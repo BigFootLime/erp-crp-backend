@@ -5,7 +5,7 @@ import { isDemoMode } from "../config/demo-mode";
 const READ_PREFIXES = [
   "/clients", "/devis", "/affaires", "/commandes", "/stock", "/production",
   "/planning", "/fournisseurs", "/pieces-techniques", "/pieces-families", "/gammes",
-  "/methodes", "/finitions", "/centre-frais", "/outils", "/service-status",
+  "/methodes", "/finitions", "/centre-frais", "/outils", "/codes", "/service-status",
   "/dashboard-governance", "/qualite", "/quality-360", "/metrologie", "/metrology-360",
   "/livraisons", "/production-readiness", "/procurement-reliability", "/replenishment-proposals",
   "/notifications",
@@ -52,9 +52,26 @@ function isDraftDevis(req: Request): boolean {
 
 function isSafeWrite(req: Request): boolean {
   if (req.method !== "POST" || req.is("multipart/form-data")) return false;
-  if (req.path === "/clients") return true;
+  // The onboarding wizard checks a name/SIREN before it creates a client.
+  // This endpoint is a validated lookup; it does not persist data.
+  if (req.path === "/clients" || req.path === "/clients/duplicate-check") return true;
+  if (req.path === "/demo/presentation/run") return true;
   if (req.path === "/devis") return isDraftDevis(req);
-  return req.path === "/stock/movements/preview" || req.path === "/stock/intelligence/simulate";
+  if (req.path === "/stock/movements/preview" || req.path === "/stock/intelligence/simulate") return true;
+
+  // The operator flow uses the existing audited production-execution service.
+  // It only runs against the isolated demo database; uploads, exports, stock
+  // receipts and every admin path remain outside this list.
+  if (req.path === "/production/execution" ||
+    req.path === "/production/execution/quantities" ||
+    req.path === "/production/execution/operations/finish/preview" ||
+    req.path === "/production/execution/operations/finish") return true;
+  if (/^\/production\/execution\/[0-9a-f-]{36}\/(pause|resume|stop)$/.test(req.path)) return true;
+
+  // A scenario can advance only through the existing command-to-affaire
+  // generator. It cannot create or mutate arbitrary customer orders.
+  if (/^\/commandes\/\d+\/(affaires\/preview|generate-affaires)$/.test(req.path)) return true;
+  return /^\/devis\/\d+\/convert-to-commande$/.test(req.path);
 }
 
 function rejected(res: Response): void {
@@ -86,7 +103,9 @@ export function demoPublicBoundaryGuard(req: Request, res: Response, next: NextF
   const path = req.path.toLowerCase();
 
   if (path === "/openapi.json" || path === "/portal" || path.startsWith("/portal/") ||
-    path === "/electronic-invoicing/webhooks" || path.startsWith("/electronic-invoicing/webhooks/")) {
+    path === "/electronic-invoicing/webhooks" || path.startsWith("/electronic-invoicing/webhooks/") ||
+    path === "/terminals" || path.startsWith("/terminals/") ||
+    path === "/time-clock" || path.startsWith("/time-clock/")) {
     return rejected(res);
   }
 

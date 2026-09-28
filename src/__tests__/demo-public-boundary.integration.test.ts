@@ -45,6 +45,8 @@ describe("CERP-DEMO-01 public boundary", () => {
     process.env.CERP_DEMO_MODE = "true";
     await request(app()).post("/electronic-invoicing/webhooks/provider").set("X-CERP-Database", "cerp_demo").expect(403);
     await request(app()).get("/portal/orders").set("X-CERP-Database", "cerp_demo").expect(403);
+    await request(app()).post("/time-clock/device-events").set("X-CERP-Database", "cerp_demo").expect(403);
+    await request(app()).get("/terminals/bootstrap").set("X-CERP-Database", "cerp_demo").expect(403);
     await request(app()).post("/Electronic-Invoicing/Webhooks/provider").set("X-CERP-Database", "cerp_demo").expect(403);
     await request(app()).get("/PORTAL/orders").set("X-CERP-Database", "cerp_demo").expect(403);
   });

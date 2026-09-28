@@ -52,6 +52,24 @@ describe("shared document service capabilities (#618)", () => {
     expect(mocks.collect).toHaveBeenCalledTimes(1);
   });
 
+  it("returns the static disabled capability in demo mode without probing storage", async () => {
+    const previous = process.env.CERP_DEMO_MODE;
+    process.env.CERP_DEMO_MODE = "true";
+    try {
+      const response = await request(app(true)).get("/api/v1/service-status/documents").expect(200);
+      expect(response.body).toMatchObject({
+        contract_version: 1,
+        status: "degraded",
+        document_writes_supported: false,
+        reason_code: "GED_VAULT_NOT_CONFIGURED",
+      });
+      expect(mocks.collect).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.CERP_DEMO_MODE;
+      else process.env.CERP_DEMO_MODE = previous;
+    }
+  });
+
   it("returns only a stable reason code and no physical or capacity metadata", () => {
     const result = documentServiceCapabilitiesFromHealth({
       ...healthy,

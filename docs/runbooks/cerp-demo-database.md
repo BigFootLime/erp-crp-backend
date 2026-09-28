@@ -11,8 +11,10 @@ recettée le 28 septembre 2026. La base `cerp_demo` contient **562 tables**
 clonées en **schéma seul** : aucun compte ni aucune donnée métier de production
 ou de test n'ont été restaurés.
 
-Le déploiement Backend03 correspondant est sain sur cette URL, avec l'image
-`sha256:ef31301a1a92f08364f0c9eed4f54bddfa9442a06464ed1ce758ae43ed742c17`.
+La recette du parcours guidé C a validé, dans cette seule base, la création
+d'un client, devis, commande, affaire de livraison, OF, créneau et pointage,
+jusqu'à la clôture opérateur. L'affaire publiée par le parcours est celle
+attachée à l'OF de livraison, et non l'affaire commerciale principale.
 
 La recette authentifiée a validé la connexion visiteur, les lectures des
 modules autorisés et la création d'un devis JSON pour le client synthétique
@@ -80,6 +82,7 @@ appliquer seulement les patches confirmés absents, puis lancer :
 node scripts/seed-demo-account.js
 node scripts/seed-demo-module-catalog.js
 node scripts/seed-showcase-data.js
+node scripts/seed-demo-presentation.js
 ```
 
 Les deux scripts exigent une URL `cerp_demo`; le mot de passe du compte démo
@@ -96,6 +99,19 @@ nominatif, ni donnée métier. Le compte garde le rôle `Directeur` et le marque
 porte aucun facteur MFA actif : un facteur actif impose une vérification MFA et
 ces routes restent volontairement fermées dans la démonstration.
 
+`seed-demo-presentation.js` ajoute les seules références synthétiques du
+parcours de présentation : versions techniques applicables, gammes, opérations,
+famille machine, centre de frais et calendrier. Il ne crée aucun scénario
+visiteur, document ou contrôle qualité. Chaque visite crée ses propres client,
+devis, commande, affaire, OF et pointage via le backend.
+
+Le registre additif `db/patches/support/20260928_cerp_demo_presentation.sql`
+est appliqué manuellement après sauvegarde, **uniquement** sur `cerp_demo`.
+Il crée les scénarios et leurs reçus d'idempotence; son garde `current_database()`
+refuse toute autre base. Il ne fait pas partie du ledger global de migrations
+des instances métier : conserver le SHA du fichier appliqué dans le journal de
+déploiement de la démo avec la sauvegarde correspondante.
+
 ## Connexion visiteur
 
 Le bouton visiteur appelle `POST /api/v1/auth/demo/login` avec l'en-tête exact
@@ -106,11 +122,27 @@ uniquement dans l'environnement du processus. Sa réponse est strictement le
 format de `POST /api/v1/auth/login`; le frontend vérifie ensuite
 `GET /api/v1/environment` avec le Bearer token et le même en-tête.
 
-La seule écriture métier exposée est la création d'un devis brouillon par
+La seule écriture métier directe exposée est la création d'un devis brouillon par
 `POST /api/v1/devis` avec un corps JSON et `statut` égal à `BROUILLON` (ou
 `DRAFT`). Les formulaires multipart et tous fichiers sont refusés avant le
 middleware d'upload; les transitions, révisions, conversions et suppressions
 restent fermées.
+
+Le parcours guidé authentifié `POST /api/v1/demo/presentation/run` est une
+exception bornée, réservée au scénario synthétique et au registre
+`demo_presentation_scenarios`. Il orchestre les services métier existants pour
+créer un client, un devis, une commande, une affaire, un OF, son créneau et un
+pointage. Il demande une clé d'idempotence et l'en-tête
+`X-CERP-Database: cerp_demo`, limite les nouveaux scénarios et refuse les
+actions concurrentes. Les actions de suppression, d'administration,
+d'intégration, d'email, de fichier et de paiement restent interdites.
+
+Le démarrage opérateur effectue une libération OF explicite et auditée. Comme
+la démo n'expose ni dépôt documentaire ni contrôle qualité, une dérogation
+contrôlée peut être enregistrée uniquement si les preuves manquantes sont un
+sous-ensemble non vide de `PROGRAM_OR_INSTRUCTION_MISSING` et
+`QUALITY_PLAN_MISSING`. Cette dérogation ne valide pas la qualité et tout autre
+bloqueur opérationnel, matière, capacité ou technique reste refusé.
 
 Les lectures complémentaires strictement nécessaires au formulaire de devis
 sont limitées aux chemins exacts `GET /billers`, `GET /payment-modes`,
@@ -142,14 +174,21 @@ Authorization: Bearer <jeton retourné>
 X-CERP-Database: cerp_demo
 Idempotency-Key: <clé unique>
 Content-Type: application/json
+
+POST ${DEMO_API_BASE_URL}/demo/presentation/run
+Authorization: Bearer <jeton retourné>
+X-CERP-Database: cerp_demo
+Idempotency-Key: <clé unique>
+Content-Type: application/json
 ```
 
-Le dernier appel doit contenir `statut: "BROUILLON"` et des lignes valides ou
-être traité selon les règles métier du formulaire. Attendre un refus `403`
+Pour le parcours, envoyer un corps `{"action":"start"}` puis les actions
+renvoyées dans `next_action`, avec une nouvelle clé d'idempotence à chaque
+étape. Attendre un refus `403`
 pour un upload multipart, une suppression, un export/document, un portail,
 une intégration ou toute écriture hors devis brouillon.
 
-Ce seed ne couvre pas les devis, affaires, ordres de fabrication, documents,
-factures, paiements, intégrations ou comptes supplémentaires. Aucune
+Le seed de présentation ne crée pas de documents, contrôles qualité, factures,
+paiements, intégrations ou comptes supplémentaires. Aucune
 restauration, migration ou connexion à une base existante n'est effectuée par
 ce dépôt.

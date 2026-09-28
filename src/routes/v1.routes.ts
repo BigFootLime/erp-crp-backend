@@ -81,6 +81,7 @@ import { moduleAccessGate } from "../module/access-control/middlewares/module-ac
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
 import { demoAccessGuard, demoPublicBoundaryGuard } from "../middlewares/demo-access.middleware"
+import demoPresentationRoutes from "../module/demo-presentation/routes/demo-presentation.routes"
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
@@ -101,6 +102,10 @@ router.use("/time-clock", tempsDeplacementsDeviceRoutes)
 // métier est portée par le compte et le module au middleware suivant.
 router.use(authenticateToken)
 router.use(demoAccessGuard)
+
+// A demo-only orchestrator. It stays behind the normal JWT/database boundary
+// and before module gating because it coordinates several existing modules.
+router.use("/demo", demoPresentationRoutes)
 
 // 🔒 Tour de contrôle des accès (#326) : filtrage module par compte, monté avant tout
 // module métier pour qu'aucune surface future n'y échappe par oubli. Une fois le

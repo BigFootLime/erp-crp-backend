@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "73a0487a2d39a46943aebac8eac25fd15d4db030eb9ed3d8a25c83d8dd08cc95";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "e196847530fabba2caa99c9570f15e2daa17bd569a3f75341feb0bfeb8dfb92d";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -16,7 +16,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_read)",
       "listAccountingBatches"
@@ -33,7 +35,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_read)",
       "getAccountingBatch"
@@ -50,7 +54,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_read)",
       "downloadAccountingArtifact"
@@ -67,7 +73,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_execute)",
       "cancelAccountingBatch"
@@ -84,7 +92,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_execute)",
       "generateAccountingBatch"
@@ -101,7 +111,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_execute)",
       "reexportAccountingBatch"
@@ -118,7 +130,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_execute)",
       "validateAccountingBatch"
@@ -135,7 +149,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_execute)",
       "previewAccountingBatch"
@@ -152,7 +168,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_read)",
       "listAccountingMappings"
@@ -169,7 +187,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/accounting-export/accounting-export.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(accounting_export_admin)",
       "createAccountingMapping"
@@ -186,7 +206,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -206,7 +228,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -226,7 +250,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -246,7 +272,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -266,7 +294,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -286,7 +316,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -306,7 +338,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -326,7 +360,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -346,7 +382,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -366,7 +404,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -386,7 +426,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/access-control/routes/access-control.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -406,7 +448,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -426,7 +470,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:11",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -445,7 +491,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:12",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -464,7 +512,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:13",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -483,7 +533,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:14",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -502,7 +554,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -521,7 +575,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -540,7 +596,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
@@ -559,7 +617,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -579,7 +639,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -599,7 +661,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -619,7 +683,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -639,7 +705,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "readCapabilities"
     ],
@@ -654,7 +722,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(view)",
       "readCatalog"
@@ -671,7 +741,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(view)",
       "validate(listReferenceChangesQuerySchema,query)",
@@ -689,7 +761,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(propose)",
       "validate(createReferenceChangeSetSchema,body)",
@@ -707,7 +781,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(view)",
       "validate(changeSetIdParamSchema,params)",
@@ -725,7 +801,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(apply)",
       "validate(changeSetIdParamSchema,params)",
@@ -744,7 +822,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(approve)",
       "validate(changeSetIdParamSchema,params)",
@@ -763,7 +843,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(propose)",
       "validate(referencePreviewSchema,body)",
@@ -781,7 +863,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(view)",
       "validate(datasetCodeParamSchema,params)",
@@ -800,7 +884,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(export)",
       "validate(referenceExportQuerySchema,query)",
@@ -818,7 +904,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(import)",
       "validate(createReferenceChangeSetSchema,body)",
@@ -836,7 +924,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/reference-data/routes/reference-data.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireReferenceDataCapability(import)",
       "validate(referencePreviewSchema,body)",
@@ -854,7 +944,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -874,7 +966,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -894,7 +988,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -914,7 +1010,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -934,7 +1032,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -954,7 +1054,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -974,7 +1076,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -994,7 +1098,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/admin/routes/admin.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1014,7 +1120,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1034,7 +1142,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1054,7 +1164,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1074,7 +1186,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1094,7 +1208,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1114,7 +1230,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1134,7 +1252,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1154,7 +1274,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1174,7 +1296,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1194,7 +1318,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/integrations/webhooks/webhook.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireSuperadmin",
@@ -1214,7 +1340,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "listClientReminderHistory"
@@ -1231,7 +1359,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "getReminderClientPreference"
@@ -1248,7 +1378,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_opt_out_manage)",
       "upsertReminderClientPreference"
@@ -1265,7 +1397,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_job_run)",
       "runReminderCycleNow"
@@ -1282,7 +1416,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "listInvoiceReminderHistory"
@@ -1299,7 +1435,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "listReminderPolicies"
@@ -1316,7 +1454,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_policy_manage)",
       "createReminderPolicy"
@@ -1333,7 +1473,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_policy_manage)",
       "retireReminderPolicy"
@@ -1350,7 +1492,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_policy_manage)",
       "validateReminderPolicy"
@@ -1367,7 +1511,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "getReminderReadiness"
@@ -1384,7 +1530,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_read)",
       "listReminderSuggestions"
@@ -1401,7 +1549,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_approve)",
       "approveReminder"
@@ -1418,7 +1568,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_approve)",
       "cancelReminder"
@@ -1435,7 +1587,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_retry)",
       "retryReminder"
@@ -1452,7 +1606,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reminders.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reminder_send)",
       "sendReminder"
@@ -1469,7 +1625,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1487,7 +1645,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(write)",
@@ -1505,7 +1665,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1523,7 +1685,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(write)",
@@ -1541,7 +1705,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(archive)",
@@ -1559,7 +1725,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1577,7 +1745,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1595,7 +1765,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1613,7 +1785,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1631,7 +1805,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1649,7 +1825,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireTransitionCapability",
@@ -1667,7 +1845,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(read)",
@@ -1685,7 +1865,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/affaire/routes/affaire.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAffaireCapability(write)",
@@ -1703,7 +1885,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/asbuilt/routes/asbuilt.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(asbuilt_download)",
@@ -1721,7 +1905,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/asbuilt/routes/asbuilt.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(asbuilt_generate)",
@@ -1739,7 +1925,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/asbuilt/routes/asbuilt.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(read)",
@@ -1757,7 +1945,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/audit-logs/routes/audit-logs.routes.ts:8",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listAuditLogs"
@@ -1773,7 +1963,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/audit-logs/routes/audit-logs.routes.ts:7",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createAuditLog"
@@ -1786,9 +1978,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/access-profile",
-    "source": "src/module/auth/routes/auth.routes.ts:43",
+    "source": "src/module/auth/routes/auth.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "getAccessProfile"
     ],
@@ -1798,9 +1992,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/activate",
-    "source": "src/module/auth/routes/auth.routes.ts:34",
+    "source": "src/module/auth/routes/auth.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "resetPasswordRateLimit",
       "activateAccount"
     ],
@@ -1809,10 +2005,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
-    "path": "/auth/forgot-password",
-    "source": "src/module/auth/routes/auth.routes.ts:32",
+    "path": "/auth/demo/login",
+    "source": "src/module/auth/routes/auth.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
+      "demoLoginRateLimit",
+      "demoLogin"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/forgot-password",
+    "source": "src/module/auth/routes/auth.routes.ts:37",
+    "middleware": [
+      "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "forgotPasswordRateLimit",
       "forgotPassword"
     ],
@@ -1822,9 +2034,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/login",
-    "source": "src/module/auth/routes/auth.routes.ts:30",
+    "source": "src/module/auth/routes/auth.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "loginRateLimit",
       "login"
     ],
@@ -1834,9 +2048,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me",
-    "source": "src/module/auth/routes/auth.routes.ts:35",
+    "source": "src/module/auth/routes/auth.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "getProfile"
     ],
@@ -1846,9 +2062,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:44",
+    "source": "src/module/auth/routes/auth.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "getNavigationPreferences"
     ],
@@ -1858,9 +2076,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:45",
+    "source": "src/module/auth/routes/auth.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "putNavigationPreferences"
     ],
@@ -1870,9 +2090,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/enrollment",
-    "source": "src/module/auth/routes/auth.routes.ts:48",
+    "source": "src/module/auth/routes/auth.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "mfaRateLimit",
       "startEnrollment"
@@ -1883,9 +2105,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:52",
+    "source": "src/module/auth/routes/auth.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "requireSuperadmin",
       "policy"
@@ -1898,9 +2122,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:53",
+    "source": "src/module/auth/routes/auth.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "requireSuperadmin",
       "mfaRateLimit",
@@ -1914,9 +2140,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/recovery-codes",
-    "source": "src/module/auth/routes/auth.routes.ts:50",
+    "source": "src/module/auth/routes/auth.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "mfaRateLimit",
       "recoveryCodes"
@@ -1927,9 +2155,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/replacement",
-    "source": "src/module/auth/routes/auth.routes.ts:49",
+    "source": "src/module/auth/routes/auth.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "mfaRateLimit",
       "startReplacement"
@@ -1940,9 +2170,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/revoke",
-    "source": "src/module/auth/routes/auth.routes.ts:51",
+    "source": "src/module/auth/routes/auth.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "mfaRateLimit",
       "revoke"
@@ -1953,9 +2185,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/status",
-    "source": "src/module/auth/routes/auth.routes.ts:46",
+    "source": "src/module/auth/routes/auth.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "status"
     ],
@@ -1965,9 +2199,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/step-up",
-    "source": "src/module/auth/routes/auth.routes.ts:47",
+    "source": "src/module/auth/routes/auth.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "authenticateToken",
       "mfaRateLimit",
       "stepUp"
@@ -1978,9 +2214,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/verify",
-    "source": "src/module/auth/routes/auth.routes.ts:31",
+    "source": "src/module/auth/routes/auth.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "mfaRateLimit",
       "verifyChallenge"
     ],
@@ -1990,9 +2228,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/reset-password",
-    "source": "src/module/auth/routes/auth.routes.ts:33",
+    "source": "src/module/auth/routes/auth.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
+      "demoAuthGuard",
       "resetPasswordRateLimit",
       "resetPassword"
     ],
@@ -2005,7 +2245,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listAvoirs"
@@ -2022,7 +2264,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "createAvoir"
@@ -2039,7 +2283,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "deleteAvoir"
@@ -2056,7 +2302,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "getAvoir"
@@ -2073,7 +2321,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "updateAvoir"
@@ -2090,7 +2340,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "getElectronicCreditNote"
@@ -2107,7 +2359,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_reconcile)",
       "reconcileElectronicCreditNote"
@@ -2124,7 +2378,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_submit)",
       "queueElectronicCreditNote"
@@ -2141,7 +2397,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "avoirLegalArchive.list"
@@ -2158,7 +2416,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "avoirLegalArchive.get"
@@ -2175,7 +2435,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "avoirLegalArchive.download"
@@ -2192,7 +2454,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "avoirLegalArchive.preview"
@@ -2209,7 +2473,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "avoirLegalArchive.print"
@@ -2226,7 +2492,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "getAvoirPdf"
@@ -2243,7 +2511,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "generateAvoirPdf"
@@ -2260,7 +2530,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_issue)",
       "issueAvoirWorkflow"
@@ -2277,7 +2549,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(request_validation)",
       "requestAvoirValidationWorkflow"
@@ -2294,7 +2568,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(validate)",
       "validateAvoirWorkflow"
@@ -2311,7 +2587,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "createAvoirDraftWorkflow"
@@ -2328,7 +2606,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listAvoirEligibleLines"
@@ -2345,7 +2625,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/avoirs.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "previewAvoirWorkflow"
@@ -2362,7 +2644,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/banking-info/routes/banking-info.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listBankingInfos"
     ],
@@ -2377,7 +2661,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/banking-info/routes/banking-info.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(createBankingInfoSchema)",
       "createBankingInfo"
@@ -2393,7 +2679,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/banking-info/routes/banking-info.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "deleteBankingInfo"
@@ -2409,7 +2697,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/banking-info/routes/banking-info.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "getBankingInfo"
@@ -2425,7 +2715,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/banking-info/routes/banking-info.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "updateBankingInfo"
@@ -2441,7 +2733,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/biller/routes/biller.routes.ts:6",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listBillers"
     ],
@@ -2456,7 +2750,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/centre-frais/routes/centre-frais.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listPieceCF"
     ],
@@ -2471,7 +2767,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/centre-frais/routes/centre-frais.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(createPieceCFSchema)",
       "createPieceCF"
@@ -2487,7 +2785,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/centre-frais/routes/centre-frais.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "deletePieceCF"
@@ -2503,7 +2803,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/centre-frais/routes/centre-frais.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "getPieceCF"
@@ -2519,7 +2821,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/centre-frais/routes/centre-frais.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "updatePieceCF"
@@ -2535,7 +2839,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listConversations"
@@ -2551,7 +2857,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "archiveConversation"
@@ -2567,7 +2875,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "deleteGroupConversation"
@@ -2583,7 +2893,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "renameGroupConversation"
@@ -2599,7 +2911,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "leaveGroupConversation"
@@ -2615,7 +2929,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "addGroupMembers"
@@ -2631,7 +2947,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "removeGroupMember"
@@ -2647,7 +2965,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listMessages"
@@ -2663,7 +2983,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "sendMessage"
@@ -2679,7 +3001,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listParticipants"
@@ -2695,7 +3019,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "markConversationRead"
@@ -2711,7 +3037,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "openDirectConversation"
@@ -2727,7 +3055,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createGroupConversation"
@@ -2743,7 +3073,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getUnreadCount"
@@ -2759,7 +3091,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/chat/routes/chat.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listChatUsers"
@@ -2775,7 +3109,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listClients"
@@ -2791,7 +3127,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2809,7 +3147,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listClientAddresses"
@@ -2825,7 +3165,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listClientContacts"
@@ -2841,7 +3183,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2859,7 +3203,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2877,7 +3223,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getClientById"
@@ -2893,7 +3241,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2911,7 +3261,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2929,7 +3281,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -2947,7 +3301,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getClientCreationSnapshot"
@@ -2963,7 +3319,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadClientCreationSnapshot"
@@ -2979,7 +3337,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "previewClientCreationSnapshot"
@@ -2995,7 +3355,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "printClientCreationSnapshot"
@@ -3011,7 +3373,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -3031,7 +3395,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listClientOfficialDocuments"
@@ -3047,7 +3413,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireClientWriteRole",
@@ -3065,7 +3433,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadClientOfficialDocument"
@@ -3081,7 +3451,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "previewClientOfficialDocument"
@@ -3097,7 +3469,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "printClientOfficialDocument"
@@ -3113,7 +3487,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listClientsAnalytics"
@@ -3129,7 +3505,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client/routes/client.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "checkClientDuplicates"
@@ -3145,7 +3523,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/codes/routes/codes.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listCodeFormats"
@@ -3161,7 +3541,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:126",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listCommandes"
     ],
@@ -3176,7 +3558,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "upload.array(documents[])",
       "parseCommandeBody",
@@ -3193,7 +3577,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "listCommandesFournisseurs"
@@ -3210,7 +3596,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "createCommandeFournisseur"
@@ -3227,7 +3615,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "getCommandeFournisseur"
@@ -3244,7 +3634,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "updateCommandeFournisseur"
@@ -3261,7 +3653,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(acknowledge)",
       "accuseReception"
@@ -3278,7 +3672,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "requireCapability(prices)",
@@ -3297,7 +3693,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "requireCapability(prices)",
@@ -3316,7 +3714,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(send)",
       "generateDocument"
@@ -3333,7 +3733,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "getDocument"
@@ -3350,7 +3752,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "duplicateCommandeFournisseur"
@@ -3367,7 +3771,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "addLigne"
@@ -3384,7 +3790,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "deleteLigne"
@@ -3401,7 +3809,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "updateLigne"
@@ -3418,7 +3828,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(update_draft)",
       "reorderLignes"
@@ -3435,7 +3847,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "listOfficialDocuments"
@@ -3452,7 +3866,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "queueOfficialDocument"
@@ -3469,7 +3885,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "getOfficialDocument"
@@ -3486,7 +3904,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:103",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "downloadOfficialDocument"
@@ -3503,7 +3923,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "previewOfficialDocument"
@@ -3520,7 +3942,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:104",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "printOfficialDocument"
@@ -3537,7 +3961,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "resyncReceptions"
@@ -3554,7 +3980,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAnyTransitionCapability",
       "transitionCommandeFournisseur"
@@ -3571,7 +3999,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "getCommandeFournisseurKpis"
@@ -3588,7 +4018,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "confirmPropositions"
@@ -3605,7 +4037,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "previewPropositions"
@@ -3622,7 +4056,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "simulateTotaux"
@@ -3639,7 +4075,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:198",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "deleteCommande"
@@ -3655,7 +4093,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:129",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "getCommande"
@@ -3671,7 +4111,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:195",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "upload.array(documents[])",
@@ -3689,7 +4131,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:215",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3707,7 +4151,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:216",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3725,7 +4171,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:217",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3743,7 +4191,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:219",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3761,7 +4211,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:218",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3779,7 +4231,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:220",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3797,7 +4251,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:221",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3815,7 +4271,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:244",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "rejectLegacyCommandeLaunch"
@@ -3831,7 +4289,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:241",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -3848,7 +4308,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:232",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -3865,7 +4327,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:211",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(generateCommandeArSchema)",
@@ -3882,7 +4346,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:204",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(generateCommandeArSchema)",
@@ -3899,7 +4365,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:224",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(sendCommandeArSchema)",
@@ -3916,7 +4384,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:133",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3935,7 +4405,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:135",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3954,7 +4426,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:134",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3973,7 +4447,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:136",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAcknowledgementExport",
@@ -3992,7 +4468,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:156",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(documentIdParamSchema)",
       "getCommandeDocumentFile"
@@ -4008,7 +4486,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:247",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "duplicateCommande"
@@ -4024,7 +4504,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:235",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(generateAffairesV3Schema)",
@@ -4041,7 +4523,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:238",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "rejectLegacyCommandeLaunch"
@@ -4057,7 +4541,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:160",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "listCadreReleases"
@@ -4073,7 +4559,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:163",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "createCadreRelease"
@@ -4089,7 +4577,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:172",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseIdParamSchema)",
       "cancelCadreRelease"
@@ -4105,7 +4595,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:166",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseIdParamSchema)",
       "getCadreRelease"
@@ -4121,7 +4613,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:169",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseIdParamSchema)",
       "updateCadreRelease"
@@ -4137,7 +4631,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:178",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseIdParamSchema)",
       "addCadreReleaseLine"
@@ -4153,7 +4649,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:188",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseLineIdParamSchema)",
       "deleteCadreReleaseLine"
@@ -4169,7 +4667,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:181",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseLineIdParamSchema)",
       "updateCadreReleaseLine"
@@ -4185,7 +4685,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:175",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(releaseIdParamSchema)",
       "updateCadreReleaseStatus"
@@ -4201,7 +4703,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:201",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -4218,7 +4722,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:142",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -4235,7 +4741,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:139",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -4252,7 +4760,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:153",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -4269,7 +4779,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:145",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(commandeWorkflowCheckpointCodeParamSchema)",
@@ -4286,7 +4798,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-client/routes/commande-client.routes.ts:123",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createQuickTechnicalPiece"
@@ -4302,7 +4816,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-references/routes/commercial-references.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireDevisRead",
       "listComptesVente"
@@ -4319,7 +4835,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-references/routes/commercial-references.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireDevisRead",
       "listConditionsPaiement"
@@ -4336,7 +4854,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/dashboard-governance/routes/dashboard-governance.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "getDashboardGovernance"
     ],
@@ -4351,7 +4871,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/dashboard-governance/routes/dashboard-governance.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSuperadmin",
       "getDashboardUsageMetrics"
@@ -4368,7 +4890,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/dashboard-governance/routes/dashboard-governance.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "postDashboardUsage"
     ],
@@ -4378,12 +4902,28 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
-    "method": "get",
-    "path": "/devis",
-    "source": "src/module/devis/routes/devis.routes.ts:107",
+    "method": "post",
+    "path": "/demo/presentation/run",
+    "source": "src/module/demo-presentation/routes/demo-presentation.routes.ts:6",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
+      "runDemoPresentation"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/devis",
+    "source": "src/module/devis/routes/devis.routes.ts:143",
+    "middleware": [
+      "anonymous",
+      "demoPublicBoundaryGuard",
+      "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "listDevis"
@@ -4397,14 +4937,17 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis",
-    "source": "src/module/devis/routes/devis.routes.ts:120",
+    "source": "src/module/devis/routes/devis.routes.ts:156",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
-      "upload.array(documents[])",
-      "parseMultipartData(createDevisBodySchema)",
+      "parseDemoDraftJson",
+      "uploadCreateDevis",
+      "parseCreateDevisData",
       "createDevis"
     ],
     "authenticated": true,
@@ -4416,10 +4959,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:124",
+    "source": "src/module/devis/routes/devis.routes.ts:160",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(delete)",
       "deleteDevis"
@@ -4433,10 +4978,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:110",
+    "source": "src/module/devis/routes/devis.routes.ts:146",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "getDevis"
@@ -4450,10 +4997,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:123",
+    "source": "src/module/devis/routes/devis.routes.ts:159",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireUpdateOrTransitionCapability",
       "upload.array(documents[])",
@@ -4469,10 +5018,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/commande-draft",
-    "source": "src/module/devis/routes/devis.routes.ts:112",
+    "source": "src/module/devis/routes/devis.routes.ts:148",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(convert)",
       "getCommandeDraftFromDevis"
@@ -4486,10 +5037,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/convert-to-commande",
-    "source": "src/module/devis/routes/devis.routes.ts:121",
+    "source": "src/module/devis/routes/devis.routes.ts:157",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(convert)",
       "convertDevisToCommande"
@@ -4503,10 +5056,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/documents/{docId}/file",
-    "source": "src/module/devis/routes/devis.routes.ts:113",
+    "source": "src/module/devis/routes/devis.routes.ts:149",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "getDevisDocumentFile"
@@ -4520,10 +5075,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents",
-    "source": "src/module/devis/routes/devis.routes.ts:114",
+    "source": "src/module/devis/routes/devis.routes.ts:150",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "listDevisOfficialDocuments"
@@ -4537,10 +5094,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/official-documents",
-    "source": "src/module/devis/routes/devis.routes.ts:115",
+    "source": "src/module/devis/routes/devis.routes.ts:151",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "queueDevisOfficialDocument"
@@ -4554,10 +5113,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}",
-    "source": "src/module/devis/routes/devis.routes.ts:116",
+    "source": "src/module/devis/routes/devis.routes.ts:152",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "getDevisOfficialDocument"
@@ -4571,10 +5132,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}/download",
-    "source": "src/module/devis/routes/devis.routes.ts:118",
+    "source": "src/module/devis/routes/devis.routes.ts:154",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "downloadDevisOfficialDocument"
@@ -4588,10 +5151,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/devis/routes/devis.routes.ts:117",
+    "source": "src/module/devis/routes/devis.routes.ts:153",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "previewDevisOfficialDocument"
@@ -4605,10 +5170,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/devis/routes/devis.routes.ts:119",
+    "source": "src/module/devis/routes/devis.routes.ts:155",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(export)",
       "printDevisOfficialDocument"
@@ -4622,10 +5189,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/revise",
-    "source": "src/module/devis/routes/devis.routes.ts:122",
+    "source": "src/module/devis/routes/devis.routes.ts:158",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(revise)",
       "upload.array(documents[])",
@@ -4641,10 +5210,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/versions",
-    "source": "src/module/devis/routes/devis.routes.ts:111",
+    "source": "src/module/devis/routes/devis.routes.ts:147",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "listDevisVersions"
@@ -4658,10 +5229,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/by-article-devis-code/{code}",
-    "source": "src/module/devis/routes/devis.routes.ts:109",
+    "source": "src/module/devis/routes/devis.routes.ts:145",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "findDevisByArticleDevisCode"
@@ -4675,10 +5248,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/by-article/{articleId}",
-    "source": "src/module/devis/routes/devis.routes.ts:108",
+    "source": "src/module/devis/routes/devis.routes.ts:144",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "findDevisByArticle"
@@ -4695,7 +5270,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/operation-dossiers/routes/operation-dossiers.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "upload.any()",
@@ -4712,7 +5289,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/operation-dossiers/routes/operation-dossiers.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadOperationDossierDocument"
@@ -4728,7 +5307,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/operation-dossiers/routes/operation-dossiers.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getOperationDossierByOperation"
@@ -4744,7 +5325,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:13",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "searchElectronicInvoiceDirectory"
@@ -4761,7 +5344,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:14",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "listElectronicInvoiceDirectory"
@@ -4778,7 +5363,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-directory.routes.ts:12",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "getElectronicInvoiceReferenceData"
@@ -4795,7 +5382,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:14",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(ereporting_submit)",
       "createEReportingPayment"
@@ -4812,7 +5401,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:12",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(ereporting_read)",
       "listEReportingPeriods"
@@ -4829,7 +5420,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-reporting.routes.ts:13",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(ereporting_submit)",
       "createEReportingTransaction"
@@ -4846,6 +5439,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/electronic-invoicing/electronic-invoice-webhook.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "electronicInvoiceWebhookRateLimit",
       "receiveElectronicInvoiceWebhook"
     ],
@@ -4866,7 +5460,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:117",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listFactures"
@@ -4883,7 +5479,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "createFacture"
@@ -4900,7 +5498,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:123",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "deleteFacture"
@@ -4917,7 +5517,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:118",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "getFacture"
@@ -4934,7 +5536,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "updateFacture"
@@ -4951,7 +5555,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "getElectronicInvoice"
@@ -4968,7 +5574,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_reconcile)",
       "reconcileElectronicInvoice"
@@ -4985,7 +5593,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_submit)",
       "queueElectronicInvoice"
@@ -5002,7 +5612,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "factureLegalArchive.list"
@@ -5019,7 +5631,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "factureLegalArchive.get"
@@ -5036,7 +5650,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:97",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "factureLegalArchive.download"
@@ -5053,7 +5669,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:96",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "factureLegalArchive.preview"
@@ -5070,7 +5688,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "factureLegalArchive.print"
@@ -5087,7 +5707,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:119",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(documents_read)",
       "getFacturePdf"
@@ -5104,7 +5726,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:121",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "generateFacturePdf"
@@ -5121,7 +5745,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "getFinanceConfigurationReadiness"
@@ -5138,7 +5764,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "activateFinanceConfiguration"
@@ -5155,7 +5783,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:111",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "createFinanceSequences"
@@ -5172,7 +5802,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_admin)",
       "getSuperPdpConfiguration"
@@ -5189,7 +5821,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_admin)",
       "activateSuperPdp"
@@ -5206,7 +5840,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_admin)",
       "deactivateSuperPdp"
@@ -5223,7 +5859,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(einvoice_read)",
       "getElectronicInvoiceReadiness"
@@ -5240,7 +5878,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(issue)",
       "issueFactureWorkflow"
@@ -5257,7 +5897,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(request_validation)",
       "requestFactureValidation"
@@ -5274,7 +5916,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(validate)",
       "validateFactureWorkflow"
@@ -5291,7 +5935,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "createFactureDraftWorkflow"
@@ -5308,7 +5954,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listEligibleFactureSources"
@@ -5325,7 +5973,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/factures.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "previewFacture"
@@ -5342,7 +5992,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "validate(listFinishesQuerySchema,query)",
@@ -5360,7 +6012,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_draft_create)",
       "validate(createFinishBodySchema)",
@@ -5378,7 +6032,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "getFinish"
@@ -5395,7 +6051,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_draft_write)",
       "validate(updateFinishBodySchema)",
@@ -5413,7 +6071,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:116",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_retire)",
       "validate(archiveFinishBodySchema)",
@@ -5431,7 +6091,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:112",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "removeFinishFavorite"
@@ -5448,7 +6110,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:111",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "addFinishFavorite"
@@ -5465,7 +6129,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:130",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(audit_read)",
       "validate(finishHistoryQuerySchema,query)",
@@ -5483,7 +6149,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_retire)",
       "validate(reactivateFinishBodySchema)",
@@ -5501,7 +6169,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:137",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_draft_write)",
       "validate(createRevisionBodySchema)",
@@ -5519,7 +6189,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "readCapabilities"
     ],
@@ -5534,7 +6206,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "listFinishFamilies"
@@ -5551,7 +6225,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_draft_write)",
       "validate(createFinishFamilyBodySchema)",
@@ -5569,7 +6245,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:144",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_draft_write)",
       "validate(updateRevisionBodySchema)",
@@ -5587,7 +6265,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:162",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(documents_read)",
       "listRevisionDocuments"
@@ -5604,7 +6284,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:164",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(documents_write)",
       "validate(attachDocumentBodySchema)",
@@ -5622,7 +6304,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:160",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "revisionImpact"
@@ -5639,7 +6323,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:153",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "validate(transitionRevisionBodySchema)",
@@ -5657,7 +6343,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "validate(similarFinishesQuerySchema,query)",
@@ -5675,7 +6363,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(article_resolve)",
       "validate(stockArticleFinishConfirmBodySchema)",
@@ -5693,7 +6383,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(article_preview)",
       "validate(stockArticleFinishPreviewBodySchema)",
@@ -5711,7 +6403,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurs"
@@ -5727,7 +6421,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5745,7 +6441,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getFournisseur"
@@ -5761,7 +6459,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5779,7 +6479,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurAdresses"
@@ -5795,7 +6497,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5813,7 +6517,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5831,7 +6537,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:89",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5849,7 +6557,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...ARCHIVE)",
@@ -5867,7 +6577,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurCatalogue"
@@ -5883,7 +6595,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5901,7 +6615,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5919,7 +6635,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5937,7 +6655,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurContacts"
@@ -5953,7 +6673,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5971,7 +6693,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:84",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -5989,7 +6713,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6007,7 +6733,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getFournisseurCreationSnapshot"
@@ -6023,7 +6751,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadFournisseurCreationSnapshot"
@@ -6039,7 +6769,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "previewFournisseurCreationSnapshot"
@@ -6055,7 +6787,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "printFournisseurCreationSnapshot"
@@ -6071,7 +6805,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...QUALIF)",
@@ -6089,7 +6825,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:104",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurDocuments"
@@ -6105,7 +6843,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:105",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6124,7 +6864,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6142,7 +6884,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadFournisseurDocument"
@@ -6158,7 +6902,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6176,7 +6922,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6196,7 +6944,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurEvents"
@@ -6212,7 +6962,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurHomologations"
@@ -6228,7 +6980,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...QUALIF)",
@@ -6246,7 +7000,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...QUALIF)",
@@ -6264,7 +7020,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listFournisseurDomaines"
@@ -6280,7 +7038,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/fournisseurs/routes/fournisseurs.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "authorizeRole(...WRITE)",
@@ -6298,7 +7058,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(gammeIdParamSchema)",
@@ -6316,7 +7078,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_read)",
@@ -6335,7 +7099,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_write)",
@@ -6355,7 +7121,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_write)",
@@ -6375,7 +7143,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_write)",
@@ -6395,7 +7165,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish-gamme.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(operation_configure)",
       "params",
@@ -6414,7 +7186,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish-gamme.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(library_read)",
       "params",
@@ -6432,7 +7206,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish-gamme.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(article_resolve)",
       "params",
@@ -6451,7 +7227,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/surface-finish/routes/surface-finish-gamme.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireSurfaceFinishCapability(article_preview)",
       "params",
@@ -6470,7 +7248,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_read)",
@@ -6490,7 +7270,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_write)",
@@ -6510,7 +7292,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_read)",
@@ -6529,7 +7313,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_publish)",
@@ -6549,7 +7335,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/gammes.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMethodesCapability(gamme_operation_write)",
@@ -6569,7 +7357,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.getClasses"
@@ -6586,7 +7376,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.listDocuments"
@@ -6603,7 +7395,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(upload)",
       "upload.single(file)",
@@ -6621,7 +7415,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.getDocument"
@@ -6638,7 +7434,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.getDocumentHistory"
@@ -6655,7 +7453,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(upload)",
       "controller.reuseRevisionDocument"
@@ -6672,7 +7472,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(upload)",
       "upload.single(file)",
@@ -6690,7 +7492,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.getVaultStatus"
@@ -6707,7 +7511,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(upload)",
       "controller.listReusableRevisionDocuments"
@@ -6724,7 +7530,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(admin)",
       "controller.listQuarantine"
@@ -6741,7 +7549,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(admin)",
       "controller.deleteQuarantine"
@@ -6758,7 +7568,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(admin)",
       "controller.releaseQuarantine"
@@ -6775,7 +7587,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(admin)",
       "controller.rescanQuarantine"
@@ -6792,7 +7606,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(read)",
       "controller.getTree"
@@ -6809,7 +7625,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(approve)",
       "controller.approveVersion"
@@ -6826,7 +7644,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(download)",
       "controller.downloadVersion"
@@ -6843,7 +7663,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(obsolete)",
       "controller.obsoleteVersion"
@@ -6860,7 +7682,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(publish)",
       "controller.publishVersion"
@@ -6877,7 +7701,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/ged/routes/ged.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireGedCapability(submit)",
       "controller.submitVersion"
@@ -6894,7 +7720,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -6913,7 +7741,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -6933,7 +7763,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -6952,7 +7784,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -6971,7 +7805,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -6990,7 +7826,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -7009,7 +7847,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -7028,7 +7868,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -7047,7 +7889,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/import-assistant/routes/import-assistant.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireImportAdmin",
       "requireImportTestDatabase",
@@ -7066,7 +7910,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7084,7 +7930,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7102,7 +7950,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:128",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7120,7 +7970,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:139",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7138,7 +7990,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:131",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7156,7 +8010,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:133",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7174,7 +8030,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:132",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7192,7 +8050,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:134",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7210,7 +8070,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:181",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7229,7 +8091,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:187",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7247,7 +8111,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:192",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7265,7 +8131,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:145",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(allocate)",
@@ -7283,7 +8151,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:150",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(allocate)",
@@ -7301,7 +8171,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:141",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7319,7 +8191,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:143",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7337,7 +8211,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:142",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7355,7 +8231,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:135",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(export)",
@@ -7373,7 +8251,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:137",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(export)",
@@ -7391,7 +8271,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:136",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(export)",
@@ -7409,7 +8291,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:138",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(export)",
@@ -7427,7 +8311,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:236",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7445,7 +8331,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:231",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7463,7 +8351,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:226",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7481,7 +8371,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:241",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7499,7 +8391,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:203",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7517,7 +8411,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:204",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7535,7 +8431,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:198",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7553,7 +8451,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:156",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7571,7 +8471,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:161",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7589,7 +8491,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:166",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7607,7 +8511,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:129",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7625,7 +8531,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:130",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7643,7 +8551,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:179",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(proof_manage)",
@@ -7661,7 +8571,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:210",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7679,7 +8591,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:215",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7697,7 +8611,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:220",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(documents_manage)",
@@ -7715,7 +8631,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:177",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(ship)",
@@ -7733,7 +8651,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:172",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(ship)",
@@ -7751,7 +8671,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:178",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStatusCapability",
@@ -7769,7 +8691,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7787,7 +8711,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7805,7 +8731,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(read)",
@@ -7823,7 +8751,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:117",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCorrectionPermission",
@@ -7841,7 +8771,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/livraisons/routes/livraisons.routes.ts:112",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireLivraisonCapability(prepare)",
@@ -7859,7 +8791,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/locks/routes/locks.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "acquireLock"
@@ -7875,7 +8809,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/locks/routes/locks.routes.ts:11",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "heartbeatLock"
@@ -7891,7 +8827,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/locks/routes/locks.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "releaseLock"
@@ -7907,7 +8845,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(read_costs)",
       "getMargin"
@@ -7924,7 +8864,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(export)",
       "exportMargin"
@@ -7941,7 +8883,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(read_costs)",
       "listMarginSnapshots"
@@ -7958,7 +8902,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(snapshot)",
       "createMarginSnapshot"
@@ -7975,7 +8921,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(manage_inputs)",
       "createMarginInput"
@@ -7992,7 +8940,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(read_costs)",
       "listRateVersions"
@@ -8009,7 +8959,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/margin-engine/routes/margin-engine.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMarginCapability(manage_rates)",
       "createRateVersion"
@@ -8026,7 +8978,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "readMethodesCapabilities"
     ],
@@ -8041,7 +8995,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(listCostCentersQuerySchema,query)",
@@ -8059,7 +9015,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_write)",
       "createCostCenter"
@@ -8076,7 +9034,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(cfIdParamSchema,params)",
@@ -8094,7 +9054,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_write)",
       "validate(cfIdParamSchema,params)",
@@ -8112,7 +9074,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(tarif_read)",
       "validate(cfIdParamSchema,params)",
@@ -8130,7 +9094,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(tarif_write)",
       "validate(cfIdParamSchema,params)",
@@ -8148,7 +9114,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(listFamiliesQuerySchema,query)",
@@ -8166,7 +9134,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_write)",
       "createMachineFamily"
@@ -8183,7 +9153,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_write)",
       "validate(familyCodeParamSchema,params)",
@@ -8201,7 +9173,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(listMachineOptionsQuerySchema,query)",
@@ -8219,7 +9193,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:113",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(machineIdParamSchema,params)",
@@ -8237,7 +9213,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:127",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_write)",
       "validate(machineIdParamSchema,params)",
@@ -8255,7 +9233,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(machineIdParamSchema,params)",
@@ -8274,7 +9254,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/methodes/routes/methodes.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireMethodesCapability(referentiel_read)",
       "validate(listMachinesQualificationQuerySchema,query)",
@@ -8292,7 +9274,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8310,7 +9294,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8328,7 +9314,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8346,7 +9334,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(equipment_write)",
@@ -8364,7 +9354,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(repair_manage)",
@@ -8382,7 +9374,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8400,7 +9394,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(equipment_write)",
@@ -8418,7 +9414,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_read)",
@@ -8436,7 +9434,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_write)",
@@ -8455,7 +9455,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_write)",
@@ -8473,7 +9475,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_read)",
@@ -8491,7 +9495,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(plan_manage)",
@@ -8509,7 +9515,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrologie.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8527,7 +9535,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8545,7 +9555,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(categories_manage)",
@@ -8563,7 +9575,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8581,7 +9595,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8599,7 +9615,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8617,7 +9635,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(equipment_write)",
@@ -8635,7 +9655,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8653,7 +9675,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(equipment_write)",
@@ -8671,7 +9695,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:127",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_write)",
@@ -8690,7 +9716,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:133",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_write)",
@@ -8708,7 +9736,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:138",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(documents_read)",
@@ -8726,7 +9756,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(execution_record)",
@@ -8744,7 +9776,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:147",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_create)",
@@ -8762,7 +9796,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(plan_manage)",
@@ -8780,7 +9816,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(plan_manage)",
@@ -8798,7 +9836,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(plan_manage)",
@@ -8816,7 +9856,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(quarantine_set)",
@@ -8834,7 +9876,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8852,7 +9896,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(audit_read)",
@@ -8870,7 +9916,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(repair_manage)",
@@ -8888,7 +9936,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_read)",
@@ -8906,7 +9956,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8924,7 +9976,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -8942,7 +9996,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(execution_record)",
@@ -8960,7 +10016,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(execution_record)",
@@ -8978,7 +10036,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:115",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(verdict_validate)",
@@ -8996,7 +10056,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:112",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -9014,7 +10076,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:145",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_read)",
@@ -9032,7 +10096,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:146",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_read)",
@@ -9050,7 +10116,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:148",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_decide)",
@@ -9068,7 +10136,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:153",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(impact_decide)",
@@ -9086,7 +10156,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/metrologie/routes/metrology-360.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMetrologyCapability(read)",
@@ -9104,7 +10176,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/notifications/routes/notifications.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listNotifications"
@@ -9120,7 +10194,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/notifications/routes/notifications.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "escalateNotification"
@@ -9136,7 +10212,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/notifications/routes/notifications.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "muteNotification"
@@ -9152,7 +10230,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/notifications/routes/notifications.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "markNotificationRead"
@@ -9168,7 +10248,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/notifications/routes/notifications.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "markAllNotificationsRead"
@@ -9184,6 +10266,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/swagger/openapi.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous"
     ],
     "authenticated": false,
@@ -9195,7 +10278,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/operational-media/routes/operational-media.routes.ts:5",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "downloadOperationalImage"
     ],
@@ -9210,7 +10295,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/operational-media/routes/operational-media.routes.ts:4",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "getMediaCapabilities"
     ],
@@ -9225,7 +10312,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilController.getFiltered)"
     ],
@@ -9240,7 +10329,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:97",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageToolUpload.fields([ { name: \"esquisse\", maxCount: 1 }, { name: \"plan\", maxCount: 1 }, { name: \"ima)",
@@ -9257,7 +10348,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:119",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.remove)"
@@ -9273,7 +10366,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilController.getById)"
     ],
@@ -9288,7 +10383,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:108",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageToolUpload.fields([ { name: \"esquisse\", maxCount: 1 }, { name: \"plan\", maxCount: 1 }, { name: \"ima)",
@@ -9305,7 +10402,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(read)",
@@ -9323,7 +10422,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(configure)",
@@ -9341,7 +10442,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.getPricing)"
@@ -9357,7 +10460,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(read)",
@@ -9375,7 +10480,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9393,7 +10500,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9411,7 +10520,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9429,7 +10540,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9447,7 +10560,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9465,7 +10580,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(operate)",
@@ -9483,7 +10600,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getAretes)"
     ],
@@ -9498,7 +10617,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getFabricants)"
     ],
@@ -9513,7 +10634,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageFabricantUpload.single(logo)",
@@ -9530,7 +10653,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageFabricantUpload.single(logo)",
@@ -9547,7 +10672,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getFamilles)"
     ],
@@ -9562,7 +10689,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageFamilleUpload.single(image)",
@@ -9579,7 +10708,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageFamilleUpload.single(image)",
@@ -9596,7 +10727,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getFournisseurs)"
     ],
@@ -9611,7 +10744,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilSupportController.postFournisseur)"
@@ -9627,7 +10762,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilSupportController.patchFournisseur)"
@@ -9643,7 +10780,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getGeometries)"
     ],
@@ -9658,7 +10797,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageGeometrieUpload.single(image)",
@@ -9675,7 +10816,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "outillageGeometrieUpload.single(image)",
@@ -9692,7 +10835,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.getImportBatchesSummary)"
@@ -9708,7 +10853,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:141",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.inventaireSet)"
@@ -9724,7 +10871,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.getLowStock)"
@@ -9740,7 +10889,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:132",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.reapprovisionner)"
@@ -9756,7 +10907,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.getRecentMovements)"
@@ -9772,7 +10925,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilController.getByReferenceFabricant)"
     ],
@@ -9787,7 +10942,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:129",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.retourStock)"
@@ -9803,7 +10960,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "asyncHandler(outilSupportController.getRevetements)"
     ],
@@ -9818,7 +10977,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilSupportController.postRevetement)"
@@ -9834,7 +10995,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:138",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.scanEntree)"
@@ -9850,7 +11013,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:135",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.scanSortie)"
@@ -9866,7 +11031,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:128",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.sortieStock)"
@@ -9882,7 +11049,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/outils/routes/outil.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "asyncHandler(outilController.getSummary)"
@@ -9898,7 +11067,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listPaiements"
@@ -9915,7 +11086,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_register)",
       "createPaiement"
@@ -9932,7 +11105,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "deletePaiement"
@@ -9949,7 +11124,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "getPaiement"
@@ -9966,7 +11143,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_register)",
       "updatePaiement"
@@ -9983,7 +11162,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_allocate)",
       "allocatePaymentWorkflow"
@@ -10000,7 +11181,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/paiements.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_register)",
       "requirePaymentAllocationCapabilityForInlineAllocations",
@@ -10019,7 +11202,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/payment-mode/routes/payment-modes.routes.ts:6",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listPaymentModes"
     ],
@@ -10034,7 +11219,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/payment-mode/routes/payment-modes.routes.ts:7",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "postPaymentMode"
     ],
@@ -10049,7 +11236,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/piece-technique-versions.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(versionIdParamSchema)",
@@ -10066,7 +11255,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/gammes/routes/piece-technique-versions.routes.ts:11",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(versionIdParamSchema)",
@@ -10084,7 +11275,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-families/routes/pieces-families.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "listPieceFamilies"
     ],
@@ -10099,7 +11292,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-families/routes/pieces-families.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(createPieceFamilySchema)",
       "createPieceFamily"
@@ -10115,7 +11310,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-families/routes/pieces-families.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "deletePieceFamily"
@@ -10131,7 +11328,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-families/routes/pieces-families.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "getPieceFamily"
@@ -10147,7 +11346,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-families/routes/pieces-families.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "validate(idParamSchema)",
       "updatePieceFamily"
@@ -10163,7 +11364,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:186",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listPieceTechniques"
@@ -10179,7 +11382,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:155",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(createPieceTechniqueSchema)",
@@ -10196,7 +11401,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:200",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireDeleteRole",
@@ -10215,7 +11422,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:198",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10232,7 +11441,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:199",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10250,7 +11461,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:242",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10268,7 +11481,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:244",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(achatIdParamSchema)",
@@ -10285,7 +11500,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:243",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(achatIdParamSchema)",
@@ -10303,7 +11520,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:245",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10321,7 +11540,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:247",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10338,7 +11559,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:248",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10356,7 +11579,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:249",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(affaireIdParamSchema)",
@@ -10373,7 +11598,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:188",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10390,7 +11617,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:206",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10407,7 +11636,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:207",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10424,7 +11655,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:194",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10441,7 +11674,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:196",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10458,7 +11693,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:195",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10475,7 +11712,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:197",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10492,7 +11731,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:189",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10509,7 +11750,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:190",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10526,7 +11769,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:251",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10543,7 +11788,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:252",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10561,7 +11808,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:253",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(documentIdParamSchema)",
@@ -10578,7 +11827,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:254",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(documentIdParamSchema)",
@@ -10595,7 +11846,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:202",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10612,7 +11865,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:232",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10630,7 +11885,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:234",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(bomLineIdParamSchema)",
@@ -10647,7 +11904,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:233",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(bomLineIdParamSchema)",
@@ -10665,7 +11924,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:235",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10683,7 +11944,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:237",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10701,7 +11964,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:239",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(operationIdParamSchema)",
@@ -10718,7 +11983,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:238",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(operationIdParamSchema)",
@@ -10736,7 +12003,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:240",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10754,7 +12023,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:191",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10772,7 +12043,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:203",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10790,7 +12063,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:210",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10807,7 +12082,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:211",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(idParamSchema)",
@@ -10825,7 +12102,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:212",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(versionIdParamSchema)",
@@ -10843,7 +12122,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:216",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(read)",
@@ -10861,7 +12142,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:215",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(versionIdParamSchema)",
@@ -10879,7 +12162,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:214",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireVersionApproval",
@@ -10899,7 +12184,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:213",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireVersionApproval",
@@ -10919,7 +12206,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:226",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(read)",
@@ -10937,7 +12226,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:221",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOutillageCapability(configure)",
@@ -10955,7 +12246,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:187",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(affaireOnlyParamSchema)",
@@ -10972,7 +12265,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:154",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "previewPieceTechniqueCode"
@@ -10988,7 +12283,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:171",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(clientIdParamSchema)",
@@ -11005,7 +12302,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:172",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireDocumentPolicyRole",
@@ -11025,7 +12324,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:162",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listDocumentTypes"
@@ -11041,7 +12342,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:163",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireDocumentPolicyRole",
@@ -11060,7 +12363,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:164",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireDocumentPolicyRole",
@@ -11080,7 +12385,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:179",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listPieceDrafts"
@@ -11096,7 +12403,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:180",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(saveDraftSchema)",
@@ -11113,7 +12422,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:183",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(draftIdParamSchema)",
@@ -11130,7 +12441,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:181",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(draftIdParamSchema)",
@@ -11147,7 +12460,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:182",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(draftIdParamSchema)",
@@ -11165,7 +12480,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:161",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getPieceTechniquePermissions"
@@ -11181,7 +12498,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:158",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getPieceTechniquesSummary"
@@ -11197,7 +12516,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:184",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validate(versionIdOnlyParamSchema)",
@@ -11214,7 +12535,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11234,7 +12557,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11254,7 +12579,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11274,7 +12601,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11294,7 +12623,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11314,7 +12645,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11334,7 +12667,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11354,7 +12689,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11375,7 +12712,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11395,7 +12734,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11415,7 +12756,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11435,7 +12778,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11453,7 +12798,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11473,7 +12820,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11491,7 +12840,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11509,7 +12860,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11529,7 +12882,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11549,7 +12904,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11569,7 +12926,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:8",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11589,7 +12948,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11609,7 +12970,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11629,7 +12992,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:11",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11649,7 +13014,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:12",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11669,7 +13036,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:7",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11689,7 +13058,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:6",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11709,7 +13080,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning-central.routes.ts:13",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11729,7 +13102,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/planning/routes/planning.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -11749,6 +13124,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "controller.activate"
     ],
     "authenticated": false,
@@ -11760,6 +13136,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "controller.forgotPassword"
     ],
     "authenticated": false,
@@ -11771,6 +13148,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:8",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "controller.login"
     ],
     "authenticated": false,
@@ -11782,6 +13160,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:11",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "controller.resetPassword"
     ],
     "authenticated": false,
@@ -11793,6 +13172,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.listDeliveries"
     ],
@@ -11805,6 +13185,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.listDocuments"
     ],
@@ -11817,6 +13198,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.acknowledgeDocument"
     ],
@@ -11829,6 +13211,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.downloadDocument"
     ],
@@ -11841,6 +13224,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.listInvoices"
     ],
@@ -11853,6 +13237,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.me"
     ],
@@ -11865,6 +13250,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/client-portal/routes/client-portal.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateClientPortal",
       "controller.listOrders"
     ],
@@ -11877,7 +13263,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/procurement-reliability/routes/procurement-reliability.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(close)",
       "updateProcurementAnomalyAction"
@@ -11894,7 +13282,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/procurement-reliability/routes/procurement-reliability.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(acknowledge)",
       "reviseProcurementPromise"
@@ -11911,7 +13301,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/procurement-reliability/routes/procurement-reliability.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "procurementOverview"
@@ -11928,7 +13320,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/procurement-reliability/routes/procurement-reliability.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireRoleCapability(approve)",
       "createProcurementPolicy"
@@ -11945,7 +13339,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:233",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(generate)",
@@ -11963,7 +13359,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:234",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -11981,7 +13379,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:235",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(cancel)",
@@ -11999,7 +13399,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:232",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(generate)",
@@ -12017,7 +13419,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12035,7 +13439,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12055,7 +13461,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12073,7 +13481,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:138",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(cancel)",
@@ -12091,7 +13501,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12111,7 +13523,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:136",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(correct)",
@@ -12129,7 +13543,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12149,7 +13565,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12169,7 +13587,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:135",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(reject)",
@@ -12187,7 +13607,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12207,7 +13629,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12227,7 +13651,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:131",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(submit)",
@@ -12245,7 +13671,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:134",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(validate)",
@@ -12263,7 +13691,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12281,7 +13711,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "capabilities"
@@ -12297,7 +13729,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12315,7 +13749,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12333,7 +13769,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12353,7 +13791,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:116",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(declare_quantity)",
@@ -12371,7 +13811,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionExecutionCapability(read)",
@@ -12389,7 +13831,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:108",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12409,7 +13853,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production-execution.routes.ts:137",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -12429,7 +13875,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:293",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12447,7 +13895,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:294",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12465,7 +13915,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:295",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12483,7 +13935,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:296",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12501,7 +13955,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:297",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12519,7 +13975,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:298",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -12537,7 +13995,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:191",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12555,7 +14015,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:192",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12573,7 +14035,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:193",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12591,7 +14055,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:194",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12609,7 +14075,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:196",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12627,7 +14095,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:215",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(create)",
@@ -12646,7 +14116,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:218",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(archive)",
@@ -12664,7 +14136,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:213",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12682,7 +14156,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:217",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(update)",
@@ -12701,7 +14177,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:207",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12719,7 +14197,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:197",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12737,7 +14217,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:208",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12755,7 +14237,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:210",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(documents)",
@@ -12773,7 +14257,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:212",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(documents)",
@@ -12791,7 +14277,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:211",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12809,7 +14297,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:209",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(documents)",
@@ -12828,7 +14318,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:204",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12846,7 +14338,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:205",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(maintenance)",
@@ -12864,7 +14358,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:201",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12882,7 +14378,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:202",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(maintenance)",
@@ -12900,7 +14398,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:203",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(maintenance)",
@@ -12918,7 +14418,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:216",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(update)",
@@ -12937,7 +14439,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:206",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(restore)",
@@ -12955,7 +14459,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:198",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(read)",
@@ -12973,7 +14479,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:199",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(availability)",
@@ -12991,7 +14499,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:200",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(availability)",
@@ -13009,7 +14519,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:214",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireMachineCapability(create)",
@@ -13028,7 +14540,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:135",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13048,7 +14562,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:145",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(document)",
@@ -13066,7 +14582,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:146",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(document)",
@@ -13084,7 +14602,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:148",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13102,7 +14622,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:151",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13122,7 +14644,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:159",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(document)",
@@ -13140,7 +14664,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13158,7 +14684,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:109",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13178,7 +14706,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:127",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(plan_validate)",
@@ -13196,7 +14726,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:115",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(plan_draft)",
@@ -13214,7 +14746,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(plan_validate)",
@@ -13232,7 +14766,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13250,7 +14786,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13270,7 +14808,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13288,7 +14828,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13308,7 +14850,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13326,7 +14870,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13344,7 +14890,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireIdempotencyKey",
@@ -13364,7 +14912,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(plan_validate)",
@@ -13382,7 +14932,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:89",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(plan_draft)",
@@ -13400,7 +14952,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(ar_recalage)",
@@ -13418,7 +14972,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(ar_recalage)",
@@ -13436,7 +14992,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "capabilities"
@@ -13452,7 +15010,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/of-versioning.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13470,7 +15030,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:229",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listOrdresFabrication"
@@ -13486,7 +15048,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:280",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(create)",
@@ -13504,7 +15068,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:277",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getOrdreFabrication"
@@ -13520,7 +15086,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:281",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAnyOfCapability([\"edit_prelaunch\", \"launch\", \"operate\", \"cancel\", \"archive\"])",
@@ -13538,7 +15106,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:253",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(release)",
@@ -13556,7 +15126,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:239",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13574,7 +15146,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:240",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13592,7 +15166,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:241",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13610,7 +15186,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:243",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13628,7 +15206,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:242",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13646,7 +15226,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:273",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getOfCreationSnapshot"
@@ -13662,7 +15244,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:275",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadOfCreationSnapshot"
@@ -13678,7 +15262,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:274",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "previewOfCreationSnapshot"
@@ -13694,7 +15280,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:276",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "printOfCreationSnapshot"
@@ -13710,7 +15298,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:237",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13728,7 +15318,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:238",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13746,7 +15338,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:245",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13764,7 +15358,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:246",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13782,7 +15378,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:247",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13800,7 +15398,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:252",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13818,7 +15418,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:249",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(operate)",
@@ -13836,7 +15438,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:248",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(operate)",
@@ -13854,7 +15458,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:251",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13872,7 +15478,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:250",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(operate)",
@@ -13890,7 +15498,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:244",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13908,7 +15518,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:283",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAnyOfCapability([\"operate\", \"edit_prelaunch\"])",
@@ -13926,7 +15538,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:284",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(operate)",
@@ -13944,7 +15558,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:285",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(operate)",
@@ -13962,7 +15578,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:282",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -13980,7 +15598,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:278",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -13998,7 +15618,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:289",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(receipt)",
@@ -14016,7 +15638,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:288",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(receipt)",
@@ -14034,7 +15658,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:279",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(release)",
@@ -14052,7 +15678,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:267",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -14070,7 +15698,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:268",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14088,7 +15718,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:269",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14106,7 +15738,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:270",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(release)",
@@ -14124,7 +15758,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:266",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getOfTechnicalSnapshot"
@@ -14140,7 +15776,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:290",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(traceability)",
@@ -14158,7 +15796,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:265",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getOrdreFabricationTree"
@@ -14174,7 +15814,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:236",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -14192,7 +15834,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:254",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(generate)",
@@ -14210,7 +15854,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:257",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14228,7 +15874,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:255",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(revise)",
@@ -14246,7 +15894,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:256",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14264,7 +15914,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:261",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14282,7 +15934,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:262",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -14300,7 +15954,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:260",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(quality_decision)",
@@ -14318,7 +15974,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:259",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14336,7 +15994,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:258",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(edit_prelaunch)",
@@ -14354,7 +16014,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:264",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(generate)",
@@ -14372,7 +16034,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:263",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(generate)",
@@ -14390,7 +16054,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:301",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14408,7 +16074,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:302",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14426,7 +16094,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:305",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14444,7 +16114,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:304",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14462,7 +16134,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:308",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14480,7 +16154,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:306",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14498,7 +16174,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:307",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14516,7 +16194,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:309",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14534,7 +16214,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:303",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -14552,7 +16234,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:221",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listPostes"
@@ -14568,7 +16252,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:223",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createPoste"
@@ -14584,7 +16270,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:225",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireAdmin",
@@ -14602,7 +16290,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:222",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getPoste"
@@ -14618,7 +16308,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:224",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "updatePoste"
@@ -14634,7 +16326,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(view)",
       "readProductionReadiness"
@@ -14651,7 +16345,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(view)",
       "listProductionCalendars"
@@ -14668,7 +16364,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(calendar_write)",
       "validate(productionCalendarSchema,body)",
@@ -14686,7 +16384,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(calendar_write)",
       "validate(calendarIdParamSchema,params)",
@@ -14705,7 +16405,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(calendar_write)",
       "validate(calendarIdParamSchema,params)",
@@ -14724,7 +16426,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production-readiness/routes/production-readiness.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProductionReadinessCapability(calendar_write)",
       "validate(closureIdParamSchema,params)",
@@ -14742,7 +16446,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:178",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(audit_stations)",
@@ -14760,7 +16466,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "loadStationSessionIfAny",
       "bootstrap"
@@ -14776,7 +16484,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:165",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_credentials)",
@@ -14794,7 +16504,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:171",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_credentials)",
@@ -14812,7 +16524,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:159",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(read_own_station)",
@@ -14830,7 +16544,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:134",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_devices)",
@@ -14848,7 +16564,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:140",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_devices)",
@@ -14866,7 +16584,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:146",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_devices)",
@@ -14884,7 +16604,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:152",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStationCapability(administer_devices)",
@@ -14902,7 +16624,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(read_dossier)",
@@ -14921,7 +16645,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:109",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(read_own_station)",
@@ -14940,7 +16666,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:116",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationIdempotencyKey",
@@ -14961,7 +16689,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:123",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(acknowledge_handover)",
@@ -14980,7 +16710,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "identify"
     ],
@@ -14995,7 +16727,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(select_machine)",
@@ -15014,7 +16748,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(select_machine)",
@@ -15033,7 +16769,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(read_own_station)",
@@ -15052,7 +16790,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(read_own_station)",
@@ -15071,7 +16811,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "closeSession"
@@ -15088,7 +16830,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "heartbeat"
@@ -15105,7 +16849,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "lock"
@@ -15122,7 +16868,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "unlock"
     ],
@@ -15137,7 +16885,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/station.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireStationSession",
       "requireStationCapability(read_own_station)",
@@ -15156,7 +16906,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:230",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -15174,7 +16926,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/production/routes/production.routes.ts:231",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireOfCapability(read)",
@@ -15192,7 +16946,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/programmation/routes/programmation.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -15210,7 +16966,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/programmation/routes/programmation.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -15228,7 +16986,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/programmation/routes/programmation.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -15246,7 +17006,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/programmation/routes/programmation.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -15264,7 +17026,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/programmation/routes/programmation.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireProductionOrAdmin",
@@ -15282,7 +17046,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "base.getAccess"
     ],
@@ -15297,7 +17063,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.patchAction"
@@ -15314,7 +17082,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:105",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.patchError"
@@ -15331,7 +17101,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getEvidenceFileDownload"
@@ -15348,7 +17120,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postExternalLink"
@@ -15365,7 +17139,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.patchMilestone"
@@ -15382,7 +17158,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.getProjects"
@@ -15399,7 +17177,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.postProject"
@@ -15416,7 +17196,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.getProject"
@@ -15433,7 +17215,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.patchProject"
@@ -15450,7 +17234,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getActions"
@@ -15467,7 +17253,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postAction"
@@ -15484,7 +17272,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "operations.postAffaireLink"
@@ -15501,7 +17291,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "operations.deleteAffaireLink"
@@ -15518,7 +17310,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "operations.postBudget"
@@ -15535,7 +17329,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getDecisions"
@@ -15552,7 +17348,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postDecision"
@@ -15569,7 +17367,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:103",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getErrors"
@@ -15586,7 +17386,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:104",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postError"
@@ -15603,7 +17405,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getEvidence"
@@ -15620,7 +17424,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postEvidence"
@@ -15637,7 +17443,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getEvidenceFiles"
@@ -15654,7 +17462,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "evidenceFileUpload.single(file)",
@@ -15672,7 +17482,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getStatusReportMarkdown"
@@ -15689,7 +17501,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getStatusReportPdf"
@@ -15706,7 +17520,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getExternalLinks"
@@ -15723,7 +17539,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getGantt"
@@ -15740,7 +17558,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getKanban"
@@ -15757,7 +17577,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.postMember"
@@ -15774,7 +17596,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "projects.deleteMember"
@@ -15791,7 +17615,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getMilestones"
@@ -15808,7 +17634,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.postMilestone"
@@ -15825,7 +17653,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "operations.getOperations"
@@ -15842,7 +17672,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getAssets"
@@ -15859,7 +17691,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "assetUpload.single(file)",
@@ -15877,7 +17711,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getReports"
@@ -15894,7 +17730,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postReport"
@@ -15911,7 +17749,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getRisks"
@@ -15928,7 +17768,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postRisk"
@@ -15945,7 +17787,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getSpecs"
@@ -15962,7 +17806,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postSpec"
@@ -15979,7 +17825,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getStatusReport"
@@ -15996,7 +17844,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getWorkLogs"
@@ -16013,7 +17863,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postWorkLog"
@@ -16030,7 +17882,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getProjectEvidenceFileContent"
@@ -16047,7 +17901,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:108",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getAssetContent"
@@ -16064,7 +17920,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getExportFile"
@@ -16081,7 +17939,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:84",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getTemplates"
@@ -16098,7 +17958,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getReport"
@@ -16115,7 +17977,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getEntry"
@@ -16132,7 +17996,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:89",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.patchEntry"
@@ -16149,7 +18015,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postEntryEvidence"
@@ -16166,7 +18034,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postEntryGenerate"
@@ -16183,7 +18053,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postEntryValidate"
@@ -16200,7 +18072,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getReportDocx"
@@ -16217,7 +18091,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:97",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getReportMarkdown"
@@ -16234,7 +18110,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postGenerateFull"
@@ -16251,7 +18129,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:96",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.getSectionDocx"
@@ -16268,7 +18148,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "report.postReportVersion"
@@ -16285,7 +18167,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.patchRisk"
@@ -16302,7 +18186,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.getSpec"
@@ -16319,7 +18205,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postSpecApprove"
@@ -16336,7 +18224,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.patchSpecStatus"
@@ -16353,7 +18243,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "registers.postSpecVersion"
@@ -16370,7 +18262,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getWorkPackages"
@@ -16387,7 +18281,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.postWorkPackage"
@@ -16404,7 +18300,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getWorkPackage"
@@ -16421,7 +18319,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.patchWorkPackage"
@@ -16438,7 +18338,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.getWorkPackageActivity"
@@ -16455,7 +18357,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.postComment"
@@ -16472,7 +18376,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.postDependency"
@@ -16489,7 +18395,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/project-office/routes/project-office.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireProjectOfficeAccess",
       "work.postWorkPackageEvidence"
@@ -16506,7 +18414,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16524,7 +18434,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16542,7 +18454,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16560,7 +18474,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16578,7 +18494,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:117",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16596,7 +18514,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:118",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16615,7 +18535,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:119",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16633,7 +18555,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16651,7 +18575,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16669,7 +18595,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16687,7 +18615,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:84",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16705,7 +18635,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16723,7 +18655,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16741,7 +18675,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:108",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16760,7 +18696,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:109",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16778,7 +18716,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:110",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16796,7 +18736,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16814,7 +18756,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16832,7 +18776,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16850,7 +18796,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16868,7 +18816,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16886,7 +18836,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16904,7 +18856,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16922,7 +18876,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16940,7 +18896,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:96",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16958,7 +18916,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:112",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16976,7 +18936,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:113",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -16995,7 +18957,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:114",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -17013,7 +18977,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:115",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -17031,7 +18997,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -17049,7 +19017,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/qualite.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityOrAdmin",
@@ -17067,7 +19037,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17085,7 +19057,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17103,7 +19077,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(settings_manage)",
@@ -17121,7 +19097,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17139,7 +19117,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(settings_manage)",
@@ -17157,7 +19137,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(settings_manage)",
@@ -17175,7 +19157,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(settings_manage)",
@@ -17193,7 +19177,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:104",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17211,7 +19197,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(derogation_request)",
@@ -17229,7 +19217,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:105",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17247,7 +19237,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:113",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(release_decide)",
@@ -17265,7 +19257,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:108",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireDerogationTransitionCapability",
@@ -17283,7 +19277,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17301,7 +19297,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17319,7 +19317,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:93",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(execution_run)",
@@ -17337,7 +19337,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17355,7 +19357,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(release_decide)",
@@ -17373,7 +19377,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(measurement_write)",
@@ -17391,7 +19397,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17409,7 +19417,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:92",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(execution_run)",
@@ -17427,7 +19437,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(analytics_read)",
@@ -17445,7 +19457,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(capa_manage)",
@@ -17463,7 +19477,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(analytics_read)",
@@ -17481,7 +19497,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:120",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17499,7 +19517,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:121",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(nc_manage)",
@@ -17517,7 +19537,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:123",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(nc_manage)",
@@ -17535,7 +19557,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:122",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(nc_manage)",
@@ -17553,7 +19577,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17571,7 +19597,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(referential_manage)",
@@ -17589,7 +19617,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17607,7 +19637,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:84",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(referential_manage)",
@@ -17625,7 +19657,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(referential_manage)",
@@ -17643,7 +19677,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(plan_publish)",
@@ -17661,7 +19697,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/qualite/routes/quality-360.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireQualityCapability(read)",
@@ -17687,7 +19725,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listReceptions"
@@ -17703,7 +19743,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createReception"
@@ -17719,7 +19761,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getReception"
@@ -17735,7 +19779,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "patchReception"
@@ -17751,7 +19797,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "validateGroupedReceipt"
@@ -17767,7 +19815,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "upload.array(documents[])",
@@ -17784,7 +19834,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "removeReceptionDocument"
@@ -17800,7 +19852,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "downloadReceptionDocument"
@@ -17816,7 +19870,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createReceptionLine"
@@ -17832,7 +19888,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createLotForReceptionLine"
@@ -17848,7 +19906,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "decideIncomingInspection"
@@ -17864,7 +19924,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "addIncomingMeasurement"
@@ -17880,7 +19942,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "startIncomingInspection"
@@ -17896,7 +19960,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.packProcessing"
@@ -17912,7 +19978,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.getProcessing"
@@ -17928,7 +19996,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.reconcileProcessing"
@@ -17944,7 +20014,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.stockProcessing"
@@ -17960,7 +20032,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.mapProcessing"
@@ -17976,7 +20050,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "createReceptionStockReceipt"
@@ -17992,7 +20068,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.subcontractProcessing"
@@ -18008,7 +20086,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.toolStockProcessing"
@@ -18024,7 +20104,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.voidProcessing"
@@ -18040,7 +20122,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "expectedReceiptLines"
@@ -18056,7 +20140,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "stageGroupedReceipt"
@@ -18072,7 +20158,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:29",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "getReceptionsKpis"
@@ -18088,7 +20176,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/receptions/routes/receptions.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "processing.listProcessing"
@@ -18104,7 +20194,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/replenishment-proposal.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(read)",
       "requireCapability(prices)",
@@ -18123,7 +20215,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/replenishment-proposal.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "requireCapability(prices)",
@@ -18142,7 +20236,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commande-fournisseur/routes/replenishment-proposal.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireCapability(create)",
       "requireCapability(prices)",
@@ -18161,7 +20257,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "createDeliveryBlock"
@@ -18178,7 +20276,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)",
       "resolveDeliveryBlock"
@@ -18195,7 +20295,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "updateInvoiceDispute"
@@ -18212,7 +20314,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(credit_write)",
       "createInvoiceDispute"
@@ -18229,7 +20333,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_register)",
       "createPaymentPromise"
@@ -18246,7 +20352,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "advOrderChain"
@@ -18263,7 +20371,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "advOverview"
@@ -18280,7 +20390,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/adv-reliability/routes/adv-reliability.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(payment_register)",
       "updatePaymentPromise"
@@ -18297,7 +20409,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "commercialOutstanding"
@@ -18314,7 +20428,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_DECIDERS)",
       "cancelOrder"
@@ -18331,7 +20447,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "commercialOrderTimeline"
@@ -18348,7 +20466,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "commercialOverview"
@@ -18365,7 +20485,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_ACTORS)",
       "requestDiscountApproval"
@@ -18382,7 +20504,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_DECIDERS)",
       "decideDiscountApproval"
@@ -18399,7 +20523,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_ACTORS)",
       "recordQuoteLoss"
@@ -18416,7 +20542,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_ACTORS)",
       "recordQuoteReminder"
@@ -18433,7 +20561,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/commercial-reliability/routes/commercial-reliability.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireAssignedRole(COMMERCIAL_DECIDERS)",
       "expireDueQuotes"
@@ -18450,7 +20580,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "commercialRevenue"
@@ -18467,7 +20599,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "commercialTopClients"
@@ -18484,7 +20618,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_client_detail)",
       "reportingClients"
@@ -18501,7 +20637,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingDefinitions"
@@ -18518,7 +20656,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingDeliveries"
@@ -18535,7 +20675,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingDrilldown"
@@ -18552,7 +20694,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_export)",
       "reportingExport"
@@ -18569,7 +20713,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "reportingInvoicing"
@@ -18586,7 +20732,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingOrders"
@@ -18603,7 +20751,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingOverview"
@@ -18620,7 +20770,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_read)",
       "reportingQuotes"
@@ -18637,7 +20789,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "reportingReceivables"
@@ -18654,7 +20808,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/reporting.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(reporting_financial)",
       "directionDashboardOverview"
@@ -18668,10 +20824,12 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/service-status/documents",
-    "source": "src/shared/document-services/document-service-capabilities.routes.ts:19",
+    "source": "src/shared/document-services/document-service-capabilities.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "getDocumentServiceCapabilities"
     ],
@@ -18686,7 +20844,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:137",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18704,7 +20864,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:152",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18722,7 +20884,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:154",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18740,7 +20904,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:155",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -18758,7 +20924,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:162",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18776,7 +20944,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:171",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -18796,7 +20966,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:177",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18814,7 +20986,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:179",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -18834,7 +21008,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:181",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleArchive",
@@ -18852,7 +21028,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:178",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18870,7 +21048,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:173",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18888,7 +21068,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:175",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18906,7 +21088,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:174",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18924,7 +21108,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:176",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18942,7 +21128,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:217",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18960,7 +21148,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:221",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -18978,7 +21168,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:222",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleDocumentWrite",
@@ -18997,7 +21189,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:223",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleDocumentWrite",
@@ -19015,7 +21209,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:224",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19033,7 +21229,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:219",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -19051,7 +21249,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:218",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -19069,7 +21269,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:182",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleArchive",
@@ -19087,7 +21289,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:180",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleApprove",
@@ -19105,7 +21309,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:183",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19123,7 +21329,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:184",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19141,7 +21349,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:164",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19159,7 +21369,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:167",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19177,7 +21389,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:163",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19195,7 +21409,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:166",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19213,7 +21429,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:170",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19231,7 +21449,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:270",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19249,7 +21469,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:141",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19267,7 +21489,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:140",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19285,7 +21509,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:139",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19303,7 +21529,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:138",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19321,7 +21549,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:247",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19339,7 +21569,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:248",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19357,7 +21589,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:151",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_create)",
@@ -19375,7 +21609,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:142",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19393,7 +21629,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:144",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19411,7 +21649,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:143",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19429,7 +21669,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:150",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19447,7 +21689,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:186",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19465,7 +21709,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:187",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_create)",
@@ -19483,7 +21729,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:188",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19501,7 +21749,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:200",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_approve)",
@@ -19519,7 +21769,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:205",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_approve)",
@@ -19537,7 +21789,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:210",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_close)",
@@ -19555,7 +21809,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:189",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19573,7 +21829,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:195",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_count)",
@@ -19591,7 +21849,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:190",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(inventory_create)",
@@ -19609,7 +21869,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:254",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19627,7 +21889,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:255",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19645,7 +21909,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:261",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19663,7 +21929,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:262",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19681,7 +21949,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:268",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19699,7 +21969,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:263",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(lot_quality)",
@@ -19717,7 +21989,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:256",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_post)",
@@ -19735,7 +22009,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:230",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19753,7 +22029,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:232",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19771,7 +22049,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:233",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19789,7 +22069,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:234",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19807,7 +22089,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:240",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19825,7 +22109,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:235",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19843,7 +22129,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:241",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(referential_manage)",
@@ -19861,7 +22149,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:231",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19879,7 +22169,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:158",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19897,7 +22189,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:159",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -19915,7 +22209,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:156",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19933,7 +22229,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:157",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -19951,7 +22249,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:160",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -19969,7 +22269,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:161",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireArticleWrite",
@@ -19987,7 +22289,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:290",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20005,7 +22309,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:292",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_create)",
@@ -20023,7 +22329,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:293",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20041,7 +22349,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:305",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_cancel)",
@@ -20059,7 +22369,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:299",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_compensate)",
@@ -20077,7 +22389,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:294",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_compensate)",
@@ -20095,7 +22409,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:307",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20113,7 +22429,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:308",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(documents_manage)",
@@ -20132,7 +22450,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:314",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(documents_manage)",
@@ -20150,7 +22470,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:319",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20168,7 +22490,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:304",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_post)",
@@ -20186,7 +22510,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:291",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(movement_create)",
@@ -20204,7 +22530,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:149",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20222,7 +22550,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:272",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20240,7 +22570,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:273",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(reservation_manage)",
@@ -20258,7 +22590,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:278",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20276,7 +22610,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:284",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(reservation_manage)",
@@ -20294,7 +22630,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:279",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(reservation_manage)",
@@ -20312,7 +22650,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/stock/routes/stock.routes.ts:153",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireStockCapability(read)",
@@ -20330,7 +22670,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(false)",
       "anonymous"
@@ -20346,7 +22688,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "anonymous"
@@ -20362,7 +22706,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(false)",
       "anonymous"
@@ -20378,7 +22724,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "anonymous"
@@ -20394,7 +22742,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:97",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "anonymous"
@@ -20410,7 +22760,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(false)",
       "getFlow"
@@ -20426,7 +22778,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "anonymous"
@@ -20442,7 +22796,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:95",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "anonymous"
@@ -20458,7 +22814,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(true)",
       "postTransfer"
@@ -20474,7 +22832,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/subcontract/subcontract.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "access(false)",
       "getCreationOptions"
@@ -20490,7 +22850,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_read)",
       "listSupplierInvoices"
@@ -20507,7 +22869,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_read)",
       "getSupplierInvoice"
@@ -20524,7 +22888,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_approve)",
       "approveSupplierInvoice"
@@ -20541,7 +22907,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_dispute)",
       "disputeSupplierInvoice"
@@ -20558,7 +22926,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_match)",
       "identifySupplierInvoice"
@@ -20575,7 +22945,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_match)",
       "matchSupplierInvoice"
@@ -20592,7 +22964,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_dispute)",
       "rejectSupplierInvoice"
@@ -20609,7 +22983,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_match)",
       "requestSupplierInvoiceApproval"
@@ -20626,7 +23002,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/tarification.routes.ts:13",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "listTarificationClients"
@@ -20643,7 +23021,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/tarification.routes.ts:15",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "createTarificationClient"
@@ -20660,7 +23040,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/tarification.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "deleteTarificationClient"
@@ -20677,7 +23059,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/tarification.routes.ts:14",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(read)",
       "getTarificationClient"
@@ -20694,7 +23078,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/facturation/routes/tarification.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "requireFinanceCapability(settings_manage)",
       "updateTarificationClient"
@@ -20711,6 +23097,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20726,6 +23113,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20741,6 +23129,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20756,6 +23145,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20771,6 +23161,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20786,6 +23177,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20801,6 +23193,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20817,6 +23210,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20833,6 +23227,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20849,6 +23244,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20865,6 +23261,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:109",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20893,6 +23290,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:111",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20921,6 +23319,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:110",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20949,6 +23348,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20963,6 +23363,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:46",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "authenticateToken",
@@ -20977,6 +23378,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -20999,6 +23401,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21021,6 +23424,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21043,6 +23447,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:103",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21065,6 +23470,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:107",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21087,6 +23493,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21109,6 +23516,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:94",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21131,6 +23539,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21153,6 +23562,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21175,6 +23585,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21197,6 +23608,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21219,6 +23631,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:69",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21241,6 +23654,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21263,6 +23677,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:47",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "controllers.pairTerminal"
@@ -21276,6 +23691,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:106",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21302,6 +23718,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:105",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21328,6 +23745,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:104",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21354,6 +23772,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:103",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21380,6 +23799,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21405,6 +23825,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:98",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21430,6 +23851,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:99",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21455,6 +23877,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:100",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21480,6 +23903,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:102",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21505,6 +23929,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:101",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21530,6 +23955,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21552,6 +23978,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:84",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21574,6 +24001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21597,6 +24025,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:83",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21620,6 +24049,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21642,6 +24072,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21664,6 +24095,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21686,6 +24118,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21708,6 +24141,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21730,6 +24164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21752,6 +24187,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21774,6 +24210,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:39",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21796,6 +24233,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:38",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21818,6 +24256,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21840,6 +24279,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21862,6 +24302,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21884,6 +24325,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21906,6 +24348,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21929,6 +24372,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21951,6 +24395,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -21976,6 +24421,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22000,6 +24446,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22025,6 +24472,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22050,6 +24498,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22074,6 +24523,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22099,6 +24549,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22123,6 +24574,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminal-supply.routes.ts:68",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22145,6 +24597,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22164,6 +24617,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22183,6 +24637,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:64",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22202,6 +24657,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/terminals/routes/terminals.routes.ts:63",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "anonymous",
       "anonymous",
       "requireTerminalDevice",
@@ -22221,7 +24677,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:40",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.postAbsence"
     ],
@@ -22236,7 +24694,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:43",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.approveAbsence"
     ],
@@ -22251,7 +24711,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:44",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.rejectAbsence"
     ],
@@ -22266,7 +24728,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:41",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.getMyAbsences"
     ],
@@ -22281,7 +24745,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:30",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.postAdjustment"
     ],
@@ -22296,7 +24762,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.approveAdjustment"
     ],
@@ -22311,7 +24779,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:32",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.rejectAdjustment"
     ],
@@ -22326,7 +24796,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:89",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.getBadges"
     ],
@@ -22341,7 +24813,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:90",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.postBadge"
     ],
@@ -22356,7 +24830,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:91",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.revokeBadgeHandler"
     ],
@@ -22371,7 +24847,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:55",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.getContracts"
     ],
@@ -22386,7 +24864,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:56",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.postContract"
     ],
@@ -22401,7 +24881,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:57",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.putContract"
     ],
@@ -22416,7 +24898,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:58",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.patchContractActive"
     ],
@@ -22431,7 +24915,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:85",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.getDevices"
     ],
@@ -22446,7 +24932,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:86",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.postDevice"
     ],
@@ -22461,7 +24949,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:88",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.postDeviceRotate"
     ],
@@ -22476,7 +24966,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:87",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "dev.patchDeviceStatus"
     ],
@@ -22491,7 +24983,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:49",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.getEmployeeCandidates"
     ],
@@ -22506,7 +25000,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:48",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.getEmployees"
     ],
@@ -22521,7 +25017,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:50",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.postEmployee"
     ],
@@ -22536,7 +25034,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:65",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "exp.getExports"
     ],
@@ -22551,7 +25051,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:66",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "exp.postExport"
     ],
@@ -22566,7 +25068,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:67",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "exp.downloadExport"
     ],
@@ -22581,7 +25085,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:81",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.getKilometerRates"
     ],
@@ -22596,7 +25102,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:82",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.postKilometerRate"
     ],
@@ -22611,7 +25119,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:78",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.getClosures"
     ],
@@ -22626,7 +25136,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:79",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.postClosure"
     ],
@@ -22641,7 +25153,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:80",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.reopenClosure"
     ],
@@ -22656,7 +25170,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:51",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.getRuleSets"
     ],
@@ -22671,7 +25187,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:52",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.postRuleSet"
     ],
@@ -22686,7 +25204,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:53",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.putRuleSet"
     ],
@@ -22701,7 +25221,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:54",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.patchRuleSetActive"
     ],
@@ -22716,7 +25238,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:59",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.getSchedules"
     ],
@@ -22731,7 +25255,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:60",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.postSchedule"
     ],
@@ -22746,7 +25272,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:62",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.deleteScheduleHandler"
     ],
@@ -22761,7 +25289,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:61",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "adm.putSchedule"
     ],
@@ -22776,7 +25306,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:77",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.postVehicle"
     ],
@@ -22791,7 +25323,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:36",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.validateDay"
     ],
@@ -22806,7 +25340,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getDeviceConfig"
     ],
@@ -22821,6 +25357,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements-device.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "c.postDeviceEvent"
     ],
     "authenticated": false,
@@ -22832,6 +25369,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements-device.routes.ts:10",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "c.postDeviceHeartbeat"
     ],
     "authenticated": false,
@@ -22843,7 +25381,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getEmployeeToday"
     ],
@@ -22858,7 +25398,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:24",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getEmployeeWeek"
     ],
@@ -22873,7 +25415,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.postEvent"
     ],
@@ -22888,7 +25432,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:71",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.postKm"
     ],
@@ -22903,7 +25449,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:76",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.rejectKm"
     ],
@@ -22918,7 +25466,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:73",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.submitKm"
     ],
@@ -22933,7 +25483,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:75",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.validateKm"
     ],
@@ -22948,7 +25500,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:72",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.getMyKm"
     ],
@@ -22963,7 +25517,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:74",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.getTeamKm"
     ],
@@ -22978,7 +25534,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:70",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "km.getVehicles"
     ],
@@ -22993,7 +25551,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getMeAnomalies"
     ],
@@ -23008,7 +25568,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getMeToday"
     ],
@@ -23023,7 +25585,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "c.getMeWeek"
     ],
@@ -23038,7 +25602,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:42",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.getTeamAbsences"
     ],
@@ -23053,7 +25619,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:33",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.getTeamAdjustments"
     ],
@@ -23068,7 +25636,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:35",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.getTeamAnomalies"
     ],
@@ -23083,7 +25653,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:45",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "ops.getOperationsQueue"
     ],
@@ -23098,7 +25670,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:34",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.getTeamToday"
     ],
@@ -23113,7 +25687,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/temps-deplacements/routes/temps-deplacements.routes.ts:37",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "cor.validateWeek"
     ],
@@ -23128,7 +25704,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(read)",
@@ -23146,7 +25724,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:16",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "getIdentificationCapabilities"
     ],
@@ -23161,7 +25741,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:17",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "getIdentificationLabels"
     ],
@@ -23176,7 +25758,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:18",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "createIdentificationLabel"
     ],
@@ -23191,7 +25775,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:20",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "invalidateIdentificationLabel"
     ],
@@ -23206,7 +25792,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:19",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "printIdentificationLabel"
     ],
@@ -23221,7 +25809,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:21",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "replaceIdentificationLabel"
     ],
@@ -23236,7 +25826,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:23",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "syncOfflineIdentificationCodes"
     ],
@@ -23251,7 +25843,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/identification/identification.routes.ts:22",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "resolveIdentificationCode"
     ],
@@ -23266,7 +25860,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability-360.routes.ts:25",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(read)",
@@ -23284,7 +25880,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability-360.routes.ts:27",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(read)",
@@ -23302,7 +25900,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability-360.routes.ts:28",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(read)",
@@ -23320,7 +25920,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability-360.routes.ts:31",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(impact)",
@@ -23338,7 +25940,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/traceability/routes/traceability-360.routes.ts:26",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "requireTraceabilityCapability(search)",
@@ -23356,7 +25960,9 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/users/routes/users.routes.ts:9",
     "middleware": [
       "anonymous",
+      "demoPublicBoundaryGuard",
       "authenticateToken",
+      "demoAccessGuard",
       "moduleAccessGate",
       "authenticateToken",
       "listAssignableUsersController"

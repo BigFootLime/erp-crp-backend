@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { activateAccount, demoLogin, demoLoginRateLimitIdentity, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
+import { activateAccount, demoLogin, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
 import {
     authenticateToken,
   } from '../middlewares/auth.middleware';
@@ -7,6 +7,7 @@ import { getProfile } from '../controllers/user.controller';
 import { getNavigationPreferences, putNavigationPreferences } from '../controllers/navigation-preferences.controller';
 import { getAccessProfile } from '../../access-control/controllers/access-control.controller';
 import {
+  demoLoginRateLimit,
   forgotPasswordRateLimit,
   loginRateLimit,
   mfaRateLimit,
@@ -31,7 +32,7 @@ const router: Router = Router();
 router.use(demoAuthGuard);
 
 router.post('/login', loginRateLimit, login);
-router.post('/demo/login', demoLoginRateLimitIdentity, loginRateLimit, demoLogin);
+router.post('/demo/login', demoLoginRateLimit, demoLogin);
 router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);

@@ -155,6 +155,11 @@ export function createAuthRateLimitMiddleware(
 
 export const registerRateLimit = createAuthRateLimitMiddleware("register");
 export const loginRateLimit = createAuthRateLimitMiddleware("login");
+/** The public demo account is shared: apply the normal per-IP login budget only. */
+export function demoLoginRateLimitSubjects(req: Request): AuthRateLimitSubject[] {
+  return [{ dimension: "ip", value: getRateLimitClientAddress(req) }];
+}
+export const demoLoginRateLimit = createAuthRateLimitMiddleware("login", authRateLimiter, demoLoginRateLimitSubjects);
 export const forgotPasswordRateLimit = createAuthRateLimitMiddleware("forgotPassword");
 export const resetPasswordRateLimit = createAuthRateLimitMiddleware("resetPassword");
 export const mfaRateLimit = createAuthRateLimitMiddleware("mfa");

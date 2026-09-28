@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthRateLimitDecision } from "../module/auth/domain/auth-rate-limit";
-import { createAuthRateLimitMiddleware } from "../module/auth/middlewares/auth-rate-limit.middleware";
+import { createAuthRateLimitMiddleware, demoLoginRateLimitSubjects } from "../module/auth/middlewares/auth-rate-limit.middleware";
 
 function appWithDecision(endpoint: Parameters<typeof createAuthRateLimitMiddleware>[0], decision: AuthRateLimitDecision) {
   const checkedSubjects: unknown[][] = [];

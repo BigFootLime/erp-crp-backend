@@ -26,7 +26,8 @@ describe("CERP-DEMO-01 API guard", () => {
     const next = vi.fn();
     demoAccessGuard({ method: "GET", path: "/qualite/dashboard", headers } as any, response(), next);
     demoAccessGuard({ method: "GET", path: "/dashboard-governance", headers } as any, response(), next);
-    expect(next).toHaveBeenCalledTimes(2);
+    demoAccessGuard({ method: "GET", path: "/codes/formats", headers } as any, response(), next);
+    expect(next).toHaveBeenCalledTimes(3);
     for (const path of [
       "/devis/1/documents/2/file",
       "/stock/articles/export.csv",
@@ -77,6 +78,29 @@ describe("CERP-DEMO-01 API guard", () => {
     demoAccessGuard({ method: "DELETE", path: "/devis/1", headers: { "x-cerp-database": "cerp_demo" } } as any, denied, vi.fn());
     expect(denied.status).toHaveBeenCalledWith(403);
     process.env.CERP_DEMO_MODE = previous;
+  });
+
+  it("allows only the bounded execution and command-to-affaire scenario writes", () => {
+    const previous = process.env.CERP_DEMO_MODE;
+    process.env.CERP_DEMO_MODE = "true";
+    const headers = { "x-cerp-database": "cerp_demo" };
+    for (const path of [
+      "/production/execution", "/production/execution/11111111-1111-4111-8111-111111111111/pause",
+      "/production/execution/quantities", "/production/execution/operations/finish/preview",
+      "/commandes/7/affaires/preview", "/commandes/7/generate-affaires", "/devis/7/convert-to-commande",
+      "/clients/duplicate-check",
+    ]) {
+      const next = vi.fn();
+      demoAccessGuard({ method: "POST", path, headers, is: vi.fn(() => false) } as any, response(), next);
+      expect(next).toHaveBeenCalledOnce();
+    }
+    for (const path of ["/commandes/7", "/production/ofs/7/release", "/production/execution/unknown/pause"]) {
+      const denied = response();
+      demoAccessGuard({ method: "POST", path, headers, is: vi.fn(() => false) } as any, denied, vi.fn());
+      expect(denied.status).toHaveBeenCalledWith(403);
+    }
+    if (previous === undefined) delete process.env.CERP_DEMO_MODE;
+    else process.env.CERP_DEMO_MODE = previous;
   });
 
   it("permits login and access-profile but blocks reset flows", () => {
