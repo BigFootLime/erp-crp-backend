@@ -23,6 +23,8 @@ export const runDemoPresentation: RequestHandler = async (req, res, next) => {
     const out = await runPresentation({
       action: input.action,
       scenarioId: input.scenario_id,
+      clientId: input.client_id,
+      devisId: input.devis_id,
       requestKey,
       actor: { id: user.id, role: user.role },
       context: {

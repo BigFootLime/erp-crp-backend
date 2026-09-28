@@ -4,10 +4,10 @@ import { svcCreateDevis, svcConvertDevisToCommande, svcGetDevis, svcUpdateDevis 
 import { generateAffairesFromOrderSVC, runCommandeWorkflowActionSVC } from "../../commande-client/services/commande-client.service";
 import { svcAutoPlanPlanning } from "../../planning/services/planning.service";
 import { svcGetOfReadiness, svcReleaseOrdreFabrication } from "../../production/services/production.service";
-import { svcDeclareQuantity, svcPauseExecution, svcResumeExecution, svcStartExecution, svcStopExecution } from "../../production/services/production-execution.service";
+import { svcFinishOperation, svcPauseExecution, svcPreviewFinishOperation, svcResumeExecution, svcStartExecution, svcStopExecution } from "../../production/services/production-execution.service";
 import { isDemoMode } from "../../../config/demo-mode";
 import type { PresentationAction, PresentationActor, PresentationScenario, PresentationStatus } from "../types/demo-presentation.types";
-import { createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
+import { createOrResumePresentation, findExistingPresentationProduction, findFixtureArticleId, findPreparedClient, findPreparedQuote, findScenarioOfAffaire, findScenarioOfStatus, findScenarioOperation, getPresentationScenario, hasPresentationReceipt, recordPresentationReceipt, updatePresentationScenario, withPresentationLock } from "../repository/demo-presentation.repository";
 
 type RequestContext = { ip: string | null; user_agent: string | null; path: string | null; page_key: string | null; client_session_id: string | null };
 
@@ -33,11 +33,16 @@ function requireState(scenario: PresentationScenario, states: readonly Presentat
 
 export function nextPresentationAction(status: PresentationStatus): PresentationAction | null {
   switch (status) {
+    case "INITIALIZING":
+    case "CLIENT_PREPARED": return "adopt_client";
+    case "CLIENT_CREATED": return "prepare_devis";
+    case "QUOTE_PREPARED": return "adopt_devis";
     case "QUOTE_DRAFT": return "convert_quote";
     case "COMMANDE_CREATED": return "generate_affaires";
     case "AFFAIRE_CREATED": return "generate_ofs";
     case "PRODUCTION_READY": return "plan";
-    case "PLANNED": return "start_operator";
+    case "PLANNED": return "release_operator";
+    case "OPERATOR_READY": return "start_operator";
     case "RUNNING": return "declare_quantity";
     case "PAUSED": return "resume_operator";
     case "QUANTITY_DECLARED": return "stop_operator";
@@ -57,8 +62,8 @@ export function isPermittedPresentationReleaseOverride(blockers: readonly string
 
 export function presentationResponse(scenario: PresentationScenario) {
   const steps: Record<PresentationStatus, string> = {
-    INITIALIZING: "started", QUOTE_DRAFT: "started", COMMANDE_CREATED: "quote_converted",
-    AFFAIRE_CREATED: "affaires_generated", PRODUCTION_READY: "ofs_generated", PLANNED: "planned",
+    INITIALIZING: "client_prepared", CLIENT_PREPARED: "client_prepared", CLIENT_CREATED: "client_created", QUOTE_PREPARED: "quote_prepared", QUOTE_DRAFT: "quote_created", COMMANDE_CREATED: "quote_converted",
+    AFFAIRE_CREATED: "affaires_generated", PRODUCTION_READY: "ofs_generated", PLANNED: "planned", OPERATOR_READY: "operator_released",
     RUNNING: "operator_started", PAUSED: "operator_paused", QUANTITY_DECLARED: "quantity_declared", COMPLETED: "operator_stopped",
   };
   return {
@@ -73,6 +78,7 @@ export function presentationResponse(scenario: PresentationScenario) {
       execution: scenario.execution_id ? { id: scenario.execution_id } : null,
     },
     next_action: nextPresentationAction(scenario.status),
+    ...(scenario.status === "INITIALIZING" || scenario.status === "CLIENT_PREPARED" ? { prepared: { client: preparedClient(scenario) } } : {}),
     capabilities: {
       documents: false, uploads: false, external_integrations: false, destructive_actions: false,
       quality_validation: false, controlled_release_override: true,
@@ -80,25 +86,75 @@ export function presentationResponse(scenario: PresentationScenario) {
   };
 }
 
-async function startScenario(actor: PresentationActor, context: RequestContext, startKey: string): Promise<PresentationScenario> {
+function luhnCheckDigit(value: string): string {
+  let sum = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    let digit = Number(value[value.length - 1 - index]);
+    if (index % 2 === 0) digit *= 2;
+    sum += digit > 9 ? digit - 9 : digit;
+  }
+  return String((10 - (sum % 10)) % 10);
+}
+
+function preparedClient(scenario: PresentationScenario) {
+  const digits = scenario.id.replace(/-/g, "").split("").map((char) => (parseInt(char, 16) % 10).toString()).join("");
+  const siretBase = `9${digits.slice(0, 12)}`;
+  const suffix = scenario.id.slice(0, 8).toUpperCase();
+  return {
+    company_name: `Atelier Présentation ${suffix}`,
+    email: `contact+${scenario.id.slice(0, 8)}@demo.cerp.invalid`,
+    siret: `${siretBase}${luhnCheckDigit(siretBase)}`,
+    siren: siretBase.slice(0, 9), vat_number: "FR12123456789", phone: "0478000000", devise: "EUR",
+    primary_contact: { first_name: "Camille", last_name: "Martin", email: `camille+${scenario.id.slice(0, 8)}@demo.cerp.invalid`, phone_direct: "0478000000", role: "Achats", civility: "Madame" },
+    bill_address: { name: "Facturation", house_number: "12", street: "Rue de la Démonstration", postal_code: "69007", city: "Lyon", country: "France" },
+    delivery_address: { name: "Livraison", house_number: "12", street: "Rue de la Démonstration", postal_code: "69007", city: "Lyon", country: "France" },
+  };
+}
+
+async function preparedQuote(scenario: PresentationScenario) {
+  if (!scenario.client_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "Le client de démonstration est absent.");
+  const articleId = await findFixtureArticleId(scenario.piece_technique_id);
+  return { client_id: scenario.client_id, statut: "BROUILLON" as const, remise_globale: 0, total_ht: 0, total_ttc: 0,
+    lignes: [{ article_id: articleId, piece_technique_id: scenario.piece_technique_id, code_piece: "DEMO-PT-001", description: "Support de guidage — démonstration", quantite: 3, unite: "U", prix_unitaire_ht: 240, remise_ligne: 0, taux_tva: 20 }] };
+}
+
+async function prepareClient(actor: PresentationActor, startKey: string) {
+  const scenario = await createOrResumePresentation(actor.id, startKey);
+  return scenario;
+}
+
+/** Compatibility only for an already loaded v2 frontend. New presentation UI
+ * uses prepare/adopt and native forms; this path is not advertised to it. */
+async function legacyStartScenario(actor: PresentationActor, context: RequestContext, startKey: string) {
   let scenario = await createOrResumePresentation(actor.id, startKey);
   if (scenario.status !== "INITIALIZING") return scenario;
-  const today = new Date().toISOString().slice(0, 10);
-  const suffix = scenario.id.slice(0, 8).toUpperCase();
+  const clientPreset = preparedClient(scenario);
   const client = await repoCreateClient({
-    company_name: `Atelier Horizon ${suffix}`,
-    email: `demo-${scenario.id.slice(0, 8)}@example.invalid`,
-    status: "prospect", blocked: false, creation_date: today, payment_mode_ids: [], contacts: [], quality_levels: [],
-    bill_address: { name: "Atelier Horizon", street: "Rue de la Démonstration", postal_code: "69001", city: "Lyon", country: "France" },
-    delivery_address: { name: "Atelier Horizon", street: "Rue de la Démonstration", postal_code: "69001", city: "Lyon", country: "France" },
+    ...clientPreset, status: "prospect", blocked: false, creation_date: new Date().toISOString().slice(0, 10), payment_mode_ids: [], contacts: [], quality_levels: [],
   }, audit(actor, context), scenario.id);
   scenario = await updatePresentationScenario(scenario.id, actor.id, { client_id: client.client_id });
-  const fixtureArticleId = await findFixtureArticleId(scenario.piece_technique_id);
-  const devis = await svcCreateDevis({
-    client_id: client.client_id, user_id: actor.id, statut: "BROUILLON", remise_globale: 0, total_ht: 0, total_ttc: 0,
-    lignes: [{ article_id: fixtureArticleId, piece_technique_id: scenario.piece_technique_id, code_piece: "DEMO-PT-001", description: "Support de guidage — démonstration", quantite: 3, unite: "U", prix_unitaire_ht: 240, remise_ligne: 0, taux_tva: 20 }],
-  }, actor.id, [], { idempotency_key: key(scenario, "quote"), audit: audit(actor, context) });
+  const quotePreset = await preparedQuote(scenario);
+  const devis = await svcCreateDevis(quotePreset, actor.id, [], { idempotency_key: key(scenario, "quote"), audit: audit(actor, context) });
   return updatePresentationScenario(scenario.id, actor.id, { devis_id: devis.id, status: "QUOTE_DRAFT" });
+}
+
+async function adoptClient(scenario: PresentationScenario, actor: PresentationActor, clientId?: string) {
+  requireState(scenario, ["INITIALIZING", "CLIENT_PREPARED"]);
+  const preset = preparedClient(scenario);
+  const adoptedId = await findPreparedClient({ scenario, userId: actor.id, companyName: preset.company_name, siret: preset.siret, email: preset.email, clientId });
+  return updatePresentationScenario(scenario.id, actor.id, { client_id: adoptedId, status: "CLIENT_CREATED" });
+}
+
+async function prepareQuote(scenario: PresentationScenario, actor: PresentationActor): Promise<PresentationScenario> {
+  requireState(scenario, ["CLIENT_CREATED"]);
+  return updatePresentationScenario(scenario.id, actor.id, { status: "QUOTE_PREPARED" });
+}
+
+async function adoptQuote(scenario: PresentationScenario, actor: PresentationActor, devisId?: number): Promise<PresentationScenario> {
+  requireState(scenario, ["QUOTE_PREPARED"]);
+  const preset = await preparedQuote(scenario);
+  const adoptedId = await findPreparedQuote({ scenario, userId: actor.id, articleId: preset.lignes[0].article_id, devisId });
+  return updatePresentationScenario(scenario.id, actor.id, { devis_id: adoptedId, status: "QUOTE_DRAFT" });
 }
 
 async function convertQuote(scenario: PresentationScenario, actor: PresentationActor, context: RequestContext): Promise<PresentationScenario> {
@@ -171,7 +227,7 @@ async function plan(scenario: PresentationScenario, actor: PresentationActor, co
   return updatePresentationScenario(scenario.id, actor.id, { operation_id: operationId, status: "PLANNED" });
 }
 
-async function startOperator(scenario: PresentationScenario, actor: PresentationActor, context: RequestContext): Promise<PresentationScenario> {
+async function releaseOperator(scenario: PresentationScenario, actor: PresentationActor, context: RequestContext): Promise<PresentationScenario> {
   requireState(scenario, ["PLANNED"]);
   if (!scenario.of_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "L'ordre de fabrication est absent.");
   const ofId = scenario.of_id;
@@ -206,7 +262,17 @@ async function startOperator(scenario: PresentationScenario, actor: Presentation
   } else if (!["EN_COURS", "EN_PAUSE"].includes(ofStatus ?? "")) {
     throw new HttpError(409, "DEMO_OF_RELEASE_STATE_INVALID", "L'ordre de fabrication de démonstration ne peut pas être lancé dans son état actuel.", { statut: ofStatus });
   }
+  return updatePresentationScenario(scenario.id, actor.id, { status: "OPERATOR_READY" });
+}
+
+async function startOperator(scenario: PresentationScenario, actor: PresentationActor, context: RequestContext): Promise<PresentationScenario> {
+  // v2 callers may still send start directly; the v3 UI makes the audited
+  // release visible as its own native button first.
+  if (scenario.status === "PLANNED") scenario = await releaseOperator(scenario, actor, context);
+  requireState(scenario, ["OPERATOR_READY"]);
+  if (!scenario.of_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "L'ordre de fabrication est absent.");
   const operationId = scenario.operation_id ?? await findScenarioOperation(scenario);
+  const ofId = scenario.of_id;
   const execution = await svcStartExecution({ actor, body: { of_id: ofId, operation_id: operationId, machine_id: scenario.machine_id, activity_code: "USINAGE" }, idempotencyKey: key(scenario, "start"), audit: audit(actor, context), source: "CANONICAL" });
   return updatePresentationScenario(scenario.id, actor.id, { operation_id: operationId, execution_id: execution.id, status: "RUNNING" });
 }
@@ -226,8 +292,18 @@ async function operatorAction(scenario: PresentationScenario, action: Presentati
   }
   if (action === "declare_quantity") {
     requireState(scenario, ["RUNNING"]);
-    await svcDeclareQuantity({ actor, body: { of_id: scenario.of_id, operation_id: scenario.operation_id, pointage_id: scenario.execution_id, qty_good: 1, qty_scrap: 0, qty_rework: 0, qty_pending_control: 0, unite: "U", note: "Quantité déclarée pendant la démonstration" }, idempotencyKey: key(scenario, action), audit: audit(actor, context) });
+    if (!scenario.operation_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "L'opération de démonstration est absente.");
+    // Keep this payload identical to the guided native operator dialog: it
+    // previews, then confirms the same one-good-unit declaration.
+    const body = { of_id: scenario.of_id, operation_id: scenario.operation_id, qty_good: 1, qty_scrap: 0, qty_rework: 0, qty_pending_control: 0, unite: "U", note: null, stop_active_segment: true, complete_operation: false };
+    const preview = await svcPreviewFinishOperation({ actor, body });
+    await svcFinishOperation({ actor, body: { ...body, preview_hash: preview.preview_hash }, idempotencyKey: key(scenario, action), audit: audit(actor, context) });
     return updatePresentationScenario(scenario.id, actor.id, { status: "QUANTITY_DECLARED" });
+  }
+  if (action === "stop_operator" && scenario.status === "QUANTITY_DECLARED") {
+    // The canonical finish command above already stopped the active segment;
+    // this final button records the confirmed, read-back presentation outcome.
+    return updatePresentationScenario(scenario.id, actor.id, { status: "COMPLETED" });
   }
   requireState(scenario, ["RUNNING", "PAUSED", "QUANTITY_DECLARED"]);
   await svcStopExecution({ ...args, body: { comment: "Fin de démonstration" } });
@@ -235,16 +311,17 @@ async function operatorAction(scenario: PresentationScenario, action: Presentati
 }
 
 const completedActionStates: Partial<Record<PresentationAction, PresentationStatus>> = {
+  adopt_client: "CLIENT_CREATED", prepare_devis: "QUOTE_PREPARED", adopt_devis: "QUOTE_DRAFT",
   convert_quote: "COMMANDE_CREATED", generate_affaires: "AFFAIRE_CREATED", generate_ofs: "PRODUCTION_READY",
-  plan: "PLANNED", start_operator: "RUNNING", pause_operator: "PAUSED", resume_operator: "RUNNING",
+  plan: "PLANNED", release_operator: "OPERATOR_READY", start_operator: "RUNNING", pause_operator: "PAUSED", resume_operator: "RUNNING",
   declare_quantity: "QUANTITY_DECLARED", stop_operator: "COMPLETED",
 };
 
-export function actionHasCompleted(scenario: PresentationScenario, action: Exclude<PresentationAction, "start">): boolean {
+export function actionHasCompleted(scenario: PresentationScenario, action: Exclude<PresentationAction, "prepare_client">): boolean {
   return scenario.status === completedActionStates[action];
 }
 
-async function runScenarioAction(params: { action: Exclude<PresentationAction, "start">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext }) {
+async function runScenarioAction(params: { action: Exclude<PresentationAction, "prepare_client">; scenarioId: string; requestKey: string; actor: PresentationActor; context: RequestContext; clientId?: string; devisId?: number }) {
   return withPresentationLock(`scenario:${params.scenarioId}`, async () => {
     let scenario = await getPresentationScenario(params.scenarioId, params.actor.id);
     if (await hasPresentationReceipt(scenario.id, params.action, params.requestKey)) return presentationResponse(scenario);
@@ -254,6 +331,9 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
       await recordPresentationReceipt(scenario.id, params.action, params.requestKey);
       return presentationResponse(scenario);
     }
+    if (params.action === "adopt_client") scenario = await adoptClient(scenario, params.actor, params.clientId);
+    if (params.action === "prepare_devis") scenario = await prepareQuote(scenario, params.actor);
+    if (params.action === "adopt_devis") scenario = await adoptQuote(scenario, params.actor, params.devisId);
     if (params.action === "convert_quote") scenario = await convertQuote(scenario, params.actor, params.context);
     if (params.action === "generate_affaires") scenario = await generateProduction(scenario, params.actor, params.context);
     if (params.action === "generate_ofs") {
@@ -261,20 +341,27 @@ async function runScenarioAction(params: { action: Exclude<PresentationAction, "
       scenario = await updatePresentationScenario(scenario.id, params.actor.id, { status: "PRODUCTION_READY" });
     }
     if (params.action === "plan") scenario = await plan(scenario, params.actor, params.context);
+    if (params.action === "release_operator") scenario = await releaseOperator(scenario, params.actor, params.context);
     if (params.action === "start_operator") scenario = await startOperator(scenario, params.actor, params.context);
     if (["pause_operator", "resume_operator", "declare_quantity", "stop_operator"].includes(params.action)) {
       scenario = await operatorAction(scenario, params.action, params.actor, params.context);
     }
     await recordPresentationReceipt(scenario.id, params.action, params.requestKey);
-    return presentationResponse(scenario);
+    const response = presentationResponse(scenario);
+    return params.action === "prepare_devis" ? { ...response, prepared: { devis: await preparedQuote(scenario) } } : response;
   });
 }
 
-export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; requestKey: string; actor: PresentationActor; context: RequestContext }) {
+export async function runPresentation(params: { action: PresentationAction; scenarioId?: string; clientId?: string; devisId?: number; requestKey: string; actor: PresentationActor; context: RequestContext }) {
   if (!isDemoMode()) throw new HttpError(404, "NOT_FOUND", "Not found");
   if (params.action === "start") {
     return withPresentationLock(`start:${params.actor.id}`, async () =>
-      presentationResponse(await startScenario(params.actor, params.context, params.requestKey))
+      presentationResponse(await legacyStartScenario(params.actor, params.context, params.requestKey))
+    );
+  }
+  if (params.action === "prepare_client") {
+    return withPresentationLock(`start:${params.actor.id}`, async () =>
+      presentationResponse(await prepareClient(params.actor, params.requestKey))
     );
   }
   return runScenarioAction({ ...params, action: params.action, scenarioId: params.scenarioId! });

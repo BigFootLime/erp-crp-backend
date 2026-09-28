@@ -221,6 +221,55 @@ export async function findScenarioOfAffaire(ofId: number): Promise<number> {
   return Number(affaireId);
 }
 
+export async function findPreparedClient(params: { scenario: PresentationScenario; userId: number; companyName: string; siret: string; email: string; clientId?: string }): Promise<string> {
+  const result = await pool.query<{ client_id: string }>(`
+    SELECT c.client_id
+      FROM public.clients c
+     WHERE c.created_by = $1
+       AND c.company_name = $2
+       AND c.siret = $3
+       AND lower(btrim(COALESCE(c.email, ''))) = lower(btrim($4))
+       AND ($5::text IS NULL OR c.client_id = $5::text)
+       AND NOT EXISTS (
+         SELECT 1 FROM public.demo_presentation_scenarios linked
+          WHERE linked.client_id = c.client_id AND linked.id <> $6::uuid
+       )
+     ORDER BY c.created_at DESC
+     LIMIT 1
+  `, [params.userId, params.companyName, params.siret, params.email, params.clientId ?? null, params.scenario.id]);
+  const clientId = result.rows[0]?.client_id;
+  if (!clientId) throw new HttpError(409, "DEMO_CLIENT_NOT_READY", "Le client préparé doit être créé avec le formulaire natif avant de poursuivre.");
+  return clientId;
+}
+
+export async function findPreparedQuote(params: { scenario: PresentationScenario; userId: number; articleId: string; devisId?: number }): Promise<number> {
+  if (!params.scenario.client_id) throw new HttpError(409, "DEMO_SCENARIO_INCOMPLETE", "Le client de démonstration est absent.");
+  const result = await pool.query<{ id: number | string }>(`
+    SELECT d.id::bigint AS id
+      FROM public.devis d
+      JOIN public.devis_ligne dl ON dl.devis_id = d.id
+     WHERE d.client_id = $1
+       AND d.user_id = $2
+       AND d.statut = 'BROUILLON'
+       AND dl.article_id = $3::uuid
+       AND ($4::bigint IS NULL OR d.id = $4::bigint)
+       AND NOT EXISTS (
+         SELECT 1 FROM public.demo_presentation_scenarios linked
+          WHERE linked.devis_id = d.id AND linked.id <> $5::uuid
+       )
+     GROUP BY d.id
+    HAVING count(*) = 1
+       AND max(dl.quantite) = 3
+       AND max(dl.prix_unitaire_ht) = 240
+       AND bool_and(dl.piece_technique_id = $6::uuid)
+     ORDER BY d.id DESC
+     LIMIT 1
+  `, [params.scenario.client_id, params.userId, params.articleId, params.devisId ?? null, params.scenario.id, params.scenario.piece_technique_id]);
+  const devisId = result.rows[0]?.id;
+  if (!devisId) throw new HttpError(409, "DEMO_QUOTE_NOT_READY", "Le devis brouillon préparé doit être créé avec le formulaire natif avant de poursuivre.");
+  return Number(devisId);
+}
+
 export async function findScenarioOperation(scenario: PresentationScenario): Promise<string> {
   if (!scenario.of_id) throw new HttpError(409, "DEMO_SCENARIO_STEP_INVALID", "L'ordre de fabrication n'est pas encore créé.");
   const result = await pool.query<{ id: string }>(`

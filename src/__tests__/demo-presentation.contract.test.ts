@@ -17,7 +17,8 @@ describe("demo presentation contract", () => {
     expect(nextPresentationAction("COMMANDE_CREATED")).toBe("generate_affaires");
     expect(nextPresentationAction("AFFAIRE_CREATED")).toBe("generate_ofs");
     expect(nextPresentationAction("PRODUCTION_READY")).toBe("plan");
-    expect(nextPresentationAction("PLANNED")).toBe("start_operator");
+    expect(nextPresentationAction("PLANNED")).toBe("release_operator");
+    expect(nextPresentationAction("OPERATOR_READY")).toBe("start_operator");
     expect(nextPresentationAction("RUNNING")).toBe("declare_quantity");
     expect(nextPresentationAction("QUANTITY_DECLARED")).toBe("stop_operator");
     expect(nextPresentationAction("COMPLETED")).toBeNull();
@@ -37,6 +38,14 @@ describe("demo presentation contract", () => {
     expect(presentationRunSchema.safeParse({ action: "start", scenario_id: base.id }).success).toBe(false);
     expect(presentationRunSchema.safeParse({ action: "plan" }).success).toBe(false);
     expect(presentationRunSchema.safeParse({ action: "plan", scenario_id: base.id }).success).toBe(true);
+  });
+
+  it("requires native entities to be adopted only after a prepared scenario", () => {
+    expect(presentationRunSchema.safeParse({ action: "prepare_client" }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_client", scenario_id: base.id, client_id: "003" }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_client", scenario_id: base.id, devis_id: 12 }).success).toBe(false);
+    expect(presentationRunSchema.safeParse({ action: "prepare_devis", scenario_id: base.id }).success).toBe(true);
+    expect(presentationRunSchema.safeParse({ action: "adopt_devis", scenario_id: base.id, devis_id: 12 }).success).toBe(true);
   });
 });
 
@@ -77,12 +86,24 @@ describe("operator continuation", () => {
     expect(source).toContain("svcReleaseOrdreFabrication");
     expect(source).toContain("isPermittedPresentationReleaseOverride");
     expect(source).toContain("DEMO_OF_RELEASE_STATE_INVALID");
+    expect(source).toContain('case "PLANNED": return "release_operator"');
+    expect(source).toContain('case "OPERATOR_READY": return "start_operator"');
+    expect(source).toContain('release_operator: "OPERATOR_READY"');
   });
 
   it("creates operator pointages with the schema's canonical source", () => {
     const source = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/services/demo-presentation.service.ts"), "utf8");
     expect(source).toContain('source: "CANONICAL"');
     expect(source).not.toContain('source: "demo_presentation"');
+  });
+
+  it("uses the same preview-confirm finish command as the native operator form", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/services/demo-presentation.service.ts"), "utf8");
+    expect(source).toContain("svcPreviewFinishOperation");
+    expect(source).toContain("svcFinishOperation");
+    expect(source).toContain("preview_hash: preview.preview_hash");
+    expect(source).toContain("stop_active_segment: true, complete_operation: false");
+    expect(source).toContain('note: null');
   });
 
   it("limits the presentation release override to hidden document and quality evidence", () => {
@@ -96,6 +117,15 @@ describe("operator continuation", () => {
 });
 
 describe("presentation recovery", () => {
+  it("adopts native creations only when their synthetic provenance is exact", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/repository/demo-presentation.repository.ts"), "utf8");
+    expect(source).toContain("c.created_by = $1");
+    expect(source).toContain("NOT EXISTS (");
+    expect(source).toContain("max(dl.quantite) = 3");
+    expect(source).toContain("max(dl.prix_unitaire_ht) = 240");
+    expect(source).toContain("bool_and(dl.piece_technique_id = $6::uuid)");
+  });
+
   it("uses the persisted quote and planning state rather than repeating a write", () => {
     const source = readFileSync(resolve(process.cwd(), "src/module/demo-presentation/services/demo-presentation.service.ts"), "utf8");
     expect(source).toContain('const current = await svcGetDevis');
