@@ -247,6 +247,13 @@ export async function adoptNativeReceipt(params: { scenario: PresentationScenari
   return receipt;
 }
 
+export async function assertNativeProductionFinished(scenario: PresentationScenario, requireOfFinished: boolean): Promise<void> {
+  const row=await pool.query<{ operation_status:string; of_status:string; qty:number }>(`SELECT op.status::text operation_status,ofx.statut::text of_status,ofx.quantite_bonne::float8 qty FROM public.ordres_fabrication ofx JOIN public.of_operations op ON op.id=$2::uuid AND op.of_id=ofx.id WHERE ofx.id=$1::bigint`,[scenario.of_id,scenario.operation_id]);
+  const value=row.rows[0];
+  if(!value || value.operation_status!=="DONE" || value.qty<3) throw new HttpError(409,"DEMO_OPERATION_NOT_FINISHED","Terminez l'opération native avant de poursuivre.");
+  if(requireOfFinished && !["TERMINE","CLOTURE","CLOTUREE"].includes(value.of_status)) throw new HttpError(409,"DEMO_OF_NOT_FINISHED","Terminez l'OF native avant de poursuivre.");
+}
+
 export async function adoptNativePiece(params: { scenario: PresentationScenario; userId: number; pieceId?: string }) {
   const row = await pool.query<{ piece_id: string; version_id: string }>(`SELECT pt.id::text piece_id,v.id::text version_id FROM public.pieces_techniques pt JOIN public.piece_technique_versions v ON v.piece_technique_id=pt.id WHERE pt.id=$1::uuid AND pt.client_id=$2 AND pt.created_by=$3 ORDER BY v.created_at DESC LIMIT 1`, [params.pieceId, params.scenario.client_id, params.userId]);
   if (!row.rows[0]) throw new HttpError(409, "DEMO_PIECE_NOT_READY", "La pièce doit être créée pour ce client avec le formulaire natif.");
