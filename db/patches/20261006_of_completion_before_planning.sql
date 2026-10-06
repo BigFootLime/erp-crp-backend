@@ -1,0 +1,61 @@
+-- #811 / web #1095: completeness before planning; execution retains inspection and programme guards.
+BEGIN;
+-- Keep reusable version tasks; late choices belong to the OF that requested them.
+ALTER TABLE public.piece_version_programming_tasks ADD COLUMN IF NOT EXISTS of_id bigint REFERENCES public.ordres_fabrication(id);
+ALTER TABLE public.piece_version_programming_tasks DROP CONSTRAINT IF EXISTS piece_version_programming_tasks_piece_technique_version_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS piece_version_programming_tasks_shared_version_uidx ON public.piece_version_programming_tasks(piece_technique_version_id) WHERE of_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS piece_version_programming_tasks_of_uidx ON public.piece_version_programming_tasks(of_id) WHERE of_id IS NOT NULL;
+CREATE OR REPLACE FUNCTION public.fn_guard_preparation_execution_712() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE target bigint; o public.ordres_fabrication; execution boolean:=false; task uuid; operation uuid; operation_kind text; programme jsonb; frozen_operation jsonb;
+BEGIN
+  IF TG_TABLE_NAME='ordres_fabrication' THEN
+    IF NEW.statut IS NOT DISTINCT FROM OLD.statut OR NEW.statut IN ('BROUILLON','ANNULE') THEN RETURN NEW; END IF;
+    target:=NEW.id; execution:=NEW.statut='EN_COURS';
+    SELECT p.operation_id INTO operation FROM public.production_pointages p WHERE p.of_id=target AND p.status='RUNNING' ORDER BY p.created_at DESC,p.id DESC LIMIT 1;
+  ELSIF TG_TABLE_NAME='planning_events' THEN
+    IF NEW.archived_at IS NOT NULL OR NEW.status='CANCELLED' THEN RETURN NEW; END IF;
+    target:=COALESCE((SELECT of_id FROM public.of_operations WHERE id=NEW.of_operation_id),NEW.of_id);
+  ELSIF TG_TABLE_NAME='of_operations' THEN
+    IF NEW.status::text IN ('TODO','READY','CANCELLED') OR (TG_OP='UPDATE' AND NEW.status IS NOT DISTINCT FROM OLD.status) THEN RETURN NEW; END IF;
+    target:=NEW.of_id; operation:=NEW.id; execution:=true;
+  ELSIF TG_TABLE_NAME='of_time_logs' THEN
+    target:=(SELECT of_id FROM public.of_operations WHERE id=NEW.of_operation_id); operation:=NEW.of_operation_id; execution:=true;
+  ELSE target:=NEW.of_id; operation:=NEW.operation_id; execution:=true;
+  END IF;
+  SELECT * INTO o FROM public.ordres_fabrication WHERE id=target FOR UPDATE;
+  IF o.preparation_rules_version IS NULL THEN RETURN NEW; END IF;
+  IF o.technical_readiness<>'VALIDATED' OR o.technical_snapshot_sha256 IS NULL
+     OR (execution AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s WHERE s.id=NULLIF(o.technical_preparation->>'self_inspection_sheet_id','')::uuid AND s.of_id=o.id AND s.state='READY' AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) THEN
+    RAISE EXCEPTION 'OF_PREPARATION_REQUIRED: terminer et valider le dossier de préparation' USING ERRCODE='23514';
+  END IF;
+  IF o.preparation_rules_version>=2 AND NOT EXISTS(SELECT 1 FROM public.of_dossier_validations v
+    WHERE v.of_id=target AND v.invalidated_at IS NULL) THEN
+    RAISE EXCEPTION 'OF_DOSSIER_REQUIRED: valider le dossier complet avant planning' USING ERRCODE='23514';
+  END IF;
+  programme:=COALESCE(o.technical_preparation->'execution_programming',o.technical_snapshot->'preparation_decisions'->'programming');
+  task:=NULLIF(programme->>'task_id','')::uuid;
+  -- The programme is an operation prerequisite. A cutting/control operation
+  -- may start while the machining programme remains pending. Resolve only from
+  -- the frozen route and an active dossier proof; unknown/foreign operations
+  -- retain the conservative legacy gate.
+  IF execution AND EXISTS(SELECT 1 FROM public.of_dossier_validations v WHERE v.of_id=target AND v.invalidated_at IS NULL) THEN
+    SELECT f.value->>'type_operation',f.value INTO operation_kind,frozen_operation
+    FROM public.of_operations op CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) f
+    WHERE op.id=operation AND op.of_id=target AND f.value->>'phase'=op.phase::text
+      AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
+    LIMIT 1;
+    IF operation_kind IN ('DECOUPE','CONTROLE','ASSEMBLAGE','FINITION','TRAITEMENT','SOUS_TRAITANCE','AUTRE','LAVAGE','EMBALLAGE') THEN execution:=false; END IF;
+  END IF;
+  IF execution AND ((task IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.piece_version_programming_tasks WHERE id=task
+    AND piece_technique_version_id=o.piece_technique_version_id AND (of_id IS NULL OR of_id=o.id)
+    AND status='DONE' AND NULLIF(btrim(program_reference),'') IS NOT NULL))
+    OR (o.preparation_rules_version>=2 AND task IS NULL AND (programme->>'mode' IS DISTINCT FROM 'NONE' OR length(btrim(COALESCE(programme->>'reason','')))<3)
+      AND COALESCE(NULLIF(btrim(frozen_operation->>'numero_programme'),''),NULLIF(btrim(programme->>'reference'),'')) IS NULL)) THEN
+    RAISE EXCEPTION 'OF_PROGRAMMING_REQUIRED: terminer la programmation avant démarrage' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+-- Scheduling changes do not alter the validated technical product.
+DROP TRIGGER IF EXISTS of_dossier_planning_changed ON public.planning_events;
+UPDATE public.app_feature_flags SET description='Validation du dossier avant planning, puis couverture matière et prérequis par opération.' WHERE key='PRODUCTION_MATERIAL_WORKFLOW';
+COMMIT;

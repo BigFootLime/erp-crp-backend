@@ -9,7 +9,7 @@ import {assertOperationQuantityCeiling,evaluateOperationReadiness,type Operation
 import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 
-type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean};
+type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
 
 export async function usesOperationReadiness(tx:DossierDb,ofId:number){
@@ -25,22 +25,30 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
   const operations=(await tx.query<OperationRow>(`
     SELECT op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
       COALESCE(q.good,0)::float8 AS good,COALESCE(q.scrap,0)::float8 AS scrap,COALESCE(q.pending,0)::float8 AS pending,COALESCE(q.rework,0)::float8 AS rework,
-      (frozen.value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE') AND COALESCE(o.technical_snapshot->'preparation_decisions'->'programming'->>'mode','')<>'NONE') AS program_required,
-      (CASE o.technical_snapshot->'preparation_decisions'->'programming'->>'mode'
-        WHEN 'NONE' THEN true
-        WHEN 'EXISTING' THEN COALESCE(NULLIF(btrim(frozen.value->>'numero_programme'),''),NULLIF(btrim(o.technical_snapshot->'preparation_decisions'->'programming'->>'reference'),'')) IS NOT NULL
+       (frozen.value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE') AND (COALESCE(programming.value->>'mode','')<>'NONE'
+         OR length(btrim(COALESCE(programming.value->>'reason','')))<3)) AS program_required,
+       (CASE programming.value->>'mode'
+         WHEN 'NONE' THEN length(btrim(COALESCE(programming.value->>'reason','')))>=3
+         WHEN 'EXISTING' THEN COALESCE(NULLIF(btrim(frozen.value->>'numero_programme'),''),NULLIF(btrim(programming.value->>'reference'),'')) IS NOT NULL
         WHEN 'TASK' THEN EXISTS(SELECT 1 FROM public.piece_version_programming_tasks pr
-          WHERE pr.id::text=o.technical_snapshot->'preparation_decisions'->'programming'->>'task_id'
-            AND pr.piece_technique_version_id=o.piece_technique_version_id AND pr.status='DONE' AND NULLIF(btrim(pr.program_reference),'') IS NOT NULL)
-        ELSE false END)
+           WHERE pr.id::text=programming.value->>'task_id'
+            AND pr.piece_technique_version_id=o.piece_technique_version_id AND (pr.of_id IS NULL OR pr.of_id=o.id)
+            AND pr.status='DONE' AND NULLIF(btrim(pr.program_reference),'') IS NOT NULL)
+         ELSE NULLIF(btrim(frozen.value->>'numero_programme'),'') IS NOT NULL END)
       AS program_ready,
       (EXISTS(SELECT 1 FROM public.non_conformity nc WHERE nc.of_id=o.id AND nc.status::text NOT IN ('CLOSED','CANCELLED'))
         OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'preparation_evidence'->'documents','[]')) doc
           WHERE NOT EXISTS(SELECT 1 FROM public.ged_document_versions v WHERE v.id::text=doc->>'version_id' AND v.status='APPLICABLE'))
         OR (frozen.value->>'type_operation'='CONTROLE' AND NOT EXISTS(SELECT 1 FROM public.quality_control_plan p
-          WHERE p.id::text=o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id' AND p.status='PUBLISHED'))) AS quality_blocked
+           WHERE p.id::text=COALESCE(o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id',o.technical_preparation->'execution_quality'->'quality_plan'->>'id')
+             AND p.piece_version_id=o.piece_technique_version_id AND p.status='PUBLISHED' AND p.archived_at IS NULL
+             AND (p.effective_from IS NULL OR p.effective_from<=now()) AND (p.effective_to IS NULL OR p.effective_to>now())))) AS quality_blocked,
+       (o.preparation_rules_version IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s
+         WHERE s.id::text=o.technical_preparation->>'self_inspection_sheet_id' AND s.of_id=o.id AND s.state='READY'
+           AND s.piece_technique_version_id=o.piece_technique_version_id AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) AS inspection_missing
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id LEFT JOIN public.machines m ON m.id=op.machine_id
-    LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
+     LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
+     CROSS JOIN LATERAL(SELECT COALESCE(o.technical_preparation->'execution_programming',o.technical_snapshot->'preparation_decisions'->'programming') AS value) programming
     LEFT JOIN LATERAL(SELECT sum(qty_good) AS good,sum(qty_scrap) AS scrap,sum(qty_pending_control) AS pending,sum(qty_rework) AS rework FROM public.production_quantity_declarations WHERE operation_id=op.id) q ON true
     WHERE op.id=ANY($1::uuid[]) ORDER BY op.phase,op.id`,[dossier.operations.map(o=>o.id)])).rows;
   const dependencies=(await tx.query<DependencyRow>(`
@@ -62,7 +70,9 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
         AND r.status='ACTIVE' AND(r.expires_at IS NULL OR r.expires_at>now())),0)) AS missing`,[ofId])).rows[0]?.missing===true;
   const materialFacts=new Map<string,OperationReadinessFacts['materials']>();
   const quality=new Map<string,Awaited<ReturnType<typeof readOperationalLotQualityEligibility>>>();
-  if(operations.some(op=>op.kind==='ASSEMBLAGE')){
+   if(operations.some(op=>op.kind==='ASSEMBLAGE')){
+     if (!(await tx.query<{defined:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_component_requirements WHERE consuming_of_id=$1 AND status<>'CANCELLED') AS defined`, [ofId])).rows[0]?.defined)
+       componentMissing=true;
     const components=(await tx.query<{lot_id:string|null;physical:boolean}>(`SELECT r.lot_id::text,
       (l.lot_status='LIBERE' AND b.qty_total-b.qty_depreciated>=b.qty_reserved AND r.article_id=l.article_id) AS physical
       FROM public.stock_reservations r JOIN public.of_component_requirements n ON n.id=r.of_component_requirement_id
@@ -91,7 +101,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       processedQuantity:Number(row?.good??0)+Number(row?.scrap??0)+Number(row?.pending??0)+Number(row?.rework??0),dossierComplete:dossier.status==='COMPLETE',executionStatus:dossier.executionStatus,
       planned:op.planned||['RUNNING','DONE'].includes(op.status),machineBlocked:statuses.includes(row?.machine_status??''),
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
-      programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,
+       programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
       predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>{
         const packages=external.filter(p=>p.operationId===d.predecessor);

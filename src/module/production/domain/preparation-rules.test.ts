@@ -2,11 +2,34 @@ import { describe, expect, it } from "vitest";
 import {
   evaluatePreparation,
   isPreparationReady,
+  preparationWarnings,
+  programmingDecisionDefined,
   planningUrgency,
   preparationOperationIssues,
   sourceHash,
   type PreparationFacts,
 } from "./preparation-rules";
+
+describe("programming choices frozen before planning", () => {
+  it.each([
+    undefined,
+    { mode: "NONE" as const },
+    { mode: "NONE" as const, reason: "  " },
+    { mode: "EXISTING" as const, reference: " " },
+    { mode: "TASK" as const, task_id: "task", estimated_hours: 0 },
+    { mode: "TASK" as const, task_id: " ", estimated_hours: 1 },
+    { mode: "TASK" as const, task_id: "task", estimated_hours: Infinity },
+  ])("allows completing an unfinished choice without rewriting the frozen definition", (decision) => {
+    expect(programmingDecisionDefined(decision)).toBe(false);
+  });
+  it.each([
+    { mode: "NONE" as const, reason: "Travail manuel" },
+    { mode: "EXISTING" as const, reference: "  CN-42  " },
+    { mode: "TASK" as const, task_id: "task", estimated_hours: 0.5 },
+  ])("protects an already defined programming choice", (decision) => {
+    expect(programmingDecisionDefined(decision)).toBe(true);
+  });
+});
 
 describe("operation-specific preparation evidence", () => {
   const manual = { designation: "Contrôle final", type_operation: "CONTROLE", cf_id: null, machine_family_code: null, tp: 0.1, tf_unit: 0.02 };
@@ -62,13 +85,21 @@ function complete(): PreparationFacts {
   };
 }
 describe("Source-backed production preparation", () => {
+  it("preserves version-1 required sections and the historical material exemption", () => {
+    const f = complete();
+    f.purchases=[];
+    f.decisions.material={mode:'NOT_REQUIRED',reason:'Brut client déjà couvert'};
+    expect(isPreparationReady(evaluatePreparation(f,1))).toBe(true);
+    expect(isPreparationReady(evaluatePreparation(f,2))).toBe(false);
+    f.sheet_current=false;
+    expect(evaluatePreparation(f,1).find(item=>item.key==='self_inspection')?.required).toBe(true);
+    expect(isPreparationReady(evaluatePreparation(f,1))).toBe(false);
+    expect(evaluatePreparation({...complete(),decisions:{...complete().decisions,manufacturing_plan_required:true}},1)
+      .find(item=>item.key==='manufacturing_plan')?.required).toBe(true);
+  });
   it("accepts a complete manual piece with justified non-applicable services", () =>
     expect(isPreparationReady(evaluatePreparation(complete()))).toBe(true));
-  it.each([
-    "client_plan_count",
-    "routing_count",
-    "quality_characteristic_count",
-  ] as const)(
+  it.each(["client_plan_count"] as const)(
     "blocks missing %s even with arbitrary confirmation metadata",
     (key) => {
       const f = {
@@ -108,27 +139,30 @@ describe("Source-backed production preparation", () => {
       evaluatePreparation(f).find((i) => i.key === "treatment")?.status,
     ).toBe("MISSING");
   });
-  it("keeps manufacturing drawing optional unless explicitly required", () => {
+  it("warns about a requested manufacturing drawing without blocking planning", () => {
     const f = complete();
     expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
     f.decisions.manufacturing_plan_required = true;
-    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
+    expect(preparationWarnings(evaluatePreparation(f)).map(i => i.key)).toContain("manufacturing_plan");
   });
-  it("requires assembly components independently of child OF position", () => {
+  it("keeps missing assembly components visible before their execution gate", () => {
     const f = complete();
     f.manufacturing_mode = "ASSEMBLY";
-    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
+    expect(preparationWarnings(evaluatePreparation(f)).map(i => i.key)).toContain("structure");
     f.component_count = 2;
     expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
   });
-  it("requires an assigned, estimated programming task but allows its completion after planning", () => {
+  it("warns about an unassigned programming task and allows planning", () => {
     const f = complete();
     f.decisions.programming = {
       mode: "TASK",
       task_id: "task",
       estimated_hours: 2,
     };
-    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
+    expect(preparationWarnings(evaluatePreparation(f)).map(i => i.key)).toContain("programming");
     f.programming_task_valid = true;
     expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
   });
@@ -136,7 +170,8 @@ describe("Source-backed production preparation", () => {
     "does not inherit OF-specific evidence: %s",
     (key) => {
       const f = { ...complete(), [key]: false };
-      expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+      expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
+      expect(preparationWarnings(evaluatePreparation(f)).map(i => i.key)).toContain(key === "sheet_current" ? "self_inspection" : "stock_compatibility");
     },
   );
   it("rejects obsolete and non-current revisions", () => {
@@ -145,6 +180,27 @@ describe("Source-backed production preparation", () => {
     expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
     f.version_status = "APPLICABLE";
     f.version_current = false;
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+  });
+  it("accepts the four rubrics while every secondary section is unfinished", () => {
+    const f = {...complete(), routing_count:0, invalid_operations:1, quality_plan_id:null,
+      quality_characteristic_count:0, required_documents_missing:2, stock_review_current:false, sheet_current:false,
+      decisions:{treatment:complete().decisions.treatment,subcontract:complete().decisions.subcontract}};
+    const items = evaluatePreparation(f);
+    expect(isPreparationReady(items)).toBe(true);
+    expect(preparationWarnings(items).map(i=>i.key)).toEqual(["documents","routing","quality","programming","stock_compatibility","self_inspection"]);
+    expect(items.filter(i=>i.required).map(i=>i.key)).toEqual(["plan","material"]);
+  });
+  it("accepts no direct material only for a justified assembly without material purchases", () => {
+    const f = complete();
+    f.purchases=[];
+    f.decisions.material={mode:"NOT_REQUIRED",reason:"Montage de sous-pièces"};
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+    f.manufacturing_mode="ASSEMBLY";
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
+    expect(evaluatePreparation(f).find(i=>i.key==="material")?.status).toBe("NOT_REQUIRED");
+    f.purchases=complete().purchases;
+    f.purchases[0].quantite=0;
     expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
   });
   it("hashes field order identically, while preserving phase order and changes", () => {

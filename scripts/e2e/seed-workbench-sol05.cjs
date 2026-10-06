@@ -35,7 +35,7 @@ async function main() {
       version_id: fixture.version,
       expected_version: preparation.profile_version,
       decisions: {
-        material: { mode: "NOT_REQUIRED", reason: "Matière fournie dans cet essai" },
+        material: { mode: "REQUIRED" },
         treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement demandé" },
         subcontract: { mode: "NOT_REQUIRED", reason: "Fabrication entièrement interne" },
         programming: { mode: "NONE", reason: "Opérations manuelles de démonstration" },

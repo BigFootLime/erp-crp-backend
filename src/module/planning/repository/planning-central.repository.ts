@@ -43,7 +43,9 @@ WITH operation_rows AS (
         WHEN op.poste_id IS NOT NULL THEN 'poste:'||op.poste_id::text END AS resource_id,
    COALESCE(e.start_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_start END) AS committed_start,
    COALESCE(e.end_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_end END) AS committed_end,op.started_at AS actual_start,op.ended_at AS actual_end,
-   op.status::text AS status,o.technical_readiness AS readiness,
+   op.status::text AS status,CASE WHEN o.preparation_rules_version>=2 AND NOT EXISTS(
+     SELECT 1 FROM public.of_dossier_validations v WHERE v.of_id=o.id AND v.invalidated_at IS NULL)
+     THEN 'INCOMPLETE' ELSE o.technical_readiness END AS readiness,
    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END AS due,
    CASE o.priority::text WHEN 'CRITICAL' THEN 3 WHEN 'HIGH' THEN 2 WHEN 'LOW' THEN 0 ELSE 1 END AS priority,
    op.created_at,op.updated_at,op.tp*60 AS setup_minutes,op.tf_unit*op.qte*op.coef*60 AS unit_minutes,
@@ -96,15 +98,17 @@ WITH operation_rows AS (
 ), version_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
    t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
-   NULL::bigint,NULL::bigint,NULL::text,pt.code_piece,v.id::text,
+    o.id,o.commande_id,o.numero,pt.code_piece,v.id::text,
    'Préparer le programme — indice '||v.indice||' · révision interne '||COALESCE(v.version_interne::text,'non renseignée'),0::int,
-   'programming'::text,false,NULL::text,1::numeric,CASE WHEN pr.status='DONE' THEN 1 ELSE 0 END::numeric,
+    'programming'::text,COALESCE(cc.order_type='INTERNE',false),cc.internal_order_purpose,1::numeric,CASE WHEN pr.status='DONE' THEN 1 ELSE 0 END::numeric,
    0::numeric,0::numeric,0::numeric,'person:'||pr.assignee_id::text,t.committed_start,t.committed_end,
    NULL::timestamptz,pr.completed_at,pr.status,'VALIDATED'::text,NULL::text,1::int,
    pr.updated_at,pr.updated_at,0::numeric,pr.estimated_hours*60,'PROGRAMMING'::text
  FROM public.planning_tasks t JOIN public.piece_version_programming_tasks pr ON pr.id=t.version_programming_id
  JOIN public.piece_technique_versions v ON v.id=pr.piece_technique_version_id
- JOIN public.pieces_techniques pt ON pt.id=v.piece_technique_id
+  JOIN public.pieces_techniques pt ON pt.id=v.piece_technique_id
+  LEFT JOIN public.ordres_fabrication o ON o.id=pr.of_id
+  LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
  WHERE v.statut<>'OBSOLETE' OR t.locked OR t.committed_start IS NOT NULL OR pr.status<>'TODO'
    OR EXISTS(SELECT 1 FROM public.ordres_fabrication consumer
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
@@ -221,8 +225,9 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
     FROM public.piece_version_programming_tasks pr
     JOIN public.ordres_fabrication o ON o.piece_technique_version_id=pr.piece_technique_version_id
     JOIN public.of_operations op ON op.of_id=o.id
-    WHERE o.technical_snapshot->'preparation_decisions'->'programming'->>'mode'='TASK'
-      AND pr.id::text=o.technical_snapshot->'preparation_decisions'->'programming'->>'task_id'
+    CROSS JOIN LATERAL(SELECT COALESCE(o.technical_preparation->'execution_programming',o.technical_snapshot->'preparation_decisions'->'programming') AS value) programming
+    WHERE programming.value->>'mode'='TASK'
+      AND pr.id::text=programming.value->>'task_id' AND (pr.of_id IS NULL OR pr.of_id=o.id)
       AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
       AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) value
       WHERE value->>'phase'=op.phase::text AND value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE'))`);

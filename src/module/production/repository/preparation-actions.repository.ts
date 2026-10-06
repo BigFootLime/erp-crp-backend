@@ -1,4 +1,4 @@
-import type { PreparationDecisions } from "../domain/preparation-rules";
+import { programmingDecisionDefined, type PreparationDecisions } from "../domain/preparation-rules";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -6,6 +6,7 @@ import type { AuditContext } from "./production.repository";
 import { synchronizeDraftChildrenTx } from "./preparation-children.repository";
 import {
   assertPreparationMutable,
+  assertExecutionEvidenceMutable,
   PROGRAMMING_ASSIGNEE_PREDICATE_SQL,
   loadPreparationOrder,
   persistPreparationEvaluation,
@@ -70,6 +71,11 @@ export async function repoSaveProgrammingTask(
       "SELECT id FROM public.piece_technique_versions WHERE id=$1::uuid FOR UPDATE",
       [of.version_id],
     );
+    const frozenProgramming = of.technical_snapshot?.preparation_decisions?.programming;
+    const choice = of.technical_preparation?.execution_programming ?? frozenProgramming;
+    const lateProgramming = Boolean(of.technical_snapshot_sha256 && !programmingDecisionDefined(frozenProgramming) && !programmingDecisionDefined(of.technical_preparation?.execution_programming));
+    const ownTask = lateProgramming || Boolean(of.technical_preparation?.execution_programming);
+    if (of.technical_snapshot_sha256) assertExecutionEvidenceMutable(of, input.expected_updated_at);
     const task = (
       await tx.query<{
         id: string;
@@ -77,9 +83,12 @@ export async function repoSaveProgrammingTask(
         status: string;
         assignee_id: number;
         estimated_hours: string;
+        program_reference: string | null;
       }>(
-        "SELECT id::text,updated_at::text,status,assignee_id,estimated_hours FROM public.piece_version_programming_tasks WHERE piece_technique_version_id=$1::uuid FOR UPDATE",
-        [of.version_id],
+        `SELECT id::text,updated_at::text,status,assignee_id,estimated_hours,program_reference FROM public.piece_version_programming_tasks
+         WHERE piece_technique_version_id=$1::uuid AND
+           (CASE WHEN $3::boolean THEN of_id=$2::bigint WHEN $4::uuid IS NOT NULL THEN id=$4::uuid AND of_id IS NULL ELSE of_id IS NULL END) FOR UPDATE`,
+        [of.version_id, id, ownTask, of.technical_snapshot_sha256 ? choice?.task_id ?? null : null],
       )
     ).rows[0];
     if (task?.updated_at !== input.expected_task_updated_at)
@@ -88,9 +97,18 @@ export async function repoSaveProgrammingTask(
         "CONCURRENT_MODIFICATION",
         "La tâche a changé. Actualisez-la.",
       );
+    if (lateProgramming) {
+      assertExecutionEvidenceMutable(of, input.expected_updated_at);
+      const started = (await tx.query<{started:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_operations op
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) f
+        WHERE op.of_id=o.id AND f->>'phase'=op.phase::text AND f->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE')
+          AND (op.status::text IN ('RUNNING','DONE') OR EXISTS(SELECT 1 FROM public.production_quantity_declarations d WHERE d.operation_id=op.id))) AS started
+        FROM public.ordres_fabrication o WHERE o.id=$1`, [id])).rows[0]?.started;
+      if (started) throw new HttpError(409, 'PROGRAMMING_ALREADY_USED', 'Une opération d’usinage a déjà commencé. Créez une révision pour changer sa programmation.');
+    }
     if (
-      of.technical_snapshot_sha256 &&
-      (!task ||
+      of.technical_snapshot_sha256 && !lateProgramming &&
+      (choice?.mode !== 'TASK' || !task ||
         task.status === "DONE" ||
         input.status !== "DONE" ||
         input.assignee_id !== task.assignee_id ||
@@ -115,9 +133,9 @@ export async function repoSaveProgrammingTask(
       );
     const saved = (
       await tx.query<{ id: string }>(
-        `INSERT INTO public.piece_version_programming_tasks(piece_technique_version_id,assignee_id,estimated_hours,status,program_reference,completed_at,completed_by,updated_by)
-      VALUES($1::uuid,$2,$3,$4,$5,CASE WHEN $4='DONE' THEN now() END,CASE WHEN $4='DONE' THEN $6::integer END,$6)
-      ON CONFLICT(piece_technique_version_id) DO UPDATE SET assignee_id=excluded.assignee_id,estimated_hours=excluded.estimated_hours,status=excluded.status,
+        `INSERT INTO public.piece_version_programming_tasks(piece_technique_version_id,assignee_id,estimated_hours,status,program_reference,completed_at,completed_by,updated_by,of_id)
+      VALUES($1::uuid,$2,$3,$4,$5,CASE WHEN $4='DONE' THEN now() END,CASE WHEN $4='DONE' THEN $6::integer END,$6,$7)
+      ON CONFLICT ${ownTask ? '(of_id) WHERE of_id IS NOT NULL' : '(piece_technique_version_id) WHERE of_id IS NULL'} DO UPDATE SET assignee_id=excluded.assignee_id,estimated_hours=excluded.estimated_hours,status=excluded.status,
       program_reference=excluded.program_reference,completed_at=excluded.completed_at,completed_by=excluded.completed_by,updated_by=excluded.updated_by,updated_at=now() RETURNING id::text`,
         [
           of.version_id,
@@ -126,6 +144,7 @@ export async function repoSaveProgrammingTask(
           input.status,
           input.program_reference ?? null,
           audit.user_id,
+          ownTask ? id : null,
         ],
       )
     ).rows[0];
@@ -162,6 +181,18 @@ export async function repoSaveProgrammingTask(
         of.version_id,
         audit,
       );
+    if (!of.technical_snapshot_sha256 && task) {
+      const referenced = (await tx.query<{used:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.ordres_fabrication
+        WHERE technical_snapshot_sha256 IS NOT NULL AND technical_snapshot->'preparation_decisions'->'programming'->>'task_id'=$1) AS used`, [task.id])).rows[0]?.used;
+      if (referenced && (task.status === 'DONE' || input.status !== 'DONE' || input.assignee_id !== task.assignee_id || input.estimated_hours !== Number(task.estimated_hours)))
+        throw new HttpError(409, 'PROGRAMMING_DEFINITION_FROZEN', 'Cette programmation est déjà prévue dans un dossier validé. Seule sa réalisation peut être enregistrée.');
+    }
+    }
+    if (ownTask) {
+      await tx.query(`UPDATE public.ordres_fabrication SET
+        technical_preparation=COALESCE(technical_preparation,'{}') || jsonb_build_object('execution_programming',
+          jsonb_build_object('mode','TASK','task_id',$2::text,'estimated_hours',$3::numeric)),updated_at=now(),updated_by=$4 WHERE id=$1`,
+        [id, saved.id, input.estimated_hours, audit.user_id]);
     }
     await preparationAudit(
       tx,

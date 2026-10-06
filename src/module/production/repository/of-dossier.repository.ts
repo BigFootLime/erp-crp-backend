@@ -16,7 +16,7 @@ export async function readOfDossierTx(tx:DossierDb,id:number) {
   const row=(await tx.query(`SELECT o.id::bigint::int,o.statut::text AS status,o.technical_readiness,o.technical_snapshot_sha256,
     o.piece_technique_version_id::text,o.quantite_lancee::float8,o.updated_at::text,o.numero,
     CASE WHEN cc.order_type='INTERNE' THEN NULL ELSE cl.delai_client::text END AS customer_due,
-    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_interne::text END AS internal_due,o.date_lancement_reelle::text,o.date_fin_reelle::text
+    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_interne::text END AS internal_due,o.date_lancement_reelle::text,o.date_fin_reelle::text,o.preparation_rules_version
     FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
     LEFT JOIN public.commande_ligne cl ON cl.id=o.commande_ligne_id WHERE o.id=$1`,[id])).rows[0];
   if(!row) throw new HttpError(404,"OF_NOT_FOUND","Ordre de fabrication introuvable.");
@@ -48,8 +48,9 @@ export async function readOfDossierTx(tx:DossierDb,id:number) {
       CROSS JOIN LATERAL jsonb_array_elements_text(ft.forecast_issues) issue WHERE fp.id=ANY($1::uuid[])),'[]'::jsonb) AS issues
     FROM public.planning_tasks t JOIN public.of_operations p ON p.id=t.operation_id WHERE p.id=ANY($1::uuid[])`,[operations.map(o=>o.id)])).rows[0];
   const version=createHash("sha256").update(JSON.stringify([row.updated_at,dossier.sourceHash,operations.map(o=>[o.id,o.start,o.end,o.status]),validation])).digest("hex");
+  const warnings = row.preparation_rules_version == null ? [] : (await evaluateOfPreparation(tx,id)).warnings;
   return {enabled:true,ofId:id,number:row.numero,version,executionStatus:row.status,technicalReadiness:row.technical_readiness,
-    quantity:row.quantite_lancee,...dossier,validation,operations,forecastState:await readForecastState(tx),forecastIssues:forecast?.issues??[],
+    quantity:row.quantite_lancee,...dossier,warnings,validation,operations,forecastState:await readForecastState(tx),forecastIssues:forecast?.issues??[],
     dates:{customerDue:row.customer_due,internalDue:row.internal_due,committedStart:starts[0]??null,committedEnd:ends.at(-1)??null,
       forecastEnd:forecast?.end??null,actualStart:row.date_lancement_reelle,actualEnd:row.date_fin_reelle}};
 }
@@ -78,13 +79,13 @@ export async function repoCompleteOfDossier(id:number,body:{expectedVersion:stri
     }
     const current=await readOfDossierTx(tx,id);
     if(current.version!==body.expectedVersion) throw new HttpError(409,"DOSSIER_CHANGED","Le dossier a changé. Relis ses conséquences avant de valider.");
-    if(!current.canComplete) throw new HttpError(409,"DOSSIER_INCOMPLETE","Le dossier et toutes ses opérations doivent être préparés et planifiés.",{blockers:current.blockers});
+    if(!current.canComplete) throw new HttpError(409,"DOSSIER_INCOMPLETE","Validez la définition technique avant de passer le dossier à Complet.",{blockers:current.blockers});
     const preparation=await evaluateOfPreparation(tx,id);
     if(!preparation.ready) throw new HttpError(409,"DOSSIER_TECHNICAL_CHANGED","La préparation technique doit être revue.",{items:preparation.items});
     if(current.status!=="COMPLETE"){
       await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=COALESCE(invalidated_at,now()),invalidation_reason=COALESCE(invalidation_reason,'Nouvelle validation du dossier.') WHERE of_id=$1 AND invalidated_at IS NULL",[id]);
       await tx.query(`INSERT INTO public.of_dossier_validations(of_id,source_hash,planning_revision,evidence,decided_by)
-        SELECT $1,$2,revision,$3::jsonb,$4 FROM public.planning_central_settings WHERE singleton`,[id,current.sourceHash,JSON.stringify({planning:current.planning,operations:current.operations,preparationHash:preparation.source_hash}),audit.user_id]);
+        SELECT $1,$2,revision,$3::jsonb,$4 FROM public.planning_central_settings WHERE singleton`,[id,current.sourceHash,JSON.stringify({planning:current.planning,operations:current.operations,preparationHash:preparation.source_hash,rulesVersion:preparation.rules_version,warnings:preparation.warnings}),audit.user_id]);
       // Never changes execution status or actual dates.
       await preparationAudit(tx,audit,id,"production.of.dossier.complete",{sourceHash:current.sourceHash,operations:current.planning.total});
     }

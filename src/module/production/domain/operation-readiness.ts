@@ -6,7 +6,7 @@ export type OperationReadinessFacts = {
   id: string; label: string; phase: number; status: string; targetQuantity: number; processedQuantity: number;
   dossierComplete: boolean; executionStatus: string; planned: boolean; machineBlocked: boolean;
   preparationMissing: boolean; programRequired: boolean; programReady: boolean; qualityBlocked: boolean;
-  componentsMissing: boolean;
+   componentsMissing: boolean; inspectionMissing?: boolean;
   materials: Array<{label: string; availableBlanks: number; allowPartial: boolean; blockers: string[]}>;
   predecessors: Array<{id: string; label: string; done: boolean; good: number; transferred: number; partial: boolean; minimum: number; requireTransfer?:boolean}>;
 };
@@ -21,7 +21,8 @@ export function evaluateOperationReadiness(f: OperationReadinessFacts) {
   if (!f.planned) block("OPERATION_NOT_PLANNED", "Cette opération ne possède pas de créneau engagé.", "Planifier cette opération", "planning");
   if (["DONE", "CANCELLED", "BLOCKED"].includes(f.status)) block("OPERATION_UNAVAILABLE", f.status === "DONE" ? "Cette opération est déjà terminée." : "Cette opération est suspendue ou annulée.", "Consulter l’opération", "operations");
   if (f.machineBlocked) block("MACHINE_UNAVAILABLE", "La ressource affectée est indisponible.", "Vérifier la ressource ou la réaffecter", "planning");
-  if (f.preparationMissing) block("MATERIAL_PREPARATION_MISSING", "Un besoin matière n’est pas encore relié à son opération.", "Compléter la préparation matière", "matiere");
+   if (f.preparationMissing) block("MATERIAL_PREPARATION_MISSING", "Un besoin matière n’est pas encore relié à son opération.", "Compléter la préparation matière", "matiere");
+   if (f.inspectionMissing) block("INSPECTION_REQUIRED", "La fiche d’autocontrôle de cet OF n’est pas encore prête.", "Publier le plan de contrôle puis générer la fiche", "qualite");
   if (f.programRequired && !f.programReady) block("PROGRAM_REQUIRED", "Le programme requis n’est pas encore disponible.", "Terminer et référencer le programme", "programmation");
   if (f.qualityBlocked) block("QUALITY_BLOCKED", "Un contrôle applicable ou une non-conformité bloque cette opération.", "Consulter le contrôle et sa décision", "qualite");
   if (f.componentsMissing) block("COMPONENTS_MISSING", "Les composants de cet assemblage ne sont pas tous réservés et libérés par la qualité.", "Vérifier la couverture et la qualité des composants", "matiere");
