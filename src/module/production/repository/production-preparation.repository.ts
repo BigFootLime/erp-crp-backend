@@ -9,6 +9,8 @@ import {
   evaluatePreparation,
   preparationOperationIssues,
   isPreparationReady,
+  preparationWarnings,
+  programmingDecisionDefined,
   PREPARATION_RULES_VERSION,
   sourceHash,
   type PreparationDecisions,
@@ -51,7 +53,7 @@ export async function assertOfPreparationReady(tx: Db, id: number) {
       "Le dossier technique contient encore des actions à terminer.",
       {
         missing_sections: evaluation.items
-          .filter((i) => i.required && i.status !== "READY")
+          .filter((i) => i.status === "BLOCKED" || (i.required && i.status !== "READY"))
           .map((i) => i.key),
       },
     );
@@ -70,6 +72,10 @@ export type PreparationOrder = {
   updated_at: string;
   technical_snapshot_sha256: string | null;
   preparation_rules_version: number | null;
+  technical_preparation?: {
+    execution_programming?: NonNullable<PreparationDecisions['programming']>;
+    execution_quality?: Pick<TechnicalSources, 'quality_plan' | 'characteristics'>;
+  };
   technical_snapshot?: {
     preparation_evidence?: TechnicalSources;
     preparation_decisions?: PreparationDecisions;
@@ -178,13 +184,21 @@ export async function loadPreparationOrder(
       NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,
       (SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=o.piece_technique_id
        AND v.statut<>'OBSOLETE' ORDER BY v.is_current DESC,v.created_at DESC,v.id LIMIT 1))::text AS version_id,
-    o.quantite_lancee::float8,o.updated_at::text,o.technical_snapshot_sha256,o.preparation_rules_version,o.technical_snapshot
+    o.quantite_lancee::float8,o.updated_at::text,o.technical_snapshot_sha256,o.preparation_rules_version,o.technical_snapshot,o.technical_preparation
     FROM public.ordres_fabrication o WHERE o.id=$1 ${lock ? "FOR UPDATE OF o" : ""}`,
       [id],
     )
   ).rows[0];
   if (!row) throw new HttpError(404, "OF_NOT_FOUND", "OF introuvable.");
   return row;
+}
+
+/** Late execution evidence never rewrites the frozen technical product. */
+export function assertExecutionEvidenceMutable(of: PreparationOrder, expected: string) {
+  if (of.updated_at !== expected)
+    throw new HttpError(409, 'CONCURRENT_MODIFICATION', 'Cet OF a changé. Rechargez le dossier avant de sauvegarder.');
+  if (!['BROUILLON', 'PLANIFIE', 'EN_COURS', 'EN_PAUSE'].includes(of.statut))
+    throw new HttpError(409, 'OF_PREPARATION_LOCKED', 'Cet OF est clôturé ou annulé. Consultez son historique.');
 }
 export function assertPreparationMutable(
   of: PreparationOrder,
@@ -235,8 +249,11 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       [of.version_id],
     )
   ).rows[0];
-  const decisions =
+  const frozenDecisions =
     of.technical_snapshot?.preparation_decisions ?? profile?.decisions ?? {};
+  const decisions = of.technical_snapshot_sha256 && !programmingDecisionDefined(frozenDecisions.programming) && of.technical_preparation?.execution_programming
+    ? {...frozenDecisions, programming: of.technical_preparation.execution_programming}
+    : frozenDecisions;
   const { rows } = await tx.query<{ sources: TechnicalSources }>(
     `
     WITH v AS (SELECT * FROM public.piece_technique_versions WHERE id=$1::uuid AND piece_technique_id=$2::uuid),
@@ -262,20 +279,28 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
       'characteristics',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.position,c.id) FROM public.quality_control_plan_characteristic c WHERE c.plan_id=(SELECT id FROM qp)),'[]'),
       'missing_documents',(SELECT count(*) FROM public.piece_version_document_requirements r WHERE r.piece_technique_version_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM docs WHERE role=r.document_type_code)),
-      'programming_task_valid',EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id AND u.status='Active' WHERE p.id=$3::uuid AND p.piece_technique_version_id=$1::uuid AND p.estimated_hours>0)
+      'programming_task_valid',EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id AND u.status='Active' WHERE p.id=$3::uuid AND p.piece_technique_version_id=$1::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) AND p.estimated_hours>0)
     ) AS sources`,
     [
       of.version_id,
       of.piece_technique_id,
       decisions.programming?.task_id ?? null,
+      id,
     ],
   );
-  const sources =
-    of.technical_snapshot?.preparation_evidence ?? rows[0].sources;
+  const frozenSources = of.technical_snapshot?.preparation_evidence;
+  const rulesVersion = of.preparation_rules_version ?? PREPARATION_RULES_VERSION;
+  const sources = frozenSources && !frozenSources.quality_plan
+    ? {...frozenSources, ...(of.technical_preparation?.execution_quality ?? {
+        quality_plan: rows[0].sources.quality_plan,
+        characteristics: rows[0].sources.characteristics,
+      })}
+    : frozenSources ?? rows[0].sources;
   const sharedHash = sourceHash({
-    rules: PREPARATION_RULES_VERSION,
+    rules: rulesVersion,
     sources,
-    decisions,
+    // Programme completion does not invalidate a quantity-specific inspection PDF.
+    decisions: frozenDecisions,
   });
   const candidates = await loadStockCandidates(tx, of);
   const stockHash = sourceHash({
@@ -339,7 +364,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     )
       ? sources.characteristics.length
       : 0,
-    programming_task_valid: sources.programming_task_valid,
+    programming_task_valid: rows[0].sources.programming_task_valid,
     programming_reference_valid: sources.operations.some(
       (op) => op.numero_programme === decisions.programming?.reference,
     ),
@@ -350,7 +375,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
         : stockReview?.source_hash === stockHash),
     sheet_current: sheet?.state === "READY",
   };
-  const items = evaluatePreparation(f);
+  const items = evaluatePreparation(f, rulesVersion);
   const sharedReady = isPreparationReady(
     items.filter((i) => i.scope === "VERSION"),
   );
@@ -358,8 +383,9 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     (
       await tx.query(
         `SELECT p.id::text,p.assignee_id,p.estimated_hours::float8,p.status,p.program_reference,p.updated_at::text,concat_ws(' ',u.name,u.surname) AS assignee_name
-    FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id WHERE p.piece_technique_version_id=$1::uuid`,
-        [of.version_id],
+    FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id WHERE p.piece_technique_version_id=$1::uuid
+      AND CASE WHEN $3::boolean THEN p.id=$2::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) ELSE p.of_id IS NULL END`,
+        [of.version_id, decisions.programming?.task_id ?? null, Boolean(of.technical_snapshot_sha256), id],
       )
     ).rows[0] ?? null;
   const programmers = (
@@ -401,12 +427,13 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     profile_version: profile?.version ?? 0,
     decisions,
     items,
+    warnings: preparationWarnings(items),
     ready: isPreparationReady(items),
     shared_ready: sharedReady,
     shared_impact: sharedImpact,
     shared_approved:
       sharedReady && profile?.approved_source_hash === sharedHash,
-    rules_version: PREPARATION_RULES_VERSION,
+    rules_version: rulesVersion,
     source_hash: sharedHash,
     stock_hash: stockHash,
     sheet_hash: sheetHash,
@@ -415,6 +442,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     sheet,
     sources,
     programming_task: programmingTask,
+    programming_assignment_allowed: Boolean(of.technical_snapshot_sha256 && !programmingDecisionDefined(decisions.programming)
+      && ['BROUILLON','PLANIFIE','EN_COURS','EN_PAUSE'].includes(of.statut)),
     programmers,
     purchase_sources: purchaseSources,
     stock_reuse_decisions: stockReuseDecisions,
@@ -432,7 +461,7 @@ export async function persistPreparationEvaluation(tx: Db, id: number) {
     [
       id,
       evaluation.of.version_id,
-      PREPARATION_RULES_VERSION,
+      evaluation.rules_version,
       evaluation.source_hash,
       JSON.stringify(evaluation.items),
       evaluation.ready,

@@ -7,9 +7,7 @@ if (process.env.CERP_E2E_ISOLATED !== "1" || process.env.CERP_E2E_MANAGED_STACK 
   || url.pathname !== "/cerp_test" || url.username !== "cerp_e2e") {
   throw Error("Managed disposable SOL-05 database required");
 }
-require(require.resolve("ts-node/register/transpile-only", {
-  paths: [require("node:path").dirname(require.resolve("ts-node-dev/package.json"))],
-}));
+require("ts-node/register/transpile-only");
 const database = require("../../src/config/database.ts").default;
 async function main() {
   try {
@@ -35,7 +33,7 @@ async function main() {
       version_id: fixture.version,
       expected_version: preparation.profile_version,
       decisions: {
-        material: { mode: "NOT_REQUIRED", reason: "Matière fournie dans cet essai" },
+        material: { mode: "REQUIRED" },
         treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement demandé" },
         subcontract: { mode: "NOT_REQUIRED", reason: "Fabrication entièrement interne" },
         programming: { mode: "NONE", reason: "Opérations manuelles de démonstration" },
