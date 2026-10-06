@@ -120,7 +120,9 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
         }
         return {id:d.predecessor,label:d.label,done:d.status==='DONE',good:d.good,transferred:Math.min(d.good,d.transferred),partial:d.partial,minimum:d.minimum??1};
       })};
-    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
+    const firstMachining=operations.find(o=>['TOURNAGE','FRAISAGE','REPRISE'].includes(o.kind??''));
+    const quantityKind=row?.kind==='DECOUPE'&&firstMachining?.kind==='TOURNAGE'&&coverage.needs.some(n=>n.operationId===op.id&&n.debitRule?.form==='BAR')?'POTENTIAL' as const:'ACTUAL' as const;
+    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,quantityKind,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
   return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
@@ -134,7 +136,7 @@ export async function getOperationReadiness(ofId:number){
 
 /** Called before OF/pointage locks. The canonical gate rechecks quality under
  * lot locks so a concurrent quarantine cannot race a successful start. */
-export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,operationId:string|null|undefined,expectedVersion?:string,machineId?:string|null){
+export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,operationId:string|null|undefined,expectedVersion?:string,machineId?:string|null,acknowledgedWarnings?:string[]){
   if(!await usesOperationReadiness(tx,ofId))return null;
   await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
   await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE',[ofId]);
@@ -162,7 +164,9 @@ export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,o
   if(!operation)throw new HttpError(404,'OF_OPERATION_NOT_FOUND','Opération introuvable dans cet OF.');
   if(machineId&&machineId!==operation.machineId)throw new HttpError(409,'OPERATION_RESOURCE_CHANGED','Cette machine ne correspond pas à l’affectation de l’opération. Faites valider sa réaffectation dans le planning.');
   if(!operation.canStart)throw new HttpError(409,'OPERATION_NOT_READY','Cette opération ne peut pas encore démarrer.',{operation});
-  return {version:current.version,operation};
+  if(acknowledgedWarnings!==undefined && operation.warnings.some(w=>!acknowledgedWarnings.includes(w.code)))
+    throw new HttpError(409,'OPERATION_WARNINGS_REQUIRED','Prenez connaissance des alertes de passage partiel avant de démarrer.',{operation});
+  return {version:current.version,operation,acknowledgedWarnings:acknowledgedWarnings??[]};
 }
 
 /** Lock before execution context, including for offline replay. Recording actual

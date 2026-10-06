@@ -3,11 +3,12 @@ import type {DossierDb} from './of-dossier.repository';
 /** Read immutable proofs beside canonical stock and WIP balances. */
 export async function readMaterialDebitsTx(tx:DossierDb,ofId:number){
   return (await tx.query(`SELECT d.id::text,d.operation_id::text AS "operationId",d.created_at AS "createdAt",d.note,
-    d.compensates_id::text AS "compensatesId",c.id::text AS "correctedBy",q.qty_good::float8 AS good,q.qty_scrap::float8 AS scrap,
+    d.compensates_id::text AS "compensatesId",c.id::text AS "correctedBy",d.quantity_kind AS "quantityKind",q.qty_good::float8 AS good,q.qty_scrap::float8 AS scrap,
     COALESCE(u.username,u.id::text) AS actor,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('reservationId',s.reservation_id,'movementId',s.stock_movement_id,
       'lotId',r.lot_id,'lotCode',l.lot_code,'unit',n.unit,'planned',COALESCE(s.planned_qty,abs(m.qty)),
-      'actual',COALESCE(s.actual_qty,abs(m.qty))) ORDER BY l.lot_code,s.reservation_id)
+      'actual',COALESCE(s.actual_qty,abs(m.qty)),'cut',COALESCE(s.cut_qty,s.actual_qty,abs(m.qty)),
+      'discarded',COALESCE(s.discarded_qty,0),'barClosed',s.bar_closed) ORDER BY l.lot_code,s.reservation_id)
       FROM public.production_material_debit_sources s JOIN public.stock_movements m ON m.id=s.stock_movement_id
       JOIN public.stock_reservations r ON r.id=s.reservation_id JOIN public.of_material_needs n ON n.id=s.need_id
       JOIN public.lots l ON l.id=r.lot_id WHERE s.debit_id=d.id),'[]'::jsonb) AS sources,

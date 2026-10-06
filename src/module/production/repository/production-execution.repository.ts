@@ -89,6 +89,9 @@ export async function repoCompensateQuantity(params:{id:string;reason:string;ide
       [hint.of_id,hint.operation_id,params.id]);
     if(original.non_conformity_id || downstream.rowCount)
       throw new HttpError(409,'PRODUCTION_QUANTITY_DOWNSTREAM_LOCKED','Une réception, un débit matière, un contrôle ou un transfert utilise ce contexte. Réconciliez cet usage dans son circuit avant de corriger les quantités.');
+    if((await client.query(`SELECT 1 FROM public.production_loss_complements c JOIN public.ordres_fabrication f ON f.id=c.complement_of_id
+      WHERE c.source_operation_id=$1::uuid AND f.statut::text<>'ANNULE' LIMIT 1`,[hint.operation_id])).rowCount)
+      throw new HttpError(409,'PRODUCTION_LOSS_ALREADY_COVERED','Un OF de complément couvre ces pertes. Annulez son brouillon inutilisé avant de corriger la déclaration.');
     const inserted=await client.query<{id:string}>(`INSERT INTO public.production_quantity_declarations(
       pointage_id,of_id,operation_id,qty_good,qty_scrap,qty_rework,qty_pending_control,unite,
       compensates_id,compensation_reason,note,idempotency_key,declared_by)
@@ -1106,7 +1109,7 @@ export async function repoStartExecution(params: {
       return existing;
     }
 
-    const materialAuthorization = await assertMaterialOperationStartTx(client,params.body.of_id,params.body.operation_id,params.body.expected_readiness_version,params.body.machine_id);
+    const materialAuthorization = await assertMaterialOperationStartTx(client,params.body.of_id,params.body.operation_id,params.body.expected_readiness_version,params.body.machine_id,params.body.acknowledged_warning_codes??[]);
     const { of, operation } = await lockExecutionContext(client, {
       of_id: params.body.of_id,
       operation_id: params.body.operation_id ?? null,
