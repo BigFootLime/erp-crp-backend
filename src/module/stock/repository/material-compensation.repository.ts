@@ -32,7 +32,7 @@ export async function compensateMaterialMovementTx(tx:PoolClient,input:{movement
   return {movementId:created.movement.id,quantity:qty};
 }
 
-export async function restoreMaterialReservationTx(tx:PoolClient,input:{reservationId:string;quantity:number;reason:string},audit:AuditContext){
+export async function restoreMaterialReservationTx(tx:PoolClient,input:{reservationId:string;quantity:number;reason:string;releaseExtraQuantity?:number},audit:AuditContext){
   const r=(await tx.query<{stock_level_id:string;stock_batch_id:string;qty_consumed:number;status:string;unexpired:boolean}>(`SELECT b.stock_level_id::text,r.stock_batch_id::text,r.qty_consumed::float8,r.status,
     (r.expires_at IS NULL OR r.expires_at>now()) AS unexpired FROM public.stock_reservations r JOIN public.stock_batches b ON b.id=r.stock_batch_id
     WHERE r.id=$1::uuid FOR UPDATE OF r`,[input.reservationId])).rows[0];
@@ -49,4 +49,11 @@ export async function restoreMaterialReservationTx(tx:PoolClient,input:{reservat
   await tx.query('UPDATE public.stock_batches SET qty_reserved=qty_reserved+$2 WHERE id=$1::uuid',[r.stock_batch_id,input.quantity]);
   await tx.query(`UPDATE public.stock_reservations SET qty_consumed=qty_consumed-$2,status='ACTIVE',updated_at=now(),updated_by=$3,reason=$4
     WHERE id=$1::uuid`,[input.reservationId,input.quantity,audit.user_id,input.reason]);
+  const extra=input.releaseExtraQuantity??0;
+  if(extra<0||extra>input.quantity)throw new HttpError(409,'MATERIAL_DEBIT_PROOF_MISMATCH','L’extension de réservation ne correspond pas au débit compensé.');
+  if(extra>0){
+    await tx.query('UPDATE public.stock_levels SET qty_reserved=qty_reserved-$2,updated_at=now(),updated_by=$3 WHERE id=$1::uuid',[r.stock_level_id,extra,audit.user_id]);
+    await tx.query('UPDATE public.stock_batches SET qty_reserved=qty_reserved-$2 WHERE id=$1::uuid',[r.stock_batch_id,extra]);
+    await tx.query('UPDATE public.stock_reservations SET qty_reserved=qty_reserved-$2,updated_at=now(),updated_by=$3 WHERE id=$1::uuid',[input.reservationId,extra,audit.user_id]);
+  }
 }

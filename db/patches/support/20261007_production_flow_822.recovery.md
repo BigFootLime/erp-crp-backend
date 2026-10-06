@@ -1,0 +1,1 @@
+Le retour arrière remet les binaires précédents. Les colonnes additives et les preuves de débit et de complément restent présentes ; aucune preuve industrielle n’est supprimée. Sauvegarder avant application, exécuter preflight puis verify et contrôler le ledger de migrations sans rejouer les effets métier.

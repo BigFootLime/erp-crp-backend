@@ -1,4 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {readLosses,createComplement} from '../controllers/production-loss.controller';
 import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
 import { Router, type RequestHandler } from "express";
 import {synchronizePreparationChildren} from '../controllers/production-workbench.controller';
@@ -186,6 +187,8 @@ const machineDocumentUpload = createSecureUpload("machine-document", { maxFiles:
 const machineImageUpload = createSecureUpload("image", { maxFiles: 1 });
 
 router.use(authenticateToken);
+router.get('/ofs/:id/loss-complements',requireOfCapability('read'),readLosses);
+router.post('/ofs/:id/loss-complements',requireOfCapability('create'),createComplement);
 
 // Machines
 router.get("/machine-models", requireMachineCapability("read"), listMachineModels);

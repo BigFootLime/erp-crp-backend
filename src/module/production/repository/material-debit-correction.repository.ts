@@ -14,9 +14,12 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
         AND NOT EXISTS(SELECT 1 FROM public.production_material_debits c WHERE c.compensates_id=d.id)
         AND NOT EXISTS(SELECT 1 FROM public.production_quantity_declarations c WHERE c.compensates_id=d.declaration_id) FOR UPDATE OF o`,[body.debitId,ofId])).rows[0];
     if(!debit)throw new HttpError(409,'MATERIAL_DEBIT_NOT_CORRECTABLE','Ce débit est déjà corrigé ou son opération est clôturée. Faites rouvrir le dossier par le responsable avant correction.');
+    if((await tx.query(`SELECT 1 FROM public.production_loss_complements c JOIN public.ordres_fabrication f ON f.id=c.complement_of_id
+      WHERE c.source_operation_id=$1::uuid AND f.statut::text<>'ANNULE' LIMIT 1`,[debit.operation_id])).rowCount)
+      throw new HttpError(409,'PRODUCTION_LOSS_ALREADY_COVERED','Un OF de complément couvre les pertes de cette opération. Annulez son brouillon inutilisé avant de compenser le débit.');
     const transferred=(await tx.query(`SELECT id FROM public.production_transfer_batches WHERE material_debit_id=$1::uuid AND released_quantity>0`,[debit.id])).rows;
     if(transferred.length)throw new HttpError(409,'MATERIAL_DEBIT_TRANSFER_ACTIVE','Retournez les bruts transférés à l’étape suivante avant de compenser ce débit.');
-    const sources=(await tx.query<{reservation_id:string;need_id:string;stock_movement_id:string;lot_id:string;actual:number;planned:number}>(`SELECT s.reservation_id::text,s.need_id::text,s.stock_movement_id::text,r.lot_id::text,
+    const sources=(await tx.query<{reservation_id:string;need_id:string;stock_movement_id:string;lot_id:string;actual:number;planned:number;extended:number}>(`SELECT s.reservation_id::text,s.need_id::text,s.stock_movement_id::text,r.lot_id::text,COALESCE(s.extended_qty,0)::float8 AS extended,
       COALESCE(s.actual_qty,abs(m.qty))::float8 AS actual,COALESCE(s.planned_qty,abs(m.qty))::float8 AS planned
       FROM public.production_material_debit_sources s JOIN public.stock_movements m ON m.id=s.stock_movement_id
       JOIN public.stock_reservations r ON r.id=s.reservation_id WHERE s.debit_id=$1::uuid ORDER BY r.lot_id,r.id`,[debit.id])).rows;
@@ -28,7 +31,7 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
     for(const source of sources){
       const inverse=await compensateMaterialMovementTx(tx,{movementId:source.stock_movement_id,ofId,kind:'SOURCE',key:`${body.idempotencyKey}:source:${source.reservation_id}`,reason:body.reason},audit);
       if(Math.abs(inverse.quantity-source.actual)>.000001)throw new HttpError(409,'MATERIAL_DEBIT_PROOF_MISMATCH','La quantité du mouvement ne correspond plus à la preuve de débit.');
-      await restoreMaterialReservationTx(tx,{reservationId:source.reservation_id,quantity:inverse.quantity,reason:body.reason},audit);
+      await restoreMaterialReservationTx(tx,{reservationId:source.reservation_id,quantity:inverse.quantity,reason:body.reason,releaseExtraQuantity:source.extended},audit);
       inverses.push({...source,movementId:inverse.movementId});
     }
     const correctionId=randomUUID();

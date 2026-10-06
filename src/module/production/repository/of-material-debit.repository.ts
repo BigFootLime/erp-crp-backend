@@ -44,8 +44,15 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     if(body.good+body.scrap>(measured?operation.remainingQuantity:operation.availableQuantity))
       throw new HttpError(409,'MATERIAL_DEBIT_QUANTITY_EXCEEDED','Les bruts déclarés dépassent la quantité utilisable.',{available:operation.availableQuantity});
     const remnants=body.remnants??[];
+    for(const s of sources){
+      if(!s.source.barClosure)continue;
+      if(s.need.debitRule?.form!=='BAR'||s.need.unit?.toLowerCase()!=='mm')
+        throw new HttpError(422,'MATERIAL_BAR_CLOSURE_INVALID','Le solde avec reliquat mesuré est réservé aux barres gérées en millimètres.');
+      if(s.source.barClosure.discardedQuantity>150&&!s.source.barClosure.acknowledgedLargeRemainder)
+        throw new HttpError(409,'MATERIAL_BAR_CLOSURE_WARNING','Le reliquat dépasse 150 mm. Confirmez explicitement son solde ; celui-ci reste possible.');
+    }
     const balances=needs.map(need=>({need,balance:actualDebitBalance({rule:need.debitRule!,blanks:body.good+body.scrap,varianceReason:body.varianceReason,
-      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,quantity:s.source.quantity,remnant:remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0}))})}));
+      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,quantity:s.source.quantity+(s.source.barClosure?.discardedQuantity??0),remnant:remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0}))})}));
     for(const remnant of remnants){
       const need=sources.find(s=>s.source.reservationId===remnant.reservationId)?.need;
       if(!need||!remnant.dimensions.longueur_mm||need.debitRule?.form==='SHEET'&&!remnant.dimensions.largeur_mm)
@@ -54,15 +61,18 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     const consumed=[];
     for(const s of [...sources].sort((a,b)=>a.source.reservationId.localeCompare(b.source.reservationId)))
       consumed.push({needId:s.need.id!,...await consumeMaterialReservationTx(tx,{...s.source,ofId,operationId:body.operationId,
+        quantity:s.source.quantity+(s.source.barClosure?.discardedQuantity??0),barDiscardAllowance:s.source.barClosure?.discardedQuantity,
         idempotencyKey:`${body.idempotencyKey}:${s.source.reservationId}`,reason:body.note},audit)});
     const debitId=randomUUID(),declarationId=randomUUID();
     // The deferred declaration FK allows the measured yield proof to exist
     // before the canonical declaration rechecks its material quantity credit.
-    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,created_by)
-      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9)`,[debitId,ofId,body.operationId,current.technicalVersion,declarationId,body.idempotencyKey,current.version,[body.note,body.varianceReason].filter(Boolean).join('\n'),audit.user_id]);
-    for(const s of consumed)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)`,[debitId,s.needId,s.reservationId,s.stockMovementId,
-      balances.find(b=>b.need.id===s.needId)!.balance.sources.find(source=>source.id===s.reservationId)!.planned,s.quantity]);
+    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,created_by,quantity_kind)
+      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9,$10)`,[debitId,ofId,body.operationId,current.technicalVersion,declarationId,body.idempotencyKey,current.version,[body.note,body.varianceReason].filter(Boolean).join('\n'),audit.user_id,operation.quantityKind]);
+    for(const s of consumed){const source=body.sources.find(source=>source.reservationId===s.reservationId)!;
+      await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty,cut_qty,discarded_qty,bar_closed,extended_qty)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10)`,[debitId,s.needId,s.reservationId,s.stockMovementId,
+      balances.find(b=>b.need.id===s.needId)!.balance.sources.find(source=>source.id===s.reservationId)!.planned,s.quantity,source.quantity,source.barClosure?.discardedQuantity??0,Boolean(source.barClosure),s.extendedQuantity??0]);
+    }
     const declaration=await repoDeclareQuantity({transactionClient:tx,declarationId,idempotencyKey:body.idempotencyKey,audit,
       body:{of_id:ofId,operation_id:body.operationId,qty_good:body.good,qty_scrap:body.scrap,qty_pending_control:0,qty_rework:0,
         scrap_reason_code:body.scrapReason,unite:'u',note:body.note}});
