@@ -37,12 +37,14 @@ export async function readMaterialOriginPolicyTx(tx: DossierDb, ofIds: readonly 
 
 /** Central reservation owner also covers receipt transfers. Lock the OF before
  * stock/quality locks so two simultaneous confirmations cannot add a third lot. */
-export async function assertMaterialReservationOriginTx(tx: DossierDb, ofId: number, needId: string, lotId: string | null | undefined) {
+export async function assertMaterialReservationOriginTx(tx: DossierDb, ofId: number, needId: string | undefined, lotId: string | null | undefined, articleId?: string) {
   await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE', [ofId]);
-  const need = (await tx.query<{ need_kind: string; of_id: string }>(
-    'SELECT need_kind,of_id::text FROM public.of_material_needs WHERE id=$1::uuid', [needId])).rows[0];
-  if (!need || Number(need.of_id) !== ofId) throw new HttpError(409, 'MATERIAL_NEED_NOT_FOUND', 'Ce besoin matière ne correspond plus à cet OF.');
-  if (need.need_kind !== 'MATIERE') return;
+  const need = needId ? (await tx.query<{ need_kind: string; of_id: string }>(
+    'SELECT need_kind,of_id::text FROM public.of_material_needs WHERE id=$1::uuid', [needId])).rows[0]
+    : undefined;
+  if (needId && (!need || Number(need.of_id) !== ofId)) throw new HttpError(409, 'MATERIAL_NEED_NOT_FOUND', 'Ce besoin matière ne correspond plus à cet OF.');
+  if (need ? need.need_kind !== 'MATIERE' : !(await tx.query<{ raw: boolean }>(
+    'SELECT EXISTS(SELECT 1 FROM public.articles_matiere WHERE article_id=$1::uuid) AS raw', [articleId ?? null])).rows[0]?.raw) return;
   if (!lotId) throw new HttpError(409, 'LOT_REQUIRED', 'Choisissez un lot matière traçable.');
   const policy=await readMaterialOriginPolicyTx(tx, [ofId], [lotId]);
   assertMaterialOriginLimit(policy, [lotId]);
