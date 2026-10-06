@@ -14,6 +14,8 @@ import {
   updateAffaireBodySchema,
 } from "../validators/affaire.validators";
 import type { AuditContext } from "../types/affaire.types";
+import { readDeliveryPromises, reviseDeliveryPromises } from "../repository/delivery-promises.repository";
+import { reviseDeliveryPromisesSchema } from "../validators/delivery-promises.validators";
 import {
   svcArchiveAffaire,
   svcCreateAffaire,
@@ -121,6 +123,20 @@ export const getAffaireOperations: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const getAffaireDeliveryPromises: RequestHandler = async (req,res,next) => {
+  try {
+    const {id}=affaireIdParamsSchema.parse(req.params);
+    res.setHeader("Cache-Control","no-store");
+    res.json(await readDeliveryPromises(id));
+  } catch(error) { next(error); }
+};
+export const reviseAffaireDeliveryPromises: RequestHandler = async (req,res,next) => {
+  try {
+    const {id}=affaireIdParamsSchema.parse(req.params);
+    res.json(await reviseDeliveryPromises(id,reviseDeliveryPromisesSchema.parse(req.body),buildAuditContext(req)));
+  } catch(error) { next(error); }
 };
 
 // Aperçu de création manuelle : lecture seule, aucun effet de bord (ne consomme pas de code).

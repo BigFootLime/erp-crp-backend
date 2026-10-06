@@ -5,7 +5,10 @@ import type { WorklistQuery } from "../validators/production-workbench.validator
 export async function repoProductionWorklist(input: WorklistQuery) {
   const result = await pool.query<{ payload: Record<string, unknown> }>(
     `
-    WITH clock AS (SELECT statement_timestamp() AS now), base AS (
+    WITH clock AS (SELECT statement_timestamp() AS now), order_deadlines AS MATERIALIZED (
+      SELECT cc.id,cc.created_at,public.workshop_working_deadline(cc.created_at,48) AS deadline FROM public.commande_client cc
+      WHERE EXISTS(SELECT 1 FROM public.ordres_fabrication active WHERE active.commande_id=cc.id AND active.statut NOT IN('ANNULE','TERMINE','CLOTURE'))
+    ), base AS (
       SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.statut::text,o.technical_readiness,
         o.piece_technique_id::text,pt.code_piece AS piece_code,pt.designation AS piece_designation,
         o.client_id,c.company_name AS client_company_name,
@@ -20,8 +23,9 @@ export async function repoProductionWorklist(input: WorklistQuery) {
         own_group.id::text AS consolidation_id,
         (o.statut IN ('BROUILLON','PLANIFIE') AND coverage.id IS NULL
           AND NOT(COALESCE(op.total,0)>0 AND COALESCE(op.planned,0)>=op.total)
-          AND o.planning_wait_started_at + interval '48 hours' <= clock.now) AS overdue,
-        (o.planning_wait_started_at+interval '48 hours')::text AS priority_deadline
+           AND COALESCE(deadline.deadline <= clock.now,false)) AS overdue,
+         deadline.deadline::text AS priority_deadline,deadline.created_at::text AS priority_started_at,
+         deadline.deadline IS NULL AS priority_calendar_missing
       FROM public.ordres_fabrication o
       JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
       LEFT JOIN public.clients c ON c.client_id=o.client_id
@@ -32,6 +36,10 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       LEFT JOIN public.production_consolidation_allocations coverage ON coverage.source_of_id=o.id AND coverage.state='ACTIVE'
       LEFT JOIN public.production_consolidations producer ON producer.id=coverage.consolidation_id
       LEFT JOIN public.production_consolidations own_group ON own_group.producer_of_id=o.id AND own_group.state='ACTIVE'
+      LEFT JOIN LATERAL (SELECT min(d.created_at) AS created_at,min(d.deadline) AS deadline FROM order_deadlines d
+        WHERE d.id=o.commande_id OR EXISTS(SELECT 1 FROM public.production_consolidation_allocations a
+          JOIN public.ordres_fabrication source ON source.id=a.source_of_id WHERE a.consolidation_id=own_group.id
+          AND a.state='ACTIVE' AND source.commande_id=d.id)) deadline ON true
       LEFT JOIN LATERAL (
         SELECT count(*) AS total, count(*) FILTER(WHERE EXISTS (
           SELECT 1 FROM public.planning_events e WHERE e.of_operation_id=p.id
@@ -85,7 +93,7 @@ export async function repoProductionWorkbenchConfig() {
       consolidation_enabled: boolean;
     }>(`SELECT
     (EXISTS(SELECT 1 FROM public.app_feature_flags WHERE key='PRODUCTION_WORKBENCH' AND enabled)
-    OR EXISTS(SELECT 1 FROM public.ordres_fabrication WHERE preparation_rules_version=1 AND statut::text NOT IN ('ANNULE','CLOTURE','TERMINE'))) AS enabled,
+    OR EXISTS(SELECT 1 FROM public.ordres_fabrication WHERE preparation_rules_version>=1 AND statut::text NOT IN ('ANNULE','CLOTURE','TERMINE'))) AS enabled,
     EXISTS(SELECT 1 FROM public.app_feature_flags WHERE key='PRODUCTION_CONSOLIDATION' AND enabled) AS consolidation_enabled`)
   ).rows[0];
   return row;

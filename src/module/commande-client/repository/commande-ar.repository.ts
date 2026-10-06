@@ -1178,6 +1178,7 @@ async function repoFinalizeCommandeArSendLegacy(params: {
       throw new HttpError(409, "COMMAND_AR_SEND_CLAIM_LOST", "La réservation d'envoi de l'AR n'est plus valide.");
     }
 
+    await tx.query("SELECT public.capture_initial_delivery_promises($1::bigint)", [params.commande_id]);
     const stockOnlyFlowRes = await tx.query<{ stock_only_flow: boolean }>(
       `
         SELECT COALESCE((metadata->>'stock_only_flow')::boolean, false) AS stock_only_flow
@@ -1565,6 +1566,8 @@ export async function repoFinalizeCommandeArSend(params: {
     );
     const sentAt = update.rows[0]?.sent_at;
     if (!sentAt) throw new HttpError(409, "COMMANDE_AR_SEND_CLAIM_LOST", "La réservation d'envoi de l'AR a expiré");
+
+    await tx.query("SELECT public.capture_initial_delivery_promises($1::bigint)", [params.commande_id]);
 
     const stockOnlyFlowRes = await tx.query<{ stock_only_flow: boolean }>(
       `SELECT COALESCE((metadata->>'stock_only_flow')::boolean, false) AS stock_only_flow FROM public.commande_client_workflow_checkpoint WHERE commande_id = $1::bigint AND checkpoint_code = 'ar_sent' LIMIT 1`,

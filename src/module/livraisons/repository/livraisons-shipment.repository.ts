@@ -3,6 +3,7 @@ import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
+import { captureShipmentPromises } from "../../affaire/repository/delivery-promises.repository"
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -1281,6 +1282,7 @@ export async function repoShipLivraison(
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le statut du BL a changé pendant l’expédition.")
     }
 
+    await captureShipmentPromises(client, bonLivraisonId)
     // SHIPPED is the legal/operational boundary. Queue exactly one official
     // artifact from the locked, persisted rows before the shipment commits.
     await queueCreationPdfArchive(client, await buildShippedDeliveryArtifactInput(client, {

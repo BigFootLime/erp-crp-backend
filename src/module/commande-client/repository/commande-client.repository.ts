@@ -7122,6 +7122,8 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
       ]
     );
   }
+  // Allocations can be created after an AR; only the original sent snapshot is accepted.
+  await db.query("SELECT public.capture_initial_delivery_promises($1::bigint)", [input.commande_id]);
 }
 
 export async function repoPreviewAffairesFromCommande(id: string) {

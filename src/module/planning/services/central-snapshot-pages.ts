@@ -10,7 +10,7 @@ const entries=new Map<string,Entry>(),loading=new Map<string,Promise<Entry>>();
 const ttl=30_000,maxTasks=40_000,maxEntries=16;
 let waitingReaders=0;
 const obsolete=()=>new HttpError(409,'PLANNING_SNAPSHOT_EXPIRED','La lecture a expiré. Actualisez le planning.');
-const scopeOf=(q:CentralWindow)=>JSON.stringify([q.from,q.to,q.search??null,q.of_id??null,q.resource_id??null,q.placement??null]);
+const scopeOf=(q:CentralWindow)=>JSON.stringify([q.from,q.to,q.search??null,q.of_id??null,q.resource_id??null,q.placement??null,q.client_id??null]);
 function sweep(){
   for(const [id,entry] of entries)if(entry.expires<Date.now())entries.delete(id);
   let total=[...entries.values()].reduce((sum,e)=>sum+e.snapshot.tasks.length,0);

@@ -12,6 +12,7 @@ import { assertOperationResourceCompatible, assertResourceSchedulable, repoArchi
 import type { CentralSimulationInput, CentralUnplanInput } from "../validators/planning-central.validators";
 import type { CentralSnapshot, ScheduleResult } from "../types/planning-central.types";
 import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "../../production/repository/production-preparation.repository";
+import {scopeClientUrgency,assertUrgencyResult} from './client-urgency-scope';
 
 const levels: CentralSnapshot["activation"][] = ["OBSERVE","READ","SIMULATE","COMMIT","EXECUTE","LEARN"];
 function commandResult(result:ScheduleResult):ScheduleResult {
@@ -84,7 +85,7 @@ async function simulationSnapshot(input:CentralSimulationInput,tx:PoolClient) {
   // all competing reservations, and the complete dependency closure.
   const capacities=new Set(selected.resources.filter(r=>ids.has(r.id)).map(r=>r.capacityId??r.id));
   const capacityResourceIds=selected.resources.filter(r=>ids.has(r.id)||capacities.has(r.capacityId??r.id)).map(r=>r.id);
-  return readCentralSnapshot({...query,capacityResourceIds},tx,false);
+  return scopeClientUrgency(await readCentralSnapshot({...query,capacityResourceIds},tx,false),input,tx);
 }
 
 export async function previewCentralWindow(input: CentralPreviewInput, signal?: AbortSignal) {
@@ -127,8 +128,8 @@ export async function createCentralSimulation(input:CentralSimulationInput,audit
       const task=tasksById.get(change.taskId);
       if(!task || task.version!==change.expectedVersion)throw stale();
     }
-    const result=commandResult(await computeSchedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,
-      from:input.from,requested:input.changes}));
+    const result=assertUrgencyResult(commandResult(await computeSchedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,
+      from:input.from,requested:input.changes})),snapshot,input);
     const latest=(await tx.query<{revision:string}>('SELECT revision::text FROM public.planning_central_settings WHERE singleton FOR SHARE')).rows[0];
     if(latest.revision!==input.revision)throw stale();
     const {rows}=await tx.query<{id:string}>(`INSERT INTO public.planning_simulations(created_by,base_revision,request,result)
@@ -164,7 +165,7 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
     const input=simulation.request;
     const current=await simulationSnapshot(input,tx);
     // Recompute from canonical state, never trust a client-supplied or outdated schedule result.
-    const result=commandResult(await computeSchedule({tasks:current.tasks,resources:current.resources,dependencies:current.dependencies,from:input.from,requested:input.changes}));
+    const result=assertUrgencyResult(commandResult(await computeSchedule({tasks:current.tasks,resources:current.resources,dependencies:current.dependencies,from:input.from,requested:input.changes})),current,input);
     if(!result.feasible || centralCanonicalJson(result.changes)!==centralCanonicalJson(simulation.result.changes))throw stale();
     // Batch moves can exchange slots; exclusions are checked against the final transaction state.
     await tx.query("SET CONSTRAINTS planning_events_machine_no_overlap,planning_events_poste_no_overlap DEFERRED");
@@ -176,7 +177,7 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
       if(task.external){
         if(task.external.packages.some(p=>p.departedAt))throw stale();
         const orderLock=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
-        if(orderLock.rows[0]?.ar_sent_at)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        if(orderLock.rows[0]?.ar_sent_at&&!input.urgency)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
         const lock=await tx.query('SELECT id FROM public.of_operations WHERE id=$1::uuid FOR UPDATE',[task.operationId]);
         if(!lock.rowCount)throw stale();
         const legacy=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
@@ -193,7 +194,7 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
         await assertResourceSchedulable(tx,resource);
         await assertOperationResourceCompatible({tx,of_operation_id:task.operationId,resource});
         const lock=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
-        if(lock.rows[0]?.ar_sent_at)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        if(lock.rows[0]?.ar_sent_at&&!input.urgency)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
         const existing=await tx.query<{id:string}>(`SELECT id FROM public.planning_events WHERE of_operation_id=$1::uuid
           AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE`,[task.operationId]);
         if(existing.rows.length>1)throw new HttpError(409,"PLANNING_SPLIT_OPERATION","Cette opération possède plusieurs créneaux à rapprocher.");
