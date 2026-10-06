@@ -65,15 +65,15 @@ export const getPieceArticlePrincipal: RequestHandler = async (req, res, next) =
   }
 }
 
-// POST /pieces-techniques/:id/create-or-link-article-fabrique { family_code, code?, designation?, stock_managed? }
+// POST /pieces-techniques/:id/create-or-link-article-fabrique { family_code, designation?, stock_managed? }
 export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const id = uuidSchema.parse(req.params.id)
     const input = createOrLinkSchema.parse(req.body)
 
-    const p = await db.query<{ code_piece: string; designation: string }>(
-      "SELECT code_piece, designation FROM public.pieces_techniques WHERE id = $1::uuid",
+    const p = await db.query<{ code_piece: string; designation: string; client_id: string | null }>(
+      "SELECT code_piece, designation, client_id FROM public.pieces_techniques WHERE id = $1::uuid",
       [id]
     )
     if (p.rowCount === 0) {
@@ -88,14 +88,22 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
       return
     }
 
+    const pieceClientId = p.rows[0].client_id
+    if (!pieceClientId) {
+      throw new HttpError(422, "ARTICLE_CLIENT_REQUIRED", "Associez un client à la pièce technique avant de créer son article client. Pour un article CRP, utilisez la création d'article avec sa référence interne.")
+    }
+
     const parsed = createArticleSchema.parse({
       body: {
-        // Placeholder pour satisfaire min(1) ; remplacé par "" ci-dessous si l'utilisateur ne fournit
-        // pas de code → le backend génère alors le code fabriqué normalisé ({code_piece}-P{plan_index}).
         designation: input.designation ?? p.rows[0].designation,
         family_code: input.family_code,
         article_category: "fabrique",
         piece_technique_id: id,
+        // La portée commerciale vient du client canonique de la PT, pas d'un
+        // identifiant fourni par le navigateur. Le service stock conserve ses
+        // validations et sa transaction article / lien / audit.
+        commercial_scope: "CLIENTS",
+        client_ids: [pieceClientId],
         stock_managed: input.stock_managed ?? true,
       },
     }).body
