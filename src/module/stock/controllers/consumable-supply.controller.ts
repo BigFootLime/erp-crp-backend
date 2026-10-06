@@ -18,8 +18,10 @@ export const prepareConsumableSupply=asyncHandler(async(req,res)=>{
   res.json({...result,supply:await present(result.supply,req)});
 });
 export const finishConsumablePack=asyncHandler(async(req,res)=>{
-  if(!(await consumableRights(req)).deplete)throw new HttpError(403,'CONSUMABLE_DEPLETION_FORBIDDEN','Les droits de création et de comptabilisation des sorties de stock sont nécessaires.');
-  const result=await depleteConsumablePack(identity(req),consumableDepletionSchema.parse(req.body),buildAuditContext(req));
+  const rights=await consumableRights(req),body=consumableDepletionSchema.parse(req.body);
+  if(!rights.deplete)throw new HttpError(403,'CONSUMABLE_DEPLETION_FORBIDDEN','Les droits de création et de comptabilisation des sorties de stock sont nécessaires.');
+  if(body.replenishment&&!rights.purchase)throw new HttpError(403,'CONSUMABLE_PURCHASE_FORBIDDEN','Les droits de préparation des achats sont nécessaires.');
+  const result=await depleteConsumablePack(identity(req),body,buildAuditContext(req));
   res.json({...result,supply:await present(result.supply,req)});
 });
 

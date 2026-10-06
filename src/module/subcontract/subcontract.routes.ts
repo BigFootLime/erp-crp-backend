@@ -9,6 +9,7 @@ import { roleHasOfCapability } from "../production/domain/of-rbac";
 import { repoListSubcontractWorkPackagesForOf } from "./subcontract.repository";
 import { getFlow, getCreationOptions, postTransfer } from './subcontract-flow.controller';
 import { subcontractFlowInstalled } from './subcontract-flow.repository';
+import { getProcurement,postProcurement } from './subcontract-procurement.controller';
 
 const router = Router();
 const activeOrderStates = ["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"];
@@ -27,7 +28,7 @@ async function audit(c: any, user: number | undefined, action: string, packageId
   await c.query("INSERT INTO public.erp_audit_logs(user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SUBCONTRACT_WORK_PACKAGE',$3,$4::jsonb)", [user ?? null, action, packageId, JSON.stringify(details)]);
 }
 async function lockPackage(c: any, packageId: string) {
-  const r = await c.query(`SELECT p.*,l.type,l.statut_ligne,cf.statut order_status FROM public.subcontract_work_packages p JOIN public.commande_fournisseur_ligne l ON l.id=p.supplier_order_line_id JOIN public.commande_fournisseur cf ON cf.id=l.commande_id WHERE p.id=$1::uuid FOR UPDATE OF p,l`, [packageId]);
+  const r = await c.query(`SELECT p.*,l.type,l.statut_ligne,origin.material_origin_id,cf.statut order_status FROM public.subcontract_work_packages p JOIN public.commande_fournisseur_ligne l ON l.id=p.supplier_order_line_id JOIN public.commande_fournisseur cf ON cf.id=l.commande_id LEFT JOIN public.subcontract_purchase_origins origin ON origin.line_id=l.id WHERE p.id=$1::uuid FOR UPDATE OF p,l`, [packageId]);
   const row = r.rows[0];
   if (!row || row.status !== "SENT" || row.type !== "SOUS_TRAITANCE" || row.statut_ligne !== "ACTIVE" || !activeOrderStates.includes(row.order_status)) throw new HttpError(409, "SUBCONTRACT_PACKAGE_NOT_ELIGIBLE", "Dossier sous-traitance non éligible.");
   return row;
@@ -43,6 +44,8 @@ router.get("/", access(false), async (req, res, next) => { try {
   res.json({ of_id: ofId, work_packages: workPackages });
 } catch (e) { next(e); } });
 
+router.get('/ofs/:ofId/procurement',access(false),getProcurement);
+router.post('/ofs/:ofId/procurement',access(false),postProcurement);
 router.get('/creation-options',access(false),getCreationOptions);
 router.get('/:id/flow',access(false),getFlow);
 router.post('/:id/transfers',access(true),postTransfer);
@@ -58,7 +61,10 @@ router.post("/", access(true), async (req: any, res, next) => { try {
   const c = await pool.connect(); try { await c.query("BEGIN"); await lockRevision(c);
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1)),pg_advisory_xact_lock(hashtext($2))", [line, operation]);
     const r = await c.query<any>(`INSERT INTO public.subcontract_work_packages(supplier_order_line_id,of_operation_id,status,unit,qty_planned,ged_evidence_document_id,created_by)
-      SELECT l.id,o.id,'SENT',$3,$4,d.id,$6 FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur cf ON cf.id=l.commande_id JOIN public.of_operations o ON o.id=$2::uuid AND o.of_id=l.of_id JOIN public.pieces_techniques_operations source ON source.id=o.source_piece_operation_id AND source.type_operation='SOUS_TRAITANCE' JOIN public.ged_documents d ON d.id=$5::uuid AND d.archived_at IS NULL WHERE l.id=$1::uuid AND l.type='SOUS_TRAITANCE' AND l.statut_ligne='ACTIVE' AND cf.statut=ANY($7::text[]) RETURNING *`, [line, operation, packageUnit, planned, evidence, req.user?.id ?? null, activeOrderStates]);
+      SELECT l.id,o.id,'SENT',$3,$4,d.id,$6 FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur cf ON cf.id=l.commande_id JOIN public.of_operations o ON o.id=$2::uuid AND o.of_id=l.of_id JOIN public.pieces_techniques_operations source ON source.id=o.source_piece_operation_id AND source.type_operation='SOUS_TRAITANCE' JOIN public.ged_documents d ON d.id=$5::uuid AND d.archived_at IS NULL WHERE l.id=$1::uuid AND l.type='SOUS_TRAITANCE' AND l.statut_ligne='ACTIVE' AND cf.statut=ANY($7::text[])
+       AND $4<=l.quantite AND upper(trim(l.unite))=$3
+       AND EXISTS(SELECT 1 FROM public.subcontract_purchase_origins origin WHERE origin.line_id=l.id AND origin.operation_id=o.id)
+       AND o.status::text<>'CANCELLED' AND(o.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions revision WHERE revision.id=o.revision_id AND revision.statut='ACTIVE')) RETURNING *`, [line, operation, packageUnit, planned, evidence, req.user?.id ?? null, activeOrderStates]);
     if (!r.rows[0]) throw new HttpError(409, "SUBCONTRACT_PACKAGE_PREREQUISITES", "La ligne sous-traitance active, l'opération OF canonique et la preuve GED active doivent correspondre.");
     await c.query("INSERT INTO public.ged_document_links(document_id,entity_type,entity_id,link_role,created_by) VALUES($1,'SUBCONTRACT_WORK_PACKAGE',$2,'EVIDENCE',$3) ON CONFLICT DO NOTHING", [evidence,r.rows[0].id,req.user?.id ?? null]);
     await audit(c,req.user?.id,"CREATE",r.rows[0].id,{line,operation,evidence,unit:packageUnit,qty_planned:planned}); await c.query("COMMIT"); res.status(201).json(r.rows[0]);
@@ -79,6 +85,12 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
     if(lots.rows[0]?.lot_status!==expected) throw new HttpError(409,eventType==="ISSUE"?"SUBCONTRACT_QUALITY_BLOCK":"SUBCONTRACT_RETURN_NOT_QUARANTINED",eventType==="ISSUE"?"Le lot expédié doit être LIBERE.":"Le retour doit être en QUARANTAINE avant décision Qualité.");
     if(eventType==="RETURN") { const b=await c.query<any>("SELECT COALESCE(sum(qty) FILTER(WHERE event_type='ISSUE'),0)-COALESCE(sum(qty) FILTER(WHERE event_type='RETURN'),0) qty FROM public.subcontract_work_package_ledger WHERE package_id=$1::uuid",[packageId]); if(Number(b.rows[0].qty)+1e-9<amount) throw new HttpError(409,"SUBCONTRACT_OVER_RETURN","Retour supérieur au solde expédié."); }
     if(eventType==='ISSUE'){
+       if(p.material_origin_id){
+         const matches=await c.query(`WITH RECURSIVE ancestry(id) AS (
+           SELECT $1::uuid UNION SELECT e.parent_lot_id FROM ancestry a JOIN public.stock_lot_genealogy_edges e ON e.child_lot_id=a.id
+         ) SELECT 1 FROM ancestry WHERE id=$2::uuid LIMIT 1`,[lot,p.material_origin_id]);
+         if(!matches.rows.length)throw new HttpError(409,'SUBCONTRACT_WRONG_MATERIAL_ORIGIN','Le lot expédié ne descend pas de l’origine matière de cette ligne fournisseur.');
+       }
       const op=(await c.query('SELECT of_id FROM public.of_operations WHERE id=$1',[p.of_operation_id])).rows[0];
       const readiness=flowInstalled?await assertMaterialOperationStartTx(c,Number(op.of_id),p.of_operation_id):null;
       const issued=await c.query("SELECT COALESCE(sum(qty),0)::float8 AS qty FROM public.subcontract_work_package_ledger WHERE package_id=$1 AND event_type='ISSUE'",[packageId]);
