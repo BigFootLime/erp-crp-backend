@@ -114,15 +114,21 @@ WITH operation_rows AS (
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
 ), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
  SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows), filtered AS (
-SELECT * FROM tasks
+SELECT tasks.*,owner.client_id,
+  COALESCE(promise.due::text,tasks.due) AS commercial_due
+  FROM tasks LEFT JOIN public.ordres_fabrication owner ON owner.id=tasks.of_id
+  LEFT JOIN LATERAL (SELECT min(p.due_date) AS due FROM public.delivery_promise_roots r
+    JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
+    WHERE r.line_id=owner.commande_ligne_id AND p.quantity>COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)) promise ON true
  WHERE ($3::bigint IS NULL OR of_id=$3)
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
- AND ($5::text IS NULL OR resource_id=$5)
- AND (NOT $10::boolean OR id=ANY($8::text[]))
- AND ($11::text[] IS NULL OR resource_id=ANY($11::text[]) OR id=ANY($8::text[]))
+  AND ($5::text IS NULL OR resource_id=$5)
+  AND ($12::text IS NULL OR owner.client_id=$12)
+  AND (NOT $10::boolean OR tasks.id=ANY($8::text[]))
+  AND ($11::text[] IS NULL OR resource_id=ANY($11::text[]) OR tasks.id=ANY($8::text[]))
  AND ($9::text IS NULL OR $9='all' OR ($9='backlog' AND committed_start IS NULL)
       OR ($9='placed' AND (committed_start IS NOT NULL OR forecast_start IS NOT NULL)))
- AND ($9='backlog' OR id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
+  AND ($9='backlog' OR tasks.id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
       (committed_start<$2::timestamptz AND committed_end>$1::timestamptz) OR
       (forecast_start<$2::timestamptz AND forecast_end>$1::timestamptz))
 )
@@ -143,7 +149,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     contextKey,routingSetupMinutes:0,routingUnitMinutes:num(row.envelope_minutes),quantity:1,good:0,scrap:0,rework:0,observations:[] });
   const committed = interval(row.committed_start,row.committed_end);
   return { id:String(row.id),source:row.source as CentralTask["source"],operationId:str(row.operation_id),
-    programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),
+    programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
     released:num(row.released),resourceIds,eligibleResourceIds:resourceIds,
@@ -151,7 +157,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
       { ...(row.actual_start ? {start:instant(row.actual_start)!}:{}), ...(row.actual_end ? {end:instant(row.actual_end)!}:{}) } : null,
     commitment:row.status==="DONE" ? "DONE" : row.status==="RUNNING" ? "STARTED" : committed ? "COMMITTED" : "FORECAST",
     locked:row.locked===true,readiness:row.readiness==="VALIDATED" ? "READY" : row.source==="DRAFT" ? "DRAFT" : "MISSING",
-    blockers:strings(row.blockers),earliestStart:instant(row.earliest_start),due:instant(row.due),
+    blockers:strings(row.blockers),earliestStart:instant(row.earliest_start),due:instant(row.commercial_due??row.due),
     priority:num(row.priority),createdAt:instant(row.created_at)!,
     version:createHash("sha256").update(JSON.stringify(versionFields)).digest("hex"),estimate };
 }
@@ -252,7 +258,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
     throw new HttpError(409,'PLANNING_SNAPSHOT_OBSOLETE','Le planning a changé. Actualisez la liste.');
   const { rows } = await tx.query<Row>(TASK_QUERY,[query.from,query.to,query.of_id ?? null,query.search ?? null,
     query.resource_id ?? null,query.cursor ?? null,query.limit+1,query.includeTaskIds ?? [],query.placement ?? null,
-    query.taskIdsOnly??false,query.capacityResourceIds??null]);
+    query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null]);
   const more = rows.length > query.limit;
   const visible = more ? rows.slice(0,query.limit) : rows;
   const tasks = visible.map(row => taskFromRow(row));

@@ -5,6 +5,7 @@ export const centralWindowSchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(250),
   of_id: z.coerce.number().int().positive().optional(), search: z.string().trim().max(100).optional(),
   resource_id: z.string().max(100).optional(),
+  client_id: z.string().trim().min(1).max(100).optional(),
   placement: z.enum(['all','placed','backlog']).optional(),
   snapshot_revision: z.string().regex(/^\d+$/).optional(),
   include_coverage: z.enum(['true','false']).optional().transform(v=>v!=='false'),
@@ -12,6 +13,7 @@ export const centralWindowSchema = z.object({
   { message: "La fenêtre doit couvrir entre un instant et douze mois." });
 export const centralSimulationSchema = z.object({
   revision: z.string().regex(/^\d+$/), from: instant, to: instant,
+  urgency: z.object({client_id:z.string().trim().min(1).max(100),promise_event_id:z.string().uuid()}).strict().optional(),
   changes: z.array(z.object({ taskId: z.string().min(1).max(100), expectedVersion: z.string().min(1).max(200),
     earliestStart: instant, resourceIds: z.array(z.string().min(1).max(100)).min(1).max(4).optional(), autoAssign: z.boolean().optional()
   }).refine(change => !change.autoAssign || !change.resourceIds, { message: "Choisissez une affectation automatique ou une ressource explicite." })).min(1).max(100),
