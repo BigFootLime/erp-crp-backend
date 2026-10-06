@@ -10,6 +10,8 @@ import {
   getAffaire,
   getAffaireCreationSnapshot,
   getAffaireOperations,
+  getAffaireDeliveryPromises,
+  reviseAffaireDeliveryPromises,
   listAffaires,
   listAffairesCommandCenter,
   previewAffaire,
@@ -59,6 +61,8 @@ router.use(authenticateToken);
 router.get("/command-center", requireAffaireCapability("read"), listAffairesCommandCenter);
 router.get("/", requireAffaireCapability("read"), listAffaires);
 router.get("/:id/operations", requireAffaireCapability("read"), getAffaireOperations);
+router.get("/:id/delivery-promises", requireAffaireCapability("read"), getAffaireDeliveryPromises);
+router.post("/:id/delivery-promises/revisions", requireAffaireCapability("write"), reviseAffaireDeliveryPromises);
 // Immutable internal creation snapshot. It is discoverable only through the
 // normal affair read capability and cannot be issued from HTTP.
 router.get("/:id/creation-snapshot", requireAffaireCapability("read"), getAffaireCreationSnapshot);

@@ -27,6 +27,7 @@ export type CentralTask = {
   resourceEstimates?: Record<string, Estimate>;
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
+  clientId?: string | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
   view: Exclude<CentralView, "global" | "machines" | "internal"> | "machines";
   internal: boolean; internalPurpose: string | null; quantity: number;

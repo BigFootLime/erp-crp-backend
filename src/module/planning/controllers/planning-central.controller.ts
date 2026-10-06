@@ -13,7 +13,15 @@ import { HttpError } from '../../../utils/httpError';
 import { previewCentralWindow } from '../services/planning-central.service';
 import { centralPreviewSchema } from '../validators/planning-central.validators';
 import {readCentralPage} from '../services/central-snapshot-pages';
+import {readWorkshopCalendar,setWorkshopCalendar} from '../repository/workshop-calendar.repository';
 const key = (value: unknown) => typeof value === "string" ? value : "";
+export const centralWorkshopCalendar: RequestHandler = asyncHandler(async(_req,res)=>{
+  res.setHeader('Cache-Control','no-store');res.json(await readWorkshopCalendar());
+});
+export const centralSetWorkshopCalendar: RequestHandler = asyncHandler(async(req,res)=>{
+  const input=z.object({calendar_id:z.string().uuid(),expected_revision:z.string().regex(/^\d+$/)}).strict().parse(req.body);
+  res.json(await setWorkshopCalendar(input,buildAuditContext(req),key(req.headers['idempotency-key'])));
+});
 export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
   const input=centralPreviewSchema.parse(req.body), abort=new AbortController();
   const onClose=()=>{if(!res.writableEnded)abort.abort();};
