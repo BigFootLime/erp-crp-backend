@@ -13,6 +13,7 @@ export type OperationReadinessFacts = {
 
 export function evaluateOperationReadiness(f: OperationReadinessFacts) {
   const blockers: OperationBlocker[] = [];
+  const warnings: OperationBlocker[] = [];
   const block = (code: string, message: string, action: string, target: OperationBlocker["target"]) => blockers.push({code,message,action,target});
   const remaining = Math.max(0, f.targetQuantity - f.processedQuantity);
   let ceiling = f.targetQuantity;
@@ -36,15 +37,21 @@ export function evaluateOperationReadiness(f: OperationReadinessFacts) {
   for (const p of f.predecessors) {
     // An explicit released transfer is required for an unfinished predecessor.
     // A good quantity declaration alone never means the batch was transferred.
-    const available = p.requireTransfer ? Math.max(0,p.transferred) : p.done ? Math.max(0,p.good) : p.partial ? Math.max(0,p.transferred) : 0;
+    const available = p.requireTransfer ? Math.max(0,p.transferred) : Math.max(0,p.good);
     ceiling = Math.min(ceiling, available);
-    if ((p.requireTransfer && available < (p.partial ? p.minimum : f.targetQuantity)) || (!p.done && (!p.partial || available < p.minimum))) block("PREDECESSOR_REQUIRED", `Attente de ${p.label}${p.partial ? ` : lot transférable de ${p.minimum} pièces minimum.` : " : opération complète requise."}`, "Consulter l’étape précédente", "operations");
+    // An unfinished routing step is an acknowledged warning. Physical quantity
+    // ceilings and external quality release still govern actual declarations.
+    if (!p.done || available < f.targetQuantity) warnings.push({code:`PREDECESSOR_PARTIAL:${p.id}`,
+      message:`${p.label} ${p.done ? 'est terminée avec une quantité partielle' : 'est encore en cours'} : ${available} pièces disponibles. Vous pouvez démarrer ; seules les pièces disponibles pourront être déclarées.`,
+      action:'Consulter l’étape précédente',target:'operations'});
+    if (p.requireTransfer && available <= 0) block('EXTERNAL_TRANSFER_REQUIRED',
+      `${p.label} : aucune pièce retournée et libérée par la qualité n’est encore transférée.`, 'Vérifier le retour de sous-traitance', 'qualite');
   }
   const availableQuantity = Math.max(0, Math.min(remaining, Math.floor(ceiling - f.processedQuantity)));
   if (!remaining) block("QUANTITY_COMPLETE", "Toute la quantité de cette opération est déjà déclarée.", "Vérifier puis terminer l’opération", "operations");
-  else if (!availableQuantity && !blockers.length) block("QUANTITY_UNAVAILABLE", "Aucune quantité supplémentaire n’est encore utilisable sur cette opération.", "Vérifier la matière et les étapes précédentes", "matiere");
+  else if (!availableQuantity && !blockers.length && !f.predecessors.length) block("QUANTITY_UNAVAILABLE", "Aucune quantité supplémentaire n’est encore utilisable sur cette opération.", "Vérifier la matière et les étapes précédentes", "matiere");
   return {id:f.id,label:f.label,phase:f.phase,status:f.status,targetQuantity:f.targetQuantity,processedQuantity:f.processedQuantity,
-    remainingQuantity:remaining,availableQuantity,canStart:availableQuantity>0&&!blockers.length,partial:availableQuantity>0&&availableQuantity<remaining,blockers};
+    remainingQuantity:remaining,availableQuantity,canStart:remaining>0&&!blockers.length,partial:availableQuantity<remaining,blockers,warnings};
 }
 
 /** Good, rejected, awaiting inspection and awaiting rework are exclusive outputs.

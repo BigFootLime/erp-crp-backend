@@ -4,8 +4,8 @@ import {partialReservationConsumption} from '../domain/partial-reservation-consu
 import {assertOperationalLotQualityEligibility} from '../../qualite/repository/quality-operational-gate.repository';
 import {assertStockConsumptionAllowed,beginStockCommand,completeStockCommand,lockStockStates,stockTargetKey,repoCreateMovement,repoPostMovement,type AuditContext} from './stock.repository';
 
-type Input={reservationId:string;ofId:number;operationId:string|null;kind?:'MATIERE'|'CONSOMMABLE';quantity:number;expectedVersion:number;idempotencyKey:string;reason:string};
-type Result={reservationId:string;stockMovementId:string;quantity:number;remaining:number;status:'ACTIVE'|'CONSUMED'};
+type Input={reservationId:string;ofId:number;operationId:string|null;kind?:'MATIERE'|'CONSOMMABLE';quantity:number;expectedVersion:number;idempotencyKey:string;reason:string;barDiscardAllowance?:number};
+type Result={reservationId:string;stockMovementId:string;quantity:number;remaining:number;status:'ACTIVE'|'CONSUMED';extendedQuantity?:number};
 
 /** Internal stock command, joined to the debit transaction. The production
  * owner must first lock planning and OF, then all source lots in stable order. */
@@ -34,10 +34,23 @@ export async function consumeMaterialReservationTx(tx:PoolClient,input:Input,aud
   if(!row)throw new HttpError(409,'MATERIAL_RESERVATION_MISMATCH','Cette réservation ne couvre pas la matière de cette opération.');
   if(row.status!=='ACTIVE'||!row.unexpired)throw new HttpError(409,'MATERIAL_RESERVATION_EXPIRED','Cette réservation n’est plus active. Revoyez la couverture matière.');
   if(row.row_version!==input.expectedVersion)throw new HttpError(409,'CONCURRENT_MODIFICATION','Cette réservation a changé. Relisez le reliquat avant de débiter.');
-  const next=partialReservationConsumption({reserved:row.qty_reserved,consumed:row.qty_consumed,prepared:row.qty_prepared,quantity:input.quantity});
   const target={stock_level_id:row.stock_level_id,stock_batch_id:row.stock_batch_id};
   const state=(await lockStockStates(tx,[target])).get(stockTargetKey(target));
   if(!state)throw new HttpError(409,'STOCK_LEVEL_MISSING','Le stock du lot ne peut pas être vérifié.');
+  const extra=Math.max(0,input.quantity-(row.qty_reserved-row.qty_consumed));
+  if(extra>0){
+    // Only the explicitly measured discarded end of a bar may extend this
+    // reservation. Free stock and quality release are rechecked under locks.
+    if(!Number.isFinite(input.barDiscardAllowance)||extra>(input.barDiscardAllowance??0)+1e-9||input.kind==='CONSOMMABLE')
+      throw new HttpError(409,'MATERIAL_DEBIT_RESERVATION_EXCEEDED','Le prélèvement dépasse la réservation.');
+    if(row.lot_id)await assertOperationalLotQualityEligibility({client:tx,lotId:row.lot_id,qty:extra,unit:row.unit,purpose:'RESERVE'});
+    assertStockConsumptionAllowed(state,{movement_type:'RESERVE',qty:extra});
+    await tx.query('UPDATE public.stock_levels SET qty_reserved=qty_reserved+$2,updated_at=now(),updated_by=$3 WHERE id=$1::uuid',[row.stock_level_id,extra,audit.user_id]);
+    if(row.stock_batch_id)await tx.query('UPDATE public.stock_batches SET qty_reserved=qty_reserved+$2 WHERE id=$1::uuid',[row.stock_batch_id,extra]);
+    await tx.query('UPDATE public.stock_reservations SET qty_reserved=qty_reserved+$2,updated_at=now(),updated_by=$3 WHERE id=$1::uuid',[input.reservationId,extra,audit.user_id]);
+    row.qty_reserved+=extra;state.qty_reserved+=extra;
+  }
+  const next=partialReservationConsumption({reserved:row.qty_reserved,consumed:row.qty_consumed,prepared:row.qty_prepared,quantity:input.quantity});
   assertStockConsumptionAllowed(state,{movement_type:'UNRESERVE',qty:next.unreserve});
   await tx.query('UPDATE public.stock_levels SET qty_reserved=qty_reserved-$2,updated_at=now(),updated_by=$3 WHERE id=$1::uuid',[row.stock_level_id,next.unreserve,audit.user_id]);
   if(row.stock_batch_id)await tx.query('UPDATE public.stock_batches SET qty_reserved=qty_reserved-$2 WHERE id=$1::uuid',[row.stock_batch_id,next.unreserve]);
@@ -50,7 +63,7 @@ export async function consumeMaterialReservationTx(tx:PoolClient,input:Input,aud
     consumed_at=now(),consumed_by=$6,updated_at=now(),updated_by=$6,reason=$7 WHERE id=$1::uuid`,[input.reservationId,next.consumed,next.prepared,next.status,movementId,audit.user_id,input.reason]);
   const posted=await repoPostMovement(movementId,{},audit,`${command.key}:post`,tx,{reservationId:input.reservationId});
   if(posted?.movement.status!=='POSTED')throw new HttpError(409,'MATERIAL_CONSUMPTION_NOT_POSTED','La sortie matière n’a pas été comptabilisée. Aucun débit n’est conservé.');
-  const result:Result={reservationId:input.reservationId,stockMovementId:movementId,quantity:input.quantity,remaining:next.remaining,status:next.status};
+  const result:Result={reservationId:input.reservationId,stockMovementId:movementId,quantity:input.quantity,remaining:next.remaining,status:next.status,extendedQuantity:extra};
   await completeStockCommand(tx,{audit,command,command_type:'RESERVATION_CONSUME',resource_type:'stock_reservation',resource_id:input.reservationId,result_payload:result});
   return result;
 }

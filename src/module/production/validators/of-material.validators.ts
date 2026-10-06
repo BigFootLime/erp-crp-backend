@@ -29,13 +29,16 @@ export const materialDebitSchema=materialCommandSchema.extend({
   varianceReason:z.string().trim().min(10).max(2000).nullable().optional(),
   remnants:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
     dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9))}).strict()).max(100).default([]),
-  sources:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive()}).strict()).min(1).max(100),
+  sources:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive(),
+    barClosure:z.object({discardedQuantity:z.number().finite().nonnegative().max(1e9).multipleOf(.001),acknowledgedLargeRemainder:z.boolean()}).strict().optional(),
+  }).strict()).min(1).max(100),
   successorOperationId:z.string().uuid().nullable(),
 }).strict().superRefine((v,ctx)=>{
   if(v.good+v.scrap===0)ctx.addIssue({code:'custom',path:['good'],message:'Indiquez les bruts obtenus ou rebutés.'});
   if(v.scrap>0&&!v.scrapReason)ctx.addIssue({code:'custom',path:['scrapReason'],message:'Précisez la cause du rebut.'});
   if(new Set(v.sources.map(s=>s.reservationId)).size!==v.sources.length)ctx.addIssue({code:'custom',path:['sources'],message:'Une réservation ne peut figurer deux fois.'});
   if(new Set(v.remnants.map(s=>s.reservationId)).size!==v.remnants.length||v.remnants.some(r=>!v.sources.some(s=>s.reservationId===r.reservationId)))ctx.addIssue({code:'custom',path:['remnants'],message:'Chaque chute doit correspondre à un lot prélevé unique.'});
+  if(v.sources.some(s=>s.barClosure&&v.remnants.some(r=>r.reservationId===s.reservationId)))ctx.addIssue({code:'custom',path:['remnants'],message:'Une barre soldée avec reliquat écarté ne peut pas aussi créer une chute réutilisable.'});
 });
 export type MaterialDebit=z.infer<typeof materialDebitSchema>;
 export const materialDebitCorrectionSchema=materialCommandSchema.extend({debitId:z.string().uuid(),reason:z.string().trim().min(10).max(2000)}).strict();

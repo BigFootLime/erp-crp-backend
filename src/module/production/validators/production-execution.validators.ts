@@ -121,6 +121,7 @@ export const startExecutionSchema = z.object({
     activity_code: activityCode,
     time_type: z.enum(["OPERATEUR", "MACHINE", "PROGRAMMATION"]).optional(),
     expected_readiness_version: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    acknowledged_warning_codes: z.array(z.string().min(1).max(100)).max(100).optional(),
     comment: z.string().trim().max(2000).nullable().optional(),
 
     operator_user_id: z.coerce.number().int().positive().optional(),
