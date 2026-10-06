@@ -3,6 +3,12 @@ allowBuilds:
   bcrypt: true
   esbuild: true
 overrides:
-  'fast-uri@>=3.0.0 <3.1.6': '3.1.6'
+  'fast-uri@>=3.0.0 <3.1.7': '3.1.7'
   'nanoid@<3.3.18': '^3.3.18'
   'js-yaml@>=4.0.0 <4.3.2': '4.3.2'
+  'brace-expansion@<1.1.20': '1.1.20'
+  'brace-expansion@>=4.0.0 <5.0.11': '5.0.11'
+  'engine.io@>=6.6.0 <6.6.10': '6.6.10'
+  'source-map-js@>=1.0.0 <1.2.2': '1.2.2'
+  'proxy-addr@>=1.1.0 <2.0.8': '2.0.8'
+  'tinypool@<2.1.2': '2.1.2'

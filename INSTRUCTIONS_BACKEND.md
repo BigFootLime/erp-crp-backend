@@ -36,14 +36,14 @@ Observed from `package.json`, `tsconfig.json`, and code:
 - Docs: `swagger-ui-express`, `swagger-jsdoc` (dev), and `@scalar/express-api-reference`; OpenAPI spec in `src/swagger/swagger.ts`
 - WebSocket: `socket.io` (`src/sockets/sockeServer.ts`)
 - Tests: Vitest (`vitest`) + Supertest (`supertest`) under `src/__tests__`
-- Dev runner: `ts-node-dev` (`npm run dev`)
+- Dev runner: native Node watch + `ts-node/register/transpile-only` (`npm run dev`)
 
 ## 4) Local Dev / Build Commands
 
 From `package.json`:
 
 - Install: `npm ci` (recommended for CI parity) or `npm install`
-- Dev: `npm run dev` (runs `ts-node-dev --respawn --transpile-only src/index.ts`)
+- Dev: `npm run dev` (runs `node --watch --require ts-node/register/transpile-only src/index.ts`)
 - Build: `npm run build` (runs `tsc -p tsconfig.json`, outputs `dist/`)
 - Start (built): `npm start` (runs `node dist/index.js`)
 - Tests:
