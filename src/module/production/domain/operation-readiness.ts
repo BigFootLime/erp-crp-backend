@@ -6,7 +6,7 @@ export type OperationReadinessFacts = {
   id: string; label: string; phase: number; status: string; targetQuantity: number; processedQuantity: number;
   dossierComplete: boolean; executionStatus: string; planned: boolean; machineBlocked: boolean;
   preparationMissing: boolean; programRequired: boolean; programReady: boolean; qualityBlocked: boolean;
-   componentsMissing: boolean; inspectionMissing?: boolean;
+   componentsMissing: boolean; inspectionMissing?: boolean; wholeOfMaterialBlockers?: string[];
   materials: Array<{label: string; availableBlanks: number; allowPartial: boolean; blockers: string[]}>;
   predecessors: Array<{id: string; label: string; done: boolean; good: number; transferred: number; partial: boolean; minimum: number; requireTransfer?:boolean}>;
 };
@@ -26,6 +26,8 @@ export function evaluateOperationReadiness(f: OperationReadinessFacts) {
   if (f.programRequired && !f.programReady) block("PROGRAM_REQUIRED", "Le programme requis n’est pas encore disponible.", "Terminer et référencer le programme", "programmation");
   if (f.qualityBlocked) block("QUALITY_BLOCKED", "Un contrôle applicable ou une non-conformité bloque cette opération.", "Consulter le contrôle et sa décision", "qualite");
   if (f.componentsMissing) block("COMPONENTS_MISSING", "Les composants de cet assemblage ne sont pas tous réservés et libérés par la qualité.", "Vérifier la couverture et la qualité des composants", "matiere");
+  for(const reason of f.wholeOfMaterialBlockers??[]) block('OF_FULL_MATERIAL_REQUIRED',reason,
+    'Réserver toute la matière de l’OF ; les achats attendus ne permettent pas de démarrer', 'matiere');
   for (const m of f.materials) {
     ceiling = Math.min(ceiling, Math.max(0, Math.floor(m.availableBlanks)));
     for (const reason of m.blockers) block("MATERIAL_BLOCKED", `${m.label} : ${reason}`, "Vérifier les lots réservés", "matiere");
