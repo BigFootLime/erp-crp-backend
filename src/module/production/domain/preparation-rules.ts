@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-export const PREPARATION_RULES_VERSION = 1;
+export const PREPARATION_RULES_VERSION = 2;
+const REQUIRED_PREPARATION_KEYS = new Set(["plan", "material", "treatment", "subcontract"]);
 export type PreparationStatus =
   | "READY"
   | "MISSING"
@@ -27,6 +28,16 @@ export type PreparationDecisions = {
   };
   manufacturing_plan_required?: boolean;
 };
+
+/** Incomplete optional choices remain completable after the planning freeze. */
+export function programmingDecisionDefined(decision: PreparationDecisions["programming"]): boolean {
+  if (decision?.mode === "NONE") return (decision.reason?.trim().length ?? 0) >= 3;
+  if (decision?.mode === "EXISTING") return Boolean(decision.reference?.trim());
+  return decision?.mode === "TASK"
+    && Boolean(decision.task_id?.trim())
+    && Number.isFinite(decision.estimated_hours)
+    && Number(decision.estimated_hours) > 0;
+}
 export type PurchaseEvidence = {
   article_policy?: {stock_managed:boolean;consumption_mode:"UNIT"|"GLOBAL_PACK";receipt_quality_required:boolean;unit:string|null;consumable:boolean}|null;
   id: string;
@@ -112,12 +123,12 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
     ready: boolean,
     detail: string,
     scope: "VERSION" | "OF" = "VERSION",
-    required = true,
+    required = REQUIRED_PREPARATION_KEYS.has(key),
   ) => {
     items.push({
       key,
       label,
-      status: ready ? "READY" : required ? "MISSING" : "NOT_REQUIRED",
+      status: ready ? "READY" : "MISSING",
       required,
       detail,
       scope,
@@ -131,6 +142,9 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
       f.version_current,
     "Version applicable et courante requise.",
   );
+  // Identity is an integrity guard, separate from the four business rubrics.
+  // A draft/obsolete revision cannot be frozen under another revision's evidence.
+  if (items[0].status !== "READY") items[0].status = "BLOCKED";
   add(
     "plan",
     "Plan client",
@@ -143,8 +157,10 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
     f.manufacturing_plan_count > 0,
     "Plan atelier de cet indice.",
     "VERSION",
-    f.decisions.manufacturing_plan_required === true,
+    false,
   );
+  if (!f.decisions.manufacturing_plan_required && f.manufacturing_plan_count === 0)
+    items[items.length - 1].status = "NOT_REQUIRED";
   add(
     "documents",
     "Documents requis",
@@ -163,6 +179,7 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
         p.piece_technique_version_id === f.version_id,
     );
     const notRequired =
+      (key !== "material" || f.manufacturing_mode === "ASSEMBLY") &&
       decision?.mode === "NOT_REQUIRED" &&
       (decision.reason?.trim().length ?? 0) >= 3 &&
       rows.length === 0;
@@ -186,6 +203,7 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
       "VERSION",
       !notRequired,
     );
+    if (notRequired) items[items.length - 1].status = "NOT_REQUIRED";
   }
   const consumables=f.purchases.filter(p=>p.type_achat==="CONSOMMABLE");
   if(consumables.length) add("consumables","Consommables",consumables.every(p=>p.article_id&&p.quantite>0&&p.designation?.trim()
@@ -247,7 +265,11 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
 }
 
 export function isPreparationReady(items: readonly PreparationItem[]): boolean {
-  return items.every((x) => !x.required || x.status === "READY");
+  return items.every((x) => x.status !== "BLOCKED" && (!x.required || x.status === "READY"));
+}
+
+export function preparationWarnings(items: readonly PreparationItem[]): PreparationItem[] {
+  return items.filter((item) => !item.required && item.status === "MISSING");
 }
 
 export function planningUrgency(params: {

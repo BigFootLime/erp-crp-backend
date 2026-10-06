@@ -43,7 +43,9 @@ WITH operation_rows AS (
         WHEN op.poste_id IS NOT NULL THEN 'poste:'||op.poste_id::text END AS resource_id,
    COALESCE(e.start_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_start END) AS committed_start,
    COALESCE(e.end_ts,CASE WHEN frozen.value->>'type_operation'='SOUS_TRAITANCE' THEN t.committed_end END) AS committed_end,op.started_at AS actual_start,op.ended_at AS actual_end,
-   op.status::text AS status,o.technical_readiness AS readiness,
+   op.status::text AS status,CASE WHEN o.preparation_rules_version>=2 AND NOT EXISTS(
+     SELECT 1 FROM public.of_dossier_validations v WHERE v.of_id=o.id AND v.invalidated_at IS NULL)
+     THEN 'INCOMPLETE' ELSE o.technical_readiness END AS readiness,
    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END AS due,
    CASE o.priority::text WHEN 'CRITICAL' THEN 3 WHEN 'HIGH' THEN 2 WHEN 'LOW' THEN 0 ELSE 1 END AS priority,
    op.created_at,op.updated_at,op.tp*60 AS setup_minutes,op.tf_unit*op.qte*op.coef*60 AS unit_minutes,

@@ -5,7 +5,7 @@ import { HttpError } from "../../../utils/httpError";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import type { AuditContext } from "./production.repository";
 import {
-  assertPreparationMutable,
+  assertExecutionEvidenceMutable,
   evaluateOfPreparation,
   loadPreparationOrder,
   persistPreparationEvaluation,
@@ -16,6 +16,16 @@ import {
   type SelfInspectionSnapshot,
 } from "../services/self-inspection-pdf";
 
+async function attachReadyInspection(tx: Pick<PoolClient, 'query'>, ofId: number, audit: AuditContext, evaluation: Awaited<ReturnType<typeof evaluateOfPreparation>>) {
+  await tx.query(`UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2,
+    technical_preparation=COALESCE(technical_preparation,'{}') || jsonb_build_object(
+      'self_inspection_sheet_id',(SELECT id::text FROM public.of_self_inspection_sheets WHERE of_id=$1 AND source_hash=$3 AND state='READY'))
+      || CASE WHEN technical_snapshot_sha256 IS NOT NULL AND COALESCE(technical_snapshot->'preparation_evidence'->'quality_plan','null'::jsonb)='null'::jsonb
+        THEN jsonb_build_object('execution_quality',$4::jsonb) ELSE '{}'::jsonb END
+    WHERE id=$1`,
+    [ofId, audit.user_id, evaluation.sheet_hash, JSON.stringify({quality_plan: evaluation.sources.quality_plan, characteristics: evaluation.sources.characteristics})]);
+}
+
 export async function generateSelfInspectionTx(
   tx: Pick<PoolClient, "query">,
   ofId: number,
@@ -23,9 +33,13 @@ export async function generateSelfInspectionTx(
   audit: AuditContext,
 ) {
   const of = await loadPreparationOrder(tx, ofId, true);
-  assertPreparationMutable(of, expected);
+  assertExecutionEvidenceMutable(of, expected);
   const evaluation = await evaluateOfPreparation(tx, ofId);
-  if (evaluation.sheet?.state === "READY") return evaluation;
+  if (evaluation.sheet?.state === "READY") {
+    await attachReadyInspection(tx, ofId, audit, evaluation);
+    await preparationAudit(tx, audit, ofId, 'production.preparation.self-inspection.attach', {sheet_id: evaluation.sheet.id, source_hash: evaluation.sheet_hash});
+    return persistPreparationEvaluation(tx, ofId);
+  }
   const plan = evaluation.sources.quality_plan;
   if (
     !plan ||
@@ -82,10 +96,7 @@ export async function generateSelfInspectionTx(
       createHash("sha256").update(pdf).digest("hex"),
     ],
   );
-  await tx.query(
-    "UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2 WHERE id=$1",
-    [ofId, audit.user_id],
-  );
+  await attachReadyInspection(tx, ofId, audit, evaluation);
   await preparationAudit(
     tx,
     audit,

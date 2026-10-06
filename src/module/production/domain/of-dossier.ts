@@ -20,9 +20,8 @@ export function evaluateDossier(f: DossierFacts, validation?: {source_hash:strin
   const blockers: Array<{code:string;message:string;operationId?:string}> = [];
   if(f.technicalReadiness!=="VALIDATED" || !f.technicalHash || !f.revision)
     blockers.push({code:"TECHNICAL_PREPARATION_REQUIRED",message:"Valider et figer le dossier technique de l’OF."});
-  if(!f.operations.length) blockers.push({code:"ROUTING_REQUIRED",message:"Définir les opérations de fabrication."});
-  for(const operation of f.operations) if(!operation.planned && !["RUNNING","DONE"].includes(operation.status))
-    blockers.push({code:"OPERATION_NOT_PLANNED",message:`Planifier la phase ${operation.phase} : ${operation.label}.`,operationId:operation.id});
+  // Completeness precedes planning. A slot is still required by the execution
+  // gate, but neither assigning nor withdrawing it changes the prepared product.
   const fingerprint=dossierSourceHash(f);
   const valid=!!validation && !validation.invalidated_at && validation.source_hash===fingerprint && !blockers.length;
   const mayValidate=["BROUILLON","PLANIFIE"].includes(f.status) || (!!validation && ["EN_COURS","EN_PAUSE"].includes(f.status));

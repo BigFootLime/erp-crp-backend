@@ -16,6 +16,7 @@ import {
   repoReviewPreparationStock,
 } from "./production-preparation.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
+import { repoCompleteOfDossier, repoOfDossier } from "./of-dossier.repository";
 import {
   repoCreateOrdreFabrication,
   repoSubmitOfTechnicalPreparation,
@@ -40,10 +41,9 @@ async function prepareFixture(
 ) {
   let e = await evaluateOfPreparation(pool, f.ids[0]);
   const decisions = {
-    material: {
-      mode: "NOT_REQUIRED" as const,
-      reason: "Matière fournie pour cet essai",
-    },
+    material: f.manufacturingMode === "ASSEMBLY"
+      ? { mode: "NOT_REQUIRED" as const, reason: "Montage de sous-pièces fabriquées" }
+      : { mode: "REQUIRED" as const },
     treatment: {
       mode: "NOT_REQUIRED" as const,
       reason: "Aucun traitement prévu",
@@ -98,6 +98,7 @@ describe.skipIf(!isolated)(
     let fixture: Awaited<ReturnType<typeof seedProductionWorkbenchFixture>>;
     beforeAll(async () => {
       fixture = await seedProductionWorkbenchFixture();
+      await pool.query("UPDATE public.app_feature_flags SET enabled=true WHERE key='PRODUCTION_MATERIAL_WORKFLOW'");
     });
     afterAll(async () => {
       await pool.end();
@@ -117,6 +118,52 @@ describe.skipIf(!isolated)(
         await tx.query("ROLLBACK");
         tx.release();
       }
+    });
+    it("completes before planning and adds inspection and programming evidence without rewriting the frozen product", async () => {
+      const f = await seedProductionWorkbenchFixture({ qualityDraft: true });
+      const id = f.ids[0];
+      let e = await evaluateOfPreparation(pool, id);
+      e = await repoSavePreparationDecisions(id, {
+        expected_updated_at: e.of.updated_at,
+        version_id: f.version,
+        expected_version: e.profile_version,
+        decisions: {
+          material: { mode: "REQUIRED" },
+          treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement prévu" },
+          subcontract: { mode: "NOT_REQUIRED", reason: "Fabrication interne" },
+        },
+      }, f.audit);
+      expect(e.ready).toBe(true);
+      expect(e.warnings.map(item => item.key)).toEqual(expect.arrayContaining(["quality", "programming", "self_inspection"]));
+      await repoSubmitOfTechnicalPreparation({ id, body: { expected_updated_at: e.of.updated_at }, audit: f.audit });
+      e = await evaluateOfPreparation(pool, id);
+      await repoValidateOfTechnicalPreparation({ id, body: { expected_updated_at: e.of.updated_at }, audit: f.audit });
+      e = await evaluateOfPreparation(pool, id);
+      const frozenHash = e.of.technical_snapshot_sha256;
+      const dossier = await repoOfDossier(id);
+      if (!dossier.enabled) throw Error("Material workflow required by the isolated fixture");
+      expect(dossier.operations.every(operation => !operation.planned)).toBe(true);
+      const complete = await repoCompleteOfDossier(id, { expectedVersion: dossier.version, idempotencyKey: randomUUID() }, f.audit);
+      expect(complete.status).toBe("COMPLETE");
+      await pool.query("UPDATE public.ordres_fabrication SET statut='PLANIFIE' WHERE id=$1", [id]);
+      await pool.query("UPDATE public.quality_control_plan SET status='PUBLISHED',published_at=now(),published_by=$2 WHERE id=$1::uuid", [f.quality, f.audit.user_id]);
+      e = await evaluateOfPreparation(pool, id);
+      e = await repoGenerateSelfInspection(id, e.of.updated_at, f.audit);
+      expect(e.sheet?.state).toBe("READY");
+      expect(e.of.technical_preparation?.execution_quality?.quality_plan?.id).toBe(f.quality);
+      expect(e.programming_assignment_allowed).toBe(true);
+      e = await repoSaveProgrammingTask(id, {
+        expected_updated_at: e.of.updated_at,
+        assignee_id: f.audit.user_id,
+        estimated_hours: 2,
+        status: "DONE",
+        program_reference: `${f.code}-CN`,
+      }, f.audit);
+      expect(e.programming_task?.status).toBe("DONE");
+      expect(e.of.technical_snapshot_sha256).toBe(frozenHash);
+      expect(e.sheet?.state).toBe("READY");
+      const stillComplete = await repoOfDossier(id);
+      expect(stillComplete.enabled && stillComplete.status).toBe("COMPLETE");
     });
     it("offers and accepts secondary programming roles but rejects unassigned or inactive users", async () => {
       const f = await seedProductionWorkbenchFixture();
@@ -725,8 +772,7 @@ describe.skipIf(!isolated)(
       let e = await evaluateOfPreparation(pool, id);
       const decisions = {
         material: {
-          mode: "NOT_REQUIRED" as const,
-          reason: "Matière fournie pour cet essai",
+          mode: "REQUIRED" as const,
         },
         treatment: {
           mode: "NOT_REQUIRED" as const,
@@ -837,6 +883,12 @@ describe.skipIf(!isolated)(
         ),
       ).rejects.toThrow("OF_COVERED_BY_CONSOLIDATION");
       const poste = randomUUID();
+      const dossier = await repoOfDossier(group.producer_of_id);
+      if (!dossier.enabled) throw Error("Material workflow required by the isolated fixture");
+      await repoCompleteOfDossier(group.producer_of_id, {
+        expectedVersion: dossier.version,
+        idempotencyKey: randomUUID(),
+      }, fixture.audit);
       await pool.query(
         "INSERT INTO public.postes(id,code,label,is_active) VALUES($1::uuid,$2,'Poste de recette préparation',true)",
         [poste, fixture.code],

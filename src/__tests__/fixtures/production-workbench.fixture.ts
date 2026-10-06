@@ -8,6 +8,7 @@ export async function seedProductionWorkbenchFixture(
     draft?: boolean;
     child?: { piece: string; version: string; article: string };
     componentQuantity?: number;
+    qualityDraft?: boolean;
   } = {},
 ) {
   const url = new URL(process.env.DATABASE_URL || "http://invalid");
@@ -58,6 +59,19 @@ export async function seedProductionWorkbenchFixture(
       VALUES($1::uuid,$2::uuid,'A',$3,'BROUILLON',true,now(),now(),CURRENT_DATE,1,$3,$3,now(),'NONE')`,
       [version, piece, code],
     );
+    if (!options.child) {
+      const materialArticle = randomUUID();
+      await tx.query(
+        `INSERT INTO public.articles(id,code,designation,article_type,unite,lot_tracking,is_active,article_category,stock_managed,family_code,root_article_id,version_number,plan_index,status,is_sold,row_version)
+         VALUES($1::uuid,$2,'Matière synthétique de préparation','PURCHASED','kg',true,true,'matiere',true,'matiere_premiere',$1::uuid,1,1,'VALIDE',false,1)`,
+        [materialArticle, `${code}-MP`],
+      );
+      await tx.query(
+        `INSERT INTO public.pieces_techniques_achats(piece_technique_id,piece_technique_version_id,phase,nom,designation,type_achat,article_id,quantite,unite_prix)
+         VALUES($1::uuid,$2::uuid,10,'Brut synthétique','Brut synthétique','MATIERE',$3::uuid,1,'kg')`,
+        [piece, version, materialArticle],
+      );
+    }
     if (options.child) {
       await tx.query(
         "UPDATE public.piece_technique_versions SET manufacturing_mode='ASSEMBLY' WHERE id=$1::uuid",
@@ -86,6 +100,11 @@ export async function seedProductionWorkbenchFixture(
       [cf, code],
     );
     await tx.query(
+      `INSERT INTO public.production_cost_center_rates(cf_id,taux_horaire,devise,date_effet,source,created_by)
+       VALUES($1::uuid,50,'EUR',CURRENT_DATE,'Fixture synthétique workbench : 50 EUR/h',$2)`,
+      [cf, user],
+    );
+    await tx.query(
       `INSERT INTO public.gammes(id,piece_technique_version_id,code,designation,statut,is_current,created_by,updated_by) VALUES($1::uuid,$2::uuid,$3,'Gamme démonstration','APPLICABLE',true,$4,$4)`,
       [gamme, version, code, user],
     );
@@ -108,7 +127,7 @@ export async function seedProductionWorkbenchFixture(
       VALUES($1::uuid,'D1',1,'Diamètre extérieur','DIMENSIONAL','NUMERIC','mm',10,-0.1,0.1,2,'MAJOR',true,false,'Pied à coulisse','9.9 à 10.1 mm','ALL','IN_PROCESS')`,
       [quality],
     );
-    await tx.query(
+    if (!options.qualityDraft) await tx.query(
       `UPDATE public.quality_control_plan SET status='PUBLISHED',published_at=now(),published_by=$2 WHERE id=$1::uuid`,
       [quality, user],
     );
@@ -141,7 +160,7 @@ export async function seedProductionWorkbenchFixture(
       page_key: "production",
       client_session_id: null,
     };
-    return { ids, piece, version, article, gamme, cf, quality, audit, code };
+    return { ids, piece, version, article, gamme, cf, quality, audit, code, manufacturingMode: options.child ? "ASSEMBLY" : "SIMPLE" };
   } catch (e) {
     await tx.query("ROLLBACK");
     throw e;
