@@ -12,7 +12,7 @@ import {
   buildConsolidationPlan,
   type ConsolidationSource,
 } from "../domain/consolidation-rules";
-import { sourceHash } from "../domain/preparation-rules";
+import { PREPARATION_RULES_VERSION, sourceHash } from "../domain/preparation-rules";
 import {
   preparationAudit,
   assertOfPreparationReady,
@@ -20,6 +20,7 @@ import {
 } from "./production-preparation.repository";
 import { generateSelfInspectionTx } from "./self-inspection.repository";
 import { createConsolidationSurplusComponents } from "./consolidation-components.repository";
+import {previewConsolidationMaterialTx,transferConsolidationMaterialTx} from './consolidation-material.repository';
 import type { AuditContext } from "./production.repository";
 import type { ConsolidationRequest } from "../validators/production-workbench.validators";
 
@@ -83,6 +84,7 @@ async function previewTx(tx: Db, request: ConsolidationRequest, lock = false) {
   await assertConsolidationEnabled(tx);
   const sources = await readSources(tx, request, lock);
   const plan = buildConsolidationPlan(sources, request.surplus_quantity);
+  const material=await previewConsolidationMaterialTx(tx,sources.map(s=>s.id),plan.quantity,lock);
   const load = (
     await tx.query<{ producer_minutes: number; separate_minutes: number }>(
       `SELECT (SELECT COALESCE(sum(${PLANNED_OPERATION_DURATION_MINUTES_SQL}),0)::int FROM public.of_operations op CROSS JOIN (SELECT $2::numeric AS quantite_lancee) o WHERE op.of_id=$1) AS producer_minutes,
@@ -92,6 +94,7 @@ async function previewTx(tx: Db, request: ConsolidationRequest, lock = false) {
   ).rows[0];
   return {
     ...plan,
+    material,
     workload: load,
     preview_hash: sourceHash({
       request,
@@ -100,7 +103,7 @@ async function previewTx(tx: Db, request: ConsolidationRequest, lock = false) {
         updated_at: s.updated_at,
         hash: s.technical_snapshot_sha256,
       })),
-      plan,
+      plan,material,
     }),
     sources,
   };
@@ -143,6 +146,7 @@ export async function repoCreateConsolidation(
         );
       return { ...prior, idempotent_replay: true };
     }
+    await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
     const preview = await previewTx(tx, input.request, true);
     if (preview.preview_hash !== input.preview_hash)
       throw new HttpError(
@@ -181,9 +185,9 @@ export async function repoCreateConsolidation(
     await tx.query(
       `INSERT INTO public.ordres_fabrication(id,numero,article_id,client_id,piece_technique_id,piece_technique_version_id,
       technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,technical_readiness,technical_preparation,preparation_rules_version,
-      quantite_lancee,statut,priority,root_of_id,generation_level,structure_path,quantity_per_parent,quantity_cumulative,planning_wait_started_at,date_fin_prevue,notes,created_by,updated_by)
-      VALUES($1::bigint,$2,$3::uuid,$4,$5::uuid,$6::uuid,$7::jsonb,$8,now(),'VALIDATED',jsonb_build_object('consolidation',true),1,
-      $9,'BROUILLON',$14::of_priority,$1::bigint,0,($1::bigint)::text,1,1,$10::timestamptz,$11::date,$12,$13,$13)`,
+      quantite_lancee,statut,priority,root_of_id,generation_level,structure_path,quantity_per_parent,quantity_cumulative,planning_wait_started_at,date_fin_prevue,notes,created_by,updated_by,material_origin_limit)
+      VALUES($1::bigint,$2,$3::uuid,$4,$5::uuid,$6::uuid,$7::jsonb,$8,now(),'VALIDATED',jsonb_build_object('consolidation',true),$16,
+      $9,'BROUILLON',$14::of_priority,$1::bigint,0,($1::bigint)::text,1,1,$10::timestamptz,$11::date,$12,$13,$13,$15)`,
       [
         producerId,
         numero,
@@ -210,6 +214,8 @@ export async function repoCreateConsolidation(
               a.priority ?? "NORMAL",
             ),
         )[0].priority ?? "NORMAL",
+        preview.material.policy.maximumLots,
+        PREPARATION_RULES_VERSION,
       ],
     );
     await tx.query(
@@ -255,6 +261,7 @@ export async function repoCreateConsolidation(
         ],
       )
     ).rows[0];
+    await transferConsolidationMaterialTx(tx,group.id,producerId,preview.material,audit);
     for (const s of preview.sources) {
       // Requirements and their reservations follow the physical producer.
       // The commercial source and its child genealogy remain traceable.
@@ -315,21 +322,14 @@ export async function repoCreateConsolidation(
         audit.user_id,
       ],
     );
-    const prepared = await generateSelfInspectionTx(
-      tx,
-      producerId,
-      producerEvaluation.of.updated_at,
-      audit,
-    );
-    if (!prepared.ready || prepared.sheet?.state !== "READY")
-      throw new HttpError(
-        422,
-        "CONSOLIDATION_PREPARATION_INCOMPLETE",
-        "La fiche du regroupement n’a pas pu être préparée. Aucun OF n’a été regroupé.",
-      );
+    // Optional execution documents must not prevent a technically complete OF
+    // from being planned. Their execution gates remain mandatory before start.
+    let prepared = await assertOfPreparationReady(tx, producerId);
+    if (prepared.sources.quality_plan && prepared.sources.characteristics.length)
+      prepared = await generateSelfInspectionTx(tx, producerId, prepared.of.updated_at, audit);
     await tx.query(
-      `UPDATE public.ordres_fabrication SET technical_preparation=technical_preparation||jsonb_build_object('self_inspection_sheet_id',$2::text,'prepared_source_hash',$3::text),technical_validated_at=now(),technical_validated_by=$4 WHERE id=$1`,
-      [producerId, prepared.sheet.id, prepared.source_hash, audit.user_id],
+      `UPDATE public.ordres_fabrication SET technical_preparation=technical_preparation||jsonb_build_object('prepared_source_hash',$2::text),technical_validated_at=now(),technical_validated_by=$3 WHERE id=$1`,
+      [producerId, prepared.source_hash, audit.user_id],
     );
     await preparationAudit(
       tx,
@@ -377,6 +377,13 @@ export async function repoDissolveConsolidation(
   audit: AuditContext,
 ) {
   return withRealtimeOutboxTransaction(await pool.connect(), async (tx) => {
+    await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
+    // Use the same OF-before-reservation lock order as starts and regrouping.
+    await tx.query(`SELECT o.id FROM public.ordres_fabrication o WHERE o.id IN (
+      SELECT producer_of_id FROM public.production_consolidations WHERE id=$1::uuid
+      UNION SELECT source_of_id FROM public.production_consolidation_allocations WHERE consolidation_id=$1::uuid
+      UNION SELECT unnest(surplus_of_ids)::bigint FROM public.production_consolidations WHERE id=$1::uuid)
+      ORDER BY o.id FOR UPDATE`,[id]);
     const group = (
       await tx.query<{
         producer_of_id: number;
@@ -417,7 +424,9 @@ export async function repoDissolveConsolidation(
         `SELECT EXISTS(SELECT 1 FROM public.planning_events WHERE (of_id=$1 OR of_operation_id IN(SELECT id FROM public.of_operations WHERE of_id=$1)) AND archived_at IS NULL AND status<>'CANCELLED')
       OR EXISTS(SELECT 1 FROM public.of_operations WHERE of_id=$1 AND status::text NOT IN ('TODO','READY'))
       OR EXISTS(SELECT 1 FROM public.production_consolidation_allocations WHERE consolidation_id=$2::uuid AND received_quantity>0)
-      OR EXISTS(SELECT 1 FROM public.stock_reservations WHERE of_id=$1 AND status IN ('ACTIVE','CONSUMED') AND (status='CONSUMED' OR of_component_requirement_id IS NULL OR of_component_requirement_id NOT IN(SELECT requirement_id FROM public.production_consolidation_component_transfers WHERE consolidation_id=$2::uuid))) AS engaged`,
+      OR EXISTS(SELECT 1 FROM public.stock_reservations WHERE of_id=$1 AND status IN ('ACTIVE','CONSUMED') AND (status='CONSUMED' OR qty_consumed>0 OR
+        (id NOT IN(SELECT reservation_id FROM public.production_consolidation_material_transfers WHERE consolidation_id=$2::uuid)
+         AND (of_component_requirement_id IS NULL OR of_component_requirement_id NOT IN(SELECT requirement_id FROM public.production_consolidation_component_transfers WHERE consolidation_id=$2::uuid))))) AS engaged`,
         [group.producer_of_id, id],
       )
     ).rows[0].engaged;
@@ -459,6 +468,11 @@ export async function repoDissolveConsolidation(
       `UPDATE public.stock_reservations r SET of_id=t.source_of_id,updated_at=now(),updated_by=$2 FROM public.production_consolidation_component_transfers t WHERE t.consolidation_id=$1::uuid AND r.of_component_requirement_id=t.requirement_id AND r.status='ACTIVE'`,
       [id, audit.user_id],
     );
+    await tx.query(`UPDATE public.stock_reservations r SET of_id=t.source_of_id,source_id=t.source_of_id::text,
+      material_need_id=t.source_need_id,updated_at=now(),updated_by=$2 FROM public.production_consolidation_material_transfers t
+      WHERE t.consolidation_id=$1::uuid AND r.id=t.reservation_id AND r.status='ACTIVE' AND r.qty_consumed=0`,[id,audit.user_id]);
+    await tx.query('UPDATE public.of_material_needs SET superseded_at=now(),updated_at=now(),updated_by=$2 WHERE of_id=$1 AND superseded_at IS NULL',
+      [group.producer_of_id,audit.user_id]);
     await tx.query(
       `UPDATE public.of_component_requirements r SET consuming_of_id=t.source_of_id,updated_at=now() FROM public.production_consolidation_component_transfers t WHERE t.consolidation_id=$1::uuid AND r.id=t.requirement_id`,
       [id],

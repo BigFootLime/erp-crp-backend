@@ -6,6 +6,7 @@ import {preparationAudit} from "./production-preparation.repository";
 import {quantity} from "../domain/of-material";
 import {transferCustomerMaterialReceiptTx} from './customer-material-receipts.repository';
 import {receivedAllocationQuantity} from '../domain/material-future-supply';
+import {assertMaterialReservationOriginTx} from './of-material-policy.repository';
 
 /** The receipt owner calls this before locking stock. The planning lock serializes
  * coverage confirmation with a receipt; OF locks precede reservation/lot locks. */
@@ -74,6 +75,14 @@ export async function transferMaterialReceiptTx(tx:PoolClient,receiptId:string,a
     if(qty<=0)continue;
     if((allocation.article_id!==receipt.article_id && allocation.article_id!==receipt.source_article_id)||allocation.unit?.trim().toUpperCase()!==receipt.unite?.trim().toUpperCase())
       throw new HttpError(409,"MATERIAL_RECEIPT_UNIT_MISMATCH","L’article ou l’unité de réception diffère du besoin affecté. Corrigez la réception avant mise en stock.");
+    try{await assertMaterialReservationOriginTx(tx,Number(allocation.of_id),allocation.material_need_id,receipt.lot_id);}
+    catch(error){
+      if(!(error instanceof HttpError)||error.code!=='MATERIAL_LOT_LIMIT')throw error;
+      await preparationAudit(tx,audit,Number(allocation.of_id),'production.of.material.receipt_origin_limit',
+        {receiptId,purchaseNeedId:allocation.id,lotId:receipt.lot_id,quantity:qty,maximum:error.details});
+      // Receive physical goods normally, but leave this portion unreserved.
+      continue;
+    }
     const result=await repoCreateStockReservation({article_id:receipt.article_id,magasin_id:receipt.dst_magasin_id,emplacement_id:Number(receipt.dst_emplacement_id),
       lot_id:receipt.lot_id,qty,source:{source_type:"OF",of_id:Number(allocation.of_id)},reason:"Affectation de la réception au besoin matière déjà destinataire"},
       audit,`material-receipt:${receiptId}:${allocation.id}${portionId ? `:${portionId}` : ""}`,tx,allocation.material_need_id);

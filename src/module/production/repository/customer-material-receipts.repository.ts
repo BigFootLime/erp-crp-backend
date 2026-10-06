@@ -3,6 +3,7 @@ import type {AuditContext} from './production.repository';
 import {HttpError} from '../../../utils/httpError';
 import {repoCreateStockReservation} from '../../stock/repository/stock-reservation.repository';
 import {preparationAudit} from './production-preparation.repository';
+import {assertMaterialReservationOriginTx} from './of-material-policy.repository';
 
 export async function transferCustomerMaterialReceiptTx(tx:PoolClient,receiptId:string,audit:AuditContext){
   const r=(await tx.query(`SELECT c.id::text AS call_id,c.client_id,n.id::text AS need_id,n.of_id,n.unit,n.article_id::text,n.superseded_at,
@@ -21,6 +22,13 @@ export async function transferCustomerMaterialReceiptTx(tx:PoolClient,receiptId:
   // An explicit separation preserves the receipt in client-owned free stock.
   // It must not reserve against either the superseded or the current need.
   if(r.kept_separate)return [];
+  try{await assertMaterialReservationOriginTx(tx,Number(r.of_id),r.need_id,r.lot_id);}
+  catch(error){
+    if(!(error instanceof HttpError)||error.code!=='MATERIAL_LOT_LIMIT')throw error;
+    await preparationAudit(tx,audit,Number(r.of_id),'production.of.material.receipt_origin_limit',
+      {receiptId,callId:r.call_id,lotId:r.lot_id,quantity:r.qty,maximum:error.details});
+    return [];
+  }
   const result=await repoCreateStockReservation({article_id:r.article_id,magasin_id:r.dst_magasin_id,emplacement_id:Number(r.dst_emplacement_id),lot_id:r.lot_id,qty:r.qty,
     source:{source_type:'OF',of_id:Number(r.of_id)},reason:'Bruts client reçus et libérés, affectés à leur OF destinataire'},audit,`customer-material-receipt:${receiptId}`,tx,r.need_id);
   await tx.query('INSERT INTO public.of_customer_material_receipt_transfers(receipt_id,call_id,reservation_id) VALUES($1::uuid,$2::uuid,$3::uuid)',[receiptId,r.call_id,result.reservation.id]);
