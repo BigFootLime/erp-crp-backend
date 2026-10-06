@@ -45,7 +45,9 @@ export function materialBalance(need:MaterialNeed){
     surplus:Math.max(0,protectedQty-milli(need.required))/1000};
 }
 /** Shared pool is debited as each need is proposed, including unreserved demand. */
-export function proposeMaterialCoverage(needs:MaterialNeed[],lots:MaterialLot[]){
+export function proposeMaterialCoverage<T extends MaterialLot>(needs:MaterialNeed[],lots:T[],originPolicy?:{
+  maximumLots:number;usedOrigins:Set<string>;originsByLot:Record<string,string[]>;
+}){
   const available=new Map(lots.map(l=>[l.batchId,milli(Math.max(0,l.available))]));
   const levels=new Map(lots.filter(l=>l.stockLevelId&&l.levelAvailable!==undefined).map(l=>[l.stockLevelId!,milli(Math.max(0,l.levelAvailable!))]));
   const released=new Map(lots.filter(l=>l.qualityAvailable!==undefined).map(l=>[l.id,milli(Math.max(0,l.qualityAvailable!))]));
@@ -55,8 +57,10 @@ export function proposeMaterialCoverage(needs:MaterialNeed[],lots:MaterialLot[])
     let missing=milli(balance.missing);
     const candidates=ordered.filter(l=>l.articleId===need.articleId).map(lot=>{
       const reasons=lotCompatibility(need,lot),free=Math.min(available.get(lot.batchId)??0,lot.stockLevelId?levels.get(lot.stockLevelId)??Infinity:Infinity,released.get(lot.id)??Infinity);
-      const take=reasons.length?0:Math.min(missing,free);
-      if(take>0){selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);if(released.has(lot.id))released.set(lot.id,released.get(lot.id)!-take);missing-=take;}
+      const roots=originPolicy?.originsByLot[lot.id]??[lot.id];
+      const originAllowed=!originPolicy||(roots.length>0&&new Set([...originPolicy.usedOrigins,...roots]).size<=originPolicy.maximumLots);
+      const take=reasons.length||!originAllowed?0:Math.min(missing,free);
+      if(take>0){roots.forEach(root=>originPolicy?.usedOrigins.add(root));selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);if(released.has(lot.id))released.set(lot.id,released.get(lot.id)!-take);missing-=take;}
       return {lot,reasons,available:free/1000,proposed:take/1000};
     });
     return {...balance,key:need.key,candidates,selections,purchaseMissing:missing/1000};

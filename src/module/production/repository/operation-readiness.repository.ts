@@ -8,6 +8,7 @@ import {readMaterialReservationAvailabilityTx,type MaterialReservationAvailabili
 import {assertOperationQuantityCeiling,evaluateOperationReadiness,type OperationReadinessFacts} from "../domain/operation-readiness";
 import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
+import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 
 type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
@@ -86,6 +87,11 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     }
   }
   const availableReservations=reservationAvailability??await readMaterialReservationAvailabilityTx(tx,coverage);
+  const missingMaterial=missingPhysicalMaterial(coverage.needs.map(need=>({key:need.key,designation:need.designation,
+    unit:need.unit,required:need.required,consumed:need.consumed,usableReserved:availableReservations.get(need.key)?.usable??0,
+    blockers:[...need.blockers,...(availableReservations.get(need.key)?.blockers??[])]})));
+  let originBlock:string|null=null;
+  try{assertMaterialOriginLimit(coverage.originPolicy,[]);}catch(error){if(!(error instanceof HttpError))throw error;originBlock=error.message;}
   for(const need of coverage.needs){
     if(!need.operationId)continue;
     const available=availableReservations.get(need.key)!;
@@ -103,6 +109,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
        programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
+      wholeOfMaterialBlockers:[...missingMaterial.map(n=>`${n.designation} : ${n.missing} ${n.unit??''} à couvrir physiquement.${n.blockers.length?' '+n.blockers.join(' '):''}`),...(originBlock?[originBlock]:[])],
       predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>{
         const packages=external.filter(p=>p.operationId===d.predecessor);
         if(operations.some(source=>source.id===d.predecessor&&source.kind==='SOUS_TRAITANCE')){
@@ -116,7 +123,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
-  return {enabled:true as const,ofId,number:dossier.number,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
+  return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
 }
 
 export async function getOperationReadiness(ofId:number){
@@ -137,7 +144,9 @@ export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,o
     LEFT JOIN public.of_material_needs n ON n.id=destination.target_need_id
     LEFT JOIN public.of_component_requirements c ON c.id=r.of_component_requirement_id
     WHERE r.status='ACTIVE' AND r.lot_id IS NOT NULL AND(r.expires_at IS NULL OR r.expires_at>now()) AND
-      ((n.of_id=$1 AND n.operation_id=$2::uuid) OR(c.consuming_of_id=$1 AND EXISTS(SELECT 1 FROM public.of_operations op
+      ((n.of_id=$1) OR(r.of_id=$1 AND r.material_need_id IS NULL AND r.of_component_requirement_id IS NULL
+        AND EXISTS(SELECT 1 FROM public.articles_matiere a WHERE a.article_id=r.article_id))
+        OR(c.consuming_of_id=$1 AND EXISTS(SELECT 1 FROM public.of_operations op
         JOIN public.ordres_fabrication o ON o.id=op.of_id CROSS JOIN LATERAL jsonb_array_elements(o.technical_snapshot->'operations') f
         WHERE op.id=$2::uuid AND f->>'phase'=op.phase::text AND f->>'type_operation'='ASSEMBLAGE'))) ORDER BY 1`,[ofId,operationId])).rows;
   for(const r of reservations)await assertOperationalLotQualityEligibility({client:tx,lotId:r.lot_id,qty:0,purpose:'RESERVE'});

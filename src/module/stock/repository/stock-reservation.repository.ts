@@ -1,6 +1,7 @@
 import db from "../../../config/database";
 import type { PoolClient } from "pg";
 import { assertLegacyMaterialWrite } from "./of-material-write-guard";
+import { assertMaterialReservationOriginTx } from '../../production/repository/of-material-policy.repository';
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
@@ -235,6 +236,8 @@ export async function repoCreateStockReservation(
     }
 
     if(body.source.source_type==="OF"&&!materialNeedId)await assertLegacyMaterialWrite(client,body.source.of_id,body.article_id);
+    if (body.source.source_type === 'OF')
+      await assertMaterialReservationOriginTx(client, body.source.of_id, materialNeedId, body.lot_id, body.article_id);
 
     const article = await client.query<{ stock_managed: boolean; lot_tracking: boolean; consumption_mode:string }>(
       `SELECT stock_managed, lot_tracking, consumption_mode FROM public.articles WHERE id = $1::uuid`,

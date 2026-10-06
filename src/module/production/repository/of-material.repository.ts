@@ -12,6 +12,7 @@ import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-f
 import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 import {readMaterialDebitsTx} from './material-debit-history.repository';
 import {materialCarryBlockers} from '../domain/material-reconciliation';
+import {readMaterialOriginPolicyTx} from './of-material-policy.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
@@ -136,13 +137,16 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
       rowVersion:row?.row_version??null,consumptionAdjustment};
   });
+  const originPolicy=await readMaterialOriginPolicyTx(tx,[ofId],lots.map(l=>l.id));
   // Per-need checks are never generalized to another reference or revision.
   const remaining=new Map(lots.map(l=>[l.batchId,l.available]));
   const remainingQuality=new Map(lots.map(l=>[l.id,l.qualityAvailable??0]));
   const remainingLevels=new Map(lots.filter(l=>l.stockLevelId).map(l=>[l.stockLevelId!,l.levelAvailable!]));
+  const proposedOrigins=new Set(originPolicy.usedOrigins);
   const coverage=needs.map(need=>{
     const candidates=lots.map(l=>({...l,available:remaining.get(l.batchId)??0,qualityAvailable:remainingQuality.get(l.id)??0,levelAvailable:l.stockLevelId?remainingLevels.get(l.stockLevelId):undefined,manualVerified:checks.some(c=>c.need_id===need.id&&c.lot_id===l.id&&c.requirements_hash===coverageFingerprint(need.requirements)&&c.lot_properties_hash===l.propertiesHash&&c.manual_checks_confirmed)}));
-    const proposal=proposeMaterialCoverage([need],candidates)[0];
+    const proposal=proposeMaterialCoverage([need],candidates,{maximumLots:originPolicy.maximumLots,
+      usedOrigins:proposedOrigins,originsByLot:originPolicy.originsByLot})[0];
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     return {...need,...proposal,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
@@ -158,8 +162,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       targets:needs.filter(t=>t.id).map(t=>({id:t.id!,designation:t.designation,required:t.required,blockers:[...t.blockers,...materialCarryBlockers(identity,t)]}))};
   });
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
-    technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations}),needs:coverage,customerCalls,debits,
+    technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy}),needs:coverage,customerCalls,debits,
     previousNeeds:historicalNeeds.filter(n=>!reconciliations.some(r=>r.previous_need_id===n.id)),
     retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
@@ -179,6 +183,11 @@ export async function materialCommand<T>(ofId:number,type:string,body:{expectedV
     const hash=coverageFingerprint({ofId,type,body});
     const replay=(await tx.query("SELECT * FROM public.of_material_commands WHERE idempotency_key=$1::uuid",[body.idempotencyKey])).rows[0];
     if(replay){if(replay.payload_hash!==hash||replay.actor_id!==audit.user_id)throw new HttpError(409,"IDEMPOTENCY_KEY_REUSED","Cette action a déjà été utilisée avec un autre contenu.");return replay.response as T;}
+    const producer=(await tx.query<{producer_of_id:number}>(`SELECT c.producer_of_id::bigint::int
+      FROM public.production_consolidation_allocations a JOIN public.production_consolidations c ON c.id=a.consolidation_id
+      WHERE a.source_of_id=$1 AND a.state='ACTIVE' AND c.state='ACTIVE'`,[ofId])).rows[0];
+    if(producer)throw new HttpError(409,'OF_COVERED_BY_CONSOLIDATION','La matière de cet OF est suivie dans son OF de regroupement.',
+      {producerOfId:producer.producer_of_id});
     const current=await readMaterialTx(tx,ofId);
     if(current.version!==body.expectedVersion)throw new HttpError(409,"MATERIAL_COVERAGE_CHANGED","Le stock, le dossier ou un achat a changé. Actualisez la proposition avant de confirmer.");
     const response=await action(tx,current);
