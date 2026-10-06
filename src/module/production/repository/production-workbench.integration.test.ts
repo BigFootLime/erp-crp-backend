@@ -17,6 +17,8 @@ import {
 } from "./production-preparation.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
 import { repoCompleteOfDossier, repoOfDossier } from "./of-dossier.repository";
+import { readCentralDependencies } from '../../planning/repository/planning-central.repository';
+import { applicableProgram, type OperationContext } from '../../terminals/repository/terminal-dossier.repository';
 import {
   repoCreateOrdreFabrication,
   repoSubmitOfTechnicalPreparation,
@@ -147,6 +149,8 @@ describe.skipIf(!isolated)(
       expect(complete.status).toBe("COMPLETE");
       await pool.query("UPDATE public.ordres_fabrication SET statut='PLANIFIE' WHERE id=$1", [id]);
       await pool.query("UPDATE public.quality_control_plan SET status='PUBLISHED',published_at=now(),published_by=$2 WHERE id=$1::uuid", [f.quality, f.audit.user_id]);
+      const liveDossier = await repoOfDossier(id);
+      expect(liveDossier.enabled && liveDossier.warnings.map(item=>item.key)).not.toContain('quality');
       e = await evaluateOfPreparation(pool, id);
       e = await repoGenerateSelfInspection(id, e.of.updated_at, f.audit);
       expect(e.sheet?.state).toBe("READY");
@@ -160,10 +164,35 @@ describe.skipIf(!isolated)(
         program_reference: `${f.code}-CN`,
       }, f.audit);
       expect(e.programming_task?.status).toBe("DONE");
+      const taskId = e.programming_task!.id;
+      const op = (await pool.query('SELECT id::text,phase FROM public.of_operations WHERE of_id=$1 ORDER BY phase LIMIT 1',[id])).rows[0];
+      expect(await readCentralDependencies(pool)).toEqual(expect.arrayContaining([expect.objectContaining({predecessorId:`version-program:${taskId}`,successorId:`op:${op.id}`})]));
+      const terminalContext:OperationContext={...e.of, of_id:id, operation_id:op.id, phase:op.phase, machine_id:null,
+        designation:'Fraisage',status:'TODO',piece_technique_version_id:f.version,technical_snapshot:e.of.technical_snapshot??null};
+      const terminalProgram = await applicableProgram(terminalContext);
+      expect(terminalProgram.reference).toBe(`${f.code}-CN`);
       expect(e.of.technical_snapshot_sha256).toBe(frozenHash);
       expect(e.sheet?.state).toBe("READY");
       const stillComplete = await repoOfDossier(id);
       expect(stillComplete.enabled && stillComplete.status).toBe("COMPLETE");
+      // The second OF owns a different late task without changing the first.
+      const secondId=f.ids[1];
+      let second=await evaluateOfPreparation(pool,secondId);
+      await repoSubmitOfTechnicalPreparation({id:secondId,body:{expected_updated_at:second.of.updated_at},audit:f.audit});
+      second=await evaluateOfPreparation(pool,secondId);
+      await repoValidateOfTechnicalPreparation({id:secondId,body:{expected_updated_at:second.of.updated_at},audit:f.audit});
+      second=await evaluateOfPreparation(pool,secondId);
+      expect(second.programming_task).toBeNull();
+      second=await repoSaveProgrammingTask(secondId,{expected_updated_at:second.of.updated_at,assignee_id:f.audit.user_id,
+        estimated_hours:3,status:'TODO'},f.audit);
+      expect(second.programming_task?.id).not.toBe(taskId);
+      expect((await evaluateOfPreparation(pool,id)).programming_task?.program_reference).toBe(`${f.code}-CN`);
+      const tx=await pool.connect();
+      try {
+        await tx.query('BEGIN');
+        await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=now(),invalidation_reason='Test isolé' WHERE of_id=$1",[id]);
+        await expect(tx.query("UPDATE public.of_operations SET status='RUNNING' WHERE id=$1",[op.id])).rejects.toThrow('OF_DOSSIER_REQUIRED');
+      } finally {await tx.query('ROLLBACK');tx.release();}
     });
     it("offers and accepts secondary programming roles but rejects unassigned or inactive users", async () => {
       const f = await seedProductionWorkbenchFixture();

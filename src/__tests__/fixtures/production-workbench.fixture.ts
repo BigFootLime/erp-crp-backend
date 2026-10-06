@@ -142,7 +142,7 @@ export async function seedProductionWorkbenchFixture(
       );
       await tx.query(
         `INSERT INTO public.ordres_fabrication(id,numero,client_id,article_id,piece_technique_id,quantite_lancee,statut,technical_preparation,preparation_rules_version,planning_wait_started_at,created_by,updated_by,root_of_id)
-        VALUES($1,$2,'901',$3::uuid,$4::uuid,$5,'BROUILLON',jsonb_build_object('selected_version_id',$6::text),1,now()-interval '49 hours',$7,$7,$1)`,
+        VALUES($1,$2,'901',$3::uuid,$4::uuid,$5,'BROUILLON',jsonb_build_object('selected_version_id',$6::text),2,now()-interval '49 hours',$7,$7,$1)`,
         [id, `${code}-${qty}`, article, piece, qty, version, user],
       );
       ids.push(id);

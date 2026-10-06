@@ -85,6 +85,18 @@ function complete(): PreparationFacts {
   };
 }
 describe("Source-backed production preparation", () => {
+  it("preserves version-1 required sections and the historical material exemption", () => {
+    const f = complete();
+    f.purchases=[];
+    f.decisions.material={mode:'NOT_REQUIRED',reason:'Brut client déjà couvert'};
+    expect(isPreparationReady(evaluatePreparation(f,1))).toBe(true);
+    expect(isPreparationReady(evaluatePreparation(f,2))).toBe(false);
+    f.sheet_current=false;
+    expect(evaluatePreparation(f,1).find(item=>item.key==='self_inspection')?.required).toBe(true);
+    expect(isPreparationReady(evaluatePreparation(f,1))).toBe(false);
+    expect(evaluatePreparation({...complete(),decisions:{...complete().decisions,manufacturing_plan_required:true}},1)
+      .find(item=>item.key==='manufacturing_plan')?.required).toBe(true);
+  });
   it("accepts a complete manual piece with justified non-applicable services", () =>
     expect(isPreparationReady(evaluatePreparation(complete()))).toBe(true));
   it.each(["client_plan_count"] as const)(

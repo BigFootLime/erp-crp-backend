@@ -15,6 +15,7 @@ export type OperationContext = {
   piece_technique_id: string;
   piece_technique_version_id: string | null;
   technical_snapshot: Record<string, any> | null;
+  technical_preparation?: Record<string, any> | null;
   technical_snapshot_sha256: string | null;
   technical_readiness: string;
   quantite_lancee: number;
@@ -30,7 +31,7 @@ export async function operationContext(
   const row = (
     await db.query<OperationContext>(
       `SELECT o.id::int AS of_id,op.id::text AS operation_id,op.phase,op.designation,op.status::text,
-    op.machine_id::text,o.piece_technique_id::text,o.piece_technique_version_id::text,o.technical_snapshot,o.technical_snapshot_sha256,
+    op.machine_id::text,o.piece_technique_id::text,o.piece_technique_version_id::text,o.technical_snapshot,o.technical_snapshot_sha256,o.technical_preparation,
     o.technical_readiness,o.quantite_lancee::float8,o.numero,o.statut::text
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
     WHERE op.id=$1 AND o.id=$2 AND (op.machine_id=$3 OR EXISTS(SELECT 1 FROM public.planning_events e
@@ -389,7 +390,7 @@ export async function applicableProgram(
 ) {
   const frozen = frozenProgram(context);
   const decision =
-    context.technical_snapshot?.preparation_decisions?.programming;
+    context.technical_preparation?.execution_programming ?? context.technical_snapshot?.preparation_decisions?.programming;
   if (decision?.mode !== "TASK") return frozen;
   const task = (
     await db.query<{
@@ -398,8 +399,8 @@ export async function applicableProgram(
       updated_at: string;
     }>(
       `SELECT program_reference,completed_at::text,updated_at::text
-    FROM public.piece_version_programming_tasks WHERE id::text=$1 AND piece_technique_version_id=$2 AND status='DONE'`,
-      [decision.task_id, context.piece_technique_version_id],
+     FROM public.piece_version_programming_tasks WHERE id::text=$1 AND piece_technique_version_id=$2 AND (of_id IS NULL OR of_id=$3) AND status='DONE'`,
+      [decision.task_id, context.piece_technique_version_id, context.of_id],
     )
   ).rows[0];
   if (!task)

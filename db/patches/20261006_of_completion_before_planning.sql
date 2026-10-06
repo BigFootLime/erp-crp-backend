@@ -1,5 +1,10 @@
 -- #811 / web #1095: completeness before planning; execution retains inspection and programme guards.
 BEGIN;
+-- Keep reusable version tasks; late choices belong to the OF that requested them.
+ALTER TABLE public.piece_version_programming_tasks ADD COLUMN IF NOT EXISTS of_id bigint REFERENCES public.ordres_fabrication(id);
+ALTER TABLE public.piece_version_programming_tasks DROP CONSTRAINT IF EXISTS piece_version_programming_tasks_piece_technique_version_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS piece_version_programming_tasks_shared_version_uidx ON public.piece_version_programming_tasks(piece_technique_version_id) WHERE of_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS piece_version_programming_tasks_of_uidx ON public.piece_version_programming_tasks(of_id) WHERE of_id IS NOT NULL;
 CREATE OR REPLACE FUNCTION public.fn_guard_preparation_execution_712() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target bigint; o public.ordres_fabrication; execution boolean:=false; task uuid; operation uuid; operation_kind text; programme jsonb; frozen_operation jsonb;
 BEGIN
@@ -23,7 +28,7 @@ BEGIN
      OR (execution AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s WHERE s.id=NULLIF(o.technical_preparation->>'self_inspection_sheet_id','')::uuid AND s.of_id=o.id AND s.state='READY' AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) THEN
     RAISE EXCEPTION 'OF_PREPARATION_REQUIRED: terminer et valider le dossier de préparation' USING ERRCODE='23514';
   END IF;
-  IF NOT execution AND o.preparation_rules_version>=2 AND NOT EXISTS(SELECT 1 FROM public.of_dossier_validations v
+  IF o.preparation_rules_version>=2 AND NOT EXISTS(SELECT 1 FROM public.of_dossier_validations v
     WHERE v.of_id=target AND v.invalidated_at IS NULL) THEN
     RAISE EXCEPTION 'OF_DOSSIER_REQUIRED: valider le dossier complet avant planning' USING ERRCODE='23514';
   END IF;
@@ -39,10 +44,11 @@ BEGIN
     WHERE op.id=operation AND op.of_id=target AND f.value->>'phase'=op.phase::text
       AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
     LIMIT 1;
-    IF operation_kind IN ('DECOUPE','CONTROLE','ASSEMBLAGE','FINITION','TRAITEMENT','SOUS_TRAITANCE','AUTRE') THEN execution:=false; END IF;
+    IF operation_kind IN ('DECOUPE','CONTROLE','ASSEMBLAGE','FINITION','TRAITEMENT','SOUS_TRAITANCE','AUTRE','LAVAGE','EMBALLAGE') THEN execution:=false; END IF;
   END IF;
   IF execution AND ((task IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.piece_version_programming_tasks WHERE id=task
-    AND piece_technique_version_id=o.piece_technique_version_id AND status='DONE' AND NULLIF(btrim(program_reference),'') IS NOT NULL))
+    AND piece_technique_version_id=o.piece_technique_version_id AND (of_id IS NULL OR of_id=o.id)
+    AND status='DONE' AND NULLIF(btrim(program_reference),'') IS NOT NULL))
     OR (o.preparation_rules_version>=2 AND task IS NULL AND (programme->>'mode' IS DISTINCT FROM 'NONE' OR length(btrim(COALESCE(programme->>'reason','')))<3)
       AND COALESCE(NULLIF(btrim(frozen_operation->>'numero_programme'),''),NULLIF(btrim(programme->>'reference'),'')) IS NULL)) THEN
     RAISE EXCEPTION 'OF_PROGRAMMING_REQUIRED: terminer la programmation avant démarrage' USING ERRCODE='23514';

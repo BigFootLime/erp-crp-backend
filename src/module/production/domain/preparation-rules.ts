@@ -115,7 +115,8 @@ export function sourceHash(value: unknown): string {
     .digest("hex");
 }
 
-export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
+export function evaluatePreparation(f: PreparationFacts, rulesVersion = PREPARATION_RULES_VERSION): PreparationItem[] {
+  const legacy = rulesVersion < 2;
   const items: PreparationItem[] = [];
   const add = (
     key: string,
@@ -123,12 +124,12 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
     ready: boolean,
     detail: string,
     scope: "VERSION" | "OF" = "VERSION",
-    required = REQUIRED_PREPARATION_KEYS.has(key),
+    required = legacy || REQUIRED_PREPARATION_KEYS.has(key),
   ) => {
     items.push({
       key,
       label,
-      status: ready ? "READY" : "MISSING",
+      status: ready ? "READY" : legacy && !required ? "NOT_REQUIRED" : "MISSING",
       required,
       detail,
       scope,
@@ -157,7 +158,7 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
     f.manufacturing_plan_count > 0,
     "Plan atelier de cet indice.",
     "VERSION",
-    false,
+    legacy && f.decisions.manufacturing_plan_required === true,
   );
   if (!f.decisions.manufacturing_plan_required && f.manufacturing_plan_count === 0)
     items[items.length - 1].status = "NOT_REQUIRED";
@@ -179,7 +180,7 @@ export function evaluatePreparation(f: PreparationFacts): PreparationItem[] {
         p.piece_technique_version_id === f.version_id,
     );
     const notRequired =
-      (key !== "material" || f.manufacturing_mode === "ASSEMBLY") &&
+      (legacy || key !== "material" || f.manufacturing_mode === "ASSEMBLY") &&
       decision?.mode === "NOT_REQUIRED" &&
       (decision.reason?.trim().length ?? 0) >= 3 &&
       rows.length === 0;

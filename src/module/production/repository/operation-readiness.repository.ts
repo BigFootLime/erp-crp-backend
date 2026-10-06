@@ -32,7 +32,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
          WHEN 'EXISTING' THEN COALESCE(NULLIF(btrim(frozen.value->>'numero_programme'),''),NULLIF(btrim(programming.value->>'reference'),'')) IS NOT NULL
         WHEN 'TASK' THEN EXISTS(SELECT 1 FROM public.piece_version_programming_tasks pr
            WHERE pr.id::text=programming.value->>'task_id'
-            AND pr.piece_technique_version_id=o.piece_technique_version_id AND pr.status='DONE' AND NULLIF(btrim(pr.program_reference),'') IS NOT NULL)
+            AND pr.piece_technique_version_id=o.piece_technique_version_id AND (pr.of_id IS NULL OR pr.of_id=o.id)
+            AND pr.status='DONE' AND NULLIF(btrim(pr.program_reference),'') IS NOT NULL)
          ELSE NULLIF(btrim(frozen.value->>'numero_programme'),'') IS NOT NULL END)
       AS program_ready,
       (EXISTS(SELECT 1 FROM public.non_conformity nc WHERE nc.of_id=o.id AND nc.status::text NOT IN ('CLOSED','CANCELLED'))
@@ -40,7 +41,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
           WHERE NOT EXISTS(SELECT 1 FROM public.ged_document_versions v WHERE v.id::text=doc->>'version_id' AND v.status='APPLICABLE'))
         OR (frozen.value->>'type_operation'='CONTROLE' AND NOT EXISTS(SELECT 1 FROM public.quality_control_plan p
            WHERE p.id::text=COALESCE(o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id',o.technical_preparation->'execution_quality'->'quality_plan'->>'id')
-             AND p.piece_version_id=o.piece_technique_version_id AND p.status='PUBLISHED' AND p.archived_at IS NULL))) AS quality_blocked,
+             AND p.piece_version_id=o.piece_technique_version_id AND p.status='PUBLISHED' AND p.archived_at IS NULL
+             AND (p.effective_from IS NULL OR p.effective_from<=now()) AND (p.effective_to IS NULL OR p.effective_to>now())))) AS quality_blocked,
        (o.preparation_rules_version IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s
          WHERE s.id::text=o.technical_preparation->>'self_inspection_sheet_id' AND s.of_id=o.id AND s.state='READY'
            AND s.piece_technique_version_id=o.piece_technique_version_id AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) AS inspection_missing

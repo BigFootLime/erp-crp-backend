@@ -15,6 +15,10 @@ DO $$ DECLARE definition text; BEGIN
   IF (SELECT count(*) FROM pg_trigger WHERE tgfoid='public.fn_guard_preparation_execution_712()'::regprocedure AND NOT tgisinternal AND tgenabled<>'D') <> 6 THEN
     RAISE EXCEPTION 'One of the six execution/preparation guards is absent or disabled';
   END IF;
+  IF to_regclass('public.piece_version_programming_tasks_shared_version_uidx') IS NULL
+    OR to_regclass('public.piece_version_programming_tasks_of_uidx') IS NULL THEN
+    RAISE EXCEPTION 'Programming task scopes are not unique';
+  END IF;
 END $$;
 SET LOCAL ROLE cerp_app;
 SELECT count(*) AS readable_validations FROM public.of_dossier_validations;
