@@ -7,9 +7,7 @@ if (process.env.CERP_E2E_ISOLATED !== "1" || process.env.CERP_E2E_MANAGED_STACK 
   || url.pathname !== "/cerp_test" || url.username !== "cerp_e2e") {
   throw Error("Managed disposable SOL-05 database required");
 }
-require(require.resolve("ts-node/register/transpile-only", {
-  paths: [require("node:path").dirname(require.resolve("ts-node-dev/package.json"))],
-}));
+require("ts-node/register/transpile-only");
 const database = require("../../src/config/database.ts").default;
 async function main() {
   try {

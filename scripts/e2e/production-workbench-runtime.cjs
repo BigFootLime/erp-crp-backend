@@ -84,20 +84,12 @@ async function main() {
     return;
   }
   if (process.argv.includes("--server")) {
-    require(
-      require.resolve("ts-node/register/transpile-only", {
-        paths: [path.dirname(require.resolve("ts-node-dev/package.json"))],
-      }),
-    );
+    require("ts-node/register/transpile-only");
     require("../../src/index.ts");
     return;
   }
   if (process.argv.includes("--playwright")) {
-    require(
-      require.resolve("ts-node/register/transpile-only", {
-        paths: [path.dirname(require.resolve("ts-node-dev/package.json"))],
-      }),
-    );
+    require("ts-node/register/transpile-only");
     const { decryptMfaSecret } = require("../../src/module/auth/domain/mfa.ts");
     const { Client } = require("pg");
     const c = new Client({ connectionString: env.DATABASE_URL });
