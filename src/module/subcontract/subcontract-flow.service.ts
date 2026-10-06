@@ -192,14 +192,8 @@ export async function transferSubcontractReturn(
           "Choisissez une opération suivante de la gamme active.",
         );
       if (input.action === "RELEASE") {
-        const all = await readSubcontractFlows(tx, [p.of_operation_id]);
-        const released = all.reduce((n, f) => n + f.released, 0);
-        if (successor.minimum === null && released < Number(p.quantite_lancee))
-          throw new HttpError(
-            409,
-            "SUBCONTRACT_FULL_RETURN_REQUIRED",
-            "La gamme exige le retour conforme complet avant transfert.",
-          );
+        // Released partial returns may progress while the supplier retains the
+        // remainder. Downstream starts acknowledge the partial-flow warning.
         if (input.quantity > returned.transferable)
           throw new HttpError(
             409,
