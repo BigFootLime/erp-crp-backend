@@ -11,6 +11,7 @@ import type {
   UpdateLigneBodyDTO,
 } from "../validators/commande-fournisseur.validators";
 import db from "../../../config/database";
+import { repoReadPurchaseQualification } from "../repository/purchase-qualification.repository";
 import { computeCommandeTotaux } from "../domain/commande-fournisseur-totaux";
 import {
   repoAccuseReception,
@@ -40,6 +41,7 @@ export const listCommandesFournisseursSVC = (params: ListCommandesParams, includ
   repoListCommandesFournisseurs(params, { includePrices });
 
 export const getCommandeFournisseurKpisSVC = () => repoGetKpis();
+export const readPurchaseQualificationSVC = (id: string) => repoReadPurchaseQualification(id);
 
 export const getCommandeFournisseurSVC = (id: string, includePrices: boolean) =>
   repoGetCommandeFournisseur(id, { includePrices });
