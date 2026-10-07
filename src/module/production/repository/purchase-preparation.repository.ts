@@ -22,7 +22,7 @@ export async function readPurchasePreparationsTx(tx: Db, proposals: PurchasePrep
 
 /** Caller holds planning then OF locks; global consumables share one article scope. */
 export async function savePurchasePreparationsTx(tx: PoolClient, inputProposals: PurchasePreparation[], kind: PurchasePreparation['kind'], ofId: number,
-  sourceVersion: string, audit: AuditContext): Promise<void> {
+  sourceVersion: string, audit: AuditContext, options?: { persistCovered?: boolean }): Promise<void> {
   const proposals=inputProposals.map(raw=>{
     const {id: _id,saved: _saved,updatedAt: _updatedAt,...proposal}=raw as SavedPurchasePreparation;
     return proposal;
@@ -39,7 +39,7 @@ export async function savePurchasePreparationsTx(tx: PoolClient, inputProposals:
       FROM public.production_purchase_preparations WHERE scope_key=$1 FOR UPDATE`, [proposal.scopeKey])).rows[0];
     if (previous?.status === proposal.status && previous?.content_hash === hash) continue;
     // Do not create an empty request just because a covered OF was opened.
-    if (!previous && proposal.status === 'COUVERTE') continue;
+    if (!previous && proposal.status === 'COUVERTE' && !options?.persistCovered) continue;
     const row = (await tx.query<{ id: string }>(`INSERT INTO public.production_purchase_preparations
       (scope_key,kind,mode,of_id,source_ref,need_id,article_id,destination_id,supplier_id,technical_version_id,technical_hash,of_revision_id,
        designation,unit,missing_qty,ordered_qty,status,actions,snapshot,content_hash,source_version,created_by,updated_by)
