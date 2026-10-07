@@ -689,7 +689,7 @@ export const createLotSchema = z.object({
       supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
-      expiry_at: z.string().trim().optional().nullable(),
+      expiry_at: z.string().trim().date().optional().nullable(),
       quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
@@ -705,7 +705,7 @@ export const updateLotSchema = z.object({
       supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
       received_at: z.string().trim().optional().nullable(),
       manufactured_at: z.string().trim().optional().nullable(),
-      expiry_at: z.string().trim().optional().nullable(),
+      expiry_at: z.string().trim().date().optional().nullable(),
       quantite_lineaire_totale_mm: nullablePositiveNumber.optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })

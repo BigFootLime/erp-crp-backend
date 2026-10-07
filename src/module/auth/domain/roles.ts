@@ -140,3 +140,14 @@ export function hasAnyAssignedRole(
   const allowed = new Set(allowedRoles);
   return normalizeAssignedRoles(primaryRole, assignedRoles).some((role) => allowed.has(role));
 }
+
+/** Keep privileged-account policies aligned with canonical authorization aliases. */
+export function hasPrivilegedAssignedRole(
+  primaryRole: string | null | undefined,
+  assignedRoles: readonly string[] | null | undefined
+): boolean {
+  return effectiveRoleHasAny(authorizationRole(primaryRole, assignedRoles), [
+    "Directeur",
+    "Administrateur Systeme et Reseau",
+  ]);
+}
