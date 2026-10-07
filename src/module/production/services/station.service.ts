@@ -776,7 +776,7 @@ export async function svcDossier(params: {
   const canViewCosts = roleHasStationCapability(params.station.user.role, "view_costs");
 
   // --- Plan : le snapshot FIGÉ fait foi, jamais « la dernière version ». -----
-  const documents: PlanDocumentRef[] = (r.documents ?? []).map((d: any) => ({
+  const documents: PlanDocumentRef[] = (r.plan_documents ?? []).map((d: any) => ({
     id: d.id,
     label: d.label ?? null,
     original_name: d.original_name,
@@ -784,6 +784,7 @@ export async function svcDossier(params: {
     size_bytes: Number(d.size_bytes ?? 0),
     sha256: d.sha256 ?? null,
     piece_technique_id: core.piece_technique_id,
+    piece_technique_version_id: d.piece_technique_version_id,
   }));
 
   const planResolution = resolvePlanForSnapshot({
@@ -979,7 +980,7 @@ export async function svcDossier(params: {
             // n'assemble jamais un chemin de fichier lui-même, et la route
             // cible applique ses propres contrôles d'accès. Ce n'est pas un
             // chemin disque : `storage_path` ne sort jamais d'ici.
-            download_path: documentDownloadPath(core.piece_technique_id, planResolution.document.id),
+            download_path: `/ged/versions/${planResolution.document.id}/content`,
           }
         : null,
       matches_snapshot: planResolution.matches_snapshot,

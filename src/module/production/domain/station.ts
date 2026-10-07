@@ -813,6 +813,7 @@ export type PlanDocumentRef = {
   sha256: string | null;
   /** Version de pièce à laquelle ce document appartient. */
   piece_technique_id: string;
+  piece_technique_version_id?: string | null;
 };
 
 export type PlanResolution = {
@@ -849,7 +850,9 @@ export function resolvePlanForSnapshot(params: {
     };
   }
 
-  const document = documentsForSnapshotVersion[0] ?? null;
+  const document = documentsForSnapshotVersion.find(
+    (candidate) => candidate.piece_technique_version_id === snapshot.piece_technique_version_id
+  ) ?? null;
   if (!document) {
     return {
       document: null,
