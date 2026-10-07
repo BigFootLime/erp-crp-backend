@@ -92,7 +92,7 @@ export async function transferConsolidationMaterialTx(tx: PoolClient, consolidat
       await tx.query(`INSERT INTO public.production_consolidation_material_transfers(consolidation_id,reservation_id,source_of_id,source_need_id,producer_need_id)
         SELECT $1::uuid,r.id,$2,$3::uuid,$4::uuid FROM public.stock_reservations r WHERE r.id=ANY($5::uuid[])`,
       [consolidationId, source.ofId, source.needId, inserted.id, source.reservations]);
-      await tx.query(`UPDATE public.stock_reservations SET of_id=$1,source_id=$1::text,material_need_id=$2::uuid,updated_at=now(),updated_by=$3
+      await tx.query(`UPDATE public.stock_reservations SET of_id=$1::bigint,source_id=$1::bigint::text,material_need_id=$2::uuid,updated_at=now(),updated_by=$3
         WHERE id=ANY($4::uuid[]) AND status='ACTIVE' AND qty_consumed=0`, [producerId, inserted.id, audit.user_id, source.reservations]);
       await tx.query(`INSERT INTO public.of_material_lot_checks(need_id,lot_id,requirements_hash,evidence,decided_by,decided_at,lot_properties_hash,manual_checks_confirmed)
         SELECT $1::uuid,lot_id,requirements_hash,evidence,decided_by,decided_at,lot_properties_hash,manual_checks_confirmed
