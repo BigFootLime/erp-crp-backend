@@ -12,6 +12,7 @@ import type {
   MarginScopeType,
 } from "../domain/margin-engine";
 import type { CreateMarginInput, CreateRateVersion } from "../validators/margin-engine.validators";
+import { ofMarginOperationSourcesSql, OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_MEASUREMENTS_SQL } from "./of-margin-sources.sql";
 
 type ScopeIdentity = {
   scope_type: MarginScopeType;
@@ -99,6 +100,8 @@ function automaticCost(row: {
   source_ref: string | null;
   observed_at: string | null;
   rate_version_id?: string | null;
+  source_reliability?: MarginEvidence["source_reliability"];
+  currency?: string | null;
 }): MarginCostInput {
   return {
     key: row.key,
@@ -108,13 +111,13 @@ function automaticCost(row: {
     quantity: null,
     rate: null,
     rate_unit: null,
-    currency: "EUR",
+    currency: row.currency === null ? "UNKNOWN" : row.currency ?? "EUR",
     evidence: {
       ...evidence(row.source_type, row.source_ref, row.observed_at, {
         definition: `Coût HT calculé depuis ${row.source_type}.`,
-        source_reliability: row.source_type.includes("RECALC") || row.source_type.includes("STOCK") || row.source_type.includes("RECEPTION")
-          ? "VERIFIED"
-          : "ESTIMATED",
+        // A physical issue, receipt or measured duration proves its quantity.
+        // It does not by itself verify its accounting valuation or applied rate.
+        source_reliability: row.source_reliability ?? "ESTIMATED",
       }),
       rate_version_id: row.rate_version_id ?? null,
     },
@@ -165,6 +168,8 @@ type CostRow = {
   source_type: string;
   source_ref: string | null;
   observed_at: string | null;
+  source_reliability?: MarginEvidence["source_reliability"];
+  currency?: string | null;
 };
 
 async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: string): Promise<MarginCostInput[]> {
@@ -207,29 +212,8 @@ async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: strin
   return rows.rows.map(automaticCost);
 }
 
-async function loadOfCosts(scopeRef: string, basis: MarginBasis): Promise<{ costs: MarginCostInput[]; measurements: Record<string, string | number | null> }> {
-  const hoursColumn = basis === "STANDARD"
-    ? "op.temps_total_planned"
-    : basis === "UPDATED"
-      ? "GREATEST(op.temps_total_planned, op.temps_total_real)"
-      : "op.temps_total_real";
-  const result = await pool.query<CostRow>(`
-    SELECT concat('of-operation:', op.id::text) AS key,
-           CASE WHEN op.designation ILIKE '%contrôle%' OR op.designation ILIKE '%controle%' THEN 'CONTROL' ELSE 'OPERATOR' END::text AS category,
-           round(op.hourly_rate_applied * ${hoursColumn}, 6)::text AS amount_ht,
-           ${basis === "STANDARD"
-             ? "'OF_OPERATION_STANDARD'"
-             : basis === "UPDATED"
-               ? "'OF_OPERATION_ESTIMATE_AT_COMPLETION'"
-               : "'PRODUCTION_POINTAGES_RECALC'"}::text AS source_type,
-           op.id::text AS source_ref,
-           op.updated_at::text AS observed_at
-    FROM public.of_operations op
-    WHERE op.of_id = $1::bigint
-      AND op.hourly_rate_applied > 0
-      AND ${hoursColumn} >= 0
-    ORDER BY op.phase, op.id
-  `, [scopeRef]);
+async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED">): Promise<{ costs: MarginCostInput[]; measurements: Record<string, string | number | null> }> {
+  const result = await pool.query<CostRow>(ofMarginOperationSourcesSql(basis), [scopeRef]);
   const measureResult = await pool.query<{
     planned_hours: string | null;
     actual_hours: string | null;
@@ -238,16 +222,7 @@ async function loadOfCosts(scopeRef: string, basis: MarginBasis): Promise<{ cost
     rework_quantity: string | null;
     declaration_count: number;
     declaration_freshness: string | null;
-  }>(`
-    SELECT
-      (SELECT sum(temps_total_planned) FROM public.of_operations WHERE of_id = $1::bigint)::text AS planned_hours,
-      (SELECT sum(temps_total_real) FROM public.of_operations WHERE of_id = $1::bigint)::text AS actual_hours,
-      (SELECT sum(qty_good) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS good_quantity,
-      (SELECT sum(qty_scrap) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS scrap_quantity,
-      (SELECT sum(qty_rework) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS rework_quantity,
-      (SELECT count(*)::integer FROM public.production_quantity_declarations WHERE of_id = $1::bigint) AS declaration_count,
-      (SELECT max(declared_at)::text FROM public.production_quantity_declarations WHERE of_id = $1::bigint) AS declaration_freshness
-  `, [scopeRef]);
+  }>(OF_MARGIN_MEASUREMENTS_SQL, [scopeRef]);
   const measures = measureResult.rows[0] ?? {
     planned_hours: null, actual_hours: null, good_quantity: null,
     scrap_quantity: null, rework_quantity: null, declaration_count: 0, declaration_freshness: null,
@@ -284,26 +259,7 @@ async function loadOfCosts(scopeRef: string, basis: MarginBasis): Promise<{ cost
 }
 
 async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInput[]> {
-  const rows = await pool.query<CostRow>(`
-    SELECT concat('stock-consumption:', line.id::text) AS key,
-           'MATERIAL'::text AS category,
-           CASE WHEN line.unit_cost IS NULL THEN NULL
-                ELSE round(abs(line.qty) * line.unit_cost, 6)::text END AS amount_ht,
-           'STOCK_CUMP_CONSUMPTION'::text AS source_type,
-           movement.id::text AS source_ref,
-           movement.posted_at::text AS observed_at
-    FROM public.stock_movement_lines line
-    JOIN public.stock_movements movement ON movement.id = line.movement_id
-    WHERE movement.status::text = 'POSTED'
-      AND movement.movement_type::text = 'OUT'
-      AND EXISTS (
-        SELECT 1 FROM public.stock_reservations reservation
-        WHERE reservation.of_id = $1::bigint
-          AND reservation.status::text = 'CONSUMED'
-          AND reservation.consumed_stock_movement_id = movement.id
-      )
-    ORDER BY line.id
-  `, [scopeRef]);
+  const rows = await pool.query<CostRow>(OF_MARGIN_MATERIAL_SOURCES_SQL, [scopeRef]);
   return rows.rows.map(automaticCost);
 }
 
@@ -311,7 +267,7 @@ async function loadActualSubcontractingCosts(scopeRef: string): Promise<MarginCo
   const rows = await pool.query<CostRow>(`
     SELECT concat('supplier-receipt:', receipt_line.id::text) AS key,
            'SUBCONTRACTING'::text AS category,
-           CASE WHEN order_line.prix_unitaire_ht <= 0 THEN NULL
+           CASE WHEN order_line.prix_unitaire_ht <= 0 AND order_line.frais_ht <= 0 THEN NULL
                 ELSE round(
                   receipt_line.qty_received * order_line.prix_unitaire_ht * (1 - order_line.remise_pct / 100.0)
                   + CASE WHEN order_line.quantite > 0
@@ -320,11 +276,14 @@ async function loadActualSubcontractingCosts(scopeRef: string): Promise<MarginCo
                 )::text END AS amount_ht,
            'SUPPLIER_RECEPTION_ACTUAL'::text AS source_type,
            receipt.id::text AS source_ref,
-           receipt_line.updated_at::text AS observed_at
+           receipt_line.updated_at::text AS observed_at,
+           'DECLARED'::text AS source_reliability,
+           supplier_order.devise::text AS currency
     FROM public.reception_fournisseur_lignes receipt_line
     JOIN public.receptions_fournisseurs receipt ON receipt.id = receipt_line.reception_id
     JOIN public.commande_fournisseur_ligne order_line
       ON order_line.id = receipt_line.commande_fournisseur_ligne_id
+    JOIN public.commande_fournisseur supplier_order ON supplier_order.id = order_line.commande_id
     WHERE order_line.of_id = $1::bigint
       AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
       AND order_line.statut_ligne <> 'ANNULEE'
