@@ -100,7 +100,10 @@ describe("authoritative PDF archive foundation (#612)", () => {
       code: "23505",
       constraint: "authoritative_pdf_archive_document_version_uq",
     });
-    const tx = { query: async () => { throw duplicate; } };
+    const tx = { query: async (sql: string) => {
+      if (sql.includes("INSERT INTO public.authoritative_pdf_archives")) throw duplicate;
+      return { rows: [] };
+    } };
     await expect(queueCreationPdfArchive(tx, {
       entityType: "devis",
       entityId: "42",

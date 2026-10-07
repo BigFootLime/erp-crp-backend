@@ -22,6 +22,7 @@ beforeEach(()=>{
   mocks.connect.mockResolvedValue({query:mocks.query,release:mocks.release});
   mocks.query.mockImplementation(async(sql:string)=>{
     if(/AS enabled/.test(sql))return {rows:[{enabled:true}]};
+    if(/FROM public.supplier_open_contract_calls WHERE order_id/.test(sql))return {rows:[],rowCount:0};
     if(/FROM public.supplier_consultation_commands/.test(sql))return {rows:state.prior?[state.prior]:[]};
     if(/FROM public.commande_fournisseur\s+WHERE id = \$1::uuid\s+FOR UPDATE/.test(sql))return {rows:[{id,statut:'BROUILLON',updated_at_token:state.revision}]};
     if(/SELECT CURRENT_DATE/.test(sql))return {rows:[{today:'2026-09-08'}]};

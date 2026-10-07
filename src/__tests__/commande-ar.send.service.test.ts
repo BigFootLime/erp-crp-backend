@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   sendEmail: vi.fn(),
   findArchive: vi.fn(),
   readOfficialPdf: vi.fn(),
+  readGeneralTerms: vi.fn(),
 }));
 
 vi.mock("../module/commande-client/repository/commande-ar.repository", () => ({
@@ -26,6 +27,7 @@ vi.mock("../module/commande-client/repository/commande-ar.repository", () => ({
 
 vi.mock("../config/database", () => ({ default: { connect: vi.fn(), query: vi.fn() } }));
 vi.mock("../shared/email/resend.service", () => ({ sendTransactionalEmail: mocks.sendEmail }));
+vi.mock("../shared/commercial-terms/commercial-terms.service", () => ({ readArchivedGeneralTerms: mocks.readGeneralTerms }));
 vi.mock("../shared/authoritative-documents/authoritative-document.service", () => ({
   readOfficialPdfBytes: mocks.readOfficialPdf,
   getOfficialDocumentGenerationEnvelope: vi.fn(),
@@ -97,6 +99,7 @@ beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
   mocks.findArchive.mockResolvedValue("44444444-4444-4444-8444-444444444444");
   mocks.readOfficialPdf.mockResolvedValue({ filename: "AR-00000001-v1.pdf", bytes: PDF });
+  mocks.readGeneralTerms.mockResolvedValue(null);
   mocks.markFailed.mockResolvedValue(undefined);
   mocks.claim.mockResolvedValue({
     kind: "claimed",

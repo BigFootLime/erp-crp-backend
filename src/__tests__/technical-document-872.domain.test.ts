@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { buildTechnicalSheet } from "../module/pieces-techniques/domain/technical-sheet";
 import { buildOfTraveler } from "../module/production/domain/of-traveler";

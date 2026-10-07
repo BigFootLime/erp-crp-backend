@@ -13,7 +13,7 @@ function need(){return {id:'need',key:'source',articleId:'article',operationId:'
   requirements,blockers:[],supplierId:'supplier',price:2,currency:'EUR',destinationId:null,catalog:null,supplyMode:'PURCHASE',
   candidates:[{available:60,lot:{id:'lot',batchId:'batch',articleId:'article',unit:'u',quality:'LIBERE',ownerClientId:null,dimensions:{diametre_mm:25},certificates:[],magasinId:'store',emplacementId:1}}],
   futureSupplies:[{id:'line',available:25,reasons:[] as string[]}]};}
-function coverage(){return {version:'v1',number:'OF-TEST',previousNeeds:[] as unknown[],needs:[need()],operations:[{id:'cut',start:'2026-09-18T08:00:00Z'}]};}
+function coverage(){return {version:'v1',number:'OF-TEST',previousNeeds:[] as unknown[],purchasePreparations:[],needs:[need()],operations:[{id:'cut',start:'2026-09-18T08:00:00Z'}]};}
 const body:MaterialConfirmation={expectedVersion:'v1',idempotencyKey:'command',selections:[{needKey:'source',batchId:'batch',quantity:60}],futureSelections:[{needKey:'source',lineId:'line',quantity:25,requirementsReviewed:true}]};
 const audit={user_id:1} as never;
 let current:ReturnType<typeof coverage>;
@@ -33,8 +33,13 @@ describe('physical and future material confirmation',()=>{
   });
   it('keeps already expected stock when calculating the new purchase',async()=>{
     current.needs[0].expected=25;
-    await confirmOfMaterial(19,{...body,futureSelections:[]},audit,true);
+    await confirmOfMaterial(19,{...body,futureSelections:[],existingPurchasesReviewed:true},audit,true);
     expect(m.draft).toHaveBeenCalledWith(tx,[expect.objectContaining({quantity:15})],audit);
+  });
+  it('requires explicit review before ignoring an available existing purchase',async()=>{
+    current.needs[0].expected=25;
+    await expect(confirmOfMaterial(19,{...body,futureSelections:[]},audit,true)).rejects.toMatchObject({code:'MATERIAL_EXISTING_PURCHASE_REVIEW'});
+    expect(m.draft).not.toHaveBeenCalled();expect(tx.query).toHaveBeenCalledWith('ROLLBACK');
   });
   it('does not buy or reserve again once all quantities are covered',async()=>{
     current.needs[0].reserved=60;current.needs[0].expected=40;

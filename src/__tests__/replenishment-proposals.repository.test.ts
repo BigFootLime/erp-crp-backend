@@ -50,6 +50,9 @@ let activeCoverageConflict = false
 
 function dispatch(sqlRaw: unknown, values?: unknown[]) {
   const sql = String(sqlRaw)
+  if (sql.includes("SELECT fournisseur_id::text,") && sql.includes("statement_timestamp()")) {
+    return { rows: [{ fournisseur_id: SUPPLIER_ID, today: "2026-08-23", checked_at: "2026-08-23T12:00:00.000Z" }] }
+  }
   const authoritativePdf = authoritativePdfQueueDbMock(sql, values)
   if (authoritativePdf) return authoritativePdf
   if (sql.includes("FROM public.commande_fournisseur cf") && sql.includes("JOIN public.fournisseurs f")) {

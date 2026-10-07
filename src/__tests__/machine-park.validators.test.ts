@@ -71,14 +71,19 @@ describe("machine park strict validation matrix", () => {
   );
 
   it.each(Array.from({ length: 12 }, (_, index) => index + 1))(
-    "accepts maintenance by due date or frequency, combination %s",
+    "accepts maintenance with controls and a first due date, with or without recurrence, combination %s",
     (index) => {
       const body = index % 2 === 0
-        ? { title: `Controle ${index}`, frequency_days: index * 5 }
+        ? { title: `Controle ${index}`, frequency_days: index * 5, next_due_at: "2027-01-01" }
         : { title: `Controle ${index}`, next_due_at: `2027-01-${String(index).padStart(2, "0")}` };
-      expect(createMachineMaintenancePlanSchema.safeParse({ body }).success).toBe(true);
+      expect(createMachineMaintenancePlanSchema.safeParse({ body: { ...body, checklist: [{ id: "inspection", label: "Inspection du poste" }] } }).success).toBe(true);
     }
   );
+
+  it("refuses an active plan without controls or a recurring plan without its first due date", () => {
+    expect(createMachineMaintenancePlanSchema.safeParse({ body: { title: "Inspection", next_due_at: "2027-01-01" } }).success).toBe(false);
+    expect(createMachineMaintenancePlanSchema.safeParse({ body: { title: "Inspection", frequency_days: 30, checklist: [{ id: "inspection", label: "Inspection du poste" }] } }).success).toBe(false);
+  });
 
   it("keeps a missing hourly rate null and refuses client-owned machine codes", () => {
     const base = { name: "Centre 1", type: "MILLING", status: "ACTIVE", hourly_rate: null };
