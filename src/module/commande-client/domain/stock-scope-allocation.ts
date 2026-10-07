@@ -81,3 +81,15 @@ export function allocateCommandeStockOldThenNew(
     };
   });
 }
+
+export function allocateCompatibleStock(lines:Array<{article_id:string|null;piece_technique_version_id?:string|null;qty_ordered:number}>,candidates:Array<{article_id:string;compatible_version_ids:string[];stock_scope:CommandeStockScope;qty_available:number}>):CommandeStockScopeAllocation[]{
+ const remaining=candidates.map(c=>finiteNonNegative(c.qty_available));
+ return lines.map(line=>{
+   const eligible=candidates.map((candidate,index)=>({candidate,index})).filter(({candidate})=>candidate.article_id===line.article_id&&(!line.piece_technique_version_id||candidate.compatible_version_ids.includes(line.piece_technique_version_id)));
+   const quantities={OLD:0,NEW:0};for(const {candidate,index}of eligible)quantities[candidate.stock_scope]+=remaining[index];
+   const key=line.article_id??'missing',result=allocateCommandeStockOldThenNew([{article_id:key,requested_qty:line.qty_ordered}],new Map([[key,quantities]]))[0];
+   for(const scope of ['OLD','NEW'] as const){let outstanding=scope==='OLD'?result.old_used_qty:result.new_used_qty;
+     for(const {candidate,index}of eligible){if(candidate.stock_scope!==scope)continue;const taken=Math.min(remaining[index],outstanding);remaining[index]-=taken;outstanding-=taken;if(outstanding<=0)break;}
+   }return result;
+ });
+}

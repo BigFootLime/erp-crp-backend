@@ -2,6 +2,7 @@
 // GPAO B2.1 — validators des versions/indices d'une pièce technique.
 import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
+import { packagingPolicySchema } from "../../stock/domain/finished-packaging"
 
 const uuid = z.string().uuid()
 
@@ -44,6 +45,7 @@ const versionCoreBody = z.object({
   date_effet: z.string().date().optional().nullable(),
   manufacturing_mode: manufacturingModeSchema.optional(),
   assembly_supply_strategy: assemblySupplyStrategySchema.optional(),
+  packaging_policy: packagingPolicySchema.optional(),
 })
 
 export const createVersionSchema = z.object({ body: versionCoreBody })
@@ -85,5 +87,5 @@ export const publishVersionSchema = z.object({
 export type PublishVersionBodyDTO = z.infer<typeof publishVersionSchema>["body"]
 
 // "Nouvel indice / nouvelle évolution / nouvelle modification" (remplace le duplicate cassé).
-export const createNextVersionSchema = z.object({ body: versionCoreBody })
+export const createNextVersionSchema = z.object({ body: versionCoreBody.extend({change_level:z.enum(["MAJOR","MINOR"]).optional()}) })
 export type CreateNextVersionBodyDTO = z.infer<typeof createNextVersionSchema>["body"]

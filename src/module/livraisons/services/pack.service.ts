@@ -128,6 +128,8 @@ function buildSummaryJson(args: {
         article_designation: a.article.designation,
         lot_id: a.lot_id,
         lot_code: a.lot?.lot_code ?? null,
+        stock_scope: a.lot?.stock_scope??null,
+        historical_documents: a.lot?.historical_documents??[],
         quantite: a.quantite,
         unite: a.unite,
         stock_movement_line_id: a.stock_movement_line_id,

@@ -52,6 +52,9 @@ type TargetRow = {
   plan_id: string | null
   plan_code: string | null
   plan_version: number | null
+  stock_scope: "OLD" | "NEW"
+  historical_documents: Array<{id:string;type:string;label:string;location:string;created_by:number}>
+  has_current_lot_control: boolean
 }
 
 type ControlRow = {
@@ -208,7 +211,10 @@ export async function repoGetDeliveryQualityRelease(
           b.commande_id::text AS commande_id,
           applicable_plan.id::text AS plan_id,
           applicable_plan.code AS plan_code,
-          applicable_plan.version AS plan_version
+          applicable_plan.version AS plan_version,
+          COALESCE(l.origin_stock_scope,l.source_scope,l.stock_scope,'NEW') AS stock_scope,
+          EXISTS(SELECT 1 FROM public.quality_control current_control WHERE current_control.source_type='LOT' AND current_control.source_id=l.id::text) AS has_current_lot_control,
+          COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'type',d.type,'label',d.label,'location',d.location,'created_by',d.created_by) ORDER BY d.created_at,d.id) FROM public.old_stock_document_references d WHERE d.lot_id=l.id),'[]'::jsonb) AS historical_documents
         FROM public.bon_livraison b
         JOIN public.bon_livraison_ligne bl ON bl.bon_livraison_id = b.id
         JOIN public.bon_livraison_ligne_allocations a ON a.bon_livraison_ligne_id = bl.id
@@ -421,6 +427,7 @@ export async function repoGetDeliveryQualityRelease(
         lot_id: row.lot_id,
         lot_code: row.lot_code,
         unite: row.unite,
+        historical_provenance: row.stock_scope==="OLD" ? {scope:"OLD",documents:row.historical_documents,has_current_lot_control:row.has_current_lot_control} : null,
         plan: row.plan_id && row.plan_code && row.plan_version
           ? { id: row.plan_id, code: row.plan_code, version: row.plan_version }
           : null,
