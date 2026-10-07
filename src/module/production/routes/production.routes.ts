@@ -1,4 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCalendar} from '../controllers/maintenance-schedule.controller';
 import {readLosses,createComplement} from '../controllers/production-loss.controller';
 import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
 import { Router, type RequestHandler } from "express";
@@ -188,6 +189,9 @@ const machineDocumentUpload = createSecureUpload("machine-document", { maxFiles:
 const machineImageUpload = createSecureUpload("image", { maxFiles: 1 });
 
 router.use(authenticateToken);
+router.get('/maintenance-calendar',requireMachineCapability('read'),readMaintenanceCalendar);
+router.post('/maintenance-calendar/preview',requireMachineCapability('availability'),previewMaintenanceCalendar);
+router.post('/maintenance-calendar/publish',requireMachineCapability('availability'),publishMaintenanceCalendar);
 router.get('/ofs/:id/loss-complements',requireOfCapability('read'),readLosses);
 router.post('/ofs/:id/loss-complements',requireOfCapability('create'),createComplement);
 
