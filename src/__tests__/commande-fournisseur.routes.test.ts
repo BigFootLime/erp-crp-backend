@@ -91,6 +91,9 @@ const state = {
 
 function dispatch(sqlRaw: unknown): { rows: unknown[]; rowCount?: number } {
   const sql = String(sqlRaw);
+  if (/SELECT fournisseur_id::text,/.test(sql) && /statement_timestamp\(\)/.test(sql)) {
+    return { rows: [{ fournisseur_id: UUID, today: "2026-07-21", checked_at: "2026-07-21T10:00:00.000Z" }] };
+  }
   if (/fn_next_issued_code_value/.test(sql)) return { rows: [{ v: "7" }] };
   if (/SELECT updated_at::text AS source_revision\s+FROM public\.commande_fournisseur/.test(sql)) {
     return { rows: [{ source_revision: state.header.updated_at_token }] };

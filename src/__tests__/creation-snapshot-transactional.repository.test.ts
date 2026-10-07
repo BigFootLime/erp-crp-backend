@@ -57,6 +57,9 @@ function transactionalAuthoritativeQueue(options: { failOutbox?: boolean } = {})
   const handle = (sql: unknown, values: readonly unknown[] = []): QueryResult | undefined => {
     const statement = String(sql);
     calls.push({ statement, values });
+    if (statement.includes("SELECT fournisseur_id::text,") && statement.includes("statement_timestamp()")) {
+      return { rows: [{ fournisseur_id: SUPPLIER_ID, today: "2026-08-23", checked_at: "2026-08-23T12:00:00.000Z" }] };
+    }
     if (statement === "BEGIN") return { rows: [] };
     if (statement === "ROLLBACK") {
       pendingArchives.clear();
