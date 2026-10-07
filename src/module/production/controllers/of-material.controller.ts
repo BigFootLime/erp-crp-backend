@@ -17,6 +17,8 @@ import {commandCustomerMaterial} from '../services/of-material.service';
 import {reconcileMaterialRevision} from '../services/of-material.service';
 import {getOfComponentCoverage} from '../services/of-material.service';
 import {materialReconciliationSchema} from '../validators/of-material.validators';
+import {supplierQualificationQuerySchema} from '../validators/of-material.validators';
+import {getOfSupplierQualification} from '../services/of-material.service';
 
 function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
@@ -62,6 +64,11 @@ export const transferMaterial=asyncHandler(async(req,res)=>{
 });
 export const readOperationReadiness=asyncHandler(async(req,res)=>{res.json(await getOperationReadiness(identity.parse(req.params).id));});
 export const readComponentCoverage=asyncHandler(async(req,res)=>{res.json(await getOfComponentCoverage(identity.parse(req.params).id));});
+export const readSupplierQualification=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'OF_SUPPLIER_QUALIFICATION_FORBIDDEN','Les droits de préparation des achats sont nécessaires.');
+  const {articleId,supplierId,catalogueId}=supplierQualificationQuerySchema.parse(req.query);
+  res.json(await getOfSupplierQualification(identity.parse(req.params).id,articleId,supplierId,catalogueId));
+});
 export const verifyMaterialLot=asyncHandler(async(req,res)=>{
   if(!rights(req).canVerifyLot)throw new HttpError(403,"MATERIAL_LOT_VERIFICATION_FORBIDDEN","Les droits de vérification qualité des lots sont nécessaires.");
   res.json(present(await verifyOfMaterialLot(identity.parse(req.params).id,materialSourceRefSchema.parse(req.params.sourceRef),materialLotVerificationSchema.parse(req.body),buildAuditContext(req)),req));
