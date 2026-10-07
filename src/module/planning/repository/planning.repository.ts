@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {assertMaintenanceMachineUnblockedTx} from "../../production/repository/operator-maintenance-read.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -213,13 +214,14 @@ export async function assertResourceSchedulable(
           m.is_available,
           COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean, TRUE) AS scheduling_enabled
         FROM public.machines m
-        WHERE m.id = $1::uuid
-        LIMIT 1
+         WHERE m.id = $1::uuid
+         LIMIT 1 FOR SHARE OF m
       `,
       [resource.machine_id]
     );
     const row = res.rows[0] ?? null;
     if (!row) throw new HttpError(404, "MACHINE_NOT_FOUND", "Machine not found");
+    await assertMaintenanceMachineUnblockedTx(q,row.id);
     const reason = machineBlockedReason(row);
     if (reason) {
       throw new HttpError(409, "PLANNING_RESOURCE_BLOCKED", reason, {
@@ -274,6 +276,8 @@ export async function assertResourceSchedulable(
       });
     }
     if (!row.machine_id) return;
+    await q.query("SELECT id FROM public.machines WHERE id=$1::uuid FOR SHARE",[row.machine_id]);
+    await assertMaintenanceMachineUnblockedTx(q,row.machine_id);
     const reason = machineBlockedReason(row);
     if (reason) {
       throw new HttpError(409, "PLANNING_RESOURCE_BLOCKED", reason, {

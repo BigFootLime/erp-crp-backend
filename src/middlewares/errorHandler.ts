@@ -149,7 +149,9 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   const mappedReferenceDataError = mapReferenceDataError(err);
   const sealedCall = err && typeof err === "object" && "code" in err && err.code === "23514" && "message" in err && err.message === "OPEN_CONTRACT_CALL_SEALED"
     ? new HttpError(409,"OPEN_CONTRACT_CALL_SEALED","Cet appel conserve ses lignes et ses conditions d’origine. Créez un nouvel appel pour une correction commerciale.") : null;
-  const handledError = mappedReferenceDataError ?? sealedCall ?? err;
+  const maintenanceSeal = err && typeof err==="object" && "code" in err && err.code==="23514" && "message" in err && typeof err.message==="string" && ["MAINTENANCE_EVIDENCE_RETAINED","MAINTENANCE_HOLD_SEALED","MAINTENANCE_RECEIPT_SEALED"].includes(err.message)
+    ? new HttpError(409,err.message,"Ce justificatif ou compte rendu est conservé dans l’historique de maintenance. Déposez une nouvelle preuve pour une nouvelle décision.") : null;
+  const handledError = mappedReferenceDataError ?? sealedCall ?? maintenanceSeal ?? err;
   const isKnown = handledError instanceof HttpError || handledError instanceof ApiError;
   const status = isKnown ? handledError.status : 500;
   const code = isKnown ? handledError.code : "INTERNAL_ERROR";

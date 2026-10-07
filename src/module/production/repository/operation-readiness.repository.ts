@@ -10,7 +10,7 @@ import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibil
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 
-type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
+type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
 
 export async function usesOperationReadiness(tx:DossierDb,ofId:number){
@@ -25,6 +25,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
   const coverage=material??await readMaterialTx(tx,ofId);
   const operations=(await tx.query<OperationRow>(`
     SELECT op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
+      (m.archived_at IS NOT NULL OR m.is_available IS FALSE OR EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL) OR EXISTS(SELECT 1 FROM public.production_machine_unavailability u JOIN public.planning_events e ON e.id=u.planning_event_id WHERE u.machine_id=m.id AND u.archived_at IS NULL AND e.archived_at IS NULL AND e.status NOT IN ('DONE','CANCELLED') AND e.start_ts<=statement_timestamp() AND e.end_ts>statement_timestamp())) AS machine_unavailable,
       COALESCE(q.good,0)::float8 AS good,COALESCE(q.scrap,0)::float8 AS scrap,COALESCE(q.pending,0)::float8 AS pending,COALESCE(q.rework,0)::float8 AS rework,
        (frozen.value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE') AND (COALESCE(programming.value->>'mode','')<>'NONE'
          OR length(btrim(COALESCE(programming.value->>'reason','')))<3)) AS program_required,
@@ -105,7 +106,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     const row=operations.find(r=>r.id===op.id);
     const facts:OperationReadinessFacts={id:op.id,label:op.label,phase:op.phase,status:op.status,targetQuantity:dossier.quantity,
       processedQuantity:Number(row?.good??0)+Number(row?.scrap??0)+Number(row?.pending??0)+Number(row?.rework??0),dossierComplete:dossier.status==='COMPLETE',executionStatus:dossier.executionStatus,
-      planned:op.planned||['RUNNING','DONE'].includes(op.status),machineBlocked:statuses.includes(row?.machine_status??''),
+      planned:op.planned||['RUNNING','DONE'].includes(op.status),machineBlocked:row?.machine_unavailable===true||statuses.includes(row?.machine_status??''),
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
        programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],

@@ -267,12 +267,12 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
     const { rows: qualifications } = await tx.query<{id:string;family:string|null;operation_type:string|null;eligible:string[]}>(`
       WITH qualified_resources AS (
         SELECT 'machine:'||m.id::text AS id,upper(btrim(m.machine_family_code)) AS family
-        FROM public.machines m WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE
+        FROM public.machines m WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL)
           AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
         UNION ALL
         SELECT 'poste:'||p.id::text,upper(btrim(m.machine_family_code))
         FROM public.postes p JOIN public.machines m ON m.id=p.machine_id
-        WHERE p.is_active AND m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE
+        WHERE p.is_active AND m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL)
           AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
       )
       SELECT op.id::text,NULLIF(btrim(op.machine_family_code),'') AS family,frozen.operation_type,

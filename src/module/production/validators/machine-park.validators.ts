@@ -56,28 +56,35 @@ export const createMachineUnavailabilitySchema = z.object({
 }).strict();
 
 const machineMaintenancePlanBody = z.object({
+    idempotency_key:uuid.optional(),
     title: z.string().trim().min(1).max(240),
     status: z.enum(["ACTIVE", "PAUSED", "COMPLETED"]).optional().default("ACTIVE"),
     frequency_days: z.number().int().positive().max(3650).optional().nullable(),
     frequency_counter: z.number().positive().max(999999999).optional().nullable(),
     counter_unit: optionalText(40),
+    next_due_counter:z.number().finite().nonnegative().max(99_999_999_999).multipleOf(0.001).optional().nullable(),
     next_due_at: z.string().date().optional().nullable(),
     responsible_user_id: z.number().int().positive().optional().nullable(),
-    checklist: z.array(z.object({ id: z.string().min(1).max(80), label: z.string().min(1).max(240) }).strict()).max(100).optional().default([]),
+    checklist: z.array(z.object({ id: z.string().trim().min(1).max(80), label: z.string().trim().min(1).max(240),blocks_machine:z.boolean().optional().default(true) }).strict()).max(100).optional().default([]),
     document_id: uuid.optional().nullable(),
     source: z.string().trim().min(1).max(120).optional().default("internal"),
     notes: optionalText(4000),
   }).strict();
 
-export const createMachineMaintenancePlanSchema = z.object({
-  body: machineMaintenancePlanBody.superRefine((v, ctx) => {
+export const validatedMachineMaintenancePlanBody = machineMaintenancePlanBody.superRefine((v, ctx) => {
     if (!v.frequency_days && !v.frequency_counter && !v.next_due_at) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["next_due_at"], message: "A date or frequency is required" });
     }
     if (v.frequency_counter && !v.counter_unit) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["counter_unit"], message: "Counter unit is required" });
     }
-  }),
+    if(v.frequency_counter && v.next_due_counter==null)ctx.addIssue({code:z.ZodIssueCode.custom,path:["next_due_counter"],message:"Définissez le premier seuil du compteur."});
+    if(v.status==="ACTIVE"&&!v.checklist.length)ctx.addIssue({code:z.ZodIssueCode.custom,path:["checklist"],message:"Définissez les contrôles à effectuer avant d’activer ce plan."});
+    if(new Set(v.checklist.map(item=>item.id)).size!==v.checklist.length)ctx.addIssue({code:z.ZodIssueCode.custom,path:["checklist"],message:"Les identifiants des contrôles doivent être distincts."});
+    if(v.frequency_days&&!v.next_due_at)ctx.addIssue({code:z.ZodIssueCode.custom,path:["next_due_at"],message:"Définissez la première date de contrôle."});
+  });
+export const createMachineMaintenancePlanSchema = z.object({
+  body: validatedMachineMaintenancePlanBody,
 }).strict();
 
 export const updateMachineMaintenancePlanSchema = z.object({
