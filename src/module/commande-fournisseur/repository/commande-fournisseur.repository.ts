@@ -1419,7 +1419,7 @@ export async function repoTransitionCommandeFournisseur(
         `SELECT payload->>'supplier_qualification_revision' AS revision FROM public.commande_fournisseur_document
          WHERE commande_id=$1::uuid AND version=$2`, [id,header.version_document])).rows[0]?.revision;
       // Legacy preparations remain usable only when no applicable qualification was configured.
-      const hasDecision = qualification && [qualification.global,...qualification.domains].some(scope=>scope.decision);
+      const hasDecision = qualification && ([qualification.global,...qualification.domains].some(scope=>scope.decision)||qualification.client_approvals?.some(check=>check.policies.length));
       if (qualification && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
         throw new HttpError(409,"SUPPLIER_QUALIFICATION_DOCUMENT_STALE",
           "L’homologation ou le périmètre d’achat a changé. Régénérez le bon de commande avant l’envoi.");
