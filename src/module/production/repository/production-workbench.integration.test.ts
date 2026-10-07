@@ -4,6 +4,7 @@ import { repoReusePreparationStock } from "./preparation-stock-reuse.repository"
 import { reconcileReleasedConsolidationLot } from "./production-receipts.repository";
 import { createRecursiveOrdresFabrication } from "../domain/of-generation";
 import { synchronizeDraftChildrenTx } from "./preparation-children.repository";
+import { repoCreateNextVersion } from "../../pieces-techniques/repository/versions.repository";
 import { repoSaveProgrammingTask } from "./preparation-actions.repository";
 import { afterAll, beforeAll, describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -14,6 +15,7 @@ import {
   evaluateOfPreparation,
   repoSavePreparationDecisions,
   repoReviewPreparationStock,
+  repoSelectPreparationVersion,
 } from "./production-preparation.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
 import { repoCompleteOfDossier, repoOfDossier } from "./of-dossier.repository";
@@ -104,6 +106,47 @@ describe.skipIf(!isolated)(
     });
     afterAll(async () => {
       await pool.end();
+    });
+    it("selects a draft revision without partially attaching an immutable OF snapshot", async () => {
+      const f = await seedProductionWorkbenchFixture();
+      const id = f.ids[0];
+      const revision = await repoCreateNextVersion(f.piece, f.version, {
+        indice: "A",
+        type_changement: "EVOLUTION",
+        raison_changement: "Compléter le dossier de recette sans modifier les OF figés",
+      }, f.audit);
+      const before = await evaluateOfPreparation(pool, id);
+      const selected = await repoSelectPreparationVersion(id, {
+        expected_updated_at: before.of.updated_at,
+        version_id: revision.id,
+      }, f.audit);
+      expect(selected.of.version_id).toBe(revision.id);
+      expect(selected.sources.version?.statut).toBe("BROUILLON");
+      const row = (await pool.query(`SELECT piece_technique_version_id,technical_snapshot,
+        technical_snapshot_sha256,technical_snapshot_at,technical_preparation->>'selected_version_id' AS selected
+        FROM public.ordres_fabrication WHERE id=$1`, [id])).rows[0];
+      expect(row).toMatchObject({ piece_technique_version_id: null, technical_snapshot: null,
+        technical_snapshot_sha256: null, technical_snapshot_at: null, selected: revision.id });
+      expect((await pool.query("SELECT is_current FROM public.piece_technique_versions WHERE id=$1", [f.version])).rows[0].is_current).toBe(true);
+      await expect(repoSelectPreparationVersion(id, {
+        expected_updated_at: before.of.updated_at,
+        version_id: f.version,
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "CONCURRENT_MODIFICATION" });
+      const foreign = await seedProductionWorkbenchFixture();
+      await expect(repoSelectPreparationVersion(id, {
+        expected_updated_at: selected.of.updated_at,
+        version_id: foreign.version,
+      }, f.audit)).rejects.toMatchObject({ status: 422, code: "OF_VERSION_CONFLICT" });
+      await repoSelectPreparationVersion(id, {
+        expected_updated_at: selected.of.updated_at,
+        version_id: f.version,
+      }, f.audit);
+      await prepareFixture(f);
+      const frozen = await evaluateOfPreparation(pool, id);
+      await expect(repoSelectPreparationVersion(id, {
+        expected_updated_at: frozen.of.updated_at,
+        version_id: revision.id,
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "TECHNICAL_SNAPSHOT_FROZEN" });
     });
     it("applies the initial migration with populated OF rows and deferred constraints", async () => {
       await pool.query("UPDATE public.ordres_fabrication SET planning_wait_started_at=NULL WHERE id=$1", [fixture.ids[0]]);
