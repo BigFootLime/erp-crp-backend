@@ -2,6 +2,7 @@ import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-d
 import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
+import { generalTermsReference, type GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
 
 type DevisOfficialSnapshot = {
   type: "CUSTOMER_QUOTE"; number: string; status: string; issued_at: string; valid_until: string | null;
@@ -14,6 +15,7 @@ type DevisOfficialSnapshot = {
   lines: Array<{ position: number; reference: string | null; designation: string; quantity: string; unit: string | null; unit_price_ht: string; discount_pct: string | null; vat_pct: string | null; total_ht: string; total_ttc: string }>;
   totals: { total_ht: string; total_ttc: string; global_discount_pct: string | null };
   issuer: LegalParty;
+  general_terms?: GeneralTermsSnapshot | null;
 };
 
 function parseSnapshot(archive: AuthoritativePdfArchiveRecord): DevisOfficialSnapshot {
@@ -78,5 +80,7 @@ export async function renderDevisOfficialPdf({ archive }: { archive: Authoritati
     );
     ctx.y = Math.max(top + 34, bottom + 7);
     if (source.public_comment) ctx.notesSection("Conditions et observations", source.public_comment);
+    const terms = generalTermsReference(source.general_terms);
+    if (terms) ctx.notesSection("Conditions générales de vente jointes", terms);
   });
 }

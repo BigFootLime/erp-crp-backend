@@ -31,6 +31,8 @@ import {
 import pool from "../../../config/database";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 import { getOfficialDocumentGenerationEnvelope, getOfficialPdfDto, readOfficialPdfBytes, recordOfficialPdfPrintIntent } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { generalTermsReference, type GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
+import { readArchivedGeneralTerms } from "../../../shared/commercial-terms/commercial-terms.service";
 import {
   buildCommandeArContentSnapshot,
   isCommandeArSnapshotCurrent,
@@ -49,6 +51,7 @@ type CommandeArAddress = {
 };
 
 export type CommandeArOfficialSnapshot = {
+  general_terms?: GeneralTermsSnapshot | null;
   type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT";
   /** Assigned inside the locked creation transaction before archival. */
   acknowledgement_id?: string;
@@ -179,6 +182,7 @@ async function waitForCommandeArOfficialArchiveId(
 }
 
 export async function buildCommandeArPdfBuffer(params: {
+  general_terms?: GeneralTermsSnapshot | null;
   /** Versioned acknowledgement reference, for example AR-00000042-v1. */
   reference: string;
   /** Customer order reference; distinct from the acknowledgement number. */
@@ -308,6 +312,8 @@ export async function buildCommandeArPdfBuffer(params: {
       if (params.commentaire?.trim()) {
         ctx.notesSection("Notes", params.commentaire.trim());
       }
+      const terms = generalTermsReference(params.general_terms);
+      if (terms) ctx.notesSection("Conditions générales de vente jointes", terms);
     }
   );
 }
@@ -321,6 +327,7 @@ export async function renderCommandeArOfficialPdf({ archive }: { archive: Author
   const archivedAt = new Date(archive.createdAt);
   if (Number.isNaN(archivedAt.getTime())) throw new Error("COMMANDE_AR_ARCHIVE_CREATED_AT_INVALID");
   return buildCommandeArPdfBuffer({
+    general_terms: source.general_terms,
     issuer: source.issuer, reference: source.acknowledgement_number, orderNumber: source.order_number,
     companyName: source.customer_name ?? null,
     // `generated_at` remains inside the frozen business snapshot; the document
@@ -369,6 +376,7 @@ export async function svcGenerateCommandeAr(params: {
     const issuer = await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
 
     const officialSnapshot: CommandeArOfficialSnapshot = {
+      general_terms: data.general_terms ?? null,
       type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: data.header.numero, order_number: customerReference,
       generated_at: generatedAt.toISOString(), status: data.header.statut, customer_name: data.header.client_company_name,
       date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
@@ -388,6 +396,7 @@ export async function svcGenerateCommandeAr(params: {
       document_name: "AR.pdf",
       pdf_buffer: Buffer.alloc(0),
       pdf_factory: ({ reference, version_number }) => buildCommandeArPdfBuffer({
+        general_terms: officialSnapshot.general_terms,
         reference,
         issuer,
         orderNumber: customerReference,
@@ -525,6 +534,7 @@ export async function svcSendCommandeAr(params: {
     const sentText = emailBodyOverride ?? generatedContent.text;
     const sentHtml = emailBodyOverride ? renderCommandeArEmailHtml(emailBodyOverride) : generatedContent.html;
 
+    const termsFile = await readArchivedGeneralTerms({scope:"commande-client",entityId:String(params.commande_id),archiveId,documentKind:ACKNOWLEDGEMENT_DOCUMENT_KIND,actor:params.user_id});
     providerCallStarted = true;
     const emailResult = await sendTransactionalEmail({
       to: recipientEmails,
@@ -538,6 +548,7 @@ export async function svcSendCommandeAr(params: {
           content: archived.bytes,
           contentType: "application/pdf",
         },
+        ...(termsFile ? [{filename:termsFile.filename,content:termsFile.bytes,contentType:"application/pdf"}] : []),
       ],
     });
 

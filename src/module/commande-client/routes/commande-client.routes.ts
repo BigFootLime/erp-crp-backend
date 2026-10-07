@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express"
 import { Router } from "express"
+import { generalTermsHandlers } from "../../../shared/commercial-terms/commercial-terms.http"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
 import { effectiveRoleHasAny } from "../../auth/domain/roles"
@@ -105,6 +106,11 @@ const rejectLegacyCommandeLaunch: RequestHandler = (_req, _res, next) => {
     )
   )
 }
+
+const generalTerms = generalTermsHandlers("commande-client", "CUSTOMER_ORDER_ACKNOWLEDGEMENT")
+router.get("/:id/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.read)
+router.put("/:id/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.select)
+router.get("/:id/acknowledgements/:documentId/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.download)
 
 const rejectDirectCommandeStatusMutation: RequestHandler = (_req, _res, next) => {
   next(
