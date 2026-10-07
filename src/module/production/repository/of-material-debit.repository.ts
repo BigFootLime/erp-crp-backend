@@ -4,8 +4,9 @@ import type {AuditContext} from './production.repository';
 import type {MaterialDebit} from '../validators/of-material.validators';
 import {materialCommand,readMaterialTx} from './of-material.repository';
 import {readOperationReadinessTx} from './operation-readiness.repository';
-import {lotCompatibility} from '../domain/of-material';
+import {lotCompatibility,quantity} from '../domain/of-material';
 import {actualDebitBalance} from '../domain/material-debit-balance';
+import {materialSourceYields} from '../domain/material-source-yield';
 import {createMaterialRemnantTx} from '../../stock/repository/material-remnant.repository';
 import {consumeMaterialReservationTx} from '../../stock/repository/partial-reservation-consumption.repository';
 import {assertOperationalLotQualityEligibility} from '../../qualite/repository/quality-operational-gate.repository';
@@ -53,6 +54,9 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     }
     const balances=needs.map(need=>({need,balance:actualDebitBalance({rule:need.debitRule!,blanks:body.good+body.scrap,varianceReason:body.varianceReason,
       sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,quantity:s.source.quantity+(s.source.barClosure?.discardedQuantity??0),remnant:remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0}))})}));
+    const yields=needs.flatMap(need=>materialSourceYields({rule:need.debitRule!,good:body.good,scrap:body.scrap,varianceReason:body.varianceReason,
+      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,yield:s.source.yield,
+        quantity:s.source.quantity-(remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0)}))}));
     for(const remnant of remnants){
       const need=sources.find(s=>s.source.reservationId===remnant.reservationId)?.need;
       if(!need||!remnant.dimensions.longueur_mm||need.debitRule?.form==='SHEET'&&!remnant.dimensions.largeur_mm)
@@ -69,9 +73,11 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,created_by,quantity_kind)
       VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9,$10)`,[debitId,ofId,body.operationId,current.technicalVersion,declarationId,body.idempotencyKey,current.version,[body.note,body.varianceReason].filter(Boolean).join('\n'),audit.user_id,operation.quantityKind]);
     for(const s of consumed){const source=body.sources.find(source=>source.reservationId===s.reservationId)!;
-      await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty,cut_qty,discarded_qty,bar_closed,extended_qty)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10)`,[debitId,s.needId,s.reservationId,s.stockMovementId,
-      balances.find(b=>b.need.id===s.needId)!.balance.sources.find(source=>source.id===s.reservationId)!.planned,s.quantity,source.quantity,source.barClosure?.discardedQuantity??0,Boolean(source.barClosure),s.extendedQuantity??0]);
+      const observed=yields.find(y=>y.id===s.reservationId)!;
+      const rule=balances.find(b=>b.need.id===s.needId)!.need.debitRule!;
+      await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty,cut_qty,discarded_qty,bar_closed,extended_qty,yield_good,yield_scrap)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12)`,[debitId,s.needId,s.reservationId,s.stockMovementId,
+      quantity((observed.good+observed.scrap)*(rule.unitsPerBlank+rule.kerfPerBlank)),s.quantity,source.quantity,source.barClosure?.discardedQuantity??0,Boolean(source.barClosure),s.extendedQuantity??0,observed.good,observed.scrap]);
     }
     const declaration=await repoDeclareQuantity({transactionClient:tx,declarationId,idempotencyKey:body.idempotencyKey,audit,
       body:{of_id:ofId,operation_id:body.operationId,qty_good:body.good,qty_scrap:body.scrap,qty_pending_control:0,qty_rework:0,

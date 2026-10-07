@@ -35,7 +35,7 @@ export const repoQueueOfTraveler = (
     entityType: "ordre-fabrication",
     entityId: String(ofId),
     documentKind: "OF_TRAVELER",
-    renderVersion: "of-traveler-v1",
+    renderVersion: "of-traveler-v2",
     title: "Fiche suiveuse",
     filenamePrefix: "Fiche-suiveuse",
     idempotencyKey: key,

@@ -8,7 +8,7 @@ import {compensateMaterialMovementTx,restoreMaterialReservationTx} from '../../s
 
 export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrection,audit:AuditContext){
   return materialCommand(ofId,'CORRECT_DEBIT',body,audit,async(tx,current)=>{
-    const debit=(await tx.query<{id:string;declaration_id:string;operation_id:string;technical_version_id:string}>(`SELECT d.id::text,d.declaration_id::text,d.operation_id::text,d.technical_version_id::text
+    const debit=(await tx.query<{id:string;declaration_id:string;operation_id:string;technical_version_id:string;quantity_kind:string}>(`SELECT d.id::text,d.declaration_id::text,d.operation_id::text,d.technical_version_id::text,d.quantity_kind
       FROM public.production_material_debits d JOIN public.of_operations o ON o.id=d.operation_id JOIN public.ordres_fabrication f ON f.id=d.of_id
       WHERE d.id=$1::uuid AND d.of_id=$2 AND d.compensates_id IS NULL AND o.status::text='RUNNING' AND f.statut::text IN('EN_COURS','EN_PAUSE')
         AND NOT EXISTS(SELECT 1 FROM public.production_material_debits c WHERE c.compensates_id=d.id)
@@ -19,7 +19,7 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
       throw new HttpError(409,'PRODUCTION_LOSS_ALREADY_COVERED','Un OF de complément couvre les pertes de cette opération. Annulez son brouillon inutilisé avant de compenser le débit.');
     const transferred=(await tx.query(`SELECT id FROM public.production_transfer_batches WHERE material_debit_id=$1::uuid AND released_quantity>0`,[debit.id])).rows;
     if(transferred.length)throw new HttpError(409,'MATERIAL_DEBIT_TRANSFER_ACTIVE','Retournez les bruts transférés à l’étape suivante avant de compenser ce débit.');
-    const sources=(await tx.query<{reservation_id:string;need_id:string;stock_movement_id:string;lot_id:string;actual:number;planned:number;extended:number}>(`SELECT s.reservation_id::text,s.need_id::text,s.stock_movement_id::text,r.lot_id::text,COALESCE(s.extended_qty,0)::float8 AS extended,
+    const sources=(await tx.query<{reservation_id:string;need_id:string;stock_movement_id:string;lot_id:string;actual:number;planned:number;extended:number;yield_good:number|null;yield_scrap:number|null}>(`SELECT s.reservation_id::text,s.need_id::text,s.stock_movement_id::text,r.lot_id::text,COALESCE(s.extended_qty,0)::float8 AS extended,s.yield_good,s.yield_scrap,
       COALESCE(s.actual_qty,abs(m.qty))::float8 AS actual,COALESCE(s.planned_qty,abs(m.qty))::float8 AS planned
       FROM public.production_material_debit_sources s JOIN public.stock_movements m ON m.id=s.stock_movement_id
       JOIN public.stock_reservations r ON r.id=s.reservation_id WHERE s.debit_id=$1::uuid ORDER BY r.lot_id,r.id`,[debit.id])).rows;
@@ -39,10 +39,10 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
       unite,note,compensates_id,compensation_reason,idempotency_key,declared_by)
       SELECT of_id,operation_id,-qty_good,-qty_scrap,-qty_rework,-qty_pending_control,unite,$2,id,$2,$3,$4
       FROM public.production_quantity_declarations WHERE id=$1::uuid RETURNING id::text`,[debit.declaration_id,body.reason,body.idempotencyKey,audit.user_id])).rows[0];
-    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,compensates_id,created_by)
-      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9::uuid,$10)`,[correctionId,ofId,debit.operation_id,debit.technical_version_id,declaration.id,body.idempotencyKey,current.version,body.reason,debit.id,audit.user_id]);
-    for(const s of inverses)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6)`,[correctionId,s.need_id,s.reservation_id,s.movementId,-s.planned,-s.actual]);
+    await tx.query(`INSERT INTO public.production_material_debits(id,of_id,operation_id,technical_version_id,declaration_id,command_key,source_version,note,compensates_id,created_by,quantity_kind)
+      VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6::uuid,$7,$8,$9::uuid,$10,$11)`,[correctionId,ofId,debit.operation_id,debit.technical_version_id,declaration.id,body.idempotencyKey,current.version,body.reason,debit.id,audit.user_id,debit.quantity_kind]);
+    for(const s of inverses)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty,yield_good,yield_scrap)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8)`,[correctionId,s.need_id,s.reservation_id,s.movementId,-s.planned,-s.actual,s.yield_good===null?null:-s.yield_good,s.yield_scrap===null?null:-s.yield_scrap]);
     await syncMaterialOfQuantitiesTx(tx,ofId,audit.user_id);
     return {coverage:await readMaterialTx(tx,ofId),correctionId};
   });

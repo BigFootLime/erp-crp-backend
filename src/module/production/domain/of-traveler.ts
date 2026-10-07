@@ -173,7 +173,7 @@ export function buildOfTraveler(source: unknown) {
           })),
         },
         notes:
-          "Les bruts sont déclarés par débit. Une quantité possible avant tournage n’est pas une quantité réelle. Les sources matière ci-dessous détaillent chaque lot sans répartir artificiellement les bruts entre lots.",
+          "Les bruts sont déclarés par débit. Une quantité possible avant tournage n’est pas une quantité réelle. La répartition par lot ci-dessous provient des saisies observées ; les valeurs historiques absentes ne sont pas calculées au prorata des longueurs.",
       },
       {
         title: "Sorties matière par lot — découpe et solde des barres",
@@ -197,6 +197,28 @@ export function buildOfTraveler(source: unknown) {
             closed: c.closed ? "Oui" : "Non",
           })),
         },
+      },
+      {
+        title: "Bruts obtenus par lot matière — preuves observées",
+        table: {
+          columns: [
+            { key: "debit", label: "Débit" },
+            { key: "lot", label: "Lot utilisé" },
+            { key: "origin", label: "Lot MP d’origine" },
+            { key: "need", label: "Besoin matière" },
+            { key: "good", label: "Bons / potentiels" },
+            { key: "scrap", label: "Rebuts" },
+          ],
+          rows: cuts.map((c) => ({
+            debit: debitReferences.get(text(c.debit_id)),
+            lot: c.lot,
+            origin: c.root_lots,
+            need: c.need,
+            good: c.good ?? "Non renseigné",
+            scrap: c.scrap ?? "Non renseigné",
+          })),
+        },
+        notes: "Les totaux sont contrôlés pour chaque besoin matière. Les besoins distincts ne sont pas additionnés entre eux ; une correction conserve la répartition avec des quantités inverses.",
       },
       {
         title: "Identifiants des preuves de débit et de stock",
