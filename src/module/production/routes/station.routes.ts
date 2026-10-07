@@ -1,5 +1,5 @@
 import { Router } from "express";
-import {readCutting,debitCutting,scanCutting} from '../controllers/station-cutting.controller';
+import {readCutting,debitCutting,scanCutting,executeCutting} from '../controllers/station-cutting.controller';
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
@@ -48,9 +48,9 @@ import { syncOfflineStation } from "../controllers/offline-station.controller";
  *   3. Les routes d'administration exigent un JWT ERP : on n'enrôle pas une
  *      tablette depuis une tablette.
  *
- * Ce routeur ne duplique AUCUNE commande de `/production/execution` (#274) :
- * démarrer, mettre en pause, déclarer et terminer restent là-bas. Il n'existe
- * qu'un seul moteur d'exécution.
+ * Les adaptateurs Découpe et reprise différée délèguent leurs effets au moteur
+ * `/production/execution` (#274), avec l'identité de la session de poste et une
+ * garde transactionnelle. Il n'existe qu'un seul moteur d'exécution.
  */
 const router = Router();
 
@@ -93,6 +93,7 @@ router.post("/scan", requireStationSession, requireStationCapability("read_own_s
 router.get('/cutting/:ofId/:operationId',requireStationSession,requireStationCapability('read_dossier'),readCutting);
 router.post('/cutting/:ofId/:operationId/debits',requireStationSession,requireStationCapability('read_own_station'),debitCutting);
 router.post('/cutting/:ofId/:operationId/scan',requireStationSession,requireStationCapability('read_dossier'),scanCutting);
+router.post('/cutting/:ofId/:operationId/execution',requireStationSession,requireStationCapability('read_own_station'),requireStationIdempotencyKey,executeCutting);
 
 // Reprise bornée : la session de poste vivante constitue la réauthentification.
 // Chaque événement garde ensuite sa propre clé d'idempotence dans le corps.

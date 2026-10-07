@@ -40,12 +40,11 @@ export async function authorizeCuttingTx(
       "STATION_SESSION_LOCKED",
       "Identifiez-vous à nouveau sur le poste avant de reprendre la découpe.",
     );
-  await assertCuttingTarget(tx, station, ofId, operationId);
+  await assertCuttingTarget(tx, ofId, operationId);
 }
 
 export async function assertCuttingTarget(
   tx: Pick<PoolClient, "query">,
-  station: StationContext,
   ofId: number,
   operationId: string,
 ) {
@@ -64,23 +63,26 @@ export async function assertCuttingTarget(
       "STATION_CUTTING_OPERATION_UNKNOWN",
       "Cette opération ne comporte pas de débit matière préparé.",
     );
-  if (
-    !station.machine_id ||
-    (op.machine_id && op.machine_id !== station.machine_id)
-  )
-    throw new HttpError(
-      409,
-      "STATION_CUTTING_MACHINE_CONFLICT",
-      "Choisissez la machine de cette opération avant de découper.",
-    );
+  return (op.machine_id as string | null) ?? null;
 }
 
 export async function assertCuttingRead(
-  station: StationContext,
+  _station: StationContext,
   ofId: number,
   operationId: string,
 ) {
-  await assertCuttingTarget(pool, station, ofId, operationId);
+  return assertCuttingTarget(pool, ofId, operationId);
+}
+
+export async function assertCuttingPointageTargetTx(
+  tx: Pick<PoolClient, 'query'>, station: StationContext,
+  ofId: number, operationId: string, pointageId: string,
+) {
+  const found = await tx.query(`SELECT id FROM public.production_pointages
+    WHERE id=$1::uuid AND of_id=$2 AND operation_id=$3::uuid AND operator_user_id=$4`,
+    [pointageId, ofId, operationId, station.user.id]);
+  if (!found.rows.length) throw new HttpError(403, 'STATION_CUTTING_POINTAGE_FORBIDDEN',
+    'Ce pointage ne correspond pas à votre découpe sur cet OF.');
 }
 
 export async function cuttingPointageTx(
@@ -91,9 +93,11 @@ export async function cuttingPointageTx(
 ) {
   const row = (
     await tx.query(
-      `SELECT id::text FROM public.production_pointages WHERE of_id=$1 AND operation_id=$2::uuid
-    AND operator_user_id=$3 AND machine_id=$4::uuid AND status='RUNNING'`,
-      [ofId, operationId, station.user.id, station.machine_id],
+      `SELECT p.id::text FROM public.production_pointages p
+    JOIN public.of_operations op ON op.id=p.operation_id AND op.of_id=p.of_id
+    WHERE p.of_id=$1 AND p.operation_id=$2::uuid AND p.operator_user_id=$3 AND p.status='RUNNING'
+      AND (op.machine_id IS NULL OR p.machine_id=op.machine_id)`,
+      [ofId, operationId, station.user.id],
     )
   ).rows[0];
   if (!row)

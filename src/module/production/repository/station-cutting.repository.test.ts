@@ -43,20 +43,17 @@ it("refuses a locked or changed session even for an idempotent transport retry",
     ).rejects.toMatchObject({ code: "STATION_SESSION_LOCKED" });
   }
 });
-it("does not let a valid session debit another machine or an unprepared operation", async () => {
+it("accepts the OF without a selected machine, including an existing workshop selection", async () => {
+  for (const machine_id of [null, 'machine']) {
+    const s = { ...station, machine_id };
+    await expect(authorizeCuttingTx(tx([
+      [{status: 'ACTIVE'}], [{usable: true, user_id: 17, machine_id}],
+      [{machine_id: 'operation-machine', material_operation: true}],
+    ]), s, 91, 'op')).resolves.toBeUndefined();
+  }
+});
+it("does not let a valid session debit an unprepared operation", async () => {
   const s = { usable: true, user_id: 17, machine_id: "machine" };
-  await expect(
-    authorizeCuttingTx(
-      tx([
-        [{ status: "ACTIVE" }],
-        [s],
-        [{ machine_id: "other", material_operation: true }],
-      ]),
-      station,
-      91,
-      "op",
-    ),
-  ).rejects.toMatchObject({ code: "STATION_CUTTING_MACHINE_CONFLICT" });
   await expect(
     authorizeCuttingTx(
       tx([
@@ -70,7 +67,7 @@ it("does not let a valid session debit another machine or an unprepared operatio
     ),
   ).rejects.toMatchObject({ code: "STATION_CUTTING_OPERATION_UNKNOWN" });
 });
-it("requires a server-resolved active pointage and binds the station operator and machine", async () => {
+it("requires an own active pointage consistent with the OF assignment, even without a station machine", async () => {
   const t = tx([]);
   await expect(cuttingPointageTx(t, station, 91, "op")).rejects.toMatchObject({
     code: "STATION_CUTTING_POINTAGE_REQUIRED",
@@ -79,9 +76,9 @@ it("requires a server-resolved active pointage and binds the station operator an
     91,
     "op",
     17,
-    "machine",
   ]);
+  expect(t.query).toHaveBeenCalledWith(expect.stringContaining('op.machine_id IS NULL OR p.machine_id=op.machine_id'), expect.any(Array));
   expect(
-    await cuttingPointageTx(tx([[{ id: "pointage" }]]), station, 91, "op"),
+    await cuttingPointageTx(tx([[{ id: "pointage" }]]), {...station, machine_id: null}, 91, "op"),
   ).toBe("pointage");
 });
