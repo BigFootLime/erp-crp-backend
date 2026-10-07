@@ -19,6 +19,7 @@ const GED_ENTITY_TYPE_BY_ARCHIVE_ENTITY: Readonly<Record<string, string>> = Obje
   "commande-client": "COMMANDE_CLIENT",
   "ordre-fabrication": "OF",
   "piece-technique": "PIECE_TECHNIQUE",
+  "piece-technique-version": "PIECE_TECHNIQUE_VERSION",
   affaire: "AFFAIRE",
   "stock-article": "ARTICLE",
   "bon-livraison": "BON_LIVRAISON",

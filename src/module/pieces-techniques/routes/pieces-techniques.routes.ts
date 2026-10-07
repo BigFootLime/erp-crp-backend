@@ -1,5 +1,9 @@
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
+import {
+  technicalSheetSource, listTechnicalSheets, issueTechnicalSheet,
+  previewTechnicalSheet, downloadTechnicalSheet, printTechnicalSheet,
+} from "../controllers/technical-sheet.controller"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
@@ -208,6 +212,13 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 
 // Versions / indices (GPAO B2.1) — source de vérité indice/plan/statut.
 router.get("/:id/versions", validate(idParamSchema), listVersions)
+// Version-scoped technical PDF; never replaces the immutable creation receipt.
+router.get("/:id/versions/:versionId/technical-sheet/source", technicalSheetSource)
+router.get("/:id/versions/:versionId/technical-sheet", listTechnicalSheets)
+router.post("/:id/versions/:versionId/technical-sheet", issueTechnicalSheet)
+router.get("/:id/versions/:versionId/technical-sheet/:documentId/preview", previewTechnicalSheet)
+router.get("/:id/versions/:versionId/technical-sheet/:documentId/download", downloadTechnicalSheet)
+router.post("/:id/versions/:versionId/technical-sheet/:documentId/print-intents", printTechnicalSheet)
 router.post("/:id/versions", validate(idParamSchema), validate(createVersionSchema), createVersion)
 router.patch("/:id/versions/:versionId", validate(versionIdParamSchema), validate(updateVersionSchema), updateVersion)
 router.patch("/:id/versions/:versionId/status", requireVersionApproval, validate(versionIdParamSchema), validate(versionStatusSchema), updateVersionStatus)

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import {ofTravelerSource,listOfTravelers,issueOfTraveler,previewOfTraveler,downloadOfTraveler,printOfTraveler} from "../controllers/of-traveler.controller";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
@@ -140,6 +141,13 @@ router.post(
 );
 
 /* -------------------------------- Document -------------------------------- */
+
+router.get("/:ofId/traveler/source", requireOfCapability("document"), ofTravelerSource);
+router.get("/:ofId/traveler", requireOfCapability("document"), listOfTravelers);
+router.post("/:ofId/traveler", requireIdempotencyKey, requireOfCapability("document"), issueOfTraveler);
+router.get("/:ofId/traveler/:documentId/preview", requireOfCapability("document"), previewOfTraveler);
+router.get("/:ofId/traveler/:documentId/download", requireOfCapability("document"), downloadOfTraveler);
+router.post("/:ofId/traveler/:documentId/print-intents", requireOfCapability("document"), printOfTraveler);
 
 // Aperçu : même read-model que le PDF, aucun effet de bord.
 router.get("/:ofId/document/preview", requireOfCapability("document"), previewPayload);
