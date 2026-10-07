@@ -10,7 +10,8 @@ import crypto from "node:crypto";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import { assertSupplierPurchaseHomologationTx } from "../../fournisseurs/repository/purchase-homologation.repository";
+import { readPurchaseQualificationTx } from "./purchase-qualification.repository";
+import { purchaseQualificationRevision } from "../../fournisseurs/domain/purchase-qualification";
 import { generateCommandeFournisseurCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -81,7 +82,7 @@ type SupplierPoCreationSnapshot = Record<string, unknown>;
  * create transaction. Internal notes, actor context and procurement links are
  * deliberately absent: an official supplier PDF is an external document.
  */
-async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string): Promise<SupplierPoCreationSnapshot> {
+async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string, enforceQualification = false): Promise<SupplierPoCreationSnapshot> {
   const header = await tx.query<Record<string, unknown>>(
     `SELECT cf.code, cf.statut, cf.created_at::text AS issued_at, cf.devise,
             cf.date_besoin::text AS need_date, cf.incoterm, cf.conditions_paiement AS payment_terms,
@@ -136,6 +137,7 @@ async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string
     })),
     totals: { total_ht: String(h.total_ht), total_discount: String(h.total_remise), total_vat: String(h.total_tva), freight_ht: String(h.freight_ht), total_ttc: String(h.total_ttc) },
     issuer,
+    supplier_qualification: await readPurchaseQualificationTx(tx, commandeId, enforceQualification),
   };
 }
 
@@ -1381,7 +1383,7 @@ export async function repoTransitionCommandeFournisseur(
 
     // Préconditions métier par nature de transition.
     const qualification = ["submit", "approve", "send"].includes(kind)
-      ? await assertSupplierPurchaseHomologationTx(client, header.fournisseur_id)
+      ? await readPurchaseQualificationTx(client, id, true)
       : null;
     if (kind === "send") {
       assertFournisseurCommandable(await fetchFournisseurMini(client, header.fournisseur_id));
@@ -1412,6 +1414,15 @@ export async function repoTransitionCommandeFournisseur(
       const prepared=await client.query(`SELECT payload->'general_terms' AS terms FROM public.commande_fournisseur_document WHERE commande_id=$1::uuid AND version=$2`,[id,header.version_document]);
       if ((prepared.rows[0]?.terms?.version_id??null)!==(terms?.version_id??null) || (prepared.rows[0]?.terms?.sha256??null)!==(terms?.sha256??null)) {
         throw new HttpError(409,"GENERAL_TERMS_SELECTION_CONFLICT","Régénérez le bon de commande avec les conditions approuvées avant l’envoi.");
+      }
+      const qualificationProof = (await client.query<{ revision: string | null }>(
+        `SELECT payload->>'supplier_qualification_revision' AS revision FROM public.commande_fournisseur_document
+         WHERE commande_id=$1::uuid AND version=$2`, [id,header.version_document])).rows[0]?.revision;
+      // Legacy preparations remain usable only when no applicable qualification was configured.
+      const hasDecision = qualification && [qualification.global,...qualification.domains].some(scope=>scope.decision);
+      if (qualification && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
+        throw new HttpError(409,"SUPPLIER_QUALIFICATION_DOCUMENT_STALE",
+          "L’homologation ou le périmètre d’achat a changé. Régénérez le bon de commande avant l’envoi.");
       }
     }
     if (kind === "cancel") {
@@ -1463,6 +1474,7 @@ export async function repoTransitionCommandeFournisseur(
           devise: header.devise,
           version_document: header.version_document,
           snapshot_at: new Date().toISOString(),
+          supplier_qualification: qualification,
         })
       );
       await client.query(
@@ -1610,10 +1622,13 @@ export async function repoGenerateDocumentVersion(
     }
 
     const detail = await repoGetCommandeFournisseurTx(client, id);
+    const qualification = await readPurchaseQualificationTx(client,id,true);
     const version = Number(header.version_document) + 1;
     const payload = {
       type: "BON_DE_COMMANDE_FOURNISSEUR",
       general_terms: await freezeGeneralTerms(client,"commande-fournisseur",id,true),
+      supplier_qualification: qualification,
+      supplier_qualification_revision: purchaseQualificationRevision(qualification),
       version,
       code: detail.code,
       statut: detail.statut,
@@ -1735,7 +1750,7 @@ export async function repoQueueSupplierPoOfficialDocument(
     if (existingCount > 0 && !input.reissue_reason?.trim()) {
       throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
     }
-    const sourceSnapshot = await buildSupplierPoCreationSnapshot(client, id);
+    const sourceSnapshot = await buildSupplierPoCreationSnapshot(client, id, true);
     const currentSourceRevision = header.rows[0]?.source_revision?.trim();
     if (!currentSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
     if (currentSourceRevision !== input.source_revision) {
