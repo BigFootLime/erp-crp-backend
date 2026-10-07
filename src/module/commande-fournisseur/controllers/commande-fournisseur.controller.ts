@@ -38,6 +38,7 @@ import {
   generateDocumentSVC,
   getCommandeFournisseurKpisSVC,
   getCommandeFournisseurSVC,
+  readPurchaseQualificationSVC,
   getDocumentSVC,
   listCommandesFournisseursSVC,
   previewPropositionsSVC,
@@ -113,6 +114,13 @@ export const getCommandeFournisseurKpis: RequestHandler = async (_req, res, next
   } catch (err) {
     next(err);
   }
+};
+
+export const readPurchaseQualification: RequestHandler = async (req,res,next) => {
+  try {
+    const {params} = commandeIdParamSchema.parse({params:req.params});
+    res.json({data:await readPurchaseQualificationSVC(params.id)});
+  } catch (error) { next(error); }
 };
 
 export const readSupplierConsultations:RequestHandler=async(req,res,next)=>{
