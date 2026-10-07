@@ -4,6 +4,7 @@
 import { HttpError } from "../../../utils/httpError";
 import type { QualityCharacteristicSpec } from "./quality-plan";
 import type { QualityVerdict } from "./quality-policy";
+import { isLotExpired } from "./lot-shelf-life";
 
 const EPS = 1e-9;
 
@@ -536,6 +537,8 @@ export type EligibilityTarget = {
   qty_requested: number;
   // État qualité de l'objet exact, jamais de l'usine entière.
   lot_status: "LIBERE" | "EN_ATTENTE" | "QUARANTAINE" | "BLOQUE" | null;
+  expiry_at?: string | null;
+  shelf_life_reference_at?: string | null;
   qty_released: number;
   qty_held: number;
   qty_consumed: number;
@@ -548,6 +551,7 @@ export type EligibilityBlock = {
   code:
     | "LOT_NOT_RELEASED"
     | "LOT_QUARANTINE"
+    | "LOT_EXPIRED"
     | "QTY_NOT_RELEASED"
     | "OPEN_NON_CONFORMITY"
     | "MANDATORY_CONTROL_PENDING"
@@ -576,6 +580,15 @@ export function evaluateQualityEligibility(
 ): EligibilityVerdict {
   const blocks: EligibilityBlock[] = [];
   const anchor = { object_type: target.object_type, object_id: target.object_id };
+
+  if (purpose !== "INVOICE" && isLotExpired(target.expiry_at, target.shelf_life_reference_at ? new Date(target.shelf_life_reference_at) : at)) {
+    blocks.push({
+      ...anchor,
+      code: "LOT_EXPIRED",
+      message: `Lot ${target.label ?? target.object_id} périmé depuis le ${target.expiry_at}.`,
+      expected_action: "Isoler le lot et enregistrer sa disposition qualité ; choisir un lot utilisable.",
+    });
+  }
 
   if (target.lot_status === "BLOQUE") {
     blocks.push({

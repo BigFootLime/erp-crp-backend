@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 
 import { HttpError } from "../../../utils/httpError";
+import { hasPrivilegedAssignedRole } from "../../auth/domain/roles";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { withTransaction } from "../repository/access-control.repository";
 import * as repo from "../repository/access-review.repository";
@@ -12,8 +13,6 @@ import type {
   AccessReviewRiskLevel,
   AccessReviewRiskReason,
 } from "../types/access-review.types";
-
-const PRIVILEGED_ROLE_KEYS = new Set(["Administrateur Systeme et Reseau", "Directeur"]);
 
 function stableHash(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -35,7 +34,7 @@ export function assessAccessReviewCandidate(
   candidate: AccessReviewCandidate,
   failedLoginThreshold: number
 ): { reasons: AccessReviewRiskReason[]; level: AccessReviewRiskLevel } {
-  const privileged = candidate.is_superadmin || candidate.roles.some((role) => PRIVILEGED_ROLE_KEYS.has(role));
+  const privileged = candidate.is_superadmin || hasPrivilegedAssignedRole(null, candidate.roles);
   const failedBurst = candidate.failed_login_count >= failedLoginThreshold;
   const blocked = isBlocked(candidate.status);
   const reasons: AccessReviewRiskReason[] = [];

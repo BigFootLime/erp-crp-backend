@@ -4604,16 +4604,6 @@ export async function repoDeleteCommande(
               FROM public.dossier_technique_piece_devis_promotion technical_promotion
               WHERE technical_promotion.commande_id = cc.id
             )
-            OR EXISTS (
-              SELECT 1
-              FROM public.quick_commande_previews quick_preview
-              WHERE quick_preview.confirmed_commande_id = cc.id
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM public.quick_commande_confirmations quick_confirmation
-              WHERE quick_confirmation.commande_id = cc.id
-            )
           ) AS has_business_artifacts
         FROM public.commande_client cc
         LEFT JOIN LATERAL (

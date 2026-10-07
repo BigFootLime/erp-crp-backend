@@ -61,9 +61,10 @@ async function inspectOperationalLotQualityEligibility(params: {
     lot_code: string;
     lot_status: EligibilityTarget["lot_status"];
     article_unit: string | null;
+    expiry_at: string | null;
   }>(
     `
-      SELECT lot.lot_code, lot.lot_status::text AS lot_status, article.unite AS article_unit
+      SELECT lot.lot_code, lot.lot_status::text AS lot_status, article.unite AS article_unit, lot.expiry_at::text
       FROM public.lots lot
       JOIN public.articles article ON article.id = lot.article_id
       WHERE lot.id = $1::uuid
@@ -209,6 +210,7 @@ async function inspectOperationalLotQualityEligibility(params: {
     label: lot.lot_code,
     qty_requested: params.qty,
     lot_status: lot.lot_status,
+    expiry_at: lot.expiry_at,
     qty_released: portion ? Math.min(portion.stock_quantity, sourceDecision?.eligibility.allowed ? portion.stock_quantity : 0,
       controls.rows.length ? numeric(controls.rows[0].qty_released) : portion.stock_quantity) : admission?admission.quantity:controls.rows.reduce((sum, row) => sum + numeric(row.qty_released), 0),
     qty_held: controls.rows.reduce((sum, row) => sum + numeric(row.qty_held), 0),

@@ -18,12 +18,13 @@ function queryClient(input: {
   committed?: number;
   articleUnit?: string | null;
   controlUnit?: string | null;
+  expiryAt?: string | null;
   receiptLineId?:string;
   concession?: { status: string; valid_to: string | null } | null;
 }) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes('FROM public.reception_stock_portions')) return { rows: [] };
-    if (sql.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: input.status ?? "LIBERE", article_unit: input.articleUnit ?? "PCS" }] };
+    if (sql.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: input.status ?? "LIBERE", article_unit: input.articleUnit ?? "PCS", expiry_at: input.expiryAt ?? null }] };
     if (sql.includes("FROM public.quality_control qc")) {
       return {
         rows: [{ id: "00000000-0000-4000-8000-000000000001", qty_released: String(input.released ?? 10), qty_held: "0", qty_consumed: String(input.consumed ?? 0), unite: input.controlUnit ?? "PCS", pending: input.pending ?? false,trigger_type:input.receiptLineId?"RECEPTION":"RECHECK",reception_ligne_id:input.receiptLineId??null }],
@@ -41,6 +42,13 @@ function queryClient(input: {
 }
 
 describe("operational Quality 360 gate", () => {
+  it("refuses use of an expired released lot even after its reservation was made", async () => {
+    const client = queryClient({ expiryAt: "2000-01-01", committed: 5 });
+    await expect(assertOperationalLotQualityEligibility({ client: client as never, lotId: LOT_ID, qty: 0, purpose: "RESERVE" }))
+      .rejects.toMatchObject({ code: "QUALITY_NOT_ELIGIBLE", details: { blocks: expect.arrayContaining([expect.objectContaining({ code: "LOT_EXPIRED" })]) } });
+    const preview = await readOperationalLotQualityEligibility({ client: client as never, lotId: LOT_ID, qty: 1, purpose: "RESERVE" });
+    expect(preview.available).toBe(0);
+  });
   it("uses the receipt release once, without counting reservations of earlier entries a second time",async()=>{
     const client=queryClient({receiptLineId:"line",released:60,committed:40,consumed:5});
     await expect(assertReceiptLotQualityEligibility({client:client as never,lotId:LOT_ID,receiptLineId:"line",qty:60,unit:"PCS"})).resolves.toMatchObject({already_committed_qty:0});

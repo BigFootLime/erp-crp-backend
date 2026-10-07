@@ -289,7 +289,7 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       });
       return { kind: "verify" as const, challenge };
     }
-    if (!policyRequiresMfa(policy, user.is_superadmin)) return { kind: "none" as const };
+    if (!policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles)) return { kind: "none" as const };
     const { factor, secret } = await createPendingFactor(tx, user);
     const challenge = await insertChallenge(tx, {
       userId: user.id,
@@ -555,6 +555,8 @@ async function verifyActiveCode(tx: PoolClient, user: UserMfaRow, code: string, 
 export async function getMfaStatus(userId: number) {
   const { rows } = await pool.query<{
     is_superadmin: boolean;
+    role: string;
+    roles: string[];
     policy: string | null;
     factor_id: string | null;
     factor_version: number | null;
@@ -563,7 +565,9 @@ export async function getMfaStatus(userId: number) {
     locked_until: Date | null;
     recovery_codes_remaining: string;
   }>(
-    `SELECT u.is_superadmin,
+    `SELECT u.is_superadmin, u.role,
+             COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
+                         FROM public.user_role_assignments ura WHERE ura.user_id=u.id), ARRAY[u.role]::text[]) AS roles,
             (SELECT value_text FROM public.erp_settings WHERE key=$2 LIMIT 1) AS policy,
             f.id AS factor_id, f.version AS factor_version, f.device_label, f.enrolled_at, f.locked_until,
             COALESCE((SELECT count(*) FROM public.user_mfa_recovery_codes rc
@@ -577,10 +581,10 @@ export async function getMfaStatus(userId: number) {
   if (!row) throw new ApiError(404, "USER_NOT_FOUND", "Utilisateur inconnu.");
   const policy = normalizeMfaPolicy(row.policy);
   const enrolled = Boolean(row.factor_id);
-  const policyRequired = policyRequiresMfa(policy, row.is_superadmin);
+  const policyRequired = policyRequiresMfa(policy, row.is_superadmin, row.role, row.roles);
   return {
     policy,
-    required: accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, hasActiveFactor: enrolled }),
+    required: accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, role: row.role, roles: row.roles, hasActiveFactor: enrolled }),
     policy_required: policyRequired,
     enrolled,
     method: row.factor_id ? "TOTP" : null,
@@ -590,7 +594,7 @@ export async function getMfaStatus(userId: number) {
     locked_until: row.locked_until?.toISOString() ?? null,
     recovery_codes_remaining: Number.parseInt(row.recovery_codes_remaining, 10),
     can_enroll: !enrolled && policy !== "disabled",
-    can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin),
+    can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin, row.role, row.roles),
   };
 }
 
@@ -737,7 +741,7 @@ export async function regenerateRecoveryCodes(userId: number, password: string, 
 export async function revokeOwnMfa(userId: number, password: string, code: string, meta: MfaAuditMeta) {
   return authenticatedMutation(userId, password, code, meta, async (tx, user, factor, method) => {
     const policy = await loadMfaPolicy(tx);
-    if (!policyAllowsFactorRevocation(policy, user.is_superadmin)) {
+    if (!policyAllowsFactorRevocation(policy, user.is_superadmin, user.role, user.roles)) {
       throw new ApiError(
         409,
         "MFA_REQUIRED_BY_POLICY",

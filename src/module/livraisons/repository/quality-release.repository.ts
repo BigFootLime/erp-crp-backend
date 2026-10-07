@@ -43,6 +43,8 @@ type TargetRow = {
   qty_requested: string
   unite: string | null
   lot_status: "LIBERE" | "EN_ATTENTE" | "QUARANTAINE" | "BLOQUE" | null
+  expiry_at: string | null
+  shelf_life_reference_at: string | null
   article_id: string | null
   article_code: string | null
   article_designation: string | null
@@ -202,7 +204,9 @@ export async function repoGetDeliveryQualityRelease(
           CASE WHEN a.lot_id IS NOT NULL THEN l.lot_code ELSE 'Ligne ' || bl.ordre::text END AS label,
           a.quantite::text AS qty_requested,
           a.unite,
-          CASE WHEN a.lot_id IS NOT NULL THEN l.lot_status::text ELSE NULL END AS lot_status,
+           CASE WHEN a.lot_id IS NOT NULL THEN l.lot_status::text ELSE NULL END AS lot_status,
+           l.expiry_at::text AS expiry_at,
+           CASE WHEN b.statut IN ('SHIPPED','DELIVERED') THEN COALESCE(b.shipped_at,b.date_expedition::timestamptz)::text ELSE NULL END AS shelf_life_reference_at,
           a.article_id::text AS article_id,
           article.code AS article_code,
           article.designation AS article_designation,
@@ -446,6 +450,8 @@ export async function repoGetDeliveryQualityRelease(
           label: row.label,
           qty_requested: toNumber(row.qty_requested),
           lot_status: row.lot_status,
+          expiry_at: row.expiry_at,
+          shelf_life_reference_at: row.shelf_life_reference_at,
           qty_released: effectiveControl ? toNumber(effectiveControl.qty_released) : 0,
           qty_held: effectiveControl ? toNumber(effectiveControl.qty_held) : 0,
           qty_consumed: effectiveControl ? toNumber(effectiveControl.qty_consumed) : 0,

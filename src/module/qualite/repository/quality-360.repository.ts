@@ -3081,11 +3081,11 @@ export async function repoEvaluateEligibility(
 ): Promise<{ target: EligibilityTarget; verdict: ReturnType<typeof evaluateQualityEligibility> }> {
   const lotRes =
     query.object_type === "LOT"
-      ? await pool.query<{ lot_code: string | null; lot_status: string | null }>(
-          `SELECT lot_code, lot_status FROM public.lots WHERE id = $1::uuid`,
+      ? await pool.query<{ lot_code: string | null; lot_status: string | null; expiry_at: string | null }>(
+          `SELECT lot_code, lot_status, expiry_at::text FROM public.lots WHERE id = $1::uuid`,
           [query.object_id]
         )
-      : { rows: [] as Array<{ lot_code: string | null; lot_status: string | null }> };
+      : { rows: [] as Array<{ lot_code: string | null; lot_status: string | null; expiry_at: string | null }> };
 
   const aggregates = await pool.query<{
     qty_released: string;
@@ -3129,6 +3129,7 @@ export async function repoEvaluateEligibility(
     label: lotRes.rows[0]?.lot_code ?? null,
     qty_requested: query.qty,
     lot_status: (lotRes.rows[0]?.lot_status ?? null) as EligibilityTarget["lot_status"],
+    expiry_at: lotRes.rows[0]?.expiry_at ?? null,
     qty_released: toNumber(agg?.qty_released),
     qty_held: toNumber(agg?.qty_held),
     qty_consumed: toNumber(agg?.qty_consumed),

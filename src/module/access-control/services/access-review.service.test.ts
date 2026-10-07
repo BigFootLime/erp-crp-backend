@@ -108,6 +108,10 @@ beforeEach(() => {
 });
 
 describe("SOL-25 access review", () => {
+  it("includes the canonical Gerant alias in privileged reviews without conflating technical directors", () => {
+    expect(assessAccessReviewCandidate({ ...riskyCandidate, is_superadmin: false, roles: ["Gérant"] }, 5).reasons).toContain("PRIVILEGED");
+    expect(assessAccessReviewCandidate({ ...riskyCandidate, is_superadmin: false, roles: ["Directeur Technique"] }, 5).reasons).not.toContain("PRIVILEGED");
+  });
   it("classifies privileged inactive accounts with repeated failures as high risk", () => {
     expect(assessAccessReviewCandidate(riskyCandidate, 5)).toEqual({
       reasons: ["PRIVILEGED", "INACTIVE", "FAILED_LOGIN_BURST", "EXCEPTIONAL_ACCESS"],
