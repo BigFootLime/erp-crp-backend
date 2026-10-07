@@ -12,6 +12,7 @@ import type { AuditContext } from './production.repository';
 import type { ConsumableConfiguration,ConsumablePreparation,ConsumableReconciliation,ConsumableWithdrawal } from '../validators/consumable-procurement.validators';
 import { consumeMaterialReservationTx } from '../../stock/repository/partial-reservation-consumption.repository';
 import {groupConsumableDrafts,type ConsumableDraftRequest} from '../domain/consumable-draft-groups';
+import {savePurchasePreparationsTx} from './purchase-preparation.repository';
 
 type Coverage=Awaited<ReturnType<typeof readOfConsumablesTx>>;
 type Need=Coverage['needs'][number];
@@ -60,6 +61,14 @@ export async function configureOfConsumable(ofId:number,body:ConsumableConfigura
   });
 }
 
+export async function prepareOfConsumablePurchases(ofId:number,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext){
+  return consumableCommand({ofId},'PREPARE_PURCHASES',body,audit,async tx=>{
+    const current=await readOfConsumablesTx(tx,ofId);assertVersion(current,body.expectedVersion);
+    await savePurchasePreparationsTx(tx,current.purchasePreparations,'CONSOMMABLE',ofId,current.version,audit);
+    return readOfConsumablesTx(tx,ofId);
+  });
+}
+
 export async function prepareOfConsumables(ofId:number,body:ConsumablePreparation,audit:AuditContext,rights:{reserve:boolean;purchase:boolean}){
   return consumableCommand({ofId},'PREPARE',body,audit,async tx=>{
     let current=await readOfConsumablesTx(tx,ofId);assertVersion(current,body.expectedVersion);
@@ -102,7 +111,7 @@ export async function prepareOfConsumables(ofId:number,body:ConsumablePreparatio
       }else if(remaining>0&&need.futureSupplies.some(f=>f.compatible&&!choice.future.some(s=>s.lineId===f.id))&&!choice.existingPurchasesReviewed)
         throw new HttpError(409,'CONSUMABLE_EXISTING_PURCHASE_REVIEW','Un achat attendu est disponible. Examinez son affectation avant de créer une nouvelle commande.');
       if(remaining<=0)continue;
-      if(!need.supplierId||!need.catalogue){pending.push({key:need.key,message:'Choisissez ou créez un fournisseur et ses conditions pour préparer le brouillon.'});continue;}
+      if(!need.supplierId||!need.catalogue){pending.push({key:need.key,message:'Préparation d’achat enregistrée avec le manque. Choisissez le fournisseur et ses conditions pour créer la commande brouillon.'});continue;}
       const c=need.catalogue;
       const articlePack=(await tx.query<{pack:number}>('SELECT purchase_pack_qty::float8 AS pack FROM public.articles WHERE id=$1::uuid',[need.articleId])).rows[0].pack;
       const buy=consumablePurchaseQuantity({shortage:remaining,articlePack,supplierMinimum:c.minimum,supplierPack:c.pack,coefficient:c.coefficient??1});
@@ -113,6 +122,7 @@ export async function prepareOfConsumables(ofId:number,body:ConsumablePreparatio
       if(need.mode==='GLOBAL_PACK')sharedPrepared.add(need.articleId!);
     }
     const commands=await createMaterialDraftsTx(tx,groupConsumableDrafts(drafts),audit);
+    if(rights.purchase){const live=await readOfConsumablesTx(tx,ofId);await savePurchasePreparationsTx(tx,live.purchasePreparations,'CONSOMMABLE',ofId,live.version,audit);}
     return {coverage:await readOfConsumablesTx(tx,ofId),commands,reservedIds,pending};
   });
 }

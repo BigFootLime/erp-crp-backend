@@ -6,6 +6,7 @@ import {HttpError} from '../../../utils/httpError';
 import {repoCreateStockReservation} from '../../stock/repository/stock-reservation.repository';
 import {createMaterialDraftsTx,type MaterialDraftLine} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
 import {lockFutureMaterialSupplyTx,allocateFutureMaterialSupplyTx} from './material-future-supply.repository';
+import {savePurchasePreparationsTx} from './purchase-preparation.repository';
 
 export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,audit:AuditContext,canPurchase:boolean){
   return materialCommand(ofId,"CONFIRM",body,audit,async(tx,current)=>{
@@ -43,11 +44,14 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
       if(!buy.assigned)continue;
       if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
       if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}
-      if(!need.supplierId||need.price===null){pending.push({needKey:need.key,message:!need.supplierId?"Choisir le fournisseur pour préparer le brouillon.":"Renseigner le prix fournisseur ou consulter les fournisseurs."});continue;}
+      if(!need.supplierId){pending.push({needKey:need.key,message:"Préparation d’achat enregistrée avec la quantité manquante. Choisissez le fournisseur pour créer la commande brouillon."});continue;}
+      if(need.futureSupplies.some(s=>!s.reasons.length&&quantity(s.available-body.futureSelections.filter(f=>f.lineId===s.id).reduce((sum,f)=>sum+f.quantity,0))>0)&&!body.existingPurchasesReviewed)
+        throw new HttpError(409,'MATERIAL_EXISTING_PURCHASE_REVIEW','Un achat attendu reste disponible. Examinez son affectation avant de créer une nouvelle commande.');
       drafts.push({needId:need.id!,sourceRef:need.key,ofId,articleId:need.articleId!,designation:need.designation,supplierId:need.supplierId,currency:need.currency,destinationId:need.destinationId,unit:need.unit!,quantity:buy.ordered,assigned:buy.assigned,price:need.price,due:current.operations.find(o=>o.id===need.operationId)?.start?.slice(0,10)??null,operation:need.operationLabel!,requirements:[need.requirements.grade,need.requirements.condition,...Object.entries(need.requirements.dimensions).map(([name,value])=>`${name} : ${value} mm minimum`),...need.requirements.certificates,...need.requirements.manualChecks].filter((x):x is string=>!!x)});
     }
     if([...body.selections,...body.futureSelections].some(s=>!current.needs.some(n=>n.key===s.needKey)))throw new HttpError(422,"MATERIAL_NEED_NOT_FOUND","Le besoin sélectionné n’existe plus.");
     const commands=await createMaterialDraftsTx(tx,drafts,audit);
+    if(canPurchase){const live=await readMaterialTx(tx,ofId);await savePurchasePreparationsTx(tx,live.purchasePreparations,'MATIERE',ofId,live.version,audit);}
     return {coverage:await readMaterialTx(tx,ofId),commands,reservedIds,pending,futureAssigned:body.futureSelections};
   });
 }
