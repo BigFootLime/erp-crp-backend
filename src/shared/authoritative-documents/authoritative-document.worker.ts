@@ -3,6 +3,7 @@ import { renderSupplierPurchaseOrderOfficialPdf } from "../../module/commande-fo
 import { renderDevisOfficialPdf } from "../../module/devis/services/devis-official-pdf";
 import { renderCommandeArOfficialPdf } from "../../module/commande-client/services/commande-ar.service";
 import { renderClientProfilePdf } from "../../module/client/services/client-profile-pdf";
+import { renderCurrentTechnicalDocumentPdf } from "./current-technical-document-pdf";
 import { renderInternalCreationSnapshotPdf } from "./internal-creation-snapshot-pdf";
 import { renderShippedDeliveryOfficialPdf } from "../../module/livraisons/services/delivery-authoritative-document";
 import { repoClaimAuthoritativePdfWork } from "./authoritative-document.repository";
@@ -25,6 +26,8 @@ export function createAuthoritativePdfProducerRegistry(): AuthoritativePdfProduc
   registry.register("commande-client", "CUSTOMER_ORDER_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("ordre-fabrication", "OF_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("piece-technique", "TECHNICAL_PIECE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
+  registry.register("piece-technique-version", "TECHNICAL_SHEET", renderCurrentTechnicalDocumentPdf);
+  registry.register("ordre-fabrication", "OF_TRAVELER", renderCurrentTechnicalDocumentPdf);
   registry.register("affaire", "AFFAIR_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("stock-article", "STOCK_ARTICLE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("bon-livraison", "DELIVERY_NOTE_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
