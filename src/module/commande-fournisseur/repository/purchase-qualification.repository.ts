@@ -96,6 +96,8 @@ export async function readSupplierPurchaseQualificationTx(
     lines: PurchaseScopeLine[];
     contexts: Omit<PurchaseClientContext, "domains">[];
     enforce?: boolean;
+    // Internal read-only batch input. Actual engagements always re-read and lock.
+    prefetched?: { decisions: QualificationDecision[]; policies: Awaited<ReturnType<typeof readApprovalPoliciesTx>> };
   },
 ): Promise<PurchaseQualification> {
   const { lines, contexts, enforce = false } = input;
@@ -108,7 +110,7 @@ export async function readSupplierPurchaseQualificationTx(
     for (const domain of domains)
       domainLines.set(domain, [...(domainLines.get(domain) ?? []), line.id]);
   }
-  const decisions = (
+  const decisions = !enforce && input.prefetched ? input.prefetched.decisions : (
     await tx.query<QualificationDecision>(
       `
     SELECT id::text,version,statut,domaine_code,valid_from::text,valid_to::text,document_id::text,
@@ -135,7 +137,7 @@ export async function readSupplierPurchaseQualificationTx(
         input.today,
       ),
     );
-  const policies = await readApprovalPoliciesTx(tx, clientIds, enforce);
+  const policies = !enforce && input.prefetched ? input.prefetched.policies : await readApprovalPoliciesTx(tx, clientIds, enforce);
   const lineDomains = new Map(
     lines.map((line) => [line.id, purchaseLineDomains(line)]),
   );
