@@ -3,12 +3,12 @@ import type {Request} from "express";
 import {asyncHandler} from "../../../utils/asyncHandler";
 import {HttpError} from "../../../utils/httpError";
 import {buildAuditContext} from "./production.controller";
-import {getOfMaterial,configureOfMaterial,confirmOfMaterial,verifyOfMaterialLot,getOperationReadiness} from "../services/of-material.service";
+import {getOfMaterial,configureOfMaterial,confirmOfMaterial,verifyOfMaterialLot,getOperationReadiness,prepareOfMaterialPurchases,chooseOfMaterialSupplier} from "../services/of-material.service";
 import {roleHasOfCapability} from "../domain/of-rbac";
 import {roleHasStockCapability} from "../../stock/domain/stock-rbac";
 import {roleHasCommandeFournisseurCapability} from "../../commande-fournisseur/domain/commande-fournisseur-rbac";
 import {requestHasGrantedAccountModuleAccess} from "../../access-control/context/account-module-access.context";
-import {materialDebitSchema} from '../validators/of-material.validators';
+import {materialDebitSchema,materialCommandSchema,materialSupplierSchema} from '../validators/of-material.validators';
 import {materialDebitCorrectionSchema,materialTransferSchema} from '../validators/of-material.validators';
 import {correctMaterialDebit,commandMaterialTransfer} from '../services/of-material.service';
 import {debitOfMaterial} from '../services/of-material.service';
@@ -27,6 +27,14 @@ function present(data:Awaited<ReturnType<typeof getOfMaterial>>|Awaited<ReturnTy
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
 }
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
+export const prepareMaterialPurchases=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'MATERIAL_PURCHASE_PREPARATION_FORBIDDEN','Les droits de création d’achats sont nécessaires pour enregistrer les besoins.');
+  res.json(present(await prepareOfMaterialPurchases(identity.parse(req.params).id,materialCommandSchema.parse(req.body),buildAuditContext(req)),req));
+});
+export const chooseMaterialSupplier=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'MATERIAL_PURCHASE_PREPARATION_FORBIDDEN','Les droits de création d’achats sont nécessaires pour choisir le fournisseur.');
+  res.json(present(await chooseOfMaterialSupplier(identity.parse(req.params).id,materialSourceRefSchema.parse(req.params.sourceRef),materialSupplierSchema.parse(req.body),buildAuditContext(req)),req));
+});
 export const reconcileMaterial=asyncHandler(async(req,res)=>{
   const access=rights(req);
   if(!access.canConfigure||!access.canConfirm)throw new HttpError(403,'MATERIAL_RECONCILIATION_FORBIDDEN','Les droits de préparation et de gestion des réservations sont nécessaires pour rapprocher les engagements.');

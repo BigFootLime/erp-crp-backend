@@ -1,6 +1,6 @@
 import type {PoolClient} from "pg";
 import {readOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
-import type {MaterialLotVerification} from "../validators/of-material.validators";
+import type {MaterialLotVerification,MaterialSupplier} from "../validators/of-material.validators";
 import pool from "../../../config/database";
 import {HttpError} from "../../../utils/httpError";
 import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-outbox-transaction";
@@ -15,6 +15,9 @@ import {materialCarryBlockers} from '../domain/material-reconciliation';
 import {readMaterialOriginPolicyTx} from './of-material-policy.repository';
 import {readMaterialReservationAvailabilityTx} from './material-reservation-availability.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
+import {materialPurchasePreparations} from '../domain/purchase-preparation';
+import {readPurchasePreparationsTx,savePurchasePreparationsTx} from './purchase-preparation.repository';
+import {fetchFournisseurMini,assertFournisseurCommandable} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
@@ -132,7 +135,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     if(expected.some(p=>p.unite?.trim().toUpperCase()!==need.unit?.trim().toUpperCase()))blockers.push("Vérifier la conversion des approvisionnements déjà affectés à ce besoin.");
     const supplierId=row?.supplier_id??p.fournisseur_id;
     const catalog=catalogs.find(c=>c.article_id===p.article_id&&c.fournisseur_id===supplierId&&c.unite===need.unit&&(!c.coef_conversion||c.coef_conversion===1));
-    const price=catalog?.prix_unitaire??(p.unite_prix===need.unit?p.pu_achat:null)??null;
+    const price=catalog?.prix_unitaire??(supplierId&&supplierId===p.fournisseur_id&&p.unite_prix===need.unit?p.pu_achat:null)??null;
     return {...need,id:row?.id??null,designation:p.designation??p.nom??article?.code??"Matière à définir",articleCode:article?.code??null,articleUnit:article?.unite??null,
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule:row?.debit_rule??null,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:row?.destination_id??null,
@@ -163,10 +166,13 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       reservations:attached,promises:expected,customerCalls:calls,
       targets:needs.filter(t=>t.id).map(t=>({id:t.id!,designation:t.designation,required:t.required,blockers:[...t.blockers,...materialCarryBlockers(identity,t)]}))};
   });
-  return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,technicalVersion:of.revision as string|null,
+  const previousNeeds=historicalNeeds.filter(n=>!reconciliations.some(r=>r.previous_need_id===n.id));
+  const preparation=await readPurchasePreparationsTx(tx,materialPurchasePreparations({ofId,
+    technicalVersion:of.revision as string|null,technicalHash:of.hash as string|null,needs:coverage,previousNeeds,operations:dossier.operations}),ofId,'MATIERE');
+  return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,executionStatus:dossier.executionStatus,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,
     version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy}),needs:coverage,customerCalls,debits,
-    previousNeeds:historicalNeeds.filter(n=>!reconciliations.some(r=>r.previous_need_id===n.id)),
+    previousNeeds,purchasePreparations:preparation.items,purchasePreparationsSyncRequired:preparation.requiresSync,
     retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
@@ -241,6 +247,32 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
       ON CONFLICT(of_id,technical_version_id,source_ref) WHERE superseded_at IS NULL DO UPDATE SET operation_id=EXCLUDED.operation_id,required_qty=EXCLUDED.required_qty,unit=EXCLUDED.unit,supply_mode=EXCLUDED.supply_mode,requirements=EXCLUDED.requirements,specification_reviewed_at=now(),specification_reviewed_by=EXCLUDED.specification_reviewed_by,debit_rule=EXCLUDED.debit_rule,allow_partial=EXCLUDED.allow_partial,supplier_id=EXCLUDED.supplier_id,destination_id=EXCLUDED.destination_id,row_version=of_material_needs.row_version+1,updated_at=now(),updated_by=EXCLUDED.updated_by`,
       [ofId,sourceRef,current.technicalVersion,current.technicalHash,c.operationId,need.articleId,need.designation,total,c.debitRule.stockUnit,c.supplyMode,JSON.stringify(c.requirements),audit.user_id,JSON.stringify(c.debitRule),c.allowPartial,c.supplierId,c.destinationId]);
     await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=now(),invalidation_reason='La préparation matière ou les règles de débit ont changé.' WHERE of_id=$1 AND invalidated_at IS NULL",[ofId]);
+    return readMaterialTx(tx,ofId);
+  });
+}
+
+export async function prepareOfMaterialPurchases(ofId:number,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext){
+  return materialCommand(ofId,'PREPARE_PURCHASES',body,audit,async(tx,current)=>{
+    if(['TERMINE','CLOTURE','ANNULE'].includes(current.executionStatus))throw new HttpError(409,'MATERIAL_OF_CLOSED','Cet OF est terminé ou annulé ; ses préparations restent consultables.');
+    await savePurchasePreparationsTx(tx,current.purchasePreparations,'MATIERE',ofId,current.version,audit);
+    return readMaterialTx(tx,ofId);
+  });
+}
+
+export async function chooseOfMaterialSupplier(ofId:number,sourceRef:string,body:MaterialSupplier,audit:AuditContext){
+  return materialCommand(ofId,'CHOOSE_SUPPLIER',{...body,sourceRef},audit,async(tx,current)=>{
+    if(['TERMINE','CLOTURE','ANNULE'].includes(current.executionStatus))throw new HttpError(409,'MATERIAL_OF_CLOSED','Cet OF est terminé ou annulé ; ses préparations restent consultables.');
+    const need=current.needs.find(n=>n.key===sourceRef);
+    if(!need?.id||need.blockers.length||need.supplyMode!=='PURCHASE')throw new HttpError(409,'MATERIAL_DEFINITION_REQUIRED','Confirmez la définition matière avant de choisir son fournisseur.');
+    if(!current.suppliers.some(s=>s.id===body.supplierId))throw new HttpError(422,'MATERIAL_SUPPLIER_INVALID','Choisissez un fournisseur actif.');
+    assertFournisseurCommandable(await fetchFournisseurMini(tx,body.supplierId));
+    if(body.destinationId&&!current.destinations.some(d=>d.id===body.destinationId))throw new HttpError(422,'MATERIAL_DESTINATION_INVALID','Choisissez un magasin existant.');
+    if(body.destinationId!==need.destinationId&&need.reserved+need.consumed+need.expected+need.receivedBlocked>0)
+      throw new HttpError(409,'MATERIAL_DESTINATION_COMMITTED','Des engagements existent déjà dans ce magasin. Rapprochez-les avant de changer de destination.');
+    await tx.query(`UPDATE public.of_material_needs SET supplier_id=$2::uuid,destination_id=$3::uuid,
+      updated_by=$4,updated_at=now(),row_version=row_version+1 WHERE id=$1::uuid`,[need.id,body.supplierId,body.destinationId,audit.user_id]);
+    const live=await readMaterialTx(tx,ofId);
+    await savePurchasePreparationsTx(tx,live.purchasePreparations,'MATIERE',ofId,live.version,audit);
     return readMaterialTx(tx,ofId);
   });
 }

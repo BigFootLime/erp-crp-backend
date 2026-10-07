@@ -5,7 +5,8 @@ import { asyncHandler } from '../../../utils/asyncHandler';
 import { HttpError } from '../../../utils/httpError';
 import { buildAuditContext } from './production.controller';
 import { getOfConsumables } from '../repository/consumable-procurement-read.repository';
-import { configureOfConsumable,prepareOfConsumables,withdrawOfConsumable,reconcileOfConsumables } from '../repository/consumable-procurement.repository';
+import { configureOfConsumable,prepareOfConsumables,withdrawOfConsumable,reconcileOfConsumables,prepareOfConsumablePurchases } from '../repository/consumable-procurement.repository';
+import {materialCommandSchema} from '../validators/of-material.validators';
 import { consumableConfigurationSchema,consumablePreparationSchema,consumableWithdrawalSchema,consumableReconciliationSchema } from '../validators/consumable-procurement.validators';
 
 const ofId=(req:Request)=>z.coerce.number().int().positive().parse(req.params.id);
@@ -17,6 +18,10 @@ async function present(data:Awaited<ReturnType<typeof getOfConsumables>>,req:Req
     otherPurchases:data.otherPurchases.map(p=>({...p,pu_achat:permissions.prices?p.pu_achat:null}))};
 }
 export const readConsumables=asyncHandler(async(req,res)=>{res.json(await present(await getOfConsumables(ofId(req)),req));});
+export const prepareConsumablePurchases=asyncHandler(async(req,res)=>{
+  if(!(await consumableRights(req)).purchase)throw new HttpError(403,'CONSUMABLE_PURCHASE_PREPARATION_FORBIDDEN','Les droits de création d’achats sont nécessaires pour enregistrer les besoins.');
+  res.json(await present(await prepareOfConsumablePurchases(ofId(req),materialCommandSchema.parse(req.body),buildAuditContext(req)),req));
+});
 export const configureConsumable=asyncHandler(async(req,res)=>{
   const access=await consumableRights(req);
   if(!access.configure&&!access.purchase)throw new HttpError(403,'CONSUMABLE_CONFIGURE_FORBIDDEN','Les droits de préparation ou d’achat sont nécessaires.');

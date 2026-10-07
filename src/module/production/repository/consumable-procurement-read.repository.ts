@@ -8,6 +8,8 @@ import { readOfDossierTx } from "./of-dossier.repository";
 import { readFutureMaterialSupplyTx } from "./material-future-supply.repository";
 import { readReceiptLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type { PurchaseEvidence } from "../domain/preparation-rules";
+import {consumablePurchasePreparations} from '../domain/purchase-preparation';
+import {readPurchasePreparationsTx} from './purchase-preparation.repository';
 
 type Db=Pick<PoolClient,"query">;
 type FrozenPurchase=PurchaseEvidence&{nom?:string;pu_achat?:number|null;gamme_operation_id?:string|null};
@@ -116,7 +118,7 @@ export async function readOfConsumablesTx(tx:Db,ofId:number){
     if(catalogue&&(catalogue.stock_unit??catalogue.unit)!==policy?.unit)blockers.push("Confirmer la conversion de l’unité d’achat vers l’unité du besoin.");
     if(catalogue&&catalogue.unit!==policy?.unit&&!catalogue.coefficient)blockers.push("Renseigner le coefficient de conversion fournisseur.");
     return {...coverage,id:row?.id??null,key:p.id,articleId:p.article_id,articleCode:article?.code??null,reference:article?.reference??null,
-      designation:p.designation??p.nom??article?.designation??"Consommable à définir",unit:policy?.unit??null,mode,policy,articlePack:article?.pack??1,
+      designation:p.designation??p.nom??article?.designation??"Consommable à définir",articleDesignation:article?.designation??null,unit:policy?.unit??null,mode,policy,articlePack:article?.pack??1,
       supplierId,destinationId:row?.destination_id??null,catalogue,catalogues:catalogues.filter(c=>c.article_id===p.article_id),
       reserved,consumed,expected,receivedBlocked,receivedAccepted,reservations:attached,promises:ordered,candidates,selections,availablePacks,
       futureSupplies:relatedFuture.map(f=>({...f,compatible:f.unit===policy?.unit&&f.destinationId===(row?.destination_id??null)&&!f.ownerClientId&&!f.allocatedNeedIds.includes(row?.id??"")})),
@@ -156,8 +158,10 @@ export async function readOfConsumablesTx(tx:Db,ofId:number){
     else if(stockAvailable>0){status='À réserver';reason=`${stockAvailable} ${a?.unit} disponibles en stock ; l’affectation à ce besoin reste à confirmer.`;}
     return {...p,tracking:{required,unit:a?.unit??p.unite_prix,available,stockAvailable,reserved,consumed,expected,receivedAccepted:accepted,receivedBlocked:waiting,status,reason,promises:attached}};
   });
+  const preparation=await readPurchasePreparationsTx(tx,consumablePurchasePreparations({ofId,
+    technicalVersion:of.version,technicalHash:of.hash,ofRevisionId:of.revisionId,needs,previousNeeds}),ofId,'CONSOMMABLE');
   return {ofId,number:dossier.number,dossierStatus:dossier.status,executionStatus:dossier.executionStatus,technicalVersion:of.version,technicalHash:of.hash,ofRevisionId:of.revisionId,ofRevisionCode:of.revisionCode,
-    version:coverageFingerprint({dossier:dossier.version,ofRevision:of.revisionId,saved,articles,catalogues,stocks,promises,future,reservations,resolutions,sharedPending}),needs,previousNeeds,
+    version:coverageFingerprint({dossier:dossier.version,ofRevision:of.revisionId,saved,articles,catalogues,stocks,promises,future,reservations,resolutions,sharedPending}),needs,previousNeeds,purchasePreparations:preparation.items,purchasePreparationsSyncRequired:preparation.requiresSync,
     operations:dossier.operations,otherPurchases:trackedOtherPurchases,
     destinations:(await tx.query<{id:string;name:string}>(`SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)`)).rows};
 }
