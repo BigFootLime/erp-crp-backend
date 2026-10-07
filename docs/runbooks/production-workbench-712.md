@@ -1,5 +1,11 @@
 # Préparation Production et regroupements — exploitation #712
 
+## Correction de recette du 7 octobre 2026 — #838
+
+La sélection d’une révision pour un OF brouillon écrit uniquement `technical_preparation.selected_version_id`. L’évaluation et la validation lisent cette sélection ; les quatre champs du snapshot physique restent vides jusqu’au gel atomique du dossier. L’écriture anticipée de `piece_technique_version_id` produisait une erreur SQLSTATE 55000, car une identité seule constitue un snapshot incomplet. Aucun trigger ni checksum de migration ne change. La concurrence, l’appartenance de la version à la pièce et l’interdiction de modifier un dossier figé sont conservées.
+
+La recette PostgreSQL isolée couvre la sélection d’une révision interne, les champs de snapshot vides, l’ancien indice toujours courant, une saisie devenue périmée, une version d’une autre pièce et le refus après validation. L’OF Test 91 permet de reprendre la révision déjà créée sans en générer une deuxième.
+
 Propriétaire : exploitation CERP. Dernière vérification locale : 2026-09-05.
 
 ## Précontrôles
