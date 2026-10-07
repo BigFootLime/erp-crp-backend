@@ -13,6 +13,8 @@ import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 import {readMaterialDebitsTx} from './material-debit-history.repository';
 import {materialCarryBlockers} from '../domain/material-reconciliation';
 import {readMaterialOriginPolicyTx} from './of-material-policy.repository';
+import {readMaterialReservationAvailabilityTx} from './material-reservation-availability.repository';
+import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
@@ -169,9 +171,25 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
     destinations:(await tx.query("SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY COALESCE(code,code_magasin)")).rows};
 }
-export async function getOfMaterial(ofId:number){
+type MaterialPhysicalCoverage={ready:boolean;checkedAt:string;blockers:string[];needs:ReturnType<typeof missingPhysicalMaterial>};
+export async function getOfMaterial(ofId:number):Promise<(Awaited<ReturnType<typeof readMaterialTx>>&{physicalCoverage?:MaterialPhysicalCoverage})|{enabled:false}>{
   const tx=await pool.connect();
-  try{await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");const result=await materialWorkflowEnabled(tx)?await readMaterialTx(tx,ofId):{enabled:false as const};await tx.query("COMMIT");return result;}
+  try{
+    await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    if(!await materialWorkflowEnabled(tx)){await tx.query("COMMIT");return {enabled:false as const};}
+    const material=await readMaterialTx(tx,ofId);
+    const availability=await readMaterialReservationAvailabilityTx(tx,material);
+    const needs=missingPhysicalMaterial(material.needs.map(need=>({...need,
+      usableReserved:availability.get(need.key)?.usable??0,
+      blockers:[...need.blockers,...(availability.get(need.key)?.blockers??[])]})));
+    const blockers:string[]=[];
+    if(material.previousNeeds.length)blockers.push("Rapprocher les engagements de l’ancienne définition matière.");
+    try{assertMaterialOriginLimit(material.originPolicy,[]);}
+    catch(error){if(!(error instanceof HttpError)||error.status>=500)throw error;blockers.push(error.message);}
+    const physicalCoverage={ready:needs.length===0&&blockers.length===0,needs,blockers,checkedAt:new Date().toISOString()};
+    await tx.query("COMMIT");
+    return {...material,physicalCoverage};
+  }
   catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
 }
 export async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>,authorizeTransaction?:(tx:PoolClient)=>Promise<void>){
