@@ -44,6 +44,8 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
     article_code: string | null
     article_designation: string | null
     lot_code: string | null
+    stock_scope: string
+    historical_documents: Array<{id:string;type:string;label:string;location:string}>
   }
 
   const enrichRes = await pool.query<EnrichRow>(
@@ -52,7 +54,9 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
         a.id::text AS allocation_id,
         art.code AS article_code,
         art.designation AS article_designation,
-        l.lot_code AS lot_code
+        l.lot_code AS lot_code,
+        COALESCE(l.origin_stock_scope,l.source_scope,l.stock_scope,'NEW') AS stock_scope,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('id',d.id,'type',d.type,'label',d.label,'location',d.location) ORDER BY d.created_at,d.id) FROM public.old_stock_document_references d WHERE d.lot_id=l.id),'[]'::jsonb) AS historical_documents
       FROM public.bon_livraison_ligne_allocations a
       JOIN public.bon_livraison_ligne bl ON bl.id = a.bon_livraison_ligne_id
       LEFT JOIN public.articles art ON art.id = a.article_id
@@ -74,7 +78,7 @@ export async function repoGetLivraisonPackPreview(bonLivraisonId: string): Promi
           code: ex?.article_code ?? null,
           designation: ex?.article_designation ?? null,
         },
-        lot: ex?.lot_code ? { lot_code: ex.lot_code } : null,
+        lot: ex?.lot_code ? { lot_code: ex.lot_code,stock_scope:ex.stock_scope,historical_documents:ex.historical_documents } : null,
       }
     })
     return { ...l, allocations }

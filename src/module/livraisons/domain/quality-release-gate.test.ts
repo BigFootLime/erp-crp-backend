@@ -106,6 +106,12 @@ function input(overrides: Partial<DeliveryQualityReleaseInput> = {}): DeliveryQu
 }
 
 describe("delivery quality release gate", () => {
+  it('retains historical server evidence without inventing a release decision',()=>{
+    const old=target({qty_released:0});old.control_count=0;old.latest_decision=null;old.historical_provenance={scope:'OLD',documents:[{id:'legacy-1',type:'CERTIFICAT_MP',label:'Certificat historique',location:'\\\\serveur\\lot\\certificat.pdf',created_by:1}]};
+    const result=evaluateDeliveryQualityRelease(input({targets:[old],policy_candidates:[policy(rules([{document_type:'CERTIFICATE',scope:'PER_TARGET',min_count:1}]))]}));expect(result.state).toBe('READY');expect(result.targets[0].latest_decision).toBeNull();expect(result.targets[0].historical_provenance?.documents).toHaveLength(1);
+    old.target.open_nc_without_disposition=1;expect(evaluateDeliveryQualityRelease(input({targets:[old]})).state).toBe('BLOCKED');
+  });
+  it('does not apply the historical path to a new lot without quality release',()=>expect(evaluateDeliveryQualityRelease(input({targets:[target({qty_released:0})]})).state).toBe('BLOCKED'));
   it("fails closed when no signed policy exists and keeps a deterministic preview hash", () => {
     const first = evaluateDeliveryQualityRelease(input({ policy_candidates: [] }))
     const later = evaluateDeliveryQualityRelease(

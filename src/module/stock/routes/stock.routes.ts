@@ -101,6 +101,8 @@ import {
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
 import { roleHasStockCapability, type StockCapability } from "../domain/stock-rbac";
+import { getLegacyDocuments, postLegacyDocument } from "../controllers/legacy-documents.controller";
+import { getFinishedPackaging, postFinishedPackaging, postPackagingPrint,postPackagingVoid, getPackagingLabels } from "../controllers/finished-packaging.controller";
 import {readConsumableSupply,prepareConsumableSupply,finishConsumablePack,findScannedConsumable} from '../controllers/consumable-supply.controller';
 import {
   createStockIntelligencePolicy,
@@ -259,6 +261,13 @@ router.post(
   createStockLotGenealogy
 );
 router.get("/lots/:id", requireStockCapability("read"), getStockLot);
+router.get("/lots/:id/legacy-documents", requireStockCapability("read"), getLegacyDocuments);
+router.post("/lots/:id/legacy-documents", requireStockCapability("documents_manage"), postLegacyDocument);
+router.get("/lots/:id/packaging", requireStockCapability("read"), getFinishedPackaging);
+router.post("/lots/:id/packaging", requireStockCapability("documents_manage"), postFinishedPackaging);
+router.post("/lots/:id/packaging/:packagingId/print-intents", requireStockCapability("read"), postPackagingPrint);
+router.post("/lots/:id/packaging/:packagingId/void", requireStockCapability("documents_manage"), postPackagingVoid);
+router.get("/lots/:id/packaging/:packagingId/labels.pdf", requireStockCapability("read"), getPackagingLabels);
 router.patch("/lots/:id", requireStockCapability("referential_manage"), updateStockLot);
 router.post(
   "/lots/:id/quality-status",

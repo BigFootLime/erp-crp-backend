@@ -53,6 +53,12 @@ export type StoredScanEvent = {
 };
 
 type Queryer = Pick<PoolClient, "query">;
+export async function repoResolvePackagingLabel(code:string):Promise<{label:IdentificationLabelRow|null;invalid:boolean}|null>{
+ const match=/^CERP-PACK:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([1-9]\d*)$/i.exec(code.trim());if(!match)return null;
+ const row=(await pool.query<{lot_id:string;count:number;voided:boolean}>(`SELECT p.lot_id::text,jsonb_array_length(p.portion_quantities) AS count,v.id IS NOT NULL AS voided FROM public.finished_lot_packaging p LEFT JOIN public.finished_packaging_voids v ON v.packaging_id=p.id WHERE p.id=$1::uuid`,[match[1]])).rows[0];
+ if(!row||row.voided||!Number.isSafeInteger(Number(match[2]))||Number(match[2])>row.count)return {label:null,invalid:true};
+ return {label:await repoFindActiveLabel('STOCK_LOT',row.lot_id),invalid:false};
+}
 
 export function identificationRequestHash(commandType: string, payload: unknown): string {
   return crypto.createHash("sha256").update(`${commandType}\n${JSON.stringify(payload)}`).digest("hex");

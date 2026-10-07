@@ -33,6 +33,7 @@ import {
   repoFindEntity,
   repoFindLabelById,
   repoFindLabelByPublicId,
+  repoResolvePackagingLabel,
   repoFindScanEvent,
   repoInsertAudit,
   repoInsertLabel,
@@ -311,8 +312,10 @@ export async function resolveIdentification(input: ResolveIdentificationDTO, act
   const timestampResult = validateClientScanTimestamp(new Date(input.client_scanned_at));
   if (timestampResult !== "OK") return recordScan(input, actor, { ok: false, result_code: timestampResult, message: timestampResult === "FUTURE_TIMESTAMP" ? "L'horloge du terminal est en avance de plus de cinq minutes." : "La lecture hors ligne date de plus de sept jours.", requires_online_confirmation: true });
 
+  const packaging=await repoResolvePackagingLabel(input.code);
+  if(packaging?.invalid)return recordScan(input,actor,{ok:false,result_code:'INVALIDATED',message:'Étiquette de conditionnement annulée ou inconnue. Vérifiez le contenant.',requires_online_confirmation:true});
   let publicId: string;
-  try { publicId = parseIdentificationPayload(input.code); }
+  try { publicId = packaging?.label?.public_id??parseIdentificationPayload(input.code); }
   catch {
     return recordScan(input, actor, { ok: false, result_code: "INVALID_PAYLOAD", message: "Code non reconnu. Aucun identifiant métier n'a été interprété.", requires_online_confirmation: true });
   }

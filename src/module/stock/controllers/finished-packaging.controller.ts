@@ -1,0 +1,10 @@
+import { asyncHandler } from '../../../utils/asyncHandler';
+import { roleHasStockCapability } from '../domain/stock-rbac';
+import { requestHasGrantedAccountModuleAccess } from '../../access-control/context/account-module-access.context';
+import { packagingLotIdentity, packagingPrintIdentity, packagingCommand, packagingPrintCommand } from '../validators/finished-packaging.validators';
+import { readFinishedPackaging, createFinishedPackaging, recordPackagingPrint, voidFinishedPackaging, finishedPackagingLabels } from '../services/finished-packaging.service';
+export const getFinishedPackaging = asyncHandler(async (req, res) => res.json({ ...await readFinishedPackaging(packagingLotIdentity.parse(req.params).id), canPrepare: requestHasGrantedAccountModuleAccess(req) || roleHasStockCapability(req.user?.role, 'documents_manage') }));
+export const postFinishedPackaging = asyncHandler(async (req, res) => res.status(201).json(await createFinishedPackaging(packagingLotIdentity.parse(req.params).id, packagingCommand.parse(req.body), req.user!.id)));
+export const postPackagingPrint = asyncHandler(async (req, res) => { const { id, packagingId } = packagingPrintIdentity.parse(req.params), body = packagingPrintCommand.parse(req.body); res.status(201).json(await recordPackagingPrint(id, packagingId, body.idempotencyKey, body.reason, req.user!.id)); });
+export const getPackagingLabels = asyncHandler(async (req, res) => { const { id, packagingId } = packagingPrintIdentity.parse(req.params), buffer = await finishedPackagingLabels(id, packagingId); res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Content-Disposition', `inline; filename="etiquettes-${packagingId}.pdf"`); res.send(buffer); });
+export const postPackagingVoid = asyncHandler(async (req, res) => { const { id, packagingId } = packagingPrintIdentity.parse(req.params), body = packagingPrintCommand.parse(req.body); res.status(201).json(await voidFinishedPackaging(id, packagingId, body.idempotencyKey, body.reason, req.user!.id)); });

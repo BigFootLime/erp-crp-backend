@@ -74,6 +74,7 @@ export type DeliveryQualityDerogation = {
 }
 
 export type DeliveryQualityTargetObservation = {
+  historical_provenance?: {scope:"OLD";documents:Array<{id:string;type:string;label:string;location:string;created_by:number}>;has_current_lot_control?:boolean}|null
   key: string
   target: EligibilityTarget
   allocation_id: string
@@ -136,6 +137,7 @@ export type DeliveryQualityRelease = {
     latest_decision: DeliveryQualityTargetObservation["latest_decision"]
     derogation_id: string | null
     release_decision_id: string | null
+    historical_provenance?: DeliveryQualityTargetObservation["historical_provenance"]
   }>
   required_evidence: DeliveryQualityEvidence[]
   derogation_ids: string[]
@@ -233,6 +235,7 @@ function targetSnapshot(
     latest_decision: observation.latest_decision,
     derogation_id: derogationId,
     release_decision_id: releaseDecisionId,
+    historical_provenance: observation.historical_provenance??null,
   }
 }
 
@@ -407,7 +410,11 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
   const derogationIds = new Set<string>()
 
   for (const observation of [...input.targets].sort((a, b) => a.key.localeCompare(b.key))) {
-    if (rules.required_control_triggers.includes("LOT_RELEASE")) {
+    // OLD has no retrospective CERP control ledger. Preserve real quality holds
+    // and customer evidence requirements; never fabricate a release decision.
+    const historical=observation.historical_provenance?.scope==="OLD"&&observation.control_count===0&&!observation.historical_provenance.has_current_lot_control;
+    if(historical&&!observation.historical_provenance?.documents.length)reasons.push(blockingReason({code:"OLD_DOCUMENT_REFERENCE_REQUIRED",message:"Le lot OLD nécessite son lien documentaire serveur.",expected_action:"Renseigner une référence historique dans le dossier de lot.",object_type:observation.target.object_type,object_id:observation.target.object_id}));
+    if (rules.required_control_triggers.includes("LOT_RELEASE")&&!historical) {
       if (!observation.plan) {
         reasons.push(
           blockingReason({
@@ -440,7 +447,10 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
         )
       }
     }
-    const verdict = evaluateQualityEligibility(observation.target, "SHIP", at)
+    const currentVerdict = evaluateQualityEligibility(observation.target, "SHIP", at)
+    const historicalBlocks=historical?currentVerdict.blocks.filter(b=>b.code!=="QTY_NOT_RELEASED"):currentVerdict.blocks;
+    const verdict=historical?{blocks:historicalBlocks,qty_allowed:historicalBlocks.length===0&&observation.target.lot_status==="LIBERE"?observation.target.qty_requested:0}:currentVerdict;
+    if(historical&&observation.target.lot_status!=="LIBERE"&&!historicalBlocks.length)reasons.push(blockingReason({code:"OLD_STATUS_REQUIRED",message:"Le lot historique doit être explicitement libéré.",expected_action:"Vérifier le lot et enregistrer son statut qualité.",object_type:observation.target.object_type,object_id:observation.target.object_id}));
     for (const block of verdict.blocks) {
       reasons.push(
         blockingReason({
@@ -554,12 +564,13 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
       const matches = customerEvidence.filter(
         (doc) => doc.document_type === requirement.document_type && doc.target_keys.includes(target.key)
       )
-      if (matches.length < requirement.min_count) {
+      const historicalReferences=target.historical_provenance?.documents.filter(doc=>doc.type===requirement.document_type||(requirement.document_type==='CERTIFICATE'&&['CERTIFICAT_MP','CERTIFICAT_TRAITEMENT'].includes(doc.type)))??[];
+      if (matches.length+historicalReferences.length < requirement.min_count) {
         reasons.push(
           blockingReason({
             code: "QUALITY_EVIDENCE_MISSING",
             message: `Preuve ${requirement.document_type} manquante pour ${target.label ?? target.object_id} (${matches.length}/${requirement.min_count}).`,
-            expected_action: "Joindre une preuve décisionnelle visible client avec empreinte SHA-256.",
+            expected_action: target.historical_provenance ? "Compléter la référence serveur du lot OLD pour ce type de document, ou joindre la preuve au dossier client." : "Joindre une preuve décisionnelle visible client avec empreinte SHA-256.",
             object_type: target.object_type,
             object_id: target.object_id,
           })

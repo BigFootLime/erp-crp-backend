@@ -26,6 +26,8 @@ export type LivraisonPackAllocation = BonLivraisonLigneAllocation & {
   }
   lot: {
     lot_code: string
+    stock_scope?: string
+    historical_documents?: Array<{id:string;type:string;label:string;location:string}>
   } | null
 }
 
