@@ -46,7 +46,11 @@ SELECT jsonb_build_object(
     FROM public.production_material_debits d JOIN public.production_quantity_declarations q ON q.id=d.declaration_id
     JOIN public.of_operations op ON op.id=d.operation_id JOIN public.users u ON u.id=d.created_by WHERE d.of_id=o.id),'[]'::jsonb),
   'cuts',COALESCE((SELECT jsonb_agg(jsonb_build_object('debit_id',d.id,'lot',l.lot_code,'cut',s.cut_qty,
-    'actual',s.actual_qty,'discarded',s.discarded_qty,'closed',s.bar_closed,'unit',n.unit,'movement',s.stock_movement_id)
+    'actual',s.actual_qty,'discarded',s.discarded_qty,'closed',s.bar_closed,'unit',n.unit,'movement',s.stock_movement_id,
+    'good',s.yield_good,'scrap',s.yield_scrap,'need',n.designation,
+    'root_lots',(SELECT string_agg(DISTINCT root.lot_code,', ' ORDER BY root.lot_code) FROM ancestors an
+      JOIN public.lots root ON root.id=an.ancestor_id WHERE an.lot_id=l.id
+      AND NOT EXISTS(SELECT 1 FROM public.stock_lot_genealogy_edges e WHERE e.child_lot_id=root.id)))
     ORDER BY d.created_at,d.id,l.lot_code,s.reservation_id)
     FROM public.production_material_debit_sources s JOIN public.production_material_debits d ON d.id=s.debit_id
     JOIN public.stock_reservations r ON r.id=s.reservation_id JOIN public.lots l ON l.id=r.lot_id

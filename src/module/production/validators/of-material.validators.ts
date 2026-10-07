@@ -30,6 +30,7 @@ export const materialDebitSchema=materialCommandSchema.extend({
   remnants:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
     dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9))}).strict()).max(100).default([]),
   sources:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive(),
+    yield:z.object({good:z.number().int().nonnegative().max(1e9),scrap:z.number().int().nonnegative().max(1e9)}).strict().optional(),
     barClosure:z.object({discardedQuantity:z.number().finite().nonnegative().max(1e9).multipleOf(.001),acknowledgedLargeRemainder:z.boolean()}).strict().optional(),
   }).strict()).min(1).max(100),
   successorOperationId:z.string().uuid().nullable(),

@@ -12,7 +12,7 @@ export async function renderCurrentTechnicalDocumentPdf({
   const sheet = archive.documentKind === "TECHNICAL_SHEET";
   if (
     (!sheet && archive.documentKind !== "OF_TRAVELER") ||
-    archive.renderVersion !== (sheet ? "technical-sheet-v1" : "of-traveler-v1")
+    !(sheet ? ["technical-sheet-v1"] : ["of-traveler-v1", "of-traveler-v2"]).includes(archive.renderVersion)
   )
     throw new Error("TECHNICAL_DOCUMENT_RENDER_VERSION_UNSUPPORTED");
   const source = parseInternalCreationSnapshot(archive),

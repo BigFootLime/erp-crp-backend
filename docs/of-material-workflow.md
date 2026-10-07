@@ -1,5 +1,13 @@
 # OF dossier completion and material coverage
 
+## Rendement observé par source matière — 7 octobre 2026 (#877)
+
+La commande de débit accepte `sources[].yield: { good, scrap }`. Les nombres entiers déclarés sont contrôlés séparément pour chaque besoin matière : leur somme par besoin doit égaler les bons et rebuts de la déclaration. Avec une source unique, une ancienne requête sans `yield` peut reprendre ces totaux sans ambiguïté. Plusieurs sources exigent leur répartition observée ; aucune quantité n'est calculée au prorata des millimètres. Une conversion unitaire doit être exacte pour chaque source. Les écarts de rendement mesuré demandent une explication, même lorsque leurs sommes se compensent.
+
+La migration additive `20261007_material_source_yield_877.sql` ajoute deux colonnes nullables au registre immuable existant. Les preuves anciennes restent inconnues ; elles ne sont pas reconstituées. Un trigger différé protège les totaux par besoin et les corrections signées. La compensation conserve aussi la nature ACTUAL/POTENTIAL du débit original. Le prélèvement, la chute réutilisable, le reliquat écarté et les bruts obtenus restent des quantités distinctes.
+
+L'historique expose `yieldGood`/`yieldScrap` par source. La fiche suiveuse v2 présente ces preuves et leurs lots d'origine ; les archives v1 restent téléchargeables et les valeurs absentes sont affichées « Non renseigné ». Préflight, vérification et récupération accompagnent la migration. Compilation TypeScript et compilation SQL annulée vérifiées ; tests de domaine préparés et recette métier commune reportés à la fin du chantier sur instruction utilisateur.
+
 Delivery in progress: backend #767, frontend #1025–1032, Project Office WP-254. The governing decision is frontend ADR-0072; activation defaults to off.
 
 ## Current interfaces
