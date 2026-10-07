@@ -1,7 +1,7 @@
 import { materialPropertiesFingerprint, purchaseQuantity, quantity, type MaterialRequirements } from './of-material';
 
 export type PurchasePreparation = {
-  scopeKey: string; kind: 'MATIERE' | 'CONSOMMABLE'; mode: 'OF' | 'GLOBAL_PACK';
+  scopeKey: string; kind: 'MATIERE' | 'CONSOMMABLE' | 'PRESTATION'; mode: 'OF' | 'GLOBAL_PACK';
   ofId: number | null; sourceRef: string | null; needId: string | null;
   technicalVersion: string | null; technicalHash: string | null; ofRevisionId: string | null;
   articleId: string | null; designation: string; unit: string | null;

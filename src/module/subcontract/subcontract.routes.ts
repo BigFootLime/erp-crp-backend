@@ -9,7 +9,7 @@ import { roleHasOfCapability } from "../production/domain/of-rbac";
 import { repoListSubcontractWorkPackagesForOf } from "./subcontract.repository";
 import { getFlow, getCreationOptions, postTransfer } from './subcontract-flow.controller';
 import { subcontractFlowInstalled } from './subcontract-flow.repository';
-import { getProcurement,postProcurement } from './subcontract-procurement.controller';
+import { getProcurement,postProcurement,postDemands } from './subcontract-procurement.controller';
 
 const router = Router();
 const activeOrderStates = ["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"];
@@ -46,6 +46,7 @@ router.get("/", access(false), async (req, res, next) => { try {
 
 router.get('/ofs/:ofId/procurement',access(false),getProcurement);
 router.post('/ofs/:ofId/procurement',access(false),postProcurement);
+router.post('/ofs/:ofId/procurement/prepare-purchases',access(false),postDemands);
 router.get('/creation-options',access(false),getCreationOptions);
 router.get('/:id/flow',access(false),getFlow);
 router.post('/:id/transfers',access(true),postTransfer);
