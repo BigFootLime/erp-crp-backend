@@ -7,6 +7,7 @@ import { readApprovalPoliciesTx } from "../../fournisseurs/repository/client-sup
 import {
   assertClientApprovals,
   evaluateClientApproval,
+  type PurchaseClientContext,
 } from "../../fournisseurs/domain/client-supplier-approval";
 import {
   assertPurchaseQualification,
@@ -74,6 +75,33 @@ export async function readPurchaseQualificationTx(
       [orderId],
     )
   ).rows;
+  return readSupplierPurchaseQualificationTx(tx, {
+    supplierId: header.fournisseur_id,
+    today: header.today,
+    checkedAt: header.checked_at,
+    lines,
+    contexts,
+    enforce,
+  });
+}
+
+/** One evaluator for an order and a prospective OF purchase. The order reader
+ * retains the client-before-supplier lock order before an actual engagement. */
+export async function readSupplierPurchaseQualificationTx(
+  tx: Queryer,
+  input: {
+    supplierId: string;
+    today: string;
+    checkedAt: string;
+    lines: PurchaseScopeLine[];
+    contexts: Omit<PurchaseClientContext, "domains">[];
+    enforce?: boolean;
+    // Internal read-only batch input. Actual engagements always re-read and lock.
+    prefetched?: { decisions: QualificationDecision[]; policies: Awaited<ReturnType<typeof readApprovalPoliciesTx>> };
+  },
+): Promise<PurchaseQualification> {
+  const { lines, contexts, enforce = false } = input;
+  const clientIds = [...new Set(contexts.map(context => context.client_id))].sort();
   const domainLines = new Map<string, string[]>();
   const unmapped: string[] = [];
   for (const line of lines) {
@@ -82,7 +110,7 @@ export async function readPurchaseQualificationTx(
     for (const domain of domains)
       domainLines.set(domain, [...(domainLines.get(domain) ?? []), line.id]);
   }
-  const decisions = (
+  const decisions = !enforce && input.prefetched ? input.prefetched.decisions : (
     await tx.query<QualificationDecision>(
       `
     SELECT id::text,version,statut,domaine_code,valid_from::text,valid_to::text,document_id::text,
@@ -90,14 +118,14 @@ export async function readPurchaseQualificationTx(
     FROM public.fournisseur_homologations WHERE fournisseur_id=$1::uuid AND is_current
       AND (domaine_code IS NULL OR domaine_code=ANY($2::text[])) ORDER BY domaine_code NULLS FIRST
     ${enforce ? "FOR SHARE" : ""}`,
-      [header.fournisseur_id, [...domainLines.keys()]],
+      [input.supplierId, [...domainLines.keys()]],
     )
   ).rows;
   const global = qualificationScope(
     null,
     lines.map((line) => line.id),
     decisions.find((row) => row.domaine_code === null) ?? null,
-    header.today,
+    input.today,
   );
   const domains = [...domainLines.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
@@ -106,10 +134,10 @@ export async function readPurchaseQualificationTx(
         domain,
         ids,
         decisions.find((row) => row.domaine_code === domain) ?? null,
-        header.today,
+        input.today,
       ),
     );
-  const policies = await readApprovalPoliciesTx(tx, clientIds, enforce);
+  const policies = !enforce && input.prefetched ? input.prefetched.policies : await readApprovalPoliciesTx(tx, clientIds, enforce);
   const lineDomains = new Map(
     lines.map((line) => [line.id, purchaseLineDomains(line)]),
   );
@@ -118,16 +146,16 @@ export async function readPurchaseQualificationTx(
       evaluateClientApproval(
         { ...context, domains: lineDomains.get(context.line_id) ?? [] },
         domain,
-        header.fournisseur_id,
+        input.supplierId,
         policies,
-        header.today,
+        input.today,
       ),
     ),
   );
   const state: PurchaseQualification = {
-    supplier_id: header.fournisseur_id,
-    checked_at: header.checked_at,
-    today: header.today,
+    supplier_id: input.supplierId,
+    checked_at: input.checkedAt,
+    today: input.today,
     global,
     domains,
     unmapped_line_ids: unmapped,

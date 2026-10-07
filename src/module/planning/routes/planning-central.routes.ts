@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar } from "../controllers/planning-central.controller";
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
+import { masterPlan } from '../controllers/planning-master-plan.controller';
 const router=Router();
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
+router.get('/master-plan',requirePlanningCapability('read_capacity'),masterPlan);
 router.get("/workshop-calendar",requirePlanningCapability("read"),centralWorkshopCalendar);
 router.post("/workshop-calendar",requirePlanningCapability("manage_schedule"),centralSetWorkshopCalendar);
 router.get("/snapshot",requirePlanningCapability("read"),centralSnapshot);

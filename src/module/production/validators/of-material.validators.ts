@@ -1,6 +1,8 @@
 import {z} from "zod";
 export const materialIdentitySchema=z.object({id:z.coerce.number().int().positive()});
 export const materialSourceRefSchema=z.string().uuid();
+export const supplierQualificationQuerySchema=z.object({articleId:z.string().uuid(),supplierId:z.string().uuid(),catalogueId:z.string().uuid().optional()}).strict();
+export const supplierRecommendationQuerySchema=z.object({articleId:z.string().uuid(),quantity:z.coerce.number().finite().positive().max(1e9).optional(),unit:z.string().trim().min(1).max(30).optional(),currency:z.string().regex(/^[A-Z]{3}$/).default('EUR')}).strict();
 export const materialCommandSchema=z.object({expectedVersion:z.string().regex(/^[a-f0-9]{64}$/),idempotencyKey:z.string().uuid()}).strict();
 const text=z.string().trim().min(1).max(300);
 export const materialConfigurationSchema=materialCommandSchema.extend({configuration:z.object({
@@ -9,10 +11,13 @@ export const materialConfigurationSchema=materialCommandSchema.extend({configura
   allowPartial:z.boolean(),supplierId:z.string().uuid().nullable(),destinationId:z.string().uuid().nullable(),
 }).strict()}).strict();
 export const materialConfirmationSchema=materialCommandSchema.extend({
+  existingPurchasesReviewed:z.boolean().default(false),
   selections:z.array(z.object({needKey:z.string().uuid(),batchId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100),
   futureSelections:z.array(z.object({needKey:z.string().uuid(),lineId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),requirementsReviewed:z.literal(true)}).strict()).max(100).default([]),
 }).strict();
-export type MaterialConfirmation=z.infer<typeof materialConfirmationSchema>;
+export type MaterialConfirmation=Omit<z.infer<typeof materialConfirmationSchema>,'existingPurchasesReviewed'>&{existingPurchasesReviewed?:boolean};
+export const materialSupplierSchema=materialCommandSchema.extend({supplierId:z.string().uuid(),destinationId:z.string().uuid().nullable()}).strict();
+export type MaterialSupplier=z.infer<typeof materialSupplierSchema>;
 export const materialLotVerificationSchema=materialCommandSchema.extend({
   batchId:z.string().uuid(),grade:text.nullable(),condition:text.nullable(),
   dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),

@@ -2,6 +2,7 @@
 // over their historical filename order in every migration entry point.
 const DEPENDENCIES = Object.freeze({
   "20261007_admin_account_recovery_901.sql": ["20260218_password_resets.sql", "20260811_account_provisioning_schema_repair.sql", "20260816_mfa_policy_and_device_labels.sql"],
+  "20261007_purchase_preparations_902.sql": ["20260907_of_material_coverage.sql", "20260908_material_debits.sql", "20260909_consumable_of_revision.sql"],
   "20261007_native_cutting_terminals_896.sql": ["20260909_supply_terminals.sql", "20261007_material_source_yield_877.sql"],
   "20261007_maintenance_schedule_888.sql": ["20260722_machine_park_165.sql", "20260906_planning_central.sql", "20260908_material_debits.sql"],
   "20261007_material_source_yield_877.sql": ["20260908_material_debits.sql", "20260908_material_remnants.sql", "20261007_production_flow_822.sql"],

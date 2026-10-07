@@ -1,7 +1,8 @@
 import { HttpError } from '../../utils/httpError';
 const pieceUnits = new Set(['U', 'UNITE', 'UNITÉ', 'UNIT', 'PCE', 'PC', 'PCS', 'PIECE', 'PIÈCE']);
+export const isSubcontractPieceUnit = (unit: string) => pieceUnits.has(unit.trim().toUpperCase());
 export function assertSubcontractPieceUnit(unit: string) {
-    if (!pieceUnits.has(unit.trim().toUpperCase())) {
+    if (!isSubcontractPieceUnit(unit)) {
         throw new HttpError(422, 'SUBCONTRACT_PIECE_UNIT_REQUIRED', 'La répartition par origine compte des pièces. Choisissez des conditions fournisseur en pièces ; une conversion de poids ou de longueur doit être définie séparément.');
     }
 }

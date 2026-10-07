@@ -8,8 +8,10 @@ import { consumableCommand } from '../production/repository/consumable-command.r
 import type { AuditContext } from '../production/repository/production.repository';
 import { createMaterialDraftsTx } from '../commande-fournisseur/repository/commande-fournisseur.repository';
 import { readSubcontractPredecessorsTx } from '../commande-fournisseur/repository/subcontract-purchase.repository';
-import type { SubcontractProcurementCommand } from './subcontract-procurement.validators';
+import { subcontractSelection, type SubcontractProcurementCommand, type SubcontractDemandCommand, type SubcontractSelection } from './subcontract-procurement.validators';
 import { assertSubcontractPieceUnit } from './subcontract-procurement.domain';
+import { servicePurchasePreparations, type ServicePreparation } from './subcontract-preparation.domain';
+import { readPurchasePreparationsTx, savePurchasePreparationsTx } from '../production/repository/purchase-preparation.repository';
 type Db = Pick<PoolClient, 'query'>;
 type Purchase = {
     id: string;
@@ -19,19 +21,22 @@ type Purchase = {
     nom?: string;
     gamme_operation_id?: string | null;
 };
-export async function readSubcontractProcurementTx(tx: Db, ofId: number) {
+export async function readSubcontractProcurementTx(tx: Db, ofId: number, selectionOverride?: SubcontractSelection) {
     const of = (await tx.query<{
         id: number;
         number: string;
         quantity: number;
         status: string;
         hash: string | null;
+        technicalVersion: string | null;
+        ofRevisionId: string | null;
         purchases: Purchase[];
     }>(`
     SELECT o.id::int,o.numero AS number,o.quantite_lancee::float8 AS quantity,o.statut::text AS status,o.technical_snapshot_sha256 AS hash,
+      o.piece_technique_version_id::text AS "technicalVersion",r.id::text AS "ofRevisionId",
       COALESCE(o.technical_snapshot->'preparation_evidence'->'purchases',
         (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=o.piece_technique_version_id),'[]'::jsonb) AS purchases
-    FROM public.ordres_fabrication o WHERE o.id=$1`, [ofId])).rows[0];
+    FROM public.ordres_fabrication o LEFT JOIN public.of_revisions r ON r.of_id=o.id AND r.statut='ACTIVE' WHERE o.id=$1`, [ofId])).rows[0];
     if (!of)
         throw new HttpError(404, 'OF_NOT_FOUND', 'OF introuvable.');
     const purchases = of.purchases.filter(p => ['SOUS_TRAITANCE', 'TRAITEMENT'].includes(p.type_achat));
@@ -41,8 +46,11 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number) {
         label: string;
         status: string;
         phase: number;
+        returnDue: string | null;
     }>(`
-    SELECT op.id::text,op.source_piece_operation_id::text AS "sourceId",op.designation AS label,op.status::text,op.phase
+    SELECT op.id::text,op.source_piece_operation_id::text AS "sourceId",op.designation AS label,op.status::text,op.phase,
+      (SELECT (max(e.end_ts) AT TIME ZONE 'Europe/Paris')::date::text FROM public.planning_events e
+       WHERE e.of_operation_id=op.id AND e.archived_at IS NULL AND e.status<>'CANCELLED') AS "returnDue"
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
     LEFT JOIN public.pieces_techniques_operations source ON source.id=op.source_piece_operation_id
     LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
@@ -75,6 +83,7 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number) {
       AND(c.valid_from IS NULL OR c.valid_from<=current_date) AND(c.valid_to IS NULL OR c.valid_to>=current_date) ORDER BY 4,c.id`, [purchases.flatMap(p => p.article_id ? [p.article_id] : [])])).rows;
     const drafts = (await tx.query<{
         lineId: string;
+        purchaseId: string | null;
         operationId: string;
         originId: string | null;
         quantity: number;
@@ -82,7 +91,8 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number) {
         code: string;
         status: string;
     }>(`
-    SELECT p.line_id::text AS "lineId",p.operation_id::text AS "operationId",p.material_origin_id::text AS "originId",l.quantite::float8 AS quantity,
+    SELECT p.line_id::text AS "lineId",p.preparation_snapshot->'purchase'->>'id' AS "purchaseId",
+      p.operation_id::text AS "operationId",p.material_origin_id::text AS "originId",l.quantite::float8 AS quantity,
       c.id::text AS "orderId",c.code,c.statut::text AS status FROM public.subcontract_purchase_origins p
     JOIN public.commande_fournisseur_ligne l ON l.id=p.line_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
     WHERE p.of_id=$1 AND l.statut_ligne='ACTIVE' AND c.statut<>'ANNULEE' ORDER BY p.created_at,p.line_id`, [ofId])).rows;
@@ -91,8 +101,30 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number) {
         name: string;
     }>('SELECT id::text,COALESCE(code,code_magasin) AS name FROM public.magasins ORDER BY 2')).rows;
     const predecessorState = await Promise.all(operations.map(async (op) => ({ operationId: op.id, predecessors: await readSubcontractPredecessorsTx(tx, op.id) })));
-    const result = { of: { ...of, purchases: undefined }, hasDirectMaterial: of.purchases.some(p => p.type_achat === 'MATIERE'), purchases, operations, origins, offers, drafts, destinations, predecessorState };
-    return { ...result, version: coverageFingerprint(result) };
+    const coveredByOfId = (await tx.query<{ id: number }>(`SELECT c.producer_of_id::bigint::int AS id
+      FROM public.production_consolidation_allocations a JOIN public.production_consolidations c ON c.id=a.consolidation_id
+      WHERE a.source_of_id=$1 AND a.state='ACTIVE' AND c.state='ACTIVE'`, [ofId])).rows[0]?.id ?? null;
+    const savedRows = (await tx.query<{ selection: unknown }>(`SELECT snapshot->'service'->'selection' AS selection
+      FROM public.production_purchase_preparations WHERE of_id=$1 AND kind='PRESTATION' AND status<>'PERIMEE'
+      AND technical_version_id IS NOT DISTINCT FROM $2::uuid AND technical_hash IS NOT DISTINCT FROM $3::text
+      AND of_revision_id IS NOT DISTINCT FROM $4::uuid ORDER BY updated_at DESC,id`, [ofId, of.technicalVersion, of.hash, of.ofRevisionId])).rows;
+    const selections = savedRows.flatMap(row => { const parsed = subcontractSelection.safeParse(row.selection); return parsed.success ? [parsed.data] : []; });
+    if (selectionOverride) {
+        const purchase = purchases.find(p => p.id === selectionOverride.purchaseId);
+        if (!purchase || selectionOverride.operationId && !operations.some(op => op.id === selectionOverride.operationId && (!purchase.gamme_operation_id || purchase.gamme_operation_id === op.sourceId))
+            || selectionOverride.catalogueId && !offers.some(offer => offer.id === selectionOverride.catalogueId && offer.articleId === purchase.article_id))
+            throw new HttpError(422, 'SUBCONTRACT_SELECTION_INVALID', 'Choisissez la prestation, sa phase et des conditions fournisseur actuellement applicables.');
+        if (selectionOverride.destinationId && !destinations.some(destination => destination.id === selectionOverride.destinationId))
+            throw new HttpError(422, 'SUBCONTRACT_DESTINATION_INVALID', 'Choisissez un magasin existant.');
+        selections.unshift(selectionOverride);
+    }
+    const result = { of: { ...of, purchases: undefined }, coveredByOfId, maximumOrigins: policy.maximumLots,
+        hasDirectMaterial: of.purchases.some(p => p.type_achat === 'MATIERE'), purchases, operations, origins, offers, drafts, destinations, predecessorState };
+    const proposals = servicePurchasePreparations(result, selections);
+    const prepared = await readPurchasePreparationsTx(tx, proposals, ofId, 'PRESTATION');
+    // Ledger timestamps are excluded: saving the same projection must not invalidate itself.
+    return { ...result, version: coverageFingerprint({ ...result, proposals }),
+        purchasePreparations: prepared.items as Array<ServicePreparation & { id: string | null; saved: boolean; updatedAt: string | null }>, purchasePreparationsRequireSync: prepared.requiresSync };
 }
 export async function readSubcontractProcurement(ofId: number) {
     const tx = await pool.connect();
@@ -110,9 +142,25 @@ export async function readSubcontractProcurement(ofId: number) {
         tx.release();
     }
 }
+function assertServiceProducer(current: { coveredByOfId: number | null }) {
+    if (current.coveredByOfId) throw new HttpError(409, 'OF_COVERED_BY_CONSOLIDATION',
+        'Les prestations de cet OF sont préparées dans son OF de regroupement.', { producerOfId: current.coveredByOfId });
+}
+export async function prepareSubcontractDemands(ofId: number, body: SubcontractDemandCommand, audit: AuditContext) {
+    return consumableCommand({ ofId }, 'SUBCONTRACT_PREPARE_PURCHASES', body, audit, async tx => {
+        const current = await readSubcontractProcurementTx(tx, ofId);
+        assertServiceProducer(current);
+        if (body.expectedVersion !== current.version) throw new HttpError(409, 'SUBCONTRACT_PROCUREMENT_CHANGED',
+            'Les prestations, lots ou conditions fournisseur ont changé. Relisez la préparation.');
+        const selected = body.selection ? await readSubcontractProcurementTx(tx, ofId, body.selection) : current;
+        await savePurchasePreparationsTx(tx, selected.purchasePreparations, 'PRESTATION', ofId, selected.version, audit, { persistCovered: !!body.selection });
+        return { prepared: selected.purchasePreparations.length };
+    });
+}
 export async function prepareSubcontractProcurement(ofId: number, body: SubcontractProcurementCommand, audit: AuditContext) {
     return consumableCommand({ ofId }, 'SUBCONTRACT_PREPARE', body, audit, async (tx) => {
         const current = await readSubcontractProcurementTx(tx, ofId);
+        assertServiceProducer(current);
         if (body.expectedVersion !== current.version)
             throw new HttpError(409, 'SUBCONTRACT_PROCUREMENT_CHANGED', 'Les origines, achats ou opérations ont changé. Relisez la préparation.');
         if (!current.of.hash)
@@ -133,9 +181,17 @@ export async function prepareSubcontractProcurement(ofId: number, body: Subcontr
         const total = body.rows.reduce((n, r) => n + r.quantity, 0) + current.drafts.filter(d => d.operationId === operation.id).reduce((n, d) => n + d.quantity, 0);
         if (total > current.of.quantity)
             throw new HttpError(422, 'SUBCONTRACT_QUANTITY_EXCEEDED', 'La préparation dépasse la quantité de l’OF.');
+        const predecessors = current.predecessorState.find(state => state.operationId === operation.id)?.predecessors ?? [];
+        if (predecessors.length && predecessors.every(predecessor => predecessor.status === 'DONE') && predecessors.some(predecessor => total > predecessor.good))
+            throw new HttpError(422, 'SUBCONTRACT_REAL_QUANTITY_EXCEEDED', 'Ajustez le brouillon aux quantités réellement conformes après clôture de l’opération précédente.');
+        if (!body.due && offer.delay === null)
+            throw new HttpError(422, 'SUBCONTRACT_DELAY_REQUIRED', 'Confirmez une date de retour ou un délai fournisseur avant de préparer les lignes.');
         const commands = await createMaterialDraftsTx(tx, body.rows.map(row => ({ type: 'SOUS_TRAITANCE' as const, needId: null, ofId, sourceRef: purchase.id, articleId: purchase.article_id!, designation: `${purchase.designation ?? purchase.nom ?? operation.label} · ${row.originId ? current.origins.find(o => o.id === row.originId)!.label : 'Sans MP directe'}`,
             supplierId: offer.supplierId, currency: offer.currency, destinationId: body.destinationId, unit: offer.unit, quantity: row.quantity, assigned: 0, price: offer.price, due: body.due, delay: offer.delay, catalogueId: offer.id, supplierReference: offer.reference, requirements: [], operation: operation.label,
             subcontract: { operationId: operation.id, materialOriginId: row.originId, snapshot: { purchase, operation, unit: offer.unit, origin: row.originId, quantity: row.quantity, reason: body.reason, technicalHash: current.of.hash, predecessors: current.predecessorState.find(s => s.operationId === operation.id) } } })), audit);
-        return { commands, procurement: await readSubcontractProcurementTx(tx, ofId) };
+        const procurement = await readSubcontractProcurementTx(tx, ofId, { purchaseId: body.purchaseId, operationId: body.operationId,
+            catalogueId: body.catalogueId, destinationId: body.destinationId, due: body.due });
+        await savePurchasePreparationsTx(tx, procurement.purchasePreparations, 'PRESTATION', ofId, procurement.version, audit);
+        return { commands };
     });
 }

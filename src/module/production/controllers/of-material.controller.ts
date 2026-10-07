@@ -3,30 +3,43 @@ import type {Request} from "express";
 import {asyncHandler} from "../../../utils/asyncHandler";
 import {HttpError} from "../../../utils/httpError";
 import {buildAuditContext} from "./production.controller";
-import {getOfMaterial,configureOfMaterial,confirmOfMaterial,verifyOfMaterialLot,getOperationReadiness} from "../services/of-material.service";
+import {getOfMaterial,configureOfMaterial,confirmOfMaterial,verifyOfMaterialLot,getOperationReadiness,prepareOfMaterialPurchases,chooseOfMaterialSupplier} from "../services/of-material.service";
 import {roleHasOfCapability} from "../domain/of-rbac";
 import {roleHasStockCapability} from "../../stock/domain/stock-rbac";
 import {roleHasCommandeFournisseurCapability} from "../../commande-fournisseur/domain/commande-fournisseur-rbac";
 import {requestHasGrantedAccountModuleAccess} from "../../access-control/context/account-module-access.context";
-import {materialDebitSchema} from '../validators/of-material.validators';
+import {materialDebitSchema,materialCommandSchema,materialSupplierSchema} from '../validators/of-material.validators';
 import {materialDebitCorrectionSchema,materialTransferSchema} from '../validators/of-material.validators';
 import {correctMaterialDebit,commandMaterialTransfer} from '../services/of-material.service';
 import {debitOfMaterial} from '../services/of-material.service';
 import {customerMaterialCommandSchema} from '../validators/customer-material.validators';
 import {commandCustomerMaterial} from '../services/of-material.service';
 import {reconcileMaterialRevision} from '../services/of-material.service';
+import {getOfComponentCoverage} from '../services/of-material.service';
 import {materialReconciliationSchema} from '../validators/of-material.validators';
+import {supplierQualificationQuerySchema} from '../validators/of-material.validators';
+import {getOfSupplierQualification} from '../services/of-material.service';
+import {getOfSupplierRecommendations} from '../services/of-material.service';
+import {supplierRecommendationQuerySchema} from '../validators/of-material.validators';
 
 function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
   return {canConfigure:granted||roleHasOfCapability(req.user?.role,"edit_prelaunch"),canVerifyLot:granted||roleHasStockCapability(req.user?.role,"lot_quality"),canConfirm:granted||roleHasStockCapability(req.user?.role,"reservation_manage"),canPurchase:granted||roleHasCommandeFournisseurCapability(req.user?.role,"create"),canReadPrices:granted||roleHasCommandeFournisseurCapability(req.user?.role,"prices"),canReceive:granted||roleHasStockCapability(req.user?.role,'movement_create')};
 }
-function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
+function present(data:Awaited<ReturnType<typeof getOfMaterial>>|Awaited<ReturnType<typeof configureOfMaterial>>,req:Request){
   const access=rights(req);
   if(!data.enabled)return data;
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
 }
 export const readMaterial=asyncHandler(async(req,res)=>{res.json(present(await getOfMaterial(identity.parse(req.params).id),req));});
+export const prepareMaterialPurchases=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'MATERIAL_PURCHASE_PREPARATION_FORBIDDEN','Les droits de création d’achats sont nécessaires pour enregistrer les besoins.');
+  res.json(present(await prepareOfMaterialPurchases(identity.parse(req.params).id,materialCommandSchema.parse(req.body),buildAuditContext(req)),req));
+});
+export const chooseMaterialSupplier=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'MATERIAL_PURCHASE_PREPARATION_FORBIDDEN','Les droits de création d’achats sont nécessaires pour choisir le fournisseur.');
+  res.json(present(await chooseOfMaterialSupplier(identity.parse(req.params).id,materialSourceRefSchema.parse(req.params.sourceRef),materialSupplierSchema.parse(req.body),buildAuditContext(req)),req));
+});
 export const reconcileMaterial=asyncHandler(async(req,res)=>{
   const access=rights(req);
   if(!access.canConfigure||!access.canConfirm)throw new HttpError(403,'MATERIAL_RECONCILIATION_FORBIDDEN','Les droits de préparation et de gestion des réservations sont nécessaires pour rapprocher les engagements.');
@@ -52,6 +65,17 @@ export const transferMaterial=asyncHandler(async(req,res)=>{
   res.json({...result,coverage:present(result.coverage,req)});
 });
 export const readOperationReadiness=asyncHandler(async(req,res)=>{res.json(await getOperationReadiness(identity.parse(req.params).id));});
+export const readComponentCoverage=asyncHandler(async(req,res)=>{res.json(await getOfComponentCoverage(identity.parse(req.params).id));});
+export const readSupplierQualification=asyncHandler(async(req,res)=>{
+  if(!rights(req).canPurchase)throw new HttpError(403,'OF_SUPPLIER_QUALIFICATION_FORBIDDEN','Les droits de préparation des achats sont nécessaires.');
+  const {articleId,supplierId,catalogueId}=supplierQualificationQuerySchema.parse(req.query);
+  res.json(await getOfSupplierQualification(identity.parse(req.params).id,articleId,supplierId,catalogueId));
+});
+export const readSupplierRecommendations=asyncHandler(async(req,res)=>{
+  const access=rights(req);
+  if(!access.canPurchase)throw new HttpError(403,'OF_SUPPLIER_RECOMMENDATION_FORBIDDEN','Les droits de préparation des achats sont nécessaires.');
+  res.json(await getOfSupplierRecommendations(identity.parse(req.params).id,supplierRecommendationQuerySchema.parse(req.query),access.canReadPrices));
+});
 export const verifyMaterialLot=asyncHandler(async(req,res)=>{
   if(!rights(req).canVerifyLot)throw new HttpError(403,"MATERIAL_LOT_VERIFICATION_FORBIDDEN","Les droits de vérification qualité des lots sont nécessaires.");
   res.json(present(await verifyOfMaterialLot(identity.parse(req.params).id,materialSourceRefSchema.parse(req.params.sourceRef),materialLotVerificationSchema.parse(req.body),buildAuditContext(req)),req));
