@@ -1,3 +1,5 @@
+import { hasPrivilegedAssignedRole } from "./roles";
+
 export const MFA_POLICIES = [
   "disabled",
   "optional",
@@ -17,14 +19,24 @@ export function normalizeMfaPolicy(value: unknown): MfaPolicy {
   return isMfaPolicy(value) ? value : DEFAULT_MFA_POLICY;
 }
 
-export function policyRequiresMfa(policy: MfaPolicy, isSuperadmin: boolean): boolean {
+export function policyRequiresMfa(
+  policy: MfaPolicy,
+  isSuperadmin: boolean,
+  role?: string | null,
+  roles?: readonly string[] | null,
+): boolean {
   if (policy === "required_for_all") return true;
-  if (policy === "required_for_admins") return isSuperadmin;
+  if (policy === "required_for_admins") return isSuperadmin || hasPrivilegedAssignedRole(role, roles);
   return false;
 }
 
-export function policyAllowsFactorRevocation(policy: MfaPolicy, isSuperadmin: boolean): boolean {
-  return !policyRequiresMfa(policy, isSuperadmin);
+export function policyAllowsFactorRevocation(
+  policy: MfaPolicy,
+  isSuperadmin: boolean,
+  role?: string | null,
+  roles?: readonly string[] | null,
+): boolean {
+  return !policyRequiresMfa(policy, isSuperadmin, role, roles);
 }
 
 /**
@@ -36,7 +48,9 @@ export function policyAllowsFactorRevocation(policy: MfaPolicy, isSuperadmin: bo
 export function accountRequiresMfa(params: {
   policy: MfaPolicy;
   isSuperadmin: boolean;
+  role?: string | null;
+  roles?: readonly string[] | null;
   hasActiveFactor: boolean;
 }): boolean {
-  return params.hasActiveFactor || policyRequiresMfa(params.policy, params.isSuperadmin);
+  return params.hasActiveFactor || policyRequiresMfa(params.policy, params.isSuperadmin, params.role, params.roles);
 }

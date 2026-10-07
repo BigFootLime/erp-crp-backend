@@ -7,6 +7,7 @@ import path from "node:path"
 import db from "../../../config/database"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { lockSupplierQualificationTx } from "./purchase-homologation.repository"
 import { generateFournisseurCode } from "../../../shared/codes/code-generator.service"
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
@@ -1190,7 +1191,7 @@ export async function repoCreateFournisseurHomologation(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
+    if (!(await lockSupplierQualificationTx(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
     // Supersede the current homologation for the same domain scope (versioning).
     await client.query(
       `UPDATE public.fournisseur_homologations SET is_current = false, updated_at = now(), updated_by = $3
@@ -1251,7 +1252,7 @@ export async function repoUpdateFournisseurHomologation(
   sets.push(`updated_by = ${push(audit.user_id)}`)
   try {
     await client.query("BEGIN")
-    if (!(await ensureFournisseurExists(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
+    if (!(await lockSupplierQualificationTx(client, fournisseurId))) { await client.query("ROLLBACK"); return null }
     const res = await client.query<HomologationRow>(
       `UPDATE public.fournisseur_homologations SET ${sets.join(", ")}
        WHERE id = ${push(homologationId)}::uuid AND fournisseur_id = ${push(fournisseurId)}::uuid RETURNING ${HOMOLOGATION_SELECT}`,

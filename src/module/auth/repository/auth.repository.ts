@@ -121,11 +121,16 @@ export const findAuthenticatedAccountState = async (
     mfa_factor_id: string | null;
     mfa_factor_version: number | null;
     mfa_policy: string | null;
+    role: string;
+    roles: string[];
   }>(
     `
       SELECT
         users.status,
         users.is_superadmin,
+        users.role,
+        COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
+                    FROM public.user_role_assignments ura WHERE ura.user_id=users.id), ARRAY[users.role]::text[]) AS roles,
         factor.id::text AS mfa_factor_id,
         factor.version AS mfa_factor_version,
         (SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy' LIMIT 1) AS mfa_policy,
@@ -149,6 +154,8 @@ export const findAuthenticatedAccountState = async (
     mfa_required: accountRequiresMfa({
       policy,
       isSuperadmin: row.is_superadmin === true,
+      role: row.role,
+      roles: row.roles,
       hasActiveFactor: Boolean(row.mfa_factor_id),
     }),
     mfa_factor_id: row.mfa_factor_id ?? null,

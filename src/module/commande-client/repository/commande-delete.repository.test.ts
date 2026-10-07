@@ -83,7 +83,7 @@ describe("commande hard-delete retention guard", () => {
     expect(guardSql).toContain("FROM public.commande_ligne_affaire_allocation allocation");
     expect(guardSql).toContain("FROM public.stock_reservations reservation");
     expect(guardSql).toContain("FROM public.article_devis_promotion article_promotion");
-    expect(guardSql).toContain("FROM public.quick_commande_confirmations quick_confirmation");
+    expect(guardSql).not.toContain("quick_commande_");
     expect(mocks.clientQuery.mock.calls.some(([sql]) => String(sql).includes("DELETE FROM public.commande_client"))).toBe(false);
   });
 

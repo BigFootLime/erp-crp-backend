@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { assertSupplierPurchaseHomologationTx } from "../../fournisseurs/repository/purchase-homologation.repository";
 import { generateCommandeFournisseurCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -1378,6 +1379,12 @@ export async function repoTransitionCommandeFournisseur(
     }
 
     // Préconditions métier par nature de transition.
+    const qualification = ["submit", "approve", "send"].includes(kind)
+      ? await assertSupplierPurchaseHomologationTx(client, header.fournisseur_id)
+      : null;
+    if (kind === "send") {
+      assertFournisseurCommandable(await fetchFournisseurMini(client, header.fournisseur_id));
+    }
     if (kind === "submit" || kind === "approve") {
       const incomplete=(await client.query<{id:string}>(`SELECT id::text FROM public.commande_fournisseur_ligne
         WHERE commande_id=$1::uuid AND statut_ligne='ACTIVE' AND prix_unitaire_ht IS NULL`,[id])).rows;
@@ -1489,7 +1496,7 @@ export async function repoTransitionCommandeFournisseur(
       action: `commandes_fournisseurs.transition.${kind}`,
       entity_type: "commande_fournisseur",
       entity_id: id,
-      details: { from, to, motif, system: Boolean(options?.system), released_need_links: releasedNeedLinks },
+      details: { from, to, motif, system: Boolean(options?.system), released_need_links: releasedNeedLinks, supplier_qualification: qualification },
     });
 
     const resultat = { statut: to };
