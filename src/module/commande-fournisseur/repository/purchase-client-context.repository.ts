@@ -42,3 +42,29 @@ export async function readPurchaseClientContextsTx(
     );
   return rows;
 }
+
+/** Resolve the same effective OF origins before a purchase line exists.
+ * A consolidated producer inherits the clients of its active source OFs. */
+export const OF_PURCHASE_CLIENT_CONTEXT_SQL = `WITH effective_origins AS (
+  SELECT COALESCE(a.source_of_id,o.id) AS of_id
+  FROM public.ordres_fabrication o
+  LEFT JOIN public.production_consolidations c ON c.producer_of_id=o.id AND c.state='ACTIVE'
+  LEFT JOIN public.production_consolidation_allocations a ON a.consolidation_id=c.id AND a.state='ACTIVE'
+  WHERE o.id=$1
+) SELECT DISTINCT $2::uuid::text AS line_id,f.client_id,f.article_id::text AS product_article_id,
+  $2::uuid::text AS purchase_article_id,f.id::bigint::int AS of_id
+  FROM effective_origins e JOIN public.ordres_fabrication f ON f.id=e.of_id
+  WHERE f.client_id IS NOT NULL ORDER BY client_id,of_id,product_article_id NULLS LAST LIMIT 5001`;
+
+export async function readOfPurchaseClientContextsTx(
+  tx: Pick<PoolClient, "query">,
+  ofId: number,
+  articleId: string,
+): Promise<Omit<PurchaseClientContext, "domains">[]> {
+  const rows = (await tx.query<Omit<PurchaseClientContext, "domains">>(
+    OF_PURCHASE_CLIENT_CONTEXT_SQL, [ofId, articleId],
+  )).rows;
+  if (rows.length > 5000) throw new HttpError(409, "CLIENT_APPROVAL_CONTEXT_LIMIT",
+    "L’OF regroupe trop de besoins pour vérifier ses agréments. Scindez-le avant engagement.");
+  return rows;
+}

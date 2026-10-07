@@ -1,6 +1,7 @@
 import {z} from "zod";
 export const materialIdentitySchema=z.object({id:z.coerce.number().int().positive()});
 export const materialSourceRefSchema=z.string().uuid();
+export const supplierQualificationQuerySchema=z.object({articleId:z.string().uuid(),supplierId:z.string().uuid(),catalogueId:z.string().uuid().optional()}).strict();
 export const materialCommandSchema=z.object({expectedVersion:z.string().regex(/^[a-f0-9]{64}$/),idempotencyKey:z.string().uuid()}).strict();
 const text=z.string().trim().min(1).max(300);
 export const materialConfigurationSchema=materialCommandSchema.extend({configuration:z.object({
