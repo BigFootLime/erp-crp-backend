@@ -21,7 +21,7 @@ function rights(req:Request){
   const granted=requestHasGrantedAccountModuleAccess(req);
   return {canConfigure:granted||roleHasOfCapability(req.user?.role,"edit_prelaunch"),canVerifyLot:granted||roleHasStockCapability(req.user?.role,"lot_quality"),canConfirm:granted||roleHasStockCapability(req.user?.role,"reservation_manage"),canPurchase:granted||roleHasCommandeFournisseurCapability(req.user?.role,"create"),canReadPrices:granted||roleHasCommandeFournisseurCapability(req.user?.role,"prices"),canReceive:granted||roleHasStockCapability(req.user?.role,'movement_create')};
 }
-function present(data:Awaited<ReturnType<typeof getOfMaterial>>,req:Request){
+function present(data:Awaited<ReturnType<typeof getOfMaterial>>|Awaited<ReturnType<typeof configureOfMaterial>>,req:Request){
   const access=rights(req);
   if(!data.enabled)return data;
   return {...data,permissions:access,needs:data.needs.map(n=>({...n,price:access.canReadPrices?n.price:null,catalog:n.catalog?{...n.catalog,prix_unitaire:access.canReadPrices?n.catalog.prix_unitaire:null}:null}))};
