@@ -511,6 +511,7 @@ describe("#159 — le plan suit le snapshot figé, jamais le dernier indice", ()
     size_bytes: 1024,
     sha256: "a".repeat(64),
     piece_technique_id: "pt-1",
+    piece_technique_version_id: "v-b",
   };
 
   it("renvoie le document de la version figée", () => {
@@ -560,6 +561,28 @@ describe("#159 — le plan suit le snapshot figé, jamais le dernier indice", ()
     expect(r.document).toBeNull();
     expect(r.matches_snapshot).toBe(false);
     expect(r.warning).toMatch(/ne peut pas être garanti/i);
+  });
+
+  it("écarte un document du nouvel indice même s'il arrive en premier", () => {
+    const r = resolvePlanForSnapshot({
+      snapshot: { piece_technique_version_id: "v-b", snapshot_sha256: "x", snapshot_at: new Date() },
+      documentsForSnapshotVersion: [{ ...doc, id: "doc-c", piece_technique_version_id: "v-c" }, doc],
+      latestVersionIndice: "C",
+      snapshotIndice: "B",
+    });
+    expect(r.document?.id).toBe("doc-1");
+    expect(r.matches_snapshot).toBe(true);
+  });
+
+  it("ne garantit pas un ancien fichier sans rattachement à une version précise", () => {
+    const r = resolvePlanForSnapshot({
+      snapshot: { piece_technique_version_id: "v-b", snapshot_sha256: "x", snapshot_at: new Date() },
+      documentsForSnapshotVersion: [{ ...doc, piece_technique_version_id: null }],
+      latestVersionIndice: "B",
+      snapshotIndice: "B",
+    });
+    expect(r.document).toBeNull();
+    expect(r.matches_snapshot).toBe(false);
   });
 });
 
