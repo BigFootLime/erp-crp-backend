@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
+import type { ApprovalCheck } from "./client-supplier-approval";
 import {
   assertGlobalPurchaseHomologation,
   type PurchaseHomologation,
@@ -33,6 +34,8 @@ export type PurchaseQualification = {
   global: QualificationScope;
   domains: QualificationScope[];
   unmapped_line_ids: string[];
+  client_approvals?: ApprovalCheck[];
+  lines_without_client?: string[];
 };
 
 const categoryDomains: Record<string, string> = {
@@ -110,6 +113,10 @@ export function purchaseQualificationRevision(
         global: state.global,
         domains: state.domains,
         unmapped_line_ids: state.unmapped_line_ids,
+        // Keep existing prepared documents valid when no client policy applies.
+        ...(state.client_approvals?.some((check) => check.policies.length)
+          ? { client_approvals: state.client_approvals }
+          : {}),
       }),
     )
     .digest("hex");
