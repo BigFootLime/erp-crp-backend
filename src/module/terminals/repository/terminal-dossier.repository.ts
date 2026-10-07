@@ -36,8 +36,11 @@ export async function operationContext(
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
     WHERE op.id=$1 AND o.id=$2 AND (op.machine_id=$3 OR EXISTS(SELECT 1 FROM public.planning_events e
       WHERE e.of_operation_id=op.id AND e.machine_id=$3 AND e.archived_at IS NULL AND e.status<>'CANCELLED')
-      OR EXISTS(SELECT 1 FROM public.production_pointages p WHERE p.operation_id=op.id AND p.machine_id=$3 AND p.status='RUNNING'))`,
-      [operationId, ofId, terminal.machine_id],
+      OR EXISTS(SELECT 1 FROM public.production_pointages p WHERE p.operation_id=op.id AND p.machine_id=$3 AND p.status='RUNNING')
+      OR ($4::boolean AND EXISTS(SELECT 1 FROM public.of_material_needs n
+        WHERE n.of_id=o.id AND n.operation_id=op.id AND n.need_kind='MATIERE'
+          AND n.superseded_at IS NULL AND n.technical_version_id=o.piece_technique_version_id)))`,
+      [operationId, ofId, terminal.machine_id, terminal.kind === 'CUTTING' && terminal.machine_id === null],
     )
   ).rows[0];
   if (!row)
@@ -81,7 +84,7 @@ export async function plannedWorklist(terminal: Terminal, offset = 0) {
     items: rows.map(({ total, ...r }) => r),
   };
 }
-export async function dossierDocuments(context: OperationContext) {
+export async function dossierDocuments(context: OperationContext, application: 'operator' | 'cutting' = 'operator') {
   // Only versions carried by the released OF snapshot. Never current_version_id.
   const evidence = context.technical_snapshot?.preparation_evidence?.documents;
   const docs: Array<{
@@ -129,7 +132,7 @@ export async function dossierDocuments(context: OperationContext) {
         ["APPLICABLE", "OBSOLETE"].includes(found.status) &&
         !!found.published_at &&
         (!doc.sha256 || doc.sha256 === found.sha256),
-      download_path: `/terminals/operator/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.version_id}`,
+      download_path: `/terminals/${application}/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.version_id}`,
     };
   });
   const sheet = (
@@ -153,7 +156,7 @@ export async function dossierDocuments(context: OperationContext) {
       size_bytes: sheet.size_bytes,
       sha256: sheet.pdf_sha256,
       available: true,
-      download_path: `/terminals/operator/ofs/${context.of_id}/operations/${context.operation_id}/documents/${sheet.id}`,
+      download_path: `/terminals/${application}/ofs/${context.of_id}/operations/${context.operation_id}/documents/${sheet.id}`,
     });
   const official = (
     await pool.query(
@@ -175,7 +178,7 @@ export async function dossierDocuments(context: OperationContext) {
       size_bytes: doc.pdf_byte_size,
       sha256: doc.pdf_sha256,
       available: true,
-      download_path: `/terminals/operator/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.id}`,
+      download_path: `/terminals/${application}/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.id}`,
     });
   const certificates = (
     await pool.query(
@@ -203,7 +206,7 @@ export async function dossierDocuments(context: OperationContext) {
       sha256: doc.sha256,
       available: !!doc.sha256,
       reception_id: doc.reception_id,
-      download_path: `/terminals/operator/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.id}`,
+      download_path: `/terminals/${application}/ofs/${context.of_id}/operations/${context.operation_id}/documents/${doc.id}`,
     });
   return manifest;
 }

@@ -31,7 +31,7 @@ export const enrollSchema = z
   })
   .strict().superRefine((value,ctx)=>{
     if(value.kind==='OPERATOR'&&!value.machine_id)ctx.addIssue({code:'custom',path:['machine_id'],message:'Choisissez la machine du poste opérateur.'});
-    if(['RECEPTION','OF_PROCUREMENT'].includes(value.kind)&&value.machine_id)ctx.addIssue({code:'custom',path:['machine_id'],message:'Ce terminal est rattaché au site et au magasin.'});
+    if(['RECEPTION','OF_PROCUREMENT','CUTTING'].includes(value.kind)&&value.machine_id)ctx.addIssue({code:'custom',path:['machine_id'],message:'Ce terminal est rattaché au site, sans machine.'});
   });
 export const ownPinSchema=z.object({site_code:z.string().trim().min(1).max(64),pin:z.string().regex(/^\d{4}$/)}).strict();
 export const pinSchema = z

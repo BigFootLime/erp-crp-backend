@@ -12,6 +12,9 @@ import {
 } from "../repository/station-cutting.repository";
 import { resolveIdentification } from "../../identification/identification.service";
 import { roleHasOfCapability } from "../domain/of-rbac";
+import type { PoolClient } from "pg";
+
+export type CuttingTransactionAuthorization = (tx: PoolClient) => Promise<void>;
 
 function operatorMaterial(data: Awaited<ReturnType<typeof getOfMaterial>>) {
   if (!data.enabled) return data;
@@ -61,6 +64,7 @@ export async function debitStationCutting(
   ofId: number,
   body: MaterialDebit,
   audit: AuditContext,
+  authorizeTransaction?: CuttingTransactionAuthorization,
 ) {
   if (!roleHasOfCapability(station.user.role, "operate"))
     throw new HttpError(
@@ -69,8 +73,9 @@ export async function debitStationCutting(
       "Les droits de déclaration atelier sont nécessaires.",
     );
   const result = await debitOfMaterial(ofId, body, audit, {
-    authorizeTransaction: (tx) =>
-      authorizeCuttingTx(tx, station, ofId, body.operationId),
+    authorizeTransaction: authorizeTransaction ?? ((tx) =>
+      authorizeCuttingTx(tx, station, ofId, body.operationId)
+    ),
     resolvePointage: (tx) =>
       cuttingPointageTx(tx, station, ofId, body.operationId),
   });
