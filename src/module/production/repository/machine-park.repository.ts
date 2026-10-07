@@ -4,6 +4,8 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {validatedMachineMaintenancePlanBody} from "../validators/machine-park.validators";
+import {maintenanceEvidenceTx} from "./operator-maintenance-read.repository";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import {
@@ -123,8 +125,8 @@ export async function repoListMachineUnavailability(machineId: string, query: Li
 }
 
 export async function repoGetMachineParkContext(machineId: string): Promise<MachineParkContext | null> {
-  const machineResult = await pool.query<{ status: string; scheduling_enabled: boolean; archived_at: string | null }>(
-    `SELECT status::text AS status, scheduling_enabled, archived_at::text AS archived_at
+  const machineResult = await pool.query<{ status: string; is_available:boolean; maintenance_hold:boolean; scheduling_enabled: boolean; archived_at: string | null }>(
+    `SELECT status::text AS status,is_available,EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=machines.id AND h.resolved_at IS NULL) AS maintenance_hold, scheduling_enabled, archived_at::text AS archived_at
        FROM public.machines WHERE id = $1::uuid`,
     [machineId]
   );
@@ -141,14 +143,14 @@ export async function repoGetMachineParkContext(machineId: string): Promise<Mach
     ),
     pool.query<MachineMaintenancePlan>(
       `SELECT id::text AS id, machine_id::text AS machine_id, title, status,
-              frequency_days, frequency_counter::float8 AS frequency_counter, counter_unit,
+               frequency_days, frequency_counter::float8 AS frequency_counter, counter_unit,counter_value::float8,next_due_counter::float8,
               next_due_at::text AS next_due_at, responsible_user_id, checklist,
               document_id::text AS document_id, source, notes, version,
               created_at::text AS created_at, updated_at::text AS updated_at,
               archived_at::text AS archived_at
          FROM public.production_machine_maintenance_plans
         WHERE machine_id = $1::uuid AND archived_at IS NULL AND status = 'ACTIVE'
-          AND next_due_at IS NOT NULL AND next_due_at <= current_date + 30
+           AND ((next_due_at IS NOT NULL AND next_due_at <= (statement_timestamp() AT TIME ZONE 'Europe/Paris')::date + 30) OR (frequency_counter IS NOT NULL AND (next_due_counter IS NULL OR counter_value IS NULL OR counter_value >= next_due_counter)))
         ORDER BY next_due_at ASC`,
       [machineId]
     ),
@@ -182,6 +184,9 @@ export async function repoGetMachineParkContext(machineId: string): Promise<Mach
   } else if (!machine.scheduling_enabled) {
     availableNow = false;
     reason = "Planning disabled for this machine.";
+  } else if (machine.is_available===false || machine.maintenance_hold) {
+    availableNow=false;
+    reason=machine.maintenance_hold?"Arrêt requis par une anomalie de maintenance non levée.":"Machine déclarée indisponible.";
   } else if (active) {
     availableNow = false;
     reason = `Active unavailability: ${active.cause}.`;
@@ -286,10 +291,10 @@ export async function repoArchiveMachineUnavailability(params: { machineId: stri
   }
 }
 
-export async function repoListMachineMaintenancePlans(machineId: string): Promise<MachineMaintenancePlan[]> {
-  const result = await pool.query<MachineMaintenancePlan>(
+export async function repoListMachineMaintenancePlans(machineId: string,queryer:DbQueryer=pool): Promise<MachineMaintenancePlan[]> {
+  const result = await queryer.query<MachineMaintenancePlan>(
     `SELECT id::text AS id, machine_id::text AS machine_id, title, status,
-            frequency_days, frequency_counter::float8 AS frequency_counter, counter_unit,
+            frequency_days, frequency_counter::float8 AS frequency_counter, counter_unit,counter_value::float8,next_due_counter::float8,
             next_due_at::text AS next_due_at, responsible_user_id, checklist,
             document_id::text AS document_id, source, notes, version,
             created_at::text AS created_at, updated_at::text AS updated_at,
@@ -301,21 +306,44 @@ export async function repoListMachineMaintenancePlans(machineId: string): Promis
   return result.rows;
 }
 
+async function replayMaintenancePlan(tx:DbQueryer,machineId:string,key:string|undefined,hash:string){
+ if(!key)return null;
+ await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`maintenance-command:${key}`]);
+ const replay=(await tx.query("SELECT request_hash,result FROM public.production_maintenance_commands WHERE idempotency_key=$1::uuid",[key])).rows[0];
+ if(!replay)return null;
+ if(replay.request_hash!==hash)throw new HttpError(409,"MAINTENANCE_REQUEST_CONFLICT","Cette demande a déjà été utilisée avec un autre contenu.");
+ const prior=(await repoListMachineMaintenancePlans(machineId,tx)).find(row=>row.id===replay.result.plan_id);
+ if(!prior)throw new HttpError(409,"MAINTENANCE_PLAN_CHANGED","Le plan a changé. Rechargez la maintenance.");
+ return prior;
+}
+async function rememberMaintenancePlan(tx:DbQueryer,key:string|undefined,hash:string,actor:number|null,id:string){
+ if(key)await tx.query("INSERT INTO public.production_maintenance_commands(idempotency_key,actor_id,request_hash,result)VALUES($1::uuid,$2,$3,$4::jsonb)",[key,actor,hash,JSON.stringify({plan_id:id})]);
+}
+async function assertMaintenanceResponsible(tx:DbQueryer,userId:number|null|undefined){
+ if(userId!=null&&!(await tx.query("SELECT id FROM public.users WHERE id=$1 AND COALESCE(NULLIF(lower(trim(status)),''),'active') NOT IN ('inactive','blocked','suspended') FOR SHARE",[userId])).rows.length)throw new HttpError(422,"MAINTENANCE_RESPONSIBLE_INVALID","Choisissez un responsable actif.");
+}
+
 export async function repoCreateMachineMaintenancePlan(params: { machineId: string; body: CreateMachineMaintenancePlanBodyDTO; audit: AuditContext }): Promise<MachineMaintenancePlan> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const hash=crypto.createHash("sha256").update(JSON.stringify({kind:"create",machineId:params.machineId,body:params.body,actor:params.audit.user_id})).digest("hex");
+    const replay=await replayMaintenancePlan(client,params.machineId,params.body.idempotency_key,hash);
+    if(replay){await client.query("COMMIT");return replay;}
     await requireActiveMachine(client, params.machineId);
     const id = crypto.randomUUID();
     const b = params.body;
+    if(b.document_id)await maintenanceEvidenceTx(client,params.machineId,b.document_id);
+    await assertMaintenanceResponsible(client,b.responsible_user_id);
     await client.query(
       `INSERT INTO public.production_machine_maintenance_plans (
          id, machine_id, title, status, frequency_days, frequency_counter, counter_unit,
-         next_due_at, responsible_user_id, checklist, document_id, source, notes, created_by, updated_by
-       ) VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::date,$9,$10::jsonb,$11::uuid,$12,$13,$14,$14)`,
-      [id, params.machineId, b.title, b.status, b.frequency_days ?? null, b.frequency_counter ?? null, b.counter_unit ?? null, b.next_due_at ?? null, b.responsible_user_id ?? null, JSON.stringify(b.checklist), b.document_id ?? null, b.source, b.notes ?? null, params.audit.user_id]
+         next_due_at, responsible_user_id, checklist, document_id, source, notes, created_by, updated_by,next_due_counter
+       ) VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8::date,$9,$10::jsonb,$11::uuid,$12,$13,$14,$14,$15)`,
+      [id, params.machineId, b.title, b.status, b.frequency_days ?? null, b.frequency_counter ?? null, b.counter_unit ?? null, b.next_due_at ?? null, b.responsible_user_id ?? null, JSON.stringify(b.checklist), b.document_id ?? null, b.source, b.notes ?? null, params.audit.user_id,b.next_due_counter??null]
     );
     await audit(client, params.audit, { action: "production.machines.maintenance-plan.create", entityType: "production_machine_maintenance_plans", entityId: id, details: { machine_id: params.machineId, title: b.title, next_due_at: b.next_due_at } });
+    await rememberMaintenancePlan(client,params.body.idempotency_key,hash,params.audit.user_id,id);
     await client.query("COMMIT");
     const created = (await repoListMachineMaintenancePlans(params.machineId)).find((row) => row.id === id);
     if (!created) throw new Error("Failed to reload maintenance plan");
@@ -332,9 +360,13 @@ export async function repoUpdateMachineMaintenancePlan(params: { machineId: stri
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const hash=crypto.createHash("sha256").update(JSON.stringify({kind:"update",machineId:params.machineId,planId:params.planId,body:params.body,actor:params.audit.user_id})).digest("hex");
+    const replay=await replayMaintenancePlan(client,params.machineId,params.body.idempotency_key,hash);
+    if(replay){await client.query("COMMIT");return replay;}
+    await requireActiveMachine(client,params.machineId);
     const currentResult = await client.query<MachineMaintenancePlan>(
       `SELECT id::text AS id, machine_id::text AS machine_id, title, status, frequency_days,
-              frequency_counter::float8 AS frequency_counter, counter_unit, next_due_at::text AS next_due_at,
+              frequency_counter::float8 AS frequency_counter, counter_unit,counter_value::float8,next_due_counter::float8, next_due_at::text AS next_due_at,
               responsible_user_id, checklist, document_id::text AS document_id, source, notes, version,
               created_at::text AS created_at, updated_at::text AS updated_at, archived_at::text AS archived_at
          FROM public.production_machine_maintenance_plans
@@ -343,7 +375,7 @@ export async function repoUpdateMachineMaintenancePlan(params: { machineId: stri
     );
     const current = currentResult.rows[0];
     if (!current) throw new HttpError(404, "MAINTENANCE_PLAN_NOT_FOUND", "Maintenance plan not found.");
-    if (current.updated_at !== params.body.expected_updated_at) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Maintenance plan has changed.");
+    if (Date.parse(current.updated_at) !== Date.parse(params.body.expected_updated_at)) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le plan de maintenance a changé. Rechargez avant de modifier.");
     const b = params.body;
     const next = {
       title: b.title ?? current.title,
@@ -357,16 +389,23 @@ export async function repoUpdateMachineMaintenancePlan(params: { machineId: stri
       document_id: b.document_id === undefined ? current.document_id : b.document_id,
       source: b.source ?? current.source,
       notes: b.notes === undefined ? current.notes : b.notes,
+      next_due_counter:b.next_due_counter===undefined?current.next_due_counter:b.next_due_counter,
     };
-    await client.query(
+    const validation=validatedMachineMaintenancePlanBody.safeParse(next);
+    if(!validation.success)throw new HttpError(422,"MAINTENANCE_PLAN_INVALID","Complétez les contrôles et les échéances du plan.",{issues:validation.error.issues});
+    await assertMaintenanceResponsible(client,next.responsible_user_id);
+    if(b.document_id)await maintenanceEvidenceTx(client,params.machineId,b.document_id);
+    const changed=await client.query(
       `UPDATE public.production_machine_maintenance_plans SET
          title=$3,status=$4,frequency_days=$5,frequency_counter=$6,counter_unit=$7,next_due_at=$8::date,
          responsible_user_id=$9,checklist=$10::jsonb,document_id=$11::uuid,source=$12,notes=$13,
-         version=version+1,updated_at=now(),updated_by=$14
-       WHERE id=$1::uuid AND machine_id=$2::uuid AND updated_at::text=$15`,
-      [params.planId, params.machineId, next.title, next.status, next.frequency_days, next.frequency_counter, next.counter_unit, next.next_due_at, next.responsible_user_id, JSON.stringify(next.checklist), next.document_id, next.source, next.notes, params.audit.user_id, params.body.expected_updated_at]
+         version=version+1,updated_at=now(),updated_by=$14,next_due_counter=$16
+        WHERE id=$1::uuid AND machine_id=$2::uuid AND updated_at=$15::timestamptz`,
+      [params.planId, params.machineId, next.title, next.status, next.frequency_days, next.frequency_counter, next.counter_unit, next.next_due_at, next.responsible_user_id, JSON.stringify(next.checklist), next.document_id, next.source, next.notes, params.audit.user_id, params.body.expected_updated_at,next.next_due_counter]
     );
+    if(changed.rowCount!==1)throw new HttpError(409,"CONCURRENT_MODIFICATION","Le plan de maintenance a changé. Rechargez avant de modifier.");
     await audit(client, params.audit, { action: "production.machines.maintenance-plan.update", entityType: "production_machine_maintenance_plans", entityId: params.planId, details: { before: current, after: next } });
+    await rememberMaintenancePlan(client,params.body.idempotency_key,hash,params.audit.user_id,params.planId);
     await client.query("COMMIT");
     const updated = (await repoListMachineMaintenancePlans(params.machineId)).find((row) => row.id === params.planId);
     if (!updated) throw new Error("Failed to reload maintenance plan");
@@ -393,6 +432,7 @@ export async function repoListMachineMaintenanceEvents(machineId: string): Promi
 }
 
 export async function repoCreateMachineMaintenanceEvent(params: { machineId: string; body: CreateMachineMaintenanceEventBodyDTO; audit: AuditContext }): Promise<MachineMaintenanceEvent> {
+  if(params.body.event_type==="COMPLETED")throw new HttpError(409,"MAINTENANCE_CONTROL_REQUIRED","Validez les contrôles, l’habilitation et la preuve dans l’espace Maintenance opérateur.");
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -400,9 +440,6 @@ export async function repoCreateMachineMaintenanceEvent(params: { machineId: str
     if (params.body.maintenance_plan_id) {
       const plan = await client.query<{ frequency_days: number | null }>(`SELECT frequency_days FROM public.production_machine_maintenance_plans WHERE id=$1::uuid AND machine_id=$2::uuid AND archived_at IS NULL FOR UPDATE`, [params.body.maintenance_plan_id, params.machineId]);
       if (!plan.rows[0]) throw new HttpError(422, "MAINTENANCE_PLAN_INVALID", "Maintenance plan does not belong to the machine.");
-      if (params.body.event_type === "COMPLETED" && plan.rows[0].frequency_days) {
-        await client.query(`UPDATE public.production_machine_maintenance_plans SET next_due_at=COALESCE($3::timestamptz, now())::date + frequency_days, version=version+1, updated_at=now(), updated_by=$4 WHERE id=$1::uuid AND machine_id=$2::uuid`, [params.body.maintenance_plan_id, params.machineId, params.body.occurred_at ?? null, params.audit.user_id]);
-      }
     }
     const id = crypto.randomUUID();
     const b = params.body;

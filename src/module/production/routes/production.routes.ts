@@ -14,6 +14,7 @@ import {
 } from "../../access-control/context/account-module-access.context";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import {readOperatorMaintenance,writeOperatorMaintenance} from "../controllers/operator-maintenance.controller";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
@@ -202,6 +203,8 @@ router.get("/machines/:id/unavailability", requireMachineCapability("read"), lis
 router.post("/machines/:id/unavailability", requireMachineCapability("availability"), createMachineUnavailability);
 router.delete("/machines/:id/unavailability/:unavailabilityId", requireMachineCapability("availability"), archiveMachineUnavailability);
 router.get("/machines/:id/maintenance/plans", requireMachineCapability("read"), listMachineMaintenancePlans);
+router.get("/machines/:id/maintenance/workspace", requireMachineCapability("read"), readOperatorMaintenance);
+router.post("/machines/:id/maintenance/commands", requireMachineCapability("maintenance"), writeOperatorMaintenance);
 router.post("/machines/:id/maintenance/plans", requireMachineCapability("maintenance"), createMachineMaintenancePlan);
 router.patch("/machines/:id/maintenance/plans/:planId", requireMachineCapability("maintenance"), updateMachineMaintenancePlan);
 router.get("/machines/:id/maintenance/events", requireMachineCapability("read"), listMachineMaintenanceEvents);
