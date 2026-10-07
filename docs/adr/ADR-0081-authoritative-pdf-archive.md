@@ -80,6 +80,36 @@ chronologie et les versions affichées dans la commande sont ainsi continues.
 
 ## Automatisation de création et classement GED
 
+### Fiche technique et fiche suiveuse (#872 / interface #1152)
+
+Les routes `pieces-techniques/:id/versions/:versionId/technical-sheet` et
+`production/of-versioning/:ofId/traveler` ajoutent des producteurs explicites
+`TECHNICAL_SHEET` et `OF_TRAVELER`. Ce sont des éditions techniques courantes,
+distinctes des reçus de création. Chaque collection expose `source`, lecture,
+émission, aperçu, téléchargement et intention d’impression. La pièce/version
+est vérifiée sur chaque accès ; la capacité module reste obligatoire.
+
+La révision source de ces deux collections est le SHA-256 du contenu serveur
+normalisé : une modification de phase, de nomenclature ou de visa change donc
+la révision même si la date du parent ne change pas. Le contenu est chargé par
+une seule requête cohérente et l’émission revérifie cette révision. Un verrou
+transactionnel sérialise les numéros d’édition ; la clé d’idempotence conserve
+l’édition acceptée lors d’une reprise. Une confirmation de commit incertaine
+renvoie 503 afin que le client réutilise cette même clé.
+
+La fiche PT porte une version explicite et ses gammes/nomenclatures ; les
+données héritées non versionnées sont signalées. La fiche suiveuse distingue le
+dossier technique figé des faits d’exécution (lots et ascendants, débits,
+retours, déclarations signées et visas actifs). Aucun visa ni rendement par lot
+absent n’est inventé. Les bornes documentaires produisent une erreur explicite
+plutôt qu’un tableau tronqué. Ces documents utilisent la classe
+`CERP_AUTHORITATIVE_PDF`, avec lien PT sur `PIECE_TECHNIQUE_VERSION` ou sur l’OF.
+Le registre et la GED existants suffisent ; aucune migration n’est ajoutée.
+
+Compilation et vérification de préparation des requêtes Test au rôle applicatif
+effectuées avant publication ; tests de domaine et recette métier regroupée
+différés à la fin des implémentations sur instruction de Keenan.
+
 Deux politiques documentaires sont volontairement distinctes :
 
 - les documents externes opposables (`CUSTOMER_QUOTE`,
