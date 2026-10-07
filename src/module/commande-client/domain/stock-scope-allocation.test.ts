@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { allocateCommandeStockOldThenNew } from "./stock-scope-allocation";
+import { allocateCommandeStockOldThenNew,allocateCompatibleStock } from "./stock-scope-allocation";
 
 const ARTICLE = "11111111-1111-1111-1111-111111111111";
 const VERSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const VERSION_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 describe("allocateCommandeStockOldThenNew", () => {
+  it('shares one physical lot across compatible revisions',()=>{
+    const results=allocateCompatibleStock([{article_id:'a',piece_technique_version_id:'v2',qty_ordered:20},{article_id:'a',piece_technique_version_id:'v1',qty_ordered:20}],[{article_id:'a',compatible_version_ids:['v1','v2'],stock_scope:'OLD',qty_available:30}]);
+    expect(results.map(r=>r.available_used_qty)).toEqual([20,10]);expect(results[1].shortage_qty).toBe(10);
+  });
+  it('requires explicit approval across a major revision boundary',()=>{
+    const [result]=allocateCompatibleStock([{article_id:'a',piece_technique_version_id:'v3',qty_ordered:10}],[{article_id:'a',compatible_version_ids:['v1','v2'],stock_scope:'NEW',qty_available:50}]);expect(result.shortage_qty).toBe(10);
+  });
   it.each([
     { label: "OLD only", old: 10, fresh: 0, expected: { old: 8, fresh: 0, shortage: 0 } },
     { label: "NEW only", old: 0, fresh: 10, expected: { old: 0, fresh: 8, shortage: 0 } },

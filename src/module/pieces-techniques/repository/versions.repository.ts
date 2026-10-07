@@ -46,6 +46,9 @@ export type PieceTechniqueVersionRow = {
   updated_by: number | null
   manufacturing_mode: "SIMPLE" | "ASSEMBLY"
   assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT"
+  copied_from_version_id: string | null
+  change_level: "MAJOR" | "MINOR"
+  packaging_policy: {mode:"GLOBAL"|"UNIT"|"LOT";lotSize:number|null}
 }
 
 const VERSION_COLUMNS = `
@@ -57,7 +60,7 @@ const VERSION_COLUMNS = `
   date_effet::text AS date_effet,
   commentaire_validation, date_revision::text AS date_revision, created_at::text AS created_at,
   updated_at::text AS updated_at, created_by, updated_by,
-  manufacturing_mode, assembly_supply_strategy
+  manufacturing_mode, assembly_supply_strategy, copied_from_version_id::text, change_level, packaging_policy
 `
 
 async function insertAudit(
@@ -180,8 +183,8 @@ export async function repoCreateVersion(
       `INSERT INTO public.piece_technique_versions
         (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
-         date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy)
-       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14)
+          date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy, packaging_policy)
+        VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14,$15::jsonb)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
@@ -198,6 +201,7 @@ export async function repoCreateVersion(
         audit.user_id,
         body.manufacturing_mode ?? "SIMPLE",
         body.assembly_supply_strategy ?? "MAKE_TO_ORDER",
+        JSON.stringify(body.packaging_policy ?? {mode:"GLOBAL",lotSize:null}),
       ]
     )
     const row = res.rows[0]
@@ -230,8 +234,8 @@ export async function repoUpdateVersion(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    const cur = await client.query<{ statut: VersionStatutDTO; updated_at: string; indice: string; plan_reference: string | null }>(
-      `SELECT statut, updated_at::text AS updated_at, indice, plan_reference FROM public.piece_technique_versions
+    const cur = await client.query<PieceTechniqueVersionRow>(
+      `SELECT ${VERSION_COLUMNS} FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR UPDATE`,
       [versionId, pieceTechniqueId]
     )
@@ -246,6 +250,8 @@ export async function repoUpdateVersion(
     if (body.expected_updated_at && body.expected_updated_at !== current.updated_at) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La version a été modifiée entre-temps")
     }
+    if(current.change_level==="MINOR"&&body.indice!==undefined&&body.indice.trim().toUpperCase()!==current.indice.trim().toUpperCase())throw new HttpError(422,"MINOR_INDEX_CHANGED","L’indice d’une évolution mineure doit rester identique à sa version source.")
+    if(current.change_level==="MINOR"&&body.impact_interchangeabilite===true)throw new HttpError(422,"MINOR_INTERCHANGEABILITY","Une modification non interchangeable nécessite une nouvelle version majeure.")
 
     const nextIndice = body.indice ?? current.indice
     const nextPlanReference = body.plan_reference === undefined ? current.plan_reference : body.plan_reference
@@ -274,6 +280,7 @@ export async function repoUpdateVersion(
     if (body.date_effet !== undefined) push("date_effet", body.date_effet)
     if (body.manufacturing_mode !== undefined) push("manufacturing_mode", body.manufacturing_mode)
     if (body.assembly_supply_strategy !== undefined) push("assembly_supply_strategy", body.assembly_supply_strategy)
+    if (body.packaging_policy !== undefined) push("packaging_policy", JSON.stringify(body.packaging_policy))
 
     values.push(audit.user_id)
     sets.push(`updated_by = $${values.length}`)
@@ -538,9 +545,9 @@ export async function repoCreateNextVersion(
     // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
     // Même verrou que les ajouts/modifications de composants, avant toute allocation.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
-    const src = await client.query<{ id: string; plan_reference: string | null; matiere_prevue: string | null; manufacturing_mode: "SIMPLE" | "ASSEMBLY"; assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT" }>(
-      `SELECT id::text AS id, plan_reference, matiere_prevue, manufacturing_mode, assembly_supply_strategy FROM public.piece_technique_versions
-       WHERE id = $1 AND piece_technique_id = $2`,
+    const src = await client.query<PieceTechniqueVersionRow>(
+      `SELECT ${VERSION_COLUMNS} FROM public.piece_technique_versions
+       WHERE id = $1 AND piece_technique_id = $2 FOR SHARE`,
       [sourceVersionId, pieceTechniqueId]
     )
     if (src.rowCount === 0) {
@@ -548,6 +555,9 @@ export async function repoCreateNextVersion(
       throw new HttpError(404, "NOT_FOUND", "Version source introuvable")
     }
     const source = src.rows[0]
+    const sameIndex=body.indice.trim().toUpperCase()===source.indice.trim().toUpperCase()
+    const changeLevel=body.change_level??(sameIndex?"MINOR":"MAJOR")
+    if(changeLevel==="MINOR"&&!sameIndex)throw new HttpError(422,"MINOR_INDEX_CHANGED","Une évolution mineure conserve l’indice client. Choisissez une modification majeure pour un nouvel indice.")
     const planReference = body.plan_reference ?? source.plan_reference
     const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, planReference, body.indice)
 
@@ -555,8 +565,8 @@ export async function repoCreateNextVersion(
       `INSERT INTO public.piece_technique_versions
         (piece_technique_id, indice, indice_externe_original, plan_reference, matiere_prevue, code_metier, motif_modification, date_effet, statut, is_current,
          commentaire_revision, type_changement, raison_changement, impact_interchangeabilite, impact_parents,
-         date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy)
-       VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14)
+          date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy, packaging_policy, copied_from_version_id, change_level)
+        VALUES ($1,$2,$2,$3,$4,$5,$8,$9::date,'BROUILLON',false,$6,$7,$8,$10,$11, now(), $12,$12,$13,$14,$15::jsonb,$16::uuid,$17)
        RETURNING ${VERSION_COLUMNS}`,
       [
         pieceTechniqueId,
@@ -568,11 +578,14 @@ export async function repoCreateNextVersion(
         body.type_changement ?? null,
         body.raison_changement ?? null,
         body.date_effet ?? null,
-        body.impact_interchangeabilite ?? null,
+        changeLevel==="MAJOR",
         body.impact_parents ?? null,
         audit.user_id,
         body.manufacturing_mode ?? source.manufacturing_mode,
         body.assembly_supply_strategy ?? source.assembly_supply_strategy,
+        JSON.stringify(body.packaging_policy ?? source.packaging_policy),
+        sourceVersionId,
+        changeLevel,
       ]
     )
     const row = res.rows[0]

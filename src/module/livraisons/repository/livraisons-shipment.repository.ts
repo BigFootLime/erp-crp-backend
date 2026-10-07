@@ -174,7 +174,7 @@ async function loadShipmentSnapshot(
         lot.article_id::text AS lot_article_id,
         lot.lot_status,
         allocation.magasin_id::text AS magasin_id,
-        magasin.stock_scope::text AS stock_scope,
+        CASE WHEN lot.origin_stock_scope='OLD' THEN 'OLD' ELSE COALESCE(reservation.source_scope,lot.source_scope,lot.stock_scope,magasin.stock_scope,'NEW') END::text AS stock_scope,
         allocation.emplacement_id::int AS emplacement_id,
         allocation.location_id::text AS location_id,
         allocation.stock_level_id::text AS stock_level_id,

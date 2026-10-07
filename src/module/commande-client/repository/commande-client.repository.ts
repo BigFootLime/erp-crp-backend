@@ -73,8 +73,7 @@ import {
   assertCommandeQualityReleased,
 } from "./commande-fulfillment-guards.repository";
 import {
-  allocateCommandeStockOldThenNew,
-  type CommandeStockAvailability,
+  allocateCompatibleStock,
 } from "../domain/stock-scope-allocation";
 import {
   commandeArticleEligibleSql,
@@ -6110,72 +6109,6 @@ async function loadAvailableQtyByArticle(db: PoolClient, params: {
   return out;
 }
 
-function commandeStockKey(articleId: string, versionId: string | null): string {
-  return versionId ? `${articleId}:${versionId}` : articleId;
-}
-
-async function loadScopedAvailableQtyByArticle(
-  db: PoolClient,
-  refs: CommandeLineRef[]
-): Promise<Map<string, CommandeStockAvailability>> {
-  const out = new Map<string, CommandeStockAvailability>();
-  const articleIds = Array.from(
-    new Set(refs.map((ref) => ref.article_id).filter((value): value is string => Boolean(value)))
-  );
-  for (const ref of refs) {
-    if (ref.article_id) out.set(commandeStockKey(ref.article_id, ref.piece_technique_version_id ?? null), { OLD: 0, NEW: 0 });
-  }
-  if (articleIds.length === 0) return out;
-
-  const res = await db.query<{
-    article_id: string;
-    piece_technique_version_id: string | null;
-    stock_scope: "OLD" | "NEW";
-    qty_available: number;
-  }>(
-    `
-      SELECT
-        availability.article_id::text AS article_id,
-        lot.piece_technique_version_id::text AS piece_technique_version_id,
-        CASE
-          WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
-          ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
-        END AS stock_scope,
-        COALESCE(SUM(availability.qty_available), 0)::float8 AS qty_available
-      FROM public.v_stock_availability_225 availability
-      JOIN public.warehouses warehouse ON warehouse.id = availability.warehouse_id
-      JOIN public.lots lot ON lot.id = availability.lot_id
-      WHERE availability.article_id = ANY($1::uuid[])
-        AND availability.managed_in_stock = true
-        AND warehouse.stock_scope IN ('OLD', 'NEW')
-      GROUP BY
-        availability.article_id,
-        lot.piece_technique_version_id,
-        CASE
-          WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
-          ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
-        END
-    `,
-    [articleIds]
-  );
-
-  for (const row of res.rows) {
-    const quantity = Math.max(0, Number(row.qty_available ?? 0));
-    const legacyKey = commandeStockKey(row.article_id, null);
-    const legacy = out.get(legacyKey) ?? { OLD: 0, NEW: 0 };
-    legacy[row.stock_scope] += quantity;
-    out.set(legacyKey, legacy);
-
-    if (row.piece_technique_version_id) {
-      const versionKey = commandeStockKey(row.article_id, row.piece_technique_version_id);
-      const versioned = out.get(versionKey) ?? { OLD: 0, NEW: 0 };
-      versioned[row.stock_scope] += quantity;
-      out.set(versionKey, versioned);
-    }
-  }
-  return out;
-}
-
 type StockAvailabilityStatus = "FULL" | "PARTIAL" | "NONE";
 
 export type CommandeStockAnalysisLine = {
@@ -6291,15 +6224,8 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
   assembly_feature_enabled: boolean;
 }): Promise<CommandeStockAnalysis> {
   const refs = await selectCommandeLineRefs(db, params.commande_id);
-  const availableByArticle = await loadScopedAvailableQtyByArticle(db, refs);
-  const allocations = allocateCommandeStockOldThenNew(
-    refs.map((ref) => ({
-      article_id: ref.article_id,
-      stock_key: ref.article_id ? commandeStockKey(ref.article_id, ref.piece_technique_version_id ?? null) : null,
-      requested_qty: Number(ref.qty_ordered),
-    })),
-    availableByArticle
-  );
+  const candidates=await loadScopedDeliveryStockCandidates(db,Array.from(new Set(refs.map(r=>r.article_id).filter((id):id is string=>!!id))));
+  const allocations=allocateCompatibleStock(refs.map(ref=>({...ref,qty_ordered:Number(ref.qty_ordered)})),candidates);
 
   const ledger = createAssemblyPlanningLedger();
   const lines: CommandeStockAnalysisLine[] = [];
@@ -6358,6 +6284,7 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
 type ScopedDeliveryStockCandidate = {
   article_id: string;
   piece_technique_version_id: string | null;
+  compatible_version_ids: string[];
   stock_scope: "OLD" | "NEW";
   stock_level_id: string;
   stock_batch_id: string | null;
@@ -6383,6 +6310,7 @@ async function loadScopedDeliveryStockCandidates(
       SELECT
         availability.article_id::text AS article_id,
         lot.piece_technique_version_id::text AS piece_technique_version_id,
+        ARRAY(SELECT compatibility.target_version_id::text FROM public.v_technical_stock_compatibility_832 compatibility WHERE compatibility.stock_version_id=lot.piece_technique_version_id) AS compatible_version_ids,
         CASE
           WHEN lot.origin_stock_scope = 'OLD' THEN 'OLD'
           ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')
@@ -6742,7 +6670,7 @@ function planDeliveryAllocations(
       if (!candidate || candidate.article_id !== line.article_id) continue;
       if (
         line.piece_technique_version_id
-        && candidate.piece_technique_version_id !== line.piece_technique_version_id
+        && !candidate.compatible_version_ids.includes(line.piece_technique_version_id)
       ) continue;
       const available = Number(remainingByCandidate.get(index) ?? 0);
       if (available <= 1e-9) continue;
