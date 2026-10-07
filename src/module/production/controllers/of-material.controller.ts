@@ -15,6 +15,7 @@ import {debitOfMaterial} from '../services/of-material.service';
 import {customerMaterialCommandSchema} from '../validators/customer-material.validators';
 import {commandCustomerMaterial} from '../services/of-material.service';
 import {reconcileMaterialRevision} from '../services/of-material.service';
+import {getOfComponentCoverage} from '../services/of-material.service';
 import {materialReconciliationSchema} from '../validators/of-material.validators';
 
 function rights(req:Request){
@@ -60,6 +61,7 @@ export const transferMaterial=asyncHandler(async(req,res)=>{
   res.json({...result,coverage:present(result.coverage,req)});
 });
 export const readOperationReadiness=asyncHandler(async(req,res)=>{res.json(await getOperationReadiness(identity.parse(req.params).id));});
+export const readComponentCoverage=asyncHandler(async(req,res)=>{res.json(await getOfComponentCoverage(identity.parse(req.params).id));});
 export const verifyMaterialLot=asyncHandler(async(req,res)=>{
   if(!rights(req).canVerifyLot)throw new HttpError(403,"MATERIAL_LOT_VERIFICATION_FORBIDDEN","Les droits de vérification qualité des lots sont nécessaires.");
   res.json(present(await verifyOfMaterialLot(identity.parse(req.params).id,materialSourceRefSchema.parse(req.params.sourceRef),materialLotVerificationSchema.parse(req.body),buildAuditContext(req)),req));
