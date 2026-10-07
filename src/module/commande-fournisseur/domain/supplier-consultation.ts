@@ -8,13 +8,29 @@ export type ConsultationRequestedLine={
   vat_pct:number;need_date:string|null;requirements:Array<{type:string;valeur?:string|null;obligatoire?:boolean}>;
   documents:string[];operation:string|null;of_id:number|null;
 };
-export type ConsultationSnapshot={code:string;currency:string;delivery_address:string|null;destination_id:string|null;freight_vat_pct:number;lines:ConsultationRequestedLine[]};
+export type ConsultationTechnicalSource={
+  line_id:string;of_id:number;of_code:string;piece_technique_id:string|null;piece_code:string|null;designation:string|null;
+  version_id:string|null;plan_reference:string|null;external_index:string|null;internal_version:number|null;critical:boolean;
+  required_documents:Array<{code:string;label:string;policy:string}>;
+  manufacturing_frozen:boolean;manufacturing_sha256:string|null;source_sha256:string;
+};
+export type ConsultationSnapshot={code:string;currency:string;delivery_address:string|null;destination_id:string|null;freight_vat_pct:number;lines:ConsultationRequestedLine[];technical_sources?:ConsultationTechnicalSource[]};
 
 // PostgreSQL jsonb reorders object keys; compare content, never key insertion order.
 export function consultationSnapshotKey(value:unknown):string{
   if(Array.isArray(value))return `[${value.map(consultationSnapshotKey).join(',')}]`;
   if(value!==null&&typeof value==='object')return `{${Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${JSON.stringify(k)}:${consultationSnapshotKey(v)}`).join(',')}}`;
   return JSON.stringify(value);
+}
+
+/** Legacy history stays unchanged; an unproven production round must be reopened. */
+export function assertConsultationSnapshotCurrent(frozen:ConsultationSnapshot,current:ConsultationSnapshot){
+  if(frozen.technical_sources===undefined){
+    if(current.technical_sources?.length)throw new HttpError(409,'CONSULTATION_TECHNICAL_REOPEN_REQUIRED','Cette ancienne consultation ne conserve pas les références techniques des OF. Clôturez-la et préparez une nouvelle demande ; son historique restera conservé.');
+    const legacyCurrent={...current};delete legacyCurrent.technical_sources;
+    if(consultationSnapshotKey(frozen)===consultationSnapshotKey(legacyCurrent))return;
+  }else if(consultationSnapshotKey(frozen)===consultationSnapshotKey(current))return;
+  throw new HttpError(409,'CONSULTATION_OBSOLETE','Les besoins, le plan, l’indice, la version ou le dossier OF ont changé. Clôturez cette consultation et préparez une nouvelle demande ; les offres enregistrées restent conservées.');
 }
 
 export function compareSupplierOffer(snapshot:ConsultationSnapshot,response:SupplierOfferResponse,today:string){
@@ -46,6 +62,10 @@ export function supplierConsultationRequest(snapshot:ConsultationSnapshot,suppli
       `${i+1}. ${l.article_code?`${l.article_code} — `:''}${l.designation} : ${l.quantity} ${l.unit}${l.need_date?`, nécessaire le ${l.need_date}`:''}`,
       ...l.requirements.map(r=>`Exigence${r.obligatoire?' obligatoire':''} : ${r.valeur||r.type}`),
       ...l.documents.map(d=>`Document attendu : ${d}`),
+      ...(snapshot.technical_sources??[]).filter(s=>s.line_id===l.id).flatMap(s=>[
+        `Dossier ${s.of_code} : ${s.piece_code||'pièce à préciser'} · plan ${s.plan_reference||'à préciser'} · indice ${s.external_index||'sans indice'} · version ${s.internal_version??'à préciser'}${s.manufacturing_frozen?'':' · dossier de fabrication en préparation'}`,
+        ...s.required_documents.map(d=>`Exigence documentaire de la pièce : ${d.label} (${d.code})`),
+      ]),
     ]),snapshot.delivery_address?`Livraison : ${snapshot.delivery_address}`:'',notes,
     'Merci de signaler les minimums de commande, conditionnements, frais de transport et écarts éventuels.'].filter(Boolean).join('\n\n');
 }
