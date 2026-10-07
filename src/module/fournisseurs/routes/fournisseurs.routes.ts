@@ -1,4 +1,5 @@
 import { Router } from "express"
+import {readSupplierReviews,readSupplierReviewsDue,readSupplierReviewOptions,writeSupplierReview} from "../controllers/supplier-periodic-review.controller"
 import {createClientApprovalRevision,readClientApprovalEvidence,readClientApprovalHistory,readClientApprovals} from "../controllers/client-supplier-approval.controller"
 import { SUPPLIER_WRITE_ROLES } from "../fournisseurs.permissions"
 
@@ -57,6 +58,7 @@ router.use(authenticateToken)
 router.get("/", listFournisseurs)
 router.get("/doublons", authorizeRole(...WRITE), findDoublons)
 router.get("/domaines", listFournisseurDomaines)
+router.get("/reviews/due", readSupplierReviewsDue)
 router.get("/client-approvals", readClientApprovals)
 router.get("/client-approvals/evidence", readClientApprovalEvidence)
 router.get("/client-approvals/:scopeId/history", readClientApprovalHistory)
@@ -98,6 +100,9 @@ router.delete("/:id/adresses/:adresseId", authorizeRole(...WRITE), deleteFournis
 router.get("/:id/homologations", listFournisseurHomologations)
 router.post("/:id/homologations", authorizeRole(...QUALIF), createFournisseurHomologation)
 router.patch("/:id/homologations/:homologationId", authorizeRole(...QUALIF), updateFournisseurHomologation)
+router.get("/:id/reviews", readSupplierReviews)
+router.get("/:id/reviews/options", authorizeRole(...QUALIF), readSupplierReviewOptions)
+router.post("/:id/reviews/commands", authorizeRole(...QUALIF), writeSupplierReview)
 
 // Catalogue.
 router.get("/:id/catalogue", listFournisseurCatalogue)
