@@ -143,6 +143,9 @@ function resolveInput(input: MarginCostInput, directSubtotal: bigint): { amount:
   if (input.availability === "NOT_APPLICABLE") {
     return { amount: null, row: { ...input, resolved_amount_ht: null } };
   }
+  if (input.currency !== MARGIN_CURRENCY) {
+    return { amount: null, row: { ...input, resolved_amount_ht: null } };
+  }
   let amount: bigint | null = null;
   try {
     if (input.amount_ht !== null) amount = decimal(input.amount_ht);
@@ -264,11 +267,19 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
   const required = input.required_categories ?? MARGIN_COST_CATEGORIES;
   const missing: MarginCalculation["missing_inputs"] = [];
   let revenue: bigint | null = null;
-  if (input.revenue?.availability === "PROVIDED" && input.revenue.amount_ht !== null) {
+  if (input.revenue?.availability === "PROVIDED" && input.revenue.amount_ht !== null && input.revenue.currency === MARGIN_CURRENCY) {
     try { revenue = decimal(input.revenue.amount_ht); } catch { revenue = null; }
   }
   if (revenue === null) {
     missing.push({ code: "REVENUE_HT_MISSING", category: "REVENUE", message: "Prix de vente HT/remises non attribués à ce périmètre." });
+  }
+  if (input.revenue?.availability === "PROVIDED" && input.revenue.currency !== MARGIN_CURRENCY) {
+    missing.push({ code: "REVENUE_CURRENCY_UNSUPPORTED", category: "REVENUE", message: "Devise du prix de vente non convertible en EUR sans règle documentée." });
+  }
+  for (const cost of input.costs) {
+    if (cost.availability === "PROVIDED" && cost.currency !== MARGIN_CURRENCY) {
+      missing.push({ code: "COST_CURRENCY_UNSUPPORTED", category: cost.category, message: `Devise de l'entrée ${cost.key} non convertible en EUR sans règle documentée.` });
+    }
   }
 
   const nonOverhead = input.costs.filter((item) => item.category !== "OVERHEAD");
@@ -335,7 +346,7 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
     scope: { type: input.scope_type, ref: input.scope_ref, label: input.label },
     basis: input.basis,
     as_of: input.as_of,
-    currency: input.revenue?.currency ?? MARGIN_CURRENCY,
+    currency: MARGIN_CURRENCY,
     availability,
     reliability,
     reliability_reasons: reliabilityReasons,
