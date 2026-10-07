@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   lock: vi.fn(), replay: vi.fn(), invalidate: vi.fn(), insert: vi.fn(), commit: vi.fn(),
-  password: vi.fn(), reset: vi.fn(), audit: vi.fn(), revoke: vi.fn(),
+  password: vi.fn(), reset: vi.fn(), audit: vi.fn(), revoke: vi.fn(), enabled: vi.fn(),
 }));
 vi.mock("../config/database", () => ({ default: { connect: vi.fn(async () => ({})) } }));
 vi.mock("../shared/realtime/realtime-outbox-transaction", () => ({
@@ -12,6 +12,7 @@ vi.mock("../shared/realtime/realtime-outbox-transaction", () => ({
 vi.mock("../module/admin/repository/account-recovery.repository", () => ({
   lockRecoveryAccounts: mocks.lock, findRecoveryReplay: mocks.replay,
   invalidateAccountRecoveryCredentials: mocks.invalidate, insertAccountRecovery: mocks.insert, findRecoveryCommitHash: mocks.commit,
+  isAccountRecoveryEnabled: mocks.enabled,
 }));
 vi.mock("../module/auth/repository/auth.repository", () => ({ updateUserPassword: mocks.password }));
 vi.mock("../module/auth/repository/password-reset.repository", () => ({ repoInsertPasswordReset: mocks.reset }));
@@ -35,10 +36,18 @@ describe("administrative account recovery", () => {
     vi.resetAllMocks();
     vi.stubEnv("JWT_SECRET", "test-only-administrative-account-recovery-key");
     mocks.lock.mockResolvedValue([actor,target]);
+    mocks.enabled.mockResolvedValue(true);
     mocks.replay.mockResolvedValue(null);
     mocks.invalidate.mockResolvedValue({ factors: 2, pins: 1, badges: 1, stationSessions: 2 });
     mocks.insert.mockImplementation(async (_tx,row) => ({ ...row, superseded_at: null, completed_at: null, reset_usable: true }));
     mocks.revoke.mockResolvedValue(undefined);
+  });
+
+  it("keeps recovery closed until every API target has compatible code", async () => {
+    mocks.enabled.mockResolvedValue(false);
+    await expect(recoverAccountBySuperadmin(input)).rejects.toMatchObject({ code: "ACCOUNT_RECOVERY_UNAVAILABLE" });
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    expect(mocks.password).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -8,7 +8,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { updateUserPassword } from "../../auth/repository/auth.repository";
 import { repoInsertPasswordReset } from "../../auth/repository/password-reset.repository";
 import type { MfaAuditMeta } from "../../auth/services/mfa.service";
-import { lockRecoveryAccounts, findRecoveryReplay, invalidateAccountRecoveryCredentials, insertAccountRecovery, findRecoveryCommitHash, type RecoveryRow } from "../repository/account-recovery.repository";
+import { lockRecoveryAccounts, findRecoveryReplay, invalidateAccountRecoveryCredentials, insertAccountRecovery, findRecoveryCommitHash, isAccountRecoveryEnabled, type RecoveryRow } from "../repository/account-recovery.repository";
 export type AccountRecoveryInput = {
     userId: number;
     actorUserId: number;
@@ -47,6 +47,9 @@ export async function recoverAccountBySuperadmin(input: AccountRecoveryInput) {
     const passwordHash = await bcrypt.hash(crypto.randomBytes(48).toString("base64url"), 12);
     const client = await pool.connect();
     const result = await withRealtimeOutboxTransaction(client, async (tx) => {
+        if (!await isAccountRecoveryEnabled(tx)) {
+            throw new HttpError(503, "ACCOUNT_RECOVERY_UNAVAILABLE", "La récupération est temporairement indisponible. Réessayez après la mise à jour des services.");
+        }
         const users = await lockRecoveryAccounts(tx, input.actorUserId, input.userId, input.idempotencyKey);
         const actor = users.find(row => row.id === input.actorUserId);
         if (!actor?.is_superadmin || actor.status !== "Active" || actor.session_epoch !== input.actorSessionEpoch
