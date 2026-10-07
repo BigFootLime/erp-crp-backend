@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { buildDurationObservation, durationContextKey, type LearningSource } from "../domain/duration-learning";
 import { estimateDuration, type DurationObservation } from "../domain/central-estimation";
 import type { CentralSnapshot, CentralTask, Resource } from "../types/planning-central.types";
+import { HttpError } from '../../../utils/httpError';
 
 type Query = Pick<PoolClient, "query">;
 export async function readLearningSources(tx: Query, operationIds: string[]): Promise<LearningSource[]> {
@@ -109,7 +110,9 @@ export async function hydrateDurationEstimates(tx:Query,tasks:CentralTask[],reso
       estimate.learnedAt=records.map(r=>new Date(r.calculated_at).toISOString()).sort().at(-1)??null;
       task.resourceEstimates[target.resource_id]=estimate;
     }
-    task.estimate=task.resourceEstimates[task.resourceIds[0]]??original;
+    const displayedResource = !task.committed && task.commitment==='FORECAST'
+      ? task.forecastResourceIds?.[0] ?? task.resourceIds[0] : task.resourceIds[0];
+    task.estimate=task.resourceEstimates[displayedResource]??original;
   }
 }
 
@@ -155,10 +158,17 @@ export async function readDurationAccuracy(tx:Query) {
   return rows[0];
 }
 
-export async function readTaskObservations(tx:Query,operationId:string,offset:number,limit:number) {
+export async function readTaskObservations(tx:Query,operationId:string,offset:number,limit:number,resourceId?:string) {
   const sources=await readLearningSources(tx,[operationId]);
   if(!sources[0])return null;
-  const context=sources[0].context;
+  let context=sources[0].context;
+  if(resourceId){
+    const resource=(await tx.query<{machine_id:string|null}>(`
+      SELECT m.id::text AS machine_id FROM public.machines m WHERE 'machine:'||m.id::text=$1
+      UNION ALL SELECT p.machine_id::text FROM public.postes p WHERE 'poste:'||p.id::text=$1`,[resourceId])).rows[0];
+    if(!resource)throw new HttpError(404,'PLANNING_RESOURCE_NOT_FOUND','Ressource introuvable.');
+    context=context&&resource.machine_id?{...context,machineId:resource.machine_id}:null;
+  }
   const {rows}=await tx.query<ObservationRow & {pointage_ids:string[];declaration_ids:string[];of_number:string;total:number;used:boolean;enabled:boolean}>(`
     WITH retained AS (SELECT o.id FROM public.planning_estimation_observations o
       WHERE o.context_key=$1 AND o.operation_id<>$2::uuid AND o.measurement_kind='MACHINE'

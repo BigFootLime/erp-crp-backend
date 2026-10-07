@@ -38,6 +38,8 @@ export type CentralTask = {
   internal: boolean; internalPurpose: string | null; quantity: number;
   good: number; scrap: number; rework: number; released: number;
   resourceIds: string[]; eligibleResourceIds: string[];
+  /** Suggested placement only; never an assignment or capacity commitment. */
+  forecastResourceIds?: string[] | null;
   committed: Interval | null; forecast: Interval | null; actual: Partial<Interval> | null;
   commitment: Commitment; locked: boolean; readiness: "READY" | "DRAFT" | "MISSING";
   blockers: string[]; earliestStart: string | null; due: string | null;

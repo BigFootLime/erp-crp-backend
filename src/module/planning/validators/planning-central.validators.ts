@@ -1,5 +1,11 @@
 import { z } from "zod";
 const instant = z.string().datetime({ offset: true });
+export const centralObservationsSchema = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  resource_id: z.string().regex(/^(machine|poste):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    .transform(value=>value.toLowerCase()).optional(),
+}).strict();
 export const centralWindowSchema = z.object({
   from: instant, to: instant, cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(1000).default(250),

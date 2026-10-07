@@ -61,7 +61,7 @@ function projectOrder(order: MasterPlanOrderSource, tasks: CentralTask[], period
     readiness: completeRoute && route.every(task => task.readiness === 'READY') ? 'READY' : 'MISSING', issues };
 }
 
-function projectCapacity(aliases: Resource[], tasks: CentralTask[], periods: MasterPlanPeriod[]): MasterPlanCapacity {
+function projectCapacity(aliases: Resource[], tasks: CentralTask[], periods: MasterPlanPeriod[], forecastsKnown: boolean): MasterPlanCapacity {
   const primary = aliases.find(resource => resource.id === resource.capacityId) ?? aliases[0];
   const issues: string[] = [];
   let openings = union(primary.availability.map(numeric));
@@ -80,6 +80,8 @@ function projectCapacity(aliases: Resource[], tasks: CentralTask[], periods: Mas
   }
   const aliasIds = new Set(aliases.map(resource => resource.id));
   const allocated = tasks.filter(task => task.resourceIds.some(id => aliasIds.has(id)));
+  const projected = tasks.filter(task => task.commitment !== 'DONE'
+    && task.forecastResourceIds?.some(id => aliasIds.has(id)));
   const closures = union(aliases.flatMap(resource => resource.unavailability?.map(numeric) ?? []));
   return {
     id: primary.capacityId ?? primary.id, label: primary.label, kind: primary.kind as MasterPlanCapacity['kind'], issues,
@@ -90,16 +92,20 @@ function projectCapacity(aliases: Resource[], tasks: CentralTask[], periods: Mas
         return total + length(intersection(intersection([numeric(task.committed!)], range), available));
       }, 0));
       const capacityMinutes = configured ? minutes(length(available)) : null;
-      // Cached forecasts persist dates, but not the scheduler's chosen resource.
-      // An operation's preferred machine must not masquerade as that assignment.
-      const committedMinutes = configured ? sum() : null, forecastMinutes = null;
+      const predicted = projected.filter(task => task.forecast && inPeriod(task.forecast, period));
+      const committedMinutes = configured ? sum() : null;
+      const forecastMinutes = configured && forecastsKnown ? minutes(predicted.reduce((total, task) =>
+        total + length(intersection(intersection([numeric(task.forecast!)], range), available)), 0)) : null;
       const cellIssues: string[] = [];
       if (capacityMinutes === 0 && relevant.length) cellIssues.push('Engagement sans ouverture disponible.');
       if (relevant.some(task => task.committed && length(intersection(intersection([numeric(task.committed)], range), closures)) > 0))
         cellIssues.push('Un engagement recouvre une indisponibilité.');
+      if (predicted.some(task => task.forecast && length(intersection(intersection([numeric(task.forecast)], range), closures)) > 0))
+        cellIssues.push('Une prévision recouvre une indisponibilité : recalcul nécessaire.');
+      const linked = [...relevant, ...predicted];
       return { capacityMinutes, committedMinutes, forecastMinutes,
         ratio: capacityMinutes && committedMinutes !== null ? minutes(committedMinutes / capacityMinutes * 100) : null,
-        taskIds: unique(relevant.map(task => task.id)), ofIds: unique(relevant.flatMap(task => task.ofId === null ? [] : [task.ofId])), issues: cellIssues };
+        taskIds: unique(linked.map(task => task.id)), ofIds: unique(linked.flatMap(task => task.ofId === null ? [] : [task.ofId])), issues: cellIssues };
     }),
   };
 }
@@ -114,11 +120,15 @@ export function projectMasterPlan(snapshot: CentralSnapshot, sources: MasterPlan
     const id = resource.capacityId ?? resource.id;
     physical.set(id, [...(physical.get(id) ?? []), resource]);
   }
-  const capacities = [...physical.values()].map(aliases => projectCapacity(aliases, snapshot.tasks, periods));
   const unfinished = snapshot.tasks.filter(task => task.commitment !== 'DONE');
+  const knownResources = new Set(snapshot.resources.map(resource => resource.id));
+  const unallocatedForecasts = unfinished.filter(task => task.forecast && !task.external
+    && (!task.forecastResourceIds?.length || task.forecastResourceIds.some(id => !knownResources.has(id)))).length;
+  const forecastsKnown = snapshot.forecastState?.status === 'READY' && unallocatedForecasts === 0;
+  const capacities = [...physical.values()].map(aliases => projectCapacity(aliases, snapshot.tasks, periods, forecastsKnown));
   const warnings = ['OF existants uniquement : les objectifs ne sont pas une prévision commerciale.',
     'Objectifs classés à la première échéance active de l’OF ; les quantités de livraison restent dans les affaires.'];
-  if (unfinished.some(task => task.forecast && !task.committed)) warnings.push('Prévisions datées sans affectation machine enregistrée : charge prévisionnelle non répartie. La simulation propose les affectations.');
+  if (unallocatedForecasts) warnings.push(`${unallocatedForecasts} prévision(s) sans ressource connue : charge prévisionnelle à recalculer.`);
   if (snapshot.forecastState && snapshot.forecastState.status !== 'READY') warnings.push('Prévisions non actualisées : consultez l’état du calcul.');
   return {
     apiVersion: 1, readOnly: true, scope: 'ACTIVE_PRODUCER_OFS', revision: snapshot.revision, generatedAt: snapshot.generatedAt,
@@ -129,7 +139,7 @@ export function projectMasterPlan(snapshot: CentralSnapshot, sources: MasterPlan
       missingDuration: unfinished.filter(task => !task.estimate).length,
       unknownCalendars: capacities.filter(capacity => capacity.cells[0].capacityMinutes === null).length,
       overdueOrders: orders.filter(order => order.due && order.due < civilDay(snapshot.generatedAt)).length,
-      unallocatedForecasts: unfinished.filter(task => task.forecast && !task.committed).length },
+      unallocatedForecasts },
     warnings, forecastCalculatedAt: snapshot.forecastState?.calculatedAt ?? null,
   };
 }

@@ -46,7 +46,7 @@ export async function unplanCentral(input: CentralUnplanInput, audit: AuditConte
           throw new HttpError(409,"PLANNING_UNPLAN_LOCKED","Un créneau commencé ou terminé ne peut pas être retiré.");
         for(const event of events.rows) await repoArchivePlanningEvent({id:event.id,audit,tx});
       }
-      await tx.query("UPDATE public.planning_tasks SET committed_start=NULL,committed_end=NULL,forecast_start=NULL,forecast_end=NULL,version=version+1,updated_at=clock_timestamp() WHERE id=$1",[task.id]);
+      await tx.query("UPDATE public.planning_tasks SET committed_start=NULL,committed_end=NULL,forecast_start=NULL,forecast_end=NULL,forecast_resource_ids=NULL,version=version+1,updated_at=clock_timestamp() WHERE id=$1",[task.id]);
     }
     // Programming-only changes must advance the same revision as machine events.
     await tx.query("UPDATE public.planning_central_settings SET revision=revision+1,updated_at=clock_timestamp() WHERE singleton");
@@ -105,7 +105,7 @@ export async function previewCentralWindow(input: CentralPreviewInput, signal?: 
   } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
   const search = input.search?.toLocaleLowerCase('fr') ?? '';
   const requested = snapshot.tasks.filter(t=>!t.committed&&!t.locked&&t.commitment!=='DONE'&&t.commitment!=='STARTED'&&
-    (!input.resource_id||t.resourceIds.includes(input.resource_id))&&
+    (!input.resource_id||t.resourceIds.includes(input.resource_id)||t.forecastResourceIds?.includes(input.resource_id))&&
     [t.reference,t.ofNumber,t.label].some(v=>v?.toLocaleLowerCase('fr').includes(search)))
     .map(t=>({taskId:t.id,earliestStart:input.earliestStart,autoAssign:input.autoAssign&&t.source==='OPERATION'}));
   const result = await computeSchedule({tasks:snapshot.tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,from:input.from,requested},signal);

@@ -4,7 +4,7 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { buildAuditContext } from "./planning.controller";
 import { readCentralSettings, readCentralSnapshot } from "../repository/planning-central.repository";
 import { createCentralSimulation, getCentralSimulation, applyCentralSimulation, assertCentralActivation, unplanCentral } from "../services/planning-central.service";
-import { centralApplySchema, centralSimulationSchema, centralWindowSchema, centralUnplanSchema } from "../validators/planning-central.validators";
+import { centralApplySchema, centralSimulationSchema, centralWindowSchema, centralUnplanSchema, centralObservationsSchema } from "../validators/planning-central.validators";
 import { requestHasElevatedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { roleHasPlanningCapability } from "../domain/planning-rbac";
 import pool from '../../../config/database';
@@ -36,8 +36,8 @@ export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
 });
 export const centralObservations: RequestHandler = asyncHandler(async(req,res)=>{
   const operationId=z.string().uuid().parse(req.params.operationId);
-  const query=z.object({offset:z.coerce.number().int().min(0).default(0),limit:z.coerce.number().int().min(1).max(100).default(20)}).parse(req.query);
-  const result=await readTaskObservations(pool,operationId,query.offset,query.limit);
+  const query=centralObservationsSchema.parse(req.query);
+  const result=await readTaskObservations(pool,operationId,query.offset,query.limit,query.resource_id);
   if(!result)throw new HttpError(404,'PLANNING_TASK_NOT_FOUND','Opération introuvable.');
   res.setHeader('Cache-Control','no-store');res.json(result);
 });

@@ -30,7 +30,7 @@ export async function readCentralSettings(tx: CentralQuery = pool) {
 const TASK_QUERY = `
 WITH operation_rows AS (
  SELECT t.id,t.operation_id::text,t.programming_id::text,t.draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
+   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
    o.id AS of_id,o.commande_id AS order_id,o.numero AS of_number,pt.code_piece AS reference,
    o.piece_technique_version_id::text AS revision,op.designation AS label,op.phase,
    CASE frozen.value->>'type_operation' WHEN 'DECOUPE' THEN 'cutting' WHEN 'SOUS_TRAITANCE' THEN 'external' ELSE 'machines' END AS view,
@@ -67,7 +67,7 @@ WITH operation_rows AS (
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
 ), draft_rows AS (
  SELECT t.id,NULL::text AS operation_id,NULL::text AS programming_id,t.draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
+   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
    o.id,o.commande_id,o.numero,pt.code_piece,o.piece_technique_version_id::text,'Opérations à définir'::text,0::int,
    'machines'::text,cc.order_type='INTERNE',cc.internal_order_purpose,o.quantite_lancee,0::numeric,0::numeric,0::numeric,0::numeric,
    NULL::text,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,'TODO'::text,
@@ -80,7 +80,7 @@ WITH operation_rows AS (
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
 ), legacy_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
+   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
    op.of_id,o.commande_id,o.numero,pt.code_piece,o.piece_technique_version_id::text,'Préparer le programme'::text,0::int,
    'programming'::text,cc.order_type='INTERNE',cc.internal_order_purpose,1::numeric,0::numeric,0::numeric,0::numeric,0::numeric,
    'person:'||pr.programmer_user_id::text,
@@ -97,7 +97,7 @@ WITH operation_rows AS (
  WHERE pr.archived_at IS NULL
 ), version_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.locked,t.blockers,t.configuration_key,
+   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
     o.id,o.commande_id,o.numero,pt.code_piece,v.id::text,
    'Préparer le programme — indice '||v.indice||' · révision interne '||COALESCE(v.version_interne::text,'non renseignée'),0::int,
     'programming'::text,COALESCE(cc.order_type='INTERNE',false),cc.internal_order_purpose,1::numeric,CASE WHEN pr.status='DONE' THEN 1 ELSE 0 END::numeric,
@@ -122,10 +122,11 @@ SELECT tasks.*,owner.client_id,
     WHERE r.line_id=owner.commande_ligne_id AND p.quantity>COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)) promise ON true
  WHERE ($3::bigint IS NULL OR of_id=$3)
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
-  AND ($5::text IS NULL OR resource_id=$5)
+   AND ($5::text IS NULL OR resource_id=$5 OR (committed_start IS NULL AND $5=ANY(forecast_resource_ids)))
   AND ($12::text IS NULL OR owner.client_id=$12)
   AND (NOT $10::boolean OR tasks.id=ANY($8::text[]))
-  AND ($11::text[] IS NULL OR resource_id=ANY($11::text[]) OR tasks.id=ANY($8::text[]))
+  AND ($11::text[] IS NULL OR resource_id=ANY($11::text[]) OR tasks.id=ANY($8::text[])
+    OR (committed_start IS NULL AND forecast_resource_ids && $11::text[]))
  AND ($9::text IS NULL OR $9='all' OR ($9='backlog' AND committed_start IS NULL)
       OR ($9='placed' AND (committed_start IS NOT NULL OR forecast_start IS NOT NULL)))
   AND ($9='backlog' OR tasks.id=ANY($8::text[]) OR COALESCE(forecast_start,committed_start) IS NULL OR
@@ -153,6 +154,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
     released:num(row.released),resourceIds,eligibleResourceIds:resourceIds,
+    forecastResourceIds:row.forecast_resource_ids == null ? null : strings(row.forecast_resource_ids),
     committed,forecast:interval(row.forecast_start,row.forecast_end),actual:row.actual_start || row.actual_end ?
       { ...(row.actual_start ? {start:instant(row.actual_start)!}:{}), ...(row.actual_end ? {end:instant(row.actual_end)!}:{}) } : null,
     commitment:row.status==="DONE" ? "DONE" : row.status==="RUNNING" ? "STARTED" : committed ? "COMMITTED" : "FORECAST",

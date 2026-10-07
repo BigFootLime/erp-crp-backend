@@ -1,0 +1,11 @@
+# WP-278 — Ressource de prévision distincte de l'engagement
+
+Le cache du calcul central conservait ses dates sans la ressource choisie. Le traitement périodique recherchait seulement la machine affectée, même pour une opération non engagée. Le PIC/PDP laissait correctement la charge prévue inconnue plutôt que d'utiliser cette préférence comme une affectation.
+
+Le traitement compare désormais les ressources qualifiées des seules opérations non engagées. Il réutilise les durées par PT/version/phase/machine et configuration, mesurées et validées, avec repli sur la gamme. Disponibilité matière/qualité, calendriers, maintenance, capacités communes machine/postes et dépendances restent autoritaires. Une opération engagée ou commencée garde sa ressource. Le choix minimisant la fin calculée est conservé avec les dates dans `planning_tasks.forecast_resource_ids`, sans changer `of_operations`, `planning_events` ou les engagements.
+
+Les projections et leurs ressources sont invalidées ensemble en cas de conflit. Un résultat périmé est rejeté avant écriture. Les prévisions anciennes n'ont pas de ressource déduite : la migration additive demande un recalcul. La charge PIC/PDP n'est renseignée que lorsque le calcul est prêt et les ressources connues ; les alias physiques ne doublent pas la charge. Les observations détaillées peuvent cibler une ressource canonique ; elles gardent le contexte exact de la pièce/version/phase/configuration et les droits de lecture existants.
+
+La frise montre les opérations non engagées sur la machine proposée et les opérations engagées sur leur machine validée. Le choix est prérempli pour préparer une simulation, mais son application exige toujours le protocole autorisé, versionné et idempotent. Une proposition ne constitue aucun engagement.
+
+Avant livraison : compilation TypeScript/build, contrat API existant et compilation des requêtes SQL sous le rôle applicatif avec rollback. Tests de domaine/worker préparés, exécution et recette métier commune à la fin du chantier selon instruction de Keenan. Preflight/verify et rollback applicatif sous `db/patches/support/20261008_planning_forecast_resources_931.*` ; sauvegarde fraîche avant Test/Production.
