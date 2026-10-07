@@ -2,7 +2,8 @@ import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import type { PurchaseClientContext } from "../../fournisseurs/domain/client-supplier-approval";
 
-export const PURCHASE_CLIENT_CONTEXT_SQL = `WITH active_lines AS (
+/** Shared origin resolution for qualification, consultations and GED scope. */
+export const PURCHASE_OF_ORIGIN_CTES = `active_lines AS (
   SELECT l.*,COALESCE(l.article_id,c.article_id) AS purchase_article FROM public.commande_fournisseur_ligne l
   LEFT JOIN public.fournisseur_catalogue c ON c.id=l.catalogue_id WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE'
 ), origins AS (
@@ -14,7 +15,9 @@ export const PURCHASE_CLIENT_CONTEXT_SQL = `WITH active_lines AS (
   SELECT o.line_id,COALESCE(a.source_of_id,o.of_id) AS of_id FROM origins o
   LEFT JOIN public.production_consolidations c ON c.producer_of_id=o.of_id AND c.state='ACTIVE'
   LEFT JOIN public.production_consolidation_allocations a ON a.consolidation_id=c.id AND a.state='ACTIVE'
-), contexts AS (
+)`;
+
+export const PURCHASE_CLIENT_CONTEXT_SQL = `WITH ${PURCHASE_OF_ORIGIN_CTES}, contexts AS (
   SELECT l.id AS line_id,f.client_id,f.article_id AS product_article_id,l.purchase_article AS purchase_article_id,f.id AS of_id
   FROM active_lines l JOIN effective_origins e ON e.line_id=l.id JOIN public.ordres_fabrication f ON f.id=e.of_id
   UNION SELECT l.id,cc.client_id,NULL::uuid,l.purchase_article,NULL::bigint FROM active_lines l JOIN public.commande_client cc ON cc.id=l.commande_client_id
