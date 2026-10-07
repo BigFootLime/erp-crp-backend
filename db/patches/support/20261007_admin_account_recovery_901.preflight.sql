@@ -3,7 +3,9 @@ DO $$ BEGIN
   IF to_regclass('public.users') IS NULL OR to_regclass('public.password_resets') IS NULL
      OR to_regclass('public.password_reset_tokens') IS NULL OR to_regclass('public.user_mfa_factors') IS NULL
      OR to_regclass('public.user_mfa_recovery_codes') IS NULL OR to_regclass('public.auth_mfa_challenges') IS NULL
-     OR to_regclass('public.realtime_session_epochs') IS NULL OR to_regclass('public.erp_audit_logs') IS NULL THEN
+     OR to_regclass('public.realtime_session_epochs') IS NULL OR to_regclass('public.erp_audit_logs') IS NULL
+     OR to_regclass('public.cerp_terminal_pins') IS NULL OR to_regclass('public.cerp_terminal_audit') IS NULL
+     OR to_regclass('public.operator_badge_credentials') IS NULL OR to_regclass('public.operator_device_sessions') IS NULL THEN
     RAISE EXCEPTION 'Recovery preflight: prerequisite account and MFA schema missing';
   END IF;
 END $$;

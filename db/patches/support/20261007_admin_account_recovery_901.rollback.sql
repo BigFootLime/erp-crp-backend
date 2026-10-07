@@ -9,5 +9,6 @@ DO $$ BEGIN
   END IF;
 END $$;
 DROP TABLE public.admin_account_recoveries;
+DROP FUNCTION public.cerp_guard_account_recovery_evidence();
 ALTER TABLE public.users DROP COLUMN mfa_reenrollment_required;
 COMMIT;

@@ -11,6 +11,10 @@ DO $$ BEGIN
   IF to_regclass('public.admin_account_recoveries_one_pending_uq') IS NULL THEN
     RAISE EXCEPTION 'Recovery verify: pending uniqueness missing';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.admin_account_recoveries'::regclass
+    AND tgname='admin_account_recoveries_evidence_guard' AND tgenabled='O' AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'Recovery verify: immutable evidence guard missing';
+  END IF;
 END $$;
 SELECT current_database() AS database,
   (SELECT count(*) FROM public.admin_account_recoveries) AS recovery_evidence_count,

@@ -36,7 +36,7 @@ describe("administrative account recovery", () => {
     vi.stubEnv("JWT_SECRET", "test-only-administrative-account-recovery-key");
     mocks.lock.mockResolvedValue([actor,target]);
     mocks.replay.mockResolvedValue(null);
-    mocks.invalidate.mockResolvedValue(2);
+    mocks.invalidate.mockResolvedValue({ factors: 2, pins: 1, badges: 1, stationSessions: 2 });
     mocks.insert.mockImplementation(async (_tx,row) => ({ ...row, superseded_at: null, completed_at: null, reset_usable: true }));
     mocks.revoke.mockResolvedValue(undefined);
   });
@@ -68,7 +68,8 @@ describe("administrative account recovery", () => {
     expect(JSON.stringify(mocks.insert.mock.calls)).not.toContain(token);
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain(token);
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({
-      details: expect.objectContaining({ mfa_reenrollment_required: true,password_invalidated: true,identity_confirmed: true }),
+      details: expect.objectContaining({ mfa_reenrollment_required: true,password_invalidated: true,identity_confirmed: true,
+        revoked_factors: 2, revoked_pins: 1, revoked_badges: 1, revoked_station_sessions: 2 }),
     }) }));
     const row = { ...mocks.insert.mock.calls[0][1],superseded_at: null,completed_at: null,reset_usable: true };
     mocks.replay.mockResolvedValue(row);

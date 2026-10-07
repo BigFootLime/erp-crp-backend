@@ -65,7 +65,7 @@ import {
 function jwtActor(req: Request): Actor | null {
   const user = req.user;
   if (!user || typeof user.id !== "number") return null;
-  return { id: user.id, role: user.role ?? null };
+  return { id: user.id, role: user.role ?? null, session_epoch: user.session_epoch };
 }
 
 /** Acteur de poste. C'est la SEULE identité acceptée par les routes tablette. */

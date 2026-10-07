@@ -12,6 +12,14 @@ Evidence contains hashes and a factual reason, never the token or TOTP secret.
 `reset_id` intentionally has no cascading FK: normal reset-token cleanup must retain
 recovery evidence. Only successful new-factor confirmation clears the forced flag.
 
+Native and web station sessions, personal PINs and badge credentials are also
+revoked atomically. History and running production pointages are preserved.
+New station identification and cutting writes lock the account first and refuse
+forced reenrollment; a concurrent recovery cannot reopen a revoked session.
+After the new MFA is confirmed, a fresh PIN/badge must be configured explicitly.
+The recovery dependencies therefore include canonical shopfloor and native PIN
+schemas. See `docs/adr/ADR-20261007-account-recovery-901.md`.
+
 Runtime rollback to code predating #901 is allowed only if the table is empty and no
 forced enrollment exists, while writers are stopped. The SQL rollback refuses any
 evidence or forced flag. Once recovery has been used, retain schema and deploy a

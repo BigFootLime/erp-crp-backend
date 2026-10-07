@@ -152,7 +152,7 @@ export const adminCreatePasswordResetSchema = z.object({
 
 export const adminRecoverAccountSchema = z.object({
   headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),
-  params: z.object({ id: userIdParam }),
+  params: z.object({ id: userIdParam.refine(value => Number.isSafeInteger(Number(value)) && Number(value) > 0 && Number(value) <= 2_147_483_647, "ID utilisateur invalide") }),
   body: z.object({
     reason: z.string().trim().min(20, "Décrivez le motif en au moins 20 caractères.").max(500),
     identity_confirmed: z.literal(true),
