@@ -1,5 +1,8 @@
 \set ON_ERROR_STOP on
 DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM public.erp_settings WHERE key='security.account_recovery_enabled' AND value_text IN ('true','false')) THEN
+    RAISE EXCEPTION 'Recovery verify: rollout activation setting missing';
+  END IF;
   IF to_regclass('public.admin_account_recoveries') IS NULL OR NOT EXISTS (
     SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='users'
       AND column_name='mfa_reenrollment_required' AND data_type='boolean' AND is_nullable='NO'

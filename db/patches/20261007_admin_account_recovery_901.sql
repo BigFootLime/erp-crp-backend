@@ -15,6 +15,12 @@ END $$;
 
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS mfa_reenrollment_required boolean NOT NULL DEFAULT false;
 
+-- Recovery stays closed during a rolling deployment. Operators activate it
+-- only after every API instance serving this database has compatible code.
+INSERT INTO public.erp_settings(key,value_text,value_json)
+  VALUES('security.account_recovery_enabled','false','{"enabled":false}'::jsonb)
+  ON CONFLICT(key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.admin_account_recoveries (
   id uuid PRIMARY KEY,
   user_id integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,

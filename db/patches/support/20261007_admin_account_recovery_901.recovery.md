@@ -4,6 +4,12 @@ Additive migration; no account, factor, password or session is modified by the p
 Apply preflight, backup and migration before the new backend, then verify under the
 canonical database owner. Test and Production are separate targets.
 
+The patch initializes `security.account_recovery_enabled=false`. Keep this gate
+closed until readiness and exact compatible SHA are verified on native Test,
+native Production and the public API (which routes both databases). Then activate
+both settings in an audited operator transaction. Do not expose recovery during
+a rolling deployment with an older API that ignores mandatory reenrollment.
+
 The application action, exclusively for an active superadmin with recent MFA,
 atomically revokes the target's password, existing factors, recovery codes, challenges
 and durable ERP sessions. A 15-minute single-use link reuses the public password reset

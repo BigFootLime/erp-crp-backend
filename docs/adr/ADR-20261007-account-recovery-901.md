@@ -36,6 +36,12 @@ writers are stopped. After use, old code would ignore the mandatory flag: retain
 the schema and deploy a compatible forward fix. Never clear the flag or revive
 old credentials as an operational shortcut.
 
+`security.account_recovery_enabled` starts false. Deployment activates it in
+each database only after exact compatible versions are ready on every API
+instance, including the public API's Test/Production routing. This closes the
+recovery command during a rolling rollout; an older instance must never serve
+login while new recovery commands can create forced reenrollment.
+
 Verification is limited to compilation, lint, SQL/schema checks and deployment
 health until the user-requested combined recipe. Security scenarios are prepared
 in frontend `docs/testing/account-recovery-1180.md`; deployment does not reset a

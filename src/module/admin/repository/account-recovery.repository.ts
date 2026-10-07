@@ -1,4 +1,9 @@
 import type { PoolClient } from "pg";
+export async function isAccountRecoveryEnabled(tx: PoolClient): Promise<boolean> {
+    const result = await tx.query<{ enabled: boolean }>(`SELECT value_text='true' AS enabled
+      FROM public.erp_settings WHERE key='security.account_recovery_enabled' FOR SHARE`);
+    return result.rows[0]?.enabled === true;
+}
 export type RecoveryRow = {
     id: string;
     user_id: number;

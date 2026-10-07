@@ -11,4 +11,5 @@ END $$;
 DROP TABLE public.admin_account_recoveries;
 DROP FUNCTION public.cerp_guard_account_recovery_evidence();
 ALTER TABLE public.users DROP COLUMN mfa_reenrollment_required;
+DELETE FROM public.erp_settings WHERE key='security.account_recovery_enabled';
 COMMIT;
