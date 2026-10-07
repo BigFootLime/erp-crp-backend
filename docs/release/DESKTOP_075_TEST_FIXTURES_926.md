@@ -31,3 +31,29 @@ unified release gates. Initial failed reports are retained. A gate pass alone
 does not establish that the Electron update feed has been published.
 
 Related frontend delivery: BigFootLime/crp-systems-web#1192 and PR #1201.
+
+The managed browser workbench fixture now creates and links a synthetic customer
+order older than 48 workshop working hours. It verifies the authoritative
+calendar deadline before opening the UI. The fixture provides an explicit
+weekday workshop calendar and restores the previous calendar selection during
+test cleanup. The former OF-only 49-hour timestamp
+predated the order-based priority rule and could no longer prove the badge.
+This additional setup stays behind the existing disposable database identity
+checks in `scripts/e2e/seed-workbench-sol05.cjs`.
+
+After both source dossiers are validated through the browser, the managed
+fixture prepares their raw-material needs through the canonical configuration
+and confirmation repositories. A quality-released synthetic lot, split across
+three stock locations, supplies the 8- and 12-unit reservations and the 3-unit
+consolidation surplus. Physical
+availability and reservation quantities are asserted before grouping. The
+material feature flag is restored with the other fixture flags. Stock seeding
+accepts the same explicitly isolated managed database boundary as OF seeding;
+no consolidation guard is bypassed.
+
+The preflight also reproduced an existing same-location merge failure:
+`stock_reservations_active_need_lot_uq` rejects moving two source reservations
+to one producer need, or adding surplus at that occupied location. This is
+tracked separately in backend #937; this desktop release does not change the
+backend runtime or its database constraint. The managed recipe explicitly
+covers distinct source and surplus stock locations.
