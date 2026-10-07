@@ -205,52 +205,63 @@ export async function repoGetMachineParkContext(machineId: string): Promise<Mach
   };
 }
 
-export async function repoCreateMachineUnavailability(params: {
+type CreateMachineUnavailabilityParams = {
   machineId: string;
   body: CreateMachineUnavailabilityBodyDTO;
   audit: AuditContext;
-}): Promise<MachineUnavailability> {
+};
+
+/** One canonical event/availability pair, also reusable by a transactional schedule batch. */
+export async function createMachineUnavailabilityTx(
+  client: PoolClient,
+  params: CreateMachineUnavailabilityParams
+): Promise<string> {
+  await requireActiveMachine(client, params.machineId);
+  if (params.body.maintenance_plan_id) {
+    const plan = await client.query(`SELECT 1 FROM public.production_machine_maintenance_plans WHERE id = $1::uuid AND machine_id = $2::uuid AND archived_at IS NULL`, [params.body.maintenance_plan_id, params.machineId]);
+    if (!plan.rowCount) throw new HttpError(422, "MAINTENANCE_PLAN_INVALID", "Maintenance plan does not belong to the machine.");
+  }
+
+  const planningEventId = crypto.randomUUID();
+  await client.query(
+    `INSERT INTO public.planning_events (
+       id, kind, status, priority, machine_id, title, description,
+       start_ts, end_ts, allow_overlap, created_by, updated_by
+     ) VALUES ($1::uuid, $2::planning_event_kind, 'PLANNED', $3::planning_priority, $4::uuid, $5, $6, $7::timestamptz, $8::timestamptz, false, $9, $9)`,
+    [
+      planningEventId,
+      params.body.cause === "PREVENTIVE_MAINTENANCE" || params.body.cause === "BREAKDOWN" ? "MAINTENANCE" : "CUSTOM",
+      params.body.cause === "BREAKDOWN" ? "CRITICAL" : "NORMAL",
+      params.machineId,
+      `Indisponibilité machine — ${params.body.cause}`,
+      params.body.comment ?? null,
+      params.body.start_ts,
+      params.body.end_ts,
+      params.audit.user_id,
+    ]
+  );
+
+  const id = crypto.randomUUID();
+  await client.query(
+    `INSERT INTO public.production_machine_unavailability (
+       id, machine_id, planning_event_id, cause, comment, source, maintenance_plan_id, created_by, updated_by
+     ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::uuid, $8, $8)`,
+    [id, params.machineId, planningEventId, params.body.cause, params.body.comment ?? null, params.body.source, params.body.maintenance_plan_id ?? null, params.audit.user_id]
+  );
+  await audit(client, params.audit, {
+    action: "production.machines.unavailability.create",
+    entityType: "production_machine_unavailability",
+    entityId: id,
+    details: { machine_id: params.machineId, planning_event_id: planningEventId, cause: params.body.cause, start_ts: params.body.start_ts, end_ts: params.body.end_ts },
+  });
+  return id;
+}
+
+export async function repoCreateMachineUnavailability(params: CreateMachineUnavailabilityParams): Promise<MachineUnavailability> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await requireActiveMachine(client, params.machineId);
-    if (params.body.maintenance_plan_id) {
-      const plan = await client.query(`SELECT 1 FROM public.production_machine_maintenance_plans WHERE id = $1::uuid AND machine_id = $2::uuid AND archived_at IS NULL`, [params.body.maintenance_plan_id, params.machineId]);
-      if (!plan.rowCount) throw new HttpError(422, "MAINTENANCE_PLAN_INVALID", "Maintenance plan does not belong to the machine.");
-    }
-
-    const planningEventId = crypto.randomUUID();
-    await client.query(
-      `INSERT INTO public.planning_events (
-         id, kind, status, priority, machine_id, title, description,
-         start_ts, end_ts, allow_overlap, created_by, updated_by
-       ) VALUES ($1::uuid, $2::planning_event_kind, 'PLANNED', $3::planning_priority, $4::uuid, $5, $6, $7::timestamptz, $8::timestamptz, false, $9, $9)`,
-      [
-        planningEventId,
-        params.body.cause === "PREVENTIVE_MAINTENANCE" || params.body.cause === "BREAKDOWN" ? "MAINTENANCE" : "CUSTOM",
-        params.body.cause === "BREAKDOWN" ? "CRITICAL" : "NORMAL",
-        params.machineId,
-        `Indisponibilité machine — ${params.body.cause}`,
-        params.body.comment ?? null,
-        params.body.start_ts,
-        params.body.end_ts,
-        params.audit.user_id,
-      ]
-    );
-
-    const id = crypto.randomUUID();
-    await client.query(
-      `INSERT INTO public.production_machine_unavailability (
-         id, machine_id, planning_event_id, cause, comment, source, maintenance_plan_id, created_by, updated_by
-       ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::uuid, $8, $8)`,
-      [id, params.machineId, planningEventId, params.body.cause, params.body.comment ?? null, params.body.source, params.body.maintenance_plan_id ?? null, params.audit.user_id]
-    );
-    await audit(client, params.audit, {
-      action: "production.machines.unavailability.create",
-      entityType: "production_machine_unavailability",
-      entityId: id,
-      details: { machine_id: params.machineId, planning_event_id: planningEventId, cause: params.body.cause, start_ts: params.body.start_ts, end_ts: params.body.end_ts },
-    });
+    const id = await createMachineUnavailabilityTx(client, params);
     await client.query("COMMIT");
     const rows = await repoListMachineUnavailability(params.machineId, { include_archived: false });
     const created = rows.find((row) => row.id === id);
@@ -267,20 +278,30 @@ export async function repoCreateMachineUnavailability(params: {
   }
 }
 
-export async function repoArchiveMachineUnavailability(params: { machineId: string; unavailabilityId: string; audit: AuditContext }): Promise<boolean> {
+type ArchiveMachineUnavailabilityParams = { machineId: string; unavailabilityId: string; audit: AuditContext };
+
+/** Cancel the canonical pair inside the caller's transaction; keep its audit history. */
+export async function archiveMachineUnavailabilityTx(
+  client: PoolClient,
+  params: ArchiveMachineUnavailabilityParams
+): Promise<void> {
+  const row = await client.query<{ planning_event_id: string }>(
+    `SELECT planning_event_id::text AS planning_event_id FROM public.production_machine_unavailability
+      WHERE id = $1::uuid AND machine_id = $2::uuid AND archived_at IS NULL FOR UPDATE`,
+    [params.unavailabilityId, params.machineId]
+  );
+  const existing = row.rows[0];
+  if (!existing) throw new HttpError(404, "MACHINE_UNAVAILABILITY_NOT_FOUND", "Machine unavailability not found.");
+  await client.query(`UPDATE public.production_machine_unavailability SET archived_at = now(), archived_by = $3, updated_at = now(), updated_by = $3 WHERE id = $1::uuid AND machine_id = $2::uuid`, [params.unavailabilityId, params.machineId, params.audit.user_id]);
+  await client.query(`UPDATE public.planning_events SET status = 'CANCELLED', archived_at = now(), archived_by = $2, updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [existing.planning_event_id, params.audit.user_id]);
+  await audit(client, params.audit, { action: "production.machines.unavailability.archive", entityType: "production_machine_unavailability", entityId: params.unavailabilityId, details: { machine_id: params.machineId, planning_event_id: existing.planning_event_id } });
+}
+
+export async function repoArchiveMachineUnavailability(params: ArchiveMachineUnavailabilityParams): Promise<boolean> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const row = await client.query<{ planning_event_id: string }>(
-      `SELECT planning_event_id::text AS planning_event_id FROM public.production_machine_unavailability
-        WHERE id = $1::uuid AND machine_id = $2::uuid AND archived_at IS NULL FOR UPDATE`,
-      [params.unavailabilityId, params.machineId]
-    );
-    const existing = row.rows[0];
-    if (!existing) throw new HttpError(404, "MACHINE_UNAVAILABILITY_NOT_FOUND", "Machine unavailability not found.");
-    await client.query(`UPDATE public.production_machine_unavailability SET archived_at = now(), archived_by = $3, updated_at = now(), updated_by = $3 WHERE id = $1::uuid AND machine_id = $2::uuid`, [params.unavailabilityId, params.machineId, params.audit.user_id]);
-    await client.query(`UPDATE public.planning_events SET status = 'CANCELLED', archived_at = now(), archived_by = $2, updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [existing.planning_event_id, params.audit.user_id]);
-    await audit(client, params.audit, { action: "production.machines.unavailability.archive", entityType: "production_machine_unavailability", entityId: params.unavailabilityId, details: { machine_id: params.machineId, planning_event_id: existing.planning_event_id } });
+    await archiveMachineUnavailabilityTx(client, params);
     await client.query("COMMIT");
     return true;
   } catch (error) {
