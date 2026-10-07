@@ -3,10 +3,12 @@ import type { RequestHandler } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import * as adminService from "../services/admin.service";
+import { recoverAccountBySuperadmin } from "../services/account-recovery.service";
 import {
   adminCreateUserSchema,
   adminCreateInvitationSchema,
   adminCreatePasswordResetSchema,
+  adminRecoverAccountSchema,
   adminUpdateUserSchema,
   adminUserIdParamSchema,
   adminErpSettingKeySchema,
@@ -124,6 +126,24 @@ export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, r
     newPassword: dto.body.newPassword,
   });
   res.status(204).end();
+});
+
+export const recoverUserAccountAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminRecoverAccountSchema.parse({ headers: { idempotencyKey: req.get("Idempotency-Key") }, params: req.params, body: req.body });
+  const actor = req.user;
+  if (actor?.mfa !== true || !actor.mfa_factor_id || typeof actor.mfa_factor_version !== "number" || typeof actor.session_epoch !== "number") {
+    throw new HttpError(403, "RECOVERY_MFA_REQUIRED", "Activez et confirmez votre authentification 2FA avant de récupérer un autre compte.");
+  }
+  const result = await recoverAccountBySuperadmin({
+    userId: Number(dto.params.id), actorUserId: actor.id, actorSessionEpoch: actor.session_epoch,
+    actorFactorId: actor.mfa_factor_id, actorFactorVersion: actor.mfa_factor_version,
+    idempotencyKey: dto.headers.idempotencyKey, reason: dto.body.reason,
+    meta: { ip: req.ip ?? null, user_agent: req.get("User-Agent") ?? null, device_type: null, os: null, browser: null,
+      path: `/api/v1/admin/users/${dto.params.id}/account-recovery`, request_id: req.requestId ?? null },
+  });
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+  res.status(result.replayed ? 200 : 201).json(result);
 });
 
 export const getErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) => {

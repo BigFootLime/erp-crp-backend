@@ -12,6 +12,7 @@ import {
   listUsersAdmin,
   listLoginLogsAdmin,
   resetUserPasswordAdmin,
+  recoverUserAccountAdmin,
   getAdminAnalytics,
   patchUserAdmin,
   getErpSettingAdmin,
@@ -43,5 +44,6 @@ router.put("/erp-settings/:key", upsertErpSettingAdmin);
 
 router.post("/users/:id/password-reset-token", createPasswordResetTokenAdmin);
 router.patch("/users/:id/password", resetUserPasswordAdmin);
+router.post("/users/:id/account-recovery", recoverUserAccountAdmin);
 
 export default router;

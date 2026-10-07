@@ -77,6 +77,7 @@ export async function identifyTerminal(
     user_id: result.pin.user_id,
     machine_id: terminal.machine_id,
     identification_method: "PASSWORD",
+    account_epoch: account.session_epoch,
     app_version: appVersion,
     beforeCommit: async (tx, session) => {
       const live = (

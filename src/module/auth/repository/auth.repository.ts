@@ -121,6 +121,7 @@ export const findAuthenticatedAccountState = async (
     mfa_factor_id: string | null;
     mfa_factor_version: number | null;
     mfa_policy: string | null;
+    mfa_reenrollment_required: boolean;
     role: string;
     roles: string[];
   }>(
@@ -128,6 +129,7 @@ export const findAuthenticatedAccountState = async (
       SELECT
         users.status,
         users.is_superadmin,
+        users.mfa_reenrollment_required,
         users.role,
         COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
                     FROM public.user_role_assignments ura WHERE ura.user_id=users.id), ARRAY[users.role]::text[]) AS roles,
@@ -151,7 +153,7 @@ export const findAuthenticatedAccountState = async (
     status: row.status,
     session_epoch: Number.isSafeInteger(sessionEpoch) && sessionEpoch >= 0 ? sessionEpoch : 0,
     is_superadmin: row.is_superadmin === true,
-    mfa_required: accountRequiresMfa({
+    mfa_required: row.mfa_reenrollment_required === true || accountRequiresMfa({
       policy,
       isSuperadmin: row.is_superadmin === true,
       role: row.role,

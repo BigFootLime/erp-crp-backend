@@ -736,7 +736,7 @@ export async function repoFindSessionByToken(token: string): Promise<
             ) AS role
        FROM public.operator_device_sessions s
        JOIN public.users u ON u.id = s.user_id
-      WHERE s.session_token_hash = $1`,
+      WHERE s.session_token_hash = $1 AND u.status='Active' AND NOT u.mfa_reenrollment_required`,
     [hashSessionToken(token)]
   );
   const row = rows[0];
@@ -784,6 +784,7 @@ export async function repoOpenSession(params: {
   user_id: number;
   machine_id: string | null;
   identification_method: IdentificationMethod;
+  account_epoch?: number;
   app_version?: string | null;
   request_id?: string | null;
   beforeCommit?: (client: PoolClient, session: SessionRow) => Promise<void>;
@@ -792,6 +793,18 @@ export async function repoOpenSession(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // Account recovery locks the user before closing station sessions. Holding
+    // the same lock first prevents a concurrent login from reopening one.
+    const account = (await client.query<{ session_epoch: string }>(
+      `SELECT COALESCE(e.session_epoch,0)::text AS session_epoch FROM public.users u
+       LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
+       WHERE u.id=$1 AND u.status='Active' AND NOT u.mfa_reenrollment_required FOR SHARE OF u`,
+      [params.user_id],
+    )).rows[0];
+    if (!account || (params.account_epoch !== undefined && Number(account.session_epoch) !== params.account_epoch)) {
+      throw new HttpError(401, "STATION_ACCOUNT_RECOVERY_REQUIRED", "Terminez la récupération du compte avant de vous identifier sur le poste.");
+    }
 
     // Verrou d'appareil : deux badges présentés simultanément ne créent pas
     // deux sessions vivantes.

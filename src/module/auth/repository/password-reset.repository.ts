@@ -58,6 +58,14 @@ export async function repoGetPasswordResetForUpdate(params: {
   password_hash: string;
   session_epoch: number;
 } | null> {
+  // Account recovery always locks the account before invalidating its tokens.
+  // Use the same order, then recheck the token after the account lock is held.
+  const owner = await params.tx.query<{ user_id: number }>(
+    `SELECT user_id FROM public.password_resets WHERE token_hash=$1::text AND NOT used AND expires_at>now() LIMIT 1`,
+    [params.token_hash],
+  );
+  if (!owner.rows[0]) return null;
+  await params.tx.query(`SELECT id FROM public.users WHERE id=$1 FOR UPDATE`, [owner.rows[0].user_id]);
   const res = await params.tx.query<Pick<PasswordResetRow, "id" | "user_id"> & {
     password_hash: string;
     session_epoch: number;
