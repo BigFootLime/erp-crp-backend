@@ -331,6 +331,7 @@ export async function svcFinishOperation(params: {
   body: FinishOperationBodyDTO;
   idempotencyKey: string;
   audit: AuditContext;
+  transactionHooks?: Pick<ProductionExecutionTransactionHooks<{id: string}>, 'beforeEffect'>;
 }) {
   assertProductionExecutionCapability(params.actor.role, "declare_quantity");
   assertProductionExecutionCapability(params.actor.role, "stop_self");
@@ -340,6 +341,7 @@ export async function svcFinishOperation(params: {
     idempotencyKey: params.idempotencyKey,
     actorRole: params.actor.role,
     audit: params.audit,
+    transactionHooks: params.transactionHooks,
   });
 }
 

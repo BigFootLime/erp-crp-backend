@@ -1872,10 +1872,12 @@ export async function repoFinishOperation(params: {
   idempotencyKey: string;
   actorRole: string | null | undefined;
   audit: AuditContext;
+  transactionHooks?: Pick<ProductionExecutionTransactionHooks<{id: string}>, 'beforeEffect'>;
 }): Promise<{ preview: FinishOperationPreview; declaration_id: string | null; operation_status: string }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await params.transactionHooks?.beforeEffect(client);
 
     const replay = await reserveIdempotencyKey<{
       preview: FinishOperationPreview;

@@ -5,6 +5,8 @@ import { HttpError } from "../../../utils/httpError";
 import { buildAuditContext } from "./production.controller";
 import { materialDebitSchema } from "../validators/of-material.validators";
 import { stationDossierParamsSchema } from "../validators/station.validators";
+import { cuttingExecutionCommandSchema } from '../validators/station-cutting.validators';
+import { executeStationCutting } from '../services/station-cutting-execution.service';
 import {
   readStationCutting,
   debitStationCutting,
@@ -28,6 +30,15 @@ const scan = z
 export const readCutting = asyncHandler(async (req, res) => {
   const p = stationDossierParamsSchema.parse(req.params);
   res.json(await readStationCutting(station(req), p.ofId, p.operationId));
+});
+
+export const executeCutting = asyncHandler(async (req, res) => {
+  const p = stationDossierParamsSchema.parse(req.params), s = station(req);
+  const command = cuttingExecutionCommandSchema.parse(req.body);
+  res.json(await executeStationCutting({station: s, ...p, command,
+    idempotencyKey: String(req.headers['idempotency-key']),
+    audit: {...buildAuditContext(req), user_id: s.user.id, user_role: s.user.role},
+  }));
 });
 export const debitCutting = asyncHandler(async (req, res) => {
   const s = station(req),

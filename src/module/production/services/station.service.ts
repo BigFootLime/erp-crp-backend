@@ -614,10 +614,10 @@ export async function svcWorklist(params: {
   query: StationWorklistQueryDTO;
 }): Promise<Record<string, unknown>> {
   const rows = await repoWorklist({
-    machineId: params.station.machine_id,
+    machineId: params.query.material_only ? null : params.station.machine_id,
     workshopZone: params.station.device_zone,
     q: params.query.q ?? null,
-    machineOnly: params.query.machine_only && Boolean(params.station.machine_id),
+    machineOnly: !params.query.material_only && params.query.machine_only && Boolean(params.station.machine_id),
     includeBlocked: params.query.include_blocked,
     materialOnly: params.query.material_only,
     limit: params.query.limit,
@@ -633,7 +633,8 @@ export async function svcWorklist(params: {
       has_pending_predecessor: row.has_pending_predecessor,
       has_active_execution_by_other:
         row.active_by_user_id !== null && row.active_by_user_id !== params.station.user.id,
-      machine_matches: !row.machine_id || row.machine_id === params.station.machine_id,
+      // Découpe : l'OF fournit son affectation, aucune machine à choisir sur le poste.
+      machine_matches: params.query.material_only || !row.machine_id || row.machine_id === params.station.machine_id,
       machine_available: row.machine_is_available,
       has_technical_snapshot: row.has_technical_snapshot,
       has_plan_document: row.has_plan_document,
@@ -715,7 +716,7 @@ export async function svcWorklist(params: {
 
   return {
     server_time: new Date().toISOString(),
-    machine_id: params.station.machine_id,
+    machine_id: params.query.material_only ? null : params.station.machine_id,
     /** L'ordre est EXPLIQUÉ, jamais un score opaque. */
     ordering_explanation: WORKLIST_ORDERING_EXPLANATION,
     recommended_operation_id: recommended?.operation_id ?? null,
