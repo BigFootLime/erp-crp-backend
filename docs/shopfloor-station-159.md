@@ -23,6 +23,15 @@ Aucun moteur d'exécution. `production_pointages` (#274) reste la source de vér
 du temps, des quantités et des aléas. Ce module **lit** cet état et **pilote** ses
 commandes existantes ; il n'en duplique aucune.
 
+Depuis #883, les routes `/production/station/cutting/:ofId/:operationId`
+adaptent aussi la session opérateur au **débit matière canonique**. La route de
+débit revalide et verrouille appareil/session avant les verrous OF et stock,
+utilise le pointage actif de cet opérateur et délègue au moteur existant :
+aucun second registre de matière, quantité ou temps. La lecture masque les prix
+et l'approvisionnement ; scanner une barre identifie une réservation sans la
+consommer. Le filtre Découpe s'applique avant la limite de la file et à la
+résolution d'un scan OF. [Contrats et recette finale](testing/station-cutting-883.md).
+
 Un test le prouve : `POST /production/station`, `/pause`, `/resume`, `/stop` et
 `/quantities` renvoient **404**.
 

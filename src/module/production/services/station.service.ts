@@ -619,6 +619,7 @@ export async function svcWorklist(params: {
     q: params.query.q ?? null,
     machineOnly: params.query.machine_only && Boolean(params.station.machine_id),
     includeBlocked: params.query.include_blocked,
+    materialOnly: params.query.material_only,
     limit: params.query.limit,
   });
 
@@ -729,7 +730,7 @@ export async function svcScan(params: {
   station: StationContext;
   body: StationScanDTO;
 }): Promise<Record<string, unknown>> {
-  const resolved = await repoResolveScan(params.body.code);
+  const resolved = await repoResolveScan(params.body.code, params.body.material_only);
   if (!resolved) {
     throw new HttpError(
       404,
@@ -741,7 +742,9 @@ export async function svcScan(params: {
     throw new HttpError(
       409,
       "STATION_SCAN_NO_OPEN_OPERATION",
-      `L'OF ${resolved.of_numero} n'a aucune opération ouverte.`
+      params.body.material_only
+        ? `L'OF ${resolved.of_numero} n'a aucune opération matière ouverte et préparée.`
+        : `L'OF ${resolved.of_numero} n'a aucune opération ouverte.`
     );
   }
   return resolved;
