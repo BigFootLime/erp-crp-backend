@@ -1,4 +1,5 @@
 import { Router } from "express";
+import {readCutting,debitCutting,scanCutting} from '../controllers/station-cutting.controller';
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {
@@ -89,6 +90,9 @@ router.get(
   worklist
 );
 router.post("/scan", requireStationSession, requireStationCapability("read_own_station"), scan);
+router.get('/cutting/:ofId/:operationId',requireStationSession,requireStationCapability('read_dossier'),readCutting);
+router.post('/cutting/:ofId/:operationId/debits',requireStationSession,requireStationCapability('read_own_station'),debitCutting);
+router.post('/cutting/:ofId/:operationId/scan',requireStationSession,requireStationCapability('read_dossier'),scanCutting);
 
 // Reprise bornée : la session de poste vivante constitue la réauthentification.
 // Chaque événement garde ensuite sa propre clé d'idempotence dans le corps.
