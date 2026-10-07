@@ -31,6 +31,8 @@ export type MachineMaintenancePlan = {
   frequency_days: number | null;
   frequency_counter: number | null;
   counter_unit: string | null;
+  counter_value:number|null;
+  next_due_counter:number|null;
   next_due_at: string | null;
   responsible_user_id: number | null;
   checklist: unknown[];

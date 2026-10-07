@@ -15,6 +15,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import {assertMaintenanceMachineUnblockedTx} from "./operator-maintenance-read.repository";
 import {PLANNED_OPERATION_DURATION_MINUTES_SQL} from '../domain/planned-operation-duration';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx,assertMaterialQuantityTx,syncMaterialOfQuantitiesTx} from "./operation-readiness.repository";
 import { HttpError } from "../../../utils/httpError";
@@ -972,11 +973,11 @@ async function lockExecutionContext(
     throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable.", { of_id: params.of_id });
   }
 
-  let operation: { id: string; status: string; phase: number; of_id: string } | null = null;
+  let operation: { id: string; status: string; phase: number; of_id: string; machine_id:string|null } | null = null;
   if (params.operation_id) {
-    const opRes = await tx.query<{ id: string; status: string; phase: number; of_id: string }>(
+    const opRes = await tx.query<{ id: string; status: string; phase: number; of_id: string; machine_id:string|null }>(
       `
-        SELECT id::text AS id, status::text AS status, phase, of_id::text AS of_id
+        SELECT id::text AS id, status::text AS status, phase, of_id::text AS of_id,machine_id::text AS machine_id
         FROM public.of_operations
         WHERE id = $1::uuid
         FOR UPDATE
@@ -1049,8 +1050,8 @@ function assertOperationExecutable(operation: { status: string } | null) {
 /** Une maintenance bloquante interdit le démarrage : elle n'est pas contournable. */
 async function assertMachineAvailable(tx: DbQueryer, machineId: string | null | undefined) {
   if (!machineId) return;
-  const res = await tx.query<{ status: string | null }>(
-    `SELECT status::text AS status FROM public.machines WHERE id = $1::uuid`,
+  const res = await tx.query<{ status: string | null; is_available: boolean; archived_at: string | null }>(
+    `SELECT status::text AS status,is_available,archived_at::text FROM public.machines WHERE id = $1::uuid FOR SHARE`,
     [machineId]
   );
   const row = res.rows[0];
@@ -1065,13 +1066,17 @@ async function assertMachineAvailable(tx: DbQueryer, machineId: string | null | 
     "IN_MAINTENANCE",
     "INDISPONIBLE",
   ];
-  if (row.status && blocking.includes(row.status)) {
+  if (row.archived_at || row.is_available===false || (row.status && blocking.includes(row.status))) {
     throw new HttpError(
       409,
       "PRODUCTION_EXECUTION_MACHINE_UNAVAILABLE",
       `Cette machine est en statut ${row.status} : le pointage est refusé.`,
       { machine_id: machineId, statut: row.status }
     );
+  }
+  await assertMaintenanceMachineUnblockedTx(tx,machineId);
+  if((await tx.query(`SELECT u.id FROM public.production_machine_unavailability u JOIN public.planning_events e ON e.id=u.planning_event_id WHERE u.machine_id=$1::uuid AND u.archived_at IS NULL AND e.archived_at IS NULL AND e.status NOT IN ('DONE','CANCELLED') AND e.start_ts<=statement_timestamp() AND e.end_ts>statement_timestamp() LIMIT 1`,[machineId])).rows.length) {
+    throw new HttpError(409,"PRODUCTION_EXECUTION_MACHINE_UNAVAILABLE","Une indisponibilité est en cours dans le planning de cette machine.",{machine_id:machineId});
   }
 }
 
@@ -1119,7 +1124,7 @@ export async function repoStartExecution(params: {
 
     if (!materialAuthorization) assertOfExecutable(of.statut);
     assertOperationExecutable(operation);
-    await assertMachineAvailable(client, params.body.machine_id);
+    await assertMachineAvailable(client, params.body.machine_id??operation?.machine_id);
 
     const activity = await loadActivity(client, params.body.activity_code);
     assertReasonProvided(activity, params.body.comment ?? params.body.retroactive_reason ?? null);

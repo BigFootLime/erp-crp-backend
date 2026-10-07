@@ -1,4 +1,6 @@
 import { asyncHandler } from "../../../utils/asyncHandler";
+import type {Request} from "express";
+import {maintenanceManager} from "../domain/operator-maintenance";
 import { getDocumentStoragePath, resolveCerpStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
@@ -68,13 +70,19 @@ export const listMachineMaintenancePlans = asyncHandler(async (req, res) => {
   res.json(await svcListMachineMaintenancePlans(id));
 });
 
+function assertMaintenanceManager(req:Request){
+  if(!maintenanceManager([req.user?.role,req.user?.primary_role,...(req.user?.roles??[])]))throw new HttpError(403,"MAINTENANCE_MANAGER_REQUIRED","La définition des contrôles nécessite un responsable maintenance, la direction ou l’administration.");
+}
+
 export const createMachineMaintenancePlan = asyncHandler(async (req, res) => {
+  assertMaintenanceManager(req);
   const { id } = machineParkIdParamSchema.parse({ params: req.params }).params;
   const body = createMachineMaintenancePlanSchema.parse({ body: req.body }).body;
   res.status(201).json(await svcCreateMachineMaintenancePlan({ machineId: id, body, audit: buildAuditContext(req) }));
 });
 
 export const updateMachineMaintenancePlan = asyncHandler(async (req, res) => {
+  assertMaintenanceManager(req);
   const { id, planId } = machineMaintenancePlanIdParamSchema.parse({ params: req.params }).params;
   const body = updateMachineMaintenancePlanSchema.parse({ body: req.body }).body;
   res.json(await svcUpdateMachineMaintenancePlan({ machineId: id, planId, body, audit: buildAuditContext(req) }));
