@@ -30,6 +30,7 @@ export type SupplierPurchaseOrderSnapshot = {
   issuer: LegalParty;
   general_terms?: GeneralTermsSnapshot | null;
   supplier_qualification?: PurchaseQualification;
+  supplier_open_contract?: {reference:string;revision:number;call_id:string;documents:Array<{title:string;original_name:string;sha256:string}>;technical_sources:Array<{plan_reference:string|null;external_index:string|null;internal_version:number|null;piece_code:string|null;required_documents:Array<{label:string}>}>}|null;
 };
 
 function snapshotOf(record: AuthoritativePdfArchiveRecord): SupplierPurchaseOrderSnapshot {
@@ -122,6 +123,13 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
     );
     ctx.y = Math.max(ctx.y, totalBottom + 7);
     if (source.public_comment) ctx.notesSection("Instructions", source.public_comment);
+    if (source.supplier_open_contract) {
+      const contract=source.supplier_open_contract;
+      ctx.notesSection("Appel de commande ouverte",`${contract.reference} · avenant / révision ${contract.revision}\nRéférence d’appel : ${contract.call_id}`);
+      const dossiers=[...new Set(contract.technical_sources.map(piece=>`${piece.piece_code??'Pièce'} · plan ${piece.plan_reference??'à compléter'} · indice ${piece.external_index??'à compléter'} · version ${piece.internal_version??'à compléter'}${piece.required_documents.length?'\nDocuments exigés : '+piece.required_documents.map(doc=>doc.label).join(', '):''}`))];
+      if(dossiers.length)ctx.notesSection("Dossiers techniques de l’appel",dossiers.join('\n'));
+      if(contract.documents?.length)ctx.notesSection("Documents de référence de l’appel",contract.documents.map(doc=>`${doc.title} · ${doc.original_name}\nSHA-256 : ${doc.sha256}`).join('\n'));
+    }
     const terms = generalTermsReference(source.general_terms);
     if (terms) ctx.notesSection("Conditions générales d’achat jointes", terms);
   });

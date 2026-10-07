@@ -10,6 +10,8 @@ import {
 import {
   accuseReception,
   readSupplierConsultations,
+  readSupplierOpenContracts,
+  commandSupplierOpenContract,
   readPurchaseQualification,
   commandSupplierConsultation,
   addLigne,
@@ -85,6 +87,8 @@ router.post("/propositions/confirm", requireCapability("create"), confirmProposi
 
 router.get("/:id", requireCapability("read"), getCommandeFournisseur);
 router.get("/:id/qualification", requireCapability("read"), readPurchaseQualification);
+router.get("/:id/open-contracts", requireCapability("read"), requireCapability("prices"), readSupplierOpenContracts);
+router.post("/:id/open-contracts/commands", requireCapability("update_draft"), requireCapability("prices"), commandSupplierOpenContract);
 router.get("/:id/consultations", requireCapability("read"), requireCapability("prices"), readSupplierConsultations);
 router.post("/:id/consultations/commands", requireCapability("update_draft"), requireCapability("prices"), commandSupplierConsultation);
 router.patch("/:id", requireCapability("update_draft"), updateCommandeFournisseur);
