@@ -18,9 +18,11 @@ import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-ma
 import {materialPurchasePreparations} from '../domain/purchase-preparation';
 import {readPurchasePreparationsTx,savePurchasePreparationsTx} from './purchase-preparation.repository';
 import {fetchFournisseurMini,assertFournisseurCommandable} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
+import {proposeMaterialConfiguration} from '../domain/material-configuration-proposal';
+import {readMaterialConfigurationDefaults} from './material-configuration-defaults.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
-type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null};
+type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null};
 type NeedRow={id:string;source_ref:string;designation:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
 export type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
@@ -70,7 +72,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     WHERE b.besoin_of_id=$1 AND c.statut<>'ANNULEE' AND l.statut_ligne<>'ANNULEE' ORDER BY b.created_at,b.id`,[ofId])).rows;
   const articleIds=[...new Set(purchases.flatMap(p=>p.article_id?[p.article_id]:[]))];
   const futureSupplies=await readFutureMaterialSupplyTx(tx,articleIds);
-  const articles=(await tx.query(`SELECT a.id::text,a.code,a.unite,m.client_proprietaire_id FROM public.articles a LEFT JOIN public.articles_matiere m ON m.article_id=a.id WHERE a.id=ANY($1::uuid[])`,[articleIds])).rows;
+  const defaults=await readMaterialConfigurationDefaults(tx,articleIds,dossier.operations.map(o=>o.id));
+  const articles=defaults.articles;
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",
     COALESCE(l.received_at::text,l.created_at::text) AS "receivedAt",l.material_properties->>'grade' AS grade,l.material_properties->>'condition' AS condition,
@@ -140,6 +143,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule:row?.debit_rule??null,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:row?.destination_id??null,
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
+      configurationProposal:proposeMaterialConfiguration(p,article,defaults.operations,of.client_id),
       rowVersion:row?.row_version??null,consumptionAdjustment};
   });
   const originPolicy=await readMaterialOriginPolicyTx(tx,[ofId],lots.map(l=>l.id));
@@ -170,8 +174,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const preparation=await readPurchasePreparationsTx(tx,materialPurchasePreparations({ofId,
     technicalVersion:of.revision as string|null,technicalHash:of.hash as string|null,needs:coverage,previousNeeds,operations:dossier.operations}),ofId,'MATIERE');
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,executionStatus:dossier.executionStatus,technicalVersion:of.revision as string|null,
-    technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy}),needs:coverage,customerCalls,debits,
+    technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,references:defaults.references,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy,defaults}),needs:coverage,customerCalls,debits,
     previousNeeds,purchasePreparations:preparation.items,purchasePreparationsSyncRequired:preparation.requiresSync,
     retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
