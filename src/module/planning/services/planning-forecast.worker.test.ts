@@ -31,7 +31,7 @@ describe('durable planning projection',()=>{
   it('projects after material arrival and preserves the original commitment',async()=>{
     await expect(runPlanningForecastOnce()).resolves.toBe(true);
     const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
-    expect(JSON.parse(update?.[1][0])).toEqual([{id:'op:1',start,end:'2026-09-14T09:00:00.000Z',issues:[]}]);
+    expect(JSON.parse(update?.[1][0])).toEqual([{id:'op:1',start,end:'2026-09-14T09:00:00.000Z',resources:['m'],issues:[]}]);
     expect(m.snapshot.mock.results[0]).toBeDefined();
     expect(m.snapshot.mock.calls[0][0].includeTaskIds).toContain('program:done');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
@@ -54,6 +54,20 @@ describe('durable planning projection',()=>{
     expect(projection).toMatchObject({id:'op:1',start:null,end:null});
     expect(projection.issues.join(' ')).toContain('Matière restante');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_/.test(sql))).toBe(false);
+    vi.useRealTimers();
+  });
+  it('proposes the qualified machine finishing earliest without assigning the operation',async()=>{
+    const snapshot=await m.snapshot();
+    snapshot.tasks[0].committed=null;snapshot.tasks[0].commitment='FORECAST';
+    snapshot.tasks[0].eligibleResourceIds=['m','alternative'];
+    snapshot.tasks[0].resourceEstimates={alternative:{remainingMinutes:30}};
+    snapshot.resources.push({...snapshot.resources[0],id:'alternative'});
+    await runPlanningForecastOnce();
+    const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
+    expect(JSON.parse(update?.[1][0])[0]).toMatchObject({start,end:'2026-09-14T08:30:00.000Z',resources:['alternative']});
+    expect(snapshot.tasks[0].resourceIds).toEqual(['m']);
+    expect(snapshot.tasks[0].committed).toBeNull();
+    expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
     vi.useRealTimers();
   });
 });

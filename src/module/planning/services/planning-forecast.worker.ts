@@ -11,6 +11,7 @@ import {computeSchedule} from './central-compute';
 import {dependencyClosure,dependencyIndex} from '../domain/central-dependencies';
 import {HttpError} from '../../../utils/httpError';
 import {recordDurationPredictions} from '../repository/duration-learning.repository';
+import {forecastPlacements} from '../domain/forecast-placement';
 
 /** Durable queue, single DB writer, bounded calculation. Only forecast columns
  * are written: no planning_event, assignment, commitment or actual date. */
@@ -36,7 +37,6 @@ export async function runPlanningForecastOnce(){
     if(included.size>10000)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
     const snapshot=await readCentralSnapshot({from:now,to,limit:10000,includeTaskIds:[...included]},tx,false);
     if(snapshot.nextCursor)throw new HttpError(503,'FORECAST_WINDOW_TOO_DENSE','Calcul trop volumineux.');
-    await recordDurationPredictions(tx,snapshot);
     const activeIds=new Set(ids),ofIds=[...new Set(snapshot.tasks.filter(t=>activeIds.has(t.id)).flatMap(t=>t.ofId?[t.ofId]:[]))];
     const tasks=snapshot.tasks.map(t=>({...t,blockers:[...t.blockers]}));
     const byOf=new Map<number,typeof tasks>();
@@ -69,21 +69,28 @@ export async function runPlanningForecastOnce(){
         if(task.commitment==='STARTED'){task.commitment='COMMITTED';task.locked=false;}
       }
     }
-    const requested=tasks.filter(t=>t.commitment!=='DONE'&&!t.locked&&(activeIds.has(t.id)||t.source==='PROGRAMMING')).map(t=>({taskId:t.id,earliestStart:now}));
+    const requested=tasks.filter(t=>t.commitment!=='DONE'&&!t.locked&&(activeIds.has(t.id)||t.source==='PROGRAMMING'))
+      .map(t=>({taskId:t.id,earliestStart:now,
+        autoAssign:t.source==='OPERATION'&&!t.external&&!t.committed&&!t.actual?.start&&t.commitment==='FORECAST'}));
     const result=await computeSchedule({tasks,resources:snapshot.resources,dependencies:snapshot.dependencies,from:now,requested});
     // Expensive reads/calculation do not hold the global writer lock. Reject an
     // obsolete result instead of publishing a mixture of revisions.
     const latest=(await tx.query<{revision:string}>('SELECT revision::text FROM public.planning_central_settings WHERE singleton FOR UPDATE')).rows[0];
     if(latest.revision!==settings.revision)throw new HttpError(409,'PLANNING_FORECAST_STALE','Prévisions à recalculer.');
-    const issuesById=new Map<string,string[]>();
-    for(const issue of result.conflicts){if(!issuesById.has(issue.taskId))issuesById.set(issue.taskId,[]);issuesById.get(issue.taskId)!.push(issue.message);}
-    const updates=snapshot.tasks.map(task=>{
-      const issues=issuesById.get(task.id)??[],projection=result.forecasts[task.id];
-      return {id:task.id,start:issues.length?null:projection?.start??null,end:issues.length?null:projection?.end??null,issues};
-    });
-    await tx.query(`UPDATE public.planning_tasks t SET forecast_start=p.start,forecast_end=p.end,forecast_issues=p.issues
-      FROM jsonb_to_recordset($1::jsonb) AS p(id text,start timestamptz,"end" timestamptz,issues jsonb)
-      WHERE t.id=p.id AND(t.forecast_start,t.forecast_end,t.forecast_issues) IS DISTINCT FROM(p.start,p.end,p.issues)`,[JSON.stringify(updates)]);
+    const updates=forecastPlacements(snapshot.tasks,result),placements=new Map(updates.map(p=>[p.id,p]));
+    // Accuracy predictions refer to the suggested machine, without changing the
+    // operation's assignment. A blocked forecast creates no prediction.
+    await recordDurationPredictions(tx,{...snapshot,tasks:snapshot.tasks.flatMap(task=>{
+      const placement=placements.get(task.id);
+      if(!placement?.resources?.length)return [];
+      const resourceIds=task.committed?task.resourceIds:placement.resources;
+      return [{...task,resourceIds,estimate:task.resourceEstimates?.[resourceIds[0]]??task.estimate}];
+    })});
+    await tx.query(`UPDATE public.planning_tasks t SET forecast_start=p.start,forecast_end=p.end,
+        forecast_resource_ids=p.resources,forecast_issues=p.issues
+      FROM jsonb_to_recordset($1::jsonb) AS p(id text,start timestamptz,"end" timestamptz,resources text[],issues jsonb)
+      WHERE t.id=p.id AND(t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.forecast_issues)
+        IS DISTINCT FROM(p.start,p.end,p.resources,p.issues)`,[JSON.stringify(updates)]);
     if(maxJob)await tx.query('UPDATE public.planning_recalculation_jobs SET processed_at=now(),attempts=attempts+1,last_error=NULL WHERE id<=$1::bigint AND processed_at IS NULL',[maxJob]);
     await tx.query('UPDATE public.planning_forecast_state SET calculated_at=now(),source_revision=$1::bigint,issue_count=$2,last_error=NULL WHERE singleton',[settings.revision,result.conflicts.length]);
     await enqueueEntityChanged(tx,{entityType:'PLANNING_EVENTS',entityId:'forecast',module:'planning',action:'updated',at:now,invalidateKeys:['planning:events','production:ofs']},{deduplicationKey:`planning-forecast:${settings.revision}:${now}`});
