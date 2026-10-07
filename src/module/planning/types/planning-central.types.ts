@@ -9,6 +9,7 @@ export type Resource = {
   capacityId?: string;
   /** Explicit UTC intervals obtained from the resource's local civil calendar. */
   availability: Interval[]; qualifiedTaskIds?: string[]; version: string;
+  unavailability?: Array<Interval & { id:string; title:string; description:string|null; kind:string }>;
 };
 export type Dependency = {
   predecessorId: string; successorId: string; transferQuantity: number | null;

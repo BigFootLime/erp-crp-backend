@@ -261,6 +261,7 @@ export async function repoCreateMachineUnavailability(params: CreateMachineUnava
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     const id = await createMachineUnavailabilityTx(client, params);
     await client.query("COMMIT");
     const rows = await repoListMachineUnavailability(params.machineId, { include_archived: false });
@@ -301,6 +302,8 @@ export async function repoArchiveMachineUnavailability(params: ArchiveMachineUna
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+    await client.query("SELECT id FROM public.machines WHERE id=$1::uuid FOR UPDATE", [params.machineId]);
     await archiveMachineUnavailabilityTx(client, params);
     await client.query("COMMIT");
     return true;

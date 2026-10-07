@@ -182,7 +182,13 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
           AND e.archived_at IS NULL AND e.status<>'CANCELLED'
           AND (e.of_operation_id IS NULL OR e.kind<>'OF_OPERATION')
           AND e.start_ts<$2::timestamptz AND e.end_ts>$1::timestamptz),'[]') AS absences,
-      COALESCE((SELECT jsonb_agg(jsonb_build_object('start',start_date::text,'end',end_date::text))
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',e.id,'start',e.start_ts,'end',e.end_ts,'title',e.title,'description',e.description,'kind',e.kind) ORDER BY e.start_ts,e.id)
+         FROM public.planning_events e LEFT JOIN public.postes ep ON ep.id=e.poste_id
+         WHERE COALESCE('machine:'||COALESCE(e.machine_id,ep.machine_id)::text,'poste:'||e.poste_id::text)=r.capacity_id
+           AND e.archived_at IS NULL AND e.status<>'CANCELLED'
+           AND (e.of_operation_id IS NULL OR e.kind<>'OF_OPERATION')
+           AND e.start_ts<$2::timestamptz AND e.end_ts>$1::timestamptz),'[]') AS unavailability,
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('start',start_date::text,'end',end_date::text))
         FROM public.programmation_calendar_closures cl WHERE cl.calendar_id=c.id),'[]') AS closures
     FROM resources r LEFT JOIN public.planning_resource_calendars rc ON rc.resource_id=r.id
     LEFT JOIN public.planning_resource_calendars mc ON mc.resource_id=r.capacity_id AND r.capacity_id<>r.id
@@ -204,7 +210,8 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
     const key = JSON.stringify(calendar);
     if (!cache.has(key)) cache.set(key,calendar.shifts.length ? expandCalendar(calendar,from,to) : []);
     return {id:String(row.id),kind:row.kind as Resource["kind"],label:String(row.label),timezone:calendar.timezone,
-      capacityId:String(row.capacity_id),availability:cache.get(key)!,version:String(row.version ?? "unconfigured")};
+       capacityId:String(row.capacity_id),availability:cache.get(key)!,version:String(row.version ?? "unconfigured"),
+       unavailability:Array.isArray(row.unavailability)?row.unavailability as NonNullable<Resource['unavailability']>:[]};
   });
 }
 
