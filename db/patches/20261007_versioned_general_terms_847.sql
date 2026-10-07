@@ -1,6 +1,6 @@
 -- Approved source PDFs stay in the existing GED; selections are append-only.
 INSERT INTO public.ged_document_classes
- (class_key,domain,label,nature,allowed_mime,allowed_extensions,max_size_bytes,approvals_required,retention_months,hold_on_publish,is_active)
+ (class_key,domain,label,nature,allowed_mime_types,allowed_extensions,max_size_bytes,approvals_required,retention_months,hold_on_publish,is_active)
 VALUES
  ('CERP_CGV','COMMERCIAL','Conditions générales de vente CERP','SOURCE',ARRAY['application/pdf'],ARRAY['pdf'],10485760,1,NULL,true,true),
  ('CERP_CGA','COMMERCIAL','Conditions générales d’achat CERP','SOURCE',ARRAY['application/pdf'],ARRAY['pdf'],10485760,1,NULL,true,true)
