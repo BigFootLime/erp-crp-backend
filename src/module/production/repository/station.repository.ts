@@ -18,6 +18,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { frozenStationPlansSql } from "./station-plan.sql";
 
 import {
   assertDeviceUsable,
@@ -1077,7 +1078,7 @@ export async function repoWorklist(params: {
              o.priority::text AS of_priority, o.date_fin_prevue,
              o.quantite_lancee, o.quantite_bonne, o.quantite_rebut,
              o.piece_technique_id, o.affaire_id, o.parent_of_id,
-             o.technical_snapshot_sha256, o.piece_technique_version_id
+             o.technical_snapshot, o.technical_snapshot_sha256, o.piece_technique_version_id
         FROM public.of_operations op
         JOIN public.ordres_fabrication o ON o.id = op.of_id
        WHERE o.statut::text NOT IN ('BROUILLON', 'ANNULE', 'TERMINE')
@@ -1116,11 +1117,7 @@ export async function repoWorklist(params: {
               LIMIT 1
            ) AS active_by_user_id,
            (c.technical_snapshot_sha256 IS NOT NULL) AS has_technical_snapshot,
-           EXISTS (
-             SELECT 1 FROM public.pieces_techniques_documents d
-              WHERE d.piece_technique_id = c.piece_technique_id
-                AND d.removed_at IS NULL
-           ) AS has_plan_document,
+            EXISTS (${frozenStationPlansSql("c")}) AS has_plan_document,
            EXISTS (
              SELECT 1
                FROM public.quality_control_plan qcp
@@ -1215,6 +1212,7 @@ export type DossierRaw = {
   operation: Record<string, unknown>;
   client: Record<string, unknown> | null;
   documents: Array<Record<string, unknown>>;
+  plan_documents: Array<Record<string, unknown>>;
   instructions: Array<Record<string, unknown>>;
   materials: Array<Record<string, unknown>>;
   characteristics: Array<Record<string, unknown>>;
@@ -1279,6 +1277,12 @@ export async function repoDossier(params: {
       END AS client,
       to_jsonb(m) AS machine,
       to_jsonb(po) AS poste,
+
+      -- Exact approved plan versions captured by the OF; superseded versions remain readable.
+      COALESCE((
+        SELECT jsonb_agg(to_jsonb(plan) - 'position' ORDER BY plan.position)
+          FROM (${frozenStationPlansSql("b")}) plan
+      ), '[]'::jsonb) AS plan_documents,
 
       -- Documents de la pièce technique : jamais storage_path.
       COALESCE((
