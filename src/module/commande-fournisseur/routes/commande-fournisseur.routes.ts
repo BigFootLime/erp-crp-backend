@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { generalTermsHandlers } from "../../../shared/commercial-terms/commercial-terms.http";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
@@ -67,6 +68,10 @@ const requireAnyTransitionCapability: RequestHandler = (req, _res, next) => {
 };
 
 const router = Router();
+const generalTerms = generalTermsHandlers("commande-fournisseur", "SUPPLIER_PURCHASE_ORDER");
+router.get("/:id/general-terms", requireCapability("read"), generalTerms.read);
+router.put("/:id/general-terms", requireCapability("update_draft"), generalTerms.select);
+router.get("/:id/official-documents/:documentId/general-terms", requireCapability("export"), generalTerms.download);
 
 router.get("/", requireCapability("read"), listCommandesFournisseurs);
 router.get("/kpis", requireCapability("read"), getCommandeFournisseurKpis);

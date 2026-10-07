@@ -2,6 +2,7 @@ import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-d
 import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
+import { generalTermsReference, type GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
 
 export type SupplierPurchaseOrderSnapshot = {
   type: "SUPPLIER_PURCHASE_ORDER";
@@ -26,6 +27,7 @@ export type SupplierPurchaseOrderSnapshot = {
   }>;
   totals: { total_ht: string; total_discount: string; total_vat: string; freight_ht: string; total_ttc: string };
   issuer: LegalParty;
+  general_terms?: GeneralTermsSnapshot | null;
 };
 
 function snapshotOf(record: AuthoritativePdfArchiveRecord): SupplierPurchaseOrderSnapshot {
@@ -118,5 +120,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
     );
     ctx.y = Math.max(ctx.y, totalBottom + 7);
     if (source.public_comment) ctx.notesSection("Instructions", source.public_comment);
+    const terms = generalTermsReference(source.general_terms);
+    if (terms) ctx.notesSection("Conditions générales d’achat jointes", terms);
   });
 }

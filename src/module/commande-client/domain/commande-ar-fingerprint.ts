@@ -10,6 +10,7 @@ type AddressSource = {
 };
 
 type CommandeArFingerprintSource = {
+  general_terms?: { version_id: string; sha256: string } | null;
   header: {
     numero: unknown;
     customer_reference: unknown;
@@ -92,7 +93,8 @@ function normalizedLine(source: Record<string, unknown>): Record<string, unknown
  */
 export function buildCommandeArContentSnapshot(data: CommandeArFingerprintSource) {
   return {
-    schema_version: 2,
+    schema_version: 3,
+    general_terms: data.general_terms ? { version_id: data.general_terms.version_id, sha256: data.general_terms.sha256 } : null,
     header: {
       numero: data.header.numero,
       customer_reference: data.header.customer_reference,
@@ -139,6 +141,7 @@ export function normalizeCommandeArContentSnapshot(value: unknown): Record<strin
     : {};
 
   return {
+    general_terms: snapshot.general_terms ?? null,
     header: {
       numero: header.numero,
       customer_reference: header.customer_reference,

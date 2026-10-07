@@ -7,6 +7,8 @@ import { cleanupOwnedVaultBlob, computeSha256, readBlob, writeBlob, type VaultBl
 import { assertAuthoritativePdfFilename } from "./authoritative-document.filename";
 import { repoAssertAuthoritativePdfClaim, repoFindLatestAuthoritativePdfForEntity, repoFindLatestGedDocumentForAuthoritativePdf, repoGetAuthoritativePdf, repoListAuthoritativePdfs, repoMarkAuthoritativePdfArchived, repoMarkAuthoritativePdfFailure, repoQueueAuthoritativePdf, type AuthoritativePdfListedRecord } from "./authoritative-document.repository";
 import type { ArchiveQueueItem, AuthoritativePdfArchiveRecord, AuthoritativePdfCreationInput, AuthoritativePdfProducer } from "./authoritative-document.types";
+import { commercialTermsScopeSchema } from "../commercial-terms/commercial-terms.domain";
+import { freezeGeneralTerms } from "../commercial-terms/commercial-terms.repository";
 
 const PDF_CLASS = "CERP_AUTHORITATIVE_PDF";
 const SYSTEM_SNAPSHOT_CLASS = "CERP_SYSTEM_SNAPSHOT";
@@ -99,6 +101,11 @@ export async function queueCreationPdfArchive(
   input: AuthoritativePdfCreationInput
 ): Promise<AuthoritativePdfArchiveRecord> {
   assertCreationInput(input);
+  const scope = commercialTermsScopeSchema.safeParse(input.entityType);
+  if (scope.success && ["CUSTOMER_QUOTE","CUSTOMER_ORDER_ACKNOWLEDGEMENT","SUPPLIER_PURCHASE_ORDER"].includes(input.documentKind)) {
+    const terms=await freezeGeneralTerms(tx,scope.data,input.entityId,input.requireGeneralTerms??false);
+    input={...input,sourceSnapshot:{...input.sourceSnapshot,general_terms:terms}};
+  }
   return repoQueueAuthoritativePdf(tx, input, sha256Text(canonicalJson(input.sourceSnapshot)));
 }
 

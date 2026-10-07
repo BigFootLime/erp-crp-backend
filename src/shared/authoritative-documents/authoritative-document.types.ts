@@ -21,6 +21,8 @@ export type AuthoritativePdfCreationInput = Readonly<{
    * keep their current contract.
    */
   exactPdfBytes?: Buffer;
+  /** Issuance requires an explicit selection once approved CGV/CGA are configured. Draft creation remains possible. */
+  requireGeneralTerms?: boolean;
   actorUserId: number | null;
 }>;
 

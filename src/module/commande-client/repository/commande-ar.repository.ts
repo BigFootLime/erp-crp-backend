@@ -20,6 +20,8 @@ import {
 } from "./commande-client.repository";
 import { canActOnCommandeWorkflowCheckpoint } from "../domain/commande-client-rbac";
 import { buildCommandeArContentSnapshot, isCommandeArSnapshotCurrent } from "../domain/commande-ar-fingerprint";
+import { readTermsSelection, freezeGeneralTerms } from "../../../shared/commercial-terms/commercial-terms.repository";
+import type { GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
 import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import type {
@@ -143,6 +145,7 @@ type CommandeArContact = {
 };
 
 export type CommandeArGenerationData = {
+  general_terms?: GeneralTermsSnapshot | null;
   header: CommandeArHeader;
   lines: CommandeArLine[];
   allocations: CommandeArAllocation[];
@@ -447,6 +450,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
 
   return {
     header,
+    general_terms: (await readTermsSelection(tx, "commande-client", String(commandeId)))?.snapshot ?? null,
     lines: linesRes.rows.map((row) => ({
       id: row.id,
       designation: row.designation,
@@ -585,6 +589,15 @@ export async function repoCreateCommandeArDraft(params: {
       }
     }
 
+    if (params.official_source_snapshot) {
+      const terms = await freezeGeneralTerms(tx, "commande-client", String(params.commande_id), true);
+      // Compare the exact revision rendered by the service, under the order lock.
+      const rendered = params.official_source_snapshot.general_terms as GeneralTermsSnapshot | null | undefined;
+      if ((rendered?.version_id ?? null) !== (terms?.version_id ?? null) || (rendered?.sha256 ?? null) !== (terms?.sha256 ?? null)) {
+        throw new HttpError(409,"GENERAL_TERMS_SELECTION_CONFLICT","Les conditions ont changé. Régénérez l’accusé de réception.");
+      }
+    }
+
     if (params.content_fingerprint && !params.force_new_version) {
       const reusable = await repoFindReusableCommandeArDraft({
         tx,
@@ -703,6 +716,7 @@ export async function repoCreateCommandeArDraft(params: {
         // different document (timestamps, customer reference, PDF metadata)
         // and guarantees that preview, GED archive and email attachment match.
         exactPdfBytes: pdfBuffer,
+        requireGeneralTerms: true,
         actorUserId: params.user_id,
       });
     } else {

@@ -2102,7 +2102,7 @@ export async function repoQueueDevisOfficialDocument(id: number, idempotencyKey:
       entityType: "devis", entityId: String(id), documentKind: "CUSTOMER_QUOTE", documentVersion: existingCount + 1, renderVersion: "devis-pdf-v1",
       idempotencyKey, title: `Devis ${numero}`, originalName: authoritativePdfFilename(["DEVIS", numero, `v${existingCount + 1}`]),
       sourceRevision: currentSourceRevision,
-      sourceSnapshot, actorUserId: audit.user_id,
+      sourceSnapshot, actorUserId: audit.user_id, requireGeneralTerms: true,
     });
     await insertDevisAuditLog(client, audit, { action: "devis.official_document.queue", entity_id: String(id), details: { archive_id: archive.id, document_version: archive.documentVersion, render_version: archive.renderVersion, source_revision: archive.sourceRevision, reissue_reason: input.reissue_reason?.trim() ?? null } });
     await client.query("COMMIT");
