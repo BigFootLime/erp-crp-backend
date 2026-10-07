@@ -71,22 +71,34 @@ export async function replenishConsumable(articleId:string,body:ConsumableReplen
 }
 export async function depleteConsumablePack(articleId:string,body:ConsumableDepletion,audit:AuditContext){
   return consumableCommand({articleId},'PACK_FINISHED',body,audit,async tx=>{
-    await tx.query('SELECT id FROM public.lots WHERE id=$1::uuid AND article_id=$2::uuid FOR UPDATE',[body.lotId,articleId]);
-    await tx.query('SELECT id FROM public.stock_levels WHERE id IN(SELECT stock_level_id FROM public.stock_batches WHERE lot_id=$1::uuid) ORDER BY id FOR UPDATE',[body.lotId]);
+    await tx.query('SELECT id FROM public.articles WHERE id=$1::uuid FOR UPDATE',[articleId]);
+    await tx.query('SELECT id FROM public.lots WHERE article_id=$1::uuid ORDER BY id FOR UPDATE',[articleId]);
+    await tx.query('SELECT id FROM public.stock_levels WHERE article_id=$1::uuid ORDER BY id FOR UPDATE',[articleId]);
     const current=await readConsumableSupplyTx(tx,articleId);assertVersion(current,body.expectedVersion);
-    const packs=current.stock.filter(s=>s.lotId===body.lotId&&s.pack);
-    if(current.article.consumption_mode!=='GLOBAL_PACK'||!packs.length)throw new HttpError(409,'CONSUMABLE_PACK_REQUIRED','Scannez un conditionnement identifié de consommable suivi globalement.');
-    await assertConsumableScanTx(tx,body.scan,{lotId:body.lotId,legacyCodes:[body.lotId,packs[0].lotCode]});
+    const packs=current.stock;
+    if(current.article.consumption_mode!=='GLOBAL_PACK'||!packs.length)throw new HttpError(409,'CONSUMABLE_PACK_REQUIRED','Choisissez un consommable suivi globalement avec du stock physique.');
+    const scanned=body.lotId?packs.find(p=>p.lotId===body.lotId):null;
+    if(body.lotId&&!scanned)throw new HttpError(409,'CONSUMABLE_SCAN_MISMATCH','Le lot scanné ne correspond plus au stock de cet article.');
+    await assertConsumableScanTx(tx,body.scan,{articleId,lotId:body.lotId,legacyCodes:[articleId,current.article.code,current.article.reference,body.lotId,scanned?.lotCode]});
     const total=assertPackDepletion({total:quantity(packs.reduce((sum,p)=>sum+p.total,0)),reserved:quantity(packs.reduce((sum,p)=>sum+p.reserved,0)),expected:body.expectedQuantity});
-    if(packs.some(p=>p.available<p.total))throw new HttpError(409,'CONSUMABLE_PACK_UNAVAILABLE','Le conditionnement est bloqué ou déprécié. Faites traiter sa situation avant de déclarer sa consommation.');
+    if(packs.some(p=>p.available<p.total))throw new HttpError(409,'CONSUMABLE_PACK_UNAVAILABLE','Une partie du stock global est réservée, bloquée ou dépréciée. Faites traiter sa situation avant de déclarer son épuisement.');
     const movementIds:string[]=[];
     for(const p of packs){
-      const created=await repoCreateMovement({movement_type:'OUT',source_document_type:'MANUAL',source_document_id:body.lotId,reason_code:'PALETTE_TERMINEE',notes:body.reason,
+      const created=await repoCreateMovement({movement_type:'OUT',source_document_type:'MANUAL',source_document_id:articleId,reason_code:'PALETTE_TERMINEE',notes:body.reason,
         idempotency_key:`${body.idempotencyKey}:${p.key}:movement`,lines:[{article_id:articleId,lot_id:p.lotId,qty:p.total,unite:p.unit!,src_magasin_id:p.magasinId,src_emplacement_id:p.emplacementId,note:body.reason}]},audit,{client:tx,trusted_source_flow:true});
       const posted=await repoPostMovement(created.movement.id,{},audit,`${body.idempotencyKey}:${p.key}:post`,tx);
       if(posted?.movement.status!=='POSTED')throw new HttpError(409,'CONSUMABLE_PACK_NOT_POSTED','La sortie de cette palette n’a pas été comptabilisée.');
       movementIds.push(created.movement.id);
     }
-    return {movementId:movementIds[0],movementIds,quantity:total,supply:await readConsumableSupplyTx(tx,articleId)};
+    let commands:Array<{id:string;code:string}>=[];
+    if(body.replenishment){
+      const selection=body.replenishment,c=current.catalogues.find(c=>c.supplierId===selection.supplierId);
+      if(current.purchases.length&&!selection.existingPurchasesReviewed)throw new HttpError(409,'CONSUMABLE_PENDING_PURCHASES','Examinez les achats déjà attendus avant de préparer un nouvel achat.');
+      if(!c||(c.stockUnit??c.unit)!==current.article.unit||c.unit!==current.article.unit&&!c.coefficient)throw new HttpError(422,'CONSUMABLE_SUPPLIER_CONDITIONS_REQUIRED','Complétez les conditions et la conversion du fournisseur.');
+      if(selection.destinationId&&!current.destinations.some(d=>d.id===selection.destinationId))throw new HttpError(422,'CONSUMABLE_DESTINATION_INVALID','Choisissez un magasin existant.');
+      const buy=consumablePurchaseQuantity({shortage:current.article.pack,articlePack:current.article.pack,supplierMinimum:c.minimum,supplierPack:c.pack,coefficient:c.coefficient??1});
+      commands=await createMaterialDraftsTx(tx,[{type:'ARTICLE',needId:null,ofId:null,sourceRef:articleId,articleId,designation:current.article.designation,supplierId:c.supplierId,currency:c.currency,destinationId:selection.destinationId,unit:c.unit,stockUnit:current.article.unit,coefficient:c.coefficient??1,catalogueId:c.id,supplierReference:c.reference,quantity:buy.ordered,assigned:0,price:c.price,due:null,delay:c.delay,requirements:[],operation:'Épuisement du stock global · lot fixe'}],audit);
+    }
+    return {movementId:movementIds[0],movementIds,quantity:total,commands,replenishmentPending:!body.replenishment,supply:await readConsumableSupplyTx(tx,articleId)};
   });
 }

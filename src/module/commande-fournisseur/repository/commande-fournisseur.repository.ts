@@ -3,6 +3,7 @@ import { applyAcknowledgementPricesTx } from "./supplier-acknowledgement.reposit
 import { readCatalogueLinePriceTx } from "./catalogue-line-pricing.repository";
 import { priceCatalogueLine, changesCataloguePricing, type CataloguePriceSnapshot } from "../domain/catalogue-line-pricing";
 import {findUntouchedMaterialDraftTx,recordMaterialDraftBaselineTx} from './material-draft-baseline.repository';
+import { assertSubcontractPurchaseReadyTx,assertSubcontractLineIdentityTx } from './subcontract-purchase.repository';
 import {assertPurchaseLineCoveragePatch,type AllocatedPurchaseLine} from '../domain/purchase-line-coverage';
 import {assertLegacyMaterialWrite} from "../../stock/repository/of-material-write-guard";
 import crypto from "node:crypto";
@@ -1140,6 +1141,7 @@ export async function repoUpdateLigne(
       [ligneId, id]
     );
     if (!exists.rows[0]) throw new HttpError(404, "LIGNE_NOT_FOUND", "Ligne introuvable sur cette commande.");
+    await assertSubcontractLineIdentityTx(client,ligneId,body.patch);
 
     const allocation=(await client.query<{qty:number}>(`SELECT COALESCE(sum(CASE WHEN besoin_type='OF_MATERIAL' THEN quantite_couverte ELSE quantite_couverte*$2 END),0)::float8 AS qty
       FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=$1::uuid AND NOT annule`,[ligneId,exists.rows[0].coef_conversion??1])).rows[0];
@@ -1201,16 +1203,16 @@ export async function repoDeleteLigne(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     const header = await lockHeader(client, id);
     assertOptimisticToken(expectedUpdatedAt, header.updated_at_token);
     assertDraft(header.statut);
 
-    // Suppression physique UNIQUEMENT en brouillon (rien n'a été engagé) : les liens besoins
-    // tombent en cascade et libèrent la couverture. Après soumission, une ligne s'annule.
-    const res = await client.query(
-      `DELETE FROM public.commande_fournisseur_ligne WHERE id = $1::uuid AND commande_id = $2::uuid`,
-      [ligneId, id]
-    );
+    // An origin-linked draft keeps its immutable evidence when abandoned.
+    const linked=(await client.query('SELECT line_id FROM public.subcontract_purchase_origins WHERE line_id=$1::uuid',[ligneId])).rowCount;
+    const res = linked
+      ? await client.query(`UPDATE public.commande_fournisseur_ligne SET statut_ligne='ANNULEE',updated_by=$3 WHERE id=$1::uuid AND commande_id=$2::uuid AND statut_ligne='ACTIVE'`,[ligneId,id,audit.user_id])
+      : await client.query(`DELETE FROM public.commande_fournisseur_ligne WHERE id=$1::uuid AND commande_id=$2::uuid`,[ligneId,id]);
     if (res.rowCount === 0) throw new HttpError(404, "LIGNE_NOT_FOUND", "Ligne introuvable sur cette commande.");
     await recomputeTotauxTx(client, id);
     await client.query(`UPDATE public.commande_fournisseur SET updated_by = $2 WHERE id = $1::uuid`, [id, audit.user_id]);
@@ -1321,6 +1323,7 @@ export async function repoTransitionCommandeFournisseur(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
 
     if (body.idempotency_key) {
       const replay = await readIdempotentReplay(client, body.idempotency_key, "SEND");
@@ -1380,6 +1383,7 @@ export async function repoTransitionCommandeFournisseur(
         WHERE commande_id=$1::uuid AND statut_ligne='ACTIVE' AND prix_unitaire_ht IS NULL`,[id])).rows;
       if(incomplete.length)throw new HttpError(422,"SUPPLIER_PRICE_REQUIRED","Complétez les prix inconnus dans le brouillon avant sa validation.",{line_ids:incomplete.map(l=>l.id)});
       await assertConsumableOrderReadyTx(client,id);
+      await assertSubcontractPurchaseReadyTx(client,id);
       const nbLignes = await countLignesActives(client, id);
       if (nbLignes === 0) {
         throw new HttpError(422, "COMMANDE_SANS_LIGNE", "Impossible sans au moins une ligne active.");
@@ -2036,7 +2040,7 @@ export async function repoPreviewPropositions(body: PropositionsPreviewBodyDTO):
               cat.id AS catalogue_id, cat.prix_unitaire::text AS cat_prix, cat.devise AS cat_devise,
               cat.delai_jours AS cat_delai, cat.fournisseur_id AS cat_fournisseur_id
          FROM public.ordres_fabrication o
-         JOIN public.pieces_techniques_achats pta ON pta.piece_technique_id = o.piece_technique_id
+          JOIN public.pieces_techniques_achats pta ON pta.piece_technique_id = o.piece_technique_id
          LEFT JOIN public.articles a ON a.id = pta.article_id
          LEFT JOIN public.fournisseurs f ON f.id = pta.fournisseur_id
          LEFT JOIN LATERAL (
@@ -2046,6 +2050,7 @@ export async function repoPreviewPropositions(body: PropositionsPreviewBodyDTO):
             LIMIT 1
          ) cat ON TRUE
         WHERE ${ofFilter}
+          AND pta.type_achat NOT IN ('SOUS_TRAITANCE','TRAITEMENT','CONSOMMABLE')
           AND NOT EXISTS (
             SELECT 1 FROM public.commande_fournisseur_ligne_besoin b
              WHERE b.besoin_type = 'PIECE_TECHNIQUE_ACHAT'
@@ -2253,7 +2258,8 @@ export type MaterialDraftLine = {
   needId: string | null; sourceRef: string; ofId: number | null; articleId: string; designation: string;
   supplierId: string; currency: string; destinationId: string | null; unit: string;
   quantity: number; assigned: number; price: number | null; due: string | null;
-  type?:"MATIERE"|"ARTICLE";stockUnit?:string;coefficient?:number;catalogueId?:string|null;supplierReference?:string|null;delay?:number|null;
+  type?:"MATIERE"|"ARTICLE"|"SOUS_TRAITANCE";stockUnit?:string;coefficient?:number;catalogueId?:string|null;supplierReference?:string|null;delay?:number|null;
+  subcontract?:{operationId:string;materialOriginId:string|null;snapshot:unknown};
   requirements: string[]; operation: string;
   allocations?: Array<{needId:string;sourceRef:string;ofId:number;assigned:number}>;
 };
@@ -2268,7 +2274,7 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
   for (const group of groups.values()) {
     const first = group[0];
     assertFournisseurCommandable(await fetchFournisseurMini(tx, first.supplierId));
-    const reusable = first.ofId ? await findUntouchedMaterialDraftTx(tx,first) : null;
+    const reusable = first.ofId && !group.some(l=>l.subcontract) ? await findUntouchedMaterialDraftTx(tx,first) : null;
     const code = reusable?.code ?? await generateCommandeFournisseurCode(tx);
     const id = reusable?.id ?? (await tx.query<{id:string}>(`INSERT INTO public.commande_fournisseur
       (code,origine,fournisseur_id,devise,magasin_livraison_id,note_interne,created_by,updated_by)
@@ -2279,10 +2285,13 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
       const lineId = await insertLigneTx(tx,id,position+index+1,{
         type:line.type??"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.stockUnit??line.unit,coef_conversion:line.coefficient??1,
         catalogue_id:line.catalogueId,reference_fournisseur:line.supplierReference,
+        apply_catalogue_pricing:line.type==='SOUS_TRAITANCE'&&line.price!==null,
         quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,delai_jours:line.delay,
         of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
         exigences_qualite:line.requirements.map(valeur=>({type:"SPECIFICATION" as const,valeur,obligatoire:true})),documents_attendus:[],besoins:[],
       },audit.user_id,true);
+      if(line.subcontract)await tx.query(`INSERT INTO public.subcontract_purchase_origins(line_id,of_id,operation_id,material_origin_id,preparation_snapshot,created_by)
+        VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::jsonb,$6)`,[lineId,line.ofId,line.subcontract.operationId,line.subcontract.materialOriginId,JSON.stringify(line.subcontract.snapshot),audit.user_id]);
       const allocations=line.allocations??(line.needId&&line.ofId?[{needId:line.needId,sourceRef:line.sourceRef,ofId:line.ofId,assigned:line.assigned}]:[]);
       for(const allocation of allocations)await tx.query(`INSERT INTO public.commande_fournisseur_ligne_besoin
         (ligne_id,besoin_type,besoin_ref,besoin_of_id,of_id,quantite_couverte,material_need_id)
