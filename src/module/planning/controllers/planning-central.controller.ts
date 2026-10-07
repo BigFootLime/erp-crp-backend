@@ -46,7 +46,8 @@ export const centralUnplan: RequestHandler = asyncHandler(async(req,res)=>{
 });
 export const centralStatus: RequestHandler = asyncHandler(async (req,res)=>{
   res.setHeader("Cache-Control","no-store");res.json({apiVersion:2,...await readCentralSettings(),
-    canManageSchedule:requestHasElevatedAccountModuleAccess(req) || roleHasPlanningCapability(req.user?.role,"manage_schedule")});
+    canManageSchedule:requestHasElevatedAccountModuleAccess(req) || roleHasPlanningCapability(req.user?.role,"manage_schedule"),
+    canReadCapacity:requestHasElevatedAccountModuleAccess(req) || roleHasPlanningCapability(req.user?.role,'read_capacity')});
 });
 export const centralSnapshot: RequestHandler = asyncHandler(async(req,res)=>{
   const query=centralWindowSchema.parse(req.query);
