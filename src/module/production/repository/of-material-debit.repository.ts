@@ -12,11 +12,16 @@ import {consumeMaterialReservationTx} from '../../stock/repository/partial-reser
 import {assertOperationalLotQualityEligibility} from '../../qualite/repository/quality-operational-gate.repository';
 import {repoDeclareQuantity} from './production-execution.repository';
 import {releaseMaterialTransferTx} from './material-transfer.repository';
+import type {PoolClient} from 'pg';
 
 /** One owner for reservation consumption, stock posting, produced WIP and its
  * transfer proof. A failed declaration or transfer rolls back the whole debit. */
-export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:AuditContext){
+export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:AuditContext,station?:{
+  authorizeTransaction:(tx:PoolClient)=>Promise<void>;
+  resolvePointage:(tx:PoolClient)=>Promise<string>;
+}){
   return materialCommand(ofId,'DEBIT',body,audit,async(tx,current)=>{
+    const pointageId=await station?.resolvePointage(tx);
     const needs=current.needs.filter(n=>n.operationId===body.operationId);
     if(!current.technicalVersion||!needs.length||needs.some(n=>!n.id||!n.debitRule||n.blockers.length))
       throw new HttpError(409,'MATERIAL_DEBIT_PREPARATION_REQUIRED','Complétez les matières et les règles de débit de cette opération.');
@@ -80,7 +85,7 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
       quantity((observed.good+observed.scrap)*(rule.unitsPerBlank+rule.kerfPerBlank)),s.quantity,source.quantity,source.barClosure?.discardedQuantity??0,Boolean(source.barClosure),s.extendedQuantity??0,observed.good,observed.scrap]);
     }
     const declaration=await repoDeclareQuantity({transactionClient:tx,declarationId,idempotencyKey:body.idempotencyKey,audit,
-      body:{of_id:ofId,operation_id:body.operationId,qty_good:body.good,qty_scrap:body.scrap,qty_pending_control:0,qty_rework:0,
+      body:{of_id:ofId,operation_id:body.operationId,...(pointageId?{pointage_id:pointageId}:{}),qty_good:body.good,qty_scrap:body.scrap,qty_pending_control:0,qty_rework:0,
         scrap_reason_code:body.scrapReason,unite:'u',note:body.note}});
     const createdRemnants=[];
     for(const remnant of remnants){
@@ -94,5 +99,5 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
         quantity:body.good,key:body.idempotencyKey,reason:body.note},audit);
     }
     return {coverage:await readMaterialTx(tx,ofId),debitId,declarationId:declaration.id,consumed,remnants:createdRemnants};
-  });
+  },station?.authorizeTransaction);
 }

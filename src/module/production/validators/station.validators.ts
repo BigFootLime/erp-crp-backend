@@ -155,6 +155,7 @@ export const stationWorklistQuerySchema = z.object({
    * un tour n'a rien à faire de la file de la fraiseuse.
    */
   machine_only: z.coerce.boolean().default(true),
+  material_only: z.enum(['true','false']).optional().transform(v=>v==='true'),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 export type StationWorklistQueryDTO = z.infer<typeof stationWorklistQuerySchema>;
@@ -172,6 +173,7 @@ export const stationScanSchema = z.object({
    * jamais.
    */
   code: z.string().trim().min(1).max(200),
+  material_only: z.boolean().optional().default(false),
 });
 export type StationScanDTO = z.infer<typeof stationScanSchema>;
 

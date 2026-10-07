@@ -1066,6 +1066,7 @@ export async function repoWorklist(params: {
   workshopZone: string | null;
   q: string | null;
   machineOnly: boolean;
+  materialOnly?: boolean;
   includeBlocked: boolean;
   limit: number;
 }): Promise<WorklistRow[]> {
@@ -1083,7 +1084,10 @@ export async function repoWorklist(params: {
         JOIN public.ordres_fabrication o ON o.id = op.of_id
        WHERE o.statut::text NOT IN ('BROUILLON', 'ANNULE', 'TERMINE')
          AND op.status::text NOT IN ('DONE', 'CANCELLED')
-         AND ($1::uuid IS NULL OR NOT $4::boolean OR op.machine_id = $1 OR op.machine_id IS NULL)
+          AND ($1::uuid IS NULL OR NOT $4::boolean OR op.machine_id = $1 OR op.machine_id IS NULL)
+          AND (NOT $6::boolean OR EXISTS(SELECT 1 FROM public.of_material_needs mn
+            WHERE mn.of_id=o.id AND mn.operation_id=op.id AND mn.need_kind='MATIERE'
+              AND mn.superseded_at IS NULL AND mn.technical_version_id=o.piece_technique_version_id))
          AND (
            $2::text IS NULL
            OR o.numero ILIKE '%' || $2 || '%'
@@ -1163,6 +1167,7 @@ export async function repoWorklist(params: {
       params.workshopZone,
       params.machineOnly,
       params.limit,
+      params.materialOnly??false,
     ]
   );
 
@@ -1504,7 +1509,7 @@ export async function repoDossier(params: {
 /* Résolution de scan                                                         */
 /* -------------------------------------------------------------------------- */
 
-export async function repoResolveScan(code: string): Promise<
+export async function repoResolveScan(code: string, materialOnly = false): Promise<
   { of_id: number; of_numero: string; operation_id: string | null; phase: number | null } | null
 > {
   // Formats acceptés : « OF-2026-0007 », « OF-2026-0007/30 », une URL CERP se
@@ -1521,17 +1526,27 @@ export async function repoResolveScan(code: string): Promise<
             (SELECT op.id FROM public.of_operations op
               WHERE op.of_id = o.id
                 AND ($2::int IS NULL OR op.phase = $2)
-                AND op.status::text NOT IN ('DONE','CANCELLED')
+                 AND op.status::text NOT IN ('DONE','CANCELLED')
+                 AND (NOT $4::boolean OR EXISTS (
+                   SELECT 1 FROM public.of_material_needs mn
+                    WHERE mn.operation_id=op.id AND mn.of_id=o.id
+                      AND mn.need_kind='MATIERE' AND mn.superseded_at IS NULL
+                      AND mn.technical_version_id=o.piece_technique_version_id))
               ORDER BY op.phase LIMIT 1) AS operation_id,
             (SELECT op.phase FROM public.of_operations op
               WHERE op.of_id = o.id
                 AND ($2::int IS NULL OR op.phase = $2)
-                AND op.status::text NOT IN ('DONE','CANCELLED')
+                 AND op.status::text NOT IN ('DONE','CANCELLED')
+                 AND (NOT $4::boolean OR EXISTS (
+                   SELECT 1 FROM public.of_material_needs mn
+                    WHERE mn.operation_id=op.id AND mn.of_id=o.id
+                      AND mn.need_kind='MATIERE' AND mn.superseded_at IS NULL
+                      AND mn.technical_version_id=o.piece_technique_version_id))
               ORDER BY op.phase LIMIT 1) AS phase
        FROM public.ordres_fabrication o
       WHERE o.numero = $1 OR ($3::bigint IS NOT NULL AND o.id = $3::bigint)
       LIMIT 1`,
-    [numero, phase, /^\d+$/.test(numero) ? numero : null]
+    [numero, phase, /^\d+$/.test(numero) ? numero : null, materialOnly]
   );
 
   const row = rows[0];

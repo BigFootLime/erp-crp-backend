@@ -174,8 +174,10 @@ export async function getOfMaterial(ofId:number){
   try{await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");const result=await materialWorkflowEnabled(tx)?await readMaterialTx(tx,ofId):{enabled:false as const};await tx.query("COMMIT");return result;}
   catch(error){await tx.query("ROLLBACK");throw error;}finally{tx.release();}
 }
-export async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>){
+export async function materialCommand<T>(ofId:number,type:string,body:{expectedVersion:string;idempotencyKey:string;sourceRef?:string},audit:AuditContext,action:(tx:PoolClient,current:Awaited<ReturnType<typeof readMaterialTx>>)=>Promise<T>,authorizeTransaction?:(tx:PoolClient)=>Promise<void>){
   return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
+    // Station adapters recheck and lock their live identity even on a replay.
+    await authorizeTransaction?.(tx);
     await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     await tx.query("SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE",[ofId]);
     if(!await materialWorkflowEnabled(tx))throw new HttpError(409,"MATERIAL_WORKFLOW_DISABLED","Le parcours matière n’est pas activé.");
