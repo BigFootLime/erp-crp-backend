@@ -21,11 +21,12 @@ function tx(rows: unknown[][]) {
   } as unknown as PoolClient;
 }
 it("refuses a revoked device before reading a target or performing material effects", async () => {
-  const t = tx([[{ status: "REVOKED" }]]);
+  const t = tx([[{ id: 17 }], [{ status: "REVOKED" }]]);
   await expect(authorizeCuttingTx(t, station, 91, "op")).rejects.toMatchObject({
     code: "STATION_DEVICE_DISABLED",
   });
-  expect(t.query).toHaveBeenCalledTimes(1);
+  expect(t.query).toHaveBeenCalledTimes(2);
+  expect(t.query).not.toHaveBeenCalledWith(expect.stringContaining("FROM public.of_operations"), expect.anything());
 });
 it("refuses a locked or changed session even for an idempotent transport retry", async () => {
   for (const session of [
@@ -35,7 +36,7 @@ it("refuses a locked or changed session even for an idempotent transport retry",
   ]) {
     await expect(
       authorizeCuttingTx(
-        tx([[{ status: "ACTIVE" }], [session]]),
+        tx([[{ id: 17 }], [{ status: "ACTIVE" }], [session]]),
         station,
         91,
         "op",
@@ -47,7 +48,7 @@ it("accepts the OF without a selected machine, including an existing workshop se
   for (const machine_id of [null, 'machine']) {
     const s = { ...station, machine_id };
     await expect(authorizeCuttingTx(tx([
-      [{status: 'ACTIVE'}], [{usable: true, user_id: 17, machine_id}],
+      [{id: 17}], [{status: 'ACTIVE'}], [{usable: true, user_id: 17, machine_id}],
       [{machine_id: 'operation-machine', material_operation: true}],
     ]), s, 91, 'op')).resolves.toBeUndefined();
   }
@@ -57,6 +58,7 @@ it("does not let a valid session debit an unprepared operation", async () => {
   await expect(
     authorizeCuttingTx(
       tx([
+        [{ id: 17 }],
         [{ status: "ACTIVE" }],
         [s],
         [{ machine_id: "machine", material_operation: false }],
@@ -66,6 +68,14 @@ it("does not let a valid session debit an unprepared operation", async () => {
       "op",
     ),
   ).rejects.toMatchObject({ code: "STATION_CUTTING_OPERATION_UNKNOWN" });
+});
+it("refuses a recovering account before reading a device, session or material target", async () => {
+  const t = tx([[]]);
+  await expect(authorizeCuttingTx(t, station, 91, "op")).rejects.toMatchObject({
+    code: "STATION_ACCOUNT_RECOVERY_REQUIRED",
+  });
+  expect(t.query).toHaveBeenCalledTimes(1);
+  expect(t.query).toHaveBeenCalledWith(expect.stringContaining("NOT mfa_reenrollment_required FOR SHARE"), [17]);
 });
 it("requires an own active pointage consistent with the OF assignment, even without a station machine", async () => {
   const t = tx([]);

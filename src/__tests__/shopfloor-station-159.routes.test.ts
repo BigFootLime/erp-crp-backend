@@ -241,6 +241,8 @@ describe("#159 — écran verrouillé et bootstrap", () => {
 /* -------------------------------------------------------------------------- */
 describe("#159 — identification", () => {
   it("ouvre une session et pose un cookie httpOnly", async () => {
+    on(/FROM public\.users u[\s\S]*NOT u\.mfa_reenrollment_required FOR SHARE OF u/i, [{ session_epoch: "0" }]);
+    on(/SELECT id FROM public\.operator_badge_credentials[\s\S]*revoked_at IS NULL FOR SHARE/i, [{ id: "cred-1" }]);
     on(/FROM public\.production_devices d[\s\S]*WHERE d\.public_code/i, [deviceRow()]);
     on(/FROM public\.operator_badge_credentials\s*\n\s*WHERE credential_hash/i, [
       { id: "cred-1", user_id: 7, active: true, revoked_at: null, locked_until: null },

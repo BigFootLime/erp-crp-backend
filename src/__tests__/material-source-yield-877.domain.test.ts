@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { materialSourceYields } from '../module/production/domain/material-source-yield';
 import { buildOfTraveler } from '../module/production/domain/of-traveler';
