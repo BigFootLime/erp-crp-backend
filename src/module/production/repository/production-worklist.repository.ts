@@ -10,10 +10,15 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       WHERE EXISTS(SELECT 1 FROM public.ordres_fabrication active WHERE active.commande_id=cc.id AND active.statut NOT IN('ANNULE','TERMINE','CLOTURE'))
     ), base AS (
       SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.statut::text,o.technical_readiness,
-        o.piece_technique_id::text,pt.code_piece AS piece_code,pt.designation AS piece_designation,
+         o.piece_technique_id::text,o.piece_technique_version_id::text,o.article_id::text,o.technical_snapshot_sha256,
+         pt.code_piece AS piece_code,pt.designation AS piece_designation,
         o.client_id,c.company_name AS client_company_name,
         o.parent_of_id::bigint::int,parent.numero AS parent_numero,o.root_of_id::bigint::int,
-        o.generation_level,o.structure_path,o.quantite_lancee::float8,o.quantite_bonne::float8,
+         o.generation_level,o.structure_path,o.quantite_lancee::float8,o.quantite_bonne::float8,o.quantite_rebut::float8,
+         (SELECT count(*)::int FROM public.planning_events e WHERE (e.of_id=o.id OR e.of_operation_id IN(SELECT id FROM public.of_operations WHERE of_id=o.id))
+           AND e.archived_at IS NULL AND e.status<>'CANCELLED') AS consolidation_planned_count,
+         (SELECT count(*)::int FROM public.of_operations p WHERE p.of_id=o.id AND p.status::text NOT IN ('TODO','READY')) AS consolidation_started_count,
+         EXISTS(SELECT 1 FROM public.production_consolidations g WHERE g.producer_of_id=o.id) AS was_consolidation_producer,
         o.date_fin_prevue::text,o.updated_at::text,o.created_at::text,
         o.planning_wait_started_at::text,
         COALESCE(v.manufacturing_mode,'SIMPLE') AS manufacturing_mode,v.indice,
