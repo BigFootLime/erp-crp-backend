@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "b42540dc7455af50c547bc4ba37ed0c4d0392b4e600e375d744c5b18efc5bb11";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "1c18cc0181787892d4df54b8a671a80b5e4828803099fc71239ea1269cd1abb5";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -3194,7 +3194,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:126",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:132",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3209,7 +3209,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:120",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:126",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3226,7 +3226,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:71",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3243,7 +3243,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:74",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3260,7 +3260,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:80",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:85",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3277,7 +3277,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes-fournisseurs/{id}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:83",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:88",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3294,7 +3294,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/accuse",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:91",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:96",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3311,7 +3311,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/consultations",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:81",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:86",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3330,7 +3330,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/consultations/commands",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:82",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3349,7 +3349,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:93",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:98",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3366,7 +3366,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/documents/{documentId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:94",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:99",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3383,7 +3383,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/duplicate",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:107",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3398,9 +3398,43 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/commandes-fournisseurs/{id}/general-terms",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:72",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(read)",
+      "generalTerms.read"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(read)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/commandes-fournisseurs/{id}/general-terms",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:73",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(update_draft)",
+      "generalTerms.select"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(update_draft)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/lignes",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:85",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:90",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3417,7 +3451,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/commandes-fournisseurs/{id}/lignes/{ligneId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:88",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3434,7 +3468,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes-fournisseurs/{id}/lignes/{ligneId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:87",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:92",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3451,7 +3485,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/lignes/reorder",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:86",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:91",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3468,7 +3502,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:99",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:104",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3485,7 +3519,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/official-documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:100",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:105",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3502,7 +3536,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:101",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:106",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3519,7 +3553,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/download",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:103",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:108",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3535,8 +3569,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/general-terms",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:74",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(export)",
+      "generalTerms.download"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(export)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:102",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:107",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3553,7 +3604,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:104",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:109",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3570,7 +3621,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/receptions/resync",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:106",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:111",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3587,7 +3638,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/transition",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:90",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:95",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3604,7 +3655,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/kpis",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:72",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3621,7 +3672,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/propositions/confirm",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:78",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:83",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3638,7 +3689,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/propositions/preview",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:77",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3655,7 +3706,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/totaux/simulate",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:75",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3672,7 +3723,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/commandes/{id}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:198",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:204",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3688,7 +3739,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:129",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:135",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3704,7 +3755,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes/{id}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:195",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:201",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3722,7 +3773,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/acknowledgements",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:215",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:221",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3740,7 +3791,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/acknowledgements",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:216",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:222",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3758,7 +3809,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/acknowledgements/{documentId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:217",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:223",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3776,7 +3827,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/acknowledgements/{documentId}/download",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:219",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:225",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3793,8 +3844,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/commandes/{id}/acknowledgements/{documentId}/general-terms",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:113",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireAcknowledgementExport",
+      "generalTerms.download"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireAcknowledgementExport"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/commandes/{id}/acknowledgements/{documentId}/preview",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:218",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:224",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3812,7 +3881,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/acknowledgements/{documentId}/print-intents",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:220",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:226",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3830,7 +3899,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/acknowledgements/{documentId}/send",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:221",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:227",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3848,7 +3917,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/affaires/generate",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:244",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:250",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3864,7 +3933,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/affaires/preview",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:241",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:247",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3881,7 +3950,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/analyze-stock",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:232",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:238",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3898,7 +3967,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/ar",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:211",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:217",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3915,7 +3984,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/ar/generate",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:204",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:210",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3932,7 +4001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/ar/send",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:224",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:230",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3949,7 +4018,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/creation-snapshot",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:133",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:139",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3968,7 +4037,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:135",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:141",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3987,7 +4056,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:134",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:140",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4006,7 +4075,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:136",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:142",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4025,7 +4094,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/documents/{docId}/file",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:156",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:162",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4041,7 +4110,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/duplicate",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:247",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:253",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4055,9 +4124,45 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/commandes/{id}/general-terms",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:111",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireAcknowledgementExport",
+      "generalTerms.read"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireAcknowledgementExport"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/commandes/{id}/general-terms",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:112",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireAcknowledgementExport",
+      "generalTerms.select"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireAcknowledgementExport"
+    ]
+  },
+  {
     "method": "post",
     "path": "/commandes/{id}/generate-affaires",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:235",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:241",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4074,7 +4179,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/generate-affaires/confirm",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:238",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:244",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4090,7 +4195,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/releases",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:160",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:166",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4106,7 +4211,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/releases",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:163",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:169",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4122,7 +4227,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/commandes/{id}/releases/{releaseId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:172",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:178",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4138,7 +4243,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/releases/{releaseId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:166",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:172",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4154,7 +4259,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes/{id}/releases/{releaseId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:169",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:175",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4170,7 +4275,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/releases/{releaseId}/lines",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:178",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:184",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4186,7 +4291,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/commandes/{id}/releases/{releaseId}/lines/{lineId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:188",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:194",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4202,7 +4307,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes/{id}/releases/{releaseId}/lines/{lineId}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:181",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:187",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4218,7 +4323,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/releases/{releaseId}/status",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:175",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:181",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4234,7 +4339,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/status",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:201",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:207",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4251,7 +4356,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/stock-receipts",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:142",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:148",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4268,7 +4373,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes/{id}/workflow",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:139",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:145",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4285,7 +4390,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/{id}/workflow/actions",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:153",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:159",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4302,7 +4407,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes/{id}/workflow/checkpoints/{checkpointCode}",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:145",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:151",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4319,7 +4424,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes/technical-pieces/quick",
-    "source": "src/module/commande-client/routes/commande-client.routes.ts:123",
+    "source": "src/module/commande-client/routes/commande-client.routes.ts:129",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4416,7 +4521,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis",
-    "source": "src/module/devis/routes/devis.routes.ts:107",
+    "source": "src/module/devis/routes/devis.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4433,7 +4538,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis",
-    "source": "src/module/devis/routes/devis.routes.ts:120",
+    "source": "src/module/devis/routes/devis.routes.ts:125",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4452,7 +4557,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:124",
+    "source": "src/module/devis/routes/devis.routes.ts:129",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4469,7 +4574,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:110",
+    "source": "src/module/devis/routes/devis.routes.ts:115",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4486,7 +4591,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/devis/{id}",
-    "source": "src/module/devis/routes/devis.routes.ts:123",
+    "source": "src/module/devis/routes/devis.routes.ts:128",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4505,7 +4610,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/commande-draft",
-    "source": "src/module/devis/routes/devis.routes.ts:112",
+    "source": "src/module/devis/routes/devis.routes.ts:117",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4522,7 +4627,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/convert-to-commande",
-    "source": "src/module/devis/routes/devis.routes.ts:121",
+    "source": "src/module/devis/routes/devis.routes.ts:126",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4539,7 +4644,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/documents/{docId}/file",
-    "source": "src/module/devis/routes/devis.routes.ts:113",
+    "source": "src/module/devis/routes/devis.routes.ts:118",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4555,8 +4660,42 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/devis/{id}/general-terms",
+    "source": "src/module/devis/routes/devis.routes.ts:108",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(read)",
+      "generalTerms.read"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(read)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/devis/{id}/general-terms",
+    "source": "src/module/devis/routes/devis.routes.ts:109",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(update_draft)",
+      "generalTerms.select"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(update_draft)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/devis/{id}/official-documents",
-    "source": "src/module/devis/routes/devis.routes.ts:114",
+    "source": "src/module/devis/routes/devis.routes.ts:119",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4573,7 +4712,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/official-documents",
-    "source": "src/module/devis/routes/devis.routes.ts:115",
+    "source": "src/module/devis/routes/devis.routes.ts:120",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4590,7 +4729,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}",
-    "source": "src/module/devis/routes/devis.routes.ts:116",
+    "source": "src/module/devis/routes/devis.routes.ts:121",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4607,7 +4746,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}/download",
-    "source": "src/module/devis/routes/devis.routes.ts:118",
+    "source": "src/module/devis/routes/devis.routes.ts:123",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4623,8 +4762,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/devis/{id}/official-documents/{documentId}/general-terms",
+    "source": "src/module/devis/routes/devis.routes.ts:110",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(export)",
+      "generalTerms.download"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(export)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/devis/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/devis/routes/devis.routes.ts:117",
+    "source": "src/module/devis/routes/devis.routes.ts:122",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4641,7 +4797,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/devis/routes/devis.routes.ts:119",
+    "source": "src/module/devis/routes/devis.routes.ts:124",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4658,7 +4814,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/devis/{id}/revise",
-    "source": "src/module/devis/routes/devis.routes.ts:122",
+    "source": "src/module/devis/routes/devis.routes.ts:127",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4677,7 +4833,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/{id}/versions",
-    "source": "src/module/devis/routes/devis.routes.ts:111",
+    "source": "src/module/devis/routes/devis.routes.ts:116",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4694,7 +4850,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/by-article-devis-code/{code}",
-    "source": "src/module/devis/routes/devis.routes.ts:109",
+    "source": "src/module/devis/routes/devis.routes.ts:114",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4711,7 +4867,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/devis/by-article/{articleId}",
-    "source": "src/module/devis/routes/devis.routes.ts:108",
+    "source": "src/module/devis/routes/devis.routes.ts:113",
     "middleware": [
       "anonymous",
       "authenticateToken",

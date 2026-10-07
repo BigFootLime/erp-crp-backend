@@ -32,6 +32,7 @@ import { repoRecordInitialPromiseEvent } from "../../procurement-reliability/rep
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { freezeGeneralTerms } from "../../../shared/commercial-terms/commercial-terms.repository";
 import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
 import type {
   AccuseBodyDTO,
@@ -1386,6 +1387,7 @@ export async function repoTransitionCommandeFournisseur(
       assertFournisseurCommandable(await fetchFournisseurMini(client, header.fournisseur_id));
     }
     if (kind === "submit" || kind === "approve") {
+      await freezeGeneralTerms(client,"commande-fournisseur",id,true);
       const incomplete=(await client.query<{id:string}>(`SELECT id::text FROM public.commande_fournisseur_ligne
         WHERE commande_id=$1::uuid AND statut_ligne='ACTIVE' AND prix_unitaire_ht IS NULL`,[id])).rows;
       if(incomplete.length)throw new HttpError(422,"SUPPLIER_PRICE_REQUIRED","Complétez les prix inconnus dans le brouillon avant sa validation.",{line_ids:incomplete.map(l=>l.id)});
@@ -1405,6 +1407,11 @@ export async function repoTransitionCommandeFournisseur(
           "DOCUMENT_VERSION_REQUISE",
           "Impossible d'envoyer sans version figée du bon de commande : générez d'abord le document."
         );
+      }
+      const terms=await freezeGeneralTerms(client,"commande-fournisseur",id,true);
+      const prepared=await client.query(`SELECT payload->'general_terms' AS terms FROM public.commande_fournisseur_document WHERE commande_id=$1::uuid AND version=$2`,[id,header.version_document]);
+      if ((prepared.rows[0]?.terms?.version_id??null)!==(terms?.version_id??null) || (prepared.rows[0]?.terms?.sha256??null)!==(terms?.sha256??null)) {
+        throw new HttpError(409,"GENERAL_TERMS_SELECTION_CONFLICT","Régénérez le bon de commande avec les conditions approuvées avant l’envoi.");
       }
     }
     if (kind === "cancel") {
@@ -1606,6 +1613,7 @@ export async function repoGenerateDocumentVersion(
     const version = Number(header.version_document) + 1;
     const payload = {
       type: "BON_DE_COMMANDE_FOURNISSEUR",
+      general_terms: await freezeGeneralTerms(client,"commande-fournisseur",id,true),
       version,
       code: detail.code,
       statut: detail.statut,
@@ -1738,7 +1746,7 @@ export async function repoQueueSupplierPoOfficialDocument(
       documentVersion: existingCount + 1, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
       originalName: authoritativePdfFilename(["BCF", code, `v${existingCount + 1}`]),
       sourceRevision: currentSourceRevision,
-      sourceSnapshot, actorUserId: audit.user_id,
+      sourceSnapshot, actorUserId: audit.user_id, requireGeneralTerms: true,
     });
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.official_document.queue", entity_type: "commande_fournisseur", entity_id: id,
