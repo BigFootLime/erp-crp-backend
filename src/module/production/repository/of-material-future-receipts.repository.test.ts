@@ -1,4 +1,5 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {materialOriginQueryFixture} from '../../../__tests__/fixtures/material-origin-queries.fixture';
 const m=vi.hoisted(()=>({reserve:vi.fn(),audit:vi.fn(),customer:vi.fn()}));
 vi.mock('../../stock/repository/stock-reservation.repository',()=>({repoCreateStockReservation:m.reserve}));
 vi.mock('./production-preparation.repository',()=>({preparationAudit:m.audit}));
@@ -6,7 +7,8 @@ vi.mock('./customer-material-receipts.repository',()=>({transferCustomerMaterial
 import {transferMaterialReceiptTx} from './of-material-receipts.repository';
 beforeEach(()=>{vi.clearAllMocks();m.reserve.mockResolvedValue({reservation:{id:'reservation'}})});
 function fixture(start:number,qty:number,offset:number,assigned:number,here=0){
-  const tx={query:vi.fn(async(sql:string)=>{
+  const tx={query:vi.fn(async(sql:string,params:unknown[]=[])=>{
+    const policy=materialOriginQueryFixture(sql,params,{need:20});if(policy)return policy;
     if(sql.includes('receipt_start'))return {rows:[{line_id:'line',qty,receipt_start:start,movement_status:'POSTED',article_id:'article',lot_id:'lot',unite:'m',dst_magasin_id:'store',dst_emplacement_id:1}]};
     if(sql.includes('FOR UPDATE OF b'))return {rows:[{id:'allocation',material_need_id:'need',of_id:20,article_id:'article',unit:'m',assigned,receipt_offset:offset,transferred:here}]};
     if(sql.includes('sum(r.qty_reserved)'))return {rows:[{qty:here}]};

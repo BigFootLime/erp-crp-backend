@@ -1,4 +1,5 @@
 import {beforeEach,expect,it,vi} from 'vitest';
+import {materialOriginQueryFixture} from '../../../__tests__/fixtures/material-origin-queries.fixture';
 const m=vi.hoisted(()=>({reserve:vi.fn(),audit:vi.fn()}));
 vi.mock('../../stock/repository/stock-reservation.repository',()=>({repoCreateStockReservation:m.reserve}));
 vi.mock('./production-preparation.repository',()=>({preparationAudit:m.audit}));
@@ -9,7 +10,8 @@ it('preserves allocation intervals when a previous need is kept separately',asyn
   m.reserve.mockResolvedValue({reservation:{id:'reservation'}});
   const allocations=[{id:'previous',material_need_id:'old',of_id:1,assigned:20,kept_separate:true,transferred:0},
     {id:'current',material_need_id:'new',of_id:2,assigned:20,kept_separate:false,transferred:0,article_id:'article',unit:'u'}];
-  const tx={query:vi.fn(async(sql:string)=>{
+  const tx={query:vi.fn(async(sql:string,params:unknown[]=[])=>{
+    const policy=materialOriginQueryFixture(sql,params,{old:1,new:2});if(policy)return policy;
     if(sql.startsWith('SELECT s.id'))return {rows:[{id:'receipt',qty:30,line_id:'line',article_id:'article',lot_id:'lot',unite:'u',movement_status:'POSTED',dst_magasin_id:'store',dst_emplacement_id:1,receipt_start:0}]};
     if(sql.startsWith('SELECT b.id'))return {rows:allocations};
     if(sql.startsWith('SELECT COALESCE(sum'))return {rows:[{qty:0}]};
@@ -25,7 +27,8 @@ it('allocates a mapped MP portion across OF needs and leaves supplier overpack i
   m.reserve.mockImplementation(async(body)=>({reservation:{id:`reservation-${body.source.of_id}`}}));
   const allocations=[{id:'a',material_need_id:'need-a',of_id:1,assigned:40,receipt_offset:0,transferred:30,article_id:'finished-piece',unit:'u'},
     {id:'b',material_need_id:'need-b',of_id:2,assigned:20,receipt_offset:40,transferred:0,article_id:'finished-piece',unit:'u'}];
-  const tx={query:vi.fn(async(sql:string)=>{
+  const tx={query:vi.fn(async(sql:string,params:unknown[]=[])=>{
+    const policy=materialOriginQueryFixture(sql,params,{'need-a':1,'need-b':2});if(policy)return policy;
     if(sql.startsWith('SELECT s.id'))return {rows:[{id:'receipt',qty:50,line_id:'purchase-line',source_article_id:'finished-piece',article_id:'mp',lot_id:'mp-portion',unite:'u',movement_status:'POSTED',dst_magasin_id:'store',dst_emplacement_id:1,receipt_start:30}]};
     if(sql.startsWith('SELECT b.id'))return {rows:allocations};
     if(sql.startsWith('SELECT COALESCE(sum'))return {rows:[{qty:0}]};
