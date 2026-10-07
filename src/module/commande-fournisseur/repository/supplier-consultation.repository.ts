@@ -10,6 +10,7 @@ import {supplierOfferResponseSchema,type SupplierConsultationCommand,type Suppli
 import {assertDraft,assertFournisseurCommandable,assertOptimisticToken,fetchFournisseurMini,insertAuditLog,lockHeader,recomputeTotauxTx,type AuditContext} from './commande-fournisseur.repository';
 import {readConsultationDocuments,retainConsultationDocumentsTx,type ConsultationDocument} from './consultation-documents.repository';
 import {readConsultationTechnicalSourcesTx} from './consultation-technical.repository';
+import {assertSupplierCallEditableTx} from '../../../shared/commercial-terms/supplier-contract-terms.repository';
 
 type Queryer=Pick<PoolClient,'query'>;
 type Round={id:string;round_no:number;status:'OPEN'|'SELECTED'|'CLOSED';source_revision:string;snapshot:ConsultationSnapshot;row_version:number;notes:string;selected_offer_id:string|null;selection_reason:string|null;decided_at:string|null;created_at:string};
@@ -89,6 +90,7 @@ export async function repoCommandSupplierConsultation(commandeId:string,body:Sup
       return prior.result;
     }
     const header=await lockHeader(tx,commandeId);
+    if(body.action!=='CLOSE')await assertSupplierCallEditableTx(tx,commandeId);
     assertOptimisticToken(body.expected_updated_at,header.updated_at_token);
     const today=(await tx.query<{today:string}>('SELECT CURRENT_DATE::text AS today')).rows[0].today;
     let consultationId:string;

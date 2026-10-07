@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "../../utils/httpError";
+import { assertSupplierCallEditableTx, readSupplierContractTermsTx } from "./supplier-contract-terms.repository";
 import {
   generalTermsSnapshotSchema,
   termsKind,
@@ -37,6 +38,7 @@ export async function lockTermsParent(
       "GENERAL_TERMS_PARENT_NOT_FOUND",
       "Dossier introuvable.",
     );
+  if (scope === "commande-fournisseur") await assertSupplierCallEditableTx(tx,id);
   if (scope !== "commande-client" && row.rows[0].statut !== "BROUILLON") {
     throw new HttpError(
       409,
@@ -129,6 +131,10 @@ export async function freezeGeneralTerms(
   id: string,
   required: boolean,
 ): Promise<GeneralTermsSnapshot | null> {
+  if (scope === "commande-fournisseur") {
+    const inherited = await readSupplierContractTermsTx(tx,id,true);
+    if (inherited) return inherited;
+  }
   const selection = await readTermsSelection(tx, scope, id);
   if (!selection) {
     if (required && (await hasApprovedTerms(tx, scope)))

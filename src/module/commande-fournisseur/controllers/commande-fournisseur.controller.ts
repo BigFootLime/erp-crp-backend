@@ -1,5 +1,6 @@
 import type { Request, RequestHandler } from "express";
 import {z} from 'zod';
+import { readSupplierOpenContractsSVC, commandSupplierOpenContractSVC } from '../services/supplier-open-contract.service';
 import {supplierConsultationCommandSchema} from '../validators/supplier-consultation.validators';
 import {readSupplierConsultationsSVC,commandSupplierConsultationSVC} from '../services/supplier-consultation.service';
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
@@ -83,6 +84,13 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   };
 }
+
+export const readSupplierOpenContracts: RequestHandler = async (req,res,next) => {
+  try { const {params}=commandeIdParamSchema.parse({params:req.params}); res.json(await readSupplierOpenContractsSVC(params.id,req.user?.role,buildAuditContext(req).user_id)); } catch(error) {next(error);}
+};
+export const commandSupplierOpenContract: RequestHandler = async (req,res,next) => {
+  try { const {params}=commandeIdParamSchema.parse({params:req.params}); res.json(await commandSupplierOpenContractSVC(params.id,req.body,buildAuditContext(req))); } catch(error) {next(error);}
+};
 
 function includePricesFor(req: Request): boolean {
   return (

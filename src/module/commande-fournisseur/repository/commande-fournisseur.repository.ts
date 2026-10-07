@@ -34,6 +34,8 @@ import { readIssuerParty } from "../../../shared/documents/issuer-identity.repos
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { freezeGeneralTerms } from "../../../shared/commercial-terms/commercial-terms.repository";
+import { assertSupplierCallEditableTx, supplierOrderIsContractCallTx } from "../../../shared/commercial-terms/supplier-contract-terms.repository";
+import { readSupplierOpenContractProofTx } from "./supplier-open-contract-guard.repository";
 import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
 import type {
   AccuseBodyDTO,
@@ -138,6 +140,7 @@ async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string
     totals: { total_ht: String(h.total_ht), total_discount: String(h.total_remise), total_vat: String(h.total_tva), freight_ht: String(h.freight_ht), total_ttc: String(h.total_ttc) },
     issuer,
     supplier_qualification: await readPurchaseQualificationTx(tx, commandeId, enforceQualification),
+    supplier_open_contract: await readSupplierOpenContractProofTx(tx,commandeId,enforceQualification),
   };
 }
 
@@ -287,7 +290,7 @@ type HeaderLockRow = {
   date_promesse: string | null;
 };
 
-export async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockRow> {
+export async function lockHeader(tx: DbQueryer, id: string, draftEdit = false): Promise<HeaderLockRow> {
   const res = await tx.query<HeaderLockRow>(
     `SELECT id, code, statut, fournisseur_id, devise, version_document, date_promesse::text,
             frais_port_ht::text, tva_frais_pct::text, updated_at::text AS updated_at_token
@@ -298,6 +301,7 @@ export async function lockHeader(tx: DbQueryer, id: string): Promise<HeaderLockR
   );
   const row = res.rows[0];
   if (!row) throw new HttpError(404, "COMMANDE_FOURNISSEUR_NOT_FOUND", "Commande fournisseur introuvable.");
+  if (draftEdit) await assertSupplierCallEditableTx(tx,id);
   return row;
 }
 
@@ -748,6 +752,7 @@ export async function repoGetCommandeFournisseur(
     tva_frais_pct: includePrices ? numOrNull(r.tva_frais_t) : null,
     total_ttc: includePrices ? numOrNull(r.total_ttc_t) : null,
     prices_masked: !includePrices,
+    open_contract_call: await supplierOrderIsContractCallTx(db,id),
     allowed_transitions: [...allowedTargetsFrom(r.statut as CommandeFournisseurStatut)],
     lignes: maskedLignes,
     transitions: transitions.rows.map((t) => ({
@@ -1029,7 +1034,7 @@ export async function repoUpdateCommandeFournisseur(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const header = await lockHeader(client, id);
+    const header = await lockHeader(client, id, true);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
@@ -1070,7 +1075,7 @@ export async function repoAddLigne(id: string, body: AddLigneBodyDTO, audit: Aud
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const header = await lockHeader(client, id);
+    const header = await lockHeader(client, id, true);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
@@ -1135,7 +1140,7 @@ export async function repoUpdateLigne(
   try {
     await client.query("BEGIN");
     await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
-    const header = await lockHeader(client, id);
+    const header = await lockHeader(client, id, true);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
@@ -1208,7 +1213,7 @@ export async function repoDeleteLigne(
   try {
     await client.query("BEGIN");
     await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
-    const header = await lockHeader(client, id);
+    const header = await lockHeader(client, id, true);
     assertOptimisticToken(expectedUpdatedAt, header.updated_at_token);
     assertDraft(header.statut);
 
@@ -1244,7 +1249,7 @@ export async function repoReorderLignes(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const header = await lockHeader(client, id);
+    const header = await lockHeader(client, id, true);
     assertOptimisticToken(body.expected_updated_at, header.updated_at_token);
     assertDraft(header.statut);
 
@@ -1382,6 +1387,7 @@ export async function repoTransitionCommandeFournisseur(
     }
 
     // Préconditions métier par nature de transition.
+    const contractProof = ["submit","approve","send"].includes(kind) ? await readSupplierOpenContractProofTx(client,id,true) : null;
     const qualification = ["submit", "approve", "send"].includes(kind)
       ? await readPurchaseQualificationTx(client, id, true)
       : null;
@@ -1411,6 +1417,8 @@ export async function repoTransitionCommandeFournisseur(
         );
       }
       const terms=await freezeGeneralTerms(client,"commande-fournisseur",id,true);
+      const contractPrepared = (await client.query(`SELECT payload->'supplier_open_contract' AS proof FROM public.commande_fournisseur_document WHERE commande_id=$1::uuid AND version=$2`,[id,header.version_document])).rows[0]?.proof;
+      if (contractProof && stableStringify(contractPrepared)!==stableStringify(contractProof)) throw new HttpError(409,"OPEN_CONTRACT_DOCUMENT_STALE","Régénérez le bon de commande avec la référence du contrat et le dossier de l’appel avant l’envoi.");
       const prepared=await client.query(`SELECT payload->'general_terms' AS terms FROM public.commande_fournisseur_document WHERE commande_id=$1::uuid AND version=$2`,[id,header.version_document]);
       if ((prepared.rows[0]?.terms?.version_id??null)!==(terms?.version_id??null) || (prepared.rows[0]?.terms?.sha256??null)!==(terms?.sha256??null)) {
         throw new HttpError(409,"GENERAL_TERMS_SELECTION_CONFLICT","Régénérez le bon de commande avec les conditions approuvées avant l’envoi.");
@@ -1629,6 +1637,7 @@ export async function repoGenerateDocumentVersion(
       general_terms: await freezeGeneralTerms(client,"commande-fournisseur",id,true),
       supplier_qualification: qualification,
       supplier_qualification_revision: purchaseQualificationRevision(qualification),
+      supplier_open_contract: await readSupplierOpenContractProofTx(client,id,true),
       version,
       code: detail.code,
       statut: detail.statut,
@@ -1829,6 +1838,7 @@ async function repoGetCommandeFournisseurTx(tx: DbQueryer, id: string): Promise<
     tva_frais_pct: null,
     total_ttc: numOrNull(r.total_ttc_t),
     prices_masked: false,
+    open_contract_call: await supplierOrderIsContractCallTx(tx,id),
     allowed_transitions: [...allowedTargetsFrom(r.statut as CommandeFournisseurStatut)],
     lignes,
     transitions: [],
