@@ -147,7 +147,9 @@ function publicOperational5xxDetails(error: unknown, code: string): Record<strin
 
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   const mappedReferenceDataError = mapReferenceDataError(err);
-  const handledError = mappedReferenceDataError ?? err;
+  const sealedCall = err && typeof err === "object" && "code" in err && err.code === "23514" && "message" in err && err.message === "OPEN_CONTRACT_CALL_SEALED"
+    ? new HttpError(409,"OPEN_CONTRACT_CALL_SEALED","Cet appel conserve ses lignes et ses conditions d’origine. Créez un nouvel appel pour une correction commerciale.") : null;
+  const handledError = mappedReferenceDataError ?? sealedCall ?? err;
   const isKnown = handledError instanceof HttpError || handledError instanceof ApiError;
   const status = isKnown ? handledError.status : 500;
   const code = isKnown ? handledError.code : "INTERNAL_ERROR";

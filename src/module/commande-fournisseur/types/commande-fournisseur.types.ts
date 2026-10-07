@@ -178,6 +178,7 @@ export type CommandeFournisseur = {
   tva_frais_pct: number | null;
   total_ttc: number | null;
   prices_masked: boolean;
+  open_contract_call?: boolean;
   allowed_transitions: CommandeFournisseurStatut[];
   lignes: CommandeFournisseurLigne[];
   transitions: CommandeFournisseurTransitionEntry[];

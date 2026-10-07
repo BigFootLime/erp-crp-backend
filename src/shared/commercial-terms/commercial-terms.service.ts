@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import pool from "../../config/database";
+import { readSupplierContractTermsTx } from "./supplier-contract-terms.repository";
 import { HttpError } from "../../utils/httpError";
 import { assertGedVersionParentReadable } from "../../module/ged/services/ged-parent-authorization.service";
 import {
@@ -30,6 +31,7 @@ export async function getGeneralTerms(
   actor: number,
 ) {
   const selection = await readTermsSelection(pool, scope, entityId);
+  const inherited = scope === "commande-fournisseur" ? await readSupplierContractTermsTx(pool,entityId) : null;
   const candidates = await pool.query(
     `SELECT v.id::text FROM public.ged_documents d JOIN public.ged_document_versions v ON v.document_id=d.id
     WHERE d.class_key=$1 AND d.archived_at IS NULL AND v.status='APPLICABLE' ORDER BY d.code LIMIT 100`,
@@ -75,7 +77,8 @@ export async function getGeneralTerms(
     kind: termsKind(scope),
     configured: await hasApprovedTerms(pool, scope),
     selection,
-    selection_applicable: selection
+    inherited_from_contract: inherited !== null,
+    selection_applicable: inherited ? true : selection
       ? Boolean(
           await readTermsVersion(pool, scope, selection.snapshot.version_id),
         )
