@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   markFailed: vi.fn(),
   readArchived: vi.fn(),
   findArchive: vi.fn(),
+  readGeneralTerms: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -29,6 +30,7 @@ vi.mock("../../../shared/realtime/realtime.service", () => ({
 vi.mock("../../../shared/email/resend.service", () => ({
   sendTransactionalEmail: mocks.sendEmail,
 }));
+vi.mock("../../../shared/commercial-terms/commercial-terms.service", () => ({ readArchivedGeneralTerms: mocks.readGeneralTerms }));
 vi.mock("../../../shared/documents/issuer-identity.repository", () => ({
   readIssuerParty: vi.fn(),
 }));
