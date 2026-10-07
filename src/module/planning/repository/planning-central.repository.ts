@@ -165,14 +165,18 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
 export async function readCentralResources(tx: CentralQuery, from: string, to: string): Promise<Resource[]> {
   const {rows} = await tx.query<Row>(`
     WITH resources AS (
-      SELECT 'machine:'||id::text AS id,'MACHINE'::text AS kind,name AS label,'machine:'||id::text AS capacity_id FROM public.machines WHERE archived_at IS NULL
-      UNION ALL SELECT 'poste:'||id::text,'POSTE',code||' · '||label,COALESCE('machine:'||machine_id::text,'poste:'||id::text) FROM public.postes WHERE is_active
-      UNION ALL SELECT 'person:'||u.id::text,'PERSON',COALESCE(rc.display_label,u.username),'person:'||u.id::text
+      SELECT 'machine:'||m.id::text AS id,'MACHINE'::text AS kind,m.name AS label,'machine:'||m.id::text AS capacity_id,
+        m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
+          AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL) AS capacity_enabled
+        FROM public.machines m WHERE m.archived_at IS NULL
+      UNION ALL SELECT 'poste:'||id::text,'POSTE',code||' · '||label,COALESCE('machine:'||machine_id::text,'poste:'||id::text),true FROM public.postes WHERE is_active
+      UNION ALL SELECT 'person:'||u.id::text,'PERSON',COALESCE(rc.display_label,u.username),'person:'||u.id::text,true
         FROM public.users u LEFT JOIN public.planning_resource_calendars rc ON rc.user_id=u.id
         WHERE rc.user_id IS NOT NULL OR EXISTS(SELECT 1 FROM public.programmations p WHERE p.programmer_user_id=u.id AND p.archived_at IS NULL)
           OR EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p WHERE p.assignee_id=u.id)
     )
-    SELECT r.*,c.timezone,c.working_days,c.day_start::text,c.day_end::text,COALESCE(rc.version,mc.version)::text||':'||c.updated_at::text AS version,
+    SELECT r.*,c.timezone,c.working_days,c.day_start::text,c.day_end::text,c.id IS NOT NULL AS calendar_configured,
+      COALESCE(rc.version,mc.version,0)::text||':'||c.updated_at::text AS version,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('start',start_ts,'end',end_ts))
         FROM public.planning_resource_absences a JOIN resources ar ON ar.id=a.resource_id
         WHERE ar.capacity_id=r.capacity_id AND start_ts<$2::timestamptz AND end_ts>$1::timestamptz),'[]') ||
@@ -210,7 +214,7 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
     const key = JSON.stringify(calendar);
     if (!cache.has(key)) cache.set(key,calendar.shifts.length ? expandCalendar(calendar,from,to) : []);
     return {id:String(row.id),kind:row.kind as Resource["kind"],label:String(row.label),timezone:calendar.timezone,
-       capacityId:String(row.capacity_id),availability:cache.get(key)!,version:String(row.version ?? "unconfigured"),
+       capacityId:String(row.capacity_id),calendarConfigured:row.calendar_configured===true,capacityEnabled:row.capacity_enabled===true,availability:cache.get(key)!,version:String(row.version ?? "unconfigured"),
        unavailability:Array.isArray(row.unavailability)?row.unavailability as NonNullable<Resource['unavailability']>:[]};
   });
 }
