@@ -1,4 +1,5 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
+import {materialOriginQueryFixture} from '../../../__tests__/fixtures/material-origin-queries.fixture';
 const m=vi.hoisted(()=>({reserve:vi.fn(),audit:vi.fn()}));
 vi.mock('../../stock/repository/stock-reservation.repository',()=>({repoCreateStockReservation:m.reserve}));
 vi.mock('./production-preparation.repository',()=>({preparationAudit:m.audit}));
@@ -8,7 +9,7 @@ function receipt(){return {call_id:'call',client_id:'client',need_id:'need',of_i
 let row:ReturnType<typeof receipt>,replayed:boolean,tx:{query:ReturnType<typeof vi.fn>};
 beforeEach(()=>{
   vi.resetAllMocks();row=receipt();replayed=false;m.reserve.mockResolvedValue({reservation:{id:'reservation'}});
-  tx={query:vi.fn(async(sql:string)=>sql.startsWith('SELECT c.id')?{rows:[row]}:sql.startsWith('SELECT 1 FROM public.of_customer_material_receipt_transfers')?{rowCount:replayed?1:0,rows:[]}:{rows:[]})};
+  tx={query:vi.fn(async(sql:string,params:unknown[]=[])=>materialOriginQueryFixture(sql,params,{need:19})??(sql.startsWith('SELECT c.id')?{rows:[row]}:sql.startsWith('SELECT 1 FROM public.of_customer_material_receipt_transfers')?{rowCount:replayed?1:0,rows:[]}:{rows:[]}))};
 });
 describe('customer receipt allocation',()=>{
   it('keeps a separately retained receipt in client-owned stock without a new reservation',async()=>{

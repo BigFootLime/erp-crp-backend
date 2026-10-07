@@ -18,15 +18,16 @@ function functionSource(source: string, name: string, nextName: string): string 
 }
 
 describe("commande stock SQL contract", () => {
-  it("groups OLD/NEW availability by the same effective scope that it selects", () => {
+  it("uses one physical candidate pool for compatible revisions in the stock analysis", () => {
     const source = functionSource(
       repositorySource(),
-      "loadScopedAvailableQtyByArticle",
-      "computeCommandeStockAnalysis"
+      "computeCommandeStockAnalysis",
+      "loadScopedDeliveryStockCandidates"
     );
 
-    expect(source.match(/WHEN lot\.origin_stock_scope = 'OLD' THEN 'OLD'/g)).toHaveLength(2);
-    expect(source).toContain("ELSE COALESCE(lot.source_scope, lot.stock_scope, warehouse.stock_scope, 'NEW')");
+    expect(source.match(/await loadScopedDeliveryStockCandidates\(/g)).toHaveLength(1);
+    expect(source).toMatch(/allocateCompatibleStock\([\s\S]*?qty_ordered:Number\(ref\.qty_ordered\)[\s\S]*?,candidates\)/);
+    expect(source).not.toContain("loadScopedAvailableQtyByArticle");
   });
 
   it("joins lots before using their scope and FIFO dates for delivery candidates", () => {

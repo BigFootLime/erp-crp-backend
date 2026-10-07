@@ -1603,6 +1603,7 @@ describe("/api/v1/commandes", () => {
             piece_technique_version_id: "55555555-5555-5555-5555-555555555555",
             stock_scope: "OLD",
             stock_level_id: "33333333-3333-4333-8333-333333333333",
+            compatible_version_ids: ["55555555-5555-5555-5555-555555555555"],
             stock_batch_id: null,
             location_id: LOCATION_ID,
             lot_id: LOT_ID,
@@ -1614,7 +1615,7 @@ describe("/api/v1/commandes", () => {
       }
 
       if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
-        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", stock_scope: "OLD", qty_available: 1 }] };
+        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", compatible_version_ids: ["55555555-5555-5555-5555-555555555555"], stock_scope: "OLD", qty_available: 1 }] };
       }
 
       if (q.includes("nextval('public.affaire_id_seq')")) {
@@ -1911,7 +1912,7 @@ describe("/api/v1/commandes", () => {
 
       // One OLD/NEW unit is already covered by a legacy grouped-delivery reservation.
       if (q.includes("FROM public.v_stock_availability_225 availability") && q.includes("warehouse.stock_scope")) {
-        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", stock_scope: "OLD", qty_available: 1 }] };
+        return { rows: [{ article_id: ARTICLE_ID, piece_technique_version_id: "55555555-5555-5555-5555-555555555555", compatible_version_ids: ["55555555-5555-5555-5555-555555555555"], stock_scope: "OLD", qty_available: 1 }] };
       }
 
       if (q.includes("FROM public.stock_reservations reservation") && q.includes("JOIN public.commande_ligne line")) {
