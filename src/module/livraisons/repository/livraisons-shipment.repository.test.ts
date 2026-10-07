@@ -225,7 +225,8 @@ describe("prepareLivraisonInTransaction", () => {
     expect(String(allocationQuery?.[0])).toContain(
       "LEFT JOIN public.magasins magasin ON magasin.id = allocation.magasin_id"
     );
-    expect(String(allocationQuery?.[0])).toContain("magasin.stock_scope::text AS stock_scope");
+    expect(String(allocationQuery?.[0])).toContain("CASE WHEN lot.origin_stock_scope='OLD' THEN 'OLD'");
+    expect(String(allocationQuery?.[0])).toContain("COALESCE(reservation.source_scope,lot.source_scope,lot.stock_scope,magasin.stock_scope,'NEW') END::text AS stock_scope");
     expect(String(allocationQuery?.[0])).not.toContain("warehouse.magasin_id");
 
     expect(

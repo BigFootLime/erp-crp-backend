@@ -12,7 +12,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.connect.mockResolvedValue({ query: mocks.query, release: mocks.release })
   mocks.query.mockImplementation(async (sql: string) => {
-    if (sql.includes("SELECT id::text AS id, plan_reference")) return { rows: [{ id: "source", plan_reference: "PLAN", manufacturing_mode: "ASSEMBLY", assembly_supply_strategy: "MAKE_TO_ORDER" }], rowCount: 1 }
+    if (sql.includes("FROM public.piece_technique_versions") && sql.includes("FOR SHARE")) return { rows: [{ id: "source", indice: "B", plan_reference: "PLAN", manufacturing_mode: "ASSEMBLY", assembly_supply_strategy: "MAKE_TO_ORDER" }], rowCount: 1 }
     if (sql.includes("SELECT client_id")) return { rows: [{ client_id: null, code_client: "001" }], rowCount: 1 }
     if (sql.includes("INSERT INTO public.piece_technique_versions")) return { rows: [{ id: "new", indice: "C", type_changement: "EVOLUTION" }], rowCount: 1 }
     if (sql.includes("INSERT INTO public.pieces_techniques_nomenclature")) return { rows: [], rowCount: 2 }

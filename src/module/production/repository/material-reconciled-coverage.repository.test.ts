@@ -1,4 +1,5 @@
 import {beforeEach,expect,it,vi} from 'vitest';
+import {materialOriginQueryFixture} from '../../../__tests__/fixtures/material-origin-queries.fixture';
 const m=vi.hoisted(()=>({connect:vi.fn()}));
 vi.mock('../../../config/database',()=>({default:{connect:m.connect}}));
 vi.mock('./of-dossier.repository',()=>({materialWorkflowEnabled:async()=>true,readOfDossierTx:async()=>({version:'dossier',number:'OF-TEST',quantity:100,status:'COMPLETE',operations:[{id:'cut',label:'Découpe',phase:10}]})}));
@@ -13,7 +14,7 @@ let disposition='CARRY';
 const tx={query:vi.fn(),release:vi.fn()};
 beforeEach(()=>{vi.clearAllMocks();disposition='CARRY';m.connect.mockResolvedValue(tx);
   const base={article_id:'article',operation_id:'cut',unit:'u',supply_mode:'PURCHASE',requirements,debit_rule:rule,required_qty:100,specification_reviewed_at:'reviewed',technical_hash:'hash',row_version:1,designation:'Plat alu',supplier_id:'supplier',allow_partial:true,destination_id:null};
-  tx.query.mockImplementation(async(sql:string)=>({rows:
+  tx.query.mockImplementation(async(sql:string,params:unknown[]=[])=>materialOriginQueryFixture(sql,params,{old:19,current:19},['material-lot'])??({rows:
     sql.includes('AS purchases')?[{revision:'new-revision',hash:'hash',client_id:null,purchases:[{id:'new-source',article_id:'article',type_achat:'MATIERE',quantite:1,unite_prix:'u',fournisseur_id:'supplier',pu_achat:2}]}]:
     sql.startsWith('SELECT * FROM public.of_material_needs')?[{...base,id:'old',source_ref:'old-source',technical_version_id:'old-revision'},{...base,id:'current',source_ref:'new-source',technical_version_id:'new-revision'}]:
     sql.includes('FROM public.v_of_material_need_destinations')?[{source_need_id:'old',target_need_id:disposition==='CARRY'?'current':'old'},{source_need_id:'current',target_need_id:'current'}]:
