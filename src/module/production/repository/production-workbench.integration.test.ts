@@ -19,6 +19,8 @@ import {
 } from "./production-preparation.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
 import { repoCompleteOfDossier, repoOfDossier } from "./of-dossier.repository";
+import { configureOfMaterial, getOfMaterial } from "./of-material.repository";
+import { confirmOfMaterial } from "./of-material-confirmation.repository";
 import { readCentralDependencies } from '../../planning/repository/planning-central.repository';
 import { applicableProgram, type OperationContext } from '../../terminals/repository/terminal-dossier.repository';
 import {
@@ -95,6 +97,48 @@ async function prepareFixture(
       audit: f.audit,
     });
   }
+}
+async function prepareConsolidationMaterial(
+  f: Awaited<ReturnType<typeof seedProductionWorkbenchFixture>>,
+) {
+  const initial = await getOfMaterial(f.ids[0]);
+  if (!initial.enabled) throw Error("Material workflow required by the isolated fixture");
+  const article = initial.needs[0].articleId!;
+  const stock = await seedWorkbenchStock({ ...f, code: `${f.code}-MP` }, 35, "LIBERE", {
+    articleId: article, stockUnit: "kg", warehouseCode: "NEW-MP", technicalVersionId: null,
+  });
+  expect((await pool.query(`SELECT b.id FROM public.stock_batches b
+    JOIN public.stock_levels s ON s.id=b.stock_level_id
+    JOIN public.lots l ON l.id=b.lot_id
+    JOIN public.emplacements e ON e.location_id=s.location_id
+    WHERE b.id=$1::uuid AND l.article_id=$2::uuid`, [stock.batch, article])).rowCount).toBe(1);
+  for (const id of f.ids.slice(0, 2)) {
+    let material = await getOfMaterial(id);
+    if (!material.enabled) throw Error("Material workflow required by the isolated fixture");
+    const needKey = material.needs[0].key;
+    await configureOfMaterial(id, needKey, {
+      expectedVersion: material.version, idempotencyKey: randomUUID(),
+      configuration: {
+        operationId: material.operations[0].id,
+        requirements: { grade: null, condition: null, ownerClientId: null, dimensions: {}, certificates: [], manualChecks: [] },
+        supplyMode: "PURCHASE", supplierId: null, destinationId: null, allowPartial: false,
+        debitRule: { form: "UNIT", stockUnit: "kg", unitsPerBlank: 1, kerfPerBlank: 0, yieldValidated: true },
+      },
+    }, f.audit);
+    material = await getOfMaterial(id);
+    if (!material.enabled) throw Error("Material workflow required by the isolated fixture");
+    expect(material.needs[0].blockers).toEqual([]);
+    const candidate = material.needs[0].candidates.find(c => c.lot.batchId === stock.batch);
+    expect(candidate?.reasons).toEqual([]);
+    expect(candidate?.available).toBeGreaterThanOrEqual(material.needs[0].required);
+    const confirmed = await confirmOfMaterial(id, {
+      expectedVersion: material.version, idempotencyKey: randomUUID(),
+      selections: [{ needKey, batchId: stock.batch, quantity: material.needs[0].required }],
+      futureSelections: [],
+    }, f.audit, false);
+    expect(confirmed.coverage.needs[0].reserved).toBe(material.needs[0].required);
+  }
+  return stock;
 }
 describe.skipIf(!isolated)(
   "Production workbench — real isolated PostgreSQL",
@@ -696,6 +740,7 @@ describe.skipIf(!isolated)(
     it("allocates quarantined receipts only after release and never duplicates the physical stock entry", async () => {
       const f = await seedProductionWorkbenchFixture();
       await prepareFixture(f);
+      await prepareConsolidationMaterial(f);
       const sources = await Promise.all(
         f.ids.slice(0, 2).map(async (of_id) => ({
           of_id,
@@ -903,6 +948,7 @@ describe.skipIf(!isolated)(
         expect(e.ready).toBe(true);
         expect(e.of.technical_readiness).toBe("VALIDATED");
       }
+      await prepareConsolidationMaterial(fixture);
       const sources = await Promise.all(
         fixture.ids.slice(0, 2).map(async (of_id) => ({
           of_id,
@@ -931,6 +977,17 @@ describe.skipIf(!isolated)(
       const group = results[0];
       expect(results[1].producer_of_id).toBe(group.producer_of_id);
       expect(results.filter((r) => r.idempotent_replay)).toHaveLength(1);
+      const transferred = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,
+        r.material_need_id::text,t.source_of_id::int,t.source_need_id::text
+        FROM public.production_consolidation_material_transfers t
+        JOIN public.stock_reservations r ON r.id=t.reservation_id
+        WHERE t.consolidation_id=$1::uuid ORDER BY t.source_of_id`, [group.id])).rows;
+      expect(transferred).toHaveLength(2);
+      for (const reservation of transferred) {
+        expect(reservation.of_id).toBe(group.producer_of_id);
+        expect(reservation.source_id).toBe(String(group.producer_of_id));
+        expect(reservation.material_need_id).not.toBe(reservation.source_need_id);
+      }
       const producer = await evaluateOfPreparation(pool, group.producer_of_id);
       expect(producer.ready).toBe(true);
       expect(producer.sheet?.id).not.toBe(e.sheet?.id);
@@ -1030,6 +1087,16 @@ describe.skipIf(!isolated)(
         fixture.audit,
       );
       expect((await repoGetConsolidation(group.id)).state).toBe("DISSOLVED");
+      const restored = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,r.material_need_id::text
+        FROM public.stock_reservations r WHERE r.id=ANY($1::uuid[]) ORDER BY r.of_id`,
+        [transferred.map(r => r.id)])).rows;
+      expect(restored).toHaveLength(2);
+      for (const reservation of restored) {
+        const source = transferred.find(r => r.id === reservation.id)!;
+        expect(reservation.of_id).toBe(source.source_of_id);
+        expect(reservation.source_id).toBe(String(source.source_of_id));
+        expect(reservation.material_need_id).toBe(source.source_need_id);
+      }
       expect(
         Number(
           (

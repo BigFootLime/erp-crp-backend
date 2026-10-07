@@ -173,7 +173,14 @@ export async function seedWorkbenchStock(
   f: Awaited<ReturnType<typeof seedProductionWorkbenchFixture>>,
   quantity: number,
   status = "LIBERE",
-  options: { scope?: "NEW" | "OLD"; withQuality?: boolean } = {},
+  options: {
+    scope?: "NEW" | "OLD";
+    withQuality?: boolean;
+    stockUnit?: string;
+    warehouseCode?: string;
+    technicalVersionId?: string | null;
+    articleId?: string;
+  } = {},
 ) {
   if (
     process.env.CERP_E2E_ISOLATED !== "1" ||
@@ -190,24 +197,32 @@ export async function seedWorkbenchStock(
       location = randomUUID(),
       quality = randomUUID();
     await tx.query(
-      `INSERT INTO public.locations(id,warehouse_id,code,description) SELECT $1::uuid,id,$2,'Emplacement de test préparation' FROM public.warehouses WHERE code='NEW-PF'`,
-      [location, f.code],
+      `INSERT INTO public.locations(id,warehouse_id,code,description) SELECT $1::uuid,id,$2,'Emplacement de test préparation' FROM public.warehouses WHERE code=$3`,
+      [location, f.code, options.warehouseCode ?? "NEW-PF"],
+    );
+    await tx.query(
+      `INSERT INTO public.emplacements(magasin_id,code,name,location_id)
+       SELECT m.id,$2,'Emplacement synthétique de recette',l.id
+       FROM public.locations l JOIN public.magasins m ON m.warehouse_id=l.warehouse_id
+       WHERE l.id=$1::uuid AND m.code=$3
+       ON CONFLICT (location_id) WHERE location_id IS NOT NULL DO NOTHING`,
+      [location, f.code, options.warehouseCode ?? "NEW-PF"],
     );
     await tx.query(
       `INSERT INTO public.lots(id,article_id,lot_code,lot_status,piece_technique_version_id,source_scope,stock_scope,created_by,updated_by) VALUES($1::uuid,$2::uuid,$3,$4,$5::uuid,$7,$7,$6,$6)`,
       [
         lot,
-        f.article,
+        options.articleId ?? f.article,
         f.code,
         status,
-        f.version,
+        options.technicalVersionId === undefined ? f.version : options.technicalVersionId,
         f.audit.user_id,
         options.scope ?? "NEW",
       ],
     );
     await tx.query(
-      `INSERT INTO public.stock_levels(id,article_id,unit_id,warehouse_id,location_id,managed_in_stock,qty_total) SELECT $1::uuid,$2::uuid,u.id,l.warehouse_id,l.id,true,$4 FROM public.units u CROSS JOIN public.locations l WHERE u.code='u' AND l.id=$3::uuid`,
-      [level, f.article, location, quantity],
+      `INSERT INTO public.stock_levels(id,article_id,unit_id,warehouse_id,location_id,managed_in_stock,qty_total) SELECT $1::uuid,$2::uuid,u.id,l.warehouse_id,l.id,true,$4 FROM public.units u CROSS JOIN public.locations l WHERE u.code=$5 AND l.id=$3::uuid`,
+      [level, options.articleId ?? f.article, location, quantity, options.stockUnit ?? "u"],
     );
     await tx.query(
       `INSERT INTO public.stock_batches(id,stock_level_id,batch_code,qty_total,lot_id) VALUES($1::uuid,$2::uuid,$3,$4,$5::uuid)`,
@@ -216,8 +231,9 @@ export async function seedWorkbenchStock(
     if (options.withQuality !== false)
       await tx.query(
         `INSERT INTO public.quality_control(id,reference,control_type,status,result,controlled_by,validated_by,validation_date,created_by,updated_by,source_type,source_id,lot_id,article_id,unite,qty_population,qty_controlled,qty_conforming,qty_released,verdict,piece_technique_id)
-      VALUES($1::uuid,$2,'FINAL','VALIDATED','OK',$3,$3,now(),$3,$3,'LOT',$4::uuid::text,$4::uuid,$5::uuid,'u',$6,$6,$6,$6,'CONFORME',$7::uuid)`,
-        [quality, f.code, f.audit.user_id, lot, f.article, quantity, f.piece],
+       VALUES($1::uuid,$2,$9,'VALIDATED','OK',$3,$3,now(),$3,$3,'LOT',$4::uuid::text,$4::uuid,$5::uuid,$8,$6,$6,$6,$6,'CONFORME',$7::uuid)`,
+        [quality, f.code, f.audit.user_id, lot, options.articleId ?? f.article, quantity, f.piece,
+          options.stockUnit ?? "u", options.technicalVersionId === null ? "RECEPTION" : "FINAL"],
       );
     await tx.query("COMMIT");
     return { lot, level, batch, location, quality };
