@@ -94,7 +94,7 @@ import type {
   UpdateDeviceDTO,
 } from "../validators/station.validators";
 
-export type Actor = { id: number; role: string | null };
+export type Actor = { id: number; role: string | null; session_epoch?: number };
 
 /**
  * Chemin de téléchargement d'un document de pièce technique.
@@ -342,8 +342,14 @@ export async function svcIdentify(params: {
     user_id: userId,
     machine_id: machineId,
     identification_method: params.body.method,
+    account_epoch: credentialId ? undefined : params.jwtActor?.session_epoch,
     app_version: params.body.app_version ?? null,
     request_id: params.requestId,
+    beforeCommit: credentialId ? async tx => {
+      const credential = await tx.query(`SELECT id FROM public.operator_badge_credentials
+        WHERE id=$1::uuid AND user_id=$2 AND active AND revoked_at IS NULL FOR SHARE`, [credentialId, userId]);
+      if (!credential.rows.length) throw new HttpError(401, "STATION_IDENTIFICATION_FAILED", "Support non reconnu. Réessayez ou identifiez-vous autrement.");
+    } : undefined,
   });
 
   if (credentialId) await repoRegisterCredentialSuccess(credentialId);

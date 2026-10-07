@@ -252,7 +252,14 @@ export async function resolvePin(terminal: Terminal, hash: string) {
         [b.key],
       );
     }
-    const pin = (
+    const owner = (await tx.query<{ user_id: number }>(
+      `SELECT user_id FROM public.cerp_terminal_pins WHERE site_code=$1 AND pin_hash=$2 AND revoked_at IS NULL`,
+      [terminal.site_code, hash],
+    )).rows[0];
+    // Lock the account first, matching recovery and station session creation.
+    const account = owner ? (await tx.query(`SELECT id FROM public.users
+      WHERE id=$1 AND status='Active' AND NOT mfa_reenrollment_required FOR SHARE`, [owner.user_id])).rows[0] : null;
+    const pin = account ? (
       await tx.query<{
         id: string;
         user_id: number;
@@ -263,10 +270,10 @@ export async function resolvePin(terminal: Terminal, hash: string) {
       }>(
         `SELECT p.id,p.user_id,u.role,u.username,u.name,u.surname
       FROM public.cerp_terminal_pins p JOIN public.users u ON u.id=p.user_id
-      WHERE p.site_code=$1 AND p.pin_hash=$2 AND p.revoked_at IS NULL AND u.status='Active' FOR SHARE OF p,u`,
+      WHERE p.site_code=$1 AND p.pin_hash=$2 AND p.revoked_at IS NULL AND u.status='Active' AND NOT u.mfa_reenrollment_required FOR SHARE OF p`,
         [terminal.site_code, hash],
       )
-    ).rows[0];
+    ).rows[0] : null;
     if (!pin) {
       for (const b of buckets)
         await tx.query(
@@ -296,7 +303,7 @@ export async function setPin(
     ]);
     const user = (
       await tx.query(
-        `SELECT id FROM public.users WHERE id=$1 AND status='Active' FOR SHARE`,
+        `SELECT id FROM public.users WHERE id=$1 AND status='Active' AND NOT mfa_reenrollment_required FOR SHARE`,
         [userId],
       )
     ).rows[0];

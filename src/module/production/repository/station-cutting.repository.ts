@@ -3,13 +3,16 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import type { StationContext } from "../middlewares/station-authorization.middleware";
 
-/** Device then session: same lock order as identification/revocation. */
+/** Account, then device and session: matches recovery and identification. */
 export async function authorizeCuttingTx(
   tx: PoolClient,
   station: StationContext,
   ofId: number,
   operationId: string,
 ) {
+  const account = (await tx.query(`SELECT id FROM public.users
+    WHERE id=$1 AND status='Active' AND NOT mfa_reenrollment_required FOR SHARE`, [station.user.id])).rows[0];
+  if (!account) throw new HttpError(401, "STATION_ACCOUNT_RECOVERY_REQUIRED", "Terminez la récupération du compte avant de reprendre le poste.");
   const device = (
     await tx.query(
       `SELECT status FROM public.production_devices WHERE id=$1::uuid FOR SHARE`,
