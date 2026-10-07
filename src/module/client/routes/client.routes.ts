@@ -27,6 +27,7 @@ import { listClientsAnalytics } from "../controllers/clients.analytics.controlle
 import { CLIENT_WRITE_ROLES } from "../client.permissions";
 import { verifyClientElectronicInvoiceAddress } from "../../facturation/electronic-invoicing/electronic-invoice-directory.controller";
 import { requireFinanceCapability } from "../../facturation/middlewares/finance-authorization.middleware";
+import { postCrmCommand, readClientCrm, readCrmFollowups } from "../controllers/client-crm.controller";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
@@ -41,6 +42,9 @@ const requireClientWriteRole = authorizeRole(...CLIENT_WRITE_ROLES);
 router.post("/", requireClientWriteRole, postClient);
 router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
+router.get("/crm/followups", readCrmFollowups);
+router.get("/:id/crm", readClientCrm);
+router.post("/:id/crm/commands", requireClientWriteRole, postCrmCommand);
 // POST (et non GET) : SIRET/TVA/raison sociale ne doivent jamais transiter en query string.
 router.post("/duplicate-check", checkClientDuplicates);
 router.get("/:clientId/contacts", listClientContacts);

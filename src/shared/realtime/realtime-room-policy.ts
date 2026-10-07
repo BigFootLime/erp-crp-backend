@@ -24,6 +24,7 @@ const MODULE_ALIASES: Readonly<Record<string, string>> = {
 };
 
 const ENTITY_MODULES: Readonly<Record<string, string>> = {
+  CLIENT: "clients",
   BON_LIVRAISON: "livraisons",
   CAPA: "qualite",
   COMMANDE_CLIENT: "commandes-clients",
