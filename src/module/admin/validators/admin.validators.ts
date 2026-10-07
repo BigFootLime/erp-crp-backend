@@ -150,6 +150,15 @@ export const adminCreatePasswordResetSchema = z.object({
   body: z.object({}).strict().default({}),
 });
 
+export const adminRecoverAccountSchema = z.object({
+  headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),
+  params: z.object({ id: userIdParam }),
+  body: z.object({
+    reason: z.string().trim().min(20, "Décrivez le motif en au moins 20 caractères.").max(500),
+    identity_confirmed: z.literal(true),
+  }).strict(),
+});
+
 export const resetPasswordByAdminSchema = z.object({
   params: z.object({ id: userIdParam }),
   body: z.object({

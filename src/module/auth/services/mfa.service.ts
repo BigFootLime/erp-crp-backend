@@ -97,6 +97,7 @@ type UserMfaRow = SessionIdentity & {
   password: string;
   status: string;
   is_superadmin: boolean;
+  mfa_reenrollment_required?: boolean;
 };
 
 function mfaIssuer(): string {
@@ -193,7 +194,7 @@ async function loadFactor(tx: PoolClient, userId: number, state: "ACTIVE" | "PEN
 
 async function loadUser(tx: PoolClient, userId: number, forUpdate = false): Promise<UserMfaRow | null> {
   const { rows } = await tx.query<UserMfaRow>(
-    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin,
+    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required,
             COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
             COALESCE((SELECT array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
                         FROM public.user_role_assignments ura WHERE ura.user_id = u.id),
@@ -250,7 +251,9 @@ async function createPendingFactor(
       [existing.id],
     );
   }
-  const active = await loadFactor(tx, user.id, "ACTIVE", true);
+  const history = await tx.query<{ next_version: number }>(
+    `SELECT COALESCE(max(version),0)+1 AS next_version FROM public.user_mfa_factors WHERE user_id=$1`, [user.id],
+  );
   const secret = generateTotpSecret();
   const encrypted = encryptMfaSecret(secret);
   const { rows } = await tx.query<FactorRow>(
@@ -264,7 +267,7 @@ async function createPendingFactor(
       encrypted.iv,
       encrypted.tag,
       encrypted.keyId,
-      (active?.version ?? 0) + 1,
+      history.rows[0]!.next_version,
       new Date(Date.now() + ENROLLMENT_TTL_MS),
       deviceLabel,
     ],
@@ -277,6 +280,11 @@ export type PasswordLoginUser = UserMfaRow;
 export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAuditMeta) {
   const client = await pool.connect();
   const result = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const liveUser = await loadUser(tx, user.id, true);
+    if (!liveUser || liveUser.status !== "Active" || liveUser.password !== user.password) {
+      throw new ApiError(401, "AUTH_INVALID", "Identifiants invalides");
+    }
+    user = liveUser;
     const active = await loadFactor(tx, user.id, "ACTIVE", true);
     const policy = await loadMfaPolicy(tx);
     const sessionEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10) || 0;
@@ -289,7 +297,7 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       });
       return { kind: "verify" as const, challenge };
     }
-    if (!policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles)) return { kind: "none" as const };
+    if (!user.mfa_reenrollment_required && !policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles)) return { kind: "none" as const };
     const { factor, secret } = await createPendingFactor(tx, user);
     const challenge = await insertChallenge(tx, {
       userId: user.id,
@@ -325,6 +333,10 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
 }
 
 async function loadChallengeForUpdate(tx: PoolClient, tokenHash: string): Promise<ChallengeRow | null> {
+  // All account recovery and MFA mutations lock the user before factors and
+  // challenges, so resetting a factor cannot race its final confirmation.
+  const owner = await tx.query<{ user_id: number }>(`SELECT user_id FROM public.auth_mfa_challenges WHERE token_hash=$1`, [tokenHash]);
+  if (!owner.rows[0] || !await loadUser(tx, owner.rows[0].user_id, true)) return null;
   const { rows } = await tx.query<ChallengeRow>(
     `SELECT c.*,
             u.username, u.email, u.role, u.status, u.is_superadmin,
@@ -471,6 +483,8 @@ export async function verifyMfaChallenge(challengeToken: string, code: string, m
         [row.factor_id, verifiedStep],
       );
       recoveryCodes = await insertRecoveryCodes(tx, row.factor_id);
+      await tx.query(`UPDATE public.users SET mfa_reenrollment_required=false WHERE id=$1`, [row.user_id]);
+      await tx.query(`UPDATE public.admin_account_recoveries SET completed_at=now() WHERE user_id=$1 AND superseded_at IS NULL AND completed_at IS NULL`, [row.user_id]);
       await bumpRealtimeSessionEpoch(tx, row.user_id);
       await audit(tx, row.user_id, row.purpose === "REPLACE" ? "AUTH_MFA_FACTOR_REPLACED" : "AUTH_MFA_ENROLLED", meta, {
         factor_id: row.factor_id,
@@ -555,6 +569,7 @@ async function verifyActiveCode(tx: PoolClient, user: UserMfaRow, code: string, 
 export async function getMfaStatus(userId: number) {
   const { rows } = await pool.query<{
     is_superadmin: boolean;
+    mfa_reenrollment_required: boolean;
     role: string;
     roles: string[];
     policy: string | null;
@@ -565,7 +580,7 @@ export async function getMfaStatus(userId: number) {
     locked_until: Date | null;
     recovery_codes_remaining: string;
   }>(
-    `SELECT u.is_superadmin, u.role,
+    `SELECT u.is_superadmin, u.mfa_reenrollment_required, u.role,
              COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
                          FROM public.user_role_assignments ura WHERE ura.user_id=u.id), ARRAY[u.role]::text[]) AS roles,
             (SELECT value_text FROM public.erp_settings WHERE key=$2 LIMIT 1) AS policy,
@@ -584,7 +599,8 @@ export async function getMfaStatus(userId: number) {
   const policyRequired = policyRequiresMfa(policy, row.is_superadmin, row.role, row.roles);
   return {
     policy,
-    required: accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, role: row.role, roles: row.roles, hasActiveFactor: enrolled }),
+    required: row.mfa_reenrollment_required || accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, role: row.role, roles: row.roles, hasActiveFactor: enrolled }),
+    reenrollment_required: row.mfa_reenrollment_required,
     policy_required: policyRequired,
     enrolled,
     method: row.factor_id ? "TOTP" : null,
@@ -593,7 +609,7 @@ export async function getMfaStatus(userId: number) {
     enrolled_at: row.enrolled_at?.toISOString() ?? null,
     locked_until: row.locked_until?.toISOString() ?? null,
     recovery_codes_remaining: Number.parseInt(row.recovery_codes_remaining, 10),
-    can_enroll: !enrolled && policy !== "disabled",
+    can_enroll: !enrolled && (row.mfa_reenrollment_required || policy !== "disabled"),
     can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin, row.role, row.roles),
   };
 }

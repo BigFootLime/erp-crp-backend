@@ -307,7 +307,6 @@ export async function resetPasswordWithToken(
   const client = await pool.connect();
 
   const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
-    await repoCleanupExpiredPasswordResets({ tx });
     const row = await repoGetPasswordResetForUpdate({ token_hash, tx });
     if (!row) {
       throw new ApiError(400, "RESET_TOKEN_INVALID", "Lien invalide ou expiré");
