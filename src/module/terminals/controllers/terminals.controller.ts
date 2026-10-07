@@ -103,7 +103,7 @@ export const enrollTerminal = handle(async (req, res) => {
   const body = v.enrollSchema.parse(req.body);
   if(body.warehouse_id&&!(await pool.query('SELECT id FROM public.magasins WHERE id=$1::uuid',[body.warehouse_id])).rows.length)
     throw new HttpError(422,'TERMINAL_WAREHOUSE_UNKNOWN','Choisissez un magasin existant.');
-  if (!['OPERATOR','RECEPTION','OF_PROCUREMENT'].includes(body.kind))
+  if (!['OPERATOR','RECEPTION','OF_PROCUREMENT','CUTTING'].includes(body.kind))
     throw new HttpError(
       422,
       "TERMINAL_PILOT_ONLY",
@@ -306,7 +306,7 @@ export const downloadDocument = handle(async (req, res) => {
     s.of_id,
     s.operation_id,
   );
-  const manifest = await dossier.dossierDocuments(context);
+  const manifest = await dossier.dossierDocuments(context, req.terminal!.kind === 'CUTTING' ? 'cutting' : 'operator');
   const doc = manifest.find(
     (d) => d.id === v.uuid.parse(req.params.id) && d.available,
   );

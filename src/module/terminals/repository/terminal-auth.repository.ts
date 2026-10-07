@@ -99,7 +99,7 @@ export async function updateTerminalSettings(
     if (!t)
       throw new HttpError(404, "TERMINAL_NOT_FOUND", "Terminal introuvable.");
     if(t.kind==='OPERATOR'&&!body.machine_id)throw new HttpError(422,'TERMINAL_MACHINE_REQUIRED','Choisissez une machine pour le poste opérateur.');
-    if(['RECEPTION','OF_PROCUREMENT'].includes(t.kind)&&body.machine_id)throw new HttpError(422,'TERMINAL_SITE_ASSIGNMENT','Ce terminal est rattaché au site et au magasin.');
+    if(['RECEPTION','OF_PROCUREMENT','CUTTING'].includes(t.kind)&&body.machine_id)throw new HttpError(422,'TERMINAL_SITE_ASSIGNMENT','Ce terminal est rattaché au site, sans machine.');
     if(body.warehouse_id&&!(await tx.query('SELECT id FROM public.magasins WHERE id=$1::uuid',[body.warehouse_id])).rows.length)
       throw new HttpError(422,'TERMINAL_WAREHOUSE_UNKNOWN','Choisissez un magasin existant.');
     if (

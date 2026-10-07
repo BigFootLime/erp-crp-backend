@@ -8,6 +8,7 @@ export const TERMINAL_KINDS = [
   "ARTICLES",
   "RECEPTION",
   "OF_PROCUREMENT",
+  "CUTTING",
 ] as const;
 export type TerminalKind = (typeof TERMINAL_KINDS)[number];
 export const terminalModule: Record<TerminalKind, string> = {
@@ -17,6 +18,7 @@ export const terminalModule: Record<TerminalKind, string> = {
   ARTICLES: "stock",
   RECEPTION: "qualite",
   OF_PROCUREMENT: "production",
+  CUTTING: "production",
 };
 export const tokenHash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
