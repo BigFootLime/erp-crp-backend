@@ -1,6 +1,7 @@
 export {getOfMaterial,configureOfMaterial,verifyOfMaterialLot,prepareOfMaterialPurchases,chooseOfMaterialSupplier} from "../repository/of-material.repository";
 export {confirmOfMaterial} from '../repository/of-material-confirmation.repository';
 export {getOperationReadiness} from "../repository/operation-readiness.repository";
+export {getOfComponentCoverage} from "../repository/of-component-coverage.repository";
 export {debitOfMaterial} from "../repository/of-material-debit.repository";
 export {correctMaterialDebit} from '../repository/material-debit-correction.repository';
 export {commandMaterialTransfer} from '../repository/material-transfer.repository';
