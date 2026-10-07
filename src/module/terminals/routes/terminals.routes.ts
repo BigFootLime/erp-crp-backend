@@ -6,6 +6,8 @@ import { grantAccountModuleAccessToRequest } from "../../access-control/context/
 import { terminalModule } from '../domain/terminal-policy';
 import { getOwnPin,changeOwnPin } from '../controllers/terminal-own-pin.controller';
 import supplyRoutes from './terminal-supply.routes';
+import cuttingRoutes from './terminal-cutting.routes';
+import { clientLogoMetadata, clientLogoContent } from '../controllers/terminal-client-logo.controller';
 import {
   requireTerminalDevice,
   requireTerminalSession,
@@ -63,8 +65,11 @@ router.post("/session/activity", controllers.recordActivity);
 router.post("/session/lock", controllers.lockSession);
 router.post("/session/close", controllers.closeSession);
 router.use(supplyRoutes);
+router.use(cuttingRoutes);
 router.use("/operator", requireOperatorTerminal);
 router.get("/operator/worklist", controllers.getWorklist);
+router.get('/operator/ofs/:of_id/operations/:operation_id/client-logo', clientLogoMetadata);
+router.get('/operator/ofs/:of_id/operations/:operation_id/client-logo/content', clientLogoContent);
 router.get("/operator/activities", controllers.listActivities);
 router.post("/operator/scan", controllers.resolveScan);
 router.get(

@@ -1,11 +1,14 @@
 import path from "node:path";
 import { resolveAccessProfile } from "../../access-control/services/access-control.service";
 import { getImagesRootPath } from "../../../utils/imageStorage";
+import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { HttpError } from "../../../utils/httpError";
 import { checkOperationalMediaStorage } from "./operational-media-health.service";
 import {
   findOperationalMediaAssets,
   operationalMediaOwnerExists,
+  findCurrentOfClientLogo,
+  findAssetIdsByStorageKeys,
   type OperationalMediaAsset,
   type OperationalMediaOwnerType,
 } from "../repository/operational-media.repository";
@@ -70,6 +73,28 @@ export async function authorizeOperationalMediaRead(params: { assetId: string; u
   if (!await operationalMediaOwnerExists(asset.owner_type as OperationalMediaOwnerType, asset.owner_id)) {
     throw new HttpError(404, "MEDIA_NOT_FOUND", "Média introuvable.");
   }
+  return verifiedMediaDelivery(asset);
+}
+
+/** Production may read only the current logo of the client attached to this OF.
+ * The terminal controller first checks the operation's own authorized scope. */
+export async function authorizeOfClientLogoRead(params: { ofId: number; userId: number }) {
+  const profile = await resolveAccessProfile(params.userId);
+  if (!profileAllowsModule(profile, { moduleKey: 'production' }))
+    throw new HttpError(404, 'MEDIA_NOT_FOUND', 'Média introuvable.');
+  const client = await findCurrentOfClientLogo(params.ofId);
+  if (!client?.logo_path) return null;
+  const ids = await findAssetIdsByStorageKeys([client.logo_path]);
+  const id = ids.get(normalizeStoredImagePath(client.logo_path) ?? '');
+  if (!id) return null;
+  const assets = await findOperationalMediaAssets(id);
+  const asset = assets.length === 1 ? assets[0] : null;
+  if (!asset || asset.owner_type !== 'client' || asset.owner_id !== client.client_id || asset.module_key !== 'clients')
+    throw new HttpError(404, 'MEDIA_NOT_FOUND', 'Média introuvable.');
+  return verifiedMediaDelivery(asset);
+}
+
+async function verifiedMediaDelivery(asset: OperationalMediaAsset) {
   if (asset.status === "REVOKED") throw new HttpError(410, "MEDIA_REVOKED", "Ce média n'est plus disponible.");
   if (asset.status === "QUARANTINED") throw new HttpError(423, "MEDIA_QUARANTINED", "Ce média est en quarantaine.");
   if (asset.status === "LEGACY_UNVERIFIED") throw new HttpError(423, "MEDIA_LEGACY_UNVERIFIED", "Ce média historique doit être vérifié avant consultation.");

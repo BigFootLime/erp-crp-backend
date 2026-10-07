@@ -8,6 +8,7 @@ import {
   assertCuttingPointageTargetTx,
 } from "../repository/station-cutting.repository";
 import type { CuttingExecutionCommand } from "../validators/station-cutting.validators";
+import type { CuttingTransactionAuthorization } from "./station-cutting.service";
 import {
   svcStartExecution,
   svcPauseExecution,
@@ -25,6 +26,7 @@ export async function executeStationCutting(params: {
   command: CuttingExecutionCommand;
   idempotencyKey: string;
   audit: AuditContext;
+  authorizeTransaction?: CuttingTransactionAuthorization;
 }) {
   const { station, ofId, operationId, command, idempotencyKey } = params;
   const audit = {
@@ -38,7 +40,8 @@ export async function executeStationCutting(params: {
   const transactionHooks = {
     beforeCommit: async () => undefined,
     beforeEffect: async (tx: import("pg").PoolClient) => {
-      await authorizeCuttingTx(tx, station, ofId, operationId);
+      if (params.authorizeTransaction) await params.authorizeTransaction(tx);
+      else await authorizeCuttingTx(tx, station, ofId, operationId);
       if (command.command === "start") {
         const current = await assertCuttingTarget(tx, ofId, operationId);
         if (current !== machineId)

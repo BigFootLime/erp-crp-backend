@@ -50,6 +50,16 @@ const IDEMPOTENT_OPERATIONS = new Set([
 
 const TERMINAL_DEVICE_OPERATIONS = new Set(["get /terminals/bootstrap", "post /terminals/identify"]);
 const TERMINAL_SESSION_OPERATIONS = new Set([
+  "get /terminals/cutting/worklist", "post /terminals/cutting/resolve-of",
+  "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}",
+  "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}/documents/{id}",
+  "post /terminals/cutting/ofs/{of_id}/operations/{operation_id}/scan",
+  "post /terminals/cutting/ofs/{of_id}/operations/{operation_id}/debits",
+  "post /terminals/cutting/ofs/{of_id}/operations/{operation_id}/execution",
+  "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}/client-logo",
+  "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}/client-logo/content",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/client-logo",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/client-logo/content",
   "get /terminals/reception/processing","get /terminals/reception/{id}/lines/{lineId}/processing","get /terminals/reception/mp-articles",
   "get /terminals/reception/{id}/documents/{docId}/download",
   ...RECEIPT_PROCESSING_ACTIONS.map(action=>`post /terminals/reception/{id}/lines/{lineId}/${action}`),

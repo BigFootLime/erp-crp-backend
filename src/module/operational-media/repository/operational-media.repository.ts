@@ -23,6 +23,12 @@ export async function findOperationalMediaAssets(id: string): Promise<Operationa
   return result.rows;
 }
 
+export async function findCurrentOfClientLogo(ofId: number) {
+  return (await pool.query<{client_id: string; logo_path: string | null}>(
+    `SELECT c.client_id,c.logo_path FROM public.ordres_fabrication o
+      JOIN public.clients c ON c.client_id=o.client_id WHERE o.id=$1`, [ofId])).rows[0] ?? null;
+}
+
 /**
  * Revalidate the legacy parent before reading a file. These lookups deliberately
  * mirror the existing detail-read lifecycle: machine/client archive state does
