@@ -2,6 +2,12 @@ import type { PoolClient } from "pg";
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { lockSupplierQualificationTx } from "../../fournisseurs/repository/purchase-homologation.repository";
+import { readPurchaseClientContextsTx } from "./purchase-client-context.repository";
+import { readApprovalPoliciesTx } from "../../fournisseurs/repository/client-supplier-approval.repository";
+import {
+  assertClientApprovals,
+  evaluateClientApproval,
+} from "../../fournisseurs/domain/client-supplier-approval";
 import {
   assertPurchaseQualification,
   purchaseLineDomains,
@@ -36,6 +42,16 @@ export async function readPurchaseQualificationTx(
       404,
       "COMMANDE_FOURNISSEUR_NOT_FOUND",
       "Commande fournisseur introuvable.",
+    );
+  const contexts = await readPurchaseClientContextsTx(tx, orderId);
+  const clientIds = [
+    ...new Set(contexts.map((context) => context.client_id)),
+  ].sort();
+  // Policy writers lock clients before suppliers. Keep the same order here.
+  if (enforce && clientIds.length)
+    await tx.query(
+      "SELECT client_id FROM public.clients WHERE client_id=ANY($1::text[]) ORDER BY client_id FOR SHARE",
+      [clientIds],
     );
   if (
     enforce &&
@@ -93,6 +109,21 @@ export async function readPurchaseQualificationTx(
         header.today,
       ),
     );
+  const policies = await readApprovalPoliciesTx(tx, clientIds, enforce);
+  const lineDomains = new Map(
+    lines.map((line) => [line.id, purchaseLineDomains(line)]),
+  );
+  const clientApprovals = contexts.flatMap((context) =>
+    (lineDomains.get(context.line_id) ?? []).map((domain) =>
+      evaluateClientApproval(
+        { ...context, domains: lineDomains.get(context.line_id) ?? [] },
+        domain,
+        header.fournisseur_id,
+        policies,
+        header.today,
+      ),
+    ),
+  );
   const state: PurchaseQualification = {
     supplier_id: header.fournisseur_id,
     checked_at: header.checked_at,
@@ -100,11 +131,20 @@ export async function readPurchaseQualificationTx(
     global,
     domains,
     unmapped_line_ids: unmapped,
-    can_engage: ![global, ...domains].some(
-      (scope) => scope.status === "BLOCKED",
-    ),
+    client_approvals: clientApprovals,
+    lines_without_client: lines
+      .filter(
+        (line) => !contexts.some((context) => context.line_id === line.id),
+      )
+      .map((line) => line.id),
+    can_engage:
+      ![global, ...domains].some((scope) => scope.status === "BLOCKED") &&
+      !clientApprovals.some((check) => check.status === "BLOCKED"),
   };
-  if (enforce) assertPurchaseQualification(state);
+  if (enforce) {
+    assertPurchaseQualification(state);
+    assertClientApprovals(clientApprovals);
+  }
   return state;
 }
 

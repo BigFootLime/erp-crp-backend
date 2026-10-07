@@ -1,4 +1,5 @@
 import { Router } from "express"
+import {createClientApprovalRevision,readClientApprovalEvidence,readClientApprovalHistory,readClientApprovals} from "../controllers/client-supplier-approval.controller"
 import { SUPPLIER_WRITE_ROLES } from "../fournisseurs.permissions"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
@@ -56,6 +57,10 @@ router.use(authenticateToken)
 router.get("/", listFournisseurs)
 router.get("/doublons", authorizeRole(...WRITE), findDoublons)
 router.get("/domaines", listFournisseurDomaines)
+router.get("/client-approvals", readClientApprovals)
+router.get("/client-approvals/evidence", readClientApprovalEvidence)
+router.get("/client-approvals/:scopeId/history", readClientApprovalHistory)
+router.post("/client-approvals/revisions", authorizeRole(...QUALIF), createClientApprovalRevision)
 // Immutable internal creation snapshot; reads retain the supplier-card policy.
 router.get("/:id/creation-snapshot", getFournisseurCreationSnapshot)
 router.get("/:id/creation-snapshot/:documentId/preview", previewFournisseurCreationSnapshot)
