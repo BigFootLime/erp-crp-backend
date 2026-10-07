@@ -5,10 +5,11 @@ import {HttpError} from '../../../utils/httpError';
 import {withRealtimeOutboxTransaction} from '../../../shared/realtime/realtime-outbox-transaction';
 import {enqueueEntityChanged} from '../../../shared/realtime/realtime-outbox.service';
 import {roleHasCommandeFournisseurCapability} from '../domain/commande-fournisseur-rbac';
-import {assertSelectableSupplierOffer,compareSupplierOffer,consultationSnapshotKey,supplierConsultationRequest,type ConsultationSnapshot,type ConsultationRequestedLine} from '../domain/supplier-consultation';
+import {assertSelectableSupplierOffer,assertConsultationSnapshotCurrent,compareSupplierOffer,supplierConsultationRequest,type ConsultationSnapshot,type ConsultationRequestedLine} from '../domain/supplier-consultation';
 import {supplierOfferResponseSchema,type SupplierConsultationCommand,type SupplierOfferResponse} from '../validators/supplier-consultation.validators';
 import {assertDraft,assertFournisseurCommandable,assertOptimisticToken,fetchFournisseurMini,insertAuditLog,lockHeader,recomputeTotauxTx,type AuditContext} from './commande-fournisseur.repository';
-import {readConsultationDocuments,type ConsultationDocument} from './consultation-documents.repository';
+import {readConsultationDocuments,retainConsultationDocumentsTx,type ConsultationDocument} from './consultation-documents.repository';
+import {readConsultationTechnicalSourcesTx} from './consultation-technical.repository';
 
 type Queryer=Pick<PoolClient,'query'>;
 type Round={id:string;round_no:number;status:'OPEN'|'SELECTED'|'CLOSED';source_revision:string;snapshot:ConsultationSnapshot;row_version:number;notes:string;selected_offer_id:string|null;selection_reason:string|null;decided_at:string|null;created_at:string};
@@ -21,7 +22,7 @@ async function enabled(tx:Queryer){
   return (await tx.query(`SELECT to_regclass('public.supplier_consultations') IS NOT NULL AND EXISTS(
     SELECT 1 FROM public.app_feature_flags WHERE key='PRODUCTION_MATERIAL_WORKFLOW' AND enabled) AS enabled`)).rows[0]?.enabled===true;
 }
-async function snapshotTx(tx:Queryer,commandeId:string):Promise<ConsultationSnapshot>{
+async function snapshotTx(tx:Queryer,commandeId:string,lock=false):Promise<ConsultationSnapshot>{
   const header=(await tx.query(`SELECT code,devise AS currency,adresse_livraison_texte AS delivery_address,
     magasin_livraison_id::text AS destination_id,tva_frais_pct::float8 AS freight_vat_pct FROM public.commande_fournisseur WHERE id=$1::uuid`,[commandeId])).rows[0];
   const lines=(await tx.query<ConsultationRequestedLine>(`SELECT l.id::text,l.designation,l.article_id::text,a.code AS article_code,
@@ -31,13 +32,13 @@ async function snapshotTx(tx:Queryer,commandeId:string):Promise<ConsultationSnap
     WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE' ORDER BY l.position,l.id`,[commandeId])).rows;
   if(!lines.length||lines.length>200)throw new HttpError(409,'CONSULTATION_LINES_REQUIRED','Préparez entre une et 200 lignes avant de consulter les fournisseurs.');
   if(lines.some(l=>!l.unit?.trim()))throw new HttpError(409,'CONSULTATION_UNIT_REQUIRED','Complétez l’unité de chaque ligne avant la consultation.');
-  return {...header,lines};
+  return {...header,lines,technical_sources:await readConsultationTechnicalSourcesTx(tx,commandeId,lock)};
 }
 async function assertFrozenSourceTx(tx:Queryer,commandeId:string,round:Round,currentRevision:string){
   if(round.source_revision!==currentRevision)throw new HttpError(409,'CONSULTATION_OBSOLETE','Le brouillon a changé depuis la consultation. Clôturez cette consultation et préparez une nouvelle demande. Les offres enregistrées restent consultables.');
   // Legacy line writers must not allow a stale offer even if an old route did
   // not touch the header's revision token.
-  if(consultationSnapshotKey(await snapshotTx(tx,commandeId))!==consultationSnapshotKey(round.snapshot))throw new HttpError(409,'CONSULTATION_OBSOLETE','Les lignes ou exigences ont changé. Préparez une nouvelle consultation.');
+  assertConsultationSnapshotCurrent(round.snapshot,await snapshotTx(tx,commandeId,true));
 }
 async function roundTx(tx:Queryer,commandeId:string,id:string){
   const r=(await tx.query<Round>(`SELECT *,decided_at::text,created_at::text FROM public.supplier_consultations WHERE id=$1::uuid AND commande_id=$2::uuid FOR UPDATE`,[id,commandeId])).rows[0];
@@ -61,8 +62,14 @@ export async function repoReadSupplierConsultations(commandeId:string,role:strin
     NOT EXISTS(SELECT 1 FROM public.supplier_consultation_offers newer WHERE newer.invitation_id=o.invitation_id AND newer.revision>o.revision) AS is_latest
     FROM public.supplier_consultation_offers o JOIN public.supplier_consultation_invitations i ON i.id=o.invitation_id WHERE i.consultation_id=$1::uuid ORDER BY o.created_at,o.id`,[current.id])).rows;
   const today=(await db.query<{today:string}>('SELECT CURRENT_DATE::text AS today')).rows[0].today;
-  const availableDocuments=current.status==='OPEN'?await readConsultationDocuments(db,commandeId,{user_id:actorId,role}):[];
-  return {enabled:true,rounds,headerRevision:header.revision,availableDocuments,current:{...current,obsolete:current.status==='OPEN'&&(current.source_revision!==header.revision||header.statut!=='BROUILLON'),invitations,
+  let obsolete=current.status==='OPEN'&&(current.source_revision!==header.revision||header.statut!=='BROUILLON');
+  let obsoleteReason=obsolete?'Le brouillon a changé depuis cette consultation.':null;
+  if(current.status==='OPEN'&&!obsolete){
+    try{assertConsultationSnapshotCurrent(current.snapshot,await snapshotTx(db,commandeId));}
+    catch(error){if(error instanceof HttpError&&error.status===409){obsolete=true;obsoleteReason=error.message;}else throw error;}
+  }
+  const availableDocuments=current.status==='OPEN'&&!obsolete?await readConsultationDocuments(db,commandeId,{user_id:actorId,role}):[];
+  return {enabled:true,rounds,headerRevision:header.revision,availableDocuments,current:{...current,obsolete,obsolete_reason:obsoleteReason,invitations,
     offers:offers.map(o=>({...o,comparison:compareSupplierOffer(current.snapshot,supplierOfferResponseSchema.parse(o.response),today)}))}};
 }
 
@@ -90,7 +97,7 @@ export async function repoCommandSupplierConsultation(commandeId:string,body:Sup
       assertDraft(header.statut);
       const open=(await tx.query(`SELECT id FROM public.supplier_consultations WHERE commande_id=$1::uuid AND status='OPEN'`,[commandeId])).rows[0];
       if(open)throw new HttpError(409,'CONSULTATION_ALREADY_OPEN','Une consultation est déjà ouverte pour ce brouillon.');
-      const snapshot=await snapshotTx(tx,commandeId);
+      const snapshot=await snapshotTx(tx,commandeId,true);
       consultationId=(await tx.query<{id:string}>(`INSERT INTO public.supplier_consultations(commande_id,round_no,source_revision,snapshot,notes,created_by)
         SELECT $1::uuid,COALESCE(max(round_no),0)+1,$2,$3::jsonb,$4,$5 FROM public.supplier_consultations WHERE commande_id=$1::uuid RETURNING id::text`,
         [commandeId,header.updated_at_token,JSON.stringify(snapshot),body.notes,audit.user_id])).rows[0].id;
@@ -111,6 +118,7 @@ export async function repoCommandSupplierConsultation(commandeId:string,body:Sup
           if(invited.some(i=>i.supplier_id===body.supplier_id))throw new HttpError(409,'SUPPLIER_ALREADY_INVITED','La demande de ce fournisseur est déjà préparée.');
           if(invited.length>=20)throw new HttpError(409,'CONSULTATION_SUPPLIER_LIMIT','Une consultation peut comparer au maximum 20 fournisseurs.');
           const documents=await readConsultationDocuments(tx,commandeId,audit,body.document_version_ids??[]);
+          await retainConsultationDocumentsTx(tx,documents,round.id,audit.user_id);
           const request=supplierConsultationRequest(round.snapshot,supplier.nom??' ',round.notes)+
             (documents.length?'\n\nPièces jointes sélectionnées :\n'+documents.map(d=>`${d.code} · ${d.title} · version ${d.version_number} · ${d.original_name}`).join('\n'):'');
           await tx.query(`INSERT INTO public.supplier_consultation_invitations(consultation_id,supplier_id,request_text,created_by,documents) VALUES($1::uuid,$2::uuid,$3,$4,$5::jsonb)`,

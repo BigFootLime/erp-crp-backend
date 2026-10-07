@@ -2,24 +2,29 @@ import type {PoolClient} from 'pg';
 import {HttpError} from '../../../utils/httpError';
 import {assertGedCapability,roleHasGedCapability} from '../../ged/domain/ged-policy';
 import {assertGedVersionParentReadable} from '../../ged/services/ged-parent-authorization.service';
+import {PURCHASE_OF_ORIGIN_CTES} from './purchase-client-context.repository';
 
 export type ConsultationDocument={document_id:string;version_id:string;code:string;title:string;original_name:string;version_number:number;sha256:string};
 type Actor={user_id:number;role?:string|null};
+export const CONSULTATION_DOCUMENT_HOLD_SQL = `INSERT INTO public.ged_retention_holds(document_id,hold_type,reason,placed_by)
+  SELECT $1::uuid,'QUALITE',$2,$3 WHERE NOT EXISTS(SELECT 1 FROM public.ged_retention_holds WHERE document_id=$1::uuid AND reason=$2 AND released_at IS NULL)`;
+export async function retainConsultationDocumentsTx(tx:Pick<PoolClient,'query'>,documents:ConsultationDocument[],roundId:string,actorId:number){
+  for(const document of documents)await tx.query(CONSULTATION_DOCUMENT_HOLD_SQL,
+    [document.document_id,`CONSULTATION:${roundId}:VERSION:${document.version_id}`,actorId]);
+}
 /** References only: bytes and access remain owned by GED. Never add a second
  * parent link to a technical document merely because it is consulted. */
 export async function readConsultationDocuments(tx:Pick<PoolClient,'query'>,commandeId:string,actor:Actor,selected?:string[]){
   if(selected?.length)assertGedCapability(actor.role,'download');
   if(!roleHasGedCapability(actor.role,'read')||!actor.user_id)return [];
   if(selected && !selected.length)return [];
-  const rows=(await tx.query<ConsultationDocument>(`WITH recipients AS (
-    SELECT l.of_id FROM public.commande_fournisseur_ligne l WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE' AND l.of_id IS NOT NULL
-    UNION SELECT b.of_id FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id
-      WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE' AND NOT b.annule AND b.of_id IS NOT NULL
+  const rows=(await tx.query<ConsultationDocument>(`WITH ${PURCHASE_OF_ORIGIN_CTES}, recipients AS (
+    SELECT of_id FROM origins UNION SELECT of_id FROM effective_origins
   ), scope AS (
     SELECT 'COMMANDE_FOURNISSEUR'::text AS entity_type,$1::text AS entity_id
     UNION SELECT 'ORDRE_FABRICATION',of_id::text FROM recipients
     UNION SELECT 'OF',of_id::text FROM recipients
-    UNION SELECT 'PIECE_TECHNIQUE_VERSION',o.piece_technique_version_id::text FROM recipients r JOIN public.ordres_fabrication o ON o.id=r.of_id
+    UNION SELECT 'PIECE_TECHNIQUE_VERSION',COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid)::text FROM recipients r JOIN public.ordres_fabrication o ON o.id=r.of_id
     UNION SELECT 'ARTICLE',l.article_id::text FROM public.commande_fournisseur_ligne l WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE'
     UNION SELECT 'STOCK_ARTICLE',l.article_id::text FROM public.commande_fournisseur_ligne l WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE'
   ) SELECT d.id::text AS document_id,v.id::text AS version_id,d.code,d.title,v.original_name,v.version_number::int,b.sha256
