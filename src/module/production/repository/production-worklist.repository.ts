@@ -55,6 +55,7 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       ) op ON true CROSS JOIN clock
       WHERE ($1='' OR concat_ws(' ',o.numero,pt.code_piece,pt.designation,c.company_name,parent.numero) ILIKE '%'||$1||'%')
         AND ($2::text IS NULL OR o.client_id=$2)
+        AND ($7::uuid IS NULL OR o.piece_technique_id=$7::uuid)
         AND ($3='ALL' OR ($3='ROOT' AND o.parent_of_id IS NULL) OR ($3='CHILD' AND o.parent_of_id IS NOT NULL)
           OR ($3='ASSEMBLY' AND v.manufacturing_mode='ASSEMBLY') OR ($3='CONSOLIDATION' AND own_group.id IS NOT NULL))
         AND o.statut NOT IN ('ANNULE','TERMINE','CLOTURE')
@@ -86,6 +87,7 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       input.queue,
       input.pageSize,
       (input.page - 1) * input.pageSize,
+      input.piece_technique_id ?? null,
     ],
   );
   return result.rows[0].payload;
