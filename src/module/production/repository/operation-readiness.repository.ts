@@ -6,7 +6,8 @@ import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossi
 import {materialPropertiesFingerprint} from "../domain/of-material";
 import {readMaterialReservationAvailabilityTx,type MaterialReservationAvailability} from './material-reservation-availability.repository';
 import {assertOperationQuantityCeiling,evaluateOperationReadiness,type OperationReadinessFacts} from "../domain/operation-readiness";
-import {readOperationalLotQualityEligibility,assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
+import {assertOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
+import {readOfComponentCoverageTx} from './of-component-coverage.repository';
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 
@@ -66,27 +67,9 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     FROM edges e JOIN public.of_operations p ON p.id=e.predecessor ORDER BY e.successor,p.phase,p.id`,[dossier.operations.map(o=>o.id)])).rows;
   const external=await readSubcontractFlows(tx,[...new Set(dependencies.map(d=>d.predecessor))]);
   const externalTransfers=await readExternalTransfers(tx,external);
-  let componentMissing=(await tx.query<{missing:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_component_requirements n
-    WHERE n.consuming_of_id=$1 AND n.status NOT IN ('CANCELLED','CONSUMED') AND n.required_qty>COALESCE((
-      SELECT sum(GREATEST(0,r.qty_reserved-r.qty_consumed)) FROM public.stock_reservations r WHERE r.of_component_requirement_id=n.id
-        AND r.status='ACTIVE' AND(r.expires_at IS NULL OR r.expires_at>now())),0)) AS missing`,[ofId])).rows[0]?.missing===true;
   const materialFacts=new Map<string,OperationReadinessFacts['materials']>();
-  const quality=new Map<string,Awaited<ReturnType<typeof readOperationalLotQualityEligibility>>>();
-   if(operations.some(op=>op.kind==='ASSEMBLAGE')){
-     if (!(await tx.query<{defined:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_component_requirements WHERE consuming_of_id=$1 AND status<>'CANCELLED') AS defined`, [ofId])).rows[0]?.defined)
-       componentMissing=true;
-    const components=(await tx.query<{lot_id:string|null;physical:boolean}>(`SELECT r.lot_id::text,
-      (l.lot_status='LIBERE' AND b.qty_total-b.qty_depreciated>=b.qty_reserved AND r.article_id=l.article_id) AS physical
-      FROM public.stock_reservations r JOIN public.of_component_requirements n ON n.id=r.of_component_requirement_id
-      LEFT JOIN public.stock_batches b ON b.id=r.stock_batch_id LEFT JOIN public.lots l ON l.id=r.lot_id
-      WHERE n.consuming_of_id=$1 AND n.status NOT IN ('CANCELLED','CONSUMED') AND r.status='ACTIVE'
-        AND(r.expires_at IS NULL OR r.expires_at>now()) ORDER BY r.lot_id,r.id`,[ofId])).rows;
-    for(const component of components){
-      if(!component.lot_id||!component.physical){componentMissing=true;continue;}
-      if(!quality.has(component.lot_id))quality.set(component.lot_id,await readOperationalLotQualityEligibility({client:tx,lotId:component.lot_id,qty:0,purpose:'RESERVE'}));
-      if(quality.get(component.lot_id)!.eligibility.blocks.length)componentMissing=true;
-    }
-  }
+  const componentCoverage=operations.some(op=>op.kind==='ASSEMBLAGE')?await readOfComponentCoverageTx(tx,ofId,true):null;
+  const componentMissing=componentCoverage!==null&&!componentCoverage.ready;
   const availableReservations=reservationAvailability??await readMaterialReservationAvailabilityTx(tx,coverage);
   const missingMaterial=missingPhysicalMaterial(coverage.needs.map(need=>({key:need.key,designation:need.designation,
     unit:need.unit,required:need.required,consumed:need.consumed,usableReserved:availableReservations.get(need.key)?.usable??0,
@@ -126,7 +109,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,quantityKind,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
-  return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentMissing,quality:[...quality].map(([id,q])=>[id,q.target,q.already_committed_qty]),materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
+  return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentCoverageVersion:componentCoverage?.version??null,materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
 }
 
 export async function getOperationReadiness(ofId:number){

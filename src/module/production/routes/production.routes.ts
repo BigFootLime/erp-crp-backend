@@ -1,4 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {readComponentCoverage} from '../controllers/of-material.controller';
 import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCalendar} from '../controllers/maintenance-schedule.controller';
 import {readLosses,createComplement} from '../controllers/production-loss.controller';
 import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
@@ -254,6 +255,7 @@ router.post('/ofs/:id/consumables/prepare',requireOfCapability('read'),prepareCo
 router.post('/ofs/:id/consumables/withdraw',requireOfCapability('read'),withdrawConsumable);
 router.post('/ofs/:id/consumables/reconcile',requireOfCapability('read'),reconcileConsumables);
 router.get('/ofs/:id/operation-readiness',requireOfCapability('read'),readOperationReadiness);
+router.get('/ofs/:id/component-coverage',requireOfCapability('read'),readComponentCoverage);
 router.post('/ofs/:id/material/:sourceRef/configure',requireOfCapability('read'),configureMaterial);
 router.post('/ofs/:id/material/:sourceRef/choose-supplier',requireOfCapability('read'),chooseMaterialSupplier);
 router.post('/ofs/:id/material/:sourceRef/verify-lot',requireOfCapability('read'),verifyMaterialLot);
