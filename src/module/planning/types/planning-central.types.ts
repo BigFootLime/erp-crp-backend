@@ -7,6 +7,10 @@ export type Resource = {
   id: string; kind: ResourceKind; label: string; timezone: string;
   /** A machine and its linked workstations share the same physical capacity. */
   capacityId?: string;
+  /** Distinguishes a known closed calendar from an absent calendar. */
+  calendarConfigured?: boolean;
+  /** Current scheduling eligibility; open maintenance holds disable capacity. */
+  capacityEnabled?: boolean;
   /** Explicit UTC intervals obtained from the resource's local civil calendar. */
   availability: Interval[]; qualifiedTaskIds?: string[]; version: string;
   unavailability?: Array<Interval & { id:string; title:string; description:string|null; kind:string }>;
