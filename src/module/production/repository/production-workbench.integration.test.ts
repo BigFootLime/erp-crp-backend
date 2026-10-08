@@ -737,6 +737,42 @@ describe.skipIf(!isolated)(
         }
       },
     );
+    it.each([0, 5])("aggregates same-location material holds with %i surplus and restores unchanged allocations", async (surplus) => {
+      const f = await seedProductionWorkbenchFixture();
+      await prepareFixture(f);
+      const stock = await prepareConsolidationMaterial(f);
+      const sources = await Promise.all(f.ids.slice(0, 2).map(async (of_id) => ({
+        of_id, expected_updated_at: (await evaluateOfPreparation(pool, of_id)).of.updated_at,
+      })));
+      const request = { sources, surplus_quantity: surplus, reason: "Same material lot and location regression" };
+      const preview = await repoPreviewConsolidation(request);
+      const group = await repoCreateConsolidation({ request, preview_hash: preview.preview_hash, idempotency_key: randomUUID() }, f.audit);
+      const hold = (await pool.query(`SELECT producer_reservation_id::text,transferred_qty::float8,surplus_qty::float8
+        FROM public.production_consolidation_material_holds WHERE consolidation_id=$1::uuid`, [group.id])).rows;
+      expect(hold).toHaveLength(1);
+      expect(hold[0]).toMatchObject({ transferred_qty: 30, surplus_qty: surplus });
+      const counters = async () => (await pool.query(`SELECT b.qty_reserved::float8 AS batch,s.qty_reserved::float8 AS level
+        FROM public.stock_batches b JOIN public.stock_levels s ON s.id=b.stock_level_id WHERE b.id=$1::uuid`, [stock.batch])).rows[0];
+      expect(await counters()).toEqual({ batch: 30 + surplus, level: 30 + surplus });
+      await pool.query('UPDATE public.stock_reservations SET qty_prepared=1 WHERE id=$1::uuid', [hold[0].producer_reservation_id]);
+      const dissolve = async () => repoDissolveConsolidation(group.id, {
+        reason: "Restore source allocation",
+        expected_updated_at: (await evaluateOfPreparation(pool, group.producer_of_id)).of.updated_at,
+      }, f.audit);
+      await expect(dissolve()).rejects.toMatchObject({ status: 409 });
+      expect((await repoGetConsolidation(group.id)).state).toBe('ACTIVE');
+      expect(await counters()).toEqual({ batch: 30 + surplus, level: 30 + surplus });
+      await pool.query('UPDATE public.stock_reservations SET qty_prepared=0 WHERE id=$1::uuid', [hold[0].producer_reservation_id]);
+      await dissolve();
+      expect(await counters()).toEqual({ batch: 30, level: 30 });
+      const restored = (await pool.query(`SELECT s.of_id::int,s.qty_reserved::float8,s.status,t.source_reserved_qty::float8 AS original
+        FROM public.production_consolidation_material_transfers t JOIN public.stock_reservations s ON s.id=t.reservation_id
+        WHERE t.consolidation_id=$1::uuid ORDER BY s.of_id`, [group.id])).rows;
+      expect(restored.map(r => ({ qty: r.qty_reserved, original: r.original, status: r.status }))).toEqual([
+        { qty: 10, original: 10, status: 'ACTIVE' }, { qty: 20, original: 20, status: 'ACTIVE' },
+      ]);
+      expect((await pool.query('SELECT status FROM public.stock_reservations WHERE id=$1::uuid', [hold[0].producer_reservation_id])).rows[0].status).toBe('RELEASED');
+    });
     it("allocates quarantined receipts only after release and never duplicates the physical stock entry", async () => {
       const f = await seedProductionWorkbenchFixture();
       await prepareFixture(f);
@@ -948,7 +984,7 @@ describe.skipIf(!isolated)(
         expect(e.ready).toBe(true);
         expect(e.of.technical_readiness).toBe("VALIDATED");
       }
-      await prepareConsolidationMaterial(fixture);
+      const materialStock = await prepareConsolidationMaterial(fixture);
       const sources = await Promise.all(
         fixture.ids.slice(0, 2).map(async (of_id) => ({
           of_id,
@@ -977,17 +1013,25 @@ describe.skipIf(!isolated)(
       const group = results[0];
       expect(results[1].producer_of_id).toBe(group.producer_of_id);
       expect(results.filter((r) => r.idempotent_replay)).toHaveLength(1);
-      const transferred = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,
-        r.material_need_id::text,t.source_of_id::int,t.source_need_id::text
+      const transferred = (await pool.query(`SELECT t.reservation_id::text AS id,r.of_id::int,r.source_id,
+        r.material_need_id::text,t.source_of_id::int,t.source_need_id::text,t.source_reserved_qty::text,
+        s.status AS source_status,s.qty_reserved::text AS source_quantity
         FROM public.production_consolidation_material_transfers t
-        JOIN public.stock_reservations r ON r.id=t.reservation_id
+        JOIN public.stock_reservations r ON r.id=t.producer_reservation_id
+        JOIN public.stock_reservations s ON s.id=t.reservation_id
         WHERE t.consolidation_id=$1::uuid ORDER BY t.source_of_id`, [group.id])).rows;
       expect(transferred).toHaveLength(2);
       for (const reservation of transferred) {
         expect(reservation.of_id).toBe(group.producer_of_id);
         expect(reservation.source_id).toBe(String(group.producer_of_id));
         expect(reservation.material_need_id).not.toBe(reservation.source_need_id);
+        expect(reservation.source_status).toBe('RELEASED');
+        expect(reservation.source_quantity).toBe(reservation.source_reserved_qty);
       }
+      const materialHolds = (await pool.query(`SELECT transferred_qty::float8,surplus_qty::float8
+        FROM public.production_consolidation_material_holds WHERE consolidation_id=$1::uuid`,[group.id])).rows;
+      expect(materialHolds).toEqual([{transferred_qty:30,surplus_qty:5}]);
+      expect(Number((await pool.query('SELECT qty_reserved FROM public.stock_batches WHERE id=$1::uuid',[materialStock.batch])).rows[0].qty_reserved)).toBe(35);
       const producer = await evaluateOfPreparation(pool, group.producer_of_id);
       expect(producer.ready).toBe(true);
       expect(producer.sheet?.id).not.toBe(e.sheet?.id);
@@ -1087,7 +1131,7 @@ describe.skipIf(!isolated)(
         fixture.audit,
       );
       expect((await repoGetConsolidation(group.id)).state).toBe("DISSOLVED");
-      const restored = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,r.material_need_id::text
+      const restored = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,r.material_need_id::text,r.status,r.qty_reserved::text
         FROM public.stock_reservations r WHERE r.id=ANY($1::uuid[]) ORDER BY r.of_id`,
         [transferred.map(r => r.id)])).rows;
       expect(restored).toHaveLength(2);
@@ -1096,7 +1140,10 @@ describe.skipIf(!isolated)(
         expect(reservation.of_id).toBe(source.source_of_id);
         expect(reservation.source_id).toBe(String(source.source_of_id));
         expect(reservation.material_need_id).toBe(source.source_need_id);
+        expect(reservation.status).toBe('ACTIVE');
+        expect(reservation.qty_reserved).toBe(source.source_reserved_qty);
       }
+      expect(Number((await pool.query('SELECT qty_reserved FROM public.stock_batches WHERE id=$1::uuid',[materialStock.batch])).rows[0].qty_reserved)).toBe(30);
       expect(
         Number(
           (

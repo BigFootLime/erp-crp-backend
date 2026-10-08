@@ -8,6 +8,7 @@ import { assertMaterialOriginLimit, missingPhysicalMaterial } from '../domain/of
 import { debitQuantity, materialPropertiesFingerprint, proposeMaterialCoverage, quantity } from '../domain/of-material';
 import { repoCreateStockReservation } from '../../stock/repository/stock-reservation.repository';
 import { HttpError } from '../../../utils/httpError';
+import { aggregateConsolidationHoldsTx } from './consolidation-material-holds.repository';
 
 /** Physical regrouping moves existing holds, never reserves their quantity a
  * second time. Source preparation is checked again inside the creation tx. */
@@ -88,19 +89,22 @@ export async function transferConsolidationMaterialTx(tx: PoolClient, consolidat
       group.required, group.unit, group.supplyMode, JSON.stringify(group.requirements), audit.user_id,
       JSON.stringify(group.debitRule), group.supplierId, group.destinationId, group.phase])).rows[0];
     if (!inserted) throw new HttpError(409, 'CONSOLIDATION_MATERIAL_OPERATION', 'L’opération consommatrice du regroupement est absente.');
+    // Reserve only the surplus first, while source commitments still exist.
+    // Aggregation then transfers their ownership without reserving them twice.
+    const surplusReservationIds: string[]=[];
+    for (const extra of group.extra) {
+      const hold=await repoCreateStockReservation({ article_id: group.articleId,
+        magasin_id: extra.lot.magasinId, emplacement_id: extra.lot.emplacementId, lot_id: extra.lotId,
+        qty: extra.quantity, source: { source_type: 'OF', of_id: producerId }, reason: 'Matière du surplus du regroupement physique' },
+      audit, `consolidation-material:${consolidationId}:${inserted.id}:${extra.batchId}`, tx, inserted.id);
+      surplusReservationIds.push(hold.reservation.id);
+    }
+    await aggregateConsolidationHoldsTx(tx,{consolidationId,producerId,needId:inserted.id,articleId:group.articleId,
+      sources:group.sources,surplusReservationIds},audit);
     for (const source of group.sources) {
-      await tx.query(`INSERT INTO public.production_consolidation_material_transfers(consolidation_id,reservation_id,source_of_id,source_need_id,producer_need_id)
-        SELECT $1::uuid,r.id,$2,$3::uuid,$4::uuid FROM public.stock_reservations r WHERE r.id=ANY($5::uuid[])`,
-      [consolidationId, source.ofId, source.needId, inserted.id, source.reservations]);
-      await tx.query(`UPDATE public.stock_reservations SET of_id=$1::bigint,source_id=$1::bigint::text,material_need_id=$2::uuid,updated_at=now(),updated_by=$3
-        WHERE id=ANY($4::uuid[]) AND status='ACTIVE' AND qty_consumed=0`, [producerId, inserted.id, audit.user_id, source.reservations]);
       await tx.query(`INSERT INTO public.of_material_lot_checks(need_id,lot_id,requirements_hash,evidence,decided_by,decided_at,lot_properties_hash,manual_checks_confirmed)
         SELECT $1::uuid,lot_id,requirements_hash,evidence,decided_by,decided_at,lot_properties_hash,manual_checks_confirmed
         FROM public.of_material_lot_checks WHERE need_id=$2::uuid ON CONFLICT DO NOTHING`, [inserted.id, source.needId]);
     }
-    for (const extra of group.extra) await repoCreateStockReservation({ article_id: group.articleId,
-      magasin_id: extra.lot.magasinId, emplacement_id: extra.lot.emplacementId, lot_id: extra.lotId,
-      qty: extra.quantity, source: { source_type: 'OF', of_id: producerId }, reason: 'Matière du surplus du regroupement physique' },
-    audit, `consolidation-material:${consolidationId}:${inserted.id}:${extra.batchId}`, tx, inserted.id);
   }
 }
