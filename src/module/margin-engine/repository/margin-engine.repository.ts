@@ -16,6 +16,7 @@ import { ofMarginOperationSourcesSql, OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_
 import { QUOTE_MARGIN_SOURCES_SQL } from "./quote-margin-sources.sql";
 import { insertQuoteMarginSnapshotTx, readQuoteMarginSnapshot, type QuoteCaptureKind } from "./quote-margin-snapshot.repository";
 import { reconcileSupplierCostSources, type SupplierReceiptCost, type SupplierInvoiceCost } from "../domain/supplier-cost-reconciliation";
+import { composeMarginCostSources } from "../domain/cost-input-identities";
 import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from "./supplier-cost-sources.sql";
 
 type ScopeIdentity = {
@@ -192,7 +193,7 @@ async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: strin
   return rows.rows.map(automaticCost);
 }
 
-async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED">): Promise<{ costs: MarginCostInput[]; measurements: Record<string, string | number | null> }> {
+async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED">): Promise<{ costs: MarginCostInput[]; measurements: Record<string, string | number | null>; retiredAutomaticKeys: string[] }> {
   const result = await pool.query<CostRow>(ofMarginOperationSourcesSql(basis), [scopeRef]);
   const measureResult = await pool.query<{
     planned_hours: string | null;
@@ -239,12 +240,13 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
       });
     }
   }
-  const actualCosts = basis === "ACTUAL" || basis === "UPDATED"
-    ? [...await loadActualMaterialCosts(scopeRef), ...await loadActualSubcontractingCosts(scopeRef)]
-    : [];
+  const [materialCosts, supplierCosts] = basis === "ACTUAL" || basis === "UPDATED"
+    ? await Promise.all([loadActualMaterialCosts(scopeRef), loadActualSubcontractingCosts(scopeRef)])
+    : [[], { costs: [], retiredAutomaticKeys: [] }];
   return {
-    costs: [...result.rows.map(automaticCost), ...actualCosts, ...quantityCosts],
+    costs: [...result.rows.map(automaticCost), ...materialCosts, ...supplierCosts.costs, ...quantityCosts],
     measurements: measures,
+    retiredAutomaticKeys: supplierCosts.retiredAutomaticKeys,
   };
 }
 
@@ -253,12 +255,16 @@ async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInpu
   return rows.rows.map(automaticCost);
 }
 
-async function loadActualSubcontractingCosts(scopeRef: string): Promise<MarginCostInput[]> {
+async function loadActualSubcontractingCosts(scopeRef: string): Promise<{ costs: MarginCostInput[]; retiredAutomaticKeys: string[] }> {
   const [receipts, invoices] = await Promise.all([
     pool.query<SupplierReceiptCost>(SUPPLIER_RECEIPT_COSTS_SQL, [scopeRef]),
     pool.query<SupplierInvoiceCost>(SUPPLIER_APPROVED_INVOICE_COSTS_SQL, [scopeRef]),
   ]);
-  return reconcileSupplierCostSources(receipts.rows, invoices.rows).map(automaticCost);
+  const invoicedLines = new Set(invoices.rows.map(row => row.order_line_id));
+  return {
+    costs: reconcileSupplierCostSources(receipts.rows, invoices.rows).map(automaticCost),
+    retiredAutomaticKeys: receipts.rows.filter(row => invoicedLines.has(row.order_line_id)).map(row => row.key),
+  };
 }
 
 export type ManualInputRow = {
@@ -424,6 +430,7 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
   }
   const manual = await loadManualInputs(identity.scope_type, identity.scope_ref, basis, asOf);
   let automaticCosts: MarginCostInput[] = [];
+  let retiredAutomaticKeys: string[] = [];
   let measurements: Record<string, string | number | null> = {};
   if ((basis === "QUOTED" || basis === "STANDARD") && (identity.scope_type === "DEVIS" || identity.scope_type === "DEVIS_LINE")) {
     automaticCosts = await loadDevisCosts(identity.scope_type, identity.scope_ref);
@@ -431,13 +438,14 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
     const ofData = await loadOfCosts(identity.scope_ref, basis);
     automaticCosts = ofData.costs;
     measurements = ofData.measurements;
+    retiredAutomaticKeys = ofData.retiredAutomaticKeys;
   }
-  return assembleCalculationInput(identity, basis, asOf, manual, automaticCosts, measurements);
+  return assembleCalculationInput(identity, basis, asOf, manual, automaticCosts, measurements, retiredAutomaticKeys);
 }
 
 function assembleCalculationInput(identity: ScopeIdentity, basis: MarginBasis, asOf: string,
   manual: { revenue: MarginRevenueInput | null; costs: MarginCostInput[] }, automaticCosts: MarginCostInput[],
-  measurements: Record<string, string | number | null> = {}): MarginCalculationInput {
+  measurements: Record<string, string | number | null> = {}, retiredAutomaticKeys: string[] = []): MarginCalculationInput {
   const canonicalRevenue: MarginRevenueInput | null = identity.revenue_ht === null ? null : {
     availability: "PROVIDED",
     amount_ht: identity.revenue_ht,
@@ -458,7 +466,7 @@ function assembleCalculationInput(identity: ScopeIdentity, basis: MarginBasis, a
     basis,
     as_of: asOf,
     revenue: canonicalRevenue ?? manual.revenue,
-    costs: [...automaticCosts, ...manual.costs],
+    costs: composeMarginCostSources(automaticCosts, manual.costs, retiredAutomaticKeys),
     measurements,
   };
 }
