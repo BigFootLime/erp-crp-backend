@@ -17,16 +17,21 @@ const journalColumns = `j.sequence::text,j.movement_id::text,j.article_id::text,
       THEN r.source_snapshot->'remnants' ELSE '[]'::jsonb END) link
       LEFT JOIN public.stock_valuation_movement_journal original ON original.movement_id::text=link->>'original_movement_id'
       WHERE original.movement_id IS NULL OR link->>'original_stock_source_sha256' IS DISTINCT FROM original.source_sha256
-        OR link->'original_stock_source' IS DISTINCT FROM original.source_snapshot) AS return_valid`;
+        OR link->'original_stock_source' IS DISTINCT FROM original.source_snapshot) AS return_valid,
+  f.source_snapshot AS manufacturing_snapshot,f.source_sha256 AS manufacturing_sha256,f.source_issues AS manufacturing_issues,
+  f.source_sha256=encode(digest(f.source_snapshot::text,'sha256'),'hex')
+    AND f.source_snapshot->>'stock_source_sha256'=j.source_sha256 AS manufacturing_valid`;
 export const CUMP_SOURCE_WINDOW_SQL = `SELECT ${journalColumns}
   FROM public.stock_valuation_movement_journal j
   LEFT JOIN public.stock_valuation_acquisition_sources a ON a.movement_id=j.movement_id
   LEFT JOIN public.stock_valuation_return_sources r ON r.movement_id=j.movement_id
+  LEFT JOIN public.stock_valuation_manufacturing_sources f ON f.movement_id=j.movement_id
   WHERE j.sequence>$1::bigint ORDER BY j.sequence LIMIT $2::integer`;
 export const CUMP_TRANSFER_GROUP_SQL = `SELECT ${journalColumns}
   FROM public.stock_valuation_movement_journal j
   LEFT JOIN public.stock_valuation_acquisition_sources a ON a.movement_id=j.movement_id
   LEFT JOIN public.stock_valuation_return_sources r ON r.movement_id=j.movement_id
+  LEFT JOIN public.stock_valuation_manufacturing_sources f ON f.movement_id=j.movement_id
   WHERE j.movement_id=$1::uuid OR(j.source_snapshot->>'document_type'='STOCK_TRANSFER_INTERNAL'
     AND j.source_snapshot->>'document_id'=$1::text) ORDER BY j.sequence LIMIT 4`;
 
