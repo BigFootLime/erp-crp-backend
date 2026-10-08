@@ -25,6 +25,8 @@ export type CumpStockCostRow = {
   reporting_currency: string; formula_version: string; last_sequence: string;
   journal: CumpJournalSource | null; article_pending: boolean; article_blocked: boolean;
   entries: IssueEntry[]; returns: ReturnCursor[];
+  invoice_variances?:Array<{id:string;reconciliation_id:string;invoice_id:string;line_id:string;movement_id:string;
+    of_id:string;quantity:string;amount_ht:string;stock_sha256:string;source_valid:boolean}>;
 };
 
 const sameScope = (a: CumpScope, b: CumpScope) => JSON.stringify(a) === JSON.stringify(b);
@@ -65,7 +67,7 @@ export function resolveCumpStockCost(row: CumpStockCostRow, ofId: string): Stock
       source_type: 'CLIENT_OWNED_STOCK_EXCLUDED', source_ref: `stock-journal:${posting.movementId}`,
       definition: 'Stock fourni par le client, propriétaire figé sur la sortie : exclu du coût matière société.',
     };
-    if (inactive) return legacy;
+    if (inactive) return row.invoice_variances?.length?unknown(cost,'correction de facture présente sans projection active'):legacy;
     if (cost.currency !== scope.currency) return unknown(cost, 'devise de la source divergente');
     if (!row.initialized || row.formula_version !== CUMP_FORMULA_VERSION)
       return unknown(cost, 'projection non initialisée ou formule incompatible');
@@ -109,10 +111,26 @@ export function resolveCumpStockCost(row: CumpStockCostRow, ofId: string): Stock
         || (returnedQuantity === quantity && returnedValue !== originalValue))
         return unknown(cost, 'retours hors des bornes de la sortie originale');
     }
-    return { ...cost, amount_ht: text(originalValue - returnedValue), quantity: text(quantity - returnedQuantity),
-      source_type: 'STOCK_CUMP_NET_ISSUE_COST', source_ref: `stock-valuation-entry:${entry.entry_id}`,
-      source_reliability: entry.reliability,
-      definition: 'Valeur de sortie prouvée par le journal Stock, moins les retours nets prouvés ; aucun coût unitaire courant recalculé.',
+    let invoiceVariance=0n;
+    const variances=row.invoice_variances??[];
+    if(variances.length>500||new Set(variances.map(v=>v.id)).size!==variances.length)
+      return unknown(cost,'corrections de facture trop nombreuses ou dupliquées');
+    // A subsequent return needs an explicit invoice-return allocation policy.
+    // Do not keep the full consumed surcharge on material returned to Stock.
+    if(variances.length&&returnedQuantity>0n)return unknown(cost,'retour après correction de facture à rapprocher');
+    for(const variance of variances) {
+      if(!variance.source_valid||variance.of_id!==ofId||variance.line_id!==cost.source_document_ref
+        ||variance.movement_id!==posting.movementId||variance.stock_sha256!==posting.sourceSha256
+        ||decimal(variance.quantity)!==quantity)return unknown(cost,'attribution de correction de facture non prouvée');
+      invoiceVariance+=decimal(variance.amount_ht,true);
+    }
+    const netValue=originalValue-returnedValue+invoiceVariance;
+    if(netValue<0n)return unknown(cost,'correction de facture supérieure au coût de sortie');
+    return { ...cost, amount_ht: text(netValue), quantity: text(quantity - returnedQuantity),
+      source_type: variances.length?'STOCK_CUMP_INVOICE_ADJUSTED_ISSUE_COST':'STOCK_CUMP_NET_ISSUE_COST', source_ref: `stock-valuation-entry:${entry.entry_id}`,
+      source_reliability: variances.length?'DECLARED':entry.reliability,
+      definition: variances.length?'Sortie Stock originale et correction de facture attribuée à cette ligne OF ; les anciennes versions de marge restent conservées.':
+        'Valeur de sortie prouvée par le journal Stock, moins les retours nets prouvés ; aucun coût unitaire courant recalculé.',
     };
   } catch { return unknown(cost, 'précision ou périmètre financier invalide'); }
 }

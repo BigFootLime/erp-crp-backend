@@ -29,11 +29,13 @@ export type MaterialLot={lot_id:string;article_id:string;lot_code:string;owner_c
 export type MaterialTrace={movement_id:string;article_id:string|null;sequence:string|null;source_sha256:string|null;
   source_snapshot:unknown;source_valid:boolean;proof_complete:boolean};
 export type MaterialBalance={article_id:string;unit:string;source_snapshot:unknown};
+export type MaterialConsumptionRef={movement_id:string;line_id:string;quantity:string;of_id:string|null;stock_sha256:string};
 export type MaterialReconciliationSources={invoice:MaterialInvoiceSource;lines:MaterialInvoiceLine[];
   receipts:MaterialReceipt[];lots:MaterialLot[];trace:MaterialTrace[];balances:MaterialBalance[];complete:boolean};
 export type MaterialLotProposal={lot_id:string;lot_code:string;article_id:string;unit:string;
   received_quantity:string;remaining_quantity:string;consumed_quantity:string;invoice_amount_ht:string;
   booked_amount_ht:string;variance_ht:string;stock_variance_ht:string;consumed_variance_ht:string;
+  consumption_refs:MaterialConsumptionRef[];
   receipt_refs:Array<{receipt_line_id:string;movement_id:string;entry_id:string;stock_sha256:string;
     acquisition_sha256:string;entry_sha256:string}>};
 export type MaterialLineProposal={invoice_line_id:string;position:number;order_line_id:string;
@@ -172,7 +174,8 @@ export function proposeMaterialInvoiceReconciliation(source:MaterialReconciliati
           const total=number(b.quantity_total),depreciated=number(b.quantity_depreciated);
           if(depreciated>total){fail('MATERIAL_LOT_PHYSICAL_QUANTITY_INVALID');continue;}remaining+=total-depreciated;
         }
-        let observed=0n;const expectedReceipts=new Set(group.receipts.map(r=>r.movement_id));
+        let observed=0n;const consumptionRefs:MaterialConsumptionRef[]=[];
+        const expectedReceipts=new Set(group.receipts.map(r=>r.movement_id));
         const seenReceipts=new Set<string>();
         for(const row of source.trace) {
           const p=postings.get(row.movement_id),s=object(row.source_snapshot);
@@ -191,7 +194,16 @@ export function proposeMaterialInvoiceReconciliation(source:MaterialReconciliati
           }
           if(p.kind==='RECEIPT'&&expectedReceipts.has(p.movementId)&&s.movement_type==='IN') {
             observed+=quantity;seenReceipts.add(p.movementId);
-          } else if((p.kind==='ISSUE'||p.kind==='SCRAP')&&['OUT','SCRAP','DEPRECIATE'].includes(String(s.movement_type)))observed-=quantity;
+          } else if((p.kind==='ISSUE'||p.kind==='SCRAP')&&['OUT','SCRAP','DEPRECIATE'].includes(String(s.movement_type))) {
+            observed-=quantity;
+            for(const l of lotLines) {
+              if(!uuid(l?.line_id)){fail('MATERIAL_CONSUMPTION_LINE_MISSING');continue;}
+              const of=s.source_document_type==='OF'&&typeof s.source_document_id==='string'
+                &&/^[1-9][0-9]{0,18}$/.test(s.source_document_id)?s.source_document_id:null;
+              consumptionRefs.push({movement_id:p.movementId,line_id:l.line_id,quantity:amount(number(l.quantity)),
+                of_id:of,stock_sha256:p.sourceSha256});
+            }
+          }
           else if(p.kind!=='ZERO')fail('MATERIAL_LOT_MIXED_OR_RETURNED');
         }
         if(seenReceipts.size!==expectedReceipts.size||observed!==remaining||remaining<0n||remaining>group.received)
@@ -214,7 +226,7 @@ export function proposeMaterialInvoiceReconciliation(source:MaterialReconciliati
           invoice_amount_ht:amount(allocated),booked_amount_ht:amount(group.booked),variance_ht:amount(delta),
           stock_variance_ht:amount(stock),consumed_variance_ht:amount(consumed),receipt_refs:group.receipts.map(r=>({
             receipt_line_id:r.receipt_line_id,movement_id:r.movement_id,entry_id:r.entry_id!,stock_sha256:r.source_sha256!,
-            acquisition_sha256:r.acquisition_sha256!,entry_sha256:r.entry_sha256!}))});
+            acquisition_sha256:r.acquisition_sha256!,entry_sha256:r.entry_sha256!})),consumption_refs:consumptionRefs});
         bookedTotal+=group.booked;stockDelta+=stock;consumedDelta+=consumed;
       }
       if(result.issues.length){result.lots=[];return result;}
