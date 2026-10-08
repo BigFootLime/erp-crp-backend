@@ -11,6 +11,7 @@ export type CumpCostEvidence = { amount: string | null; reliability: CumpReliabi
 export type CumpTransition = { scope: CumpScope; quantity: string; movementRef: string } & (
   | { kind: 'RECEIPT'; cost: CumpCostEvidence }
   | { kind: 'RETURN'; cost: CumpCostEvidence; originalMovementRef: string }
+  | { kind: 'RECEIPT_REVERSAL'; cost: CumpCostEvidence; originalMovementRef: string }
   | { kind: 'ISSUE' | 'SCRAP' }
   | { kind: 'TRANSFER'; destinationScope: CumpScope }
 );
@@ -20,7 +21,7 @@ export type CumpTransitionResult = { formulaVersion: typeof CUMP_FORMULA_VERSION
 
 // Journal values retain 12 decimals. Inputs are never rounded silently and are
 // read as PostgreSQL numeric text; Number/float8 is not a financial transport.
-function scope(value: CumpScope): CumpScope {
+export function normalizeCumpScope(value: CumpScope): CumpScope {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const unit = canonicalizeStockUnitCode(value.unit), currency = value.currency.trim().toUpperCase();
   if (!uuid.test(value.articleId) || !unit || !/^[A-Z]{3}$/.test(currency)) throw new Error('CUMP_SCOPE_INVALID');
@@ -52,7 +53,7 @@ function cost(value: CumpCostEvidence): bigint | null {
  * the Stock repository under transaction locks, never supplied by an HTTP form.
  * No historical valuation is reconstructed and no physical stock is changed. */
 export function applyCumpTransition(input: CumpState, transition: CumpTransition): CumpTransitionResult {
-  const currentScope = scope(input.scope), movementScope = scope(transition.scope);
+  const currentScope = normalizeCumpScope(input.scope), movementScope = normalizeCumpScope(transition.scope);
   if (!sameScope(currentScope, movementScope)) throw new Error('CUMP_SCOPE_MISMATCH');
   if (!transition.movementRef?.trim()) throw new Error('CUMP_MOVEMENT_EVIDENCE_REQUIRED');
   const quantity = decimal(input.quantity, true), moved = decimal(transition.quantity);
@@ -73,7 +74,7 @@ export function applyCumpTransition(input: CumpState, transition: CumpTransition
   let nextReliability = before.reliability;
 
   if (transition.kind === 'TRANSFER') {
-    if (!sameScope(currentScope, scope(transition.destinationScope))) throw new Error('CUMP_TRANSFER_SCOPE_MISMATCH');
+    if (!sameScope(currentScope, normalizeCumpScope(transition.destinationScope))) throw new Error('CUMP_TRANSFER_SCOPE_MISMATCH');
     // A location change is neither an acquisition nor a second consumption.
   } else if (transition.kind === 'RECEIPT' || transition.kind === 'RETURN') {
     if (transition.kind === 'RETURN' && (!transition.originalMovementRef?.trim() || transition.originalMovementRef === transition.movementRef)) throw new Error('CUMP_RETURN_SOURCE_REQUIRED');
@@ -82,6 +83,13 @@ export function applyCumpTransition(input: CumpState, transition: CumpTransition
     nextValue = valueBefore !== null && movementValue !== null ? valueBefore + movementValue : null;
     nextReliability = nextValue === null ? 'UNKNOWN' : reliability(before.reliability, transition.cost.reliability);
     if (movementValue === null) issues.push('ENTRY_VALUE_UNKNOWN');
+  } else if (transition.kind === 'RECEIPT_REVERSAL') {
+    if (!transition.originalMovementRef?.trim() || transition.originalMovementRef === transition.movementRef) throw new Error('CUMP_RETURN_SOURCE_REQUIRED');
+    movementValue = cost(transition.cost); deltaValue = movementValue === null ? null : -movementValue;
+    deltaQuantity = -moved; nextQuantity -= moved; movementReliability = transition.cost.reliability;
+    nextValue = valueBefore !== null && movementValue !== null ? valueBefore - movementValue : null;
+    nextReliability = nextValue === null ? 'UNKNOWN' : reliability(before.reliability,transition.cost.reliability);
+    if (movementValue === null) issues.push('REVERSAL_VALUE_UNKNOWN');
   } else if (transition.kind === 'ISSUE' || transition.kind === 'SCRAP') {
     deltaQuantity = -moved; nextQuantity -= moved;
     if (quantity > 0n && moved <= quantity && valueBefore !== null) {
@@ -94,10 +102,19 @@ export function applyCumpTransition(input: CumpState, transition: CumpTransition
   } else throw new Error('CUMP_TRANSITION_INVALID');
 
   if (nextQuantity < 0n) { nextValue = null; nextReliability = 'UNKNOWN'; issues.push('NEGATIVE_STOCK'); }
+  if (nextValue !== null && nextValue < 0n) { nextValue = null; nextReliability = 'UNKNOWN'; issues.push('NEGATIVE_STOCK_VALUE'); }
   if (nextQuantity === 0n) { nextValue = 0n; nextReliability = 'VERIFIED'; }
+  try { decimal(text(nextQuantity),true); } catch { throw new Error('CUMP_QUANTITY_PRECISION_UNSUPPORTED'); }
+  if (nextValue !== null) {
+    try { decimal(text(nextValue)); } catch { nextValue = null; nextReliability = 'UNKNOWN'; issues.push('VALUE_PRECISION_UNSUPPORTED'); }
+  }
+  let unitCost: string | null = movementValue === null ? null : text(roundRatio(movementValue * SCALE,moved));
+  if (unitCost !== null) {
+    try { decimal(unitCost); } catch { unitCost = null; issues.push('UNIT_COST_DISPLAY_PRECISION_UNSUPPORTED'); }
+  }
   const after: CumpState = { scope: currentScope, quantity: text(nextQuantity), value: nextValue === null ? null : text(nextValue),
     reliability: nextReliability, sourceRef: transition.kind === 'TRANSFER' ? before.sourceRef : transition.movementRef };
   return { formulaVersion: CUMP_FORMULA_VERSION, before, after, quantityDelta: text(deltaQuantity),
     valueDelta: deltaValue === null ? null : text(deltaValue), movementValue: movementValue === null ? null : text(movementValue),
-    unitCost: movementValue === null ? null : text(roundRatio(movementValue * SCALE, moved)), movementReliability, issues };
+    unitCost, movementReliability, issues };
 }
