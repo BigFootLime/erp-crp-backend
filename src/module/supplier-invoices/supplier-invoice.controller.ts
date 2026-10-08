@@ -2,6 +2,7 @@ import type { Request, RequestHandler } from "express";
 import type { z } from "zod";
 
 import { HttpError } from "../../utils/httpError";
+import { repoMaterialInvoiceReconciliation } from './material-invoice-reconciliation.repository';
 import {
   repoApproveSupplierInvoice,
   repoDisputeSupplierInvoice,
@@ -76,6 +77,14 @@ export const getSupplierInvoiceHeaderAllocation: RequestHandler = async (req,res
     actorFrom(req);const {id}=parse(supplierInvoiceParamsSchema,req.params);
     res.setHeader('Cache-Control','no-store, private');
     res.json(await repoSupplierInvoiceHeaderAllocation(id));
+  } catch(error) {next(error);}
+};
+
+export const getSupplierInvoiceMaterialReconciliation: RequestHandler = async (req,res,next) => {
+  try {
+    actorFrom(req);const {id}=parse(supplierInvoiceParamsSchema,req.params);
+    res.setHeader('Cache-Control','no-store, private');
+    res.json(await repoMaterialInvoiceReconciliation(id));
   } catch(error) {next(error);}
 };
 
