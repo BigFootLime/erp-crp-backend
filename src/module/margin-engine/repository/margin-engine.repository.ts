@@ -13,6 +13,8 @@ import type {
 } from "../domain/margin-engine";
 import type { CreateMarginInput, CreateRateVersion } from "../validators/margin-engine.validators";
 import { ofMarginOperationSourcesSql, OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_MEASUREMENTS_SQL } from "./of-margin-sources.sql";
+import { QUOTE_MARGIN_SOURCES_SQL } from "./quote-margin-sources.sql";
+import { insertQuoteMarginSnapshotTx, readQuoteMarginSnapshot, type QuoteCaptureKind } from "./quote-margin-snapshot.repository";
 
 type ScopeIdentity = {
   scope_type: MarginScopeType;
@@ -102,13 +104,15 @@ function automaticCost(row: {
   rate_version_id?: string | null;
   source_reliability?: MarginEvidence["source_reliability"];
   currency?: string | null;
+  quantity?: string | null;
+  technical_version_id?: string | null;
 }): MarginCostInput {
   return {
     key: row.key,
     category: row.category,
     availability: "PROVIDED",
     amount_ht: row.amount_ht,
-    quantity: null,
+    quantity: row.quantity ?? null,
     rate: null,
     rate_unit: null,
     currency: row.currency === null ? "UNKNOWN" : row.currency ?? "EUR",
@@ -118,6 +122,8 @@ function automaticCost(row: {
         // A physical issue, receipt or measured duration proves its quantity.
         // It does not by itself verify its accounting valuation or applied rate.
         source_reliability: row.source_reliability ?? "ESTIMATED",
+        source_document_type: row.technical_version_id ? "PIECE_TECHNIQUE_VERSION" : row.source_type,
+        source_document_ref: row.technical_version_id ?? row.source_ref,
       }),
       rate_version_id: row.rate_version_id ?? null,
     },
@@ -170,45 +176,13 @@ type CostRow = {
   observed_at: string | null;
   source_reliability?: MarginEvidence["source_reliability"];
   currency?: string | null;
+  quantity?: string | null;
+  technical_version_id?: string | null;
 };
 
-async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: string): Promise<MarginCostInput[]> {
-  const linePredicate = scopeType === "DEVIS_LINE" ? "dl.id = $1::bigint" : "dl.devis_id = $1::bigint";
-  const rows = await pool.query<CostRow>(`
-    SELECT concat('purchase:', a.id::text) AS key,
-           CASE
-             WHEN a.type_achat = 'MATIERE' THEN 'MATERIAL'
-             WHEN a.type_achat IN ('SOUS_TRAITANCE', 'TRAITEMENT') THEN 'SUBCONTRACTING'
-             ELSE 'PURCHASE'
-           END::text AS category,
-           round(a.total_achat_ht * dl.quantite, 6)::text AS amount_ht,
-           'PIECE_TECHNIQUE_ACHAT'::text AS source_type,
-           a.id::text AS source_ref,
-           a.updated_at::text AS observed_at
-    FROM public.devis_ligne dl
-    LEFT JOIN public.articles ar ON ar.id = dl.article_id
-    JOIN public.pieces_techniques_achats a
-      ON a.piece_technique_id = COALESCE(dl.piece_technique_id, ar.piece_technique_id)
-    WHERE ${linePredicate} AND a.total_achat_ht IS NOT NULL
-    UNION ALL
-    SELECT concat('operation:', op.id::text) AS key,
-           CASE
-             WHEN op.type_operation = 'CONTROLE' THEN 'CONTROL'
-             WHEN op.type_operation = 'EMBALLAGE' THEN 'PACKAGING'
-             WHEN op.type_operation = 'SOUS_TRAITANCE' THEN 'SUBCONTRACTING'
-             ELSE 'OPERATOR'
-           END::text AS category,
-           round(op.cout_mo, 6)::text AS amount_ht,
-           'PIECE_TECHNIQUE_OPERATION'::text AS source_type,
-           op.id::text AS source_ref,
-           op.updated_at::text AS observed_at
-    FROM public.devis_ligne dl
-    LEFT JOIN public.articles ar ON ar.id = dl.article_id
-    JOIN public.pieces_techniques_operations op
-      ON op.piece_technique_id = COALESCE(dl.piece_technique_id, ar.piece_technique_id)
-    WHERE ${linePredicate} AND op.cout_mo IS NOT NULL AND op.taux_horaire > 0
-    ORDER BY key
-  `, [scopeRef]);
+async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: string,
+  db: Pick<PoolClient, "query"> = pool): Promise<MarginCostInput[]> {
+  const rows = await db.query<CostRow>(QUOTE_MARGIN_SOURCES_SQL, [scopeRef, scopeType]);
   return rows.rows.map(automaticCost);
 }
 
@@ -218,6 +192,12 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
     planned_hours: string | null;
     actual_hours: string | null;
     good_quantity: string | null;
+    pending_control_quantity: string | null;
+    good_operation_id: string | null;
+    good_declaration_count: number;
+    good_declaration_freshness: string | null;
+    good_quantity_scope: string;
+    rework_quantity_scope: string;
     scrap_quantity: string | null;
     rework_quantity: string | null;
     declaration_count: number;
@@ -225,6 +205,10 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
   }>(OF_MARGIN_MEASUREMENTS_SQL, [scopeRef]);
   const measures = measureResult.rows[0] ?? {
     planned_hours: null, actual_hours: null, good_quantity: null,
+    pending_control_quantity: null, good_operation_id: null,
+    good_declaration_count: 0, good_declaration_freshness: null,
+    good_quantity_scope: "FINAL_ACTIVE_OPERATION_DECLARED",
+    rework_quantity_scope: "DECLARED_OPERATION_EVENTS",
     scrap_quantity: null, rework_quantity: null, declaration_count: 0, declaration_freshness: null,
   };
   const quantityCosts: MarginCostInput[] = [];
@@ -360,11 +344,12 @@ export function isMarginRateResolutionValid(row: ManualInputRow, scopeType: Marg
     snapshot.validated_scope_ref === scopeRef;
 }
 
-async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, basis: MarginBasis, asOf: string): Promise<{
+async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, basis: MarginBasis, asOf: string,
+  db: Pick<PoolClient, "query"> = pool): Promise<{
   revenue: MarginRevenueInput | null;
   costs: MarginCostInput[];
 }> {
-  const result = await pool.query<ManualInputRow>(`
+  const result = await db.query<ManualInputRow>(`
     SELECT DISTINCT ON (i.input_key)
       i.input_key, i.input_kind, i.category, i.availability,
       i.amount_ht::text, i.quantity::text, i.currency,
@@ -396,7 +381,7 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
     let rateResolved = isMarginRateResolutionValid(row, scopeType, scopeRef);
     if (rateResolved && row.rate_id !== null) {
       rateResolved = await scopedRateMatchesTarget(
-        pool,
+        db,
         { scope_type: scopeType, scope_ref: scopeRef },
         { scope_type: row.rate_scope_type!, scope_ref: row.rate_scope_ref },
         row.created_by,
@@ -442,6 +427,18 @@ async function loadManualInputs(scopeType: MarginScopeType, scopeRef: string, ba
 }
 
 export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: MarginBasis, asOf: string): Promise<MarginCalculationInput> {
+  if (basis === "QUOTED" && (identity.scope_type === "DEVIS" || identity.scope_type === "DEVIS_LINE")) {
+    const frozen = await readQuoteMarginSnapshot(pool, identity.scope_type, identity.scope_ref);
+    if (frozen && frozen.captured_at.slice(0, 10) <= asOf) return {
+      ...frozen.input_snapshot, as_of: asOf,
+      measurements: { ...frozen.input_snapshot.measurements, quote_capture_kind: frozen.capture_kind, quote_captured_at: frozen.captured_at },
+    };
+    const state = (await pool.query<{ statut: string }>(`SELECT d.statut::text FROM public.devis d
+      WHERE ($2::text='DEVIS' AND d.id=$1::bigint) OR ($2::text='DEVIS_LINE' AND d.id=(SELECT devis_id FROM public.devis_ligne WHERE id=$1::bigint))`,
+    [identity.scope_ref, identity.scope_type])).rows[0];
+    if (state?.statut !== "BROUILLON" || frozen) return assembleCalculationInput(identity, basis, asOf,
+      { revenue: null, costs: [] }, [], { quote_capture_kind: "MISSING", quote_capture_message: "Chiffrage historique non conservé à cette date." });
+  }
   const manual = await loadManualInputs(identity.scope_type, identity.scope_ref, basis, asOf);
   let automaticCosts: MarginCostInput[] = [];
   let measurements: Record<string, string | number | null> = {};
@@ -452,6 +449,12 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
     automaticCosts = ofData.costs;
     measurements = ofData.measurements;
   }
+  return assembleCalculationInput(identity, basis, asOf, manual, automaticCosts, measurements);
+}
+
+function assembleCalculationInput(identity: ScopeIdentity, basis: MarginBasis, asOf: string,
+  manual: { revenue: MarginRevenueInput | null; costs: MarginCostInput[] }, automaticCosts: MarginCostInput[],
+  measurements: Record<string, string | number | null> = {}): MarginCalculationInput {
   const canonicalRevenue: MarginRevenueInput | null = identity.revenue_ht === null ? null : {
     availability: "PROVIDED",
     amount_ht: identity.revenue_ht,
@@ -475,6 +478,32 @@ export async function repoBuildCalculationInput(identity: ScopeIdentity, basis: 
     costs: [...automaticCosts, ...manual.costs],
     measurements,
   };
+}
+
+/** Called after persisted commercial lines, inside the quote write transaction.
+ * Read automatic line costs once so total and line captures share one dossier
+ * observation. A posteriori entry cannot recover the historical quoted costs. */
+export async function captureQuoteMarginsTx(tx: PoolClient, quoteId: number, kind: QuoteCaptureKind, actor: number | null) {
+  if (await readQuoteMarginSnapshot(tx, "DEVIS", String(quoteId))) return;
+  const identities = (await tx.query<ScopeIdentity & { version_number: number; capture_date: string; line_id: string | null; line_quantity: string | null }>(`
+    SELECT 'DEVIS'::text AS scope_type,d.id::text AS scope_ref,d.numero::text AS label,d.total_ht::text AS revenue_ht,
+      d.updated_at::text AS source_observed_at,COALESCE(d.version_number,1)::int AS version_number,current_date::text AS capture_date,NULL::text AS line_id,NULL::text AS line_quantity
+    FROM public.devis d WHERE d.id=$1::bigint
+    UNION ALL
+    SELECT 'DEVIS_LINE',dl.id::text,concat(d.numero,' · ',COALESCE(NULLIF(dl.description,''),'ligne '||dl.id)),
+      round(dl.total_ht*(1-COALESCE(d.remise_globale,0)/100.0),6)::text,d.updated_at::text,COALESCE(d.version_number,1)::int,current_date::text,dl.id::text,dl.quantite::text
+    FROM public.devis_ligne dl JOIN public.devis d ON d.id=dl.devis_id WHERE d.id=$1::bigint
+    ORDER BY line_id NULLS FIRST`, [quoteId])).rows;
+  if (!identities.length) throw new HttpError(409, "QUOTE_MARGIN_TARGET_MISSING", "Le devis à chiffrer est introuvable.");
+  const automatic = kind === "ISSUED" ? await loadDevisCosts("DEVIS", String(quoteId), tx) : [];
+  for (const identity of identities) {
+    const manual = kind === "ISSUED" ? await loadManualInputs(identity.scope_type, identity.scope_ref, "QUOTED", identity.capture_date, tx) : { revenue: null, costs: [] };
+    const lineCosts = identity.line_id === null ? automatic : automatic.filter(cost => cost.key.startsWith(`quote-line:${identity.line_id}:`));
+    const input = assembleCalculationInput(identity, "QUOTED", identity.capture_date, manual, lineCosts,
+      { quote_capture_kind: kind, quote_line_quantity: identity.line_quantity,
+        quote_capture_message: kind === "ISSUED" ? "Chiffrage conservé à l’envoi." : "Offre déjà envoyée lors de la saisie : coûts historiques inconnus." });
+    await insertQuoteMarginSnapshotTx(tx, quoteId, identity.version_number, identity.line_id, input, kind, actor);
+  }
 }
 
 type RateValidationRow = {
