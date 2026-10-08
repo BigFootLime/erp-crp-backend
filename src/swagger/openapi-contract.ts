@@ -3,6 +3,7 @@ import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingS
 import { clientCrmOperation, clientCrmSchemas } from "./client-crm-contract";
 import { assemblyComponentOperation, assemblyComponentSchemas } from './assembly-component-contract';
 import { terminalAssemblyOperation, TERMINAL_ASSEMBLY_OPERATIONS } from './terminal-assembly-contract';
+import { stockValuationOperation } from './stock-valuation-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 
 import {
@@ -205,7 +206,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  return terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))));
+  return stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation)))))));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
