@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import type { PoolClient } from 'pg';
 import { reconcileCumpOpenings } from '../domain/cump-opening';
 import { readCumpMaterialReturnOriginal } from '../domain/cump-material-return-source';
+import { readCumpManufacturingReceipt } from '../domain/cump-manufacturing-source';
 import { readCumpPostingSource, checkCumpTransferGroup, type CumpJournalSource,
   type CumpPostingSource } from '../domain/cump-posting-source';
 import { applyCumpTransition, CUMP_FORMULA_VERSION, type CumpTransition } from '../domain/cump-valuation';
@@ -104,7 +105,10 @@ async function projectPosting(tx: Tx, row: CumpJournalSource, posting: CumpPosti
   // Fee quantity is counted once per receipt, never once per owner scope/portion.
   const materialReturn = posting.reversalOfId ? null : readCumpMaterialReturnOriginal(row,posting.scopes[0].scope.currency);
   const originalMovementId = posting.reversalOfId ?? materialReturn?.originalMovementId;
-  const acquisition = posting.kind==='RECEIPT' && !originalMovementId && !materialReturn?.detected && !transfer?.valid
+  const manufacturing = posting.kind==='RECEIPT' && !posting.reversalOfId && !materialReturn?.detected
+    ? readCumpManufacturingReceipt(row,posting.scopes[0].scope.currency) : null;
+  const acquisition = posting.kind==='RECEIPT' && !originalMovementId && !materialReturn?.detected
+    && !manufacturing?.detected && !transfer?.valid
     ? await repository.resolveCumpAcquisitionTx(tx,row,posting.scopes[0].scope.currency) : null;
   for (const moved of posting.scopes) {
     const balance = await repository.readCumpBalanceTx(tx,moved.scope) ?? await repository.writeCumpOpeningTx(tx,
@@ -127,6 +131,10 @@ async function projectPosting(tx: Tx, row: CumpJournalSource, posting: CumpPosti
       if (materialReturn?.detected) {
         proof = { ...proof,return_source_sha256: row.return_sha256 ?? null,material_return_proof_missing: true };
         issues.push(...materialReturn.issues);
+      }
+      if (manufacturing?.detected) {
+        proof = { ...proof,...manufacturing.proof };
+        issues.push(...manufacturing.issues);
       }
       if (posting.scopes.length!==1) issues.push('ACQUISITION_OWNER_PARTITION_UNRESOLVED');
       if (moved.scope.owner!=='COMPANY') issues.push('CLIENT_OWNED_STOCK_EXCLUDED_FROM_COMPANY_VALUE');
