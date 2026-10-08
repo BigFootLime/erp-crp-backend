@@ -62,14 +62,15 @@ WITH raw AS MATERIALIZED (
         OR l.total-l.batches_total<l.depreciated-l.batches_depreciated)) AS valid
   FROM raw
 )
-SELECT jsonb_build_object('schema_version',1,'article_id',article::text,'owner','COMPANY',
+SELECT CASE WHEN pg_column_size(proof)>2000000 THEN jsonb_set(proof,'{eligible}','false'::jsonb) ELSE proof END
+FROM (SELECT jsonb_build_object('schema_version',1,'article_id',article::text,'owner','COMPANY',
   'unit',unit_code,'currency','EUR','quantity',totals.quantity::text,
   'eligible',checks.valid AND totals.quantity>0 AND totals.quantity<1e26
     AND unit_code=public.fn_stock_opening_scope_1004(unit_code),
   'opening_ids',COALESCE((SELECT jsonb_agg(id::text ORDER BY id) FROM raw WHERE unit=unit_code),'[]'::jsonb),
   'observations',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id::text,'source_sha256',source_sha256,
     'source_snapshot',source_snapshot) ORDER BY id) FROM raw),'[]'::jsonb))
-FROM totals CROSS JOIN checks
+AS proof FROM totals CROSS JOIN checks) bounded
 $$;
 
 CREATE TABLE public.stock_valuation_opening_bases (
