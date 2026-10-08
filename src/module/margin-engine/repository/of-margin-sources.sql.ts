@@ -70,7 +70,9 @@ export const OF_MARGIN_MATERIAL_SOURCES_SQL = `
               ELSE round(consumption.qty * line.unit_cost, 6)::text END AS amount_ht,
          'STOCK_POSTED_CONSUMPTION_COST'::text AS source_type,
          movement.id::text AS source_ref, consumption.effective_at::text AS observed_at,
-         'DECLARED'::text AS source_reliability, line.currency::text AS currency
+         'DECLARED'::text AS source_reliability, line.currency::text AS currency,
+         consumption.qty::text AS quantity, 'STOCK_MOVEMENT_LINE'::text AS source_document_type,
+         line.id::text AS source_document_ref
   FROM public.of_material_consumptions consumption
   JOIN public.stock_movement_lines line ON line.id = consumption.stock_movement_line_id
     AND line.movement_id = consumption.stock_movement_id
@@ -88,7 +90,9 @@ export const OF_MARGIN_MATERIAL_SOURCES_SQL = `
          CASE WHEN movement.reason_code = 'PRELEVEMENT_CONSOMMABLE' THEN 'PURCHASE' ELSE 'MATERIAL' END::text AS category,
          NULL::text AS amount_ht, 'STOCK_CONSUMPTION_PROOF_MISSING'::text AS source_type,
          movement.id::text AS source_ref, movement.posted_at::text AS observed_at,
-         'UNKNOWN'::text AS source_reliability, line.currency::text AS currency
+         'UNKNOWN'::text AS source_reliability, line.currency::text AS currency,
+         abs(line.qty)::text AS quantity, 'STOCK_MOVEMENT_LINE'::text AS source_document_type,
+         line.id::text AS source_document_ref
   FROM public.stock_movement_lines line
   JOIN public.stock_movements movement ON movement.id = line.movement_id
   WHERE movement.source_document_type = 'OF' AND movement.source_document_id = $1::bigint::text
