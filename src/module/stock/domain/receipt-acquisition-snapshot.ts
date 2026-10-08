@@ -73,7 +73,7 @@ export function readReceiptAcquisitionFacts(snapshot: unknown): { facts: Receipt
       status: string(order.status) ?? '',lineStatus: string(order.line_status) ?? '',unit: string(order.unit),
       currency: string(order.currency),quantity: string(order.quantity),unitPrice: string(order.unit_price),
       discountPercent: string(order.discount_percent),additionalFees: string(order.additional_fees),
-      transportFees: string(order.transport_fees) } : null } };
+      transportFees: string(order.transport_fees),supplierId: string(order.supplier_id),transportBasis: order.transport_basis } : null } };
 }
 
 export function resolveCapturedReceiptAcquisitionValue(snapshot: unknown, currency: string,
@@ -81,5 +81,5 @@ export function resolveCapturedReceiptAcquisitionValue(snapshot: unknown, curren
   const parsed = readReceiptAcquisitionFacts(snapshot);
   if (parsed.facts) return resolveReceiptAcquisitionValue(parsed.facts,currency,allocation);
   return { amount: null,reliability: 'UNKNOWN',sourceRef: null,currency,
-    stockUnit: null,unitCost: null,priceAmount: null,feesAmount: null,issues: parsed.issues };
+    stockUnit: null,unitCost: null,priceAmount: null,feesAmount: null,transportAmount: null,issues: parsed.issues };
 }
