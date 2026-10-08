@@ -1,5 +1,12 @@
 # Changelog
 
+## Documented invoice header allocations — #1013
+
+- Finance read-only exact-cent proposal for HT amounts outside fiscal lines; no caller amount input.
+- Explicit source-checked approval freezes complete invoice/match/archive proof; no historical backfill.
+- Subcontract margin source uses documented line allocations; serialized approval intentions and fresh archive checks.
+- No physical stock, old margin, schema or CUMP activation change. Combined fixtures/acceptance prepared NOT RUN.
+
 ## Supplier receipt fee completeness — #1010
 
 - Cap declared subcontract receipt flat fees by cumulative rounded allocation; exact six-decimal residual across partial/overreceipts.

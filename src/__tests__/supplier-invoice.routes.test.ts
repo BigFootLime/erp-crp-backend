@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   get: vi.fn(),
+  headerAllocation: vi.fn(),
   identify: vi.fn(),
   match: vi.fn(),
   requestApproval: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../module/supplier-invoices/supplier-invoice.repository", () => ({
   repoListSupplierInvoices: (...args: unknown[]) => mocks.list(...args),
   repoGetSupplierInvoice: (...args: unknown[]) => mocks.get(...args),
+  repoSupplierInvoiceHeaderAllocation: (...args: unknown[]) => mocks.headerAllocation(...args),
   repoIdentifySupplierInvoice: (...args: unknown[]) => mocks.identify(...args),
   repoMatchSupplierInvoice: (...args: unknown[]) => mocks.match(...args),
   repoRequestSupplierInvoiceApproval: (...args: unknown[]) => mocks.requestApproval(...args),
@@ -51,6 +53,17 @@ beforeEach(() => {
 });
 
 describe("supplier invoice HTTP boundary", () => {
+  // Prepared NOT RUN before the final common acceptance requested.
+  it('keeps header proposals private and refuses free amounts in an approval',async()=>{
+    mocks.headerAllocation.mockResolvedValue({id:invoiceId,eligible:false,issues:['INVOICE_HEADER_MATCH_INCOMPLETE']});
+    const proposal=await request(appFor()).get(`/supplier-invoices/${invoiceId}/header-allocation`);
+    expect(proposal.status).toBe(200);expect(proposal.headers['cache-control']).toBe('no-store, private');
+    expect((await request(appFor('Secretaire')).get(`/supplier-invoices/${invoiceId}/header-allocation`)).status).toBe(403);
+    const invalid=await request(appFor()).post(`/supplier-invoices/${invoiceId}/approve`)
+      .set('Idempotency-Key','header-proposal-001').send({expected_version:4,
+        header_allocation:{method:'PROPORTIONAL_NET_V1',expected_source_sha256:'a'.repeat(64),amount_ht:'20'}});
+    expect(invalid.status).toBe(422);expect(mocks.approve).not.toHaveBeenCalled();
+  });
   it("keeps supplier invoice reads private and capability-scoped", async () => {
     mocks.list.mockResolvedValue({ items: [], total: 0 });
     const response = await request(appFor()).get("/supplier-invoices?status=RECEIVED");

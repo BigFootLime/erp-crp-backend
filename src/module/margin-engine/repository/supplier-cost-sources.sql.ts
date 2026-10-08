@@ -1,3 +1,5 @@
+import { invoiceHeaderFactsSql } from '../../supplier-invoices/supplier-invoice-header-source.sql';
+
 export const SUPPLIER_RECEIPT_COSTS_SQL = `
   WITH receipts AS (
     SELECT receipt_line.id,receipt.id AS receipt_id,receipt_line.updated_at,
@@ -63,14 +65,26 @@ export const SUPPLIER_APPROVED_INVOICE_COSTS_SQL = `
     (SELECT count(*)>0 AND bool_and(artifact.scan_status='CLEAN' AND artifact.ged_document_id IS NOT NULL
       AND artifact.ged_version_id IS NOT NULL AND artifact.archived_at IS NOT NULL)
       FROM public.supplier_invoice_artifacts artifact WHERE artifact.supplier_invoice_id=invoice.id) AS archive_ready,
-    (abs(invoice.total_without_vat-(SELECT COALESCE(sum(all_lines.net_amount),0)
-      FROM public.supplier_invoice_lines all_lines WHERE all_lines.supplier_invoice_id=invoice.id))<=0.01) AS header_allocated
+    (invoice.total_without_vat=(SELECT COALESCE(sum(all_lines.net_amount),0)
+      FROM public.supplier_invoice_lines all_lines WHERE all_lines.supplier_invoice_id=invoice.id)) AS header_allocated,
+    invoice_line.id::text AS invoice_line_id,invoice.total_without_vat::text AS invoice_total_ht,
+    CASE WHEN row_number() OVER(PARTITION BY invoice.id ORDER BY order_line.id,invoice_line.id)=1
+      THEN ${invoiceHeaderFactsSql('invoice','match')} ELSE NULL END AS invoice_header_facts,
+    CASE WHEN row_number() OVER(PARTITION BY invoice.id ORDER BY order_line.id,invoice_line.id)=1
+      THEN approval.snapshot->'header_allocation' ELSE NULL END AS approved_header_allocation
   FROM public.supplier_invoices invoice
   JOIN LATERAL (
     SELECT version.* FROM public.supplier_invoice_match_versions version
     WHERE version.supplier_invoice_id=invoice.id AND version.created_at<=invoice.approved_at
     ORDER BY version.version DESC LIMIT 1
   ) match ON true
+  JOIN LATERAL (
+    SELECT decision.snapshot FROM public.supplier_invoice_decisions decision
+    WHERE decision.supplier_invoice_id=invoice.id AND decision.decision='APPROVED'
+      AND decision.to_status='APPROVED' AND decision.actor_user_id=invoice.approved_by
+      AND decision.created_at<=invoice.approved_at
+    ORDER BY decision.created_at DESC,decision.id DESC LIMIT 1
+  ) approval ON true
   JOIN public.supplier_invoice_line_matches line_match ON line_match.match_version_id=match.id
   JOIN public.supplier_invoice_lines invoice_line ON invoice_line.id=line_match.supplier_invoice_line_id
     AND invoice_line.supplier_invoice_id=invoice.id
@@ -79,8 +93,5 @@ export const SUPPLIER_APPROVED_INVOICE_COSTS_SQL = `
   WHERE order_line.of_id=$1::bigint AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
     AND invoice.status IN ('APPROVED','ACCOUNTING_EXPORTED','CLOSED')
     AND invoice.approved_at IS NOT NULL AND invoice.approved_by IS NOT NULL
-    AND EXISTS(SELECT 1 FROM public.supplier_invoice_decisions decision
-      WHERE decision.supplier_invoice_id=invoice.id AND decision.decision='APPROVED'
-        AND decision.actor_user_id=invoice.approved_by)
   ORDER BY order_line.id,invoice.approved_at,invoice_line.id
 `;

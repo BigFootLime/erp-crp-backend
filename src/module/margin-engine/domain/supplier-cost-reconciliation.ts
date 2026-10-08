@@ -1,5 +1,6 @@
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { decimal, proportionAmount, type MarginEvidence } from "./margin-engine";
+import { readApprovedInvoiceHeaderAllocation } from '../../supplier-invoices/supplier-invoice-header-allocation';
 
 export type SupplierCostSource = {
   key: string;
@@ -31,6 +32,10 @@ export type SupplierInvoiceCost = SupplierCostSource & {
   receipt_links_valid: boolean;
   archive_ready: boolean;
   header_allocated: boolean;
+  invoice_line_id?: string;
+  invoice_total_ht?: string;
+  invoice_header_facts?: unknown;
+  approved_header_allocation?: unknown;
 };
 
 function scaledText(value: bigint): string {
@@ -69,9 +74,30 @@ function invoiceIssue(invoice: SupplierInvoiceCost): string | null {
   return null;
 }
 
+function qualifiedHeader(invoice: SupplierInvoiceCost,proofs: Map<string,Map<string,string>|null>): SupplierInvoiceCost {
+  if(!proofs.has(invoice.invoice_id))return invoice;
+  const allocated=invoice.invoice_line_id?proofs.get(invoice.invoice_id)?.get(invoice.invoice_line_id.toLowerCase())??null:null;
+  const value=knownDecimal(allocated), total=knownDecimal(invoice.invoice_total_ht??null);
+  if(value===null||total===null)return {...invoice,header_allocated:false};
+  return {...invoice,amount_ht:scaledText(invoice.document_type==='CREDIT_NOTE'&&total>=0n?-value:value),
+    header_allocated:true,definition:'Montant HT de ligne et frais/remises hors lignes répartis, contrôlés et figés dans l’approbation.'};
+}
+
 /** Monetary attribution stays at the explicitly linked OF/order line. It does
  * not assign invoice costs to material lots or post stock/accounting entries. */
 export function reconcileSupplierCostSources(receipts: SupplierReceiptCost[], invoices: SupplierInvoiceCost[]): SupplierCostSource[] {
+  // SQL sends the complete proof once per invoice, even when it contributes to
+  // several order lines. Validate it once, then resolve every scoped fiscal line.
+  const proofs=new Map<string,Map<string,string>|null>();
+  for(const row of invoices) {
+    if(!row.approved_header_allocation)continue;
+    const facts=row.invoice_header_facts as Record<string,unknown>|null|undefined;
+    proofs.set(row.invoice_id,!proofs.has(row.invoice_id)&&facts?.invoice_id===row.invoice_id
+      &&facts?.currency===row.currency&&facts?.document_type===row.document_type
+      &&knownDecimal(typeof facts?.total_ht==='string'?facts.total_ht:null)===knownDecimal(row.invoice_total_ht??null)
+      ?readApprovedInvoiceHeaderAllocation(facts,row.approved_header_allocation):null);
+  }
+  invoices=invoices.map(invoice=>qualifiedHeader(invoice,proofs));
   const lineIds = new Set([...receipts, ...invoices].map(row => row.order_line_id));
   const costs: SupplierCostSource[] = [];
   for (const lineId of lineIds) {
@@ -100,7 +126,7 @@ export function reconcileSupplierCostSources(receipts: SupplierReceiptCost[], in
 
     for (const invoice of lineInvoices) costs.push({ ...invoice, source_reliability: "VERIFIED",
       source_document_type: "SUPPLIER_INVOICE", source_document_ref: invoice.invoice_id,
-      definition: "Montant HT de ligne rapprochée, approuvée et archivée, attribuée à cet OF." });
+      definition: invoice.definition??"Montant HT de ligne rapprochée, approuvée et archivée, attribuée à cet OF." });
     const remaining = received - billed;
     if (remaining <= 0n) continue;
     const estimateAmounts = lineReceipts.map(row => knownDecimal(row.amount_ht));
