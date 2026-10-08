@@ -66,3 +66,10 @@ prices posted partial issues from their immutable consumption lines, excludes
 compensated and reversed movements, and keeps missing proofs unvalued. Supplier
 receipt and production declaration evidence assertions remain in place. The
 former fully-consumed reservation assertion could not cover partial issues.
+
+The #941 integration adds the persisted quote identity required by the route
+fixture's real transactional cost capture, and verifies the resulting ISSUED
+snapshot. Existing status, discount and audit assertions remain. Static guards
+follow the extracted quote SQL and shared transaction reader: unit time uses
+quote quantity once, and rate scopes are revalidated with the reader's database
+connection. No quote or margin runtime is modified by these fixture repairs.

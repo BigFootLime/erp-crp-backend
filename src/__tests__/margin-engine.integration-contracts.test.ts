@@ -179,7 +179,8 @@ describe("margin mutation audit contract", () => {
 
   it("revalidates a versioned rate scope against the live target when reading inputs", () => {
     const source = fs.readFileSync(path.join(repoRoot, "src", "module", "margin-engine", "repository", "margin-engine.repository.ts"), "utf8");
-    expect(source).toMatch(/rateResolved\s*=\s*await scopedRateMatchesTarget\(\s*pool,/s);
+    expect(source).toMatch(/loadManualInputs\([\s\S]*?db: Pick<PoolClient, "query"> = pool/);
+    expect(source).toMatch(/rateResolved\s*=\s*await scopedRateMatchesTarget\(\s*db,/s);
     expect(source).toContain("row.created_by");
   });
 });
