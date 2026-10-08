@@ -8,7 +8,6 @@ import { type CumpOpeningRow, type CumpOpening } from '../domain/cump-opening';
 import type { CumpJournalSource } from '../domain/cump-posting-source';
 import { readReceiptAcquisitionFacts } from '../domain/receipt-acquisition-snapshot';
 import { resolveReceiptAcquisitionValue } from '../domain/receipt-acquisition-value';
-import { allocateCumpLinkedReturn } from '../domain/cump-linked-return';
 import * as sql from './cump-projection.sql';
 
 type Tx = Pick<PoolClient,'query'>;
@@ -119,43 +118,4 @@ export async function resolveCumpAcquisitionTx(tx: Tx, row: CumpJournalSource, c
   return { cost: value,proof,issues: value.issues };
 }
 
-export async function resolveCumpLinkedReturnTx(tx: Tx, row: CumpJournalSource, originalMovementId: string, scope: CumpScope,
-  quantity: string): Promise<{ kind: 'RETURN' | 'RECEIPT_REVERSAL'; cost: CumpCostEvidence; proof: Proof; issues: string[] }> {
-  const original = (await tx.query<{ id: string; article_id: string; source_sequence: string; kind: string;
-    quantity_delta: string | null; movement_value: string | null; reliability: CumpReliability; source_snapshot: unknown }>(
-    sql.CUMP_ORIGINAL_ENTRY_SQL,[originalMovementId,scope.owner,scope.unit,scope.currency])).rows;
-  const physical = readPhysicalReturnDirection(row);
-  const resultUnknown = (code: string) => ({ kind: physical,cost: unknown(`stock-movement:${originalMovementId}`),
-    proof: { original_movement_id: originalMovementId,original_entry_id: null },issues: [code] });
-  if (original.length!==1 || original[0].article_id!==scope.articleId || BigInt(original[0].source_sequence)>=BigInt(row.sequence)
-    || original[0].quantity_delta===null) return resultUnknown('ORIGINAL_VALUATION_ENTRY_MISSING');
-  const entry = original[0], signed = decimal(entry.quantity_delta!,true);
-  if (signed===0n) return resultUnknown('ORIGINAL_TRANSFER_REVERSAL_UNRESOLVED');
-  const kind = signed>0n ? 'RECEIPT_REVERSAL' as const : 'RETURN' as const;
-  if (kind!==physical) return resultUnknown('ORIGINAL_RETURN_DIRECTION_MISMATCH');
-  const current = (await tx.query<{ original_entry_id: string; quantity: string; value: string | null }>(sql.CUMP_RETURN_CURSOR_SQL,
-    [originalMovementId,scope.owner,scope.unit,scope.currency])).rows[0];
-  if (current && current.original_entry_id!==entry.id) return { ...resultUnknown('ORIGINAL_VALUATION_ENTRY_CHANGED'),kind };
-  let allocated: ReturnType<typeof allocateCumpLinkedReturn>;
-  try {
-    allocated = allocateCumpLinkedReturn({ movementRef: originalMovementId,entryRef: `stock-valuation-entry:${entry.id}`,
-      scope,quantity: text(signed<0n ? -signed : signed),movementValue: entry.movement_value,reliability: entry.reliability },scope,quantity,
-      { originalMovementRef: originalMovementId,quantity: current?.quantity ?? '0',value: current ? current.value : entry.movement_value===null ? null : '0' });
-  } catch (error) {
-    if (!(error instanceof Error) || !/^CUMP_(RETURN_|DECIMAL_)/.test(error.message)) throw error;
-    return resultUnknown(error.message);
-  }
-  const updated = await tx.query(sql.CUMP_STORE_RETURN_CURSOR_SQL,[originalMovementId,scope.owner,scope.unit,scope.currency,
-    entry.id,allocated.cursor.quantity,allocated.cursor.value]);
-  if (updated.rows.length!==1) throw new Error('CUMP_RETURN_CURSOR_NOT_STORED');
-  return { kind,cost: allocated.cost,proof: { original_movement_id: originalMovementId,original_entry_id: entry.id,
-    return_cursor_before: current ?? { quantity: '0',value: entry.movement_value===null ? null : '0' },return_cursor_after: allocated.cursor },issues: [] };
-}
-
-function readPhysicalReturnDirection(row: CumpJournalSource): 'RETURN' | 'RECEIPT_REVERSAL' {
-  const snapshot = row.source_snapshot as Record<string,unknown>;
-  if (snapshot.movement_type==='OUT' || snapshot.movement_type==='SCRAP' || snapshot.movement_type==='DEPRECIATE'
-    || ((snapshot.movement_type==='ADJUST' || snapshot.movement_type==='ADJUSTMENT')
-      && typeof snapshot.quantity==='string' && decimal(snapshot.quantity,true)<0n)) return 'RECEIPT_REVERSAL';
-  return 'RETURN';
-}
+export { resolveCumpLinkedReturnTx } from './cump-return-ledger.repository';

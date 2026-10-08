@@ -19,7 +19,7 @@ const journal = (n: number,type: string,qty = '10',parent: string | null = null)
   source_snapshot: { schema_version: 1,movement_id: id(n),article_id: article,movement_type: type,
     quantity: qty,stock_unit: 'pc',stock_batch_id: null,batch_owner_client_id: null,reversal_of_id: null,
     document_type: parent ? 'STOCK_TRANSFER_INTERNAL' : null,document_id: parent,
-    lines: [{ article_id: article,quantity: qty,unit: 'u',owner_client_id: null }] } });
+    lines: [{ article_id: article,quantity: qty,unit: 'u',owner_client_id: null,direction: null }] } });
 
 describe('CUMP projection proofs — prepared for the final combined recipe',()=>{
   it('does not add LEVEL to BATCH or deduct reserved quantities from value',()=>{
@@ -39,10 +39,19 @@ describe('CUMP projection proofs — prepared for the final combined recipe',()=
   it('keeps owner codes and rejects folding opposite adjustment signs into one quantity',()=>{
     const row = journal(4,'ADJUSTMENT','10');
     (row.source_snapshot as { lines: unknown[] }).lines = [
-      { article_id: article,quantity: '6',unit: 'u',owner_client_id: 'CLI-001' },
-      { article_id: article,quantity: '-4',unit: 'u',owner_client_id: null } ];
+      { article_id: article,quantity: '6',unit: 'u',owner_client_id: 'CLI-001',direction: 'IN' },
+      { article_id: article,quantity: '4',unit: 'u',owner_client_id: null,direction: 'OUT' } ];
     expect(readCumpPostingSource(row,'EUR').issues).toContain('STOCK_POSTING_LINE_SIGN_MISMATCH');
     expect(readCumpPostingSource(journal(5,'IN'),'EUR').posting?.scopes[0].quantity).toBe('10');
+  });
+  it('reads a negative adjustment header with its real positive OUT line',()=>{
+    const row = journal(6,'ADJUSTMENT','-10');
+    (row.source_snapshot as { lines: unknown[] }).lines = [
+      { article_id: article,quantity: '10',unit: 'u',owner_client_id: null,direction: 'OUT' } ];
+    expect(readCumpPostingSource(row,'EUR').posting).toMatchObject({ kind: 'ISSUE',scopes: [{ quantity: '10' }] });
+    (row.source_snapshot as { lines: unknown[] }).lines = [
+      { article_id: article,quantity: '10',unit: 'u',owner_client_id: null,direction: 'IN' } ];
+    expect(readCumpPostingSource(row,'EUR').posting).toBeNull();
   });
   it('requires the whole parent/out/in bundle before declaring an internal transfer neutral',()=>{
     const rows = [journal(10,'TRANSFER'),journal(11,'OUT','10',id(10)),journal(12,'IN','10',id(10))];
@@ -59,7 +68,14 @@ describe('CUMP projection proofs — prepared for the final combined recipe',()=
     expect([first.cost.amount,second.cost.amount,last.cost.amount]).toEqual(['0.333333333333','0.333333333334','0.333333333333']);
     expect(last.cursor).toMatchObject({ quantity: '3',value: '1' });
     expect(()=>allocateCumpLinkedReturn(original,scope,'1',last.cursor)).toThrow('CUMP_RETURN_QUANTITY_EXCEEDED');
-    expect(()=>allocateCumpLinkedReturn(original,scope,'1',{ ...first.cursor,value: '0.9' })).toThrow('CUMP_RETURN_CURSOR_MISMATCH');
+    expect(()=>allocateCumpLinkedReturn(original,scope,'1',{ ...first.cursor,value: '1.1' })).toThrow('CUMP_RETURN_CURSOR_MISMATCH');
+  });
+  it('retains exact value after an older return is cancelled out of order',()=>{
+    const original = { movementRef: id(20),entryRef: 'stock-entry:original',scope,quantity: '3',movementValue: '1',reliability: 'VERIFIED' as const };
+    const next = allocateCumpLinkedReturn(original,scope,'1',{
+      originalMovementRef: id(20),quantity: '1',value: '0.333333333334' });
+    expect(next.cost.amount).toBe('0.333333333333');
+    expect(allocateCumpLinkedReturn(original,scope,'1',next.cursor).cursor).toMatchObject({ quantity: '3',value: '1' });
   });
   it('reverses a receipt using its original value rather than today’s average',()=>{
     const result = applyCumpTransition({ scope,quantity: '20',value: '100',reliability: 'DECLARED',sourceRef: 'entry:mixed' },
