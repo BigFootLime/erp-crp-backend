@@ -21,6 +21,7 @@ import {
 import { generateSelfInspectionTx } from "./self-inspection.repository";
 import { createConsolidationSurplusComponents } from "./consolidation-components.repository";
 import {previewConsolidationMaterialTx,transferConsolidationMaterialTx} from './consolidation-material.repository';
+import {restoreConsolidationHoldsTx} from './consolidation-material-holds.repository';
 import type { AuditContext } from "./production.repository";
 import type { ConsolidationRequest } from "../validators/production-workbench.validators";
 
@@ -425,7 +426,8 @@ export async function repoDissolveConsolidation(
       OR EXISTS(SELECT 1 FROM public.of_operations WHERE of_id=$1 AND status::text NOT IN ('TODO','READY'))
       OR EXISTS(SELECT 1 FROM public.production_consolidation_allocations WHERE consolidation_id=$2::uuid AND received_quantity>0)
       OR EXISTS(SELECT 1 FROM public.stock_reservations WHERE of_id=$1 AND status IN ('ACTIVE','CONSUMED') AND (status='CONSUMED' OR qty_consumed>0 OR
-        (id NOT IN(SELECT reservation_id FROM public.production_consolidation_material_transfers WHERE consolidation_id=$2::uuid)
+        (id NOT IN(SELECT reservation_id FROM public.production_consolidation_material_transfers WHERE consolidation_id=$2::uuid
+          UNION SELECT producer_reservation_id FROM public.production_consolidation_material_holds WHERE consolidation_id=$2::uuid)
          AND (of_component_requirement_id IS NULL OR of_component_requirement_id NOT IN(SELECT requirement_id FROM public.production_consolidation_component_transfers WHERE consolidation_id=$2::uuid))))) AS engaged`,
         [group.producer_of_id, id],
       )
@@ -468,9 +470,11 @@ export async function repoDissolveConsolidation(
       `UPDATE public.stock_reservations r SET of_id=t.source_of_id,updated_at=now(),updated_by=$2 FROM public.production_consolidation_component_transfers t WHERE t.consolidation_id=$1::uuid AND r.of_component_requirement_id=t.requirement_id AND r.status='ACTIVE'`,
       [id, audit.user_id],
     );
+    await restoreConsolidationHoldsTx(tx,id,group.producer_of_id,audit);
     await tx.query(`UPDATE public.stock_reservations r SET of_id=t.source_of_id,source_id=t.source_of_id::text,
       material_need_id=t.source_need_id,updated_at=now(),updated_by=$2 FROM public.production_consolidation_material_transfers t
-      WHERE t.consolidation_id=$1::uuid AND r.id=t.reservation_id AND r.status='ACTIVE' AND r.qty_consumed=0`,[id,audit.user_id]);
+       WHERE t.consolidation_id=$1::uuid AND t.producer_reservation_id IS NULL
+         AND r.id=t.reservation_id AND r.status='ACTIVE' AND r.qty_consumed=0`,[id,audit.user_id]);
     await tx.query('UPDATE public.of_material_needs SET superseded_at=now(),updated_at=now(),updated_by=$2 WHERE of_id=$1 AND superseded_at IS NULL',
       [group.producer_of_id,audit.user_id]);
     await tx.query(
