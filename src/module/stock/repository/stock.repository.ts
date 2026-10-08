@@ -1,6 +1,7 @@
 import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
+import { assemblyComponentWithdrawalOwnsMovement } from './assembly-component-movement-guard';
 import { assertPieceReceiptMovement } from '../../receptions/repository/receipt-processing-guard';
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
 import { syncArticleCommercialTx } from './article-commercial.repository';
@@ -7270,6 +7271,7 @@ export async function repoPreviewMovementCompensation(
   );
   const built = buildCompensatingMovementBody(detail, body);
   if(await consumableWithdrawalOwnsMovement(db,id))built.blockers.push({code:'CONSUMABLE_WITHDRAWAL_CORRECTION_REQUIRED',message:'Ce mouvement est lié à un prélèvement OF. Sa correction doit rapprocher la sortie et la réservation consommée.'});
+  if (await assemblyComponentWithdrawalOwnsMovement(db, id)) built.blockers.push({ code: 'ASSEMBLY_COMPONENT_CORRECTION_REQUIRED', message: 'La correction doit rapprocher les composants mis en montage et leurs réservations consommées.' });
   const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
     UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
   if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
@@ -7935,6 +7937,7 @@ export async function repoPostMovement(
     if(!externalClient){
       const reversal=(await client.query<{reversal_of_id:string|null}>('SELECT reversal_of_id::text FROM public.stock_movements WHERE id=$1::uuid',[id])).rows[0];
       if(reversal?.reversal_of_id&&await consumableWithdrawalOwnsMovement(client,reversal.reversal_of_id))throw new HttpError(409,'CONSUMABLE_WITHDRAWAL_CORRECTION_REQUIRED','La compensation de ce prélèvement doit partager la correction de la réservation consommée de l’OF.');
+      if (reversal?.reversal_of_id && await assemblyComponentWithdrawalOwnsMovement(client, reversal.reversal_of_id)) throw new HttpError(409, 'ASSEMBLY_COMPONENT_CORRECTION_REQUIRED', 'La compensation doit partager la correction des composants et réservations de montage.');
       const materialReversal=(await client.query(`SELECT 1 FROM public.stock_movements m WHERE m.id=$1::uuid AND (
         EXISTS(SELECT 1 FROM public.production_material_debit_sources s WHERE s.stock_movement_id=m.reversal_of_id) OR
         EXISTS(SELECT 1 FROM public.production_material_remnants r WHERE r.stock_movement_id=m.reversal_of_id))`,[id])).rows.length>0;
