@@ -79,6 +79,7 @@ export const OF_MARGIN_MATERIAL_SOURCES_SQL = `
   WHERE consumption.of_id = $1::bigint AND consumption.status = 'POSTED'
     AND consumption.compensates_id IS NULL AND consumption.compensated_by_id IS NULL
     AND movement.status::text = 'POSTED' AND movement.movement_type::text IN ('OUT', 'SCRAP')
+    AND movement.reason_code IS DISTINCT FROM 'PRELEVEMENT_CONSOMMABLE'
     AND NOT EXISTS (SELECT 1 FROM public.stock_movements reversal
       WHERE reversal.reversal_of_id = movement.id AND reversal.status::text = 'POSTED')
   UNION ALL
@@ -91,6 +92,7 @@ export const OF_MARGIN_MATERIAL_SOURCES_SQL = `
   JOIN public.stock_movements movement ON movement.id = line.movement_id
   WHERE movement.source_document_type = 'OF' AND movement.source_document_id = $1::bigint::text
     AND movement.status::text = 'POSTED' AND movement.movement_type::text IN ('OUT', 'SCRAP')
+    AND movement.reason_code IS DISTINCT FROM 'PRELEVEMENT_CONSOMMABLE'
     AND NOT EXISTS (SELECT 1 FROM public.of_material_consumptions consumption WHERE consumption.stock_movement_line_id = line.id)
     AND NOT EXISTS (SELECT 1 FROM public.stock_movements reversal
       WHERE reversal.reversal_of_id = movement.id AND reversal.status::text = 'POSTED')

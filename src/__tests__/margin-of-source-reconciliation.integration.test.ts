@@ -41,7 +41,8 @@ describe.skipIf(!databaseUrl)("OF margin SQL source semantics", () => {
       CREATE TEMP TABLE of_revisions(id uuid, of_id bigint, statut text);
       CREATE TEMP TABLE of_operations(id uuid, of_id bigint, revision_id uuid, phase int, designation text, status text,
         temps_total_planned numeric, temps_total_real numeric, hourly_rate_applied numeric, updated_at timestamptz);
-      CREATE TEMP TABLE production_quantity_declarations(of_id bigint, qty_good numeric, qty_scrap numeric, qty_rework numeric, declared_at timestamptz);
+      CREATE TEMP TABLE production_quantity_declarations(of_id bigint, operation_id uuid, qty_good numeric, qty_pending_control numeric,
+        qty_scrap numeric, qty_rework numeric, declared_at timestamptz);
       CREATE TEMP TABLE stock_movements(id uuid, status text, movement_type text, reversal_of_id uuid,
         source_document_type text DEFAULT 'OF', source_document_id text DEFAULT '42', reason_code text DEFAULT 'DEBIT_MATIERE', posted_at timestamptz DEFAULT now());
       CREATE TEMP TABLE stock_movement_lines(id uuid, movement_id uuid, article_id uuid, lot_id uuid, unit_cost numeric, currency text);
