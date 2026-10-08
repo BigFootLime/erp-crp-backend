@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 import { clientCrmOperation, clientCrmSchemas } from "./client-crm-contract";
 import { assemblyComponentOperation, assemblyComponentSchemas } from './assembly-component-contract';
+import { terminalAssemblyOperation, TERMINAL_ASSEMBLY_OPERATIONS } from './terminal-assembly-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 
 import {
@@ -53,6 +54,7 @@ const IDEMPOTENT_OPERATIONS = new Set([
 
 const TERMINAL_DEVICE_OPERATIONS = new Set(["get /terminals/bootstrap", "post /terminals/identify"]);
 const TERMINAL_SESSION_OPERATIONS = new Set([
+  ...TERMINAL_ASSEMBLY_OPERATIONS,
   "get /terminals/cutting/worklist", "post /terminals/cutting/resolve-of",
   "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}",
   "get /terminals/cutting/ofs/{of_id}/operations/{operation_id}/documents/{id}",
@@ -203,7 +205,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  return assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation)))));
+  return terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {

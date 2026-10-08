@@ -61,10 +61,12 @@ export async function getAssemblyComponentPreparation(ofId: number, quantity?: n
 
 /** Intake is a physical command, distinct from time, good output or rework.
  * The immutable stock receipts retain every partial requirement/lot issue. */
-export async function withdrawAssemblyComponents(ofId: number, body: AssemblyComponentWithdrawal, audit: AuditContext) {
+export async function withdrawAssemblyComponents(ofId: number, body: AssemblyComponentWithdrawal, audit: AuditContext,
+  authorizeTransaction?: (tx: PoolClient) => Promise<void>) {
   return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
     await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
     await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE', [ofId]);
+    await authorizeTransaction?.(tx);
     const command = await beginStockCommand(tx, { audit, idempotency_key: body.idempotencyKey,
       command_type: 'RESERVATION_CONSUME', request_payload: { ofId, kind: 'ASSEMBLY_COMPONENTS', ...body } });
     if (command.existing) return command.existing.result_payload;
