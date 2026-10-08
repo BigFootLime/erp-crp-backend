@@ -22,7 +22,16 @@ export type SupplierSuggestion = SupplierHistory & {
   catalogue_id: string | null; estimated_ht: number | null; purchase_quantity: number | null;
   purchase_unit: string | null; currency: string; announced_days: number | null;
   score: number; confidence: 'LOW' | 'MEDIUM' | 'HIGH'; reasons: string[]; warnings: string[];
+  ranking?: SupplierRanking;
 };
+
+export type SupplierRankingCriterion = { available: boolean; weight: number; points: number };
+export type SupplierRanking = {
+  price: SupplierRankingCriterion; history: SupplierRankingCriterion;
+  delay: SupplierRankingCriterion; quality: SupplierRankingCriterion;
+};
+
+export const SUPPLIER_RECOMMENDATION_POLICY = 'supplier-history-v2' as const;
 
 /** Estimate the same catalogue line as the purchase writer. No FX, inferred
  * conversion, old purchase price, or missing tariff is used for comparison. */
@@ -55,12 +64,26 @@ export function rankSupplierSuggestions(items: SupplierSuggestion[], comparePric
   const minimumDelay = delays.length ? Math.min(...delays) : null;
   const maximumOrders = Math.max(1, ...eligible.map(item => item.sent_orders));
   const weight = comparePrices ? 100 : 60;
-  return items.map(item => ({ ...item, score: Math.round(100 * (
-    (comparePrices && item.estimated_ht !== null && minimumCost !== null ? 40 * (minimumCost + 1) / (item.estimated_ht + 1) : 0) +
-    30 * Math.log1p(item.sent_orders) / Math.log1p(maximumOrders) +
-    (item.actual_days !== null && minimumDelay !== null ? 15 * (minimumDelay + 1) / (item.actual_days + 1) : 0) +
-    (item.quality_score !== null ? 15 * item.quality_score / 5 : 0)
-  ) / weight) })).sort((a, b) =>
+  const criterion = (available: boolean, criterionWeight: number, ratio: number): SupplierRankingCriterion =>
+    ({ available, weight: criterionWeight, points: available ? Number((100 * criterionWeight * ratio / weight).toFixed(6)) : 0 });
+  return items.map(item => {
+    const ranking: SupplierRanking = {
+      price: criterion(comparePrices && item.estimated_ht !== null && minimumCost !== null, comparePrices ? 40 : 0,
+        item.estimated_ht !== null && minimumCost !== null ? (minimumCost + 1) / (item.estimated_ht + 1) : 0),
+      history: criterion(item.sent_orders > 0, 30, Math.log1p(item.sent_orders) / Math.log1p(maximumOrders)),
+      delay: criterion(item.actual_days !== null && minimumDelay !== null, 15,
+        item.actual_days !== null && minimumDelay !== null ? (minimumDelay + 1) / (item.actual_days + 1) : 0),
+      quality: criterion(item.quality_score !== null, 15, (item.quality_score ?? 0) / 5),
+    };
+    // Preserve the existing ranking exactly; rounded contributions are explanatory only.
+    const score = Math.round(100 * (
+      (comparePrices && item.estimated_ht !== null && minimumCost !== null ? 40 * (minimumCost + 1) / (item.estimated_ht + 1) : 0) +
+      30 * Math.log1p(item.sent_orders) / Math.log1p(maximumOrders) +
+      (item.actual_days !== null && minimumDelay !== null ? 15 * (minimumDelay + 1) / (item.actual_days + 1) : 0) +
+      (item.quality_score !== null ? 15 * item.quality_score / 5 : 0)
+    ) / weight);
+    return { ...item, ranking, score };
+  }).sort((a, b) =>
     Number(b.can_engage) - Number(a.can_engage) ||
     Number(a.review_outcome === 'UNSATISFACTORY') - Number(b.review_outcome === 'UNSATISFACTORY') ||
     Number(b.qualification_known) - Number(a.qualification_known) || b.score - a.score ||
