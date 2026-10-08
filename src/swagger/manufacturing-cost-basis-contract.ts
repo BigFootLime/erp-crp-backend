@@ -1,8 +1,9 @@
+import { stockOpeningBasisOperation } from './stock-opening-basis-contract';
 const decimal={type:'string',pattern:'^\\d+(?:\\.\\d{1,12})?$'};
 const uuid={type:'string',format:'uuid'};
 const digest={type:'string',pattern:'^[0-9a-f]{64}$'};
 export function manufacturingCostBasisOperation(key:string,operation:Record<string,unknown>) {
-  if(!/^\b(get|post) \/margins\/of\/\{ofId\}\/manufacturing-basis(?:\/candidates\/\{snapshotId\})?$/.test(key)) return operation;
+  if(!/^\b(get|post) \/margins\/of\/\{ofId\}\/manufacturing-basis(?:\/candidates\/\{snapshotId\})?$/.test(key)) return stockOpeningBasisOperation(key,operation);
   const preview=key.includes('/candidates/'),write=key.startsWith('post ');
   const parameters:Array<Record<string,unknown>>=[{name:'ofId',in:'path',required:true,schema:{type:'string',pattern:'^[1-9]\\d{0,18}$'}}];
   if(preview) parameters.push({name:'snapshotId',in:'path',required:true,schema:uuid});
