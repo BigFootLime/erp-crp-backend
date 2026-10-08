@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "e8d6a4de5c03ade25d3b3a3adcba4b5a172e358c682e0415a9fa18a21097c3f4";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ace7ae19de41b1c75ddfff2127a67fc0f0835b55435e6bb3679ad4ff1b6983b8";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -21951,7 +21951,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/supplier-invoices",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:19",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:28",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21968,7 +21968,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/supplier-invoices/{id}",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:20",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -21985,7 +21985,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/supplier-invoices/{id}/approve",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:26",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22002,7 +22002,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/supplier-invoices/{id}/dispute",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:27",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:37",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22019,7 +22019,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/supplier-invoices/{id}/header-allocation",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:21",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22036,7 +22036,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/supplier-invoices/{id}/identify",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:23",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22053,7 +22053,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/supplier-invoices/{id}/match",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:24",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22070,7 +22070,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/supplier-invoices/{id}/material-reconciliation",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:22",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:31",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22086,8 +22086,27 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/supplier-invoices/{id}/material-reconciliation",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_approve)",
+      "requireMaterialFinancialWrite",
+      "confirmSupplierInvoiceMaterialReconciliation"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(supplier_invoice_approve)",
+      "requireMaterialFinancialWrite"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/supplier-invoices/{id}/reject",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:28",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22104,7 +22123,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/supplier-invoices/{id}/request-approval",
-    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:25",
+    "source": "src/module/supplier-invoices/supplier-invoice.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",

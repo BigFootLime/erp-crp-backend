@@ -38,7 +38,23 @@ SELECT s.cost,c.mode,c.initialized,c.reporting_currency,c.formula_version,c.last
     FROM public.stock_valuation_return_allocations r
     LEFT JOIN public.stock_valuation_return_allocation_events e ON e.id=r.latest_event_id
     WHERE r.original_movement_id=j.movement_id ORDER BY r.owner_key,r.stock_unit,r.currency LIMIT 3
-  ) cursor),'[]'::jsonb) AS returns
+  ) cursor),'[]'::jsonb) AS returns,
+  COALESCE((SELECT jsonb_agg(to_jsonb(v) ORDER BY v.id) FROM (
+    SELECT ca.id::text,ca.reconciliation_id::text,p.invoice_id::text,ca.line_id::text,ca.movement_id::text,ca.of_id::text,
+      ca.quantity::text,ca.amount_ht::text,ca.stock_sha256,
+      p.source_sha256=encode(digest(p.source_snapshot::text,'sha256'),'hex') AND ca.stock_sha256=j.source_sha256
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(p.source_snapshot->'posting'->'consumption') proof
+        WHERE proof->>'line_id'=ca.line_id::text AND proof->>'movement_id'=ca.movement_id::text
+        AND proof->>'invoice_line_id'=ca.invoice_line_id::text AND proof->>'lot_id'=ca.lot_id::text
+        AND proof->>'of_id'=ca.of_id::text AND (proof->>'quantity')::numeric=ca.quantity
+        AND (proof->>'amount_ht')::numeric=ca.amount_ht AND proof->>'stock_sha256'=ca.stock_sha256) AS source_valid
+    FROM public.stock_valuation_invoice_consumption_adjustments ca
+    JOIN public.stock_valuation_invoice_reconciliations p ON p.id=ca.reconciliation_id
+    WHERE ca.line_id=CASE WHEN s.cost->>'source_document_type'='STOCK_MOVEMENT_LINE'
+      AND s.cost->>'source_document_ref' ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+      THEN (s.cost->>'source_document_ref')::uuid END AND ca.of_id=$1::bigint
+    ORDER BY ca.id LIMIT 501
+  ) v),'[]'::jsonb) AS invoice_variances
 FROM bounded s CROSS JOIN public.stock_valuation_projector_control c
 LEFT JOIN public.stock_valuation_movement_journal j ON j.movement_id=(s.cost->>'source_ref')::uuid
 WHERE c.singleton ORDER BY s.cost->>'key'`;

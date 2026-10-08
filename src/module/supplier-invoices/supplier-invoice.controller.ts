@@ -3,6 +3,9 @@ import type { z } from "zod";
 
 import { HttpError } from "../../utils/httpError";
 import { repoMaterialInvoiceReconciliation } from './material-invoice-reconciliation.repository';
+import { repoConfirmMaterialInvoice } from './material-invoice-posting.repository';
+import { materialInvoicePostingBody } from './material-invoice-posting.validators';
+import { buildAuditContext } from '../margin-engine/controllers/margin-audit-context';
 import {
   repoApproveSupplierInvoice,
   repoDisputeSupplierInvoice,
@@ -98,6 +101,14 @@ export const matchSupplierInvoice: RequestHandler = async (req, res, next) => {
       idempotencyKey: idempotencyKeyFrom(req),
     }));
   } catch (error) { next(error); }
+};
+
+export const confirmSupplierInvoiceMaterialReconciliation:RequestHandler=async(req,res,next)=>{
+  try {
+    const {id}=parse(supplierInvoiceParamsSchema,req.params),input=parse(materialInvoicePostingBody,req.body);
+    const result=await repoConfirmMaterialInvoice(id.toLowerCase(),input,buildAuditContext(req));
+    res.setHeader('Cache-Control','no-store, private');res.status(result.replayed?200:201).json(result);
+  }catch(error){next(error);}
 };
 
 export const identifySupplierInvoice: RequestHandler = async (req, res, next) => {

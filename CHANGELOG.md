@@ -1,5 +1,13 @@
 # Changelog
 
+## Explicit sourced material invoice confirmation — #1022
+
+- Protected Finance/financial Stock intent, full source SHA and actor-scoped UUID replay; no amount input.
+- Exact signed Stock/consumed allocation, quantity-neutral balance, proved physical OF attribution and visible unassigned consumption.
+- Immutable ledger/guards/audit committed atomically; additive zero-stock candidate, original guard bodies and historic costs preserved.
+- Only future explicit margin versions include proved corrections; subsequent return remains unresolved pending policy.
+- CUMP PREPARED, no actual financial posting; five fixtures and fifteen common acceptance scenarios prepared NOT RUN.
+
 ## Sourced material invoice reconciliation preview — #1019
 
 - Protected Finance read-only receipt/lot proposal, approved invoice and immutable booked acquisition evidence.
