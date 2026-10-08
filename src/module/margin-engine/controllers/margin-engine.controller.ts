@@ -3,6 +3,8 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import type { MarginScopeType } from "../domain/margin-engine";
 import type { MarginAuditContext } from "../repository/margin-engine.repository";
+import { openingBasisBody,openingBasisParams } from '../../stock/validators/cump-opening-basis.validators';
+import { declareOpeningBasis,getOpeningBasis,getOpeningBasisCandidate } from '../../stock/services/cump-opening-basis.service';
 import { manufacturingBasisBody, manufacturingBasisCandidateParams,
   manufacturingBasisParams } from '../validators/manufacturing-cost-basis.validators';
 import {
@@ -141,4 +143,25 @@ export const declareManufacturingBasis: RequestHandler = async (req,res,next) =>
     const result=await svcDeclareManufacturingBasis(ofId,input,buildAuditContext(req));
     res.setHeader('Cache-Control','no-store');res.status(result.replayed?200:201).json(result);
   } catch(error) {next(error);}
+};
+
+export const readOpeningValueCandidate:RequestHandler=async(req,res,next)=>{
+  try {
+    const {articleId,unit}=openingBasisParams.parse(req.params);
+    res.setHeader('Cache-Control','no-store');res.json(await getOpeningBasisCandidate(articleId,unit));
+  } catch(error){next(error);}
+};
+export const readOpeningValueBasis:RequestHandler=async(req,res,next)=>{
+  try {
+    const {articleId,unit}=openingBasisParams.parse(req.params);
+    res.setHeader('Cache-Control','no-store');res.json(await getOpeningBasis(articleId,unit));
+  } catch(error){next(error);}
+};
+export const declareOpeningValueBasis:RequestHandler=async(req,res,next)=>{
+  try {
+    const {articleId,unit}=openingBasisParams.parse(req.params);
+    const input=openingBasisBody.parse(req.body);
+    const result=await declareOpeningBasis(articleId,unit,input,buildAuditContext(req));
+    res.setHeader('Cache-Control','no-store');res.status(result.replayed?200:201).json(result);
+  } catch(error){next(error);}
 };
