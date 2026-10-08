@@ -1,0 +1,13 @@
+# ADR-0947 — Coût de prestation facturé et reliquat reçu
+
+Status: implemented; final combined business acceptance pending.
+
+ACTUAL/UPDATED previously used received quantity multiplied by the order price even after supplier invoice approval. Use the latest immutable match observed before approval, for purchase lines explicitly attributed to the OF. Require the supplier/order identity, physical receipt references, approval decision, complete clean GED archive, equal canonical units and currency, and invoice header amounts accounted for by its lines. No quantity, currency conversion or header charge allocation is inferred.
+
+Approved invoice line amounts become verified financial source rows. Positive invoiced quantities cover only that portion of physical receipts; the remaining receipt estimate is prorated once from the aggregate order-price valuation at six-decimal precision. Fully invoiced receipts contribute no duplicate estimate. Credit line signs follow the document/header convention; a credit changes money, not received quantity. A credit without the original invoice retains the declared receipt estimate rather than claiming the original financial charge is verified.
+
+Missing proof, a quantity/unit/currency mismatch, a header charge requiring allocation, or cumulative invoices exceeding physical receipts produces an unknown cost with a specific reason. Do not return a plausible total for unresolved attribution. No approved invoice preserves the existing declared receipt valuation. Unknown prices on the unbilled remainder remain unknown.
+
+Attribution is at the OF/purchase line, not a physical lot. This does not post stock or accounting, execute payment, alter matching, approve invoices, assign CUMP, or value consumable/component issues. Monetary evidence is internal and existing margin RBAC remains authoritative. Historic as-of financial reconstruction needs its own journal; this projection uses current observed receipt/approved invoice sources like the existing ACTUAL basis.
+
+No migration. TypeScript/build and both real SQL plans compiled under cerp_app in read-only rollback. Business cases are prepared but execution is deferred to final combined acceptance by explicit user instruction. Unknown trade unit codes remain unresolved. C62/H87 count units map to the existing piece unit without numeric conversion, according to the UNECE [C62 code list](https://unece.org/DAM/cefact/recommendations/rec20/rec20_rev3_Annex3e.pdf) and [H87 usage](https://uncefact.unece.org/download/attachments/182976575/ProductCircularityDataUseCase-v3A-Extension-TL_TT_BRS_Part%20II-UC_CCBDA.pdf?api=v2). Invalid decimals produce an attribution exception rather than a server error. WP-278, issue #947; sections 7/9/12/14/15/16.
