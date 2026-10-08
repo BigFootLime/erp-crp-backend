@@ -19,9 +19,14 @@ export function allocateCumpLinkedReturn(original: CumpOriginalValue, scope: Cum
       cursor: { originalMovementRef: original.movementRef,quantity: text(before + moved),value: null } };
   }
   if (original.reliability !== 'DECLARED' && original.reliability !== 'VERIFIED') throw new Error('CUMP_RETURN_EVIDENCE_INVALID');
-  const value = decimal(original.movementValue), allocated = ratio(value * before,total);
-  if (cursor.value === null || decimal(cursor.value) !== allocated) throw new Error('CUMP_RETURN_CURSOR_MISMATCH');
-  const next = ratio(value * (before + moved),total);
-  return { cost: { amount: text(next - allocated),reliability: original.reliability,sourceRef: original.entryRef },
-    cursor: { originalMovementRef: original.movementRef,quantity: text(before + moved),value: text(next) } };
+  const value = decimal(original.movementValue), allocated = cursor.value===null ? null : decimal(cursor.value);
+  // The repository verifies the immutable allocation ledger. After an older
+  // return is cancelled out of order, net value need not equal the cumulative
+  // ratio (one rounding unit may remain). Allocate the exact remaining value.
+  if (allocated===null || allocated>value || (before===0n && allocated!==0n)
+    || (before===total && allocated!==value)) throw new Error('CUMP_RETURN_CURSOR_MISMATCH');
+  const remainder = value - allocated, remaining = total - before;
+  const amount = moved===remaining ? remainder : ratio(remainder * moved,remaining);
+  return { cost: { amount: text(amount),reliability: original.reliability,sourceRef: original.entryRef },
+    cursor: { originalMovementRef: original.movementRef,quantity: text(before + moved),value: text(allocated + amount) } };
 }
