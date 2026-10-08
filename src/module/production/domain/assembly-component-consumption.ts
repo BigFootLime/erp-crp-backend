@@ -38,7 +38,7 @@ function parentCount(childMilli: bigint, perParent: bigint): bigint {
 /** Requirements transferred by consolidation still belong to their source OF.
  * Allocate whole assemblies to one source at a time; never spread fractional
  * components proportionally across source orders. */
-export function planAssemblyComponentConsumption(coverage: AssemblyCoverage, requested?: number) {
+function analyzeAssemblyComponents(coverage: AssemblyCoverage) {
   if (coverage.coveredByOfId) {
     throw new HttpError(409, 'ASSEMBLY_PRODUCER_REQUIRED', 'Préparez la sortie depuis l’OF qui réalise le montage.', { producerOfId: coverage.coveredByOfId });
   }
@@ -68,6 +68,20 @@ export function planAssemblyComponentConsumption(coverage: AssemblyCoverage, req
   }
   const consumed = sources.reduce((sum, [, group]) => sum + group.consumed, 0n);
   const remaining = target - consumed;
+  return { sources, target, consumed, remaining };
+}
+
+/** Physical intake only: quantity declarations and pointage never contribute.
+ * A fully withdrawn OF retains its exact balance even with no new issue plan. */
+export function getAssemblyComponentBalance(coverage: AssemblyCoverage) {
+  const { sources, target, consumed, remaining } = analyzeAssemblyComponents(coverage);
+  return { quantity: units(target), alreadyInAssembly: units(consumed), remaining: units(remaining),
+    sourceBalances: sources.map(([sourceOfId, group]) => ({ sourceOfId, quantity: units(group.target),
+      alreadyInAssembly: units(group.consumed), remaining: units(group.target - group.consumed) })) };
+}
+
+export function planAssemblyComponentConsumption(coverage: AssemblyCoverage, requested?: number) {
+  const { sources, consumed, remaining } = analyzeAssemblyComponents(coverage);
   const requestedMilli = requested === undefined ? remaining : scaled(requested, 3);
   if (requestedMilli % 1000n !== 0n || requestedMilli <= 0n || requestedMilli > remaining) {
     throw new HttpError(422, 'ASSEMBLY_QUANTITY_EXCEEDED', 'Choisissez une quantité entière dans le reliquat à mettre en montage.');
