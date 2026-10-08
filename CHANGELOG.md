@@ -1,5 +1,12 @@
 # Changelog
 
+## Material order transport evidence — #1016
+
+- Freeze complete active purchase-line monetary facts on future receipts; preserve historical proofs and previous capture function.
+- Allocate transport by net HT including discount/line flat fees, exact cumulative residuals and capped partial/overreceipt amounts.
+- Cursor hash includes the complete monetary basis; changed/removed transport, incomplete evidence and history gaps remain explained UNKNOWN.
+- Add reversible capture migration; physical stock unchanged and CUMP PREPARED. Five fixtures and common acceptance prepared NOT RUN.
+
 ## Documented invoice header allocations — #1013
 
 - Finance read-only exact-cent proposal for HT amounts outside fiscal lines; no caller amount input.
