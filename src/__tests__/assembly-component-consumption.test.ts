@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planAssemblyComponentConsumption, type AssemblyCoverage } from '../module/production/domain/assembly-component-consumption';
+import { getAssemblyComponentBalance, planAssemblyComponentConsumption, type AssemblyCoverage } from '../module/production/domain/assembly-component-consumption';
 
 // Prepared for the final combined acceptance; do not execute per increment.
 const version = '11111111-1111-4111-8111-111111111111';
@@ -14,6 +14,24 @@ function coverage(items = [requirement(10, 100, '2.000000')], quantity = 100): A
   return { ofId: 10, quantity, versionId: version, ready: true, definitionMissing: false, coveredByOfId: null, items };
 }
 describe('physical assemblies and component quantities', () => {
+  it('retains a complete intake balance with no remaining issue and rejects a further explicit withdrawal', () => {
+    const state = coverage([requirement(10, 100, '2', 100)]);
+    expect(getAssemblyComponentBalance(state)).toEqual({ quantity: 100, alreadyInAssembly: 100, remaining: 0,
+      sourceBalances: [{ sourceOfId: 10, quantity: 100, alreadyInAssembly: 100, remaining: 0 }] });
+    expect(() => planAssemblyComponentConsumption(state, 1)).toThrowError(expect.objectContaining({ code: 'ASSEMBLY_QUANTITY_EXCEEDED' }));
+  });
+  it('reports each grouped source balance, including a fully withdrawn source beside an untouched source', () => {
+    const state = coverage([requirement(10, 60, '2', 60), requirement(20, 10, '2', 0)], 70);
+    expect(getAssemblyComponentBalance(state)).toEqual({ quantity: 70, alreadyInAssembly: 60, remaining: 10,
+      sourceBalances: [{ sourceOfId: 10, quantity: 60, alreadyInAssembly: 60, remaining: 0 },
+        { sourceOfId: 20, quantity: 10, alreadyInAssembly: 0, remaining: 10 }] });
+  });
+  it('does not manufacture a balance for contradictory component intakes or an obsolete frozen version', () => {
+    const state = coverage([requirement(10, 100, '2', 20), requirement(10, 100, '3', 10)]);
+    expect(() => getAssemblyComponentBalance(state)).toThrowError(expect.objectContaining({ code: 'ASSEMBLY_COMPONENT_BALANCE_UNKNOWN' }));
+    state.items = [requirement(10, 100, '2', 100)]; state.items[0].parentVersionId = 'old';
+    expect(() => getAssemblyComponentBalance(state)).toThrowError(expect.objectContaining({ code: 'ASSEMBLY_COMPONENT_VERSION_CHANGED' }));
+  });
   it('takes 40 screws for 20 newly assembled pieces and leaves 80 assemblies available', () => {
     expect(planAssemblyComponentConsumption(coverage(), 20)).toMatchObject({ quantity: 20, remainingAfter: 80,
       allocations: [{ quantity: 40, sourceOfId: 10 }] });
