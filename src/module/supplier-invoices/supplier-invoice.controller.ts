@@ -11,6 +11,7 @@ import {
   repoMatchSupplierInvoice,
   repoRejectSupplierInvoice,
   repoRequestSupplierInvoiceApproval,
+  repoSupplierInvoiceHeaderAllocation,
   type SupplierInvoiceActor,
 } from "./supplier-invoice.repository";
 import {
@@ -20,6 +21,7 @@ import {
   supplierInvoiceParamsSchema,
   supplierInvoiceReasonBodySchema,
   supplierInvoiceVersionBodySchema,
+  supplierInvoiceApproveBodySchema,
 } from "./supplier-invoice.validators";
 
 function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
@@ -69,6 +71,14 @@ export const getSupplierInvoice: RequestHandler = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
+export const getSupplierInvoiceHeaderAllocation: RequestHandler = async (req,res,next) => {
+  try {
+    actorFrom(req);const {id}=parse(supplierInvoiceParamsSchema,req.params);
+    res.setHeader('Cache-Control','no-store, private');
+    res.json(await repoSupplierInvoiceHeaderAllocation(id));
+  } catch(error) {next(error);}
+};
+
 export const matchSupplierInvoice: RequestHandler = async (req, res, next) => {
   try {
     const { id } = parse(supplierInvoiceParamsSchema, req.params);
@@ -110,7 +120,7 @@ export const approveSupplierInvoice: RequestHandler = async (req, res, next) => 
     const { id } = parse(supplierInvoiceParamsSchema, req.params);
     res.json(await repoApproveSupplierInvoice({
       invoiceId: id,
-      body: parse(supplierInvoiceVersionBodySchema, req.body),
+      body: parse(supplierInvoiceApproveBodySchema, req.body),
       actor: actorFrom(req),
       idempotencyKey: idempotencyKeyFrom(req),
     }));
