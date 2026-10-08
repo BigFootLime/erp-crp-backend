@@ -1,0 +1,15 @@
+# Physical component intake for assembly
+
+WP-278 / #956. This backend increment prepares an explicit intake command. It does not complete the operator UI or automatically post stock at time start, good-output declaration or rework. Keenan has been asked whether the default should be partial intake or all components at montage start; the command can support either quantity with physical confirmation.
+
+The current gate generates/reserves components and checks their quality but has no component-consumption writer. Add GET `production/ofs/:id/assembly-components` and POST `assembly-components/withdraw`, authenticated with production capability and account-aware stock consumption permissions. The response prefills the first active ASSEMBLAGE operation, remaining whole assemblies and their requirement/reservation/lot issues. No supplier, article, unit, lot or technical version is accepted as free input.
+
+Use the canonical stock reservation consumer for MP, consumables and components. The component branch requires OF_COMPONENT identity, current requirement/article and tracked stock. The same transaction unreserves the consumed amount, posts OUT/PRELEVEMENT_COMPOSANT, updates only the consumed reservation delta, verifies the material-consumption proof, persists immutable stock command receipts and emits the OF audit/outbox. Missing proof aborts the entire transaction. No receipt, new output lot, quality release, CUMP or financial posting is produced.
+
+Consolidation preserves original requirement ownership. Allocate whole assemblies to source OFs in stable OF-ID order, then their frozen quantities per parent. Do not distribute fractional components proportionally. Reject inconsistent requirement targets, partial source balances, obsolete parent versions and quantities unrepresentable in the stock unit. All physical requirements must be covered before even a partial intake.
+
+Coverage now combines proven posted component consumption with remaining usable reservations; it no longer tests a nonexistent CONSUMED requirement status. Reservation consumption remains ACTIVE/CONSUMED under its existing schema. Quantity and lot history are preserved for every partial withdrawal, rather than reconstructed from the latest movement pointer. Generic compensation of owned outputs is blocked: a coordinated component return/correction must reconcile intake, reservation and physical usage together.
+
+Remaining work before claiming the complete montage flow: wire the CERP UI/RN confirmation and permissions, enforce declared assembly output against intake in that release, and provide the coordinated correction/return circuit. These changes must not silently block the existing operator before its replacement path is available. #956 stays open.
+
+Validation for this increment: strict TypeScript/build, OpenAPI contract and six real SQL PREPARE/EXPLAIN plans under cerp_app in READ ONLY/ROLLBACK. Business cases are prepared only; Keenan requires their execution at the final combined acceptance.
