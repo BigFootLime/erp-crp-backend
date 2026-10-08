@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
+import { guardCostInputIdentities } from "./cost-input-identities";
 
-export const MARGIN_FORMULA_VERSION = "CERP-MARGIN-2.0.0" as const;
+export const MARGIN_FORMULA_VERSION = "CERP-MARGIN-2.0.1" as const;
 export const MARGIN_CURRENCY = "EUR" as const;
 
 export const MARGIN_COST_CATEGORIES = [
@@ -123,6 +124,7 @@ export type MarginCostInput = {
   rate_unit: MarginRateUnit | null;
   currency: string;
   evidence: MarginEvidence;
+  valuation_issue?: "COST_SOURCE_COLLISION";
 };
 
 export type MarginRevenueInput = {
@@ -147,6 +149,7 @@ export type MarginCalculationInput = {
 type ResolvedInput = MarginCostInput & { resolved_amount_ht: string | null };
 
 function resolveInput(input: MarginCostInput, directSubtotal: bigint): { amount: bigint | null; row: ResolvedInput } {
+  if (input.valuation_issue) return { amount: null, row: { ...input, resolved_amount_ht: null } };
   if (input.availability === "NOT_APPLICABLE") {
     return { amount: null, row: { ...input, resolved_amount_ht: null } };
   }
@@ -271,6 +274,7 @@ function buildWaterfall(
 }
 
 export function calculateMargin(input: MarginCalculationInput): MarginCalculation {
+  const costs = guardCostInputIdentities(input.costs);
   const required = input.required_categories ?? MARGIN_COST_CATEGORIES;
   const missing: MarginCalculation["missing_inputs"] = [];
   let revenue: bigint | null = null;
@@ -283,14 +287,16 @@ export function calculateMargin(input: MarginCalculationInput): MarginCalculatio
   if (input.revenue?.availability === "PROVIDED" && input.revenue.currency !== MARGIN_CURRENCY) {
     missing.push({ code: "REVENUE_CURRENCY_UNSUPPORTED", category: "REVENUE", message: "Devise du prix de vente non convertible en EUR sans règle documentée." });
   }
-  for (const cost of input.costs) {
+  for (const cost of costs) {
+    if (cost.valuation_issue) missing.push({ code: cost.valuation_issue, category: cost.category,
+      message: `Identité de coût ${cost.key} ambiguë : réconciliez les sources avant valorisation.` });
     if (cost.availability === "PROVIDED" && cost.currency !== MARGIN_CURRENCY) {
       missing.push({ code: "COST_CURRENCY_UNSUPPORTED", category: cost.category, message: `Devise de l'entrée ${cost.key} non convertible en EUR sans règle documentée.` });
     }
   }
 
-  const nonOverhead = input.costs.filter((item) => item.category !== "OVERHEAD");
-  const overhead = input.costs.filter((item) => item.category === "OVERHEAD");
+  const nonOverhead = costs.filter((item) => item.category !== "OVERHEAD");
+  const overhead = costs.filter((item) => item.category === "OVERHEAD");
   const firstPass = nonOverhead.map((item) => resolveInput(item, 0n));
   const directSubtotal = firstPass.reduce((sum, item) => sum + (item.amount ?? 0n), 0n);
   const resolved = [...firstPass, ...overhead.map((item) => resolveInput(item, directSubtotal))];
