@@ -1,5 +1,12 @@
 # Changelog
 
+## Sourced material invoice reconciliation preview — #1019
+
+- Protected Finance read-only receipt/lot proposal, approved invoice and immutable booked acquisition evidence.
+- Exact variance split between traced remaining Stock and consumed material, original reliability preserved.
+- Shared/old/mixed/partial/credit sources stay explained UNKNOWN; bounded repeatable-read snapshot and full source SHA.
+- No financial posting, activation, schema or historical cost change; seven fixtures and combined acceptance prepared NOT RUN.
+
 ## Material order transport evidence — #1016
 
 - Freeze complete active purchase-line monetary facts on future receipts; preserve historical proofs and previous capture function.

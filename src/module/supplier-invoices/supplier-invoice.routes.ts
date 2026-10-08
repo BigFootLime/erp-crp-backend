@@ -6,6 +6,7 @@ import {
   disputeSupplierInvoice,
   getSupplierInvoice,
   getSupplierInvoiceHeaderAllocation,
+  getSupplierInvoiceMaterialReconciliation,
   identifySupplierInvoice,
   listSupplierInvoices,
   matchSupplierInvoice,
@@ -18,6 +19,7 @@ const router = Router();
 router.get("/", requireFinanceCapability("supplier_invoice_read"), listSupplierInvoices);
 router.get("/:id", requireFinanceCapability("supplier_invoice_read"), getSupplierInvoice);
 router.get('/:id/header-allocation',requireFinanceCapability('supplier_invoice_read'),getSupplierInvoiceHeaderAllocation);
+router.get('/:id/material-reconciliation',requireFinanceCapability('supplier_invoice_read'),getSupplierInvoiceMaterialReconciliation);
 router.post("/:id/identify", requireFinanceCapability("supplier_invoice_match"), identifySupplierInvoice);
 router.post("/:id/match", requireFinanceCapability("supplier_invoice_match"), matchSupplierInvoice);
 router.post("/:id/request-approval", requireFinanceCapability("supplier_invoice_match"), requestSupplierInvoiceApproval);
