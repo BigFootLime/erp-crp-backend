@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { repoRoot } from "./helpers/repo-paths";
+import { QUOTE_MARGIN_SOURCES_SQL } from "../module/margin-engine/repository/quote-margin-sources.sql";
 
 const patch = fs.readFileSync(path.join(repoRoot, "db", "patches", "20260805_margin_engine_0001.sql"), "utf8");
 const support = path.join(repoRoot, "db", "patches", "support");
@@ -64,8 +65,10 @@ describe("margin engine migration guards", () => {
     expect(rollback).not.toMatch(/\bCASCADE\b/i);
   });
 
-  it("does not multiply an already calculated technical operation cost by quote quantity", () => {
+  it("calculates technical operation cost with the quote quantity applied once to unit time", () => {
     expect(repository).not.toMatch(/op\.cout_mo\s*\*\s*dl\.quantite/i);
-    expect(repository).toContain("round(op.cout_mo, 6)::text AS amount_ht");
+    expect(repository).toContain("db.query<CostRow>(QUOTE_MARGIN_SOURCES_SQL");
+    expect(QUOTE_MARGIN_SOURCES_SQL).toContain("round((op.tp+op.tf_unit*dl.quantite)*op.coef*op.taux_horaire,6)::text");
+    expect(QUOTE_MARGIN_SOURCES_SQL).not.toMatch(/op\.cout_mo\s*\*\s*dl\.quantite|op\.taux_horaire\s*\*\s*dl\.quantite/i);
   });
 });
