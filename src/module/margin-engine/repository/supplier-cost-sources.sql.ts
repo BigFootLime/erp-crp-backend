@@ -1,20 +1,39 @@
 export const SUPPLIER_RECEIPT_COSTS_SQL = `
-  SELECT concat('supplier-receipt:', receipt_line.id::text) AS key,
-    'SUBCONTRACTING'::text AS category,
-    CASE WHEN order_line.prix_unitaire_ht <= 0 AND order_line.frais_ht <= 0 THEN NULL
-      ELSE round(receipt_line.qty_received * order_line.prix_unitaire_ht * (1-order_line.remise_pct/100.0)
-        + CASE WHEN order_line.quantite>0 THEN order_line.frais_ht*receipt_line.qty_received/order_line.quantite ELSE 0 END,6)::text END AS amount_ht,
-    'SUPPLIER_RECEPTION_ACTUAL'::text AS source_type, receipt.id::text AS source_ref,
-    receipt_line.updated_at::text AS observed_at, 'DECLARED'::text AS source_reliability,
-    supplier_order.devise::text AS currency, order_line.id::text AS order_line_id,
-    receipt_line.qty_received::text AS receipt_quantity, order_line.unite::text AS purchase_unit
-  FROM public.reception_fournisseur_lignes receipt_line
-  JOIN public.receptions_fournisseurs receipt ON receipt.id=receipt_line.reception_id
-  JOIN public.commande_fournisseur_ligne order_line ON order_line.id=receipt_line.commande_fournisseur_ligne_id
-  JOIN public.commande_fournisseur supplier_order ON supplier_order.id=order_line.commande_id
-  WHERE order_line.of_id=$1::bigint AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
-    AND order_line.statut_ligne<>'ANNULEE' AND receipt.status::text<>'CANCELLED' AND receipt_line.qty_received>0
-  ORDER BY receipt_line.id
+  WITH receipts AS (
+    SELECT receipt_line.id,receipt.id AS receipt_id,receipt_line.updated_at,
+      receipt_line.qty_received,order_line.id AS order_line_id,order_line.unite,
+      order_line.quantite,order_line.prix_unitaire_ht,order_line.remise_pct,order_line.frais_ht,
+      supplier_order.frais_port_ht,supplier_order.devise,
+      COALESCE(sum(receipt_line.qty_received) OVER (PARTITION BY order_line.id ORDER BY receipt_line.id
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS before_quantity
+    FROM public.reception_fournisseur_lignes receipt_line
+    JOIN public.receptions_fournisseurs receipt ON receipt.id=receipt_line.reception_id
+    JOIN public.commande_fournisseur_ligne order_line ON order_line.id=receipt_line.commande_fournisseur_ligne_id
+    JOIN public.commande_fournisseur supplier_order ON supplier_order.id=order_line.commande_id
+    WHERE order_line.of_id=$1::bigint AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
+      AND order_line.statut_ligne<>'ANNULEE' AND receipt.status::text<>'CANCELLED' AND receipt_line.qty_received>0
+  ), qualified AS (
+    SELECT receipts.*,CASE
+      WHEN ARRAY[quantite::text,qty_received::text,before_quantity::text,prix_unitaire_ht::text,
+        remise_pct::text,frais_ht::text,frais_port_ht::text] && ARRAY['NaN','Infinity','-Infinity']
+        THEN 'Montants ou quantités non finis.'
+      WHEN frais_port_ht IS NULL OR frais_port_ht<>0 THEN 'Transport de commande non réparti entre lignes : coût à confirmer.'
+      WHEN quantite IS NULL OR quantite<=0 THEN 'Quantité commandée manquante ou invalide pour répartir le forfait.'
+      WHEN prix_unitaire_ht IS NULL OR prix_unitaire_ht<0 OR frais_ht IS NULL OR frais_ht<0
+        OR remise_pct IS NULL OR remise_pct<0 OR remise_pct>100 THEN 'Prix, remise ou forfait de commande invalide.'
+      WHEN prix_unitaire_ht=0 AND frais_ht=0 THEN 'Gratuité non justifiée : facture contrôlée nécessaire.'
+      ELSE NULL END AS issue
+    FROM receipts
+  )
+  SELECT concat('supplier-receipt:',id::text) AS key,'SUBCONTRACTING'::text AS category,
+    CASE WHEN issue IS NULL THEN (round(qty_received*prix_unitaire_ht*(1-remise_pct/100.0),6)
+      + round(frais_ht*LEAST(before_quantity+qty_received,quantite)/NULLIF(quantite,0),6)
+      - round(frais_ht*LEAST(before_quantity,quantite)/NULLIF(quantite,0),6))::text ELSE NULL END AS amount_ht,
+    'SUPPLIER_RECEPTION_ACTUAL'::text AS source_type,receipt_id::text AS source_ref,
+    updated_at::text AS observed_at,CASE WHEN issue IS NULL THEN 'DECLARED' ELSE 'UNKNOWN' END AS source_reliability,
+    devise::text AS currency,order_line_id::text,qty_received::text AS receipt_quantity,unite::text AS purchase_unit,
+    COALESCE(issue,'Estimation HT de commande ; forfait cumulé plafonné, arrondi à six décimales et attribué par identifiant de réception.') AS definition
+  FROM qualified ORDER BY id
 `;
 
 // The approved match is immutable. Its supplier, receipt references and all
