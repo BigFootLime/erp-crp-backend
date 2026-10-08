@@ -1,6 +1,7 @@
 // Deployed filenames and checksums stay immutable. Dependencies take precedence
 // over their historical filename order in every migration entry point.
 const DEPENDENCIES = Object.freeze({
+  "20261008_stock_opening_bases_1004.sql": ["20261008_stock_manufacturing_allocations_1001.sql"],
   "20261008_stock_manufacturing_allocations_1001.sql": ["20261008_stock_manufacturing_bases_998.sql"],
   "20261008_stock_manufacturing_bases_998.sql": ["20261008_stock_manufacturing_sources_995.sql"],
   "20261008_stock_manufacturing_sources_995.sql": ["20261008_stock_return_sources_986.sql", "20260723_production_receipts_223.sql", "20260726_production_execution_274.sql", "20260805_margin_engine_0001.sql", "20260811_margin_traceability_0002.sql"],

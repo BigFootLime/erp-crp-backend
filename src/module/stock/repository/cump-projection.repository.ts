@@ -9,6 +9,7 @@ import type { CumpJournalSource } from '../domain/cump-posting-source';
 import { readReceiptAcquisitionFacts } from '../domain/receipt-acquisition-snapshot';
 import { resolveReceiptAcquisitionValue } from '../domain/receipt-acquisition-value';
 import * as sql from './cump-projection.sql';
+import { readDeclaredOpeningValueTx } from './cump-opening-basis.repository';
 
 type Tx = Pick<PoolClient,'query'>;
 export type CumpBalance = { state: CumpState; latestEntryId: string; latestSequence: string };
@@ -48,10 +49,14 @@ async function storeBalance(tx: Tx, balance: Balance) {
 }
 export async function writeCumpOpeningTx(tx: Tx, opening: CumpOpening, proof: Proof = {}): Promise<Balance> {
   if (opening.state.quantity!=='0' && (opening.state.value!==null || opening.state.reliability!=='UNKNOWN')) throw new Error('CUMP_OPENING_PRICE_FORBIDDEN');
-  const id = randomUUID(), state = { ...opening.state,sourceRef: `stock-valuation-entry:${id}` };
-  const snapshot = { ...proof,schema_version: 1,opening_ids: opening.openingIds,after_state: state };
+  const declared=await readDeclaredOpeningValueTx(tx,opening);
+  const id = randomUUID(), state:CumpState = { ...opening.state,
+    ...(declared?.value!==null&&declared?.value!==undefined?{value:declared.value,reliability:'DECLARED' as const}:{}),
+    sourceRef: `stock-valuation-entry:${id}` };
+  const snapshot:Proof = { ...proof,...(declared?.proof??{}),schema_version: 1,opening_ids: opening.openingIds,after_state: state,
+    issues:[...(Array.isArray(proof.issues)?proof.issues:[]),...(declared?.proof.issues??[])] };
   await insertEntry(tx,[id,null,state.scope.articleId,state.scope.owner,state.scope.unit,state.scope.currency,null,
-    'OPENING',CUMP_FORMULA_VERSION,state.quantity,null,null,state.reliability,JSON.stringify(snapshot),JSON.stringify(proof.issues ?? [])]);
+    'OPENING',CUMP_FORMULA_VERSION,state.quantity,null,null,state.reliability,JSON.stringify(snapshot),JSON.stringify(snapshot.issues ?? [])]);
   const balance = { state,latestEntryId: id,latestSequence: '0' }; await storeBalance(tx,balance); return balance;
 }
 export async function writeCumpUnresolvedTx(tx: Tx, row: CumpJournalSource | null, articleId: string,

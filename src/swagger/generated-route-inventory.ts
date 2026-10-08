@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "50b75f42c3839a9bafa16afa99aedfd5c696bfecf6755933ac72aadf2ceedd41";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "bdea9e906093a0c665a76c2c8d202bbe4c998f3bae764b670a817421fadc60fa";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -8355,7 +8355,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/{scopeType}/{scopeRef}",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:39",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8372,7 +8372,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/{scopeType}/{scopeRef}/export.csv",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:36",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:42",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8389,7 +8389,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/{scopeType}/{scopeRef}/snapshots",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:37",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8406,7 +8406,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/margins/{scopeType}/{scopeRef}/snapshots",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:38",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:44",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8423,7 +8423,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/margins/inputs",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:32",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8440,7 +8440,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/of/{ofId}/manufacturing-basis",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:34",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:37",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8457,7 +8457,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/margins/of/{ofId}/manufacturing-basis",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:35",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8474,7 +8474,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/of/{ofId}/manufacturing-basis/candidates/{snapshotId}",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:33",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8491,7 +8491,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/margins/rate-versions",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:30",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8508,7 +8508,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/margins/rate-versions",
-    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:31",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8520,6 +8520,57 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireMarginCapability(manage_rates)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/margins/stock-opening/{articleId}/{unit}/basis",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:40",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireMarginCapability(read_costs)",
+      "readOpeningValueBasis"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireMarginCapability(read_costs)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/margins/stock-opening/{articleId}/{unit}/basis",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:41",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireMarginCapability(snapshot)",
+      "declareOpeningValueBasis"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireMarginCapability(snapshot)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/margins/stock-opening/{articleId}/{unit}/candidate",
+    "source": "src/module/margin-engine/routes/margin-engine.routes.ts:39",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireMarginCapability(read_costs)",
+      "readOpeningValueCandidate"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireMarginCapability(read_costs)"
     ]
   },
   {
