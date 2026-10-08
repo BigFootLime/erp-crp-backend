@@ -16,6 +16,7 @@ import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { startPlanningForecastMaintenance } from "./module/planning/services/planning-forecast.worker";
 import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
+import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
@@ -66,6 +67,7 @@ async function start(): Promise<void> {
   const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
   const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
   const stopDurationLearningMaintenance = startDurationLearningMaintenance();
+  const stopCumpProjectionMaintenance = startCumpProjectionMaintenance();
 
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
@@ -99,6 +101,7 @@ async function start(): Promise<void> {
       stopAuthoritativePdfArchiveMaintenance,
       stopPlanningForecastMaintenance,
       stopDurationLearningMaintenance,
+      stopCumpProjectionMaintenance,
     ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),
