@@ -18,6 +18,7 @@ import { insertQuoteMarginSnapshotTx, readQuoteMarginSnapshot, type QuoteCapture
 import { reconcileSupplierCostSources, type SupplierReceiptCost, type SupplierInvoiceCost } from "../domain/supplier-cost-reconciliation";
 import { composeMarginCostSources } from "../domain/cost-input-identities";
 import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from "./supplier-cost-sources.sql";
+import { OF_MARGIN_CONSUMABLE_SOURCES_SQL } from "./consumable-cost-sources.sql";
 
 type ScopeIdentity = {
   scope_type: MarginScopeType;
@@ -185,6 +186,9 @@ type CostRow = {
   currency?: string | null;
   quantity?: string | null;
   technical_version_id?: string | null;
+  source_document_type?: string;
+  source_document_ref?: string;
+  definition?: string;
 };
 
 async function loadDevisCosts(scopeType: "DEVIS_LINE" | "DEVIS", scopeRef: string,
@@ -251,8 +255,11 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
 }
 
 async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInput[]> {
-  const rows = await pool.query<CostRow>(OF_MARGIN_MATERIAL_SOURCES_SQL, [scopeRef]);
-  return rows.rows.map(automaticCost);
+  const [material, consumable] = await Promise.all([
+    pool.query<CostRow>(OF_MARGIN_MATERIAL_SOURCES_SQL, [scopeRef]),
+    pool.query<CostRow>(OF_MARGIN_CONSUMABLE_SOURCES_SQL, [scopeRef]),
+  ]);
+  return [...material.rows, ...consumable.rows].map(automaticCost);
 }
 
 async function loadActualSubcontractingCosts(scopeRef: string): Promise<{ costs: MarginCostInput[]; retiredAutomaticKeys: string[] }> {
