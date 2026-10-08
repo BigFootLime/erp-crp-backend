@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { repoRoot } from "./helpers/repo-paths";
 import { OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_MEASUREMENTS_SQL } from "../module/margin-engine/repository/of-margin-sources.sql";
+import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from "../module/margin-engine/repository/supplier-cost-sources.sql";
 
 const patchName = "20260811_margin_traceability_0002";
 const patch = fs.readFileSync(path.join(repoRoot, "db", "patches", `${patchName}.sql`), "utf8");
@@ -60,7 +61,13 @@ describe("SOL-13 margin traceability migration guards", () => {
     expect(OF_MARGIN_MATERIAL_SOURCES_SQL).toContain("reversal.reversal_of_id = movement.id AND reversal.status::text = 'POSTED'");
     expect(OF_MARGIN_MATERIAL_SOURCES_SQL).toContain("NULL::text AS amount_ht, 'STOCK_CONSUMPTION_PROOF_MISSING'");
     expect(OF_MARGIN_MEASUREMENTS_SQL).toContain("FROM public.production_quantity_declarations");
-    expect(repository).toContain("SUPPLIER_RECEPTION_ACTUAL");
+    expect(repository).toContain("pool.query<SupplierReceiptCost>(SUPPLIER_RECEIPT_COSTS_SQL, [scopeRef])");
+    expect(repository).toContain("pool.query<SupplierInvoiceCost>(SUPPLIER_APPROVED_INVOICE_COSTS_SQL, [scopeRef])");
+    expect(SUPPLIER_RECEIPT_COSTS_SQL).toContain("SUPPLIER_RECEPTION_ACTUAL");
+    expect(SUPPLIER_RECEIPT_COSTS_SQL).toContain("receipt.status::text<>'CANCELLED'");
+    expect(SUPPLIER_APPROVED_INVOICE_COSTS_SQL).toContain("SUPPLIER_INVOICE_APPROVED_LINE");
+    expect(SUPPLIER_APPROVED_INVOICE_COSTS_SQL).toContain("invoice.status IN ('APPROVED','ACCOUNTING_EXPORTED','CLOSED')");
+    expect(SUPPLIER_APPROVED_INVOICE_COSTS_SQL).toContain("artifact.scan_status='CLEAN'");
     expect(repository).toContain("PRODUCTION_QUANTITY_DECLARATIONS");
     expect(repository).not.toMatch(/COALESCE\(\(SELECT sum\(qty_(?:good|scrap|rework)/i);
     expect(OF_MARGIN_MEASUREMENTS_SQL).not.toMatch(/COALESCE\(\(SELECT sum\(qty_(?:good|scrap|rework)/i);

@@ -73,3 +73,7 @@ snapshot. Existing status, discount and audit assertions remain. Static guards
 follow the extracted quote SQL and shared transaction reader: unit time uses
 quote quantity once, and rate scopes are revalidated with the reader's database
 connection. No quote or margin runtime is modified by these fixture repairs.
+
+After #947, the same source guard checks the extracted supplier queries executed
+by the repository, retaining actual non-cancelled receipt evidence and requiring
+approved invoice states and clean archived artifacts for the invoice source.
