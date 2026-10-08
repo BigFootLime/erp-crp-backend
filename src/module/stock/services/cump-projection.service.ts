@@ -8,6 +8,7 @@ import { readCumpPostingSource, checkCumpTransferGroup, type CumpJournalSource,
   type CumpPostingSource } from '../domain/cump-posting-source';
 import { applyCumpTransition, CUMP_FORMULA_VERSION, type CumpTransition } from '../domain/cump-valuation';
 import * as repository from '../repository/cump-projection.repository';
+import { resolveCumpManufacturingReceiptTx, resolveCumpManufacturingLinkedReturnTx } from '../repository/cump-manufacturing-ledger.repository';
 import { CUMP_CONTROL_SQL, CUMP_ADVANCE_CONTROL_SQL } from '../repository/cump-projection.sql';
 
 type Tx = Pick<PoolClient,'query'>;
@@ -120,23 +121,24 @@ async function projectPosting(tx: Tx, row: CumpJournalSource, posting: CumpPosti
       transition = { ...base,kind: 'TRANSFER',destinationScope: moved.scope };
       proof = { transfer_parent_id: posting.transferId,transfer_movement_ids: transfer.movementIds };
     } else if (originalMovementId) {
-      const original = await repository.resolveCumpLinkedReturnTx(tx,row,originalMovementId,moved.scope,moved.quantity,id);
+      const original = await resolveCumpManufacturingLinkedReturnTx(tx,row,originalMovementId,moved.scope,moved.quantity,id);
       transition = { ...base,kind: original.kind,cost: original.cost,originalMovementRef: originalMovementId };
       proof = { ...original.proof,return_source_sha256: row.return_sha256 ?? null }; issues.push(...original.issues);
     } else if (posting.kind==='RECEIPT') {
-      const cost = acquisition && posting.scopes.length===1 && moved.scope.owner==='COMPANY' ? acquisition.cost
+      const receiptValue=manufacturing?.detected
+        ?await resolveCumpManufacturingReceiptTx(tx,row,manufacturing,moved.scope,moved.quantity,id):acquisition;
+      const cost = receiptValue && posting.scopes.length===1 && moved.scope.owner==='COMPANY' ? receiptValue.cost
         : { amount: null,reliability: 'UNKNOWN' as const,sourceRef: null };
       transition = { ...base,kind: 'RECEIPT',cost };
-      proof = acquisition?.proof ?? {}; issues.push(...(acquisition?.issues ?? []));
+      proof = receiptValue?.proof ?? {}; issues.push(...(receiptValue?.issues ?? []));
       if (materialReturn?.detected) {
         proof = { ...proof,return_source_sha256: row.return_sha256 ?? null,material_return_proof_missing: true };
         issues.push(...materialReturn.issues);
       }
       if (manufacturing?.detected) {
-        proof = { ...proof,...manufacturing.proof };
-        issues.push(...manufacturing.issues);
+        proof = { ...manufacturing.proof,...proof };
       }
-      if (posting.scopes.length!==1) issues.push('ACQUISITION_OWNER_PARTITION_UNRESOLVED');
+      if (posting.scopes.length!==1) issues.push(manufacturing?.detected?'CUMP_MANUFACTURING_OWNER_PARTITION_UNRESOLVED':'ACQUISITION_OWNER_PARTITION_UNRESOLVED');
       if (moved.scope.owner!=='COMPANY') issues.push('CLIENT_OWNED_STOCK_EXCLUDED_FROM_COMPANY_VALUE');
     } else if (posting.kind==='ISSUE' || posting.kind==='SCRAP') transition = { ...base,kind: posting.kind };
     else throw new Error('CUMP_POSTING_KIND_UNSUPPORTED');
