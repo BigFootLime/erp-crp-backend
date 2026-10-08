@@ -1,5 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
-import { readAssemblyComponents, issueAssemblyComponents } from '../controllers/assembly-component-consumption.controller';
+import { readAssemblyComponents, issueAssemblyComponents, readAssemblyWithdrawals, previewAssemblyReturn, submitAssemblyReturn } from '../controllers/assembly-component-consumption.controller';
 import {readComponentCoverage,readSupplierQualification,readSupplierRecommendations} from '../controllers/of-material.controller';
 import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCalendar} from '../controllers/maintenance-schedule.controller';
 import {readLosses,createComplement} from '../controllers/production-loss.controller';
@@ -259,6 +259,9 @@ router.get('/ofs/:id/operation-readiness',requireOfCapability('read'),readOperat
 router.get('/ofs/:id/component-coverage',requireOfCapability('read'),readComponentCoverage);
 router.get('/ofs/:id/assembly-components',requireOfCapability('read'),readAssemblyComponents);
 router.post('/ofs/:id/assembly-components/withdraw',requireOfCapability('operate'),issueAssemblyComponents);
+router.get('/ofs/:id/assembly-components/withdrawals',requireOfCapability('read'),readAssemblyWithdrawals);
+router.get('/ofs/:id/assembly-components/withdrawals/:withdrawalId/return',requireOfCapability('read'),previewAssemblyReturn);
+router.post('/ofs/:id/assembly-components/withdrawals/:withdrawalId/return',requireOfCapability('operate'),submitAssemblyReturn);
 router.get('/ofs/:id/supplier-qualification',requireOfCapability('read'),readSupplierQualification);
 router.get('/ofs/:id/supplier-recommendations',requireOfCapability('read'),readSupplierRecommendations);
 router.post('/ofs/:id/material/:sourceRef/configure',requireOfCapability('read'),configureMaterial);

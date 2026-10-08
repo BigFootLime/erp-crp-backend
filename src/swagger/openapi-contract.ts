@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 import { clientCrmOperation, clientCrmSchemas } from "./client-crm-contract";
 import { assemblyComponentOperation, assemblyComponentSchemas } from './assembly-component-contract';
+import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -202,7 +203,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  return assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))));
+  return assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation)))));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -333,6 +334,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
       ...receiptProcessingSchemas,
       ...clientCrmSchemas,
       ...assemblyComponentSchemas,
+      ...assemblyComponentReturnSchemas,
       ...legacySchemas,
       ApiRequest: {
         type: "object",
