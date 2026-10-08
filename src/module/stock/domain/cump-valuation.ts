@@ -1,4 +1,6 @@
 import { canonicalizeStockUnitCode } from '../../../shared/stock-unit';
+import { CUMP_DECIMAL_SCALE as SCALE, parseCumpDecimal as decimal,
+  formatCumpDecimal as text, roundCumpRatio as roundRatio } from './cump-decimal';
 
 export const CUMP_FORMULA_VERSION = 'CERP-CUMP-1.0.0' as const;
 export type CumpReliability = 'VERIFIED' | 'DECLARED' | 'UNKNOWN';
@@ -18,24 +20,6 @@ export type CumpTransitionResult = { formulaVersion: typeof CUMP_FORMULA_VERSION
 
 // Journal values retain 12 decimals. Inputs are never rounded silently and are
 // read as PostgreSQL numeric text; Number/float8 is not a financial transport.
-const DIGITS = 12, SCALE = 1_000_000_000_000n;
-function decimal(text: string, signed = false): bigint {
-  if (typeof text !== 'string') throw new Error('CUMP_DECIMAL_TEXT_REQUIRED');
-  const match = /^(-?)(\d{1,26})(?:\.(\d{1,12}))?$/.exec(text);
-  if (!match || (!signed && match[1])) throw new Error('CUMP_DECIMAL_INVALID');
-  const absolute = BigInt(match[2]) * SCALE + BigInt((match[3] ?? '').padEnd(DIGITS, '0'));
-  return match[1] ? -absolute : absolute;
-}
-function text(value: bigint): string {
-  const negative = value < 0n, absolute = negative ? -value : value;
-  const fraction = String(absolute % SCALE).padStart(DIGITS, '0').replace(/0+$/, '');
-  return `${negative ? '-' : ''}${absolute / SCALE}${fraction ? '.' + fraction : ''}`;
-}
-function roundRatio(numerator: bigint, denominator: bigint): bigint {
-  if (numerator < 0n || denominator <= 0n) throw new Error('CUMP_RATIO_INVALID');
-  const result = numerator / denominator, remainder = numerator % denominator;
-  return remainder * 2n >= denominator ? result + 1n : result;
-}
 function scope(value: CumpScope): CumpScope {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const unit = canonicalizeStockUnitCode(value.unit), currency = value.currency.trim().toUpperCase();
