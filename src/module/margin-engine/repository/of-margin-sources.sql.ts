@@ -33,11 +33,27 @@ export function ofMarginOperationSourcesSql(basis: Exclude<MarginBasis, "QUOTED"
 }
 
 export const OF_MARGIN_MEASUREMENTS_SQL = `
+  WITH active_operations AS (
+    SELECT op.id, op.phase, op.temps_total_planned
+    FROM public.of_operations op
+    WHERE op.of_id = $1::bigint AND (${ACTIVE_OPERATION})
+  ), final_operation AS (
+    SELECT id FROM active_operations ORDER BY phase DESC, id DESC LIMIT 1
+  ), final_declarations AS (
+    SELECT declaration.* FROM public.production_quantity_declarations declaration
+    JOIN final_operation operation ON operation.id = declaration.operation_id
+    WHERE declaration.of_id = $1::bigint
+  )
   SELECT
-    (SELECT sum(op.temps_total_planned) FROM public.of_operations op
-      WHERE op.of_id = $1::bigint AND (${ACTIVE_OPERATION}))::text AS planned_hours,
+    (SELECT sum(temps_total_planned) FROM active_operations)::text AS planned_hours,
     (SELECT sum(op.temps_total_real) FROM public.of_operations op WHERE op.of_id = $1::bigint)::text AS actual_hours,
-    (SELECT sum(qty_good) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS good_quantity,
+    (SELECT sum(qty_good) FROM final_declarations)::text AS good_quantity,
+    (SELECT sum(qty_pending_control) FROM final_declarations)::text AS pending_control_quantity,
+    (SELECT id::text FROM final_operation) AS good_operation_id,
+    (SELECT count(*)::integer FROM final_declarations) AS good_declaration_count,
+    (SELECT max(declared_at)::text FROM final_declarations) AS good_declaration_freshness,
+    'FINAL_ACTIVE_OPERATION_DECLARED'::text AS good_quantity_scope,
+    'DECLARED_OPERATION_EVENTS'::text AS rework_quantity_scope,
     (SELECT sum(qty_scrap) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS scrap_quantity,
     (SELECT sum(qty_rework) FROM public.production_quantity_declarations WHERE of_id = $1::bigint)::text AS rework_quantity,
     (SELECT count(*)::integer FROM public.production_quantity_declarations WHERE of_id = $1::bigint) AS declaration_count,
