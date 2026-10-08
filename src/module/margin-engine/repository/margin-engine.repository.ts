@@ -12,14 +12,13 @@ import type {
   MarginScopeType,
 } from "../domain/margin-engine";
 import type { CreateMarginInput, CreateRateVersion } from "../validators/margin-engine.validators";
-import { ofMarginOperationSourcesSql, OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_MEASUREMENTS_SQL } from "./of-margin-sources.sql";
+import { ofMarginOperationSourcesSql, OF_MARGIN_MEASUREMENTS_SQL } from "./of-margin-sources.sql";
 import { QUOTE_MARGIN_SOURCES_SQL } from "./quote-margin-sources.sql";
 import { insertQuoteMarginSnapshotTx, readQuoteMarginSnapshot, type QuoteCaptureKind } from "./quote-margin-snapshot.repository";
 import { reconcileSupplierCostSources, type SupplierReceiptCost, type SupplierInvoiceCost } from "../domain/supplier-cost-reconciliation";
 import { composeMarginCostSources } from "../domain/cost-input-identities";
 import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from "./supplier-cost-sources.sql";
-import { OF_MARGIN_CONSUMABLE_SOURCES_SQL } from "./consumable-cost-sources.sql";
-import { OF_MARGIN_ASSEMBLY_COMPONENT_SOURCES_SQL } from "./assembly-component-cost-sources.sql";
+import { readOfCumpStockCosts } from "./cump-stock-cost.repository";
 
 type ScopeIdentity = {
   scope_type: MarginScopeType;
@@ -114,11 +113,12 @@ function automaticCost(row: {
   source_document_type?: string;
   source_document_ref?: string;
   definition?: string;
+  availability?: MarginCostInput["availability"];
 }): MarginCostInput {
   return {
     key: row.key,
     category: row.category,
-    availability: "PROVIDED",
+    availability: row.availability ?? "PROVIDED",
     amount_ht: row.amount_ht,
     quantity: row.quantity ?? null,
     rate: null,
@@ -256,12 +256,7 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
 }
 
 async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInput[]> {
-  const [material, consumable, component] = await Promise.all([
-    pool.query<CostRow>(OF_MARGIN_MATERIAL_SOURCES_SQL, [scopeRef]),
-    pool.query<CostRow>(OF_MARGIN_CONSUMABLE_SOURCES_SQL, [scopeRef]),
-    pool.query<CostRow>(OF_MARGIN_ASSEMBLY_COMPONENT_SOURCES_SQL, [scopeRef]),
-  ]);
-  return [...material.rows, ...consumable.rows, ...component.rows].map(automaticCost);
+  return (await readOfCumpStockCosts(scopeRef)).map(automaticCost);
 }
 
 async function loadActualSubcontractingCosts(scopeRef: string): Promise<{ costs: MarginCostInput[]; retiredAutomaticKeys: string[] }> {
