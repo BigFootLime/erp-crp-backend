@@ -109,9 +109,11 @@ export function reconcileSupplierCostSources(receipts: SupplierReceiptCost[], in
     costs.push({ key: `supplier-receipt-unbilled:${lineId}`, category: "SUBCONTRACTING",
       amount_ht: estimate === null ? null : proportionAmount(scaledText(estimate), scaledText(remaining), scaledText(received)),
       source_type: "SUPPLIER_RECEPTION_UNBILLED_ESTIMATE", source_ref: lineId,
-      observed_at: lineReceipts[0].observed_at, source_reliability: "DECLARED", currency: lineReceipts[0].currency,
+      observed_at: lineReceipts[0].observed_at, source_reliability: estimate === null ? "UNKNOWN" : "DECLARED", currency: lineReceipts[0].currency,
       source_document_type: "COMMANDE_FOURNISSEUR_LIGNE", source_document_ref: lineId,
-      definition: "Reliquat reçu non facturé, estimé au prix de commande ; hors unités déjà facturées." });
+      definition: estimate === null ? lineReceipts.find(row => row.amount_ht === null)?.definition
+        ?? "Coût du reliquat reçu non facturé inconnu : prix ou frais à justifier."
+        : "Reliquat reçu non facturé, estimé au prix de commande ; hors unités déjà facturées." });
   }
   return costs;
 }
