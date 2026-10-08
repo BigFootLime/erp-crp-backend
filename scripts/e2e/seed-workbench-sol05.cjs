@@ -46,29 +46,8 @@ async function main() {
       const stock = await seedWorkbenchStock({ code: `${code}-MP`, piece: source.piece_technique_id, audit }, 35, "LIBERE", {
         articleId: initial.needs[0].articleId, stockUnit: "kg", warehouseCode: "NEW-MP", technicalVersionId: null,
       });
-      // One quality-released physical lot is held in three stock locations:
-      // each source has its own hold, and the third location covers the surplus.
-      // Same-location reservation merging is tracked separately (backend #937).
-      const batches = [stock.batch];
-      const tx = await database.connect();
-      try {
-        await tx.query("BEGIN");
-        await tx.query("UPDATE public.stock_levels SET qty_total=8 WHERE id=$1::uuid", [stock.level]);
-        await tx.query("UPDATE public.stock_batches SET qty_total=8 WHERE id=$1::uuid", [stock.batch]);
-        for (const amount of [12, 15]) {
-          const location = randomUUID(), level = randomUUID(), batch = randomUUID();
-          const locationCode = `${code}-MP-${amount}`;
-          await tx.query("INSERT INTO public.locations(id,warehouse_id,code,description) SELECT $1::uuid,warehouse_id,$2,'Emplacement matière synthétique' FROM public.locations WHERE id=$3::uuid", [location, locationCode, stock.location]);
-          await tx.query("INSERT INTO public.emplacements(magasin_id,code,name,location_id) SELECT magasin_id,$2,'Emplacement matière synthétique',$1::uuid FROM public.emplacements WHERE location_id=$3::uuid", [location, locationCode, stock.location]);
-          await tx.query("INSERT INTO public.stock_levels(id,article_id,unit_id,warehouse_id,location_id,managed_in_stock,qty_total) SELECT $1::uuid,article_id,unit_id,warehouse_id,$2::uuid,true,$3 FROM public.stock_levels WHERE id=$4::uuid", [level, location, amount, stock.level]);
-          await tx.query("INSERT INTO public.stock_batches(id,stock_level_id,batch_code,qty_total,lot_id) VALUES($1::uuid,$2::uuid,$3,$4,$5::uuid)", [batch, level, locationCode, amount, stock.lot]);
-          batches.push(batch);
-        }
-        await tx.query("COMMIT");
-      } catch (error) { await tx.query("ROLLBACK"); throw error; }
-      finally { tx.release(); }
       const reserved = [];
-      for (const [index, of] of sources.entries()) {
+      for (const of of sources) {
         of.id = Number(of.id);
         let material = await getOfMaterial(of.id);
         if (!material.enabled || material.needs.length !== 1 || !material.operations[0]) throw Error("Unexpected synthetic material dossier");
@@ -84,11 +63,11 @@ async function main() {
         }, audit);
         material = await getOfMaterial(of.id);
         const need = material.needs[0];
-        const candidate = need.candidates.find(item => item.lot.batchId === batches[index]);
+        const candidate = need.candidates.find(item => item.lot.batchId === stock.batch);
         if (need.blockers.length || !candidate || candidate.reasons.length || candidate.available < need.required) throw Error("Synthetic material is not physically available");
         const confirmed = await confirmOfMaterial(of.id, {
           expectedVersion: material.version, idempotencyKey: randomUUID(),
-          selections: [{ needKey, batchId: batches[index], quantity: need.required }], futureSelections: [],
+          selections: [{ needKey, batchId: stock.batch, quantity: need.required }], futureSelections: [],
         }, audit, false);
         const quantity = confirmed.coverage.needs[0].reserved;
         if (quantity !== Number(of.quantite)) throw Error("Synthetic reservation quantity mismatch");

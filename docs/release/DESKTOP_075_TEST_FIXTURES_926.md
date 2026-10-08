@@ -43,9 +43,9 @@ checks in `scripts/e2e/seed-workbench-sol05.cjs`.
 
 After both source dossiers are validated through the browser, the managed
 fixture prepares their raw-material needs through the canonical configuration
-and confirmation repositories. A quality-released synthetic lot, split across
-three stock locations, supplies the 8- and 12-unit reservations and the 3-unit
-consolidation surplus. Physical
+and confirmation repositories. A quality-released synthetic lot at one stock
+location supplies the 8- and 12-unit reservations and the 3-unit consolidation
+surplus. Physical
 availability and reservation quantities are asserted before grouping. The
 material feature flag is restored with the other fixture flags. Stock seeding
 accepts the same explicitly isolated managed database boundary as OF seeding;
@@ -54,6 +54,8 @@ no consolidation guard is bypassed.
 The preflight also reproduced an existing same-location merge failure:
 `stock_reservations_active_need_lot_uq` rejects moving two source reservations
 to one producer need, or adding surplus at that occupied location. This is
-tracked separately in backend #937; this desktop release does not change the
-backend runtime or its database constraint. The managed recipe explicitly
-covers distinct source and surplus stock locations.
+tracked separately and corrected through backend #937 / PRs #939 and #940.
+The runtime correction and its migration are delivered by that separate ERP
+workstream. The current managed recipe exercises the originally failing
+same-location case against those integrated sources. No runtime change or
+production migration is performed by the desktop publication workstream.
