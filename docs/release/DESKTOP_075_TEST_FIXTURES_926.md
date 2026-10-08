@@ -59,3 +59,10 @@ The runtime correction and its migration are delivered by that separate ERP
 workstream. The current managed recipe exercises the originally failing
 same-location case against those integrated sources. No runtime change or
 production migration is performed by the desktop publication workstream.
+
+The margin traceability source guard follows the canonical SQL extracted by
+backend #934. It checks that the repository executes those exported queries,
+prices posted partial issues from their immutable consumption lines, excludes
+compensated and reversed movements, and keeps missing proofs unvalued. Supplier
+receipt and production declaration evidence assertions remain in place. The
+former fully-consumed reservation assertion could not cover partial issues.
