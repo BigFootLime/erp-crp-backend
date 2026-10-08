@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "f026a60e9a409567d633880839793bf0284f420735878118d9b187379d93a985";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "6a90751842509c414c202adc4850bcf131fd39ae35c6d43ba80131554d9639ff";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -22001,7 +22001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/admin",
-    "source": "src/module/terminals/routes/terminals.routes.ts:38",
+    "source": "src/module/terminals/routes/terminals.routes.ts:39",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22016,7 +22016,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/admin",
-    "source": "src/module/terminals/routes/terminals.routes.ts:41",
+    "source": "src/module/terminals/routes/terminals.routes.ts:42",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22031,7 +22031,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/terminals/admin/{id}",
-    "source": "src/module/terminals/routes/terminals.routes.ts:40",
+    "source": "src/module/terminals/routes/terminals.routes.ts:41",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22046,7 +22046,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/admin/{id}/pairing",
-    "source": "src/module/terminals/routes/terminals.routes.ts:42",
+    "source": "src/module/terminals/routes/terminals.routes.ts:43",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22061,7 +22061,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/admin/{id}/revoke",
-    "source": "src/module/terminals/routes/terminals.routes.ts:45",
+    "source": "src/module/terminals/routes/terminals.routes.ts:46",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22076,7 +22076,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/admin/options",
-    "source": "src/module/terminals/routes/terminals.routes.ts:39",
+    "source": "src/module/terminals/routes/terminals.routes.ts:40",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22091,7 +22091,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/terminals/admin/pins",
-    "source": "src/module/terminals/routes/terminals.routes.ts:43",
+    "source": "src/module/terminals/routes/terminals.routes.ts:44",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22107,7 +22107,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/admin/pins/revoke",
-    "source": "src/module/terminals/routes/terminals.routes.ts:44",
+    "source": "src/module/terminals/routes/terminals.routes.ts:45",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22123,7 +22123,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/bootstrap",
-    "source": "src/module/terminals/routes/terminals.routes.ts:51",
+    "source": "src/module/terminals/routes/terminals.routes.ts:52",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22328,7 +22328,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/identify",
-    "source": "src/module/terminals/routes/terminals.routes.ts:52",
+    "source": "src/module/terminals/routes/terminals.routes.ts:53",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22428,7 +22428,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/me/pin",
-    "source": "src/module/terminals/routes/terminals.routes.ts:47",
+    "source": "src/module/terminals/routes/terminals.routes.ts:48",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22442,7 +22442,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/terminals/me/pin",
-    "source": "src/module/terminals/routes/terminals.routes.ts:48",
+    "source": "src/module/terminals/routes/terminals.routes.ts:49",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22456,7 +22456,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/operator/activities",
-    "source": "src/module/terminals/routes/terminals.routes.ts:73",
+    "source": "src/module/terminals/routes/terminals.routes.ts:75",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22478,7 +22478,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/executions/{id}/{action}",
-    "source": "src/module/terminals/routes/terminals.routes.ts:95",
+    "source": "src/module/terminals/routes/terminals.routes.ts:97",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22500,7 +22500,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}",
-    "source": "src/module/terminals/routes/terminals.routes.ts:75",
+    "source": "src/module/terminals/routes/terminals.routes.ts:77",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22521,8 +22521,118 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/assembly-components",
+    "source": "src/module/terminals/routes/terminal-assembly.routes.ts:4",
+    "middleware": [
+      "anonymous",
+      "anonymous",
+      "anonymous",
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "anonymous",
+      "\"/operator\"",
+      "requireOperatorTerminal",
+      "assembly.preparation"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "requireOperatorTerminal"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/assembly-components/withdraw",
+    "source": "src/module/terminals/routes/terminal-assembly.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "anonymous",
+      "anonymous",
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "anonymous",
+      "\"/operator\"",
+      "requireOperatorTerminal",
+      "assembly.withdraw"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "requireOperatorTerminal"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/assembly-components/withdrawals",
+    "source": "src/module/terminals/routes/terminal-assembly.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "anonymous",
+      "anonymous",
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "anonymous",
+      "\"/operator\"",
+      "requireOperatorTerminal",
+      "assembly.history"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "requireOperatorTerminal"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/assembly-components/withdrawals/{withdrawal_id}/return",
+    "source": "src/module/terminals/routes/terminal-assembly.routes.ts:7",
+    "middleware": [
+      "anonymous",
+      "anonymous",
+      "anonymous",
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "anonymous",
+      "\"/operator\"",
+      "requireOperatorTerminal",
+      "assembly.previewReturn"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "requireOperatorTerminal"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/assembly-components/withdrawals/{withdrawal_id}/return",
+    "source": "src/module/terminals/routes/terminal-assembly.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "anonymous",
+      "anonymous",
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "anonymous",
+      "\"/operator\"",
+      "requireOperatorTerminal",
+      "assembly.restore"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireTerminalDevice",
+      "requireTerminalSession",
+      "requireOperatorTerminal"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/client-logo",
-    "source": "src/module/terminals/routes/terminals.routes.ts:71",
+    "source": "src/module/terminals/routes/terminals.routes.ts:73",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22544,7 +22654,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/client-logo/content",
-    "source": "src/module/terminals/routes/terminals.routes.ts:72",
+    "source": "src/module/terminals/routes/terminals.routes.ts:74",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22566,7 +22676,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{action}",
-    "source": "src/module/terminals/routes/terminals.routes.ts:108",
+    "source": "src/module/terminals/routes/terminals.routes.ts:110",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22588,7 +22698,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/measurements",
-    "source": "src/module/terminals/routes/terminals.routes.ts:112",
+    "source": "src/module/terminals/routes/terminals.routes.ts:114",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22610,7 +22720,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/confirm",
-    "source": "src/module/terminals/routes/terminals.routes.ts:103",
+    "source": "src/module/terminals/routes/terminals.routes.ts:105",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22632,7 +22742,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/preview",
-    "source": "src/module/terminals/routes/terminals.routes.ts:99",
+    "source": "src/module/terminals/routes/terminals.routes.ts:101",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22654,7 +22764,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/documents/{id}",
-    "source": "src/module/terminals/routes/terminals.routes.ts:83",
+    "source": "src/module/terminals/routes/terminals.routes.ts:85",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22676,7 +22786,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/handover",
-    "source": "src/module/terminals/routes/terminals.routes.ts:79",
+    "source": "src/module/terminals/routes/terminals.routes.ts:81",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22698,7 +22808,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/program/confirm",
-    "source": "src/module/terminals/routes/terminals.routes.ts:87",
+    "source": "src/module/terminals/routes/terminals.routes.ts:89",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22720,7 +22830,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/ofs/{of_id}/operations/{operation_id}/start",
-    "source": "src/module/terminals/routes/terminals.routes.ts:91",
+    "source": "src/module/terminals/routes/terminals.routes.ts:93",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22742,7 +22852,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/operator/scan",
-    "source": "src/module/terminals/routes/terminals.routes.ts:74",
+    "source": "src/module/terminals/routes/terminals.routes.ts:76",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22764,7 +22874,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/operator/worklist",
-    "source": "src/module/terminals/routes/terminals.routes.ts:70",
+    "source": "src/module/terminals/routes/terminals.routes.ts:72",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -22786,7 +22896,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/pair",
-    "source": "src/module/terminals/routes/terminals.routes.ts:49",
+    "source": "src/module/terminals/routes/terminals.routes.ts:50",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -23668,7 +23778,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/terminals/session",
-    "source": "src/module/terminals/routes/terminals.routes.ts:63",
+    "source": "src/module/terminals/routes/terminals.routes.ts:64",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -23687,7 +23797,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/session/activity",
-    "source": "src/module/terminals/routes/terminals.routes.ts:64",
+    "source": "src/module/terminals/routes/terminals.routes.ts:65",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -23706,7 +23816,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/session/close",
-    "source": "src/module/terminals/routes/terminals.routes.ts:66",
+    "source": "src/module/terminals/routes/terminals.routes.ts:67",
     "middleware": [
       "anonymous",
       "anonymous",
@@ -23725,7 +23835,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/terminals/session/lock",
-    "source": "src/module/terminals/routes/terminals.routes.ts:65",
+    "source": "src/module/terminals/routes/terminals.routes.ts:66",
     "middleware": [
       "anonymous",
       "anonymous",

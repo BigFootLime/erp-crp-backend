@@ -7,6 +7,7 @@ import { terminalModule } from '../domain/terminal-policy';
 import { getOwnPin,changeOwnPin } from '../controllers/terminal-own-pin.controller';
 import supplyRoutes from './terminal-supply.routes';
 import cuttingRoutes from './terminal-cutting.routes';
+import assemblyRoutes from './terminal-assembly.routes';
 import { clientLogoMetadata, clientLogoContent } from '../controllers/terminal-client-logo.controller';
 import {
   requireTerminalDevice,
@@ -67,6 +68,7 @@ router.post("/session/close", controllers.closeSession);
 router.use(supplyRoutes);
 router.use(cuttingRoutes);
 router.use("/operator", requireOperatorTerminal);
+router.use(assemblyRoutes);
 router.get("/operator/worklist", controllers.getWorklist);
 router.get('/operator/ofs/:of_id/operations/:operation_id/client-logo', clientLogoMetadata);
 router.get('/operator/ofs/:of_id/operations/:operation_id/client-logo/content', clientLogoContent);

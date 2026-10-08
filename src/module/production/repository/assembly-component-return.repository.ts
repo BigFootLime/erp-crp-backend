@@ -97,10 +97,12 @@ export function getAssemblyComponentWithdrawals(ofId: number) {
   });
 }
 
-export async function returnAssemblyComponents(ofId: number, withdrawalId: string, body: AssemblyComponentReturn, audit: AuditContext) {
+export async function returnAssemblyComponents(ofId: number, withdrawalId: string, body: AssemblyComponentReturn, audit: AuditContext,
+  authorizeTransaction?: (tx: PoolClient) => Promise<void>) {
   return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
     await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
     await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE', [ofId]);
+    await authorizeTransaction?.(tx);
     const command = await beginStockCommand(tx, { audit, idempotency_key: body.idempotencyKey,
       command_type: 'MOVEMENT_COMPENSATE', request_payload: { ofId, withdrawalId, kind: 'ASSEMBLY_COMPONENT_RETURN', ...body } });
     if (command.existing) return command.existing.result_payload;
