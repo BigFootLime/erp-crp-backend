@@ -111,6 +111,14 @@ function dispatch(sqlRaw: unknown, params?: unknown[]): { rows: unknown[]; rowCo
   if (/erp_audit_logs/i.test(sql)) return { rows: [{ id: "99", created_at: "2026-07-22T08:00:00.000Z" }] };
   if (/pg_notify/i.test(sql)) return { rows: [] };
 
+  if (sql.includes("'DEVIS'::text AS scope_type") && sql.includes("ORDER BY line_id NULLS FIRST")) {
+    return { rows: state.updateCurrent ? [{
+      scope_type: "DEVIS", scope_ref: "7", label: state.updateCurrent.numero,
+      revenue_ht: "100", source_observed_at: state.updateCurrent.updated_at,
+      version_number: 1, capture_date: "2026-07-22", line_id: null, line_quantity: null,
+    }] : [] };
+  }
+
   if (/INSERT INTO devis_ligne/.test(sql)) {
     const id = String(state.ligneSeq);
     state.ligneSeq += 1;
@@ -304,6 +312,11 @@ describe("#167 — automate de statuts appliqué au write-path", () => {
     const auditCall = mocks.clientQuery.mock.calls.find((c) => /erp_audit_logs/i.test(String(c[0])));
     expect(auditCall).toBeTruthy();
     expect(String((auditCall?.[1] as unknown[])?.[2])).toBe("devis.statut_transition");
+    const captureCall = mocks.clientQuery.mock.calls.find(([sql]) => /INSERT INTO public\.quote_margin_source_snapshots/.test(String(sql)));
+    expect(captureCall?.[1]).toEqual([7, 1, null, "DEVIS", "7", "ISSUED", expect.any(String), 1]);
+    expect(JSON.parse(String((captureCall?.[1] as unknown[])?.[6]))).toMatchObject({
+      basis: "QUOTED", revenue: { amount_ht: "100" }, measurements: { quote_capture_kind: "ISSUED" },
+    });
   });
 
   it("refuse ENVOYE → REFUSE sans motif de perte structuré", async () => {
