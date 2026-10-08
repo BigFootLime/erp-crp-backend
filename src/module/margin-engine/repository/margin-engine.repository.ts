@@ -15,6 +15,8 @@ import type { CreateMarginInput, CreateRateVersion } from "../validators/margin-
 import { ofMarginOperationSourcesSql, OF_MARGIN_MATERIAL_SOURCES_SQL, OF_MARGIN_MEASUREMENTS_SQL } from "./of-margin-sources.sql";
 import { QUOTE_MARGIN_SOURCES_SQL } from "./quote-margin-sources.sql";
 import { insertQuoteMarginSnapshotTx, readQuoteMarginSnapshot, type QuoteCaptureKind } from "./quote-margin-snapshot.repository";
+import { reconcileSupplierCostSources, type SupplierReceiptCost, type SupplierInvoiceCost } from "../domain/supplier-cost-reconciliation";
+import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from "./supplier-cost-sources.sql";
 
 type ScopeIdentity = {
   scope_type: MarginScopeType;
@@ -106,6 +108,9 @@ function automaticCost(row: {
   currency?: string | null;
   quantity?: string | null;
   technical_version_id?: string | null;
+  source_document_type?: string;
+  source_document_ref?: string;
+  definition?: string;
 }): MarginCostInput {
   return {
     key: row.key,
@@ -122,8 +127,9 @@ function automaticCost(row: {
         // A physical issue, receipt or measured duration proves its quantity.
         // It does not by itself verify its accounting valuation or applied rate.
         source_reliability: row.source_reliability ?? "ESTIMATED",
-        source_document_type: row.technical_version_id ? "PIECE_TECHNIQUE_VERSION" : row.source_type,
-        source_document_ref: row.technical_version_id ?? row.source_ref,
+        source_document_type: row.source_document_type ?? (row.technical_version_id ? "PIECE_TECHNIQUE_VERSION" : row.source_type),
+        source_document_ref: row.source_document_ref ?? row.technical_version_id ?? row.source_ref,
+        ...(row.definition ? { definition: row.definition } : {}),
       }),
       rate_version_id: row.rate_version_id ?? null,
     },
@@ -248,34 +254,11 @@ async function loadActualMaterialCosts(scopeRef: string): Promise<MarginCostInpu
 }
 
 async function loadActualSubcontractingCosts(scopeRef: string): Promise<MarginCostInput[]> {
-  const rows = await pool.query<CostRow>(`
-    SELECT concat('supplier-receipt:', receipt_line.id::text) AS key,
-           'SUBCONTRACTING'::text AS category,
-           CASE WHEN order_line.prix_unitaire_ht <= 0 AND order_line.frais_ht <= 0 THEN NULL
-                ELSE round(
-                  receipt_line.qty_received * order_line.prix_unitaire_ht * (1 - order_line.remise_pct / 100.0)
-                  + CASE WHEN order_line.quantite > 0
-                      THEN order_line.frais_ht * receipt_line.qty_received / order_line.quantite ELSE 0 END,
-                  6
-                )::text END AS amount_ht,
-           'SUPPLIER_RECEPTION_ACTUAL'::text AS source_type,
-           receipt.id::text AS source_ref,
-           receipt_line.updated_at::text AS observed_at,
-           'DECLARED'::text AS source_reliability,
-           supplier_order.devise::text AS currency
-    FROM public.reception_fournisseur_lignes receipt_line
-    JOIN public.receptions_fournisseurs receipt ON receipt.id = receipt_line.reception_id
-    JOIN public.commande_fournisseur_ligne order_line
-      ON order_line.id = receipt_line.commande_fournisseur_ligne_id
-    JOIN public.commande_fournisseur supplier_order ON supplier_order.id = order_line.commande_id
-    WHERE order_line.of_id = $1::bigint
-      AND order_line.type IN ('SOUS_TRAITANCE','PRESTATION')
-      AND order_line.statut_ligne <> 'ANNULEE'
-      AND receipt.status::text <> 'CANCELLED'
-      AND receipt_line.qty_received > 0
-    ORDER BY receipt_line.id
-  `, [scopeRef]);
-  return rows.rows.map(automaticCost);
+  const [receipts, invoices] = await Promise.all([
+    pool.query<SupplierReceiptCost>(SUPPLIER_RECEIPT_COSTS_SQL, [scopeRef]),
+    pool.query<SupplierInvoiceCost>(SUPPLIER_APPROVED_INVOICE_COSTS_SQL, [scopeRef]),
+  ]);
+  return reconcileSupplierCostSources(receipts.rows, invoices.rows).map(automaticCost);
 }
 
 export type ManualInputRow = {
