@@ -74,6 +74,7 @@ export const readSupplierQualification=asyncHandler(async(req,res)=>{
 export const readSupplierRecommendations=asyncHandler(async(req,res)=>{
   const access=rights(req);
   if(!access.canPurchase)throw new HttpError(403,'OF_SUPPLIER_RECOMMENDATION_FORBIDDEN','Les droits de préparation des achats sont nécessaires.');
+  res.setHeader('Cache-Control','no-store');
   res.json(await getOfSupplierRecommendations(identity.parse(req.params).id,supplierRecommendationQuerySchema.parse(req.query),access.canReadPrices));
 });
 export const verifyMaterialLot=asyncHandler(async(req,res)=>{

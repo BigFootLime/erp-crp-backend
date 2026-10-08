@@ -1,5 +1,12 @@
 # Changelog
 
+## Sourced supplier recommendations — #1025
+
+- Add exact OF/version/comparison context, displayed-evidence SHA, current order/catalogue/review references and existing ranking contributions.
+- Preserve ranking and price permissions; separate confidence, qualify first and never engage an order automatically.
+- Bound coherent PG17 read-only transaction to nine seconds, SQL to two seconds and quality evidence volume; Cache-Control no-store.
+- Four fixtures and twelve common acceptance scenarios prepared NOT RUN; local generative service remains to be confirmed.
+
 ## Explicit sourced material invoice confirmation — #1022
 
 - Protected Finance/financial Stock intent, full source SHA and actor-scoped UUID replay; no amount input.

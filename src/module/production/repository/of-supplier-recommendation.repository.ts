@@ -6,7 +6,13 @@ import { readSupplierPurchaseQualificationTx } from '../../commande-fournisseur/
 import { purchaseLineDomains, type PurchaseScopeLine, type QualificationDecision } from '../../fournisseurs/domain/purchase-qualification';
 import { readApprovalPoliciesTx } from '../../fournisseurs/repository/client-supplier-approval.repository';
 import { estimateRecommendationPrice, rankSupplierSuggestions, summarizeSupplierQualification,
-  type RecommendationCatalogue, type SupplierHistory, type SupplierReview, type SupplierSuggestion } from '../../commande-fournisseur/domain/supplier-recommendation';
+  type RecommendationCatalogue, type SupplierHistory, type SupplierReview } from '../../commande-fournisseur/domain/supplier-recommendation';
+import { supplierRecommendationEvidence, type SourcedSupplierSuggestion } from '../../commande-fournisseur/domain/supplier-recommendation-evidence';
+
+export const SUPPLIER_RECOMMENDATION_CONTEXT_SQL = `SELECT id AS of_id,updated_at::text AS of_updated_at,
+  COALESCE(piece_technique_version_id,NULLIF(technical_preparation->>'selected_version_id','')::uuid,
+    NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)::text AS technical_version_id
+  FROM public.ordres_fabrication WHERE id=$1`;
 
 // Only actual sent orders of this exact article teach a preference. A receipt
 // counts as completed only after closed, physical receipts cover the whole line.
@@ -56,19 +62,25 @@ FROM public.supplier_review_scopes s JOIN LATERAL (
     AND NOT EXISTS(SELECT 1 FROM public.supplier_review_evaluations correction WHERE correction.supersedes_id=x.id)
   ORDER BY x.evaluated_on DESC,x.created_at DESC LIMIT 1
 ) e ON true WHERE s.supplier_id=ANY($1::uuid[]) AND (s.domaine_code IS NULL OR s.domaine_code=ANY($2::text[]))
-  AND e.evaluated_on<=$3::date AND e.next_due>$3::date`;
+  AND e.evaluated_on<=$3::date AND e.next_due>$3::date
+ORDER BY s.supplier_id,e.id LIMIT 4001`;
 
 export const SUPPLIER_RECOMMENDATION_QUALIFICATIONS_SQL = `SELECT fournisseur_id::text AS supplier_id,
   id::text,version,statut,domaine_code,valid_from::text,valid_to::text,document_id::text,
   reference,organisme,perimetre,updated_at::text FROM public.fournisseur_homologations
 WHERE fournisseur_id=ANY($1::uuid[]) AND is_current AND (domaine_code IS NULL OR domaine_code=ANY($2::text[]))
-ORDER BY fournisseur_id,domaine_code NULLS FIRST`;
+ORDER BY fournisseur_id,domaine_code NULLS FIRST,id LIMIT 4001`;
 
 export async function getOfSupplierRecommendations(ofId: number,
   input: { articleId: string; quantity?: number; unit?: string; currency: string }, canReadPrices: boolean) {
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    // PG17 bounds the entire coherent snapshot, including delegated qualification reads.
+    await tx.query("SET LOCAL statement_timeout='2s'; SET LOCAL transaction_timeout='9s'");
+    const contextRow = (await tx.query<{ of_id: number; of_updated_at: string; technical_version_id: string | null }>(
+      SUPPLIER_RECOMMENDATION_CONTEXT_SQL, [ofId])).rows[0];
+    if (!contextRow) throw new HttpError(404, 'OF_NOT_FOUND', 'OF introuvable.');
     const scope = (await tx.query<PurchaseScopeLine>(OF_PURCHASE_SCOPE_SQL, [ofId, input.articleId])).rows[0];
     if (!scope) throw new HttpError(409, 'OF_PURCHASE_ARTICLE_NOT_APPLICABLE', 'Cet article ne fait pas partie des achats actuels de cet OF.');
     const clock = (await tx.query<{ today: string; checked_at: string }>(`SELECT
@@ -79,8 +91,10 @@ export async function getOfSupplierRecommendations(ofId: number,
     const catalogues = (await tx.query<RecommendationCatalogue>(SUPPLIER_RECOMMENDATION_CATALOGUES_SQL, [input.articleId, ids, clock.today])).rows;
     const reviews = (await tx.query<SupplierReview>(SUPPLIER_RECOMMENDATION_REVIEWS_SQL, [ids, domains, clock.today])).rows;
     const decisions = (await tx.query<QualificationDecision & { supplier_id:string }>(SUPPLIER_RECOMMENDATION_QUALIFICATIONS_SQL,[ids,domains])).rows;
+    if (reviews.length > 4000 || decisions.length > 4000) throw new HttpError(409,
+      'SUPPLIER_RECOMMENDATION_SCOPE_TOO_LARGE', 'Les preuves fournisseur sont trop volumineuses. Consultez les dossiers avant de choisir.');
     const policies = await readApprovalPoliciesTx(tx,[...new Set(contexts.map(context=>context.client_id))].sort(),false);
-    const suggestions: SupplierSuggestion[] = [];
+    const suggestions: SourcedSupplierSuggestion[] = [];
     for (const item of candidates) {
       const qualification = summarizeSupplierQualification(await readSupplierPurchaseQualificationTx(tx,
         { supplierId: item.supplier_id, today: clock.today, checkedAt: clock.checked_at, lines:[scope], contexts,
@@ -110,13 +124,23 @@ export async function getOfSupplierRecommendations(ofId: number,
         catalogue_id: offer?.catalogue_id ?? null, estimated_ht: prices[0]?.price.total ?? null,
         purchase_quantity: prices[0]?.price.quantity ?? null, purchase_unit: offer?.unit ?? null,
         currency: input.currency, announced_days: offer?.delay_days ?? null, score: 0,
-        confidence: item.sent_orders>=5 && item.received_orders>=3 && qualification.known && quality.length ? 'HIGH' : item.sent_orders>=3 ? 'MEDIUM' : 'LOW', reasons, warnings });
+        confidence: item.sent_orders>=5 && item.received_orders>=3 && qualification.known && quality.length ? 'HIGH' : item.sent_orders>=3 ? 'MEDIUM' : 'LOW', reasons, warnings,
+        sources: {
+          order: item.last_order_id ? { id: item.last_order_id, code: item.last_order_code, sent_at: item.last_order_at } : null,
+          catalogue: offer ? { id: offer.catalogue_id, version: offer.version, comparable_price: !!prices[0] } : null,
+          reviews: relevantReviews.map(review => ({ id: review.id, evaluated_on: review.evaluated_on,
+            outcome: review.outcome, quality_score: review.quality_score, domain: review.domain })),
+        } });
     }
     const sorted = rankSupplierSuggestions(suggestions, canReadPrices);
+    const sourced = sorted.map(item => ({ ...item, sources: suggestions.find(source => source.supplier_id === item.supplier_id)!.sources }));
     const recommended = sorted.find(item => item.can_engage && item.review_outcome!=='UNSATISFACTORY' && (item.sent_orders>0 || item.estimated_ht!==null));
+    const truncated = rows.length > 40 || catalogues.length === 400;
+    const evidence = supplierRecommendationEvidence({ ...contextRow, article_id: input.articleId,
+      quantity: input.quantity ?? null, unit: input.unit ?? null, currency: input.currency }, sourced, canReadPrices, truncated);
     await tx.query('COMMIT');
     return { data: { checked_at: clock.checked_at, article_id: input.articleId, recommended_supplier_id: recommended?.supplier_id ?? null,
-      can_read_prices: canReadPrices, truncated: rows.length>40 || catalogues.length===400, history_months:24,
-      cost_scope:'ONE_CATALOGUE_LINE_EXCLUDING_FREIGHT', items:sorted } };
-  } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
+      can_read_prices: canReadPrices, truncated, history_months:24, ...evidence,
+      cost_scope:'ONE_CATALOGUE_LINE_EXCLUDING_FREIGHT', items:sourced } };
+  } catch (error) { await tx.query('ROLLBACK').catch(() => undefined); throw error; } finally { tx.release(); }
 }
