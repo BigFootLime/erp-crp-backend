@@ -41,6 +41,7 @@ import { readIssuerParty } from "../../../shared/documents/issuer-identity.repos
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
+import { captureQuoteMarginsTx } from "../../margin-engine/repository/margin-engine.repository";
 
 type DevisCommandeHeaderRow = {
   id: string;
@@ -2000,6 +2001,7 @@ export async function repoCreateDevis(
     );
 
     await insertDevisLines(client, devisId, input.lignes);
+    if (input.statut === "ENVOYE") await captureQuoteMarginsTx(client, devisId, "RECORDED_SENT", ctx.audit?.user_id ?? userId ?? null);
     expectedUploads = await insertDevisDocuments(client, devisId, documents);
 
     await insertDevisAuditLog(client, ctx.audit, {
@@ -2353,6 +2355,8 @@ export async function repoUpdateDevis(
 
     expectedUploads = await insertDevisDocuments(client, id, documents);
 
+    if (statutChanges && requestedStatut === "ENVOYE") await captureQuoteMarginsTx(client, id, "ISSUED", ctx.audit?.user_id ?? userId ?? null);
+
     if (statutChanges) {
       const commercialEventType = requestedStatut === "ENVOYE"
         ? "SENT"
@@ -2662,6 +2666,7 @@ export async function repoReviseDevis(
     );
 
     expectedUploads = await insertDevisDocuments(client, newDevisId, documents);
+    if (revisionStatut === "ENVOYE") await captureQuoteMarginsTx(client, newDevisId, "RECORDED_SENT", ctx.audit?.user_id ?? userId ?? null);
 
     const newId = inserted.rows[0]?.id;
     const resultat = {
@@ -3049,6 +3054,9 @@ export async function repoDeleteDevis(id: number, ctx: DevisWriteContext = {}) {
       throw new HttpError(409, "DEVIS_HAS_REVISIONS", "Ce devis a des révisions : supprimez d'abord les versions descendantes ou conservez l'historique.");
     }
     const statut = normalizeDevisStatut(current.statut);
+    if ((await client.query('SELECT 1 FROM public.quote_margin_source_snapshots WHERE devis_id=$1 LIMIT 1', [id])).rowCount) {
+      throw new HttpError(409, "DEVIS_QUOTED_COSTS_RETAINED", "Le chiffrage envoyé est conservé pour traçabilité. Conservez ou annulez ce devis.");
+    }
     if (statut === "ENVOYE" || statut === "ACCEPTE") {
       throw new HttpError(409, "DEVIS_ENGAGED_UNDELETABLE", "Un devis engagé (envoyé/accepté) ne se supprime pas : annulez-le d'abord.", { statut });
     }
