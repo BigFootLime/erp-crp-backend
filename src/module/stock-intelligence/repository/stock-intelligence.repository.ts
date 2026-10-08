@@ -6,6 +6,8 @@ import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { normalizeUnit } from "../../commande-fournisseur/domain/replenishment-calculation";
+import { estimateStockValue } from '../domain/stock-value-estimate';
+import { STOCK_MOVEMENT_EVIDENCE_SQL } from './stock-movement-evidence.sql';
 import {
   STOCK_INTELLIGENCE_CONTRACT_VERSION,
   STOCK_INTELLIGENCE_DEFAULT_POLICY,
@@ -61,9 +63,14 @@ type MovementEvidenceRow = {
   key: string;
   outbound_qty_abc: number;
   outbound_value_abc: number | null;
+  outbound_currency: string | null;
   outbound_qty_coverage: number;
   last_outbound_at: string | null;
   latest_applied_unit_cost: number | null;
+  latest_unit_compatible: boolean;
+  latest_stock_unit: string | null;
+  latest_order_ambiguous: boolean;
+  latest_movement_id: string | null;
   cost_currency: string | null;
   unpriced_movement_count: number;
   currency_count: number;
@@ -253,65 +260,21 @@ async function loadMovementEvidence(
   queryer: Queryer,
 ) {
   const result = await queryer.query(
-    `WITH movement_cost AS (
-       SELECT movement.id,movement.article_id,movement.stock_level_id,movement.movement_type::text AS movement_type,
-              movement.effective_at,movement.updated_at,movement.doc_type,
-              movement.qty::float8 AS movement_qty,
-              CASE WHEN count(line.id)>0 AND count(line.unit_cost)=count(line.id)
-                    AND count(DISTINCT COALESCE(line.currency,'EUR'))=1
-                   THEN sum(abs(line.qty)*line.unit_cost)::float8 ELSE NULL END AS movement_value,
-              CASE WHEN count(line.id)>0 AND count(line.unit_cost)=count(line.id)
-                   THEN (sum(abs(line.qty)*line.unit_cost)/NULLIF(sum(abs(line.qty)),0))::float8 ELSE NULL END AS unit_cost,
-              CASE WHEN count(DISTINCT COALESCE(line.currency,'EUR'))=1
-                   THEN min(COALESCE(line.currency,'EUR')) ELSE NULL END AS currency,
-              count(DISTINCT COALESCE(line.currency,'EUR'))::int AS currency_count
-         FROM public.stock_movements movement
-         LEFT JOIN public.stock_movement_lines line ON line.movement_id=movement.id
-        WHERE movement.status::text='POSTED' AND movement.effective_at::date <= $1::date
-        GROUP BY movement.id
-     ), scoped AS (
-       SELECT concat(cost.article_id::text,':',COALESCE(magasin.id::text,'-')) AS key,cost.*
-         FROM movement_cost cost
-         JOIN public.stock_levels level ON level.id=cost.stock_level_id
-         LEFT JOIN public.emplacements emplacement ON emplacement.location_id=level.location_id
-         LEFT JOIN public.magasins magasin ON magasin.id=emplacement.magasin_id
-        WHERE ($4::uuid IS NULL OR cost.article_id=$4::uuid)
-          AND ($5::uuid IS NULL OR magasin.id=$5::uuid)
-          AND COALESCE(cost.doc_type,'') <> 'STOCK_TRANSFER_INTERNAL'
-     )
-     SELECT key,
-            COALESCE(sum(abs(movement_qty)) FILTER (
-              WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$2::int
-            ),0)::float8 AS outbound_qty_abc,
-            CASE WHEN count(*) FILTER (
-                   WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$2::int AND movement_value IS NULL
-                 )=0 AND count(DISTINCT currency) FILTER (
-                   WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$2::int
-                 )<=1
-                 THEN COALESCE(sum(movement_value) FILTER (
-                   WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$2::int
-                 ),0)::float8 ELSE NULL END AS outbound_value_abc,
-            COALESCE(sum(abs(movement_qty)) FILTER (
-              WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$3::int
-            ),0)::float8 AS outbound_qty_coverage,
-            (max(effective_at) FILTER (WHERE movement_type IN ('OUT','SCRAP')))::text AS last_outbound_at,
-            (array_agg(unit_cost ORDER BY effective_at DESC,id DESC) FILTER (WHERE unit_cost IS NOT NULL))[1]::float8 AS latest_applied_unit_cost,
-            (array_agg(currency ORDER BY effective_at DESC,id DESC) FILTER (WHERE currency IS NOT NULL))[1]::text AS cost_currency,
-            count(*) FILTER (
-              WHERE movement_type IN ('OUT','SCRAP') AND effective_at::date > $1::date-$2::int AND movement_value IS NULL
-            )::int AS unpriced_movement_count,
-            count(DISTINCT currency) FILTER (WHERE unit_cost IS NOT NULL)::int AS currency_count,
-            max(updated_at)::text AS freshness_at
-       FROM scoped GROUP BY key`,
+    STOCK_MOVEMENT_EVIDENCE_SQL,
     [asOf, policy.abc_lookback_days, policy.consumption_lookback_days, query.article_id ?? null, query.magasin_id ?? null],
   );
   return new Map<string, MovementEvidenceRow>(result.rows.map((row) => [row.key, {
     key: row.key,
     outbound_qty_abc: requiredNumber(row.outbound_qty_abc, "movements.outbound_qty_abc"),
     outbound_value_abc: numberOrNull(row.outbound_value_abc),
+    outbound_currency: row.outbound_currency ?? null,
     outbound_qty_coverage: requiredNumber(row.outbound_qty_coverage, "movements.outbound_qty_coverage"),
     last_outbound_at: row.last_outbound_at ?? null,
     latest_applied_unit_cost: numberOrNull(row.latest_applied_unit_cost),
+    latest_unit_compatible: row.latest_unit_compatible === true,
+    latest_stock_unit: row.latest_stock_unit ?? null,
+    latest_order_ambiguous: row.latest_order_ambiguous === true,
+    latest_movement_id: row.latest_movement_id ?? null,
     cost_currency: row.cost_currency ?? null,
     unpriced_movement_count: Number(row.unpriced_movement_count ?? 0),
     currency_count: Number(row.currency_count ?? 0),
@@ -491,9 +454,13 @@ async function buildOverview(query: StockIntelligenceOverviewQueryDTO, includeCo
     }
   })();
   const { policy, effectiveWeeks, scopes, movements, reservations, receipts, inventories, proposals } = evidence;
+  const valuedOutbounds = [...movements.values()].filter(movement => movement.outbound_qty_abc > 0 && movement.outbound_value_abc !== null);
+  const abcCurrencyConflict = valuedOutbounds.some(movement => !movement.outbound_currency)
+    || new Set(valuedOutbounds.map(movement => movement.outbound_currency)).size > 1;
+  const abcIncomplete = [...movements.values()].some(movement => movement.outbound_qty_abc > 0 && movement.outbound_value_abc === null);
   const abc = new Map(classifyAbc([...movements.entries()].map(([key, movement]) => ({
     key,
-    consumption_value: includeCosts ? movement.outbound_value_abc : null,
+    consumption_value: includeCosts && !abcCurrencyConflict ? movement.outbound_value_abc : null,
   })), policy.abc_a_cumulative_pct, policy.abc_b_cumulative_pct).map((item) => [item.key, item]));
 
   const items = scopes.map((scope) => {
@@ -576,13 +543,15 @@ async function buildOverview(query: StockIntelligenceOverviewQueryDTO, includeCo
       ...scopeReceipts.map((row) => row.updated_at),
       ...scopeInventory.map((row) => row.counted_at),
     ]);
-    const stockValueMissing = [] as string[];
-    if (!includeCosts) stockValueMissing.push("COST_PERMISSION_REQUIRED");
-    if (movement?.latest_applied_unit_cost == null) stockValueMissing.push("CUMP_UNIT_COST_EVIDENCE");
-    if ((movement?.currency_count ?? 0) > 1) stockValueMissing.push("COST_CURRENCY_CONFLICT");
-    const stockValue = includeCosts && movement?.latest_applied_unit_cost != null && (movement.currency_count ?? 0) <= 1
-      ? roundStockMetric((scope.qty_on_hand - scope.qty_depreciated) * movement.latest_applied_unit_cost, 2)
-      : null;
+    const stockValueEstimate = estimateStockValue({ costsVisible: includeCosts,
+      physical: scope.qty_on_hand, depreciated: scope.qty_depreciated,
+      latestUnitCost: movement?.latest_applied_unit_cost ?? null,
+      currency: movement?.cost_currency ?? null, currencyCount: movement?.currency_count ?? 0,
+      latestOrderAmbiguous: movement?.latest_order_ambiguous,
+      unitCompatible: scope.stock_unit !== null && movement?.latest_stock_unit != null
+        && normalizeUnit(scope.stock_unit) === normalizeUnit(movement.latest_stock_unit)
+        && movement.latest_unit_compatible === true });
+    const stockValue = stockValueEstimate.value;
     const lastOutboundDays = movement?.last_outbound_at
       ? Math.floor((Date.parse(`${asOf}T23:59:59Z`) - Date.parse(movement.last_outbound_at)) / DAY_MS)
       : null;
@@ -610,13 +579,14 @@ async function buildOverview(query: StockIntelligenceOverviewQueryDTO, includeCo
       },
       stock_value: metric({
         value: stockValue,
-        definition: "Quantité physique hors dépréciation × dernier coût unitaire CUMP appliqué et traçable. Ce n'est pas une couche de valorisation par lot.",
+        definition: "Estimation : quantité physique hors dépréciation × coût unitaire enregistré sur le dernier mouvement. Le CUMP n'est pas calculé par cette source.",
         unit: movement?.cost_currency ?? "EUR",
         period: { from: asOf, to: asOf, as_of: asOf },
-        source: ["v_stock_availability_225", "stock_movements", "stock_movement_lines", "erp_settings:stock.valuation_method=WEIGHTED_AVERAGE"],
+        source: ["v_stock_availability_225", "stock_movements", "stock_movement_lines",
+          ...(includeCosts && movement?.latest_movement_id ? [`stock_movements:${movement.latest_movement_id}`] : [])],
         freshness_at: freshness,
         reliability: stockValue === null ? "UNAVAILABLE" : "ESTIMATED",
-        missing: stockValue === null ? stockValueMissing : ["COST_LAYER_NOT_MATERIALIZED"],
+        missing: stockValueEstimate.missing,
       }),
       turnover: metric({
         value: stockTurnoverPerYear({
@@ -669,13 +639,14 @@ async function buildOverview(query: StockIntelligenceOverviewQueryDTO, includeCo
       abc: {
         classification: includeCosts ? abcValue?.classification ?? null : null,
         cumulative_pct: includeCosts ? abcValue?.cumulative_pct ?? null : null,
-        definition: `Valeur des sorties CUMP sur ${policy.abc_lookback_days} jours, triée décroissante; A jusqu'à ${policy.abc_a_cumulative_pct} %, B jusqu'à ${policy.abc_b_cumulative_pct} %, C au-delà.`,
+        definition: `Valeur enregistrée des sorties sur ${policy.abc_lookback_days} jours, triée décroissante; A jusqu'à ${policy.abc_a_cumulative_pct} %, B jusqu'à ${policy.abc_b_cumulative_pct} %, C au-delà. Valorisation CUMP non disponible.`,
         unit: "classe",
         period: { from: subtractDays(asOf, policy.abc_lookback_days), to: asOf, as_of: asOf },
         source: ["stock_movements", "stock_movement_lines"],
         freshness_at: movement?.freshness_at ?? null,
-        reliability: !includeCosts || abcValue?.classification == null ? "UNAVAILABLE" : movement?.unpriced_movement_count ? "PARTIAL" : "ACTUAL",
-        missing: !includeCosts ? ["COST_PERMISSION_REQUIRED"] : abcValue?.classification == null ? ["PRICED_OUTBOUND_MOVEMENTS"] : movement?.unpriced_movement_count ? ["UNPRICED_MOVEMENTS"] : [],
+        reliability: !includeCosts || abcValue?.classification == null ? "UNAVAILABLE" : abcIncomplete ? "PARTIAL" : "ESTIMATED",
+        missing: !includeCosts ? ["COST_PERMISSION_REQUIRED"] : abcCurrencyConflict ? ["ABC_CURRENCY_CONFLICT"]
+          : abcValue?.classification == null ? ["PRICED_OUTBOUND_MOVEMENTS"] : abcIncomplete ? ["UNPRICED_MOVEMENTS", "COST_LAYER_NOT_MATERIALIZED"] : ["COST_LAYER_NOT_MATERIALIZED"],
       },
       predicted_shortage_date: projection.shortage_without_proposal,
       projection,
@@ -717,7 +688,7 @@ async function buildOverview(query: StockIntelligenceOverviewQueryDTO, includeCo
     summary: {
       stock_value: metric({
         value: stockValueSummary.value,
-        definition: "Somme des valeurs article/site calculables; une valeur partielle n'intègre jamais les lignes inconnues comme zéro.",
+        definition: "Somme des estimations de valeur article/site calculables au dernier coût enregistré; une valeur partielle n'intègre jamais les lignes inconnues comme zéro.",
         unit: stockValueSummary.unit,
         period: { from: asOf, to: asOf, as_of: asOf },
         source: ["items.stock_value"],
