@@ -106,7 +106,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       })};
     const firstMachining=operations.find(o=>['TOURNAGE','FRAISAGE','REPRISE'].includes(o.kind??''));
     const quantityKind=row?.kind==='DECOUPE'&&firstMachining?.kind==='TOURNAGE'&&coverage.needs.some(n=>n.operationId===op.id&&n.debitRule?.form==='BAR')?'POTENTIAL' as const:'ACTUAL' as const;
-    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,quantityKind,
+    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
+      assemblyOperation:row?.kind==='ASSEMBLAGE',quantityKind,
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
   return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentCoverageVersion:componentCoverage?.version??null,materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};
