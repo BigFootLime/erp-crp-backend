@@ -9,14 +9,24 @@ const journalColumns = `j.sequence::text,j.movement_id::text,j.article_id::text,
   j.source_sha256=encode(digest(j.source_snapshot::text,'sha256'),'hex') AS source_valid,
   a.source_snapshot AS acquisition_snapshot,a.source_sha256 AS acquisition_sha256,
   a.source_sha256=encode(digest(a.source_snapshot::text,'sha256'),'hex')
-    AND a.source_snapshot->>'stock_source_sha256'=j.source_sha256 AS acquisition_valid`;
+    AND a.source_snapshot->>'stock_source_sha256'=j.source_sha256 AS acquisition_valid,
+  r.source_snapshot AS return_snapshot,r.source_sha256 AS return_sha256,
+  r.source_sha256=encode(digest(r.source_snapshot::text,'sha256'),'hex')
+    AND r.source_snapshot->>'stock_source_sha256'=j.source_sha256
+    AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(r.source_snapshot->'remnants')='array'
+      THEN r.source_snapshot->'remnants' ELSE '[]'::jsonb END) link
+      LEFT JOIN public.stock_valuation_movement_journal original ON original.movement_id::text=link->>'original_movement_id'
+      WHERE original.movement_id IS NULL OR link->>'original_stock_source_sha256' IS DISTINCT FROM original.source_sha256
+        OR link->'original_stock_source' IS DISTINCT FROM original.source_snapshot) AS return_valid`;
 export const CUMP_SOURCE_WINDOW_SQL = `SELECT ${journalColumns}
   FROM public.stock_valuation_movement_journal j
   LEFT JOIN public.stock_valuation_acquisition_sources a ON a.movement_id=j.movement_id
+  LEFT JOIN public.stock_valuation_return_sources r ON r.movement_id=j.movement_id
   WHERE j.sequence>$1::bigint ORDER BY j.sequence LIMIT $2::integer`;
 export const CUMP_TRANSFER_GROUP_SQL = `SELECT ${journalColumns}
   FROM public.stock_valuation_movement_journal j
   LEFT JOIN public.stock_valuation_acquisition_sources a ON a.movement_id=j.movement_id
+  LEFT JOIN public.stock_valuation_return_sources r ON r.movement_id=j.movement_id
   WHERE j.movement_id=$1::uuid OR(j.source_snapshot->>'document_type'='STOCK_TRANSFER_INTERNAL'
     AND j.source_snapshot->>'document_id'=$1::text) ORDER BY j.sequence LIMIT 4`;
 
@@ -37,17 +47,6 @@ export const CUMP_STORE_BALANCE_SQL = `INSERT INTO public.stock_valuation_balanc
   ON CONFLICT(article_id,owner_key,stock_unit,currency) DO UPDATE SET quantity=EXCLUDED.quantity,value=EXCLUDED.value,
     reliability=EXCLUDED.reliability,source_ref=EXCLUDED.source_ref,latest_sequence=EXCLUDED.latest_sequence,
     latest_entry_id=EXCLUDED.latest_entry_id,updated_at=clock_timestamp()`;
-
-export const CUMP_ORIGINAL_ENTRY_SQL = `SELECT id::text,article_id::text,source_sequence::text,kind,quantity_delta::text,movement_value::text,reliability,source_snapshot
-  FROM public.stock_valuation_entries WHERE movement_id=$1::uuid AND owner_key=$2 AND stock_unit=$3 AND currency=$4 LIMIT 2`;
-export const CUMP_RETURN_CURSOR_SQL = `SELECT original_entry_id::text,quantity::text,value::text
-  FROM public.stock_valuation_return_allocations
-  WHERE original_movement_id=$1::uuid AND owner_key=$2 AND stock_unit=$3 AND currency=$4 FOR UPDATE`;
-export const CUMP_STORE_RETURN_CURSOR_SQL = `INSERT INTO public.stock_valuation_return_allocations(
-  original_movement_id,owner_key,stock_unit,currency,original_entry_id,quantity,value)
-  VALUES($1::uuid,$2,$3,$4,$5::uuid,$6::numeric,$7::numeric)
-  ON CONFLICT(original_movement_id,owner_key,stock_unit,currency) DO UPDATE SET quantity=EXCLUDED.quantity,value=EXCLUDED.value
-  WHERE stock_valuation_return_allocations.original_entry_id=EXCLUDED.original_entry_id RETURNING original_entry_id::text`;
 
 export const CUMP_FEE_CURSOR_SQL = `SELECT quantity::text,basis_snapshot,poisoned,
   basis_sha256=encode(digest(basis_snapshot::text,'sha256'),'hex') AS source_valid

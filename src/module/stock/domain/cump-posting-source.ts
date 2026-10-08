@@ -4,7 +4,8 @@ import { normalizeCumpScope, type CumpScope } from './cump-valuation';
 
 export type CumpJournalSource = { sequence: string; movement_id: string; article_id: string;
   source_snapshot: unknown; source_sha256: string; source_valid: boolean;
-  acquisition_snapshot: unknown | null; acquisition_sha256: string | null; acquisition_valid: boolean | null };
+  acquisition_snapshot: unknown | null; acquisition_sha256: string | null; acquisition_valid: boolean | null;
+  return_snapshot?: unknown | null; return_sha256?: string | null; return_valid?: boolean | null };
 export type CumpPostingScope = { scope: CumpScope; quantity: string };
 export type CumpPostingSource = { movementId: string; articleId: string; sequence: string; sourceSha256: string;
   kind: 'RECEIPT' | 'ISSUE' | 'SCRAP' | 'TRANSFER' | 'ZERO'; scopes: CumpPostingScope[];
@@ -52,10 +53,19 @@ export function readCumpPostingSource(row: CumpJournalSource, currency: string):
     try {
       scope = normalizeCumpScope({ articleId: row.article_id,owner: client === null ? 'COMPANY' : `CLIENT:${client}`,unit,currency });
       const signed = decimal(line.quantity,true);
-      if ((s.movement_type!=='ADJUST' && s.movement_type!=='ADJUSTMENT' && signed<0n)
-        || (quantity<0n && signed>0n) || (quantity>0n && (s.movement_type==='ADJUST' || s.movement_type==='ADJUSTMENT') && signed<0n))
-        return invalid('STOCK_POSTING_LINE_SIGN_MISMATCH');
-      moved = absolute(signed);
+      let effective = signed;
+      if (s.movement_type==='ADJUST' || s.movement_type==='ADJUSTMENT') {
+        // Standard Stock and inventory write a positive line magnitude plus
+        // direction, while the header is signed. A legacy signed line without
+        // direction may be read only when it agrees with the signed header.
+        if (!Object.prototype.hasOwnProperty.call(line,'direction')) return invalid('STOCK_ADJUSTMENT_LINE_DIRECTION_MISSING');
+        if (line.direction==='IN' || line.direction==='OUT') {
+          if (signed<0n) return invalid('STOCK_ADJUSTMENT_LINE_SIGN_AMBIGUOUS');
+          effective = line.direction==='OUT' ? -signed : signed;
+        } else if (line.direction!==null) return invalid('STOCK_ADJUSTMENT_LINE_DIRECTION_INVALID');
+        if ((quantity<0n && effective>0n) || (quantity>0n && effective<0n)) return invalid('STOCK_POSTING_LINE_SIGN_MISMATCH');
+      } else if (signed<0n) return invalid('STOCK_POSTING_LINE_SIGN_MISMATCH');
+      moved = absolute(effective);
     } catch { return invalid('STOCK_POSTING_LINE_SCOPE_MISMATCH'); }
     const key = JSON.stringify(scope), group = scopes.get(key) ?? { scope,quantity: 0n };
     group.quantity += moved; lineQuantity += moved; scopes.set(key,group);

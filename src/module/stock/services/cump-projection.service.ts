@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import type { PoolClient } from 'pg';
 import { reconcileCumpOpenings } from '../domain/cump-opening';
+import { readCumpMaterialReturnOriginal } from '../domain/cump-material-return-source';
 import { readCumpPostingSource, checkCumpTransferGroup, type CumpJournalSource,
   type CumpPostingSource } from '../domain/cump-posting-source';
 import { applyCumpTransition, CUMP_FORMULA_VERSION, type CumpTransition } from '../domain/cump-valuation';
@@ -101,7 +102,9 @@ export async function projectCumpWindowTx(tx: Tx, limit = 100): Promise<CumpProj
 async function projectPosting(tx: Tx, row: CumpJournalSource, posting: CumpPostingSource,
   transfer?: { valid: boolean; movementIds: string[] }): Promise<void> {
   // Fee quantity is counted once per receipt, never once per owner scope/portion.
-  const acquisition = posting.kind==='RECEIPT' && !posting.reversalOfId && !transfer?.valid
+  const materialReturn = posting.reversalOfId ? null : readCumpMaterialReturnOriginal(row,posting.scopes[0].scope.currency);
+  const originalMovementId = posting.reversalOfId ?? materialReturn?.originalMovementId;
+  const acquisition = posting.kind==='RECEIPT' && !originalMovementId && !materialReturn?.detected && !transfer?.valid
     ? await repository.resolveCumpAcquisitionTx(tx,row,posting.scopes[0].scope.currency) : null;
   for (const moved of posting.scopes) {
     const balance = await repository.readCumpBalanceTx(tx,moved.scope) ?? await repository.writeCumpOpeningTx(tx,
@@ -112,15 +115,19 @@ async function projectPosting(tx: Tx, row: CumpJournalSource, posting: CumpPosti
     if (transfer?.valid) {
       transition = { ...base,kind: 'TRANSFER',destinationScope: moved.scope };
       proof = { transfer_parent_id: posting.transferId,transfer_movement_ids: transfer.movementIds };
-    } else if (posting.reversalOfId) {
-      const original = await repository.resolveCumpLinkedReturnTx(tx,row,posting.reversalOfId,moved.scope,moved.quantity);
-      transition = { ...base,kind: original.kind,cost: original.cost,originalMovementRef: posting.reversalOfId };
-      proof = original.proof; issues.push(...original.issues);
+    } else if (originalMovementId) {
+      const original = await repository.resolveCumpLinkedReturnTx(tx,row,originalMovementId,moved.scope,moved.quantity,id);
+      transition = { ...base,kind: original.kind,cost: original.cost,originalMovementRef: originalMovementId };
+      proof = { ...original.proof,return_source_sha256: row.return_sha256 ?? null }; issues.push(...original.issues);
     } else if (posting.kind==='RECEIPT') {
       const cost = acquisition && posting.scopes.length===1 && moved.scope.owner==='COMPANY' ? acquisition.cost
         : { amount: null,reliability: 'UNKNOWN' as const,sourceRef: null };
       transition = { ...base,kind: 'RECEIPT',cost };
       proof = acquisition?.proof ?? {}; issues.push(...(acquisition?.issues ?? []));
+      if (materialReturn?.detected) {
+        proof = { ...proof,return_source_sha256: row.return_sha256 ?? null,material_return_proof_missing: true };
+        issues.push(...materialReturn.issues);
+      }
       if (posting.scopes.length!==1) issues.push('ACQUISITION_OWNER_PARTITION_UNRESOLVED');
       if (moved.scope.owner!=='COMPANY') issues.push('CLIENT_OWNED_STOCK_EXCLUDED_FROM_COMPANY_VALUE');
     } else if (posting.kind==='ISSUE' || posting.kind==='SCRAP') transition = { ...base,kind: posting.kind };
