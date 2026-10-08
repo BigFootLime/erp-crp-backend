@@ -192,6 +192,12 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
     planned_hours: string | null;
     actual_hours: string | null;
     good_quantity: string | null;
+    pending_control_quantity: string | null;
+    good_operation_id: string | null;
+    good_declaration_count: number;
+    good_declaration_freshness: string | null;
+    good_quantity_scope: string;
+    rework_quantity_scope: string;
     scrap_quantity: string | null;
     rework_quantity: string | null;
     declaration_count: number;
@@ -199,6 +205,10 @@ async function loadOfCosts(scopeRef: string, basis: Exclude<MarginBasis, "QUOTED
   }>(OF_MARGIN_MEASUREMENTS_SQL, [scopeRef]);
   const measures = measureResult.rows[0] ?? {
     planned_hours: null, actual_hours: null, good_quantity: null,
+    pending_control_quantity: null, good_operation_id: null,
+    good_declaration_count: 0, good_declaration_freshness: null,
+    good_quantity_scope: "FINAL_ACTIVE_OPERATION_DECLARED",
+    rework_quantity_scope: "DECLARED_OPERATION_EVENTS",
     scrap_quantity: null, rework_quantity: null, declaration_count: 0, declaration_freshness: null,
   };
   const quantityCosts: MarginCostInput[] = [];
