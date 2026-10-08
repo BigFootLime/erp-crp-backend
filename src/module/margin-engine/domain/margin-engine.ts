@@ -79,6 +79,13 @@ export function money(value: bigint): string {
   return format(value, 2);
 }
 
+/** Prorate a known amount in the same quantity unit; never converts units. */
+export function proportionAmount(amount: string, part: string, total: string): string {
+  const denominator = decimal(total);
+  if (denominator <= 0n) throw new Error("A positive allocation quantity is required");
+  return format(roundDiv(decimal(amount) * decimal(part), denominator), SCALE_DIGITS);
+}
+
 function percentage(numerator: bigint, denominator: bigint): string | null {
   if (denominator === 0n) return null;
   const scaledPercent = roundDiv(numerator * 100n * SCALE, denominator);
