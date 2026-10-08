@@ -17,6 +17,8 @@ export const assemblyComponentSchemas: Record<string, Schema> = {
     blockers: { type: 'array', items: object({ code: { type: 'string' }, message: { type: 'string' } }) },
     coverage: { type: 'object', additionalProperties: true },
     permissions: object({ withdraw: { type: 'boolean' } }),
+    balance: { nullable: true, ...object({ quantity, alreadyInAssembly: quantity, remaining: quantity,
+      sourceBalances: { type: 'array', items: object({ sourceOfId: ofId, quantity, alreadyInAssembly: quantity, remaining: quantity }) } }) },
     plan: { nullable: true, ...object({ quantity: assemblyQuantity, alreadyInAssembly: quantity,
       remainingBefore: quantity, remainingAfter: quantity,
       sourceAllocations: { type: 'array', items: object({ sourceOfId: ofId, assemblyQuantity }) },

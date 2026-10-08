@@ -5,7 +5,7 @@ import { withRealtimeOutboxTransaction } from '../../../shared/realtime/realtime
 import { assertOperationalLotQualityEligibility } from '../../qualite/repository/quality-operational-gate.repository';
 import { beginStockCommand, completeStockCommand } from '../../stock/repository/stock.repository';
 import { consumeComponentReservationTx } from '../../stock/repository/partial-reservation-consumption.repository';
-import { planAssemblyComponentConsumption } from '../domain/assembly-component-consumption';
+import { getAssemblyComponentBalance, planAssemblyComponentConsumption } from '../domain/assembly-component-consumption';
 import { materialPropertiesFingerprint } from '../domain/of-material';
 import { readOfComponentCoverageTx } from './of-component-coverage.repository';
 import { OF_ASSEMBLY_OPERATIONS_SQL } from './of-component-coverage.sql';
@@ -22,6 +22,7 @@ async function preparation(tx: Db, ofId: number, quantity?: number) {
   const operations = (await tx.query<AssemblyOperation>(OF_ASSEMBLY_OPERATIONS_SQL, [ofId])).rows;
   const dossier = await readOfDossierTx(tx, ofId);
   const operation = operations[0] ?? null;
+  let balance: ReturnType<typeof getAssemblyComponentBalance> | null = null;
   let plan: ReturnType<typeof planAssemblyComponentConsumption> | null = null;
   const blockers: Array<{ code: string; message: string }> = [];
   if (!operation) blockers.push({ code: 'ASSEMBLY_OPERATION_REQUIRED', message: 'Le dossier doit contenir une opération de montage.' });
@@ -33,7 +34,10 @@ async function preparation(tx: Db, ofId: number, quantity?: number) {
   if (operation && !dossier.operations.some(item => item.id === operation.id && (item.planned || item.status === 'RUNNING'))) {
     blockers.push({ code: 'ASSEMBLY_PLANNING_REQUIRED', message: 'Planifiez l’opération de montage.' });
   }
-  try { plan = planAssemblyComponentConsumption(coverage, quantity); }
+  try {
+    balance = getAssemblyComponentBalance(coverage);
+    if (quantity !== undefined || balance.remaining > 0) plan = planAssemblyComponentConsumption(coverage, quantity);
+  }
   catch (error) {
     if (!(error instanceof HttpError)) throw error;
     blockers.push({ code: error.code, message: error.message });
@@ -41,7 +45,7 @@ async function preparation(tx: Db, ofId: number, quantity?: number) {
   const version = materialPropertiesFingerprint({ coverage: coverage.version, operations, dossier: {
     status: dossier.status, operations: dossier.operations.map(item => ({ id: item.id, status: item.status, planned: item.planned })),
   } });
-  return { ofId, number: coverage.number, operation, version, plan, canWithdraw: !blockers.length && plan !== null, blockers, coverage };
+  return { ofId, number: coverage.number, operation, version, balance, plan, canWithdraw: !blockers.length && plan !== null, blockers, coverage };
 }
 
 export async function getAssemblyComponentPreparation(ofId: number, quantity?: number) {
