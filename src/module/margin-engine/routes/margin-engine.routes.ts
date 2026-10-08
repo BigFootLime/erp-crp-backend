@@ -10,6 +10,9 @@ import {
   getMargin,
   listRateVersions,
   listMarginSnapshots,
+  declareManufacturingBasis,
+  getManufacturingBasis,
+  getManufacturingBasisCandidate,
 } from "../controllers/margin-engine.controller";
 
 const router = Router();
@@ -27,6 +30,9 @@ function requireMarginCapability(capability: MarginCapability): RequestHandler {
 router.get("/rate-versions", requireMarginCapability("read_costs"), listRateVersions);
 router.post("/rate-versions", requireMarginCapability("manage_rates"), createRateVersion);
 router.post("/inputs", requireMarginCapability("manage_inputs"), createMarginInput);
+router.get('/of/:ofId/manufacturing-basis/candidates/:snapshotId', requireMarginCapability('read_costs'), getManufacturingBasisCandidate);
+router.get('/of/:ofId/manufacturing-basis', requireMarginCapability('read_costs'), getManufacturingBasis);
+router.post('/of/:ofId/manufacturing-basis', requireMarginCapability('snapshot'), declareManufacturingBasis);
 router.get("/:scopeType/:scopeRef/export.csv", requireMarginCapability("export"), exportMargin);
 router.get("/:scopeType/:scopeRef/snapshots", requireMarginCapability("read_costs"), listMarginSnapshots);
 router.post("/:scopeType/:scopeRef/snapshots", requireMarginCapability("snapshot"), createMarginSnapshot);

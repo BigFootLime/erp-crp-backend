@@ -3,6 +3,8 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import type { MarginScopeType } from "../domain/margin-engine";
 import type { MarginAuditContext } from "../repository/margin-engine.repository";
+import { manufacturingBasisBody, manufacturingBasisCandidateParams,
+  manufacturingBasisParams } from '../validators/manufacturing-cost-basis.validators';
 import {
   createMarginInputSchema,
   createRateVersionSchema,
@@ -19,6 +21,9 @@ import {
   svcGetMargin,
   svcListRateVersions,
   svcListMarginSnapshots,
+  svcDeclareManufacturingBasis,
+  svcManufacturingBasisCandidate,
+  svcReadManufacturingBasis,
 } from "../services/margin-engine.service";
 
 const SCOPE_MAP: Record<"devis-line" | "devis" | "affaire" | "of", MarginScopeType> = {
@@ -114,4 +119,26 @@ export const listMarginSnapshots: RequestHandler = async (req, res, next) => {
     const items = await svcListMarginSnapshots(SCOPE_MAP[params.scopeType], params.scopeRef, query);
     res.json({ items });
   } catch (error) { next(error); }
+};
+
+export const getManufacturingBasisCandidate: RequestHandler = async (req,res,next) => {
+  try {
+    const {ofId,snapshotId}=manufacturingBasisCandidateParams.parse(req.params);
+    res.setHeader('Cache-Control','no-store');
+    res.json(await svcManufacturingBasisCandidate(ofId,snapshotId));
+  } catch(error) {next(error);}
+};
+export const getManufacturingBasis: RequestHandler = async (req,res,next) => {
+  try {
+    const {ofId}=manufacturingBasisParams.parse(req.params);
+    res.setHeader('Cache-Control','no-store');res.json(await svcReadManufacturingBasis(ofId));
+  } catch(error) {next(error);}
+};
+export const declareManufacturingBasis: RequestHandler = async (req,res,next) => {
+  try {
+    const {ofId}=manufacturingBasisParams.parse(req.params);
+    const input=manufacturingBasisBody.parse(req.body);
+    const result=await svcDeclareManufacturingBasis(ofId,input,buildAuditContext(req));
+    res.setHeader('Cache-Control','no-store');res.status(result.replayed?200:201).json(result);
+  } catch(error) {next(error);}
 };

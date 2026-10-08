@@ -11,6 +11,9 @@ import {
   type MarginAuditContext,
 } from "../repository/margin-engine.repository";
 import type { CreateMarginInput, CreateRateVersion } from "../validators/margin-engine.validators";
+import type { DeclareManufacturingBasis } from '../validators/manufacturing-cost-basis.validators';
+import { repoDeclareManufacturingBasis, repoManufacturingBasisCandidate,
+  repoReadManufacturingBasis } from '../repository/manufacturing-cost-basis.repository';
 
 function currentDate(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(new Date());
@@ -156,4 +159,14 @@ export async function svcListMarginSnapshots(
   filters: { basis?: MarginBasis; as_of?: string },
 ) {
   return repoListSnapshots(scopeType, scopeRef, filters);
+}
+
+export function svcManufacturingBasisCandidate(ofId:string,snapshotId:string) {
+  return repoManufacturingBasisCandidate(ofId,snapshotId);
+}
+export function svcReadManufacturingBasis(ofId:string) {
+  return repoReadManufacturingBasis(ofId);
+}
+export function svcDeclareManufacturingBasis(ofId:string,input:DeclareManufacturingBasis,audit:MarginAuditContext) {
+  return repoDeclareManufacturingBasis(ofId,input,audit);
 }
