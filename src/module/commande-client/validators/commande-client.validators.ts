@@ -71,6 +71,9 @@ const boolFromQuery = z.preprocess((value) => {
 }, z.boolean());
 
 export const commandeLigneInputSchema = z.object({
+  client_forecast_allocations: z.array(z.object({forecast_id:z.string().uuid().transform(value=>value.toLowerCase()),
+    expected_version:z.number().int().positive().max(2147483645),
+    quantity:z.number().positive().max(1_000_000_000).refine(value=>Number(value.toFixed(3))===value,'3 décimales maximum')}).strict()).max(36).optional(),
   client_contract_line_id: z.string().uuid().transform(value=>value.toLowerCase()).optional().nullable(),
   id: z.coerce.number().int().positive().optional(),
   designation: z.string().min(1),
