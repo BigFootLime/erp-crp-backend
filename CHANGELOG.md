@@ -1,5 +1,11 @@
 # Changelog
 
+## Delivery affair backlog — 2026-10-09
+
+- Show article affairs before stock reservation; retain client/PO/technical identity and initial sent-AR evidence.
+- Separate reserved/prepared/shipped counters and partial/complete states; scope the canonical BL cart to the selected affairs.
+- Common métier/UI acceptance prepared NOT RUN; proforma and historical reprise remain pending.
+
 ## BL contract compatibility — 2026-10-09
 
 - Resolve canonical contract identities across all BL source orders; reject ambiguous mixtures before commit or stock consumption.

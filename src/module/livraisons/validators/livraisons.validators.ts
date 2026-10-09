@@ -223,6 +223,8 @@ export type LivraisonProofBodyDTO = z.infer<typeof livraisonProofBodySchema>
 /* -------------------------------------------------------------------------- */
 
 export const preparationCartQuerySchema = z.object({
+  reservation_ids: z.preprocess(value => typeof value === "string" ? value.split(",") : value,
+    z.array(z.string().uuid()).min(1).max(200).optional()),
   include_contract_scope: z.enum(["true", "false"]).transform(value => value === "true").optional(),
   q: z.string().trim().min(1).max(160).optional(),
   client_id: z.string().trim().min(1).max(120).optional(),
