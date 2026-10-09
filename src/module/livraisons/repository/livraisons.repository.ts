@@ -3491,6 +3491,7 @@ export type PreparationCartItem = {
   commande_numero: string
   contract_group_key?: string
   contract_reference?: string | null
+  client_code?: string | null
   livraison_affaire_id: number | null
   affaire_reference: string | null
   principal_affaire_reference: string | null
@@ -3570,6 +3571,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     return `$${values.length}`
   }
   if (filters.commande_id) where.push(`a.commande_id = ${push(filters.commande_id)}::bigint`)
+  if (filters.reservation_ids?.length) where.push(`r.id = ANY(${push(filters.reservation_ids)}::uuid[])`)
   if (filters.affaire_id) where.push(`r.livraison_affaire_id = ${push(filters.affaire_id)}::bigint`)
   if (filters.client_id) where.push(`cc.client_id::text = ${push(filters.client_id)}::text`)
   if (filters.source_scope) {
@@ -3625,6 +3627,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     allocation_id: number | null
     client_id: string
     client_name: string | null
+    client_code: string | null
     delivery_address_id: string | null
     article_id: string
     article_code: string | null
@@ -3666,6 +3669,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         a.id::bigint::int AS allocation_id,
         cc.client_id::text AS client_id,
         c.company_name AS client_name,
+        c.client_code,
         COALESCE(cc.destinataire_id, c.delivery_address_id)::text AS delivery_address_id,
         r.article_id::text AS article_id,
         art.code AS article_code,
@@ -3812,6 +3816,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
             contract_id: row.contract_id, order_type: row.order_type,
           }),
           contract_reference: row.contract_reference,
+          client_code: row.client_code,
         } : {}),
         livraison_affaire_id: row.livraison_affaire_id === null ? null : Number(row.livraison_affaire_id),
         affaire_reference: row.affaire_reference,
