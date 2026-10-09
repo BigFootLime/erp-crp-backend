@@ -101,6 +101,7 @@ import {
   ARTICLE_WRITE_ROLES,
 } from "../stock-article.permissions";
 import { roleHasStockCapability, type StockCapability } from "../domain/stock-rbac";
+import { readStockLaneLocations, readStockLanePositions, writeStockLaneLocation } from "../controllers/stock-lanes.controller";
 import { getLegacyDocuments, postLegacyDocument } from "../controllers/legacy-documents.controller";
 import { getStockArticleValuation } from '../controllers/cump-coverage.controller';
 import { getFinishedPackaging, postFinishedPackaging, postPackagingPrint,postPackagingVoid, getPackagingLabels } from "../controllers/finished-packaging.controller";
@@ -138,6 +139,9 @@ const requireStockCapability = (capability: StockCapability): RequestHandler => 
 };
 
 router.get("/analytics", requireStockCapability("read"), getStockAnalytics);
+router.get("/lanes/locations", requireStockCapability("read"), readStockLaneLocations);
+router.get("/lanes/positions", requireStockCapability("read"), readStockLanePositions);
+router.put("/lanes/locations/:locationId", requireStockCapability("referential_manage"), writeStockLaneLocation);
 router.get('/consumables/resolve',requireStockCapability('read'),findScannedConsumable);
 router.get('/consumables/:id/supply',requireStockCapability('read'),readConsumableSupply);
 router.post('/consumables/:id/replenish',requireStockCapability('read'),prepareConsumableSupply);
