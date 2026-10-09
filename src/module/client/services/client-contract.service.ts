@@ -9,6 +9,7 @@ import { readCrmClient } from "../repository/client-crm.repository";
 import * as repo from "../repository/client-contract.repository";
 import type { ClientContractCommand } from "../validators/client-contract.validators";
 import type { ClientContractResult } from "../types/client-contract.types";
+import {readClientContractCalls} from '../repository/client-contract-calls.repository';
 
 async function requireClient(clientId:string) {
   const client=await readCrmClient(pool,clientId);
@@ -37,6 +38,19 @@ export async function getClientContract(clientId:string,id:string,page:number) {
       client_active:!client.archived_at&&!client.blocked&&client.status!=="inactif"};
   } catch(error){await db.query("ROLLBACK");throw error;}
   finally {db.release();}
+}
+export async function getClientContractCalls(clientId:string,id:string,page:number) {
+  const db=await pool.connect();
+  try {
+    await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const client=await readCrmClient(db,clientId);
+    if(!client)throw new HttpError(404,'CLIENT_NOT_FOUND','Client introuvable');
+    if(!(await db.query('SELECT 1 FROM public.client_contracts WHERE id=$1::uuid AND client_id=$2',[id,clientId])).rows.length)
+      throw new HttpError(404,'CLIENT_CONTRACT_NOT_FOUND','Contrat introuvable pour ce client');
+    const data=await readClientContractCalls(db,clientId,id,page);
+    await db.query('COMMIT');return data;
+  } catch(error){await db.query('ROLLBACK');throw error;}
+  finally{db.release();}
 }
 export async function executeClientContractCommand(clientId:string,command:ClientContractCommand,key:string,audit:AuditContext) {
   const hash=createHash("sha256").update(JSON.stringify({client_id:clientId,command})).digest("hex");

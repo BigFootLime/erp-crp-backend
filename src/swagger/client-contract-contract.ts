@@ -12,6 +12,11 @@ const definition={reference:header.reference,title:header.title,valid_from:date,
   lines:{type:"array",minItems:1,maxItems:100,items:object({article_id:uuid,replenishment_qty:{type:"number",exclusiveMinimum:true,minimum:0,maximum:1_000_000_000,multipleOf:0.001}})}};
 const existing={contract_id:uuid,expected_version:integer,reason:{...text,minLength:3,maxLength:500}};
 export const clientContractSchemas:Schema={
+  ClientContractCallBinding:object({contract_id:uuid,expected_version:integer,idempotency_key:uuid}),
+  ClientContractCalls:page(object({id:uuid,commande_id:text,numero:text,customer_reference:text,current_customer_reference:{...text,nullable:true},
+    order_date:{...text,format:"date"},created_at:{...text,format:"date-time"},contract_version:integer,actor_user_id:integer,actor_label:text,
+    lines:{type:"array",items:object({id:uuid,contract_line_id:uuid,commande_ligne_id:text,article:ref("ClientContractArticle"),
+      initial_qty:text,current_qty:text,initial_due_date:{...text,format:"date"},current_due_date:{...text,format:"date",nullable:true},replenishment_qty:text})}})),
   ClientContractArticle:object({article_id:uuid,root_article_id:uuid,code:text,designation:text,piece_technique_id:uuid,piece_technique_version_id:uuid,indice:text,unit_id:uuid,unit:text}),
   ClientContractLine:object({id:uuid,article_id:uuid,root_article_id:uuid,replenishment_qty:{...text,pattern:"^\\d+(\\.\\d{1,3})?$"},unit_id:uuid,unit:text,
     configured_code:text,configured_designation:text,configured_indice:text,configured_piece_technique_version_id:uuid,
@@ -27,18 +32,24 @@ export const clientContractSchemas:Schema={
     object({action:{...text,enum:["UPDATE"]},...existing,...definition}),object({action:{...text,enum:["CLOSE"]},...existing})],discriminator:{propertyName:"action"}},
 };
 export function clientContractOperation(key:string,operation:Schema):Schema {
-  if(!["get /clients/{id}/contracts","get /clients/{id}/contracts/articles","get /clients/{id}/contracts/{contractId}","post /clients/{id}/contracts/commands"].includes(key))return operation;
+  if(key==="post /commandes")return {...operation,description:[operation.description,
+    "Optional firm contract call in multipart data JSON: client_contract_call = {contract_id, expected_version, idempotency_key}; each line carries client_contract_line_id and the proposed validated article/PT/version/unit, requested quantity and date. Actor/key replay checks the exact parsed body and uploaded file digests. The order, immutable call snapshots, audit and outbox commit together. Reuse the exact request/key after an uncertain result."].filter(Boolean).join("\n\n"),
+    "x-cerp-contract-call-binding":ref("ClientContractCallBinding"),responses:{...operation.responses,"409":{description:"Stale contract/version/article, conflicting retry key or inactive client. No partial order."},"422":{description:"Call must be firm, valid at the order date, and contain unique available contract articles with quantity and due date."}}};
+  if(["patch /commandes/{id}","delete /commandes/{id}","post /commandes/{id}/duplicate"].includes(key))return {...operation,
+    description:[operation.description,"A recorded contract call retains its client, contract, line IDs, article/technical version and unit. Quantity/date changes retain the original immutable snapshot. Deletion and duplication are refused; create a new call from the client contract."].filter(Boolean).join("\n\n"),
+    responses:{...operation.responses,"409":{description:"Recorded contract call identity/history must be retained."}}};
+  if(!["get /clients/{id}/contracts","get /clients/{id}/contracts/articles","get /clients/{id}/contracts/{contractId}","get /clients/{id}/contracts/{contractId}/calls","post /clients/{id}/contracts/commands"].includes(key))return operation;
   const response=(name:string,description:string)=>({description,content:{"application/json":{schema:ref(name)}}});
   const parameters:Schema[]=[{name:"id",in:"path",required:true,schema:clientId}];
-  if(key.endsWith("/{contractId}"))parameters.push({name:"contractId",in:"path",required:true,schema:uuid});
+  if(key.includes("/{contractId}"))parameters.push({name:"contractId",in:"path",required:true,schema:uuid});
   const errors={...operation.responses,"404":{description:"Client ou contrat introuvable."},"409":{description:"Version, référence, clé ou article indisponible. Aucun changement partiel."},
     "422":{description:"Définition ou famille d'article invalide."},"503":{description:"Résultat incertain : conserver strictement la même commande et clé."}};
   if(key.startsWith("post "))return {...operation,summary:"Créer, modifier ou clôturer un contrat de la fiche client",parameters:[...parameters,{name:"Idempotency-Key",in:"header",required:true,schema:uuid}],
     "x-cerp-idempotency":"required",requestBody:{required:true,content:{"application/json":{schema:ref("ClientContractCommand")}}},
     responses:{...errors,"200":response("ClientContractResult","Résultat initial rejoué."),"201":response("ClientContractResult","Contrat, lignes, historique, audit et temps réel enregistrés ensemble.")}};
-  const articles=key.endsWith("/articles"),detail=key.endsWith("/{contractId}");
+  const articles=key.endsWith("/articles"),detail=key.endsWith("/{contractId}"),calls=key.endsWith("/calls");
   parameters.push(articles?{name:"q",in:"query",required:false,schema:{...text,maxLength:160,default:""}}
     :{name:"page",in:"query",required:false,schema:{type:"integer",minimum:1,maximum:100000,default:1}});
-  return {...operation,summary:articles?"Articles client validés à leur indice applicable":detail?"Définition du contrat et historique de ses versions":"Contrats de la fiche client",
-    parameters,responses:{...errors,"200":response(articles?"ClientContractArticleOptions":detail?"ClientContractDetail":"ClientContractList","Référentiel canonique, sans réécriture des commandes historiques.")}};
+  return {...operation,summary:articles?"Articles client validés à leur indice applicable":detail?"Définition du contrat et historique de ses versions":calls?"Appels fermes du contrat, quantités et délais initiaux et actuels":"Contrats de la fiche client",
+    parameters,responses:{...errors,"200":response(articles?"ClientContractArticleOptions":detail?"ClientContractDetail":calls?"ClientContractCalls":"ClientContractList","Référentiel canonique, sans réécriture des commandes historiques.")}};
 }

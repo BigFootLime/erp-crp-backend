@@ -9,7 +9,7 @@ import { CLIENT_WRITE_ROLES } from "../client.permissions";
 import type { AuditContext } from "../repository/client.repository";
 import { contractClientIdSchema,contractIdempotencySchema,clientContractCommandSchema,
   clientContractQuerySchema,clientContractArticleQuerySchema } from "../validators/client-contract.validators";
-import { getClientContracts,getClientContractArticles,getClientContract,executeClientContractCommand } from "../services/client-contract.service";
+import { getClientContracts,getClientContractArticles,getClientContract,getClientContractCalls,executeClientContractCommand } from "../services/client-contract.service";
 
 function canWrite(req:Request) {
   return hasGrantedAccountModuleAccess()||effectiveRoleHasAny(req.user?.role,CLIENT_WRITE_ROLES);
@@ -50,5 +50,12 @@ export const postContractCommand:RequestHandler=async(req,res,next)=>{
       clientContractCommandSchema.parse(req.body),contractIdempotencySchema.parse(req.headers["idempotency-key"]),auditContext(req));
     res.setHeader("Cache-Control","no-store");res.setHeader("Idempotency-Replayed",saved.replayed?"true":"false");
     res.status(saved.replayed?200:201).json(saved.result);
+  } catch(error){next(error);}
+};
+export const listContractCalls:RequestHandler=async(req,res,next)=>{
+  try {
+    const clientId=contractClientIdSchema.parse(req.params.id),id=z.string().uuid().parse(req.params.contractId);
+    const query=clientContractQuerySchema.parse(req.query);
+    res.setHeader('Cache-Control','no-store');res.json(await getClientContractCalls(clientId,id,query.page));
   } catch(error){next(error);}
 };
