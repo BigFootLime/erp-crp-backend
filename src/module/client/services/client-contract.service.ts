@@ -82,6 +82,11 @@ export async function executeClientContractCommand(clientId:string,command:Clien
           throw new HttpError(409,"CLIENT_CONTRACT_ARTICLE_UNAVAILABLE","Choisissez les articles validés de ce client à leur indice applicable");
         if(new Set(articles.map(article=>article.root_article_id)).size!==command.lines.length)
           throw new HttpError(422,"CLIENT_CONTRACT_DUPLICATE_FAMILY","Deux lignes désignent la même famille d’article");
+        if(command.action==='UPDATE') {
+          const retained=await repo.readForecastBackedContractUnits(tx,id,roots);
+          if(retained.some(line=>articles.some(article=>article.root_article_id===line.root_article_id&&article.unit_id!==line.unit_id)))
+            throw new HttpError(409,'CLIENT_CONTRACT_FORECAST_UNIT_RETAINED','Les estimations conservent leur unité. Gardez cette définition et créez un nouveau contrat pour une autre unité.');
+        }
         await repo.writeClientContract(tx,clientId,id,audit.user_id,command,articles);
       }
       const contract=await repo.readClientContract(tx,clientId,id);

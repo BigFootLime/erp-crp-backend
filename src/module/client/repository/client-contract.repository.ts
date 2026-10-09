@@ -68,6 +68,11 @@ export async function lockContractArticles(db:Queryer,ids:readonly string[]) {
   return (await db.query<{root_article_id:string}>(`SELECT COALESCE(root_article_id,id)::text AS root_article_id
     FROM public.articles WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE`,[ids])).rows.map(row=>row.root_article_id);
 }
+export async function readForecastBackedContractUnits(db:Queryer,id:string,roots:readonly string[]) {
+  return (await db.query<{root_article_id:string;unit_id:string}>(`SELECT line.root_article_id::text,line.unit_id::text
+    FROM public.client_contract_lines line WHERE line.contract_id=$1::uuid AND line.root_article_id=ANY($2::uuid[])
+      AND EXISTS(SELECT 1 FROM public.client_contract_forecasts forecast WHERE forecast.contract_line_id=line.id)`,[id,roots])).rows;
+}
 export async function writeClientContract(db:Queryer,clientId:string,id:string,actor:number,
   command:Exclude<ClientContractCommand,{action:"CLOSE"}>,articles:readonly ClientContractArticle[]) {
   if(command.action==="CREATE") {
