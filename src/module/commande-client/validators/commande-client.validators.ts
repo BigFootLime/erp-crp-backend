@@ -71,6 +71,7 @@ const boolFromQuery = z.preprocess((value) => {
 }, z.boolean());
 
 export const commandeLigneInputSchema = z.object({
+  client_contract_line_id: z.string().uuid().transform(value=>value.toLowerCase()).optional().nullable(),
   id: z.coerce.number().int().positive().optional(),
   designation: z.string().min(1),
   article_id: z.string().uuid().optional().nullable(),
@@ -140,6 +141,8 @@ export const createCommandeBodySchema = z.preprocess((value) => {
 },
 z.object({
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
+  client_contract_call: z.object({contract_id:z.string().uuid().transform(value=>value.toLowerCase()),
+    expected_version:z.number().int().positive().max(2147483646),idempotency_key:z.string().uuid().transform(value=>value.toLowerCase())}).strict().optional().nullable(),
   creation_flow_version: commandeCreationFlowVersionSchema.optional().default(1),
   save_intent: z.enum(["DRAFT", "VALIDATE"]).optional().default("VALIDATE"),
   numero: z.string().trim().min(1).optional(),

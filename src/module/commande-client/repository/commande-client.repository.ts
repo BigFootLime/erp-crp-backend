@@ -10,6 +10,8 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
+import {prepareContractCall,recordContractCall,assertContractCallMutable,assertNoContractCall,ContractCallReplay} from './commande-contract-call.repository';
+import {readCommandeContractCall} from '../../client/repository/client-contract-calls.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
@@ -2753,6 +2755,7 @@ export async function repoListCommandes(filters: ListCommandesQueryDTO) {
       cc.numero,
       cc.client_id,
       cc.order_type,
+      EXISTS(SELECT 1 FROM public.client_contract_calls call WHERE call.commande_id=cc.id) AS has_contract_call,
       cc.date_commande::text AS date_commande,
       cc.total_ht::float8 AS total_ht,
       cc.total_ttc::float8 AS total_ttc,
@@ -2907,6 +2910,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
 
   const commande = {
     ...commandeRow,
+    client_contract_call: await readCommandeContractCall(pool, String(commandeId)),
     id: toInt(commandeRow.id, "commande.id"),
     devis_id: toNullableInt(commandeRow.devis_id, "commande.devis_id"),
     source_devis_version_id: toNullableInt(commandeRow.source_devis_version_id, "commande.source_devis_version_id"),
@@ -2961,6 +2965,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
 
   const lignesOut = lignes.map((l: any) => ({
     ...l,
+    client_contract_line_id: commande.client_contract_call?.lines.find((binding: {commande_ligne_id:string}) => binding.commande_ligne_id === String(l.id))?.contract_line_id ?? null,
     id: toInt(l.id, "lignes.id"),
     commande_id: toInt(l.commande_id, "lignes.commande_id"),
   }));
@@ -3993,6 +3998,8 @@ export async function repoCreateCommande(
       context: "commande-client.create",
       work: async () => {
 
+    const contractCall=await prepareContractCall(client,input,actorUserId,documents);
+
     await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
 
     const idRes = await client.query<{ id: string }>(
@@ -4093,6 +4100,7 @@ export async function repoCreateCommande(
       creation_flow_version: input.creation_flow_version ?? 1,
       save_intent: input.save_intent ?? "VALIDATE",
     });
+    await recordContractCall(client,contractCall,commandeId,input);
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
@@ -4157,6 +4165,7 @@ export async function repoCreateCommande(
         : "uncertain",
     });
   } catch (e) {
+    if(e instanceof ContractCallReplay)return {id:e.commandeId};
     if (isObject(e)) {
       const code = typeof e.code === "string" ? e.code : null;
       const constraint = typeof e.constraint === "string" ? e.constraint : null;
@@ -4357,6 +4366,7 @@ export async function repoUpdateCommande(
     if (!existing) {
       return null;
     }
+    await assertContractCallMutable(client,id,input);
 
     if (existing.ar_sent_at) {
       throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
@@ -4533,6 +4543,7 @@ export async function repoDeleteCommande(
       await client.query("ROLLBACK");
       return false;
     }
+    await assertNoContractCall(client,commandeId);
 
     // Evaluate retention only after the aggregate lock. Under READ COMMITTED this
     // statement gets a fresh snapshot and sees workflow/artifacts committed while
@@ -7325,6 +7336,9 @@ export async function repoDuplicateCommande(id: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const source=(await client.query<{order_type:string}>('SELECT order_type FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
+    if(source?.order_type==='CADRE')throw new HttpError(409,'CLIENT_MASTER_CONTRACT_REQUIRED','Créez un nouvel appel depuis le contrat de la fiche client');
+    await assertNoContractCall(client,originalCommandeId);
 
     const originalRes = await client.query(
       `
