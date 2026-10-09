@@ -1,5 +1,12 @@
 # Changelog
 
+## Client contract catalog — 2026-10-09
+
+- Add client-owned contracts, validated article-family selection and explicit replenishment batches.
+- Keep recorded technical definitions immutable; resolve future proposals without changing historical orders.
+- Enforce role, active client, optimistic version and actor-scoped idempotency with atomic audit/realtime.
+- Combined business/UI acceptance prepared NOT RUN; firm-order calls remain pending.
+
 ## Reservation-backed lane routing — 2026-10-09
 
 - Configure one explicit physical receipt destination per lane; activate only when all three are valid.
