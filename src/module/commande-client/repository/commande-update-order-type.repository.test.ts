@@ -42,7 +42,7 @@ describe("commande order type invariant", () => {
       return { rows: [] };
     });
 
-    await expect(repoUpdateCommande("123", { order_type: "FERME" } as never, []))
+    await expect(repoUpdateCommande("123", { order_type: "FERME", lignes: [] } as never, []))
       .rejects.toMatchObject({ status: 409, code: "COMMANDE_ORDER_TYPE_IMMUTABLE" });
 
     expect(mocks.query.mock.calls.some(([sql]) => /^\s*UPDATE commande_client/i.test(String(sql)))).toBe(false);

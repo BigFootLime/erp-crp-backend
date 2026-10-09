@@ -1,10 +1,10 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveCumpArticleCoverage, type CumpCoverageSnapshot, type CumpProjectedPosition } from './cump-coverage';
 import { CUMP_FORMULA_VERSION } from './cump-valuation';
 import type { CumpOpeningRow } from './cump-opening';
 
-// Prepared for the final common acceptance run; not executed during deployment.
+// Pure coverage fixtures; database acceptance is tracked separately.
 const ARTICLE = '00000000-0000-0000-0000-000000000001';
 const LEVEL = '00000000-0000-0000-0000-000000000002';
 const BATCH = '00000000-0000-0000-0000-000000000003';
