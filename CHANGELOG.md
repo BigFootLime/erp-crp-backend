@@ -1,5 +1,10 @@
 # Changelog
 
+## Contract recipe corrections — 2026-10-10
+
+- Create manufactured client articles as sellable, lot-tracked units. Preserve existing links and historical articles; no schema migration.
+- Targeted tests passed; full business acceptance remains in progress (WP-285).
+
 ## Cumulative client demand coverage — 2026-10-09
 
 - Project remaining firm/forecast demand against shared quality-released stock and committed on-time producers.
