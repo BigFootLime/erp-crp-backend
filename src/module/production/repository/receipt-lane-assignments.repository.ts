@@ -56,4 +56,7 @@ export async function recordReceiptLaneAssignment(
     throw new HttpError(409, "RECEIPT_LANE_ALREADY_ASSIGNED", "La réception ne peut pas être affectée deux fois.");
   await tx.query(`INSERT INTO public.production_receipt_lane_assignments(receipt_id,quantity,distribution,actor_user_id,quality_decision)
     VALUES($1::uuid,$2,$3::jsonb,$4,$5::jsonb)`, [receiptId, distribution.received_quantity, JSON.stringify(distribution), actorId, JSON.stringify(qualityDecision)]);
+  if (distribution.physical_routing_applied)
+    await tx.query(`INSERT INTO public.production_receipt_lane_routes(receipt_id,quantity,destinations,actor_user_id)
+      VALUES($1::uuid,$2,$3::jsonb,$4)`, [receiptId, distribution.received_quantity, JSON.stringify(distribution.destinations), actorId]);
 }

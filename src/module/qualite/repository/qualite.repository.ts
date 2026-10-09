@@ -1,4 +1,5 @@
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
+import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -3004,6 +3005,7 @@ export async function repoCreateNonConformityDisposition(params: {
   const { id, body, audit } = params;
   const client = await pool.connect();
   const dispositionId = await withRealtimeOutboxTransaction(client, async (tx) => {
+    await lockStockLaneTopology(tx);
     const nc = await tx.query<{ id: string; reference: string; lot_id: string | null }>(
       `SELECT id::text AS id, reference, lot_id::text AS lot_id FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE`,
       [id]

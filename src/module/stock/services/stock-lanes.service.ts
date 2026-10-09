@@ -2,19 +2,21 @@ import pool from "../../../config/database";
 import { STOCK_LANES, STOCK_LANE_LABELS } from "../domain/stock-lanes";
 import { readStockLaneLocationsTx, readStockLanePositionsTx, configureStockLane } from "../repository/stock-lanes.repository";
 import type { StockLanePositionsQuery, StockLaneConfigurationCommand } from "../validators/stock-lanes.validators";
+import { readStockLaneRoutingTx } from "../repository/stock-lane-routing.repository";
 
 export async function getStockLaneLocations() {
   const tx = await pool.connect();
   try {
     await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const locations = await readStockLaneLocationsTx(tx);
+    const routing = await readStockLaneRoutingTx(tx);
     const as_of = (await tx.query<{ as_of: string }>("SELECT transaction_timestamp()::text AS as_of")).rows[0].as_of;
     await tx.query("COMMIT");
     return { as_of, locations, lanes: STOCK_LANES.map(value => ({ value, label: STOCK_LANE_LABELS[value],
       configured_locations: locations.filter(location => location.lane === value).length,
       usable_locations: locations.filter(location => location.lane === value && location.facts.active
         && location.facts.mapped && location.facts.storage && location.facts.inbound && location.facts.outbound).length })),
-      routing_active: false as const };
+      routing_active: routing.routing_active, routing_status: routing.routing_status };
   } catch (error) { await tx.query("ROLLBACK"); throw error; }
   finally { tx.release(); }
 }
@@ -24,9 +26,10 @@ export async function getStockLanePositions(query: StockLanePositionsQuery) {
   try {
     await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const result = await readStockLanePositionsTx(tx, query);
+    const routing = await readStockLaneRoutingTx(tx);
     const as_of = (await tx.query<{ as_of: string }>("SELECT transaction_timestamp()::text AS as_of")).rows[0].as_of;
     await tx.query("COMMIT");
-    return { ...result, as_of, routing_active: false as const,
+    return { ...result, as_of, routing_active: routing.routing_active,
       availability_scope: "PHYSICAL_LOT_STATUS_ONLY" as const };
   } catch (error) { await tx.query("ROLLBACK"); throw error; }
   finally { tx.release(); }

@@ -6,6 +6,7 @@ import { assertPieceReceiptMovement } from '../../receptions/repository/receipt-
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
 import { syncArticleCommercialTx } from './article-commercial.repository';
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
+import { lockStockLaneTopology } from './stock-lane-routing.repository';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -5466,6 +5467,7 @@ export async function repoUpdateLotQuality(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await lockStockLaneTopology(client);
     const command = await beginStockCommand(client, {
       audit,
       idempotency_key: idempotencyKey,

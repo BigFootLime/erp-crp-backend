@@ -13,9 +13,9 @@ export function stockLanesOperation(key: string, operation: Record<string, unkno
   const positions = key === "get /stock/lanes/positions";
   if (!configure && !locations && !positions) return operation;
   const location = { type: "object", required: ["location_id", "emplacement_id", "emplacement_code",
-    "magasin_id", "magasin_code", "lane", "version", "facts", "choices"], properties: {
+    "magasin_id", "magasin_code", "lane", "version", "default_destination", "facts", "choices"], properties: {
     location_id: uuid, emplacement_id: integer, emplacement_code: text, magasin_id: uuid, magasin_code: text,
-    lane: { ...lane, nullable: true }, version: integer,
+    lane: { ...lane, nullable: true }, version: integer, default_destination: bool,
     facts: { type: "object", required: ["active", "mapped", "storage", "inbound", "outbound", "previousLane",
       "hasStock", "hasReservations", "hasDeliveryOrAssemblyReservations"], properties: {
       active: bool, mapped: bool, storage: bool, inbound: bool, outbound: bool, previousLane: { ...lane, nullable: true },
@@ -39,14 +39,15 @@ export function stockLanesOperation(key: string, operation: Record<string, unkno
     : locations ? { type: "object", required: ["locations", "lanes", "as_of", "routing_active", "can_configure"],
       properties: { locations: { type: "array", items: location }, lanes: { type: "array", items: { type: "object",
         required: ["value", "label", "configured_locations", "usable_locations"], properties: { value: lane, label: text,
-          configured_locations: integer, usable_locations: integer } } }, as_of: text, routing_active: { ...bool, enum: [false] }, can_configure: bool } }
+          configured_locations: integer, usable_locations: integer } } }, as_of: text, routing_active: bool,
+          routing_status: { type: "string", enum: ["CONFIGURING","ACTIVE","INVALID"] }, can_configure: bool } }
     : { type: "object", required: ["items", "total", "page", "page_size", "as_of", "routing_active", "availability_scope"], properties: {
       items: { type: "array", maxItems: 100, items: position }, total: integer, page: { type: "integer", minimum: 1 },
-      page_size: { type: "integer", minimum: 1, maximum: 100 }, as_of: text, routing_active: { ...bool, enum: [false] },
+      page_size: { type: "integer", minimum: 1, maximum: 100 }, as_of: text, routing_active: bool,
       availability_scope: { type: "string", enum: ["PHYSICAL_LOT_STATUS_ONLY"] },
     } };
   return { ...operation, summary: configure ? "Affecter un emplacement à une piste" : locations ? "Paramétrage des pistes physiques" : "Positions de stock par piste",
-    description: "Socle de configuration uniquement : aucun mouvement ou reclassement implicite du stock. Les disponibilités exposées ne remplacent pas le contrôle qualité opérationnel. Le routage automatique sera activé séparément après configuration et reprise explicite.",
+    description: "La configuration ne déplace aucun stock historique. Le routage des nouvelles pièces libérées s'active quand une destination compatible est définie pour chaque piste. Les disponibilités exposées ne remplacent pas le contrôle qualité opérationnel.",
     parameters: configure ? [{ name: "locationId", in: "path", required: true, schema: uuid }] : positions ? [
       { name: "lane", in: "query", schema: { type: "string", enum: ["FREE", "DELIVERY", "ASSEMBLY", "UNASSIGNED"] } },
       ...["article_id", "location_id"].map(name => ({ name, in: "query", schema: uuid })),
@@ -55,7 +56,7 @@ export function stockLanesOperation(key: string, operation: Record<string, unkno
       { name: "page_size", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 30 } },
     ] : [],
     ...(configure ? { requestBody: { required: true, content: json({ type: "object", additionalProperties: false,
-      required: ["lane", "expected_version", "request_id", "reason"], properties: { lane,
+      required: ["lane", "expected_version", "request_id", "reason"], properties: { lane, default_destination: bool,
         expected_version: { type: "integer", minimum: 0, maximum: 2147483647 }, request_id: uuid,
         reason: { type: "string", minLength: 3, maxLength: 500 } } }) } } : {}),
     responses: { ...((operation.responses as Record<string, unknown>) ?? {}),

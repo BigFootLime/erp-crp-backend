@@ -6,11 +6,14 @@ export type ReceiptReservationAllocation = {
   reservation_id: string;
   lane: Exclude<StockLane, "FREE">;
   quantity: string;
+  source_reservation_id?: string;
 };
 export type ReceiptLaneDistribution = {
   received_quantity: string;
-  physical_routing_applied: false;
-  destinations: Array<{ lane: StockLane; quantity: string; reservations: ReceiptReservationAllocation[] }>;
+  physical_routing_applied: boolean;
+  destinations: Array<{ lane: StockLane; quantity: string; reservations: ReceiptReservationAllocation[];
+    location_id?: string; location_label?: string; movement_id?: string | null; source_location_id?: string;
+    stock_level_id?: string; stock_batch_id?: string }>;
 };
 
 /** Only canonical reservation deltas are assigned. Launched OF quantity is not an entitlement. */
