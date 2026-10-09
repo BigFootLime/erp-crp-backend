@@ -1,5 +1,11 @@
 # Changelog
 
+## BL contract compatibility — 2026-10-09
+
+- Resolve canonical contract identities across all BL source orders; reject ambiguous mixtures before commit or stock consumption.
+- Guide selections with opt-in contract metadata while preserving legacy strict cart responses.
+- Common métier/UI acceptance prepared NOT RUN; proforma/payment isolation and affair backlog remain pending #1030 work.
+
 ## Client contract calls — 2026-10-09
 
 - Bind firm calls to client master contracts through the canonical order aggregate.
