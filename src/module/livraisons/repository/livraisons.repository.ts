@@ -23,6 +23,8 @@ import {
   recordDirectLotQualityConsumption,
 } from "../../qualite/repository/quality-operational-gate.repository"
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
+import { deliveryContractBoundary, deliveryContractGroupKey } from "../domain/delivery-contract-boundary"
+import { assertDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
 import {
   assertStockConsumptionAllowed,
   getEmplacementMapping as getStockEmplacementMapping,
@@ -1466,6 +1468,7 @@ export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId:
     }
 
     await insertLines(db, id, (input.lignes ?? []) as InsertLineInput[], userId)
+    await assertDeliveryContractBoundary(db, id)
 
     await insertEvent(db, {
       bon_livraison_id: id,
@@ -1575,6 +1578,7 @@ export async function repoUpdateLivraisonHeader(id: string, patch: UpdateLivrais
     fields.push(`updated_by = ${push(userId)}`)
 
     await db.query(`UPDATE bon_livraison SET ${fields.join(", ")} WHERE id = ${push(id)}::uuid`, values)
+    await assertDeliveryContractBoundary(db, id)
 
     await insertEvent(db, {
       bon_livraison_id: id,
@@ -1638,6 +1642,7 @@ export async function repoAddLivraisonLine(
     )
     const lineId = ins.rows[0]?.id
     if (!lineId) throw new Error("Failed to insert bon_livraison_ligne")
+    await assertDeliveryContractBoundary(db, bonLivraisonId)
 
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
 
@@ -1757,6 +1762,7 @@ export async function repoUpdateLivraisonLine(
       `UPDATE bon_livraison_ligne SET ${fields.join(", ")} WHERE bon_livraison_id = ${push(bonLivraisonId)}::uuid AND id = ${push(lineId)}::uuid`,
       values
     )
+    await assertDeliveryContractBoundary(db, bonLivraisonId)
 
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
 
@@ -2100,6 +2106,7 @@ export async function repoCreateLivraisonLineAllocation(
     )
     const allocationId = ins.rows[0]?.id
     if (!allocationId) throw new Error("Failed to insert allocation")
+    await assertDeliveryContractBoundary(db, bonLivraisonId)
 
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
 
@@ -3180,6 +3187,7 @@ export async function repoCreateLivraisonFromCommande(
     }))
 
     await insertLines(db, id, outLines, userId)
+    await assertDeliveryContractBoundary(db, id)
 
     const transferredReservations = await attachActiveCommandeReservationsToLivraison(
       db,
@@ -3481,6 +3489,8 @@ export type PreparationCartItem = {
   reservation_id: string
   commande_id: number
   commande_numero: string
+  contract_group_key?: string
+  contract_reference?: string | null
   livraison_affaire_id: number | null
   affaire_reference: string | null
   principal_affaire_reference: string | null
@@ -3604,6 +3614,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     reservation_id: string
     commande_id: number
     commande_numero: string
+    contract_id: string | null
+    contract_reference: string | null
+    order_type: string | null
     livraison_affaire_id: number | null
     affaire_reference: string | null
     principal_affaire_reference: string | null
@@ -3642,6 +3655,9 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         r.id::text AS reservation_id,
         a.commande_id::bigint::int AS commande_id,
         cc.numero AS commande_numero,
+        contract_call.contract_id::text AS contract_id,
+        contract_call.contract_snapshot->>'reference' AS contract_reference,
+        cc.order_type,
         r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
         af.reference AS affaire_reference,
         parent_af.reference AS principal_affaire_reference,
@@ -3681,6 +3697,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
       LEFT JOIN public.clients c ON c.client_id = cc.client_id
       LEFT JOIN public.affaire af ON af.id = r.livraison_affaire_id
       LEFT JOIN public.affaire parent_af ON parent_af.id = af.parent_affaire_id
+      LEFT JOIN public.client_contract_calls contract_call ON contract_call.commande_id=cc.id
       JOIN public.articles art ON art.id = r.article_id
       LEFT JOIN public.lots l ON l.id = r.lot_id
       LEFT JOIN public.emplacements e ON e.location_id = r.location_id
@@ -3789,6 +3806,13 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         reservation_id: row.reservation_id,
         commande_id: Number(row.commande_id),
         commande_numero: row.commande_numero,
+        ...(filters.include_contract_scope ? {
+          contract_group_key: deliveryContractGroupKey({
+            commande_id: String(row.commande_id), client_id: row.client_id,
+            contract_id: row.contract_id, order_type: row.order_type,
+          }),
+          contract_reference: row.contract_reference,
+        } : {}),
         livraison_affaire_id: row.livraison_affaire_id === null ? null : Number(row.livraison_affaire_id),
         affaire_reference: row.affaire_reference,
         principal_affaire_reference: row.principal_affaire_reference,
@@ -4931,6 +4955,8 @@ type LockedReservationForDelivery = {
   qty_available: number
   commande_id: number
   client_id: string
+  contract_id: string | null
+  order_type: string | null
   delivery_address_id: string | null
   livraison_affaire_id: number
   allocation_id: number
@@ -5032,6 +5058,8 @@ export async function repoCreateLivraisonFromReservations(params: {
           (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
           a.commande_id::bigint::int AS commande_id,
           cc.client_id::text AS client_id,
+          contract_call.contract_id::text AS contract_id,
+          cc.order_type,
           COALESCE(cc.destinataire_id, c.delivery_address_id)::text AS delivery_address_id,
           r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
           a.id::bigint::int AS allocation_id,
@@ -5054,6 +5082,7 @@ export async function repoCreateLivraisonFromReservations(params: {
         JOIN public.commande_client cc ON cc.id = a.commande_id
         LEFT JOIN public.clients c ON c.client_id = cc.client_id
         JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
+        LEFT JOIN public.client_contract_calls contract_call ON contract_call.commande_id=cc.id
         LEFT JOIN public.emplacements e ON e.location_id = r.location_id
         LEFT JOIN LATERAL (
           SELECT revision.created_at, revision.snapshot
@@ -5083,6 +5112,9 @@ export async function repoCreateLivraisonFromReservations(params: {
     const requestedById = new Map(body.items.map((item) => [item.reservation_id, item.qty] as const))
     const first = locked.rows[0]
     if (!first) throw new HttpError(400, "EMPTY_CART", "No reservation selected")
+    const boundary = deliveryContractBoundary({clientId:first.client_id,hasUnboundLines:false,
+      orders:locked.rows.map(row=>({...row,commande_id:String(row.commande_id)}))})
+    if (boundary.blocker) throw new HttpError(409,boundary.blocker.code,boundary.blocker.message)
     for (const row of locked.rows) {
       if (row.client_id !== first.client_id) {
         throw new HttpError(409, "MIXED_DELIVERY_CLIENT", "A delivery cart must target one client")
@@ -5303,6 +5335,7 @@ export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string)
   )
   const current = header.rows[0] ?? null
   if (!current) return null
+  await assertDeliveryContractBoundary(pool, bonLivraisonId)
   const rows = await pool.query<{
     allocation_id: string
     reservation_id: string | null
@@ -5452,6 +5485,7 @@ export async function repoShipLivraison(params: {
     const bl = header.rows[0] ?? null
     if (!bl) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (bl.statut !== "READY") throw new HttpError(409, "INVALID_STATUS", "Only a READY BL can be shipped")
+    await assertDeliveryContractBoundary(db, params.bon_livraison_id)
     if (Number(bl.shipping_version) !== params.body.expected_shipping_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "The BL version changed since the preview")
     }

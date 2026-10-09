@@ -7,6 +7,7 @@ import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.s
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
+import { assertDeliveryContractBoundary, readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
 import {
   deriveLivraisonPreparationState,
   matchesLivraisonPickScanCode,
@@ -239,7 +240,8 @@ export async function repoGetLivraisonPreparation(
     total: tasks.length,
     confirmed,
   })
-  const state = hasBlockedTask && header.statut === "READY" ? "BLOCKED" : derivedState
+  const contractBoundary = await readDeliveryContractBoundary(queryable, bonLivraisonId)
+  const state = (hasBlockedTask || contractBoundary.blocker) && header.statut === "READY" ? "BLOCKED" : derivedState
 
   return {
     bon_livraison_id: header.id,
@@ -247,7 +249,7 @@ export async function repoGetLivraisonPreparation(
     status: header.statut,
     row_version: header.row_version,
     state,
-    can_ship: header.statut === "READY" && tasks.length > 0 && confirmed === tasks.length,
+    can_ship: !contractBoundary.blocker && header.statut === "READY" && tasks.length > 0 && confirmed === tasks.length,
     progress: {
       total: tasks.length,
       confirmed,
@@ -356,6 +358,7 @@ async function mutatePreparation(args: {
     if (header.row_version !== args.body.expected_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le bon de livraison a changé. Rafraîchissez la préparation.")
     }
+    if (args.mode === "CONFIRM") await assertDeliveryContractBoundary(tx, args.bonLivraisonId)
 
     const allocationResult = await tx.query<{
       lot_code: string | null
