@@ -15,6 +15,7 @@ type Db = Pick<PoolClient, "query">;
 type LocationRow = {
   location_id: string; emplacement_id: number; emplacement_code: string;
   magasin_id: string; magasin_code: string; lane: StockLane | null; version: number;
+  default_destination: boolean;
   active: boolean; mapped: boolean; storage: boolean; inbound: boolean; outbound: boolean;
   has_stock: boolean; has_reservations: boolean; has_delivery_or_assembly_reservations: boolean;
 };
@@ -23,6 +24,7 @@ export async function assertStockLaneSchema(tx: Db): Promise<void> {
   const result = await tx.query<{ installed: boolean }>(
     `SELECT to_regclass('public.stock_lane_locations') IS NOT NULL
       AND to_regclass('public.stock_lane_configuration_events') IS NOT NULL
+      AND to_regclass('public.stock_lane_destinations') IS NOT NULL
       AND to_regclass('public.v_stock_lane_positions_1028') IS NOT NULL AS installed`,
   );
   if (!result.rows[0]?.installed)
@@ -32,6 +34,7 @@ export async function assertStockLaneSchema(tx: Db): Promise<void> {
 const LOCATION_SELECT = `SELECT e.location_id::text AS location_id, e.id::int AS emplacement_id,
   e.code AS emplacement_code, m.id::text AS magasin_id, m.code AS magasin_code,
   role.lane, COALESCE(role.row_version,0)::int AS version,
+  destination.location_id IS NOT NULL AS default_destination,
   (e.is_active AND m.is_active) AS active,
   (location.id IS NOT NULL AND location.warehouse_id IS NOT NULL) AS mapped,
   (e.location_type='STORAGE' AND NOT e.is_scrap) AS storage,
@@ -47,7 +50,9 @@ const LOCATION_SELECT = `SELECT e.location_id::text AS location_id, e.id::int AS
     AS has_delivery_or_assembly_reservations
   FROM public.emplacements e JOIN public.magasins m ON m.id=e.magasin_id
   LEFT JOIN public.locations location ON location.id=e.location_id
-  LEFT JOIN public.stock_lane_locations role ON role.location_id=e.location_id`;
+  LEFT JOIN public.stock_lane_locations role ON role.location_id=e.location_id
+  LEFT JOIN public.stock_lane_destinations destination ON destination.location_id=e.location_id
+    AND destination.lane=role.lane`;
 
 function mapLocation(row: LocationRow): StockLaneLocation {
   const facts = { active: row.active, mapped: row.mapped, storage: row.storage,
@@ -57,6 +62,7 @@ function mapLocation(row: LocationRow): StockLaneLocation {
   return { location_id: row.location_id, emplacement_id: row.emplacement_id,
     emplacement_code: row.emplacement_code, magasin_id: row.magasin_id, magasin_code: row.magasin_code,
     lane: row.lane, version: row.version, facts,
+    default_destination: row.default_destination,
     choices: STOCK_LANES.map(value => ({ value, label: STOCK_LANE_LABELS[value],
       blockers: stockLaneConfigurationBlockers(facts, value) })) };
 }
@@ -94,6 +100,7 @@ export async function configureStockLane(locationId: string, command: StockLaneC
   const tx = await pool.connect();
   return withRealtimeOutboxTransaction(tx, async client => {
     await assertStockLaneSchema(client);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('stock-lane-topology',0))");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`stock-lane:${locationId}`]);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`stock-lane-command:${actor}:${command.request_id}`]);
     const hash = createHash("sha256").update(JSON.stringify({ locationId, actor, ...command })).digest("hex");
@@ -117,12 +124,26 @@ export async function configureStockLane(locationId: string, command: StockLaneC
       throw new HttpError(409, "STOCK_LANE_VERSION_CHANGED", "Le paramétrage a changé. Actualisez cet emplacement.");
     const blockers = stockLaneConfigurationBlockers(current.facts, command.lane);
     if (blockers.length) throw new HttpError(409, blockers[0], STOCK_LANE_BLOCKER_MESSAGES[blockers[0]], { blockers });
+    const previousDestinations = (await client.query<{ lane: StockLane; location_id: string }>(
+      "SELECT lane,location_id::text FROM public.stock_lane_destinations ORDER BY lane FOR UPDATE")).rows;
+    const defaultDestination = command.default_destination ?? (current.lane === command.lane && current.default_destination);
     const configured = (await client.query<{ version: number }>(`INSERT INTO public.stock_lane_locations
       (location_id,lane,row_version,updated_by) VALUES($1::uuid,$2,1,$3)
       ON CONFLICT(location_id) DO UPDATE SET lane=excluded.lane,
       row_version=stock_lane_locations.row_version+1,updated_by=excluded.updated_by,updated_at=now()
       RETURNING row_version::int AS version`, [locationId, command.lane, actor])).rows[0];
-    const result = { location_id: locationId, lane: command.lane, version: configured.version };
+    await client.query("DELETE FROM public.stock_lane_destinations WHERE location_id=$1::uuid", [locationId]);
+    if (defaultDestination) {
+      const previousDefault = previousDestinations.find(destination => destination.lane === command.lane);
+      if (previousDefault && previousDefault.location_id !== locationId)
+        await client.query("UPDATE public.stock_lane_locations SET row_version=row_version+1,updated_at=now(),updated_by=$2 WHERE location_id=$1::uuid",
+          [previousDefault.location_id, actor]);
+      await client.query(`INSERT INTO public.stock_lane_destinations(lane,location_id,updated_by)
+        VALUES($1,$2::uuid,$3) ON CONFLICT(lane) DO UPDATE SET location_id=excluded.location_id,updated_by=excluded.updated_by,updated_at=now()`,
+        [command.lane, locationId, actor]);
+    }
+    const result = { location_id: locationId, lane: command.lane, version: configured.version,
+      default_destination: defaultDestination, previous_destinations: previousDestinations };
     await client.query(`INSERT INTO public.stock_lane_configuration_events
       (location_id,request_id,request_hash,actor_user_id,reason,old_lane,new_lane,old_version,new_version,result_payload)
       VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,

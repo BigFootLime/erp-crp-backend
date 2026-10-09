@@ -1,5 +1,12 @@
 # Changelog
 
+## Reservation-backed lane routing — 2026-10-09
+
+- Configure one explicit physical receipt destination per lane; activate only when all three are valid.
+- Route new released output using canonical transfers; preserve receipt, lot and reservation evidence without consuming prepared BLs.
+- Serialize topology and Quality/receipt mutations before stock access; retain historical positions unchanged.
+- Combined business/UI acceptance prepared NOT RUN by user instruction.
+
 ## Released production attribution — 2026-10-09
 
 - Reserve actual affair remainders in current AR order without counting prepared BLs twice.

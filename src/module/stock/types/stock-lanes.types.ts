@@ -8,6 +8,7 @@ export type StockLaneLocation = {
   magasin_code: string;
   lane: StockLane | null;
   version: number;
+  default_destination: boolean;
   facts: StockLaneLocationFacts;
   choices: Array<{ value: StockLane; label: string; blockers: string[] }>;
 };
