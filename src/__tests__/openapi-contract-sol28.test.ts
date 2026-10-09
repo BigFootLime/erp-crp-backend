@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { GENERATED_ROUTE_INVENTORY } from "../swagger/generated-route-inventory";
 import { assertOpenApiRouteSecurity } from "../swagger/openapi-contract";
 import { swaggerSpec } from "../swagger/swagger";
+import { TERMINAL_ASSEMBLY_OPERATIONS } from "../swagger/terminal-assembly-contract";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -67,9 +68,12 @@ describe("SOL-28 generated OpenAPI contract", () => {
         expect(security, `${route.method} ${route.path}`).toEqual([
           sessionRequired ? { terminalDevice: [], terminalSession: [] } : { terminalDevice: [] },
         ]);
+        const assemblyScopes = TERMINAL_ASSEMBLY_OPERATIONS.includes(`${route.method} ${route.path}`)
+          ? ["releasedAssemblyOperationOnTerminalMachine", ...(route.method === "post" ? ["stockAccountRights", "transactionSessionScope"] : [])]
+          : [];
         expect(operation["x-cerp-rbac"]).toEqual(
           sessionRequired
-            ? ["terminalDeviceScope", "terminalSessionScope", "terminalKindScope"]
+            ? ["terminalDeviceScope", "terminalSessionScope", "terminalKindScope", ...assemblyScopes]
             : ["terminalDeviceScope"]
         );
         expect(operation["x-cerp-public-reason"]).toBeUndefined();

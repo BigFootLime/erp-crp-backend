@@ -104,6 +104,9 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
         // validations et sa transaction article / lien / audit.
         commercial_scope: "CLIENTS",
         client_ids: [pieceClientId],
+        is_sold: true,
+        unite: "u",
+        lot_tracking: true,
         stock_managed: input.stock_managed ?? true,
       },
     }).body

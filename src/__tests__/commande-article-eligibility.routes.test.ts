@@ -200,6 +200,9 @@ describe("BUG-CERP-0015 - validation serveur POST/PATCH commandes", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] }) // no converted forecast quantity
+      .mockResolvedValueOnce({ rows: [] }) // no firm contract call
+      .mockResolvedValueOnce({ rows: [] }) // no historical contract association
       .mockResolvedValueOnce({ rows: [{ id: "315" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
