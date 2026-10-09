@@ -29,6 +29,7 @@ import { verifyClientElectronicInvoiceAddress } from "../../facturation/electron
 import { requireFinanceCapability } from "../../facturation/middlewares/finance-authorization.middleware";
 import { postCrmCommand, readClientCrm, readCrmFollowups } from "../controllers/client-crm.controller";
 import { listContracts, listContractArticles, readContract, postContractCommand, listContractCalls } from "../controllers/client-contract.controller";
+import { listLegacyContractOrders, readLegacyContractPreview, postLegacyContractAssociation } from "../controllers/client-contract-legacy.controller";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
@@ -49,6 +50,9 @@ router.post("/:id/crm/commands", requireClientWriteRole, postCrmCommand);
 router.get("/:id/contracts", listContracts);
 router.get("/:id/contracts/articles", listContractArticles);
 router.get("/:id/contracts/:contractId/calls", listContractCalls);
+router.get("/:id/contracts/:contractId/legacy-orders", listLegacyContractOrders);
+router.get("/:id/contracts/:contractId/legacy-orders/:commandeId/preview", readLegacyContractPreview);
+router.post("/:id/contracts/:contractId/legacy-orders/associations", requireClientWriteRole, postLegacyContractAssociation);
 router.get("/:id/contracts/:contractId", readContract);
 router.post("/:id/contracts/commands", requireClientWriteRole, postContractCommand);
 // POST (et non GET) : SIRET/TVA/raison sociale ne doivent jamais transiter en query string.

@@ -5,12 +5,16 @@ import { deliveryContractBoundary, type DeliveryContractOrder } from "../domain/
 type Queryer = Pick<PoolClient, "query">
 
 export async function readDeliveryContractBoundary(tx: Queryer, deliveryId: string) {
+  // The rare explicit historical association uses the exclusive form after
+  // locking its canonical source. Ordinary BL transactions retain this shared
+  // lock until commit, so their next query sees one stable contract identity.
+  await tx.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('delivery-contract-binding',0))")
   const header = (await tx.query<{client_id:string}>(
     `SELECT client_id::text FROM public.bon_livraison WHERE id=$1::uuid`, [deliveryId],
   )).rows[0]
   if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "BL introuvable")
   // Resolve actual line/allocation identities, including multi-order BLs with no header order.
-  // Immutable call bindings require no extra lock after stock/reservation row locks.
+  // Firm-call and explicit historical bindings remain stable under the shared lock.
   const sources = await tx.query<DeliveryContractOrder & { has_unbound_lines:boolean }>(`
     WITH delivery_lines AS (
       SELECT line.id, line.commande_ligne_id, command_line.commande_id
@@ -31,10 +35,11 @@ export async function readDeliveryContractBoundary(tx: Queryer, deliveryId: stri
       JOIN public.commande_ligne_affaire_allocation source ON source.id=reservation.commande_ligne_affaire_allocation_id
     )
     SELECT command.id::text AS commande_id, command.client_id::text AS client_id,
-      command.order_type, call.contract_id::text AS contract_id,
+      command.order_type, COALESCE(call.contract_id,legacy.contract_id)::text AS contract_id,
       EXISTS(SELECT 1 FROM delivery_lines WHERE commande_id IS NULL) AS has_unbound_lines
     FROM source_ids source JOIN public.commande_client command ON command.id=source.commande_id
     LEFT JOIN public.client_contract_calls call ON call.commande_id=command.id
+    LEFT JOIN public.client_contract_legacy_orders legacy ON legacy.commande_id=command.id
     ORDER BY command.id
   `, [deliveryId])
   return deliveryContractBoundary({clientId:header.client_id, orders:sources.rows,
