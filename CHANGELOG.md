@@ -1,5 +1,10 @@
 # Changelog
 
+## Complete backend acceptance fixtures — 2026-10-10
+
+- Register seven CUMP suites in Vitest; refresh contract, lane and scope fixtures without weakening runtime guards (#1059).
+- Baseline failures reproduced; affected replay passed (15 files / 149 assertions). Full frozen run required before merge.
+
 ## Contract recipe corrections — 2026-10-10
 
 - Create manufactured client articles as sellable, lot-tracked units. Preserve existing links and historical articles; no schema migration.
