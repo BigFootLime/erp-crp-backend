@@ -5,9 +5,11 @@ import type {ClientContractArticle} from '../types/client-contract.types';
 type Queryer=Pick<PoolClient,'query'>;
 const FIELDS=`f.id::text,f.contract_id::text,f.contract_line_id::text,f.root_article_id::text,f.unit_id::text,
   f.article_snapshot,to_char(f.month,'YYYY-MM') AS month,f.quantity::text,f.delivery_due::text,f.estimate_date::text,
-  f.status,f.version,f.created_at::text,f.updated_at::text,f.updated_by,actor.username AS actor_label`;
+  f.status,f.version,f.created_at::text,f.updated_at::text,f.updated_by,actor.username AS actor_label,
+  coverage.converted_quantity::text,coverage.remaining_quantity::text`;
 export const CLIENT_FORECAST_LIST_SQL=`WITH source AS MATERIALIZED (
   SELECT ${FIELDS} FROM public.client_contract_forecasts f JOIN public.users actor ON actor.id=f.updated_by
+  JOIN public.v_client_contract_forecast_coverage coverage ON coverage.forecast_id=f.id
   WHERE f.contract_id=$1::uuid AND f.month>=$2::date AND f.month<($2::date+make_interval(months=>$3::int))::date
 ),page AS (SELECT * FROM source ORDER BY month,article_snapshot->>'code',id LIMIT 25 OFFSET $4)
 SELECT (SELECT count(*)::int FROM source) AS total,
@@ -20,7 +22,8 @@ export async function listClientForecasts(db:Queryer,id:string,query:ClientForec
 }
 export async function readClientForecast(db:Queryer,contractId:string,id:string) {
   return (await db.query<ClientContractForecast>(`SELECT ${FIELDS} FROM public.client_contract_forecasts f
-    JOIN public.users actor ON actor.id=f.updated_by WHERE f.contract_id=$1::uuid AND f.id=$2::uuid`,[contractId,id])).rows[0]??null;
+    JOIN public.users actor ON actor.id=f.updated_by JOIN public.v_client_contract_forecast_coverage coverage ON coverage.forecast_id=f.id
+    WHERE f.contract_id=$1::uuid AND f.id=$2::uuid`,[contractId,id])).rows[0]??null;
 }
 export async function lockClientForecast(db:Queryer,contractId:string,command:ClientForecastCommand) {
   const row=(await db.query<{id:string}>(command.action==='SAVE'
@@ -39,6 +42,17 @@ export async function readClientForecastHistory(db:Queryer,id:string,page:number
     JOIN public.users actor ON actor.id=e.actor_user_id WHERE e.forecast_id=$1::uuid ORDER BY e.created_at DESC,e.id DESC
     LIMIT 25 OFFSET $2`,[id,(page-1)*25])).rows;
   const total=(await db.query<{total:number}>(`SELECT count(*)::int AS total FROM public.client_contract_forecast_events WHERE forecast_id=$1::uuid`,[id])).rows[0].total;
+  return {items,total,page,page_size:25};
+}
+export async function readClientForecastConversions(db:Queryer,id:string,page:number) {
+  const items=(await db.query(`SELECT a.id::text,a.quantity::text,a.forecast_version_before,a.created_at::text,
+    actor.username AS actor_label,call.commande_id::text,commande.numero,call.customer_reference,
+    cl.commande_ligne_id::text,cl.initial_due_date::text,line.delai_client AS current_due_date,line.quantite::text AS current_qty
+    FROM public.client_forecast_call_allocations a JOIN public.users actor ON actor.id=a.actor_user_id
+    JOIN public.client_contract_call_lines cl ON cl.id=a.call_line_id JOIN public.client_contract_calls call ON call.id=cl.call_id
+    JOIN public.commande_client commande ON commande.id=call.commande_id JOIN public.commande_ligne line ON line.id=cl.commande_ligne_id
+    WHERE a.forecast_id=$1::uuid ORDER BY a.created_at DESC,a.id DESC LIMIT 25 OFFSET $2`,[id,(page-1)*25])).rows;
+  const total=(await db.query<{total:number}>(`SELECT count(*)::int AS total FROM public.client_forecast_call_allocations WHERE forecast_id=$1::uuid`,[id])).rows[0].total;
   return {items,total,page,page_size:25};
 }
 export async function saveClientForecast(db:Queryer,input:{id:string;contractId:string;command:Extract<ClientForecastCommand,{action:'SAVE'}>;

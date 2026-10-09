@@ -1,5 +1,11 @@
 # Changelog
 
+## Explicit forecast conversion — 2026-10-09
+
+- Convert monthly estimates into the canonical firm order aggregate with explicit retained allocations.
+- Preserve estimate/firm quantities, versions and immutable links; enforce exact replay, guards and atomic outbox.
+- Common métier/UI acceptance prepared NOT RUN; cumulative coverage and fixed-batch OF proposals follow separately.
+
 ## Monthly customer estimates — 2026-10-09
 
 - Record monthly customer estimates on contract article families with quantity, due date and customer estimate date.

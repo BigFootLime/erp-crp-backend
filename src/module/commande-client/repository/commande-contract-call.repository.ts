@@ -9,9 +9,10 @@ import {readClientContract} from '../../client/repository/client-contract.reposi
 import type {ClientContract,ClientContractArticle,ClientContractLine} from '../../client/types/client-contract.types';
 import type {CreateCommandeInput,UploadedDocument} from '../types/commande-client.types';
 import {assertLegacyContractOrderMutable,assertNoLegacyContractAssociation} from './commande-contract-legacy-guards.repository';
+import {prepareForecastAllocations,recordForecastAllocations,assertForecastFirmQuantities,type PreparedForecastAllocation} from './commande-contract-forecast.repository';
 type Queryer=Pick<PoolClient,'query'>;
 type SelectedLine={contractLine:ClientContractLine;article:ClientContractArticle;index:number};
-export type ContractCallContext={id:string;contract:ClientContract;actor:number;key:string;hash:string;lines:SelectedLine[]};
+export type ContractCallContext={id:string;contract:ClientContract;actor:number;key:string;hash:string;lines:SelectedLine[];allocations:PreparedForecastAllocation[]};
 
 /** Caught only after the upload transaction confirms rollback and cleans this retry's fresh files. */
 export class ContractCallReplay extends Error {
@@ -32,7 +33,7 @@ export async function prepareContractCall(tx:Queryer,input:CreateCommandeInput,a
   if(input.order_type==='CADRE')throw new HttpError(409,'CLIENT_MASTER_CONTRACT_REQUIRED','Définissez le contrat dans la fiche client, puis créez un appel de commande ferme');
   const request=input.client_contract_call;
   if(!request) {
-    if(input.lignes.some(line=>line.client_contract_line_id))throw new HttpError(422,'CONTRACT_CALL_REQUIRED','Choisissez le contrat de ces articles');
+    if(input.lignes.some(line=>line.client_contract_line_id||line.client_forecast_allocations?.length))throw new HttpError(422,'CONTRACT_CALL_REQUIRED','Choisissez le contrat de ces articles');
     return null;
   }
   if(!actor||!input.client_id||(input.order_type??'FERME')!=='FERME')
@@ -72,7 +73,8 @@ export async function prepareContractCall(tx:Queryer,input:CreateCommandeInput,a
       throw new HttpError(422,'CONTRACT_CALL_QUANTITY_DATE','Quantité ou délai client invalide',{field:`lignes.${index}.quantite`});
     return {contractLine,article,index};
   });
-  return {id:randomUUID(),contract,actor,key:request.idempotency_key,hash,lines};
+  const allocations=await prepareForecastAllocations(tx,input,contract.id);
+  return {id:randomUUID(),contract,actor,key:request.idempotency_key,hash,lines,allocations};
 }
 export async function recordContractCall(tx:Queryer,context:ContractCallContext|null,commandeId:string,input:CreateCommandeInput) {
   if(!context)return;
@@ -88,22 +90,25 @@ export async function recordContractCall(tx:Queryer,context:ContractCallContext|
     const row=saved[selected.index],line=input.lignes[selected.index];
     if(row.article_id!==selected.article.article_id||row.piece_technique_version_id!==selected.article.piece_technique_version_id)
       throw new Error('CONTRACT_CALL_CANONICAL_LINE_MISMATCH');
-    await tx.query(`INSERT INTO public.client_contract_call_lines(call_id,contract_id,contract_line_id,commande_ligne_id,article_id,
+    const binding=(await tx.query<{id:string}>(`INSERT INTO public.client_contract_call_lines(call_id,contract_id,contract_line_id,commande_ligne_id,article_id,
       piece_technique_version_id,unit_id,initial_qty,initial_due_date,article_snapshot,replenishment_qty)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,$5::uuid,$6::uuid,$7::uuid,$8,$9::date,$10::jsonb,$11)`,
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,$5::uuid,$6::uuid,$7::uuid,$8,$9::date,$10::jsonb,$11) RETURNING id::text`,
     [context.id,context.contract.id,selected.contractLine.id,row.id,selected.article.article_id,selected.article.piece_technique_version_id,
-      selected.article.unit_id,line.quantite,line.delai_client,JSON.stringify(selected.article),selected.contractLine.replenishment_qty]);
+       selected.article.unit_id,line.quantite,line.delai_client,JSON.stringify(selected.article),selected.contractLine.replenishment_qty])).rows[0];
+    await recordForecastAllocations(tx,context.allocations,binding.id,selected.index,context.actor);
   }
   await repoInsertAuditLog({tx,user_id:context.actor,ip:null,user_agent:null,device_type:null,os:null,browser:null,
     body:{event_type:'ACTION',action:'CLIENT_CONTRACT_CALL_CREATED',entity_type:'commande-client',entity_id:commandeId,
-      page_key:'commandes.client-contract-call',details:{call_id:context.id,contract_id:context.contract.id,contract_version:context.contract.version}}});
+      page_key:'commandes.client-contract-call',details:{call_id:context.id,contract_id:context.contract.id,contract_version:context.contract.version,
+        forecast_allocations:context.allocations.map(item=>({forecast_id:item.forecast.id,quantity:item.quantity,version_before:item.forecast.version}))}}});
   const at=new Date().toISOString();
   await enqueueEntityChanged(tx,{module:'clients',entityType:'CLIENT',entityId:context.contract.client_id,action:'updated',at,
-    invalidateKeys:[`client:${context.contract.client_id}`]},{deduplicationKey:`contract-call:${context.id}:client`});
+    invalidateKeys:[`client:${context.contract.client_id}`,'client-contract-forecasts']},{deduplicationKey:`contract-call:${context.id}:client`});
   await enqueueEntityChanged(tx,{module:'commandes',entityType:'COMMANDE_CLIENT',entityId:commandeId,action:'created',at,
     invalidateKeys:['commandes:list',`commandes:detail:${commandeId}`]},{deduplicationKey:`contract-call:${context.id}:order`});
 }
 export async function assertContractCallMutable(tx:Queryer,commandeId:string,input:CreateCommandeInput) {
+  await assertForecastFirmQuantities(tx,commandeId,input);
   const call=(await tx.query<{contract_id:string;client_id:string}>(`SELECT contract_id::text,client_id FROM public.client_contract_calls
     WHERE commande_id=$1::bigint`,[commandeId])).rows[0];
   if(!call) {
