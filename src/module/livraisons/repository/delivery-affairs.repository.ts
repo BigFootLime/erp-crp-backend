@@ -15,7 +15,8 @@ WITH sources AS (
     COALESCE(line.designation,article.designation) AS designation,
     line.unite AS unit, technical.indice AS article_indice,
     promise.initial_due_date::text AS ar_due_date, line.delai_client::text AS requested_due_date,
-    call.contract_id, call.contract_snapshot->>'reference' AS contract_reference
+    COALESCE(call.contract_id,legacy.contract_id) AS contract_id,
+    COALESCE(call.contract_snapshot->>'reference',legacy.contract_snapshot->>'reference') AS contract_reference
   FROM public.commande_ligne_affaire_allocation allocation
   JOIN public.commande_client command ON command.id=allocation.commande_id
   JOIN public.commande_ligne line ON line.id=allocation.commande_ligne_id AND line.commande_id=command.id
@@ -25,6 +26,7 @@ WITH sources AS (
   LEFT JOIN public.piece_technique_versions technical ON technical.id=line.piece_technique_version_id
   LEFT JOIN public.delivery_promise_roots promise ON promise.allocation_id=allocation.id
   LEFT JOIN public.client_contract_calls call ON call.commande_id=command.id
+  LEFT JOIN public.client_contract_legacy_orders legacy ON legacy.commande_id=command.id
   WHERE command.order_type<>'INTERNE'
     AND affaire.statut::text NOT IN ('ANNULE','ANNULEE','CANCELLED')
     AND allocation.qty_ordered>0

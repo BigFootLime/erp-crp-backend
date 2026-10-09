@@ -1,5 +1,11 @@
 # Changelog
 
+## Historical CADRE association — 2026-10-09
+
+- Explicitly associate historical CADRE with same-client contracts using actual family/unit identities and immutable source snapshots.
+- Preserve ordered indices, AR/OLD/stock evidence; enforce canonical composition and BL scope, audit and exact request replay.
+- Common métier/UI acceptance prepared NOT RUN; dedicated proforma payment isolation remains pending.
+
 ## Delivery affair backlog — 2026-10-09
 
 - Show article affairs before stock reservation; retain client/PO/technical identity and initial sent-AR evidence.

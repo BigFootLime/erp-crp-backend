@@ -14,7 +14,7 @@ import { getClientContracts,getClientContractArticles,getClientContract,getClien
 function canWrite(req:Request) {
   return hasGrantedAccountModuleAccess()||effectiveRoleHasAny(req.user?.role,CLIENT_WRITE_ROLES);
 }
-function auditContext(req:Request):AuditContext {
+export function clientContractAuditContext(req:Request):AuditContext {
   const userId=req.user?.id;
   if(typeof userId!=="number"||!Number.isInteger(userId)||userId<1)throw new HttpError(401,"UNAUTHORIZED","Connexion requise");
   const userAgent=typeof req.headers["user-agent"]==="string"?req.headers["user-agent"]:null;
@@ -47,7 +47,7 @@ export const readContract:RequestHandler=async(req,res,next)=>{
 export const postContractCommand:RequestHandler=async(req,res,next)=>{
   try {
     const saved=await executeClientContractCommand(contractClientIdSchema.parse(req.params.id),
-      clientContractCommandSchema.parse(req.body),contractIdempotencySchema.parse(req.headers["idempotency-key"]),auditContext(req));
+      clientContractCommandSchema.parse(req.body),contractIdempotencySchema.parse(req.headers["idempotency-key"]),clientContractAuditContext(req));
     res.setHeader("Cache-Control","no-store");res.setHeader("Idempotency-Replayed",saved.replayed?"true":"false");
     res.status(saved.replayed?200:201).json(saved.result);
   } catch(error){next(error);}
