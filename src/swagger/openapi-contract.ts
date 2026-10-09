@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 import { clientCrmOperation, clientCrmSchemas } from "./client-crm-contract";
+import { clientContractOperation, clientContractSchemas } from "./client-contract-contract";
 import { assemblyComponentOperation, assemblyComponentSchemas } from './assembly-component-contract';
 import { terminalAssemblyOperation, TERMINAL_ASSEMBLY_OPERATIONS } from './terminal-assembly-contract';
 import { stockValuationOperation } from './stock-valuation-contract';
@@ -214,7 +215,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     };
   }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return productionReceiptLanesOperation(key, stockLanesOperation(key, enriched));
+  return clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched)));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -344,6 +345,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
     schemas: {
       ...receiptProcessingSchemas,
       ...clientCrmSchemas,
+      ...clientContractSchemas,
       ...assemblyComponentSchemas,
       ...assemblyComponentReturnSchemas,
       ...legacySchemas,
