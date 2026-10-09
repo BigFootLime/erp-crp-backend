@@ -4,6 +4,7 @@ import { STOCK_LANES } from "../domain/stock-lanes";
 export const stockLaneLocationParams = z.object({ locationId: z.string().uuid() }).strict();
 export const stockLaneConfigurationCommand = z.object({
   lane: z.enum(STOCK_LANES),
+  default_destination: z.boolean().optional(),
   expected_version: z.number().int().min(0).max(2147483647),
   request_id: z.string().uuid(),
   reason: z.string().trim().min(3).max(500),

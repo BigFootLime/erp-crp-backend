@@ -21,6 +21,8 @@ import { reserveProducedDeliveryDemands } from "./receipt-delivery-reservations.
 import { assertReceiptLaneAssignmentsInstalled, calculateReceiptLaneAssignment, recordReceiptLaneAssignment, registerReceiptLaneIntent, snapshotReceiptReservations } from "./receipt-lane-assignments.repository";
 import type { ReceiptLaneDistribution } from "../domain/receipt-lane-distribution";
 import { formatCumpDecimal, parseCumpDecimal } from "../../stock/domain/cump-decimal";
+import { lockStockLaneTopology } from "../../stock/repository/stock-lane-routing.repository";
+import { routeReceiptLaneDistributionTx } from "../../stock/repository/receipt-lane-transfer.repository";
 
 type ReleasedReceiptOutput = {
   of_id: number; article_id: string; location_id: string; stock_level_id: string;
@@ -43,6 +45,7 @@ async function reserveReleasedReceiptOutput(tx: Pick<PoolClient, "query">, args:
 
 /** Preserve legacy grouped releases; new receipt intents also cover single OFs and assemblies. */
 export async function reconcileReleasedConsolidationLot(tx: Pick<PoolClient, "query">, lotId: string, userId: number) {
+  await lockStockLaneTopology(tx);
   await assertReceiptLaneAssignmentsInstalled(tx);
   await reconcileLegacyReleasedConsolidationLot(tx, lotId, userId);
   const pending = (await tx.query<{
@@ -100,7 +103,10 @@ export async function reconcileReleasedConsolidationLot(tx: Pick<PoolClient, "qu
     if (receipt.of_status !== "ANNULE")
       await reserveReleasedReceiptOutput(tx, { ...receipt, qty_ok: Number(quantity), lot_id: lotId,
         actor_user_id: userId, quality_gate_already_held: true });
-    const distribution = await calculateReceiptLaneAssignment(tx, receipt.stock_batch_id, quantity, before);
+    const allocation = await calculateReceiptLaneAssignment(tx, receipt.stock_batch_id, quantity, before);
+    const distribution = await routeReceiptLaneDistributionTx(tx, { ...receipt, lot_id: lotId, distribution: allocation },
+      { user_id: userId, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null,
+        page_key: "production", client_session_id: null });
     await recordReceiptLaneAssignment(tx, receipt.receipt_id, distribution, userId, assignmentGate);
     const audit = await repoInsertAuditLog({ tx, user_id: userId, ip: null, user_agent: null,
       device_type: null, os: null, browser: null, body: { event_type: "ACTION",
@@ -1219,6 +1225,7 @@ export async function repoCreateOfReceipt(params: {
   const client = await pool.connect();
   const requestHash = receiptRequestHash(params.of_id, params.body);
   return withRealtimeOutboxTransaction(client, async (client) => {
+    await lockStockLaneTopology(client);
     await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
       `of-receipt:${params.audit.user_id}:${params.idempotency_key}`,
     ]);
@@ -1665,21 +1672,23 @@ export async function repoCreateOfReceipt(params: {
     }
 
     const reservationSnapshot = await snapshotReceiptReservations(client, stockBatchId);
-    const autoReservation = params.body.quality_status === "LIBERE"
-      ? await reserveReleasedReceiptOutput(client, {
+    if (params.body.quality_status === "LIBERE") await reserveReleasedReceiptOutput(client, {
           of_id: params.of_id, article_id: article.id, location_id: map.location_id,
           stock_level_id: stockLevelId, stock_batch_id: stockBatchId, lot_id: lotId,
           movement_id: movementId, qty_ok: params.body.qty_ok, actor_user_id: params.audit.user_id,
           quality_gate_already_held: qualityDecision !== null, order_type: ofRow.order_type,
           internal_order_purpose: ofRow.internal_order_purpose,
           commande_ligne_id: ofRow.commande_ligne_id, livraison_affaire_id: ofRow.affaire_id,
-        }) : null;
-    const laneDistribution = params.body.quality_status === "LIBERE"
+        });
+    const receiptId = randomUUID();
+    const allocation = params.body.quality_status === "LIBERE"
       ? await calculateReceiptLaneAssignment(client, stockBatchId, String(params.body.qty_ok), reservationSnapshot) : null;
+    const laneDistribution = allocation ? await routeReceiptLaneDistributionTx(client, { receipt_id: receiptId,
+      article_id: article.id, lot_id: lotId, stock_level_id: stockLevelId, stock_batch_id: stockBatchId,
+      location_id: map.location_id, distribution: allocation }, params.audit) : null;
     const reservedQuantity = laneDistribution?.destinations.reduce((sum, destination) =>
       sum + (destination.lane === "FREE" ? 0n : parseCumpDecimal(destination.quantity)), 0n) ?? 0n;
 
-    const receiptId = randomUUID();
     const receiptResult: OfReceiptResult = {
       receipt_id: receiptId,
       lot_id: lotId,
@@ -1690,7 +1699,7 @@ export async function repoCreateOfReceipt(params: {
       qty_scrap: params.body.qty_scrap,
       qty_rework: params.body.qty_rework,
       quality_status: params.body.quality_status,
-      reservation_id: autoReservation?.reservation_id ?? null,
+      reservation_id: laneDistribution?.destinations.flatMap(destination => destination.reservations)[0]?.reservation_id ?? null,
       reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
       auto_reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
       available_qty: params.body.quality_status === "LIBERE"
@@ -1761,14 +1770,14 @@ export async function repoCreateOfReceipt(params: {
         stockLevelId,
         stockBatchId,
         movementId,
-        autoReservation?.reservation_id ?? null,
+        receiptResult.reservation_id,
         nonConformityId,
       ]
     );
 
     await registerReceiptLaneIntent(client, receiptId);
     if (laneDistribution) await recordReceiptLaneAssignment(client, receiptId, laneDistribution, params.audit.user_id, qualityDecision);
-    const automaticReservationIds = autoReservation?.reservation_ids ?? [];
+    const automaticReservationIds = laneDistribution?.destinations.flatMap(destination => destination.reservations.map(item => item.reservation_id)) ?? [];
     await insertAuditLog(client, params.audit, {
       action: "production.of.receipt",
       entity_type: "ordres_fabrication",
@@ -1787,7 +1796,7 @@ export async function repoCreateOfReceipt(params: {
         movement_no: movementNo,
         commande_ligne_id: ofRow.commande_ligne_id ?? null,
         article_id: article.id,
-        auto_reservation_id: autoReservation?.reservation_id ?? null,
+        auto_reservation_id: receiptResult.reservation_id,
         auto_reservation_ids: automaticReservationIds,
         auto_reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
         non_conformity_id: nonConformityId,
