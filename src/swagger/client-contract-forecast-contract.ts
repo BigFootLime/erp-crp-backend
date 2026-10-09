@@ -6,6 +6,20 @@ const ref=(name:string)=>({$ref:`#/components/schemas/${name}`});
 const page=(items:Schema)=>object({items:{type:'array',maxItems:25,items},total:{type:'integer',minimum:0},page:version,page_size:{type:'integer',enum:[25]}});
 const result=object({event_id:uuid,forecast:ref('ClientContractForecast')});
 export const clientContractForecastSchemas:Schema={
+  ClientContractCoverageDemand:object({id:text,kind:{...text,enum:['FIRM','FORECAST']},article_id:uuid,unit:text,
+    contract_id:{...uuid,nullable:true},contract_line_id:{...uuid,nullable:true},order_line_id:{...text,nullable:true},
+    allocation_id:{...text,nullable:true},quantity:text,due_date:date,month,target_date:date}),
+  ClientContractCoverageSource:object({id:text,kind:{...text,enum:['RESERVED','FREE','PRODUCTION']},article_id:uuid,unit:text,
+    quantity:text,available_date:{...date,nullable:true},order_line_id:{...text,nullable:true},allocation_id:{...text,nullable:true},reference_id:text,label:text}),
+  ClientContractCoverageAllocation:object({demand_id:text,source_id:text,kind:{...text,enum:['RESERVED','FREE','PRODUCTION']},quantity:text}),
+  ClientContractCoverageMonth:object({month,target_date:date,end_date:date,forecast_quantity:text,firm_quantity:text,
+    reserved_quantity:text,free_quantity:text,production_quantity:text,missing_quantity:text,
+    cumulative_demand:text,cumulative_covered:text,cumulative_missing:text,target_overdue:{type:'boolean'}}),
+  ClientContractCoverage:object({contract_id:uuid,contract_version:version,generated_at:{...text,format:'date-time'},
+    planning_revision:{...text,nullable:true},start_month:month,months:{type:'integer',minimum:1,maximum:36},readonly:{type:'boolean',enum:[true]},snapshot_hash:{...text,pattern:'^[a-f0-9]{64}$'},
+    lines:{type:'array',items:object({contract_line_id:uuid,replenishment_qty:text,article:ref('ClientContractArticle'),months:{type:'array',maxItems:36,items:ref('ClientContractCoverageMonth')}})},
+    demands:{type:'array',maxItems:5000,items:ref('ClientContractCoverageDemand')},sources:{type:'array',maxItems:10000,items:ref('ClientContractCoverageSource')},
+    allocations:{type:'array',items:ref('ClientContractCoverageAllocation')},issues:{type:'array',items:object({code:text,message:text,reference_id:text},['code','message'])}}),
   ClientContractForecast:object({id:uuid,contract_id:uuid,contract_line_id:uuid,root_article_id:uuid,unit_id:uuid,
     article_snapshot:ref('ClientContractArticle'),month,quantity:{...text,pattern:'^[0-9]+(\\.[0-9]{1,3})?$'},delivery_due:date,estimate_date:date,
     status:{...text,enum:['ACTIVE','CANCELLED']},version,created_at:{...text,format:'date-time'},updated_at:{...text,format:'date-time'},updated_by:version,actor_label:text,
@@ -25,6 +39,13 @@ export const clientContractForecastSchemas:Schema={
 };
 export function clientContractForecastOperation(key:string,operation:Schema):Schema {
   const root='/clients/{id}/contracts/{contractId}/forecasts';
+  if(key==='get /clients/{id}/contracts/{contractId}/coverage')return {...operation,summary:'Calculer la couverture mensuelle cumulative du contrat',
+    description:'Lecture cohérente : ferme réellement restant + estimation non convertie, stock FREE NEW libéré par la qualité et OF producteurs engagés à temps. Chaque source est partagée une fois entre tous les contrats et commandes concurrentes ; les réservations et parts de regroupement restent dédiées. Ne réserve rien et ne génère aucun OF. Une cible passée est conservée. Les anciens appels CADRE non rapprochés, livraisons historiques sans allocation, unités incohérentes ou périmètres incomplets empêchent une synthèse automatique.',
+    parameters:[{name:'id',in:'path',required:true,schema:text},{name:'contractId',in:'path',required:true,schema:uuid},
+      {name:'start_month',in:'query',required:false,schema:month},{name:'months',in:'query',required:false,schema:{type:'integer',minimum:1,maximum:36,default:12}}],
+    responses:{...operation.responses,'200':{description:'Synthèse en lecture seule et preuves propres au contrat.',content:{'application/json':{schema:ref('ClientContractCoverage')}}},
+      '404':{description:'Client ou contrat introuvable.'},'409':{description:'Définition technique, appels CADRE historiques ou livraisons à rapprocher.'},
+      '422':{description:'Horizon ou périmètre trop grand ; aucune synthèse partielle.'}}};
   if(![`get ${root}`,`get ${root}/{forecastId}/history`,`post ${root}/commands`].includes(key))return operation;
   const history=key.endsWith('/history'),write=key.startsWith('post ');
   const parameters:Schema[]=[{name:'id',in:'path',required:true,schema:{...text,minLength:1,maxLength:128,pattern:'^[a-zA-Z0-9_-]+$'}},

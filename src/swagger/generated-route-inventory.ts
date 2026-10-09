@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "4426de5d91f3b0eb5bb5379361422eca118b023a433b8e5820f914b1f680fa23";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "1f1a0e1879bbbc2dbdd97d13cfe42e32370f83b6dbf7aed5fcacdfccbb251c1b";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -2828,7 +2828,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:46",
+    "source": "src/module/client/routes/client.routes.ts:47",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2844,7 +2844,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients",
-    "source": "src/module/client/routes/client.routes.ts:45",
+    "source": "src/module/client/routes/client.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2862,7 +2862,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/addresses",
-    "source": "src/module/client/routes/client.routes.ts:66",
+    "source": "src/module/client/routes/client.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2878,7 +2878,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:64",
+    "source": "src/module/client/routes/client.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2894,7 +2894,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{clientId}/contacts",
-    "source": "src/module/client/routes/client.routes.ts:65",
+    "source": "src/module/client/routes/client.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2912,7 +2912,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:98",
+    "source": "src/module/client/routes/client.routes.ts:100",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2930,7 +2930,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:78",
+    "source": "src/module/client/routes/client.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2946,7 +2946,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}",
-    "source": "src/module/client/routes/client.routes.ts:94",
+    "source": "src/module/client/routes/client.routes.ts:96",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2964,7 +2964,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/archive",
-    "source": "src/module/client/routes/client.routes.ts:100",
+    "source": "src/module/client/routes/client.routes.ts:102",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2982,7 +2982,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/clients/{id}/contact",
-    "source": "src/module/client/routes/client.routes.ts:103",
+    "source": "src/module/client/routes/client.routes.ts:105",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3000,7 +3000,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts",
-    "source": "src/module/client/routes/client.routes.ts:51",
+    "source": "src/module/client/routes/client.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3016,7 +3016,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/{contractId}",
-    "source": "src/module/client/routes/client.routes.ts:60",
+    "source": "src/module/client/routes/client.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3032,7 +3032,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/{contractId}/calls",
-    "source": "src/module/client/routes/client.routes.ts:53",
+    "source": "src/module/client/routes/client.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3047,8 +3047,24 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/clients/{id}/contracts/{contractId}/coverage",
+    "source": "src/module/client/routes/client.routes.ts:55",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "readClientContractCoverage"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/clients/{id}/contracts/{contractId}/forecasts",
-    "source": "src/module/client/routes/client.routes.ts:54",
+    "source": "src/module/client/routes/client.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3064,7 +3080,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/{contractId}/forecasts/{forecastId}/history",
-    "source": "src/module/client/routes/client.routes.ts:55",
+    "source": "src/module/client/routes/client.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3080,7 +3096,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/contracts/{contractId}/forecasts/commands",
-    "source": "src/module/client/routes/client.routes.ts:56",
+    "source": "src/module/client/routes/client.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3098,7 +3114,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/{contractId}/legacy-orders",
-    "source": "src/module/client/routes/client.routes.ts:57",
+    "source": "src/module/client/routes/client.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3114,7 +3130,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/{contractId}/legacy-orders/{commandeId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:58",
+    "source": "src/module/client/routes/client.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3130,7 +3146,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/contracts/{contractId}/legacy-orders/associations",
-    "source": "src/module/client/routes/client.routes.ts:59",
+    "source": "src/module/client/routes/client.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3148,7 +3164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/contracts/articles",
-    "source": "src/module/client/routes/client.routes.ts:52",
+    "source": "src/module/client/routes/client.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3164,7 +3180,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/contracts/commands",
-    "source": "src/module/client/routes/client.routes.ts:61",
+    "source": "src/module/client/routes/client.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3182,7 +3198,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot",
-    "source": "src/module/client/routes/client.routes.ts:68",
+    "source": "src/module/client/routes/client.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3198,7 +3214,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/client/routes/client.routes.ts:70",
+    "source": "src/module/client/routes/client.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3214,7 +3230,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:69",
+    "source": "src/module/client/routes/client.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3230,7 +3246,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/client/routes/client.routes.ts:71",
+    "source": "src/module/client/routes/client.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3246,7 +3262,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/crm",
-    "source": "src/module/client/routes/client.routes.ts:49",
+    "source": "src/module/client/routes/client.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3262,7 +3278,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/crm/commands",
-    "source": "src/module/client/routes/client.routes.ts:50",
+    "source": "src/module/client/routes/client.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3280,7 +3296,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/electronic-invoicing/verify",
-    "source": "src/module/client/routes/client.routes.ts:79",
+    "source": "src/module/client/routes/client.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3300,7 +3316,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/official-documents",
-    "source": "src/module/client/routes/client.routes.ts:73",
+    "source": "src/module/client/routes/client.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3316,7 +3332,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/official-documents",
-    "source": "src/module/client/routes/client.routes.ts:74",
+    "source": "src/module/client/routes/client.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3334,7 +3350,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/official-documents/{documentId}/download",
-    "source": "src/module/client/routes/client.routes.ts:76",
+    "source": "src/module/client/routes/client.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3350,7 +3366,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/client/routes/client.routes.ts:75",
+    "source": "src/module/client/routes/client.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3366,7 +3382,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/client/routes/client.routes.ts:77",
+    "source": "src/module/client/routes/client.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3382,7 +3398,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/analytics",
-    "source": "src/module/client/routes/client.routes.ts:47",
+    "source": "src/module/client/routes/client.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3398,7 +3414,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/clients/crm/followups",
-    "source": "src/module/client/routes/client.routes.ts:48",
+    "source": "src/module/client/routes/client.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3414,7 +3430,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/clients/duplicate-check",
-    "source": "src/module/client/routes/client.routes.ts:63",
+    "source": "src/module/client/routes/client.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",

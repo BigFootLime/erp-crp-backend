@@ -1,5 +1,11 @@
 # Changelog
 
+## Cumulative client demand coverage — 2026-10-09
+
+- Project remaining firm/forecast demand against shared quality-released stock and committed on-time producers.
+- Preserve dedicated stock/producer shares, consume each source once, retain monthly targets and expose a read-only CERP panel.
+- Common métier/UI acceptance prepared NOT RUN; fixed-batch OF proposals/generation and historical CADRE release mapping follow separately.
+
 ## Explicit forecast conversion — 2026-10-09
 
 - Convert monthly estimates into the canonical firm order aggregate with explicit retained allocations.
