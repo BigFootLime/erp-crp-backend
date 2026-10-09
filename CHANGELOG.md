@@ -1,5 +1,12 @@
 # Changelog
 
+## Client contract calls — 2026-10-09
+
+- Bind firm calls to client master contracts through the canonical order aggregate.
+- Preserve initial article/index, quantity/date and actual canonical line identity, with atomic replay, audit and outbox.
+- Use CERP source fields, historical call tables, scoped retries and proactive identity/retention guards.
+- Combined business/UI acceptance prepared NOT RUN; explicit legacy CADRE migration remains pending.
+
 ## Client contract catalog — 2026-10-09
 
 - Add client-owned contracts, validated article-family selection and explicit replenishment batches.

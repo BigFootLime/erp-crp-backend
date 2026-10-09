@@ -191,6 +191,7 @@ export type CommandeToAffaire = {
 };
 
 export type CommandeLigneInput = {
+  client_contract_line_id?: string | null;
   id?: number;
   article_id?: string | null;
   piece_technique_id?: string | null;
@@ -248,6 +249,7 @@ export type CommandeEcheanceInput = {
 };
 
 export type CreateCommandeInput = {
+  client_contract_call?: {contract_id:string;expected_version:number;idempotency_key:string} | null;
   numero?: string;
   client_id?: string | null;
   devis_id?: number | null;
