@@ -1,5 +1,12 @@
 # Changelog
 
+## Physical stock lane foundation — 2026-10-09
+
+- Add versioned physical lane roles and immutable configuration evidence without moving stock or creating another balance.
+- Expose canonical per-lot positions, reservation purposes and explicit physical-only availability scope.
+- Preserve historical zones, OLD/NEW, quality and occupied reservations; automatic routing remains inactive pending #1029.
+- Compile/OpenAPI checks pass; combined business acceptance is prepared NOT RUN.
+
 ## Sourced supplier recommendations — #1025
 
 - Add exact OF/version/comparison context, displayed-evidence SHA, current order/catalogue/review references and existing ranking contributions.
