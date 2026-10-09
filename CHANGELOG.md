@@ -1,5 +1,12 @@
 # Changelog
 
+## Released production attribution — 2026-10-09
+
+- Reserve actual affair remainders in current AR order without counting prepared BLs twice.
+- Attribute new simple, component, assembly, internal-contract and grouped receipts after real Quality release, with immutable deltas and no duplicate stock entry.
+- Restore the receipt response fields required by the existing UI; reject stock quantities exceeding numeric(18,3).
+- Physical lane transfers are still inactive. Combined business/UI acceptance remains prepared NOT RUN.
+
 ## Physical stock lane foundation — 2026-10-09
 
 - Add versioned physical lane roles and immutable configuration evidence without moving stock or creating another balance.

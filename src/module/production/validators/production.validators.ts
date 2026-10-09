@@ -281,12 +281,17 @@ export const ofOperationIdParamSchema = z.object({
 export const ofReceiptQualityStatusSchema = z.enum(["LIBERE", "QUARANTAINE", "BLOQUE"]);
 export type OfReceiptQualityStatusDTO = z.infer<typeof ofReceiptQualityStatusSchema>;
 
+const receiptStockQuantitySchema = z.coerce.number().finite().nonnegative().refine(
+  value => value < 1_000_000_000_000_000 && /^\d+(?:\.\d{1,3})?$/.test(String(value)),
+  "La quantité doit tenir dans le stock et comporter au maximum trois décimales.",
+);
+
 export const ofReceiptBodySchema = z
   .object({
     article_id: uuid.optional(),
-    qty_ok: z.coerce.number().positive(),
-    qty_scrap: z.coerce.number().min(0).optional().default(0),
-    qty_rework: z.coerce.number().min(0).optional().default(0),
+    qty_ok: receiptStockQuantitySchema.refine(value => value > 0, "La quantité reçue doit être positive."),
+    qty_scrap: receiptStockQuantitySchema.optional().default(0),
+    qty_rework: receiptStockQuantitySchema.optional().default(0),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
     location_id: uuid.optional().nullable(),
     lot_mode: z.enum(["NEW", "EXISTING"]),

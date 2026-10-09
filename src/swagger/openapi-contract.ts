@@ -9,6 +9,7 @@ import { supplierInvoiceHeaderOperation } from './supplier-invoice-header-contra
 import { materialInvoiceReconciliationOperation } from './material-invoice-reconciliation-contract';
 import { supplierRecommendationOperation } from './supplier-recommendation-contract';
 import { stockLanesOperation } from './stock-lanes-contract';
+import { productionReceiptLanesOperation } from './production-receipt-lanes-contract';
 import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 
@@ -213,7 +214,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     };
   }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return stockLanesOperation(key, enriched);
+  return productionReceiptLanesOperation(key, stockLanesOperation(key, enriched));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {

@@ -17,6 +17,100 @@ import type { OfReceiptBodyDTO } from "../validators/production.validators";
 import { ofStatutAllowsReceipt, type OfStatut } from "../domain/of-status";
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import { allocateReceivedQuantity } from "../domain/consolidation-rules";
+import { reserveProducedDeliveryDemands } from "./receipt-delivery-reservations.repository";
+import { assertReceiptLaneAssignmentsInstalled, calculateReceiptLaneAssignment, recordReceiptLaneAssignment, registerReceiptLaneIntent, snapshotReceiptReservations } from "./receipt-lane-assignments.repository";
+import type { ReceiptLaneDistribution } from "../domain/receipt-lane-distribution";
+import { formatCumpDecimal, parseCumpDecimal } from "../../stock/domain/cump-decimal";
+
+type ReleasedReceiptOutput = {
+  of_id: number; article_id: string; location_id: string; stock_level_id: string;
+  stock_batch_id: string; lot_id: string; movement_id: string; qty_ok: number;
+  actor_user_id: number; quality_gate_already_held: boolean;
+  order_type: string | null; internal_order_purpose: string | null;
+  commande_ligne_id: number | null; livraison_affaire_id: number | null;
+};
+
+async function reserveReleasedReceiptOutput(tx: Pick<PoolClient, "query">, args: ReleasedReceiptOutput) {
+  const grouped = await reserveConsolidatedReceipt(tx, args);
+  if (grouped) return grouped;
+  const component = await reserveProducedComponentForParentOf(tx, { ...args, component_of_id: args.of_id });
+  if (component.matched) return component;
+  if (args.order_type === "INTERNE")
+    return args.internal_order_purpose === "CONTRACT" ? reserveInternalContractReceiptForCustomers(tx, args) : null;
+  return args.commande_ligne_id !== null
+    ? reserveProducedQtyForCommandeLine(tx, { ...args, commande_ligne_id: args.commande_ligne_id }) : null;
+}
+
+/** Preserve legacy grouped releases; new receipt intents also cover single OFs and assemblies. */
+export async function reconcileReleasedConsolidationLot(tx: Pick<PoolClient, "query">, lotId: string, userId: number) {
+  await assertReceiptLaneAssignmentsInstalled(tx);
+  await reconcileLegacyReleasedConsolidationLot(tx, lotId, userId);
+  const pending = (await tx.query<{
+    receipt_id: string; of_id: number; article_id: string; location_id: string; stock_level_id: string;
+    stock_batch_id: string; movement_id: string; remaining: string; order_type: string | null;
+    internal_order_purpose: string | null; commande_ligne_id: number | null; livraison_affaire_id: number | null;
+    of_status: string;
+  }>(`SELECT r.id::text AS receipt_id,r.of_id::bigint::int,m.article_id::text,r.location_id::text,
+    r.stock_level_id::text,r.stock_batch_id::text,r.stock_movement_id::text AS movement_id,
+    (r.qty_ok-COALESCE(done.quantity,0))::text AS remaining,c.order_type,c.internal_order_purpose,
+    o.commande_ligne_id::bigint::int,o.affaire_id::bigint::int AS livraison_affaire_id,o.statut::text AS of_status
+    FROM public.production_receipt_lane_intents intent JOIN public.of_receipts r ON r.id=intent.receipt_id
+    JOIN public.stock_movements m ON m.id=r.stock_movement_id
+    JOIN public.ordres_fabrication o ON o.id=r.of_id LEFT JOIN public.commande_client c ON c.id=o.commande_id
+    JOIN public.lots lot ON lot.id=r.lot_id AND lot.lot_status='LIBERE'
+    LEFT JOIN LATERAL(SELECT sum(quantity) AS quantity FROM public.production_receipt_lane_assignments a
+      WHERE a.receipt_id=r.id) done ON true
+    WHERE r.lot_id=$1::uuid AND m.status='POSTED' AND r.qty_ok>COALESCE(done.quantity,0)
+    ORDER BY r.created_at,r.id FOR UPDATE OF r`, [lotId])).rows;
+  for (const receipt of pending) {
+    let gate;
+    try { gate = await assertOperationalLotQualityEligibility({ client: tx, lotId, qty: 0, purpose: "RESERVE" }); }
+    catch (error) { if (error instanceof HttpError && error.code === "QUALITY_NOT_ELIGIBLE") return; throw error; }
+    // FREE attributions count as well: another Quality event must never attribute them again.
+    const attributed = (await tx.query<{ quantity: string }>(`SELECT (
+      COALESCE((SELECT sum(a.quantity) FROM public.production_receipt_lane_assignments a
+        JOIN public.of_receipts r ON r.id=a.receipt_id WHERE r.lot_id=$1::uuid),0)
+      +COALESCE((SELECT sum(a.quantity) FROM public.production_consolidation_receipt_allocations a
+        WHERE a.lot_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM public.of_receipts r
+          JOIN public.production_receipt_lane_intents intent ON intent.receipt_id=r.id
+          WHERE r.stock_movement_id=a.movement_id)),0))::text AS quantity`, [lotId])).rows[0];
+    // The existing Quality API exposes numbers; normalise its floating additions
+    // at the decimal helper's precision before subtracting canonical numeric text.
+    const released = parseCumpDecimal(gate.target.qty_released.toFixed(12));
+    const releasedRemaining = released - parseCumpDecimal(attributed.quantity);
+    const entitlement = released - parseCumpDecimal(gate.target.qty_consumed.toFixed(12))
+      - parseCumpDecimal(gate.already_committed_qty.toFixed(12));
+    const stock = (await tx.query<{ available: string }>(`SELECT
+      GREATEST(0,LEAST(sb.qty_total-sb.qty_reserved-sb.qty_depreciated,
+        sl.qty_total-sl.qty_reserved-sl.qty_depreciated))::text AS available
+      FROM public.stock_batches sb JOIN public.stock_levels sl ON sl.id=sb.stock_level_id
+      WHERE sb.id=$1::uuid AND sb.lot_id=$2::uuid AND sl.id=$3::uuid AND sl.location_id=$4::uuid
+      FOR UPDATE OF sl,sb`, [receipt.stock_batch_id, lotId, receipt.stock_level_id, receipt.location_id])).rows[0];
+    if (!stock || releasedRemaining <= 0n || entitlement <= 0n) continue;
+    const available = [parseCumpDecimal(receipt.remaining), releasedRemaining,
+      entitlement, parseCumpDecimal(stock.available)];
+    const maximum = available.reduce((minimum, item) => item < minimum ? item : minimum);
+    // Receipt/reservation ledgers store numeric(18,3). Never round a smaller
+    // Quality entitlement upward into an attributable physical quantity.
+    const amount = maximum - maximum % 1_000_000_000n;
+    if (amount <= 0n) continue;
+    const quantity = formatCumpDecimal(amount);
+    const assignmentGate = await assertOperationalLotQualityEligibility({ client: tx, lotId, qty: Number(quantity), purpose: "RESERVE" });
+    const before = await snapshotReceiptReservations(tx, receipt.stock_batch_id);
+    if (receipt.of_status !== "ANNULE")
+      await reserveReleasedReceiptOutput(tx, { ...receipt, qty_ok: Number(quantity), lot_id: lotId,
+        actor_user_id: userId, quality_gate_already_held: true });
+    const distribution = await calculateReceiptLaneAssignment(tx, receipt.stock_batch_id, quantity, before);
+    await recordReceiptLaneAssignment(tx, receipt.receipt_id, distribution, userId, assignmentGate);
+    const audit = await repoInsertAuditLog({ tx, user_id: userId, ip: null, user_agent: null,
+      device_type: null, os: null, browser: null, body: { event_type: "ACTION",
+        action: "production.of.receipt.assigned", page_key: "production", entity_type: "ordres_fabrication",
+        entity_id: String(receipt.of_id), details: { receipt_id: receipt.receipt_id, lot_id: lotId, distribution } } });
+    if (!audit) throw new Error("PRODUCTION_RECEIPT_ASSIGNMENT_AUDIT_INSERT_FAILED");
+    await enqueueProductionOfChanged(tx, { ofId: String(receipt.of_id), auditId: audit.id,
+      action: productionRealtimeActionFromAudit("production.of.receipt.assigned"), occurredAt: audit.created_at });
+  }
+}
 
 async function reserveConsolidatedReceipt(
   client: Pick<PoolClient, "query">,
@@ -97,7 +191,7 @@ async function reserveConsolidatedReceipt(
             })
           : null;
     if (reservation?.reservation_id) {
-      reservationIds.push(reservation.reservation_id);
+      reservationIds.push(...reservation.reservation_ids);
       reserved += reservation.qty_reserved;
     }
     await client.query(
@@ -112,14 +206,14 @@ async function reserveConsolidatedReceipt(
   return {
     matched: true,
     reservation_id: reservationIds[0] ?? null,
-    reservation_ids: reservationIds,
+    reservation_ids: [...new Set(reservationIds)],
     qty_reserved: reserved,
   };
 }
 
 /** Revisit real posted receipts when Quality releases a previously quarantined
  * producer lot. No stock entry is created; allocation deltas remain idempotent. */
-export async function reconcileReleasedConsolidationLot(
+async function reconcileLegacyReleasedConsolidationLot(
   tx: Pick<PoolClient, "query">,
   lotId: string,
   userId: number,
@@ -139,7 +233,9 @@ export async function reconcileReleasedConsolidationLot(
     JOIN public.production_consolidations c ON c.producer_of_id=r.of_id AND c.state='ACTIVE'
     JOIN public.stock_batches sb ON sb.id=r.stock_batch_id JOIN public.stock_levels sl ON sl.id=r.stock_level_id
     JOIN public.lots l ON l.id=sb.lot_id AND l.lot_status='LIBERE'
-    WHERE sb.lot_id=$1::uuid AND m.status='POSTED' ORDER BY r.created_at,r.id`,
+    WHERE sb.lot_id=$1::uuid AND m.status='POSTED'
+      AND NOT EXISTS(SELECT 1 FROM public.production_receipt_lane_intents intent WHERE intent.receipt_id=r.id)
+    ORDER BY r.created_at,r.id`,
       [lotId],
     )
   ).rows;
@@ -253,8 +349,12 @@ export type OfReceiptResult = {
   quality_status: string;
   reservation_id: string | null;
   reserved_qty: number;
+  auto_reserved_qty: number;
+  available_qty: number;
+  message: string;
   non_conformity_id: string | null;
   idempotent_replay: boolean;
+  lane_distribution?: ReceiptLaneDistribution | null;
 };
 
 export type OfTraceability = {
@@ -369,241 +469,7 @@ async function resolveArticleForPieceTechnique(client: Pick<PoolClient, "query">
   return row;
 }
 
-export async function reserveProducedQtyForCommandeLine(
-  client: Pick<PoolClient, "query">,
-  args: {
-    commande_ligne_id: number;
-    article_id: string;
-    location_id: string;
-    stock_level_id: string;
-    stock_batch_id: string;
-    lot_id: string;
-    qty_ok: number;
-    actor_user_id: number;
-    of_id?: number | null;
-    /** Caller already holds the canonical Quality lock for this lot. */
-    quality_gate_already_held?: boolean;
-    livraison_affaire_id?: number | null;
-    source_scope?: string;
-  }
-): Promise<{ reservation_id: string; qty_reserved: number } | null> {
-  if (!Number.isFinite(args.qty_ok) || args.qty_ok <= 0) return null;
-
-  const lineRes = await client.query<{ quantite: number; article_id: string | null }>(
-    `
-      SELECT
-        quantite::float8 AS quantite,
-        article_id::text AS article_id
-      FROM public.commande_ligne
-      WHERE id = $1::bigint
-      FOR UPDATE
-    `,
-    [args.commande_ligne_id]
-  );
-  const line = lineRes.rows[0] ?? null;
-  if (!line) return null;
-  if (line.article_id && line.article_id !== args.article_id) {
-    throw new HttpError(409, "ARTICLE_MISMATCH", "La ligne de commande n'est pas liee a l'article recu en stock");
-  }
-  const allocationRes = await client.query<{ id: number; livraison_affaire_id: number }>(
-    `
-      SELECT id::bigint::int AS id, livraison_affaire_id::bigint::int AS livraison_affaire_id
-      FROM public.commande_ligne_affaire_allocation
-      WHERE commande_ligne_id = $1::bigint
-        AND ($2::bigint IS NULL OR livraison_affaire_id = $2::bigint)
-      ORDER BY updated_at DESC, id DESC
-      LIMIT 1
-      FOR UPDATE
-    `,
-    [args.commande_ligne_id, args.livraison_affaire_id ?? null]
-  );
-  const businessAllocation = allocationRes.rows[0] ?? null;
-  if (!businessAllocation) {
-    throw new HttpError(409, "COMMANDE_ALLOCATION_NOT_FOUND", "La réception OF ne peut pas réserver un besoin sans allocation de livraison.");
-  }
-
-  const currentReservedRes = await client.query<{ qty_reserved: number }>(
-    `
-      SELECT COALESCE(SUM(qty_reserved), 0)::float8 AS qty_reserved
-      FROM public.stock_reservations
-      WHERE source_type = 'COMMANDE_LIGNE'
-        AND source_id = $1
-        AND status = 'ACTIVE'
-    `,
-    [String(args.commande_ligne_id)]
-  );
-
-  const plannedDeliveryRes = await client.query<{ qty_planned: number }>(
-    `
-      SELECT COALESCE(SUM(line.quantite), 0)::float8 AS qty_planned
-      FROM public.bon_livraison_ligne line
-      JOIN public.bon_livraison delivery ON delivery.id = line.bon_livraison_id
-      WHERE line.commande_ligne_id = $1::bigint
-        AND delivery.statut <> 'CANCELLED'
-    `,
-    [args.commande_ligne_id]
-  );
-
-  const orderedQty = Number(line.quantite);
-  const alreadyReserved = Number(currentReservedRes.rows[0]?.qty_reserved ?? 0);
-  const alreadyPlannedForDelivery = Number(plannedDeliveryRes.rows[0]?.qty_planned ?? 0);
-  const remainingToReserve = Math.max(0, orderedQty - alreadyReserved - alreadyPlannedForDelivery);
-  const qtyToReserve = Math.min(args.qty_ok, remainingToReserve);
-  if (qtyToReserve <= 0) return null;
-
-  // Automatic order-line reservation is still a stock reservation. Re-check
-  // its exact produced lot under the receipt transaction; a previously
-  // released existing lot may have been quarantined or exhausted meanwhile.
-  if (!args.quality_gate_already_held) {
-    await assertOperationalLotQualityEligibility({
-      client,
-      lotId: args.lot_id,
-      qty: qtyToReserve,
-      purpose: "RESERVE",
-    });
-  }
-
-  const stockLevelRes = await client.query<{ qty_total: number; qty_reserved: number }>(
-    `
-      SELECT qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
-      FROM public.stock_levels
-      WHERE id = $1::uuid
-      FOR UPDATE
-    `,
-    [args.stock_level_id]
-  );
-  const stockLevel = stockLevelRes.rows[0] ?? null;
-  if (!stockLevel) {
-    throw new HttpError(409, "STOCK_LEVEL_NOT_FOUND", "Niveau de stock introuvable pour la reservation automatique");
-  }
-
-  const availableQty = Number(stockLevel.qty_total) - Number(stockLevel.qty_reserved);
-  if (availableQty + 1e-9 < qtyToReserve) {
-    throw new HttpError(409, "INSUFFICIENT_STOCK", "Le stock produit n'est pas encore disponible pour la reservation automatique");
-  }
-
-  await client.query(
-    `
-      UPDATE public.stock_levels
-      SET qty_reserved = qty_reserved + $2,
-          updated_at = now(),
-          updated_by = $3
-      WHERE id = $1::uuid
-    `,
-    [args.stock_level_id, qtyToReserve, args.actor_user_id]
-  );
-
-  const stockBatchRes = await client.query<{ qty_total: number; qty_reserved: number }>(
-    `
-      SELECT qty_total::float8 AS qty_total, qty_reserved::float8 AS qty_reserved
-      FROM public.stock_batches
-      WHERE id = $1::uuid AND lot_id = $2::uuid
-      FOR UPDATE
-    `,
-    [args.stock_batch_id, args.lot_id]
-  );
-  const stockBatch = stockBatchRes.rows[0] ?? null;
-  if (!stockBatch) {
-    throw new HttpError(409, "STOCK_BATCH_NOT_FOUND", "Lot de stock introuvable pour la reservation automatique");
-  }
-  const batchAvailableQty = Number(stockBatch.qty_total) - Number(stockBatch.qty_reserved);
-  if (batchAvailableQty + 1e-9 < qtyToReserve) {
-    throw new HttpError(409, "INSUFFICIENT_LOT_STOCK", "Le lot produit n'est pas disponible pour la reservation automatique");
-  }
-  await client.query(
-    `
-      UPDATE public.stock_batches
-      SET qty_reserved = qty_reserved + $2
-      WHERE id = $1::uuid
-    `,
-    [args.stock_batch_id, qtyToReserve]
-  );
-
-  const existingReservation = await client.query<{ id: string }>(
-    `
-      SELECT id::text AS id
-      FROM public.stock_reservations
-      WHERE article_id = $1::uuid
-        AND location_id = $2::uuid
-        AND source_type = 'COMMANDE_LIGNE'
-        AND source_id = $3
-        AND lot_id = $4::uuid
-        AND stock_batch_id = $5::uuid
-        AND commande_ligne_affaire_allocation_id = $6::bigint
-        AND status = 'ACTIVE'
-      ORDER BY created_at ASC
-      LIMIT 1
-      FOR UPDATE
-    `,
-    [args.article_id, args.location_id, String(args.commande_ligne_id), args.lot_id, args.stock_batch_id, businessAllocation.id]
-  );
-
-  const existingId = existingReservation.rows[0]?.id ?? null;
-  if (existingId) {
-    await client.query(
-      `
-        UPDATE public.stock_reservations
-        SET qty_reserved = qty_reserved + $2,
-            commande_ligne_id = COALESCE(commande_ligne_id, $4::bigint),
-            commande_ligne_affaire_allocation_id = COALESCE(commande_ligne_affaire_allocation_id, $5::bigint),
-            livraison_affaire_id = COALESCE(livraison_affaire_id, $6::bigint),
-            stock_level_id = COALESCE(stock_level_id, $7::uuid),
-            source_scope = $9,
-            of_id = COALESCE(of_id, $8::bigint),
-            updated_at = now(),
-            updated_by = $3
-        WHERE id = $1::uuid
-      `,
-      [existingId, qtyToReserve, args.actor_user_id, args.commande_ligne_id, businessAllocation.id,
-        businessAllocation.livraison_affaire_id, args.stock_level_id, args.of_id ?? null, args.source_scope ?? 'NEW']
-    );
-    return { reservation_id: existingId, qty_reserved: qtyToReserve };
-  }
-
-  const insertReservation = await client.query<{ id: string }>(
-    `
-      INSERT INTO public.stock_reservations (
-        article_id,
-        location_id,
-        qty_reserved,
-        source_type,
-        source_id,
-        commande_ligne_id,
-        status,
-        lot_id,
-        stock_batch_id,
-        commande_ligne_affaire_allocation_id,
-        livraison_affaire_id,
-        stock_level_id,
-        of_id,
-        source_scope,
-        created_by,
-        updated_by
-      ) VALUES (
-        $1::uuid,$2::uuid,$3,'COMMANDE_LIGNE',$4::text,$4::bigint,'ACTIVE',$5::uuid,$6::uuid,
-        $7::bigint,$8::bigint,$9::uuid,$10::bigint,$12,$11,$11
-      )
-      RETURNING id::text AS id
-    `,
-    [
-      args.article_id,
-      args.location_id,
-      qtyToReserve,
-      String(args.commande_ligne_id),
-      args.lot_id,
-      args.stock_batch_id,
-      businessAllocation.id,
-      businessAllocation.livraison_affaire_id,
-      args.stock_level_id,
-      args.of_id ?? null,
-      args.actor_user_id,
-      args.source_scope ?? 'NEW',
-    ]
-  );
-
-  const reservationId = insertReservation.rows[0]?.id ?? null;
-  return reservationId ? { reservation_id: reservationId, qty_reserved: qtyToReserve } : null;
-}
+export const reserveProducedQtyForCommandeLine = reserveProducedDeliveryDemands;
 
 async function reserveInternalContractReceiptForCustomers(
   client: Pick<PoolClient, "query">,
@@ -639,12 +505,13 @@ async function reserveInternalContractReceiptForCustomers(
       FOR UPDATE OF allocation`,
     [args.of_id]
   );
-  let remaining = args.qty_ok;
-  let reservedQty = 0;
+  let remaining = parseCumpDecimal(String(args.qty_ok));
+  let reservedQty = 0n;
   const reservationIds: string[] = [];
   for (const allocation of allocations.rows) {
-    if (remaining <= 1e-9) break;
-    const requested = Math.min(remaining, Number(allocation.remaining_qty));
+    if (remaining <= 0n) break;
+    const allocationRemaining = parseCumpDecimal(String(allocation.remaining_qty));
+    const requested = Number(formatCumpDecimal(remaining < allocationRemaining ? remaining : allocationRemaining));
     const reserved = await reserveProducedQtyForCommandeLine(client, {
       commande_ligne_id: allocation.commande_ligne_id,
       article_id: args.article_id,
@@ -671,12 +538,12 @@ async function reserveInternalContractReceiptForCustomers(
         WHERE id = $1::uuid`,
       [allocation.id, applied]
     );
-    reservationIds.push(reserved!.reservation_id);
-    reservedQty += applied;
-    remaining -= applied;
+    reservationIds.push(...reserved!.reservation_ids);
+    reservedQty += parseCumpDecimal(String(applied));
+    remaining -= parseCumpDecimal(String(applied));
   }
   return reservationIds.length
-    ? { reservation_id: reservationIds[0]!, qty_reserved: reservedQty, reservation_ids: reservationIds }
+    ? { reservation_id: reservationIds[0]!, qty_reserved: Number(formatCumpDecimal(reservedQty)), reservation_ids: [...new Set(reservationIds)] }
     : null;
 }
 
@@ -1375,8 +1242,15 @@ export async function repoCreateOfReceipt(params: {
           "Cette cle d'idempotence a deja ete utilisee avec un contenu different."
         );
       }
-      return { ...replay.result_payload, idempotent_replay: true };
+      // Extend the response representation without rewriting immutable historical evidence.
+      const result = replay.result_payload;
+      const reserved = result.auto_reserved_qty ?? result.reserved_qty;
+      return { ...result, auto_reserved_qty: reserved,
+        available_qty: result.available_qty ?? (result.quality_status === "LIBERE" ? Math.max(0, result.qty_ok - reserved) : 0),
+        message: result.message ?? (result.quality_status === "LIBERE" ? "Réception enregistrée." : "Réception enregistrée. En attente de libération qualité."),
+        idempotent_replay: true };
     }
+    await assertReceiptLaneAssignmentsInstalled(client);
 
     const ofRes = await client.query<{
       numero: string;
@@ -1790,51 +1664,20 @@ export async function repoCreateOfReceipt(params: {
       if (!nonConformityId) throw new Error("Failed to create production non-conformity");
     }
 
-    const consolidationReservation = params.body.quality_status === 'LIBERE'
-      ? await reserveConsolidatedReceipt(client,{of_id:params.of_id,article_id:article.id,location_id:map.location_id,stock_level_id:stockLevelId,stock_batch_id:stockBatchId,
-          lot_id:lotId,movement_id:movementId,qty_ok:params.body.qty_ok,actor_user_id:params.audit.user_id,quality_gate_already_held:qualityDecision!==null}) : null;
-    const componentReservation = !consolidationReservation && params.body.quality_status === "LIBERE"
-      ? await reserveProducedComponentForParentOf(client, {
-          component_of_id: params.of_id,
-          article_id: article.id,
-          location_id: map.location_id,
-          stock_level_id: stockLevelId,
-          stock_batch_id: stockBatchId,
-          lot_id: lotId,
-          qty_ok: params.body.qty_ok,
-          actor_user_id: params.audit.user_id,
-          quality_gate_already_held: qualityDecision !== null,
-        })
-      : { matched: false, reservation_id: null, qty_reserved: 0, reservation_ids: [] };
-
-    const autoReservation = consolidationReservation ?? (componentReservation.matched
-      ? componentReservation
-      : isInternalOrder && ofRow.internal_order_purpose === "CONTRACT" && params.body.quality_status === "LIBERE"
-        ? await reserveInternalContractReceiptForCustomers(client, {
-            of_id: params.of_id,
-            article_id: article.id,
-            location_id: map.location_id,
-            stock_level_id: stockLevelId,
-            stock_batch_id: stockBatchId,
-            lot_id: lotId,
-            qty_ok: params.body.qty_ok,
-            actor_user_id: params.audit.user_id,
-            quality_gate_already_held: qualityDecision !== null,
-          })
-        : !isInternalOrder && params.body.quality_status === "LIBERE" && typeof ofRow.commande_ligne_id === "number"
-        ? await reserveProducedQtyForCommandeLine(client, {
-            commande_ligne_id: ofRow.commande_ligne_id,
-            article_id: article.id,
-            location_id: map.location_id,
-            stock_level_id: stockLevelId,
-            stock_batch_id: stockBatchId,
-            lot_id: lotId,
-            qty_ok: params.body.qty_ok,
-            actor_user_id: params.audit.user_id,
-            of_id: params.of_id,
-            quality_gate_already_held: qualityDecision !== null,
-          })
-        : null);
+    const reservationSnapshot = await snapshotReceiptReservations(client, stockBatchId);
+    const autoReservation = params.body.quality_status === "LIBERE"
+      ? await reserveReleasedReceiptOutput(client, {
+          of_id: params.of_id, article_id: article.id, location_id: map.location_id,
+          stock_level_id: stockLevelId, stock_batch_id: stockBatchId, lot_id: lotId,
+          movement_id: movementId, qty_ok: params.body.qty_ok, actor_user_id: params.audit.user_id,
+          quality_gate_already_held: qualityDecision !== null, order_type: ofRow.order_type,
+          internal_order_purpose: ofRow.internal_order_purpose,
+          commande_ligne_id: ofRow.commande_ligne_id, livraison_affaire_id: ofRow.affaire_id,
+        }) : null;
+    const laneDistribution = params.body.quality_status === "LIBERE"
+      ? await calculateReceiptLaneAssignment(client, stockBatchId, String(params.body.qty_ok), reservationSnapshot) : null;
+    const reservedQuantity = laneDistribution?.destinations.reduce((sum, destination) =>
+      sum + (destination.lane === "FREE" ? 0n : parseCumpDecimal(destination.quantity)), 0n) ?? 0n;
 
     const receiptId = randomUUID();
     const receiptResult: OfReceiptResult = {
@@ -1848,9 +1691,15 @@ export async function repoCreateOfReceipt(params: {
       qty_rework: params.body.qty_rework,
       quality_status: params.body.quality_status,
       reservation_id: autoReservation?.reservation_id ?? null,
-      reserved_qty: autoReservation?.qty_reserved ?? 0,
+      reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
+      auto_reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
+      available_qty: params.body.quality_status === "LIBERE"
+        ? Number(formatCumpDecimal(parseCumpDecimal(String(params.body.qty_ok))
+          - reservedQuantity)) : 0,
+      message: params.body.quality_status === "LIBERE" ? "Réception enregistrée." : "Réception enregistrée. En attente de libération qualité.",
       non_conformity_id: nonConformityId,
       idempotent_replay: false,
+      lane_distribution: laneDistribution,
     };
 
     await client.query(
@@ -1917,9 +1766,9 @@ export async function repoCreateOfReceipt(params: {
       ]
     );
 
-    const automaticReservationIds = autoReservation && "reservation_ids" in autoReservation
-      ? autoReservation.reservation_ids
-      : autoReservation?.reservation_id ? [autoReservation.reservation_id] : [];
+    await registerReceiptLaneIntent(client, receiptId);
+    if (laneDistribution) await recordReceiptLaneAssignment(client, receiptId, laneDistribution, params.audit.user_id, qualityDecision);
+    const automaticReservationIds = autoReservation?.reservation_ids ?? [];
     await insertAuditLog(client, params.audit, {
       action: "production.of.receipt",
       entity_type: "ordres_fabrication",
@@ -1940,10 +1789,11 @@ export async function repoCreateOfReceipt(params: {
         article_id: article.id,
         auto_reservation_id: autoReservation?.reservation_id ?? null,
         auto_reservation_ids: automaticReservationIds,
-        auto_reserved_qty: autoReservation?.qty_reserved ?? 0,
+        auto_reserved_qty: Number(formatCumpDecimal(reservedQuantity)),
         non_conformity_id: nonConformityId,
         idempotency_key: params.idempotency_key,
         quality_gate: qualityDecision,
+        lane_distribution: laneDistribution,
       },
     });
 

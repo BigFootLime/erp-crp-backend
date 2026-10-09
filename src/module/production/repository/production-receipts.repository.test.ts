@@ -16,20 +16,22 @@ const ids = {
 function transactionClient(params: { activeCommandeReservation: number; plannedBlQty: number }) {
   const query = vi.fn(async (sql: unknown, _queryParams?: unknown[]) => {
     const text = String(sql);
-    if (text.includes("FROM public.commande_ligne") && text.includes("FOR UPDATE")) {
-      return { rows: [{ quantite: 10, article_id: ids.article }] };
+    if (text.includes("SELECT quantite::text AS ordered")) {
+      return { rows: [{ ordered: "10", article_id: ids.article }] };
     }
-    if (text.includes("source_type = 'COMMANDE_LIGNE'") && text.includes("SUM(qty_reserved)")) {
-      return { rows: [{ qty_reserved: params.activeCommandeReservation }] };
+    if (text.includes("SELECT id::bigint::int FROM public.commande_ligne_affaire_allocation")) {
+      return { rows: [{ id: 91 }] };
     }
-    if (text.includes("FROM public.bon_livraison_ligne line") && text.includes("delivery.statut <> 'CANCELLED'")) {
-      return { rows: [{ qty_planned: params.plannedBlQty }] };
+    if (text.includes("SELECT EXISTS(SELECT 1 FROM public.bon_livraison_ligne")) return { rows: [{ exists: false }] };
+    if (text.includes("AS reserved_remaining")) {
+      return { rows: [{ allocation_id: 91, livraison_affaire_id: 19, ordered: "10", delivered: "0",
+        reserved_remaining: String(params.activeCommandeReservation), unreserved_prepared: String(params.plannedBlQty), due_date: "2026-11-01" }] };
     }
     if (text.includes("FROM public.stock_levels") && text.includes("FOR UPDATE")) {
-      return { rows: [{ qty_total: 20, qty_reserved: 0 }] };
+      return { rows: [{ available: "20" }] };
     }
     if (text.includes("FROM public.stock_batches") && text.includes("FOR UPDATE")) {
-      return { rows: [{ qty_total: 20, qty_reserved: 0 }] };
+      return { rows: [{ available: "20" }] };
     }
     if (text.includes("FROM public.lots")) return { rows: [{ lot_code: "LOT-616", lot_status: "LIBERE", article_unit: "U" }] };
     if (text.includes("FROM public.quality_control qc")) {
@@ -66,9 +68,8 @@ describe("reserveProducedQtyForCommandeLine", () => {
 
     const levelUpdate = client.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_levels"));
     const reservationInsert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"));
-    expect(levelUpdate?.[1]).toEqual([ids.level, 5, 7]);
-    expect(reservationInsert?.[1]).toEqual(expect.arrayContaining([5, "10"]));
-    expect(String(reservationInsert?.[0])).toContain("$4::text,$4::bigint");
+    expect(levelUpdate?.[1]).toEqual([ids.level, "5", 7]);
+    expect(reservationInsert?.[1]).toEqual(expect.arrayContaining(["5", 10]));
   });
 
   it("SHIP_ALL_TOGETHER: keeps the stock reservation and reserves only the production remainder", async () => {
@@ -77,7 +78,7 @@ describe("reserveProducedQtyForCommandeLine", () => {
     await expect(reserve(client, 7)).resolves.toMatchObject({ qty_reserved: 5 });
 
     const levelUpdate = client.query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.stock_levels"));
-    expect(levelUpdate?.[1]).toEqual([ids.level, 5, 7]);
+    expect(levelUpdate?.[1]).toEqual([ids.level, "5", 7]);
   });
 });
 
