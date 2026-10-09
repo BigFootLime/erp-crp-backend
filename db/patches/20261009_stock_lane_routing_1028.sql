@@ -18,6 +18,10 @@ CREATE INDEX IF NOT EXISTS production_receipt_lane_routes_receipt_idx ON public.
 DROP TRIGGER IF EXISTS production_receipt_lane_routes_immutable ON public.production_receipt_lane_routes;
 CREATE TRIGGER production_receipt_lane_routes_immutable BEFORE UPDATE OR DELETE ON public.production_receipt_lane_routes
   FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
-GRANT SELECT,INSERT,UPDATE,DELETE ON public.stock_lane_destinations TO cerp_app;
-GRANT SELECT,INSERT ON public.production_receipt_lane_routes TO cerp_app;
+DO $$ BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='cerp_app') THEN
+    GRANT SELECT,INSERT,UPDATE,DELETE ON public.stock_lane_destinations TO cerp_app;
+    GRANT SELECT,INSERT ON public.production_receipt_lane_routes TO cerp_app;
+  END IF;
+END $$;
 COMMIT;
