@@ -24,7 +24,8 @@ export async function getClientForecasts(clientId:string,contractId:string,query
       const forecast=await repo.readClientForecast(tx,contractId,forecastId);
       if(!forecast)throw new HttpError(404,'CLIENT_FORECAST_NOT_FOUND','Estimation introuvable');
       const history=await repo.readClientForecastHistory(tx,forecastId,query.page);
-      await tx.query('COMMIT');return {forecast,history};
+      const conversions=await repo.readClientForecastConversions(tx,forecastId,query.page);
+      await tx.query('COMMIT');return {forecast,history,conversions};
     }
     const data=await repo.listClientForecasts(tx,contractId,query);
     await tx.query('COMMIT');return {...data,client_active:clientActive,contract_active:contract.status==='ACTIVE'};
@@ -53,6 +54,8 @@ export async function executeClientForecastCommand(clientId:string,contractId:st
     if(command.action==='CANCEL'&&(!before||before.status==='CANCELLED'))throw new HttpError(409,'CLIENT_FORECAST_NOT_ACTIVE','Cette estimation n’est plus active');
     const id=before?.id??randomUUID();
     if(command.action==='SAVE') {
+      if(before&&Math.round(command.quantity*1000)<Math.round(Number(before.converted_quantity)*1000))
+        throw new HttpError(409,'CLIENT_FORECAST_CONVERTED_QUANTITY_RETAINED','L’estimation ne peut pas descendre sous sa quantité déjà convertie en commandes fermes',{field:'quantity'});
       const line=contract.lines.find(item=>item.id===command.contract_line_id);
       if(!line?.proposed_article)throw new HttpError(409,'CLIENT_FORECAST_ARTICLE_UNAVAILABLE','Choisissez un article validé du contrat');
       if((contract.valid_from&&command.delivery_due<contract.valid_from)||(contract.valid_until&&command.delivery_due>contract.valid_until))

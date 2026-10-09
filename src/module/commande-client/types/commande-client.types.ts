@@ -191,6 +191,7 @@ export type CommandeToAffaire = {
 };
 
 export type CommandeLigneInput = {
+  client_forecast_allocations?: Array<{forecast_id:string;expected_version:number;quantity:number}>;
   client_contract_line_id?: string | null;
   id?: number;
   article_id?: string | null;
