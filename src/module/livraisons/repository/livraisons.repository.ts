@@ -3658,8 +3658,8 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         r.id::text AS reservation_id,
         a.commande_id::bigint::int AS commande_id,
         cc.numero AS commande_numero,
-        contract_call.contract_id::text AS contract_id,
-        contract_call.contract_snapshot->>'reference' AS contract_reference,
+        COALESCE(contract_call.contract_id,legacy_contract.contract_id)::text AS contract_id,
+        COALESCE(contract_call.contract_snapshot->>'reference',legacy_contract.contract_snapshot->>'reference') AS contract_reference,
         cc.order_type,
         r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
         af.reference AS affaire_reference,
@@ -3702,6 +3702,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
       LEFT JOIN public.affaire af ON af.id = r.livraison_affaire_id
       LEFT JOIN public.affaire parent_af ON parent_af.id = af.parent_affaire_id
       LEFT JOIN public.client_contract_calls contract_call ON contract_call.commande_id=cc.id
+      LEFT JOIN public.client_contract_legacy_orders legacy_contract ON legacy_contract.commande_id=cc.id
       JOIN public.articles art ON art.id = r.article_id
       LEFT JOIN public.lots l ON l.id = r.lot_id
       LEFT JOIN public.emplacements e ON e.location_id = r.location_id
@@ -5063,7 +5064,7 @@ export async function repoCreateLivraisonFromReservations(params: {
           (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS qty_available,
           a.commande_id::bigint::int AS commande_id,
           cc.client_id::text AS client_id,
-          contract_call.contract_id::text AS contract_id,
+          COALESCE(contract_call.contract_id,legacy_contract.contract_id)::text AS contract_id,
           cc.order_type,
           COALESCE(cc.destinataire_id, c.delivery_address_id)::text AS delivery_address_id,
           r.livraison_affaire_id::bigint::int AS livraison_affaire_id,
@@ -5088,6 +5089,7 @@ export async function repoCreateLivraisonFromReservations(params: {
         LEFT JOIN public.clients c ON c.client_id = cc.client_id
         JOIN public.commande_ligne cl ON cl.id = a.commande_ligne_id
         LEFT JOIN public.client_contract_calls contract_call ON contract_call.commande_id=cc.id
+        LEFT JOIN public.client_contract_legacy_orders legacy_contract ON legacy_contract.commande_id=cc.id
         LEFT JOIN public.emplacements e ON e.location_id = r.location_id
         LEFT JOIN LATERAL (
           SELECT revision.created_at, revision.snapshot

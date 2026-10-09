@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { assertLegacyReleaseCompositionEditable } from "./commande-contract-legacy-guards.repository";
 
 import type {
   CadreReleaseStatus,
@@ -21,9 +22,9 @@ function toInt(value: unknown, label = "id"): number {
   throw new Error(`Invalid ${label}: ${String(value)}`);
 }
 
-async function assertCommandeIsCadre(client: PoolClient, commandeId: number) {
+async function assertCommandeIsCadre(client: PoolClient, commandeId: number, lock = false) {
   const res = await client.query<{ order_type: string }>(
-    `SELECT order_type FROM commande_client WHERE id = $1`,
+    `SELECT order_type FROM commande_client WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
     [commandeId]
   );
   const row = res.rows[0] ?? null;
@@ -360,7 +361,8 @@ export async function repoCreateCadreRelease(commandeIdRaw: string, input: Creat
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
+    await assertLegacyReleaseCompositionEditable(db, commandeId);
 
     const noRes = await db.query<{ n: number }>(
       `SELECT nextval('public.commande_cadre_release_no_seq')::int AS n`
@@ -421,7 +423,7 @@ export async function repoUpdateCadreRelease(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
 
     const existsRes = await db.query(
       `SELECT id FROM commande_cadre_release WHERE id = $1 AND commande_cadre_id = $2 FOR UPDATE`,
@@ -475,7 +477,7 @@ export async function repoUpdateCadreReleaseStatus(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
 
     const existsRes = await db.query(
       `SELECT id, statut FROM commande_cadre_release WHERE id = $1 AND commande_cadre_id = $2 FOR UPDATE`,
@@ -517,7 +519,8 @@ export async function repoAddCadreReleaseLine(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
+    await assertLegacyReleaseCompositionEditable(db, commandeId);
 
     const relRes = await db.query(
       `SELECT id FROM commande_cadre_release WHERE id = $1 AND commande_cadre_id = $2 FOR UPDATE`,
@@ -592,7 +595,8 @@ export async function repoUpdateCadreReleaseLine(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
+    await assertLegacyReleaseCompositionEditable(db, commandeId);
 
     const relRes = await db.query(
       `SELECT id FROM commande_cadre_release WHERE id = $1 AND commande_cadre_id = $2 FOR UPDATE`,
@@ -668,7 +672,8 @@ export async function repoDeleteCadreReleaseLine(
   const db = await pool.connect();
   try {
     await db.query("BEGIN");
-    await assertCommandeIsCadre(db, commandeId);
+    await assertCommandeIsCadre(db, commandeId, true);
+    await assertLegacyReleaseCompositionEditable(db, commandeId);
 
     const relRes = await db.query(
       `SELECT id FROM commande_cadre_release WHERE id = $1 AND commande_cadre_id = $2 FOR UPDATE`,

@@ -12,6 +12,7 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import {prepareContractCall,recordContractCall,assertContractCallMutable,assertNoContractCall,ContractCallReplay} from './commande-contract-call.repository';
 import {readCommandeContractCall} from '../../client/repository/client-contract-calls.repository';
+import {readLegacyAssociation} from '../../client/repository/client-contract-legacy.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
@@ -2911,6 +2912,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
   const commande = {
     ...commandeRow,
     client_contract_call: await readCommandeContractCall(pool, String(commandeId)),
+    client_contract_legacy: await readLegacyAssociation(pool, String(commandeId)),
     id: toInt(commandeRow.id, "commande.id"),
     devis_id: toNullableInt(commandeRow.devis_id, "commande.devis_id"),
     source_devis_version_id: toNullableInt(commandeRow.source_devis_version_id, "commande.source_devis_version_id"),
@@ -2929,7 +2931,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cl.designation,
             COALESCE(a.code, cl.code_piece) AS code_piece,
             cl.article_id::text AS article_id,
-            COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) AS piece_technique_id,
+            CASE WHEN EXISTS(SELECT 1 FROM public.client_contract_legacy_lines legacy WHERE legacy.commande_ligne_id=cl.id)
+              THEN cl.piece_technique_id::text ELSE COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) END AS piece_technique_id,
             cl.piece_technique_version_id::text AS piece_technique_version_id,
             cl.source_devis_ligne_id::bigint::int AS source_devis_ligne_id,
             cl.source_article_devis_id::text AS source_article_devis_id,

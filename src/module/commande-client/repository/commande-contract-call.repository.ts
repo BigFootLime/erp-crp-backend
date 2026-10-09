@@ -8,6 +8,7 @@ import {readCrmClient} from '../../client/repository/client-crm.repository';
 import {readClientContract} from '../../client/repository/client-contract.repository';
 import type {ClientContract,ClientContractArticle,ClientContractLine} from '../../client/types/client-contract.types';
 import type {CreateCommandeInput,UploadedDocument} from '../types/commande-client.types';
+import {assertLegacyContractOrderMutable,assertNoLegacyContractAssociation} from './commande-contract-legacy-guards.repository';
 type Queryer=Pick<PoolClient,'query'>;
 type SelectedLine={contractLine:ClientContractLine;article:ClientContractArticle;index:number};
 export type ContractCallContext={id:string;contract:ClientContract;actor:number;key:string;hash:string;lines:SelectedLine[]};
@@ -107,6 +108,7 @@ export async function assertContractCallMutable(tx:Queryer,commandeId:string,inp
     WHERE commande_id=$1::bigint`,[commandeId])).rows[0];
   if(!call) {
     if(input.client_contract_call||input.lignes.some(line=>line.client_contract_line_id))throw new HttpError(409,'CONTRACT_CALL_REBIND_FORBIDDEN','Créez un nouvel appel depuis le contrat');
+    await assertLegacyContractOrderMutable(tx,commandeId,input);
     return;
   }
   if(input.client_id!==call.client_id||(input.order_type??'FERME')!=='FERME'
@@ -120,6 +122,7 @@ export async function assertContractCallMutable(tx:Queryer,commandeId:string,inp
     throw new HttpError(409,'CONTRACT_CALL_LINES_IMMUTABLE','Les articles et indices de cet appel sont conservés. Créez un nouvel appel pour changer sa composition.');
 }
 export async function assertNoContractCall(tx:Queryer,commandeId:number) {
+  await assertNoLegacyContractAssociation(tx,commandeId);
   if((await tx.query('SELECT 1 FROM public.client_contract_calls WHERE commande_id=$1::bigint',[commandeId])).rows.length)
     throw new HttpError(409,'CONTRACT_CALL_HISTORY_RETAINED','Cet appel est conservé dans l’historique. Pour une nouvelle demande, créez un appel depuis le contrat.');
 }
