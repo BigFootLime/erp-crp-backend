@@ -34,9 +34,9 @@ export const clientContractSchemas:Schema={
 export function clientContractOperation(key:string,operation:Schema):Schema {
   if(key==="get /livraisons/preparation-cart")return {...operation,
     parameters:[...(operation.parameters??[]),{name:"include_contract_scope",in:"query",required:false,
-      schema:{type:"boolean",default:false},description:"Opt in to contract_group_key and saved contract_reference on each reservation. Legacy clients retain the existing response shape."}],
+      schema:{type:"boolean",default:false},description:"Opt in to contract_group_key, saved contract_reference and client_code on each reservation. Legacy clients retain the existing response shape."}],
     "x-cerp-delivery-contract-scope":{type:"object",required:["contract_group_key","contract_reference"],
-      properties:{contract_group_key:{type:"string",pattern:"^(NONE|CONTRACT:[a-f0-9-]{36}|LEGACY_CADRE:[0-9]+)$"},contract_reference:{type:"string",nullable:true}}}};
+      properties:{contract_group_key:{type:"string",pattern:"^(NONE|CONTRACT:[a-f0-9-]{36}|LEGACY_CADRE:[0-9]+)$"},contract_reference:{type:"string",nullable:true},client_code:{type:"string",nullable:true}}}};
   if(["post /livraisons","post /livraisons/from-commande/{commandeId}","post /livraisons/from-reservations",
     "put /livraisons/{id}","post /livraisons/{id}/lines","put /livraisons/{id}/lines/{lineId}",
     "post /livraisons/{id}/lignes/{lineId}/allocations","post /livraisons/{id}/status","post /livraisons/{id}/ship",

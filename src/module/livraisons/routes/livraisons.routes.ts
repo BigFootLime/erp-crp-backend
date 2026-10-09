@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express"
+import { listDeliveryAffairs } from "../controllers/delivery-affairs.controller"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
@@ -98,6 +99,7 @@ const requireStatusCapability: RequestHandler = (req, _res, next) => {
 const requireStockCorrectionPermission = requireLivraisonCapability("allocate")
 
 router.get("/", requireLivraisonCapability("read"), listLivraisons)
+router.get("/affaires", requireLivraisonCapability("read"), listDeliveryAffairs)
 router.post("/", requireLivraisonCapability("prepare"), createLivraison)
 router.post(
   "/from-commande/:commandeId",
