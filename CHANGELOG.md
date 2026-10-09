@@ -1,5 +1,11 @@
 # Changelog
 
+## Monthly customer estimates — 2026-10-09
+
+- Record monthly customer estimates on contract article families with quantity, due date and customer estimate date.
+- Preserve historical article/unit/month identities and audited revisions; enforce versions and exact actor/key replay with atomic outbox.
+- Common métier/UI acceptance prepared NOT RUN; firm conversion, cumulative coverage and fixed-batch OF proposals follow separately.
+
 ## Historical CADRE association — 2026-10-09
 
 - Explicitly associate historical CADRE with same-client contracts using actual family/unit identities and immutable source snapshots.
