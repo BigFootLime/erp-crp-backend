@@ -32,6 +32,18 @@ export const clientContractSchemas:Schema={
     object({action:{...text,enum:["UPDATE"]},...existing,...definition}),object({action:{...text,enum:["CLOSE"]},...existing})],discriminator:{propertyName:"action"}},
 };
 export function clientContractOperation(key:string,operation:Schema):Schema {
+  if(key==="get /livraisons/preparation-cart")return {...operation,
+    parameters:[...(operation.parameters??[]),{name:"include_contract_scope",in:"query",required:false,
+      schema:{type:"boolean",default:false},description:"Opt in to contract_group_key and saved contract_reference on each reservation. Legacy clients retain the existing response shape."}],
+    "x-cerp-delivery-contract-scope":{type:"object",required:["contract_group_key","contract_reference"],
+      properties:{contract_group_key:{type:"string",pattern:"^(NONE|CONTRACT:[a-f0-9-]{36}|LEGACY_CADRE:[0-9]+)$"},contract_reference:{type:"string",nullable:true}}}};
+  if(["post /livraisons","post /livraisons/from-commande/{commandeId}","post /livraisons/from-reservations",
+    "put /livraisons/{id}","post /livraisons/{id}/lines","put /livraisons/{id}/lines/{lineId}",
+    "post /livraisons/{id}/lignes/{lineId}/allocations","post /livraisons/{id}/status","post /livraisons/{id}/ship",
+    "get /livraisons/{id}/shipment-preview"].includes(key))return {...operation,
+    description:[operation.description,"Canonical source orders must share one client and one contract or all be outside contracts. Historical CADRE orders remain distinct identities pending explicit reprise. Unbound manual lines cannot enter a contract BL. Creation, edits, preparation and shipment revalidate this boundary atomically. Proforma linkage/payment validation is a separate pending increment."].filter(Boolean).join("\n\n"),
+    "x-cerp-delivery-contract-boundary":true,
+    responses:{...operation.responses,"409":{description:"MIXED_DELIVERY_CONTRACT, MIXED_DELIVERY_CLIENT or DELIVERY_CONTRACT_LINE_SOURCE_REQUIRED. No partial delivery or stock consumption."}}};
   if(key==="post /commandes")return {...operation,description:[operation.description,
     "Optional firm contract call in multipart data JSON: client_contract_call = {contract_id, expected_version, idempotency_key}; each line carries client_contract_line_id and the proposed validated article/PT/version/unit, requested quantity and date. Actor/key replay checks the exact parsed body and uploaded file digests. The order, immutable call snapshots, audit and outbox commit together. Reuse the exact request/key after an uncertain result."].filter(Boolean).join("\n\n"),
     "x-cerp-contract-call-binding":ref("ClientContractCallBinding"),responses:{...operation.responses,"409":{description:"Stale contract/version/article, conflicting retry key or inactive client. No partial order."},"422":{description:"Call must be firm, valid at the order date, and contain unique available contract articles with quantity and due date."}}};
