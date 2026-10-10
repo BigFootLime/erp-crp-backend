@@ -1518,7 +1518,8 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     const db=harnessPool!;await seedRecovery(db);
     await db.query("UPDATE public.commande_client SET statut='ANNULEE'");
     await expect(recoveryRepository.repoPreviewDeliveryStockRecovery(900)).rejects.toMatchObject({code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
-    await db.query("UPDATE public.commande_client SET statut='VALIDEE';UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
+    await db.query("UPDATE public.commande_client SET statut='VALIDEE'");
+    await db.query("UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
     await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,3,now(),'CONFORME')",[ids.lot]);
     await db.query("INSERT INTO public.non_conformity(id,lot_id,status) VALUES(gen_random_uuid(),$1,'OPEN')",[ids.lot]);
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
