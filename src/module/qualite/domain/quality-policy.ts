@@ -157,6 +157,28 @@ export const QUALITY_DELIVERY_POLICY_STATUSES = [
 export type QualityDeliveryPolicyStatus =
   (typeof QUALITY_DELIVERY_POLICY_STATUSES)[number];
 
+export type QualityDeliveryPolicyEventType =
+  | "CREATED" | "UPDATED" | "SUBMITTED" | "SIGNED"
+  | "ACTIVATED" | "SUPERSEDED" | "REVOKED";
+
+// Les événements décrivent l'action, pas le statut de la politique (CHECK #0437).
+const DELIVERY_POLICY_TRANSITION_EVENTS: Readonly<
+  Record<QualityDeliveryPolicyStatus, QualityDeliveryPolicyEventType>
+> = {
+  DRAFT: "UPDATED",
+  IN_REVIEW: "SUBMITTED",
+  SIGNED: "SIGNED",
+  ACTIVE: "ACTIVATED",
+  SUPERSEDED: "SUPERSEDED",
+  REVOKED: "REVOKED",
+};
+
+export function deliveryPolicyTransitionEvent(
+  status: QualityDeliveryPolicyStatus
+): QualityDeliveryPolicyEventType {
+  return DELIVERY_POLICY_TRANSITION_EVENTS[status];
+}
+
 const DELIVERY_POLICY_TRANSITIONS: Readonly<
   Record<QualityDeliveryPolicyStatus, readonly QualityDeliveryPolicyStatus[]>
 > = {
