@@ -26,7 +26,8 @@ export type ReplenishmentLaunchResult = {
 /** Internal transaction primitive, not an API entry point. The caller owns
  * commit/reconciliation and supplies the shared intent reader. That reader is
  * invoked here on the same SERIALIZABLE transaction, never on a second pool.
- * Routing remains disabled until received/grouped producers are reconciled. */
+ * The production route supplies the authenticated actor and capability; pending
+ * quality/group dispositions fail in the shared preparation before generation. */
 export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
   client_id: string; contract_id: string; plan_id: string; proposal_ids: readonly string[];
   key: string; request_hash: string; audit: AuditContext; user_role: string | null | undefined;

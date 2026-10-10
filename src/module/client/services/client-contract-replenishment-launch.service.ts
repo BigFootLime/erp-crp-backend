@@ -12,7 +12,8 @@ import type { AuditContext } from '../repository/client.repository';
 import { readClientContractCoverageTx } from './client-contract-coverage.service';
 import { launchPreparedContractReplenishmentTx } from './client-contract-replenishment-launch-tx';
 
-/** Internal service only. No route until producer dispositions and planning are integrated. */
+/** Canonical production generation service. Unresolved producer dispositions
+ * fail during the shared recheck before the first OF can be created. */
 export async function generateClientContractReplenishment(clientId: string, contractId: string,
   command: ClientReplenishmentLaunchCommand, key: string, audit: AuditContext, userRole: string | null | undefined) {
   const parsed = clientReplenishmentLaunchSchema.safeParse(command), parsedKey = z.string().uuid().safeParse(key);

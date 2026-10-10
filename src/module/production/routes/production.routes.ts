@@ -1,4 +1,5 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import { generateContractReplenishment } from '../controllers/contract-replenishment.controller';
 import { readAssemblyComponents, issueAssemblyComponents, readAssemblyWithdrawals, previewAssemblyReturn, submitAssemblyReturn } from '../controllers/assembly-component-consumption.controller';
 import {readComponentCoverage,readSupplierQualification,readSupplierRecommendations} from '../controllers/of-material.controller';
 import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCalendar} from '../controllers/maintenance-schedule.controller';
@@ -191,6 +192,7 @@ const machineDocumentUpload = createSecureUpload("machine-document", { maxFiles:
 const machineImageUpload = createSecureUpload("image", { maxFiles: 1 });
 
 router.use(authenticateToken);
+router.post('/clients/:clientId/contracts/:contractId/replenishment/commands',requireOfCapability('generate'),generateContractReplenishment);
 router.get('/maintenance-calendar',requireMachineCapability('read'),readMaintenanceCalendar);
 router.post('/maintenance-calendar/preview',requireMachineCapability('availability'),previewMaintenanceCalendar);
 router.post('/maintenance-calendar/publish',requireMachineCapability('availability'),publishMaintenanceCalendar);
