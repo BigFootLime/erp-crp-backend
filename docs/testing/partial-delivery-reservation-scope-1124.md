@@ -1,0 +1,5 @@
+# Successive partial deliveries (#1124)
+
+A production index still enforced global uniqueness of reservation_id across all BL allocations. The first partial delivery worked, but creating the remaining BL failed23505 after the initial shipment. Scope uniqueness to delivery-line plus reservation, preserve all historical rows and the existing duplicate-request guard, row locks, prepared/consumed quantities, idempotent receipts and promise capture. No route, DTO, RBAC or stock policy change.
+
+The isolated PostgreSQL suite installs the actual former index, executes the reviewed patch and tests stock/delivery repositories against the resulting schema. Acceptance includes reserve3, ship1 then2, unchanged first shipment evidence, no duplicate OUT on replay, duplicate line allocation rejected, concurrent preparation refusal and promise-failure rollback. Guarded schema rollback must refuse after multiple allocations; deploy using preflight/verify and backup, then replay the real Base Test UI. No fixtures in Production.

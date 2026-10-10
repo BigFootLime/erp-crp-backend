@@ -244,3 +244,7 @@
 - Accusé de réception : afficher et archiver le délai de livraison de chaque ligne, sans décalage de jour ni réécriture des anciens AR.
 
 - #1121 : mesurer les libellés du bandeau PDF pour éviter le chevauchement des références longues.
+
+## 2026-10-10 — #1124
+
+- Livraison : permettre plusieurs BL partiels successifs sur une réservation existante ; conserver les allocations historiques et l’unicité par ligne, sans modifier les limites ou mouvements de stock. Migration transactionnelle avec préflight, vérification et retour arrière protégé.
