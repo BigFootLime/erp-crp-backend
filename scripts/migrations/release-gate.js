@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { verifyStockValueUniqueness } = require("./verify-stock-value-uniqueness");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const PATCH_DIR = path.join(ROOT, "db", "patches");
@@ -824,7 +825,12 @@ async function rehearse(options = {}) {
       await verifyClient.query("GRANT SELECT ON public.article_category_referential TO cerp_app");
       for (const patch of expectedPending) {
         const verifySql = patchSupportSql(patch, "verify");
-        if (verifySql) await runSqlFile(verifyClient, verifySql);
+        if (verifySql) {
+          await runSqlFile(verifyClient, verifySql);
+          if (patch === "20261008_stock_value_adjustments_1007.sql") {
+            report.stock_value_uniqueness = await verifyStockValueUniqueness(verifyClient, fs.readFileSync(verifySql, "utf8"));
+          }
+        }
       }
     } finally {
       await verifyClient.end();

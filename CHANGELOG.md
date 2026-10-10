@@ -1,5 +1,10 @@
 # Changelog
 
+## Stock valuation verifier successor — #1087 — 2026-10-10
+
+- Verify the exact six-column #1007 key before #1022 and its seven-column successor afterward, retaining valid `NULLS NOT DISTINCT` uniqueness and the validated invoice correction identity.
+- Add seven transactional negative cases to the disposable migration rehearsal. No migration, application runtime, route or permission change. Native publication remains pending complete qualification.
+
 ## Customer-facing acknowledgement notes — 2026-10-10
 
 - New AR editions exclude the form’s internal operational markers and priority, while preserving public notes and customer requirements. The snapshot and its exact PDF use one public projection.
