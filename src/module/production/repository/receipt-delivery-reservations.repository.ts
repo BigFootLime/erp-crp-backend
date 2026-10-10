@@ -9,6 +9,7 @@ export type ProducedDeliveryReservationArgs = {
   stock_batch_id: string; lot_id: string; qty_ok: number; actor_user_id: number;
   of_id?: number | null; quality_gate_already_held?: boolean; livraison_affaire_id?: number | null;
   source_scope?: string;
+  reservation_reason?: string;
 };
 export type ProducedDeliveryReservation = {
   reservation_id: string;
@@ -99,7 +100,7 @@ export async function reserveProducedDeliveryDemands(
         version=stock_reservations.version+1,updated_at=now(),updated_by=excluded.updated_by
       RETURNING id::text`, [args.article_id, args.location_id, item.quantity, args.commande_ligne_id,
         args.lot_id, args.stock_batch_id, item.allocation_id, item.livraison_affaire_id, args.stock_level_id,
-        args.of_id ?? null, args.source_scope ?? "NEW", "Production réservée au restant de l'affaire de livraison", args.actor_user_id])).rows[0];
+        args.of_id ?? null, args.source_scope ?? "NEW", args.reservation_reason ?? "Production réservée au restant de l'affaire de livraison", args.actor_user_id])).rows[0];
     if (!reservation) throw new Error("PRODUCTION_DELIVERY_RESERVATION_NOT_CREATED");
     reservationIds.push(reservation.id);
   }
