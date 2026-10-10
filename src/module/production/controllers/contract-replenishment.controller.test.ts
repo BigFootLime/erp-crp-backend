@@ -30,13 +30,14 @@ describe('production replenishment command boundary', () => {
     expect(f.res.setHeader).toHaveBeenCalledWith('Cache-Control', 'private, no-store');
     expect(f.res.setHeader).toHaveBeenCalledWith('Idempotency-Replayed', 'false');
     expect(f.res.status).toHaveBeenCalledWith(201); expect(f.next).not.toHaveBeenCalled();
+    expect(f.res.json).toHaveBeenCalledWith({ launch_id: 'launch-1', roots: [], replayed: false });
   });
 
   it('returns the original acknowledgement on replay without claiming another creation', async () => {
     const f = fixture(); ports.generate.mockResolvedValue({ replayed: true, result: { launch_id: 'saved-1' } });
     await f.execute(); expect(f.res.status).toHaveBeenCalledWith(200);
     expect(f.res.setHeader).toHaveBeenCalledWith('Idempotency-Replayed', 'true');
-    expect(f.res.json).toHaveBeenCalledWith({ launch_id: 'saved-1' });
+    expect(f.res.json).toHaveBeenCalledWith({ launch_id: 'saved-1', replayed: true });
   });
 
   it('rejects browser-supplied quantities instead of overriding the server proposal', async () => {

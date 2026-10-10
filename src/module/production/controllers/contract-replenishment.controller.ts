@@ -16,6 +16,6 @@ export const generateContractReplenishment: RequestHandler = async (req, res, ne
       { ...clientContractAuditContext(req), page_key: 'production.replenishment' }, req.user?.role);
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Idempotency-Replayed', saved.replayed ? 'true' : 'false');
-    res.status(saved.replayed ? 200 : 201).json(saved.result);
+    res.status(saved.replayed ? 200 : 201).json({ ...saved.result, replayed: saved.replayed });
   } catch (error) { next(error); }
 };

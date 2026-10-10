@@ -20,6 +20,6 @@ export const postClientContractReplenishment: RequestHandler = async (req, res, 
     const saved = await prepareClientReplenishment(contractClientIdSchema.parse(req.params.id), uuid.parse(req.params.contractId),
       clientReplenishmentPreparationSchema.parse(req.body), contractIdempotencySchema.parse(req.headers['idempotency-key']), clientContractAuditContext(req));
     res.setHeader('Cache-Control', 'private, no-store'); res.setHeader('Idempotency-Replayed', saved.replayed ? 'true' : 'false');
-    res.status(saved.replayed ? 200 : 201).json(saved.result);
+    res.status(saved.replayed ? 200 : 201).json({ ...saved.result, replayed: saved.replayed });
   } catch (error) { next(error); }
 };

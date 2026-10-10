@@ -76,6 +76,12 @@ The earlier internal-only generation boundary is now exposed as `POST /productio
 
 The preparation read API returns `launched_ofs` as current OF links beside its immutable proposal snapshot. Links are selected from persisted root evidence within that contract and plan, including cancelled OFs; reopening never makes an already-launched proposal selectable again. A cancelled launch instead requires a new shared preparation. `generation_installed` qualifies an installation carrying only the preparation schema. An absent preparation schema returns an explicit409 before querying missing tables. This addition is read-only, does not turn an OF intention into deliverable stock, and is verified under application privileges on the isolated PostgreSQL fixture.
 
+## Confirmation and generation affordance (feature not deployed)
+
+Preparation and generation return the transport acknowledgement's explicit `replayed` boolean in JSON. The immutable stored result is unchanged; each controller adds this per-request discriminator, so the renderer never guesses freshness from an OF number or animation state. Only a fresh, changed preparation or a fresh generation may trigger operation feedback. Commit uncertainty remains handled by the canonical services and a durable caller-owned retry key.
+
+The existing authenticated production capabilities response now includes `generate`, evaluated by the existing OF capability function in the production module context. Client-write access must not imply this capability. The workspace checks both the account's production module access and this qualified response before offering generation; the production route continues to enforce both guards independently on every mutation.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.
