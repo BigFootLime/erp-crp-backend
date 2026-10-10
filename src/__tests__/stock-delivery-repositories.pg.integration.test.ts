@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { repoPath } from "./helpers/repo-paths";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { deliveryRemainderQuantitySql, remainingReservedQuantitySql } from "../module/livraisons/repository/delivery-quantity-projections.sql";
 
 /**
  * Opt-in PostgreSQL integration coverage for the state-changing stock flow.
@@ -1589,6 +1590,60 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
     expect(preview.reservable_qty).toBe(0);expect(preview.lots[0].blocker).toMatch(/non.conformité/i);
   });
+
+describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
+  // The suite above establishes and resets this guarded disposable database.
+  beforeEach(async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await harnessPool.query("UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=3,qty_delivered=1,qty_remaining=0 WHERE id=900");
+  });
+
+  async function prepare(status:string,quantities:number[]=[1]) {
+    const db=harnessPool!;
+    const delivery=(await db.query("INSERT INTO public.bon_livraison(numero,client_id,statut) VALUES('BL-QUANTITY-FIXTURE',$1,$2) RETURNING id",[ids.client,status])).rows[0].id as string;
+    for(const [index,qty] of quantities.entries()) {
+      const line=(await db.query("INSERT INTO public.bon_livraison_ligne(bon_livraison_id,ordre,designation,quantite) VALUES($1,$2,'Projection de lot',$3) RETURNING id",[delivery,index+1,qty])).rows[0].id;
+      await db.query("INSERT INTO public.bon_livraison_ligne_allocations(bon_livraison_ligne_id,article_id,quantite,commande_ligne_affaire_allocation_id) VALUES($1,$2,$3,900)",[line,ids.article,qty]);
+    }
+    return delivery;
+  }
+  async function read(deliveryId:string) {
+    return (await harnessPool!.query(`SELECT (${deliveryRemainderQuantitySql})::float8 AS remaining
+      FROM public.bon_livraison_ligne_allocations a
+      JOIN public.bon_livraison_ligne line ON line.id=a.bon_livraison_ligne_id
+      JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
+      LEFT JOIN public.commande_ligne_affaire_allocation commande_allocation ON commande_allocation.id=a.commande_ligne_affaire_allocation_id
+      WHERE delivery.id=$1 ORDER BY line.ordre`,[deliveryId])).rows;
+  }
+  it.each([['DRAFT',1],['READY',1],['SHIPPED',2],['DELIVERED',2],['CANCELLED',2]] as const)("#OBS070 computes %s from demand and actual delivery despite a zero cache",async(status,remaining)=>{
+    const id=await prepare(status);expect(await read(id)).toEqual([{remaining}]);
+    expect((await harnessPool!.query('SELECT qty_delivered::float8 AS delivered,qty_remaining::float8 AS cached FROM public.commande_ligne_affaire_allocation WHERE id=900')).rows).toEqual([{delivered:1,cached:0}]);
+  });
+  it("#OBS070 subtracts all lots on this BL once and excludes another BL",async()=>{
+    await harnessPool!.query('UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=8 WHERE id=900');
+    const id=await prepare('READY',[3,2]);await prepare('READY',[1]);
+    expect(await read(id)).toEqual([{remaining:2},{remaining:2}]);
+  });
+  it("#OBS070 keeps another order allocation separate on the same BL",async()=>{
+    const id=await prepare('READY');const db=harnessPool!;
+    await db.query("INSERT INTO public.commande_ligne_affaire_allocation(id,commande_id,commande_ligne_id,livraison_affaire_id,article_ref_id,qty_ordered) SELECT 901,commande_id,commande_ligne_id,livraison_affaire_id,article_ref_id,9 FROM public.commande_ligne_affaire_allocation WHERE id=900");
+    const line=(await db.query("INSERT INTO public.bon_livraison_ligne(bon_livraison_id,ordre,designation,quantite) VALUES($1,2,'Autre demande',2) RETURNING id",[id])).rows[0].id;
+    await db.query('INSERT INTO public.bon_livraison_ligne_allocations(bon_livraison_ligne_id,article_id,quantite,commande_ligne_affaire_allocation_id) VALUES($1,$2,2,901)',[line,ids.article]);
+    expect(await read(id)).toEqual([{remaining:1},{remaining:7}]);
+  });
+  it("#OBS070 returns null for a delivery unbound to a command",async()=>{
+    const id=await prepare('READY');await harnessPool!.query('UPDATE public.bon_livraison_ligne_allocations SET commande_ligne_affaire_allocation_id=NULL');
+    expect(await read(id)).toEqual([{remaining:null}]);
+  });
+  it("#OBS070 shows zero only when the entire remaining demand is prepared",async()=>{
+    const id=await prepare('READY',[2]);expect(await read(id)).toEqual([{remaining:0}]);
+  });
+  it.each([[3,1,0,2],[3,1,1,2],[3,3,0,0]])("#OBS070 excludes consumed %s/%s while retaining prepared %s",async(reserved,consumed,prepared,remaining)=>{
+    await harnessPool!.query('UPDATE public.stock_reservations SET qty_reserved=$1,qty_consumed=$2,qty_prepared=$3',[reserved,consumed,prepared]);
+    expect((await harnessPool!.query(`SELECT (${remainingReservedQuantitySql})::float8 AS remaining FROM public.stock_reservations r`)).rows).toEqual([{remaining}]);
+  });
+});
 
 });
 
