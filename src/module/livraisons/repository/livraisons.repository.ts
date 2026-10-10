@@ -911,7 +911,7 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         l.quantite,
         l.unite,
         l.commande_ligne_id::text AS commande_ligne_id,
-        l.delai_client,
+        l.delai_client::text AS delai_client,
         l.created_at::text AS created_at,
         l.updated_at::text AS updated_at,
         cb.id AS created_by_id,
@@ -1692,7 +1692,7 @@ export async function repoUpdateLivraisonLine(
         quantite,
         unite,
         commande_ligne_id::text AS commande_ligne_id,
-        delai_client
+        delai_client::text AS delai_client
       FROM bon_livraison_ligne
       WHERE bon_livraison_id = $1::uuid AND id = $2::uuid
       FOR UPDATE
@@ -3136,7 +3136,7 @@ export async function repoCreateLivraisonFromCommande(
         line.code_piece,
         remainder.quantite_restante::float8 AS quantite,
         line.unite,
-        line.delai_client
+        line.delai_client::text AS delai_client
       FROM public.commande_ligne line
       JOIN public.v_bon_livraison_reliquats_226 remainder
         ON remainder.commande_ligne_id = line.id
@@ -5078,7 +5078,7 @@ export async function repoCreateLivraisonFromReservations(params: {
           cl.designation,
           cl.code_piece,
           cl.unite,
-          cl.delai_client,
+          cl.delai_client::text AS delai_client,
           e.magasin_id::text AS magasin_id,
           e.id::bigint::int AS emplacement_id,
           v.created_at::text AS verified_at,
