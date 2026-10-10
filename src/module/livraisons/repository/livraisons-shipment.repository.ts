@@ -878,7 +878,7 @@ export async function releaseLivraisonReservationsInTransaction(
     id: string
     stock_level_id: string
     stock_batch_id: string | null
-    qty_reserved: number
+    qty_to_release: number
   }>(
     `
       WITH target_reservation_ids AS (
@@ -904,7 +904,7 @@ export async function releaseLivraisonReservationsInTransaction(
         reservation.id::text AS id,
         level.id::text AS stock_level_id,
         reservation.stock_batch_id::text AS stock_batch_id,
-        reservation.qty_reserved::float8 AS qty_reserved
+        (reservation.qty_reserved - reservation.qty_consumed)::float8 AS qty_to_release
       FROM target_reservation_ids target
       JOIN public.stock_reservations reservation ON reservation.id = target.id
       JOIN public.stock_levels level
@@ -923,7 +923,7 @@ export async function releaseLivraisonReservationsInTransaction(
       if (
         existing.stock_level_id !== reservation.stock_level_id ||
         existing.stock_batch_id !== reservation.stock_batch_id ||
-        existing.qty_reserved !== reservation.qty_reserved
+        existing.qty_to_release !== reservation.qty_to_release
       ) {
         throw new Error("Conflicting stock targets for delivery reservation")
       }
@@ -934,6 +934,45 @@ export async function releaseLivraisonReservationsInTransaction(
   const targetReservations = [...reservationsById.values()]
   if (!targetReservations.length) return
 
+  // A previous partial shipment is already a physical OUT. Only the remaining
+  // commitment can be released. Keep the original reserved/consumed history.
+  if (targetReservations.some(row => !Number.isFinite(row.qty_to_release) || row.qty_to_release <= 0)) {
+    throw new HttpError(409, "DELIVERY_RESERVATION_COUNTER_INVALID", "Le restant réservé est incohérent. Vérifiez la réservation avant d'annuler.");
+  }
+  // Receipt/quality writers can already own the lot and affair allocation.
+  // Do not wait while holding a reservation: return a retryable conflict rather
+  // than introducing an allocation/stock lock cycle.
+  try {
+    await client.query(`SELECT lot.id FROM public.lots lot
+      JOIN public.stock_reservations reservation ON reservation.lot_id=lot.id
+      WHERE reservation.id=ANY($1::uuid[]) ORDER BY lot.id FOR SHARE OF lot NOWAIT`,
+      [targetReservations.map(row => row.id)]);
+    await client.query(`SELECT allocation.id FROM public.commande_ligne_affaire_allocation allocation
+      JOIN public.stock_reservations reservation ON reservation.commande_ligne_affaire_allocation_id=allocation.id
+      WHERE reservation.id=ANY($1::uuid[]) ORDER BY allocation.id FOR UPDATE OF allocation NOWAIT`,
+      [targetReservations.map(row => row.id)]);
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === '55P03') {
+      throw new HttpError(409, "DELIVERY_RESERVATION_BUSY", "Ce lot ou cette affaire est utilisé par une autre opération. Actualisez avant d'annuler.");
+    }
+    throw error;
+  }
+  // Re-read after locking the reservations: concurrent cart preparation also
+  // locks these rows, so another live BL cannot lose its stock commitment.
+  const shared = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS(SELECT 1 FROM public.bon_livraison_ligne_allocations allocation
+      JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
+      JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
+      WHERE allocation.reservation_id=ANY($1::uuid[])
+        AND line.bon_livraison_id<>$2::uuid
+        AND delivery.statut NOT IN ('CANCELLED','SHIPPED','DELIVERED')
+        AND allocation.quantite>allocation.qty_consumed) AS exists`,
+    [targetReservations.map(row => row.id), bonLivraisonId]
+  );
+  if (shared.rows[0]?.exists) {
+    throw new HttpError(409, "DELIVERY_RESERVATION_SHARED", "Un autre BL utilise cette réservation. Terminez ou corrigez cette préparation avant de libérer le stock.");
+  }
+
   const grouped = new Map<string, { level: string; batch: string | null; qty: number }>()
   for (const reservation of targetReservations) {
     const key = `${reservation.stock_level_id}:${reservation.stock_batch_id ?? "-"}`
@@ -942,7 +981,7 @@ export async function releaseLivraisonReservationsInTransaction(
       batch: reservation.stock_batch_id,
       qty: 0,
     }
-    current.qty += reservation.qty_reserved
+    current.qty += reservation.qty_to_release
     grouped.set(key, current)
   }
   const groups = [...grouped.values()].sort((left, right) =>
@@ -977,6 +1016,8 @@ export async function releaseLivraisonReservationsInTransaction(
     `
       UPDATE public.stock_reservations
       SET status = 'RELEASED',
+          qty_prepared = 0,
+          version = version + 1,
           reason = $2,
           released_at = now(),
           released_by = $3,
@@ -991,6 +1032,28 @@ export async function releaseLivraisonReservationsInTransaction(
   if ((released.rowCount ?? 0) !== targetReservations.length) {
     throw new Error("Active delivery reservation count changed while releasing stock")
   }
+
+  // Refresh the affair projection from actual active commitments. Cancellation
+  // never changes delivered quantity, the original AR, or the physical total.
+  await client.query(`
+    WITH affected AS (
+      SELECT DISTINCT commande_ligne_affaire_allocation_id AS id
+      FROM public.stock_reservations WHERE id=ANY($1::uuid[])
+        AND commande_ligne_affaire_allocation_id IS NOT NULL
+    ), totals AS (
+      SELECT affected.id,COALESCE(sum(reservation.qty_reserved-reservation.qty_consumed),0) AS quantity
+      FROM affected LEFT JOIN public.stock_reservations reservation
+        ON reservation.commande_ligne_affaire_allocation_id=affected.id AND reservation.status='ACTIVE'
+      GROUP BY affected.id
+    )
+    UPDATE public.commande_ligne_affaire_allocation allocation
+    SET qty_reserved=totals.quantity,
+        qty_from_stock=LEAST(allocation.qty_ordered,allocation.qty_delivered+totals.quantity),
+        qty_to_produce=GREATEST(0,allocation.qty_ordered-allocation.qty_delivered-totals.quantity),
+        qty_remaining=GREATEST(0,allocation.qty_ordered-allocation.qty_delivered),
+        allocation_version=allocation_version+1,updated_at=now()
+    FROM totals WHERE allocation.id=totals.id
+  `, [targetReservations.map(row => row.id)]);
 }
 
 export async function repoShipLivraison(

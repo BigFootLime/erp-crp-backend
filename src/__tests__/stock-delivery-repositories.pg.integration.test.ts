@@ -1451,6 +1451,70 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     }
   });
 
+  it('#OBS071 can cancel the unshipped remainder after an earlier partial shipment',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    const recovered=await recoverCurrent('partial-cancel-recover');
+    const reservation=recovered.reservation_ids[0];
+    // This fixture records the physical lot verification before asking the
+    // canonical cart to prepare a BL; cancellation is the behavior under test.
+    await db.query(`INSERT INTO public.stock_reservation_verifications(reservation_id,verified_qty,scanned_lot_code,snapshot,verified_by)
+      VALUES($1,3,'LOT-INT-001',$2::jsonb,7)`,[reservation,JSON.stringify({verified_qty:3,lot_code:'LOT-INT-001',source_scope:'OLD'})]);
+    const first=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:1}]},user_id:7,idempotency_key:'partial-cancel-first'});
+    await shipPartialFixture(db,first.id,'partial-cancel-first-ship');
+    const second=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:2}]},user_id:7,idempotency_key:'partial-cancel-remainder'});
+    await expect(deliveryRepository.repoUpdateLivraisonStatus(second.id,'CANCELLED',7,{commentaire:'Reste annulé après expédition partielle'})).resolves.toMatchObject({statut:'CANCELLED'});
+    expect((await db.query('SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{total:2,reserved:0}]);
+    expect((await db.query('SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches')).rows).toEqual([{total:2,reserved:0}]);
+    expect((await db.query('SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1',[reservation])).rows).toEqual([{consumed:1,prepared:0,status:'RELEASED'}]);
+    expect((await db.query('SELECT statut FROM public.bon_livraison WHERE id=$1',[first.id])).rows).toEqual([{statut:'SHIPPED'}]);
+    expect((await db.query('SELECT qty_delivered::float8 AS delivered FROM public.commande_ligne_affaire_allocation')).rows).toEqual([{delivered:1}]);
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    expect(preview).toMatchObject({shipped_qty:1,uncovered_qty:2,reservable_qty:2});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved,qty_to_produce::float8 AS missing,qty_remaining::float8 AS remaining FROM public.commande_ligne_affaire_allocation')).rows).toEqual([{reserved:0,missing:2,remaining:2}]);
+    await deliveryRepository.repoUpdateLivraisonStatus(second.id,'CANCELLED',7,{commentaire:'Rejeu de l’annulation'});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+    expect((await db.query('SELECT count(*)::int AS count FROM public.stock_movements')).rows[0].count).toBe(1);
+    const renewed=await recoverCurrent('partial-cancel-recovered-rest');
+    expect(renewed.reserved_qty).toBe(2);
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).uncovered_qty).toBe(0);
+    expect((await db.query('SELECT qty_delivered::float8 AS delivered FROM public.commande_ligne_affaire_allocation')).rows).toEqual([{delivered:1}]);
+  });
+  it.each(['lot','allocation'] as const)('#OBS071 returns a retryable conflict when a writer holds the %s',async(kind)=>{
+    const db=harnessPool!;await seedRecovery(db);
+    const recovered=await recoverCurrent('cancel-lock-'+kind),reservation=recovered.reservation_ids[0];
+    await db.query(`INSERT INTO public.stock_reservation_verifications(reservation_id,verified_qty,scanned_lot_code,snapshot,verified_by)
+      VALUES($1,3,'LOT-INT-001',$2::jsonb,7)`,[reservation,JSON.stringify({verified_qty:3,lot_code:'LOT-INT-001',source_scope:'OLD'})]);
+    const delivery=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:2}]},user_id:7,idempotency_key:'cancel-held-'+kind});
+    const writer=await db.connect();
+    try {
+      await writer.query('BEGIN');
+      if(kind==='lot')await writer.query('SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE',[ids.lot]);
+      else await writer.query('SELECT id FROM public.commande_ligne_affaire_allocation WHERE id=900 FOR UPDATE');
+      await expect(deliveryRepository.repoUpdateLivraisonStatus(delivery.id,'CANCELLED',7,{commentaire:'Annulation concurrente'})).rejects.toMatchObject({status:409,code:'DELIVERY_RESERVATION_BUSY'});
+    }finally{await writer.query('ROLLBACK');writer.release();}
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:3}]);
+    expect((await db.query('SELECT qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1',[reservation])).rows).toEqual([{prepared:2,status:'ACTIVE'}]);
+    expect((await db.query('SELECT statut FROM public.bon_livraison WHERE id=$1',[delivery.id])).rows).toEqual([{statut:'READY'}]);
+    await deliveryRepository.repoUpdateLivraisonStatus(delivery.id,'CANCELLED',7,{commentaire:'Nouvelle tentative après libération du verrou'});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+  });
+  it('#OBS071 preserves a reservation shared by another historically prepared BL',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    const recovered=await recoverCurrent('cancel-shared'),reservation=recovered.reservation_ids[0];
+    await db.query(`INSERT INTO public.stock_reservation_verifications(reservation_id,verified_qty,scanned_lot_code,snapshot,verified_by)
+      VALUES($1,3,'LOT-INT-001',$2::jsonb,7)`,[reservation,JSON.stringify({verified_qty:3,lot_code:'LOT-INT-001',source_scope:'OLD'})]);
+    const delivery=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:2}]},user_id:7,idempotency_key:'cancel-shared-first'});
+    // Simulate an existing shared preparation, outside the modern one-cart
+    // guard, to ensure cancellation cannot discard another document's stock.
+    const other=(await db.query(`INSERT INTO public.bon_livraison(numero,client_id,statut) VALUES('BL-HIST-SHARED',$1,'DRAFT') RETURNING id`,[ids.client])).rows[0].id;
+    const line=(await db.query(`INSERT INTO public.bon_livraison_ligne(bon_livraison_id,ordre,designation,quantite) VALUES($1,1,'Historical preparation',1) RETURNING id`,[other])).rows[0].id;
+    await db.query(`INSERT INTO public.bon_livraison_ligne_allocations(bon_livraison_ligne_id,article_id,quantite,reservation_id) VALUES($1,$2,1,$3)`,[line,ids.article,reservation]);
+    await db.query('UPDATE public.stock_reservations SET qty_prepared=3 WHERE id=$1',[reservation]);
+    await expect(deliveryRepository.repoUpdateLivraisonStatus(delivery.id,'CANCELLED',7,{commentaire:'Annulation du BL partagé'})).rejects.toMatchObject({status:409,code:'DELIVERY_RESERVATION_SHARED'});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:3}]);
+    expect((await db.query('SELECT qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1',[reservation])).rows).toEqual([{prepared:3,status:'ACTIVE'}]);
+    expect((await db.query('SELECT statut FROM public.bon_livraison WHERE id=$1',[delivery.id])).rows).toEqual([{statut:'READY'}]);
+  });
   it('#1123 recovers the same affair after a real cancellation, with replay and unchanged AR/history',async()=>{
     const db=harnessPool!;const cancelled=await seedRecovery(db);
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-10 — annulation après expédition partielle (#1129)
+
+- Libérer uniquement le restant non consommé, conserver les traces déjà expédiées et vider la préparation annulée dans la même transaction.
+- Refuser une réservation partagée avec un autre BL ouvert et actualiser les quantités de l’affaire depuis les engagements actifs.
+- Régression PostgreSQL réelle : réserver3, expédier1, annuler2, puis reprendre le restant sur la même affaire. Rejeu Base Test encore requis.
+
 ## Delivery stock recovery — #1123 — 2026-10-10
 
 - Preview the existing affair remainder and reserve eligible free physical stock through the canonical transaction. Retain cancelled BLs, released reservations, OLD documents and initial AR promises; create no duplicate affair, OF, shipment or email.

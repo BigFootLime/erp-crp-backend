@@ -100,7 +100,7 @@ function createReservationAllocationLifecycle() {
         id: RESERVATION_ID,
         stock_level_id: STOCK_LEVEL_ID,
         stock_batch_id: STOCK_BATCH_ID,
-        qty_reserved: 2,
+        qty_to_release: 2,
       }
       // The duplicate exercises the defensive ID deduplication in addition to SQL UNION.
       return { rows: [row, { ...row }], rowCount: 2 }
