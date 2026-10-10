@@ -52,6 +52,10 @@ Pending quality output, terminal unexplained quantities and grouped losses witho
 
 The eventual generation endpoint must live under the production module gate. An ordinary client-module grant cannot be promoted by the legacy OF role helper's global granted context; the launch primitive checks both the module and authenticated actor before SQL. Explicit elevated access retains the canonical policy. No existing role/module access is changed and no generation route is introduced here.
 
+## PREPARE connected to shared producer intentions (feature not deployed)
+
+PREPARE now reads persistent producer intentions alongside the canonical shared physical allocation in its caller transaction. The preparation fingerprint includes this intention context; a new snapshot cannot silently reuse a plan computed before an OF was created. Only additional-launch proposals change. The delivery coverage report, stock quantities and OTD coverage stay unchanged. A producer requiring quality/group-loss review stops preparation before plan, audit or outbox insertion. Missing root/receipt-attribution schemas return an actionable409 before querying absent tables. This feature requires the root migration; it is not deployed and generation is still an internal unrouted primitive.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.

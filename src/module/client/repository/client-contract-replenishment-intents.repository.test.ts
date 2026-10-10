@@ -96,11 +96,16 @@ describe('persistent anticipated producer reconciliation', () => {
   });
 
   it('runs the persistent read on the caller transaction and rejects a truncated scope', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [root()] });
+    const query = vi.fn().mockResolvedValueOnce({rows:[{installed:true}]}).mockResolvedValue({ rows: [root()] });
     const tx = { query } as unknown as Pick<PoolClient, 'query'>;
     expect(await readReplenishmentProducerIntents(tx, ['article-1'], [])).toHaveLength(1);
     expect(query).toHaveBeenCalledWith(expect.stringContaining('production_consolidation_allocations'), [['article-1']]);
-    query.mockResolvedValue({ rows: Array.from({ length: 501 }, (_, i) => root({ evidence_id: String(i) })) });
+    query.mockResolvedValueOnce({rows:[{installed:true}]}).mockResolvedValue({ rows: Array.from({ length: 501 }, (_, i) => root({ evidence_id: String(i) })) });
     await expect(readReplenishmentProducerIntents(tx, ['article-1'], [])).rejects.toMatchObject({ status: 422 });
+  });
+  it('reports a pending migration before attempting the producer query',async()=>{
+    const query=vi.fn().mockResolvedValue({rows:[{installed:false}]}),tx={query} as unknown as Pick<PoolClient,'query'>;
+    await expect(readReplenishmentProducerIntents(tx,['article-1'],[])).rejects.toMatchObject({status:409,code:'CONTRACT_REPLENISHMENT_NOT_INSTALLED'});
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });

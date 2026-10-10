@@ -107,6 +107,9 @@ export function reconcileReplenishmentProducerIdentities(rows: readonly Replenis
 }
 
 export async function readReplenishmentProducerIntents(tx: Tx, articleIds: readonly string[], sources: readonly ContractCoverageSupply[]) {
+  const installed=(await tx.query<{installed:boolean}>(`SELECT to_regclass('public.client_contract_replenishment_roots') IS NOT NULL
+    AND to_regclass('public.production_receipt_lane_assignments') IS NOT NULL AS installed`)).rows[0];
+  if(!installed?.installed)throw new HttpError(409,'CONTRACT_REPLENISHMENT_NOT_INSTALLED','La préparation attend la mise à jour des OF anticipés.');
   const rows = (await tx.query<ReplenishmentProducerIdentity>(REPLENISHMENT_PRODUCER_IDENTITIES_SQL, [articleIds])).rows;
   if (rows.length > 500) throw new HttpError(422, 'CONTRACT_REPLENISHMENT_SCOPE_TOO_LARGE', 'Le calcul dépasse 500 OF anticipés. Réduisez le périmètre.');
   return reconcileReplenishmentProducerIdentities(rows, sources);

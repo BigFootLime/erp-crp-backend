@@ -8,7 +8,8 @@ import { readCrmClient } from '../repository/client-crm.repository';
 import { readClientContract, lockContractArticles } from '../repository/client-contract.repository';
 import * as repo from '../repository/client-contract-replenishment.repository';
 import { readClientContractCoverageTx } from './client-contract-coverage.service';
-import { prepareContractReplenishmentSnapshot } from '../domain/client-contract-replenishment-preparation';
+import { prepareContractReplenishmentWithIntents } from '../domain/client-contract-replenishment-intent-preparation';
+import { readReplenishmentProducerIntents } from '../repository/client-contract-replenishment-intents.repository';
 import type { AuditContext } from '../repository/client.repository';
 import type { ClientReplenishmentPreparationCommand } from '../validators/client-contract-replenishment.validators';
 import type { PreparedContractReplenishmentResult } from '../types/client-contract-replenishment.types';
@@ -53,7 +54,10 @@ export async function prepareClientReplenishment(clientId: string, contractId: s
       const snapshot = await readClientContractCoverageTx(tx, clientId, contractId, { start_month: command.start_month, months: command.months });
       if (snapshot.report.snapshot_hash !== command.expected_snapshot_hash)
         throw new HttpError(409, 'CONTRACT_REPLENISHMENT_COVERAGE_CHANGED', 'Le stock, les besoins ou le planning ont changé. Recalculez avant de préparer.');
-      const preparation = prepareContractReplenishmentSnapshot(snapshot.report, snapshot.clock.today);
+      const intents = await readReplenishmentProducerIntents(tx,
+        snapshot.contract.lines.map(line => line.proposed_article!.article_id),snapshot.allSources);
+      const preparation = prepareContractReplenishmentWithIntents({ report:snapshot.report,today:snapshot.clock.today,
+        allDemands:snapshot.allDemands,allSources:snapshot.allSources,allAllocations:snapshot.allAllocations,intents });
       const before = await repo.readReplenishmentPlan(tx, contractId);
       const unchanged = before?.fingerprint === preparation.fingerprint;
       if (!unchanged && (before?.id ?? null) !== command.expected_plan_id)

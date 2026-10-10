@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ connect: vi.fn(), query: vi.fn(), client: vi.fn(), contract: vi.fn(), lockArticles: vi.fn(),
-  coverage: vi.fn(), plan: vi.fn(), replay: vi.fn(), insert: vi.fn(), event: vi.fn(), audit: vi.fn(), outbox: vi.fn(), transaction: vi.fn() }));
+  coverage: vi.fn(), intents:vi.fn(), plan: vi.fn(), replay: vi.fn(), insert: vi.fn(), event: vi.fn(), audit: vi.fn(), outbox: vi.fn(), transaction: vi.fn() }));
 vi.mock('../../../config/database', () => ({ default: { connect: mocks.connect } }));
 vi.mock('../../../shared/realtime/realtime-outbox-transaction', () => ({ withRealtimeOutboxTransaction: mocks.transaction }));
 vi.mock('../../../shared/realtime/realtime-outbox.service', () => ({ enqueueEntityChanged: mocks.outbox }));
@@ -8,11 +8,13 @@ vi.mock('../../audit-logs/repository/audit-logs.repository', () => ({ repoInsert
 vi.mock('../repository/client-crm.repository', () => ({ readCrmClient: mocks.client }));
 vi.mock('../repository/client-contract.repository', () => ({ readClientContract: mocks.contract, lockContractArticles: mocks.lockArticles }));
 vi.mock('./client-contract-coverage.service', () => ({ readClientContractCoverageTx: mocks.coverage }));
+vi.mock('../repository/client-contract-replenishment-intents.repository',()=>({readReplenishmentProducerIntents:mocks.intents}));
 vi.mock('../repository/client-contract-replenishment.repository', () => ({ readReplenishmentPlan: mocks.plan,
   readReplenishmentReplay: mocks.replay, insertReplenishmentPlan: mocks.insert, appendReplenishmentEvent: mocks.event }));
 
 import { prepareClientReplenishment } from './client-contract-replenishment.service';
-import { prepareContractReplenishmentSnapshot } from '../domain/client-contract-replenishment-preparation';
+import { prepareContractReplenishmentWithIntents } from '../domain/client-contract-replenishment-intent-preparation';
+import { HttpError } from '../../../utils/httpError';
 import type { AuditContext } from '../repository/client.repository';
 import type { ClientReplenishmentPreparationCommand } from '../validators/client-contract-replenishment.validators';
 import type { ContractCoverageResult } from '../types/client-contract-coverage.types';
@@ -25,7 +27,7 @@ const command: ClientReplenishmentPreparationCommand = { action: 'PREPARE', expe
 const audit: AuditContext = { user_id: 1, ip: null, user_agent: null, device_type: null, os: null, browser: null,
   page_key: 'clients.contracts.replenishment', client_session_id: null,
   path: '/clients/client-a/contracts/contract-a/replenishment/commands' };
-const fingerprint = prepareContractReplenishmentSnapshot(report, '2026-10-10').fingerprint;
+const fingerprint = prepareContractReplenishmentWithIntents({report,today:'2026-10-10',allDemands:[],allSources:[],allAllocations:[],intents:[]}).fingerprint;
 const savedPlan = { id: 'plan-a', contract_id: 'contract-a', fingerprint, proposals: [] };
 
 beforeEach(() => {
@@ -33,7 +35,8 @@ beforeEach(() => {
   mocks.transaction.mockImplementation(async (tx, callback) => callback(tx));
   mocks.client.mockResolvedValue({ id: 'client-a', status: 'client', archived_at: null, blocked: false });
   mocks.contract.mockResolvedValue({ id: 'contract-a', version: 1, lines: [] });
-  mocks.coverage.mockResolvedValue({ report, clock: { today: '2026-10-10' } });
+  mocks.coverage.mockResolvedValue({ report, clock: { today: '2026-10-10' }, contract:{lines:[]},allDemands:[],allSources:[],allAllocations:[] });
+  mocks.intents.mockResolvedValue([]);
   mocks.replay.mockResolvedValue(null); mocks.plan.mockResolvedValueOnce(null).mockResolvedValue(savedPlan);
   mocks.audit.mockResolvedValue({ id: 'audit-a' });
 });
@@ -44,6 +47,7 @@ describe('contract preparation consistency and retries', () => {
     expect(result).toMatchObject({ replayed: false, result: { unchanged: false, plan: savedPlan } });
     expect(mocks.connect).toHaveBeenCalledTimes(1);
     expect(mocks.coverage.mock.calls[0][0]).toBe(await mocks.connect.mock.results[0].value);
+    expect(mocks.intents).toHaveBeenCalledExactlyOnceWith(await mocks.connect.mock.results[0].value,[],[]);
     expect(mocks.query).toHaveBeenCalledWith('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
     expect(mocks.insert).toHaveBeenCalledTimes(1); expect(mocks.event).toHaveBeenCalledTimes(1);
     expect(mocks.audit.mock.calls[0][0].body.action).toBe('CLIENT_REPLENISHMENT_PREPARE');
@@ -88,5 +92,10 @@ describe('contract preparation consistency and retries', () => {
       mocks.transaction.mockRejectedValueOnce(error);
       await expect(execute()).rejects.toMatchObject({ status: 409, code: 'CONTRACT_REPLENISHMENT_CONCURRENT_CHANGE' });
     }
+  });
+  it('does not persist another preparation when the producer reader requires a quality or grouping review',async()=>{
+    mocks.intents.mockRejectedValue(new HttpError(409,'CONTRACT_REPLENISHMENT_INTENT_REVIEW_REQUIRED','Vérifiez la réception'));
+    await expect(execute()).rejects.toMatchObject({status:409,code:'CONTRACT_REPLENISHMENT_INTENT_REVIEW_REQUIRED'});
+    expect(mocks.insert).not.toHaveBeenCalled();expect(mocks.event).not.toHaveBeenCalled();expect(mocks.audit).not.toHaveBeenCalled();expect(mocks.outbox).not.toHaveBeenCalled();
   });
 });
