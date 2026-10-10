@@ -234,3 +234,7 @@
 ## Dossier replenishment objective — #1113
 
 - Read the original anticipated contract target in the OF dossier instead of requiring the planner to type it again. Preserve customer promises, earlier internal dates, committed slots, and dossier completeness.
+
+## 2026-10-10 — #1116
+
+- Commande client : conserver les dates civiles lors de la duplication ; éviter HTTP500 dû au passage DATE PostgreSQL vers String(Date). Lecture ISO dédiée, sans mutation des délais sources ni reprise des réservations/AR.
