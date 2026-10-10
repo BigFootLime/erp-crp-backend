@@ -9,7 +9,7 @@ DO $$
 BEGIN
   IF to_regclass('public.bl_allocations_reservation_226_uq') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM pg_index i
-        WHERE i.indexrelid='public.bl_allocations_reservation_226_uq'::regclass
+        WHERE i.indexrelid=to_regclass('public.bl_allocations_reservation_226_uq')
           AND i.indrelid='public.bon_livraison_ligne_allocations'::regclass
           AND i.indisunique AND i.indisvalid AND i.indnkeyatts=1
           AND pg_get_indexdef(i.indexrelid,1,true)='reservation_id'
