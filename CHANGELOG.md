@@ -1,5 +1,10 @@
 # Changelog
 
+## Quality delivery policy audit events — 2026-10-10
+
+- Persist activation as ACTIVATED and return to draft as UPDATED, matching the existing audit constraint. Preserve signed policy contents, release gates and transactional rollback. Backend #1095 / WP-285 / OBS054. No migration.
+
+
 ## Delivery calendar dates — 2026-10-10
 
 - Return delivery-line due dates as calendar text from PostgreSQL in detail, line edit and both preparation paths. A 16 October promise stays 16 October in every timezone, without rewriting stock, orders, promises or existing official documents. WP-285 / OBS051. No migration.
