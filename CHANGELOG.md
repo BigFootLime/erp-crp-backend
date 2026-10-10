@@ -1,5 +1,10 @@
 # Changelog
 
+## Preserve purchases in technical revisions — 2026-10-10
+
+- Preserve purchase dimensions, cutting coefficient, supplier details, price basis, VAT and totals when copying a technical version. Source rows and frozen dossiers remain unchanged.
+- PostgreSQL 17 regression fixture verifies values, nulls, zero prices and source scope. WP-285 full business recipe remains in progress.
+
 ## Recipe conditional trigger precision — 2026-10-10
 
 - Preserve the conditional OF dossier invalidation trigger while widening numeric precision. Restore its definition, enabled mode and comment inside the same transaction.
