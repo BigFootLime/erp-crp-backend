@@ -15,6 +15,10 @@ function parseBoolean(value: unknown): boolean | undefined {
 
 export const packPreviewParamsSchema = livraisonIdParamsSchema
 
+export const packDownloadParamsSchema = livraisonIdParamsSchema.extend({
+  documentId: z.string().uuid(),
+}).strict()
+
 const includeDocumentsSchema = z
   .preprocess((v) => {
     const parsed = parseBoolean(v)
