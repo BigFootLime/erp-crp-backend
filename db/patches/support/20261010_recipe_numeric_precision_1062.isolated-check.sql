@@ -18,6 +18,12 @@ BEGIN
       (SELECT attnum FROM pg_attribute WHERE attrelid='public.v_production_active_executions'::regclass AND attname='temps_total_planned'))<>'Isolated duration comment' THEN
     RAISE EXCEPTION 'Column comment changed';
   END IF;
+  IF NOT EXISTS(SELECT 1 FROM pg_trigger t CROSS JOIN public.precision_trigger_before b
+      WHERE t.tgrelid='public.of_operations'::regclass AND t.tgname='of_dossier_operation_changed'
+      AND pg_get_triggerdef(t.oid,true)=b.definition AND t.tgenabled=b.enabled
+      AND obj_description(t.oid,'pg_trigger')=b.comment) THEN
+    RAISE EXCEPTION 'Conditional trigger definition, enabled mode or comment changed';
+  END IF;
   IF NOT EXISTS(SELECT 1 FROM public.pieces_techniques_achats WHERE id=1 AND prix=0.03 AND pu_achat=0.03 AND total_achat_ht=2.76)
       OR NOT EXISTS(SELECT 1 FROM public.pieces_techniques_operations WHERE id=1 AND temps_total=0.383)
       OR NOT EXISTS(SELECT 1 FROM public.of_operations WHERE id=1 AND tp=0.333 AND tf_unit=0.05 AND temps_total_planned=0.383 AND temps_total_real=0.017) THEN
@@ -39,6 +45,11 @@ DO $$ BEGIN
     RAISE EXCEPTION 'Fractional values lost precision';
   END IF;
 END $$;
+BEGIN;
+UPDATE public.of_operations SET tp=0.444444 WHERE id=2;
+DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM public.precision_trigger_audit WHERE id=2) THEN
+  RAISE EXCEPTION 'Conditional operation invalidation trigger did not execute'; END IF; END $$;
+ROLLBACK;
 SET ROLE cerp_app;
 SELECT pointage_id,temps_total_planned,temps_total_real FROM public.v_production_active_executions;
 RESET ROLE;
