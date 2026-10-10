@@ -1,6 +1,10 @@
 import type { ClientContractArticle } from './client-contract.types';
 import type { ContractCoverageResult } from './client-contract-coverage.types';
 
+export type ReplenishmentPlanLaunchLink = {
+  proposal_id: string; root_of_id: number; number: string; status: string; quantity: string; target_date: string;
+};
+
 /** Preparation evidence only; these quantities never increase physical coverage. */
 export type PreparedContractReplenishmentProposal = {
   id: string; plan_id: string; contract_line_id: string; article: ClientContractArticle;

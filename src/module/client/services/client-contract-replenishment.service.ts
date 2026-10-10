@@ -13,6 +13,7 @@ import { readReplenishmentProducerIntents } from '../repository/client-contract-
 import type { AuditContext } from '../repository/client.repository';
 import type { ClientReplenishmentPreparationCommand } from '../validators/client-contract-replenishment.validators';
 import type { PreparedContractReplenishmentResult } from '../types/client-contract-replenishment.types';
+import { readReplenishmentPlanLaunches } from '../repository/client-contract-replenishment-launch.repository';
 
 export async function getClientReplenishmentPreparation(clientId: string, contractId: string, planId?: string, page = 1) {
   const tx = await pool.connect();
@@ -20,11 +21,19 @@ export async function getClientReplenishmentPreparation(clientId: string, contra
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     if (!await readCrmClient(tx, clientId)) throw new HttpError(404, 'CLIENT_NOT_FOUND', 'Client introuvable.');
     if (!await readClientContract(tx, clientId, contractId)) throw new HttpError(404, 'CLIENT_CONTRACT_NOT_FOUND', 'Contrat introuvable pour ce client.');
+    const installed = (await tx.query<{ preparation_installed: boolean; generation_installed: boolean }>(`SELECT
+      to_regclass('public.client_contract_replenishment_plans') IS NOT NULL
+      AND to_regclass('public.client_contract_replenishment_proposals') IS NOT NULL
+      AND to_regclass('public.client_contract_replenishment_events') IS NOT NULL AS preparation_installed,
+      to_regclass('public.client_contract_replenishment_roots') IS NOT NULL AS generation_installed`)).rows[0];
+    if (!installed?.preparation_installed)
+      throw new HttpError(409, 'CONTRACT_REPLENISHMENT_NOT_INSTALLED', 'La préparation du réapprovisionnement n’est pas encore installée. Contactez l’administrateur.');
     const plan = await repo.readReplenishmentPlan(tx, contractId, planId);
     if (planId && !plan) throw new HttpError(404, 'CONTRACT_REPLENISHMENT_PLAN_NOT_FOUND', 'Préparation introuvable pour ce contrat.');
     const history = planId ? await repo.readReplenishmentHistory(tx, contractId, planId, page) : undefined;
+    const launchedOfs = plan && installed.generation_installed ? await readReplenishmentPlanLaunches(tx, contractId, plan.id) : [];
     await tx.query('COMMIT');
-    return history ? { plan, history } : { plan };
+    return { plan, launched_ofs: launchedOfs, generation_installed: installed.generation_installed, ...(history ? { history } : {}) };
   } catch (error) { await tx.query('ROLLBACK'); throw error; }
   finally { tx.release(); }
 }

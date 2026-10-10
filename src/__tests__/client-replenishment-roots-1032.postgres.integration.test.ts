@@ -7,6 +7,7 @@ import { prepareContractReplenishmentSnapshot } from '../module/client/domain/cl
 import type { ContractCoverageResult } from '../module/client/types/client-contract-coverage.types';
 import { readReplenishmentProducerIntents } from '../module/client/repository/client-contract-replenishment-intents.repository';
 import { readReplenishmentPlanningTargets } from '../module/planning/repository/planning-replenishment-targets.repository';
+import { readReplenishmentPlanLaunches } from '../module/client/repository/client-contract-replenishment-launch.repository';
 
 const url = process.env.CLIENT_REPLENISHMENT_ROOTS_1032_TEST_DATABASE_URL;
 describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
@@ -32,7 +33,7 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
       CREATE TABLE public.ordres_fabrication(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,root_of_id bigint,parent_of_id bigint,
         statut text NOT NULL,commande_id bigint,commande_ligne_id bigint,affaire_id bigint,article_id uuid,piece_technique_id uuid,
         piece_technique_version_id uuid,quantite_lancee numeric,quantite_bonne numeric DEFAULT 0,quantite_rebut numeric DEFAULT 0,
-        client_id text,created_by integer,technical_preparation jsonb);
+        client_id text,created_by integer,technical_preparation jsonb,numero text NOT NULL DEFAULT 'OF-TEST');
       CREATE TABLE public.of_output_lots(of_id bigint NOT NULL REFERENCES public.ordres_fabrication(id),qty_ok numeric(18,3) NOT NULL DEFAULT 0);
       CREATE TABLE public.of_receipts(id uuid PRIMARY KEY,of_id bigint REFERENCES public.ordres_fabrication(id),qty_ok numeric(18,3) NOT NULL);
       CREATE TABLE public.production_receipt_lane_assignments(receipt_id uuid REFERENCES public.of_receipts(id),quantity numeric(18,3) NOT NULL);
@@ -186,6 +187,17 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     const rows = await readReplenishmentProducerIntents(db,[article.article_id],[source]);
     expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===one.ofId).id)).toMatchObject({ received_quantity:'20.000',received_reconciled:true,coverage_source_ids:[] });
     expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===two.ofId).id)).toMatchObject({ received_quantity:'10.000',received_reconciled:true,coverage_source_ids:[source.id] });
+  });
+  it('reopens only the persisted roots belonging to this plan and contract, including a cancelled root',async()=>{
+    const f=await fixture(),other=await fixture();await insert(f);await insert(other);
+    await db.query("UPDATE public.ordres_fabrication SET numero='OF-REOPENED',statut='ANNULE' WHERE id=$1",[f.ofId]);
+    const tx=await db.connect();
+    try {
+      await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await tx.query('SET LOCAL ROLE cerp_app');
+      expect(await readReplenishmentPlanLaunches(tx,f.contractId,f.planId)).toEqual([{ proposal_id:f.proposalId,
+        root_of_id:Number(f.ofId),number:'OF-REOPENED',status:'ANNULE',quantity:'20.000',target_date:f.target }]);
+      expect(await readReplenishmentPlanLaunches(tx,other.contractId,f.planId)).toEqual([]);
+    } finally {await tx.query('ROLLBACK');tx.release();}
   });
   it('keeps the original planning target on an unbound root and its child under application privileges',async()=>{
     const f=await fixture();await insert(f);
