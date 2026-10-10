@@ -242,3 +242,5 @@
 ## 2026-10-10 — #1119
 
 - Accusé de réception : afficher et archiver le délai de livraison de chaque ligne, sans décalage de jour ni réécriture des anciens AR.
+
+- #1121 : mesurer les libellés du bandeau PDF pour éviter le chevauchement des références longues.
