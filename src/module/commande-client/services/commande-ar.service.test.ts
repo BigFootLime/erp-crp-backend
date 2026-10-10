@@ -1,5 +1,7 @@
 import { inflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -173,8 +175,12 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     const client = { release: vi.fn() };
     const data = {
       header: { numero: "CMD-42", customer_reference: "CLIENT-42", client_company_name: "Client recette",
-        date_commande: "2026-10-10", statut: "AR_PRET", total_ht: 80, total_ttc: 96, commentaire: raw },
-      lines: [], contacts: [], general_terms: null,
+        date_commande: "2026-10-10", statut: "AR_PRET", total_ht: 120, total_ttc: 144, commentaire: raw },
+      lines: [
+        { designation: "Axe de recette", code_piece: "RF-AXE", quantite: 1, unite: "pce", prix_unitaire_ht: 40, taux_tva: 20, total_ttc: 48, delai_client: "2026-03-29" },
+        { designation: "Bague de recette", code_piece: "RF-BAGUE", quantite: 1, unite: "pce", prix_unitaire_ht: 40, taux_tva: 20, total_ttc: 48, delai_client: "2026-11-01" },
+        { designation: "Pièce sans date confirmée", code_piece: "RF-ATTENTE", quantite: 1, unite: "pce", prix_unitaire_ht: 40, taux_tva: 20, total_ttc: 48, delai_client: null },
+      ], contacts: [], general_terms: null,
     };
     mocks.connect.mockResolvedValue(client);
     mocks.loadGeneration.mockResolvedValue(data);
@@ -186,6 +192,7 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     expect(input.official_source_snapshot.public_comment).toBe("Note publique.\n\nExigences client :\nCertificat matière obligatoire.\nLivraison au quai 2.");
     expect(JSON.stringify(input.content_snapshot)).toContain("Priorite: CRITIQUE");
     expect(data.header.commentaire).toBe(raw);
+    expect(input.official_source_snapshot.lines.map((line: { delai_client: string | null }) => line.delai_client)).toEqual(["2026-03-29", "2026-11-01", null]);
     const bytes = await input.pdf_factory({ reference: "AR-00000042-v2", version_number: 2 });
     const text = drawnPages(bytes).join("\n");
     expect(text).toContain("Note publique.");
@@ -194,6 +201,9 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     expect(text).toContain("Livraison au quai 2.");
     expect(text).not.toContain("Commande operations");
     expect(text).not.toContain("Priorite:");
+    expect(text).toContain("Délai de livraison : 29/03/2026");
+    expect(text).toContain("Délai de livraison : 01/11/2026");
+    expect(text).toContain("Délai de livraison : à confirmer");
     expect(client.release).toHaveBeenCalledOnce();
   });
 
@@ -207,7 +217,8 @@ describe("new AR customer notes and immutable archived snapshots", () => {
       exactPdfSha256: null, exactPdfSizeBytes: null, pdfSha256: null, pdfSizeBytes: null,
       gedDocumentId: null, gedVersionId: null, archivedAt: null,
       sourceSnapshot: { type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: "AR-00000042-v1",
-        order_number: "CLIENT-42", issuer: ISSUER, date_commande: "2026-10-09", lines: [],
+        order_number: "CLIENT-42", issuer: ISSUER, date_commande: "2026-10-09",
+        lines: [{ designation: "Pièce archive historique", code_piece: "RF-OLD", quantite: "2", unite: "pce", prix_unitaire_ht: "40", taux_tva: "20", total_ttc: "96" }],
         total_ht: "80", total_ttc: "96", public_comment: raw },
     };
     const bytes = await renderCommandeArOfficialPdf({ archive });
@@ -215,6 +226,7 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     expect(text).toContain("[Commande operations]");
     expect(text).toContain("Priorite: CRITIQUE");
     expect(archive.sourceSnapshot.public_comment).toBe(raw);
+    expect(text).not.toContain("Délai de livraison");
   });
 });
 
@@ -364,4 +376,42 @@ describe("accusé de réception — mentions légales", () => {
       expect(page).toContain("Indemnité forfaitaire");
     }
   }, 90_000);
+});
+describe("AR line delivery dates #1119", () => {
+  it("renders frozen per-line dates without consulting the current order or altering the source", async () => {
+    const archive: AuthoritativePdfArchiveRecord = {
+      id: "fixture-line-dates", entityType: "COMMANDE_CLIENT", entityId: "42",
+      documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", documentVersion: 2,
+      renderVersion: "customer-ar-pdf-v1", idempotencyKey: "fixture-line-dates-v2",
+      title: "AR-00000042-v2", originalName: "AR-00000042-v2.pdf", sourceRevision: "frozen-source",
+      actorUserId: 7, createdAt: "2026-10-10T08:00:00.000Z", snapshotSha256: "a".repeat(64),
+      exactPdfSha256: null, exactPdfSizeBytes: null, pdfSha256: null, pdfSizeBytes: null,
+      gedDocumentId: null, gedVersionId: null, archivedAt: null,
+      sourceSnapshot: {
+        type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: "AR-00000042-v2",
+        order_number: "RECETTE-DELIVERY-DATES", issuer: ISSUER, customer_name: "Client recette",
+        date_commande: "2026-10-10", total_ht: "120", total_ttc: "144",
+        bill_address: { name: "Client recette", city: "LYON", country: "France" },
+        delivery_address: { name: "Client recette", city: "LYON", country: "France" },
+        lines: [
+          { designation: "Axe usiné — première échéance", code_piece: "RF-AXE", quantite: "1", unite: "pce", prix_unitaire_ht: "40", taux_tva: "20", total_ttc: "48", delai_client: "2026-03-29" },
+          { designation: "Bague usinée — seconde échéance", code_piece: "RF-BAGUE", quantite: "1", unite: "pce", prix_unitaire_ht: "40", taux_tva: "20", total_ttc: "48", delai_client: "2026-11-01" },
+          { designation: "Pièce — délai à confirmer", code_piece: "RF-ATTENTE", quantite: "1", unite: "pce", prix_unitaire_ht: "40", taux_tva: "20", total_ttc: "48", delai_client: null },
+        ],
+      },
+    };
+    const original = JSON.stringify(archive.sourceSnapshot);
+    const loadCount = mocks.loadGeneration.mock.calls.length;
+    const bytes = await renderCommandeArOfficialPdf({ archive });
+    const text = drawnPages(bytes).join("\n");
+    expect(text).toContain("Délai de livraison : 29/03/2026");
+    expect(text).toContain("Délai de livraison : 01/11/2026");
+    expect(text).toContain("Délai de livraison : à confirmer");
+    expect(mocks.loadGeneration).toHaveBeenCalledTimes(loadCount);
+    expect(JSON.stringify(archive.sourceSnapshot)).toBe(original);
+    if (process.env.OBS065_RENDER_PROOF_DIR) {
+      mkdirSync(process.env.OBS065_RENDER_PROOF_DIR, { recursive: true });
+      writeFileSync(path.join(process.env.OBS065_RENDER_PROOF_DIR, "ar-line-dates.pdf"), bytes);
+    }
+  });
 });

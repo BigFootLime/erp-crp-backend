@@ -7,7 +7,7 @@ import {
   renderCerpDocument,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
-import { money } from "../../../shared/pdf/format-fr";
+import { formatDateFR as formatCivilDateFR, money } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type {
   CommandeArDraft,
@@ -67,7 +67,7 @@ export type CommandeArOfficialSnapshot = {
   public_comment: string | null;
   bill_address: CommandeArAddress;
   delivery_address: CommandeArAddress;
-  lines: Array<{ designation: string; code_piece: string | null; quantite: string; unite: string | null; prix_unitaire_ht: string; taux_tva: string | null; total_ttc: string }>;
+  lines: Array<{ designation: string; code_piece: string | null; quantite: string; unite: string | null; prix_unitaire_ht: string; taux_tva: string | null; total_ttc: string; /** Optional only for historical snapshots. */ delai_client?: string | null }>;
   issuer: LegalParty;
 };
 
@@ -209,6 +209,8 @@ export async function buildCommandeArPdfBuffer(params: {
     prix_unitaire_ht: number | string;
     taux_tva: number | string | null;
     total_ttc: number | string;
+    /** Civil delivery date; absent only from historical archived snapshots. */
+    delai_client?: string | null;
   }>;
   /**
    * Instantane de l'emetteur : identite legale et mentions obligatoires.
@@ -237,6 +239,8 @@ export async function buildCommandeArPdfBuffer(params: {
       taux_tva: `${line.taux_tva ?? 0} %`,
       total_ttc: formatCurrencyEUR(line.total_ttc),
     },
+    // Archived AR sources predating this field keep their original rendering.
+    meta: line.delai_client === undefined ? null : `Délai de livraison : ${line.delai_client ? formatCivilDateFR(line.delai_client) : "à confirmer"}`,
     metaColumn: "designation",
   }));
 
@@ -337,7 +341,7 @@ export async function renderCommandeArOfficialPdf({ archive }: { archive: Author
     documentVersion: archive.documentVersion,
     totalHt: source.total_ht ?? "0", totalTtc: source.total_ttc ?? "0", commentaire: source.public_comment ?? null,
     clientEmail: null, clientPhone: null, billAddress: source.bill_address ?? {}, deliveryAddress: source.delivery_address ?? {},
-    lines: source.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece ?? null, quantite: line.quantite, unite: line.unite ?? null, prix_unitaire_ht: line.prix_unitaire_ht, taux_tva: line.taux_tva, total_ttc: line.total_ttc })),
+    lines: source.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece ?? null, quantite: line.quantite, unite: line.unite ?? null, prix_unitaire_ht: line.prix_unitaire_ht, taux_tva: line.taux_tva, total_ttc: line.total_ttc, delai_client: line.delai_client })),
   });
 }
 
@@ -384,7 +388,7 @@ export async function svcGenerateCommandeAr(params: {
       date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
       public_comment: publicComment, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
       delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
-      lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc) })), issuer,
+      lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc), delai_client: line.delai_client ?? null })), issuer,
     };
     const contentSnapshot = buildCommandeArContentSnapshot(data);
     const contentFingerprint = sha256Canonical(contentSnapshot);
