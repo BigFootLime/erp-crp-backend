@@ -19,9 +19,11 @@ BEGIN
   END IF;
   -- #1022 extends the same NULLS NOT DISTINCT key with the invoice correction
   -- UUID. Physical/opening postings still have both correction UUIDs NULL.
-  invoice_successor := EXISTS(SELECT 1 FROM pg_attribute
-    WHERE attrelid='public.stock_valuation_entries'::regclass
-      AND attname='invoice_reconciliation_id' AND NOT attisdropped);
+  -- The documented #1022 shape rollback retains archive tables/columns but
+  -- restores the #1007 kind/key. Inspect the active kind contract instead.
+  invoice_successor := EXISTS(SELECT 1 FROM pg_constraint
+    WHERE conrelid='public.stock_valuation_entries'::regclass
+      AND conname='stock_invoice_entry_kind_1022' AND contype='c' AND convalidated);
   posting_name := CASE WHEN invoice_successor THEN 'stock_invoice_posting_unique_1022'
     ELSE 'stock_value_posting_unique_1007' END;
   posting_columns := ARRAY['movement_id','article_id','owner_key','stock_unit','currency','value_adjustment_id'];

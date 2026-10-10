@@ -2,7 +2,7 @@
 
 /** Exercise the real verifier against transactional metadata tampering in the
  * rehearsal's disposable database. Every case restores and rechecks the key. */
-async function verifyStockValueUniqueness(client, verifySql) {
+async function verifyStockValueUniqueness(client, verifySql, legacyShapeSql) {
   const database = await client.query("SELECT current_database() AS name");
   if (database.rows[0]?.name !== "cerp_test") throw new Error("Stock verifier tests require the disposable cerp_test database");
   const dropPosting = "ALTER TABLE public.stock_valuation_entries DROP CONSTRAINT stock_invoice_posting_unique_1022;";
@@ -26,6 +26,19 @@ async function verifyStockValueUniqueness(client, verifySql) {
       CHECK ((kind='INVOICE_ADJUSTMENT')=(invoice_reconciliation_id IS NOT NULL)) NOT VALID;`, "Physical/opening uniqueness requires the validated invoice correction identity"],
   ];
   const results = [];
+  // Run the actual documented shape rollback inside a test transaction. Its
+  // archive tables/columns remain present; the six-column key must still pass.
+  if (!legacyShapeSql) throw new Error("The documented invoice shape rollback is required");
+  await client.query("BEGIN");
+  try {
+    await client.query(legacyShapeSql.replace(/^\s*(?:BEGIN|COMMIT);\s*$/gm, ""));
+    await client.query(verifySql);
+    const archives = await client.query("SELECT to_regclass('public.stock_valuation_invoice_reconciliations') IS NOT NULL AS retained");
+    if (!archives.rows[0]?.retained) throw new Error("Documented shape rollback removed invoice proof archives");
+  } finally {
+    await client.query("ROLLBACK");
+  }
+  await client.query(verifySql);
   for (const [name, tamperSql, expectedMessage] of cases) {
     await client.query("BEGIN");
     try {
@@ -41,7 +54,7 @@ async function verifyStockValueUniqueness(client, verifySql) {
     }
     await client.query(verifySql);
   }
-  return { database: "cerp_test", baseline: "passed", tampering_cases: results, restoration: "passed" };
+  return { database: "cerp_test", baseline: "passed", legacy_shape_with_archives: "passed", tampering_cases: results, restoration: "passed" };
 }
 
 module.exports = { verifyStockValueUniqueness };

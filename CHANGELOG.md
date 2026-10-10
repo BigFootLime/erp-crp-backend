@@ -4,6 +4,7 @@
 
 - Verify the exact six-column #1007 key before #1022 and its seven-column successor afterward, retaining valid `NULLS NOT DISTINCT` uniqueness and the validated invoice correction identity.
 - Add seven transactional negative cases to the disposable migration rehearsal. No migration, application runtime, route or permission change. Native publication remains pending complete qualification.
+- Test the documented legacy shape with retained archives, prove that the old supplier rollback refuses current financial dependencies, and run the original SOL-06 rollback on its restored source prefix. Preserve immutable-patch validation, current-schema integrity, backup fingerprint checks and failure evidence.
 
 ## Customer-facing acknowledgement notes — 2026-10-10
 

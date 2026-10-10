@@ -26,6 +26,7 @@ const EINVOICE_REGULATORY_PATCH = "20260827_einvoice_regulatory_data_599.sql";
 const SUPPLIER_INVOICES_PATCH = "20260827_supplier_invoices_675.sql";
 const EINVOICE_CREDIT_REPORTING_PATCH = "20260827_z_einvoice_credit_reporting_676.sql";
 const ACCOUNTING_EXPORT_SUPPLIER_PATCH = "20260827_z_accounting_export_supplier_677.sql";
+const STOCK_INVOICE_RECONCILIATIONS_PATCH = "20261008_stock_invoice_reconciliations_1022.sql";
 const API_WEBHOOKS_PATCH = "20260814_api_contract_webhooks_sol28.sql";
 const MFA_POLICY_PATCH = "20260816_mfa_policy_and_device_labels.sql";
 const DEVIS_AUDIT_GRANTS_PATCH = "20260819_devis_preparation_idempotency_grants_002_003.sql";
@@ -828,7 +829,8 @@ async function rehearse(options = {}) {
         if (verifySql) {
           await runSqlFile(verifyClient, verifySql);
           if (patch === "20261008_stock_value_adjustments_1007.sql") {
-            report.stock_value_uniqueness = await verifyStockValueUniqueness(verifyClient, verifySql);
+            report.stock_value_uniqueness = await verifyStockValueUniqueness(verifyClient, verifySql,
+              patchSupportSql(STOCK_INVOICE_RECONCILIATIONS_PATCH, "rollback"));
           }
         }
       }
@@ -852,7 +854,46 @@ async function rehearse(options = {}) {
     report.durations.negative_gate = Date.now() - negativeStarted;
 
     const rollbackStarted = Date.now();
+    // Current financial archives deliberately retain FKs to supplier invoices.
+    // First prove that the old destructive rollback refuses this current schema.
+    const archiveClient = databaseClient({ connectionString: databaseUrl });
+    await archiveClient.connect();
+    try {
+      await archiveClient.query("BEGIN");
+      let refusal;
+      try { await runSqlFile(archiveClient, patchSupportSql(SUPPLIER_INVOICES_PATCH, "rollback")); }
+      catch (error) { refusal = error; }
+      if (refusal?.code !== "2BP01" || !refusal.message.includes("supplier_invoice_lines")) {
+        fail("legacy supplier rollback did not refuse retained financial dependencies");
+      }
+      await archiveClient.query("ROLLBACK");
+      await runSqlFile(archiveClient, patchSupportSql("20261008_stock_value_adjustments_1007.sql", "verify"));
+      await runSqlFile(archiveClient, patchSupportSql(STOCK_INVOICE_RECONCILIATIONS_PATCH, "verify"));
+      report.financial_archive_rollback_guard = { status: "passed", sqlstate: refusal.code, archives_retained: true };
+    } finally {
+      await archiveClient.query("ROLLBACK");
+      await archiveClient.end();
+    }
+    // The legacy SOL-06 rollback recipe belongs to its original patch prefix,
+    // not to a schema with subsequent immutable financial dependencies. Restore
+    // only this owned disposable database and apply that prefix with the normal
+    // immutable-patch runner, retaining its checksum/provenance validation.
+    if (!containerStarted || !/^cerp-sol06-\d+-\d+$/.test(container)) fail("unexpected disposable rollback container");
+    command("docker", ["exec", container, "dropdb", "-U", "cerp_e2e", "cerp_test"]);
+    command("docker", ["exec", container, "createdb", "-U", "cerp_e2e", "cerp_test"]);
+    command("docker", ["exec", container, "pg_restore", "-U", "cerp_e2e", "-d", "cerp_test", "--exit-on-error", "/tmp/cerp-test-before-sol06.dump"]);
+    const rollbackBoundary = Math.max(expectedPending.indexOf(EINVOICE_CREDIT_REPORTING_PATCH),
+      expectedPending.indexOf(ACCOUNTING_EXPORT_SUPPLIER_PATCH));
+    if (rollbackBoundary < 0 || expectedPending.indexOf(STOCK_INVOICE_RECONCILIATIONS_PATCH) <= rollbackBoundary) {
+      fail("legacy rollback prefix does not precede protected financial archives");
+    }
+    const rollbackPrefix = expectedPending.slice(0, rollbackBoundary + 1);
+    for (const filename of rollbackPrefix) {
+      command(process.execPath, ["scripts/db-patches.js", "up", "--only", filename], { env: migrationEnv });
+    }
     report.rollback = await proveRollback(databaseUrl);
+    report.rollback.scope = "Legacy SOL-06 prefix on restored disposable source; current financial archives separately protected";
+    report.rollback.prefix = rollbackPrefix;
     report.durations.rollback = Date.now() - rollbackStarted;
 
     command("docker", ["exec", container, "createdb", "-U", "cerp_e2e", "cerp_restore"]);
@@ -891,6 +932,15 @@ async function rehearse(options = {}) {
     fs.writeFileSync(path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.json"), `${JSON.stringify(report, null, 2)}\n`);
     fs.writeFileSync(path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06.md"), rehearsalMarkdown(report));
     return report;
+  } catch (error) {
+    report.status = "failed";
+    report.error = error.message;
+    report.error_code = error.code ?? null;
+    report.completed_at = new Date().toISOString();
+    const reportDir = options["report-dir"] ? path.resolve(options["report-dir"]) : DEFAULT_REPORT_DIR;
+    fs.mkdirSync(reportDir, { recursive: true });
+    fs.writeFileSync(path.join(reportDir, "MIGRATION_REHEARSAL_SOL_06_FAILED.json"), `${JSON.stringify(report, null, 2)}\n`);
+    throw error;
   } finally {
     if (containerStarted) spawnSync("docker", ["rm", "-f", container], { env: systemEnv(), stdio: "ignore", windowsHide: true });
     const resolved = path.resolve(runRoot);
