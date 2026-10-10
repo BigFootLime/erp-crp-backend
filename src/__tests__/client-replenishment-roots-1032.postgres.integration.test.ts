@@ -13,6 +13,8 @@ const url = process.env.CLIENT_REPLENISHMENT_ROOTS_1032_TEST_DATABASE_URL;
 describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
   const db = new Pool({ connectionString: url, max: 4 });
   const patch = '20261010_client_replenishment_roots_1032';
+  const fixedSql = (suffix = '') => readFile(`db/patches/${suffix ? 'support/' : ''}20261010_client_replenishment_fixed_lots_1032${suffix}.sql`, 'utf8');
+  let legacy: Awaited<ReturnType<typeof fixture>>;
   const sql = (suffix = '') => readFile(`db/patches/${suffix ? 'support/' : ''}${patch}${suffix}.sql`, 'utf8');
   const article = { article_id: randomUUID(), root_article_id: randomUUID(), piece_technique_id: randomUUID(),
     piece_technique_version_id: randomUUID(), unit_id: randomUUID(), unit: 'U', code: 'TEST-PF', designation: 'Axe fictif', indice: 'A' };
@@ -53,9 +55,16 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     await db.query(await readFile('db/patches/20261010_client_replenishment_preparations_1032.sql', 'utf8'));
     await db.query(await sql('.preflight')); await db.query(await sql()); await db.query(await sql('.verify'));
     await db.query(await sql('.rollback')); await db.query(await sql());
+    legacy = await fixture();
+    await db.query(`INSERT INTO public.client_contract_replenishment_roots(launch_id,plan_id,contract_id,proposal_id,root_of_id,
+      article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,20,$10)`,
+      [legacy.launchId,legacy.planId,legacy.contractId,legacy.proposalId,legacy.ofId,article.article_id,article.piece_technique_id,
+        article.piece_technique_version_id,article.unit_id,legacy.target]);
+    await db.query(await fixedSql('.preflight')); await db.query(await fixedSql()); await db.query(await fixedSql('.verify'));
+    await db.query(await fixedSql('.rollback')); await db.query(await fixedSql());
   }, 30000);
   afterAll(async () => { await db.end(); });
-  async function fixture(target = '2026-09-30') {
+  async function fixture(target = '2026-09-30', lotQuantity = '20', lotCount = '1') {
     const date=new Date(target+'T00:00:00Z');
     const month=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,1)).toISOString().slice(0,7);
     const contractId = randomUUID(), lineId = randomUUID(), planId = randomUUID(), launchId = randomUUID(), key = randomUUID();
@@ -63,9 +72,9 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     await db.query('INSERT INTO public.client_contract_lines VALUES($1,$2,$3,$4)', [lineId, contractId, article.root_article_id, article.unit_id]);
     const report: ContractCoverageResult = { contract_id: contractId, contract_version: 1, generated_at: '2026-10-10T08:00:00Z',
       planning_revision: null, start_month: month, months: 3, readonly: true, snapshot_hash: 'a'.repeat(64),
-      lines: [{ contract_line_id: lineId, article, replenishment_qty: '20', months: [], replenishment_projection: [{
+      lines: [{ contract_line_id: lineId, article, replenishment_qty: lotQuantity, months: [], replenishment_projection: [{
         month, target_date: target, target_overdue: true, uncovered_quantity: '17', carried_quantity: '0',
-        lot_quantity: '20', lot_count: '1', proposed_quantity: '20', surplus_quantity: '3' }] }],
+        lot_quantity: lotQuantity, lot_count: lotCount, proposed_quantity: String(Number(lotQuantity) * Number(lotCount)), surplus_quantity: '3' }] }],
       demands: [], sources: [], allocations: [], issues: [] };
     const preparation = prepareContractReplenishmentSnapshot(report, '2026-10-10');
     const proposals = preparation.proposals.map(p => ({ ...p, id: randomUUID(), plan_id: planId }));
@@ -73,18 +82,67 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     await db.query(`INSERT INTO public.client_contract_replenishment_launches(id,plan_id,contract_id,actor_user_id,idempotency_key,
       request_hash,intent_snapshot_hash,result_payload) VALUES($1,$2,$3,1,$4,$5,$6,'{}')`, [launchId, planId, contractId, key, 'b'.repeat(64), 'c'.repeat(64)]);
     const ofId = (await db.query(`INSERT INTO public.ordres_fabrication(statut,article_id,piece_technique_id,quantite_lancee,client_id,
-      created_by,technical_preparation) VALUES('BROUILLON',$1,$2,20,'195',1,jsonb_build_object('selected_version_id',$3::text)) RETURNING id::text`,
-      [article.article_id, article.piece_technique_id, article.piece_technique_version_id])).rows[0].id;
+      created_by,technical_preparation) VALUES('BROUILLON',$1,$2,$4::numeric,'195',1,jsonb_build_object('selected_version_id',$3::text)) RETURNING id::text`,
+      [article.article_id, article.piece_technique_id, article.piece_technique_version_id, lotQuantity])).rows[0].id;
     await db.query('UPDATE public.ordres_fabrication SET root_of_id=id WHERE id=$1', [ofId]);
-    return { launchId, planId, contractId, proposalId: proposals[0].id, ofId, key, target };
+    return { launchId, planId, contractId, proposalId: proposals[0].id, ofId, key, target, lotQuantity };
   }
   const insert = (f: Awaited<ReturnType<typeof fixture>>, overrides: Record<string, unknown> = {}, queryer: Pick<PoolClient, 'query'> = db) => {
     const values = { id: randomUUID(), launch: f.launchId, plan: f.planId, contract: f.contractId, proposal: f.proposalId,
       of: f.ofId, article: article.article_id, piece: article.piece_technique_id, version: article.piece_technique_version_id,
-      unit: article.unit_id, quantity: '20', target: f.target, ...overrides };
+      unit: article.unit_id, quantity: f.lotQuantity, target: f.target, lot_index: 1, ...overrides };
     return queryer.query(`INSERT INTO public.client_contract_replenishment_roots(id,launch_id,plan_id,contract_id,proposal_id,root_of_id,
-      article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, Object.values(values));
+      article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date,lot_index) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, Object.values(values));
   };
+  async function sibling(f: Awaited<ReturnType<typeof fixture>>, tx: Pick<PoolClient,'query'> = db) {
+    const ofId = (await tx.query(`INSERT INTO public.ordres_fabrication(statut,article_id,piece_technique_id,
+      piece_technique_version_id,quantite_lancee,client_id,created_by,technical_preparation)
+      SELECT statut,article_id,piece_technique_id,piece_technique_version_id,quantite_lancee,client_id,created_by,technical_preparation
+      FROM public.ordres_fabrication WHERE id=$1 RETURNING id::text`, [f.ofId])).rows[0].id;
+    await tx.query('UPDATE public.ordres_fabrication SET root_of_id=id WHERE id=$1',[ofId]);
+    return { ...f, ofId };
+  }
+  it('preserves legacy evidence through additive installation and unused rollback without rewriting it', async () => {
+    expect((await db.query('SELECT quantity::text,lot_index FROM public.client_contract_replenishment_roots WHERE proposal_id=$1',[legacy.proposalId])).rows)
+      .toEqual([{ quantity:'20.000',lot_index:null }]);
+    await expect(insert(legacy)).rejects.toMatchObject({code:'23514'});
+    await db.query(await sql('.verify')); await db.query(await fixedSql('.verify'));
+  });
+  it('commits three complete fixed lots of 40 atomically, then reopens all three canonical OF links', async () => {
+    const f=await fixture('2026-09-30','40','3'), tx=await db.connect();
+    try {
+      await tx.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      const second=await sibling(f,tx),third=await sibling(f,tx);
+      await tx.query('SET LOCAL ROLE cerp_app');
+      await insert(f,{},tx);await insert(second,{lot_index:2},tx);await insert(third,{lot_index:3},tx);
+      await tx.query('COMMIT');
+      expect((await readReplenishmentPlanLaunches(db,f.contractId,f.planId)).map(row=>[row.lot_index,row.quantity,row.target_date]))
+        .toEqual([[1,'40.000','2026-09-30'],[2,'40.000','2026-09-30'],[3,'40.000','2026-09-30']]);
+      await db.query(await sql('.verify'));await db.query(await fixedSql('.verify'));
+    } finally {await tx.query('ROLLBACK');tx.release();}
+  });
+  it('refuses an incomplete fixed-lot commit and rolls back every proof and OF created inside the transaction', async () => {
+    const f=await fixture('2026-09-30','40','3'),tx=await db.connect();let secondId:string|undefined;
+    try {
+      await tx.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      const second=await sibling(f,tx);secondId=second.ofId;
+      await insert(f,{},tx);await insert(second,{lot_index:2},tx);
+      await expect(tx.query('COMMIT')).rejects.toMatchObject({code:'23514'});
+    } finally {await tx.query('ROLLBACK');tx.release();}
+    expect((await db.query('SELECT count(*)::int AS n FROM public.client_contract_replenishment_roots WHERE proposal_id=$1',[f.proposalId])).rows[0].n).toBe(0);
+    expect((await db.query('SELECT id FROM public.ordres_fabrication WHERE id=$1',[secondId])).rows).toEqual([]);
+  });
+  it('rejects null/out-of-range/duplicate lot identities and forbids rollback once fixed-lot evidence exists', async () => {
+    const f=await fixture();
+    await expect(insert(f,{lot_index:null})).rejects.toMatchObject({code:'23514'});
+    await expect(insert(f,{lot_index:2})).rejects.toMatchObject({code:'23514'});
+    await insert(f);
+    await expect(insert(await sibling(f))).rejects.toMatchObject({code:'23505',constraint:'client_replenishment_roots_proposal_lot_key'});
+    const tx=await db.connect();
+    try {await expect(tx.query(await fixedSql('.rollback'))).rejects.toMatchObject({code:'P0001'});}
+    finally {await tx.query('ROLLBACK');tx.release();}
+    await db.query(await fixedSql('.verify'));
+  });
   it('links the exact original target, applicable version and draft root without changing stock', async () => {
     const f = await fixture(); await insert(f);
     expect((await db.query('SELECT quantity::text,target_date::text,root_of_id::text FROM public.client_contract_replenishment_roots WHERE proposal_id=$1', [f.proposalId])).rows[0])
@@ -195,7 +253,7 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     try {
       await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await tx.query('SET LOCAL ROLE cerp_app');
       expect(await readReplenishmentPlanLaunches(tx,f.contractId,f.planId)).toEqual([{ proposal_id:f.proposalId,
-        root_of_id:Number(f.ofId),number:'OF-REOPENED',status:'ANNULE',quantity:'20.000',target_date:f.target }]);
+        root_of_id:Number(f.ofId),number:'OF-REOPENED',status:'ANNULE',quantity:'20.000',target_date:f.target,lot_index:1 }]);
       expect(await readReplenishmentPlanLaunches(tx,other.contractId,f.planId)).toEqual([]);
     } finally {await tx.query('ROLLBACK');tx.release();}
   });

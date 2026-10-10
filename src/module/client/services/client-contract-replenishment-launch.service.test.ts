@@ -84,7 +84,8 @@ describe('unrouted replenishment generation transaction boundary',()=>{
     expect(mocks.connect).not.toHaveBeenCalled();
   });
   it.each([{code:'40001'},{code:'40P01'},{code:'23505',constraint:'client_contract_replenishment_roots_proposal_id_key'},
-    {code:'23505',constraint:'client_contract_replenishment_roots_root_of_id_key'}])('converts concurrent writer errors to a refreshable conflict: %j',async error=>{
+    {code:'23505',constraint:'client_contract_replenishment_roots_root_of_id_key'},
+    {code:'23505',constraint:'client_replenishment_roots_proposal_lot_key'}])('converts concurrent writer errors to a refreshable conflict: %j',async error=>{
       mocks.transaction.mockRejectedValue(error);await expect(execute()).rejects.toMatchObject({status:409,code:'CONTRACT_REPLENISHMENT_CONCURRENT_CHANGE'});
   });
   it('preserves uncertain commits and unrelated database/engine errors',async()=>{

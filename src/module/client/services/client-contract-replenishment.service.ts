@@ -25,7 +25,8 @@ export async function getClientReplenishmentPreparation(clientId: string, contra
       to_regclass('public.client_contract_replenishment_plans') IS NOT NULL
       AND to_regclass('public.client_contract_replenishment_proposals') IS NOT NULL
       AND to_regclass('public.client_contract_replenishment_events') IS NOT NULL AS preparation_installed,
-      to_regclass('public.client_contract_replenishment_roots') IS NOT NULL AS generation_installed`)).rows[0];
+      to_regclass('public.client_contract_replenishment_roots') IS NOT NULL
+      AND to_regprocedure('public.fn_client_replenishment_fixed_lots_1032()') IS NOT NULL AS generation_installed`)).rows[0];
     if (!installed?.preparation_installed)
       throw new HttpError(409, 'CONTRACT_REPLENISHMENT_NOT_INSTALLED', 'La préparation du réapprovisionnement n’est pas encore installée. Contactez l’administrateur.');
     const plan = await repo.readReplenishmentPlan(tx, contractId, planId);

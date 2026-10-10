@@ -49,8 +49,12 @@ function fixture() {
   });
   const tx = { query } as unknown as Pick<PoolClient, 'query'>;
   ports.readPlan.mockResolvedValue(plan);
-  ports.engine.mockResolvedValue({ root_of_id: 101, batch_id: 'batch-1', ofs: [{ id: 101, parent_of_id: null }, { id: 102, parent_of_id: 101 }],
-    source_hash: 'engine-hash', purchase_requirements: [], warnings: [] });
+  let engineCount = 0;
+  ports.engine.mockImplementation(async () => {
+    const id = 101 + 2 * engineCount++;
+    return { root_of_id: id, batch_id: `batch-${id}`, ofs: [{ id, parent_of_id: null }, { id: id + 1, parent_of_id: id }],
+      source_hash: 'engine-hash', purchase_requirements: [], warnings: [] };
+  });
   ports.audit.mockResolvedValue({ id: 'audit-1', created_at: '2026-10-10T07:00:00Z' });
   ports.outbox.mockResolvedValue(undefined);
   ports.notify.mockResolvedValue({ recipients: 1, notifications: 1 });
@@ -69,15 +73,17 @@ describe('anticipated generation transaction boundary', () => {
     const f = fixture();
     const launched = await launchPreparedContractReplenishmentTx(f.tx, f.input);
     expect(f.reread).toHaveBeenCalledWith(f.tx, f.plan);
-    expect(ports.engine).toHaveBeenCalledExactlyOnceWith(f.tx, expect.objectContaining({ source_type: 'MANUAL',
-      commande_id: null, commande_ligne_id: null, livraison_affaire_id: null, client_id: '195', qty_to_produce: 40,
-      root_article_id: articleId, root_pinned_version_id: versionId, force_preparation: true, idempotency_key: proposalId }));
+    expect(ports.engine).toHaveBeenCalledTimes(2);
+    expect(ports.engine).toHaveBeenNthCalledWith(1, f.tx, expect.objectContaining({ source_type: 'MANUAL',
+      commande_id: null, commande_ligne_id: null, livraison_affaire_id: null, client_id: '195', qty_to_produce: 20,
+      root_article_id: articleId, root_pinned_version_id: versionId, force_preparation: true, idempotency_key: expect.stringMatching(/^[0-9a-f-]{36}$/) }));
     expect(launched).toEqual({ replayed: false, result: expect.objectContaining({ plan_id: planId,
-      roots: [expect.objectContaining({ root_of_id: 101, quantity: '40', target_date: '2026-09-30', target_overdue: true, child_of_ids: [102] })] }) });
+      roots: [expect.objectContaining({ root_of_id: 101, lot_index: 1, quantity: '20', target_date: '2026-09-30', target_overdue: true, child_of_ids: [102] }),
+        expect.objectContaining({ root_of_id: 103, lot_index: 2, quantity: '20', target_date: '2026-09-30', child_of_ids: [104] })] }) });
     const proofs = f.calls.filter(call => call.sql.startsWith('INSERT'));
-    expect(proofs).toHaveLength(2);
+    expect(proofs).toHaveLength(3);
     expect(proofs[1].values).toEqual([launched.result.launch_id, planId, contractId, proposalId, 101, articleId,
-      f.plan.proposals[0].article.piece_technique_id, versionId, f.plan.proposals[0].article.unit_id, '40', '2026-09-30']);
+      f.plan.proposals[0].article.piece_technique_id, versionId, f.plan.proposals[0].article.unit_id, '20', '2026-09-30', 1]);
     expect(ports.audit).toHaveBeenCalledWith(expect.objectContaining({ tx: f.tx, user_id: 12,
       body: expect.objectContaining({ action: 'CLIENT_REPLENISHMENT_GENERATE' }) }));
     expect(ports.outbox).toHaveBeenCalledWith(f.tx, expect.objectContaining({ entityId: '195' }), expect.any(Object));
@@ -120,7 +126,7 @@ describe('anticipated generation transaction boundary', () => {
     const f = fixture(); f.input.user_role='Commercial';
     const attempt = new Promise((resolve,reject) => runWithAccountModuleAccess({ userId:12,moduleKey:'production',elevated:false },
       () => { void launchPreparedContractReplenishmentTx(f.tx,f.input).then(resolve,reject); }));
-    await expect(attempt).resolves.toMatchObject({ replayed:false }); expect(ports.engine).toHaveBeenCalledTimes(1);
+    await expect(attempt).resolves.toMatchObject({ replayed:false }); expect(ports.engine).toHaveBeenCalledTimes(2);
   });
 
   it('rejects a caller identity different from the authenticated production grant', async () => {
@@ -171,6 +177,50 @@ describe('anticipated generation transaction boundary', () => {
     expect(ports.engine).not.toHaveBeenCalled();
   });
 
+  it('creates three independent OFs of 40 for a shortage of 95, with distinct stable engine keys', async () => {
+    const f = fixture(); Object.assign(f.plan.proposals[0], { lot_quantity: '40', lot_count: '3', proposed_quantity: '120', surplus_quantity: '25' });
+    const launched = await launchPreparedContractReplenishmentTx(f.tx, f.input);
+    expect(ports.engine.mock.calls.map(call => call[1].qty_to_produce)).toEqual([40, 40, 40]);
+    expect(new Set(ports.engine.mock.calls.map(call => call[1].idempotency_key)).size).toBe(3);
+    expect(new Set(ports.engine.mock.calls.map(call => call[1].request_hash)).size).toBe(3);
+    expect(launched.result.roots.map(root => [root.lot_index, root.quantity, root.target_date])).toEqual([
+      [1, '40', '2026-09-30'], [2, '40', '2026-09-30'], [3, '40', '2026-09-30']]);
+    const keys = ports.engine.mock.calls.map(call => call[1].idempotency_key);
+    ports.engine.mockClear(); await launchPreparedContractReplenishmentTx(f.tx, f.input);
+    expect(ports.engine.mock.calls.map(call => call[1].idempotency_key)).toEqual(keys);
+  });
+
+  it.each([{ lot_count: '0' }, { lot_count: '2.5' }, { lot_count: '99999999999' }, { lot_quantity: '0' },
+    { lot_quantity: '19.999' }, { lot_quantity: '1e1' }, { lot_count: '3' }])('rejects inconsistent fixed lots before creating any root (%j)', async change => {
+    const f = fixture(); Object.assign(f.plan.proposals[0], change);
+    await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toMatchObject({ status: 422, code: 'CONTRACT_REPLENISHMENT_LOTS_INVALID' });
+    expect(ports.engine).not.toHaveBeenCalled();
+  });
+
+  it('bounds the whole synchronous launch without silently truncating it', async () => {
+    const f = fixture(); Object.assign(f.plan.proposals[0], { lot_count: '1001', proposed_quantity: '20020' });
+    await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toMatchObject({ status: 422, code: 'CONTRACT_REPLENISHMENT_LOT_LIMIT' });
+    expect(ports.engine).not.toHaveBeenCalled();
+  });
+
+  it('replays the complete saved lot list without a second generation or notification', async () => {
+    const f = fixture(); const first = await launchPreparedContractReplenishmentTx(f.tx, f.input);
+    f.state.replay = { client_id: '195', contract_id: contractId, request_hash: hash, result_payload: first.result };
+    ports.engine.mockClear(); ports.audit.mockClear(); ports.outbox.mockClear(); ports.notify.mockClear();
+    expect(await launchPreparedContractReplenishmentTx(f.tx, f.input)).toEqual({ result: first.result, replayed: true });
+    expect(first.result.roots).toHaveLength(2);
+    expect(ports.engine).not.toHaveBeenCalled(); expect(ports.notify).not.toHaveBeenCalled();
+  });
+
+  it('propagates failure of a later lot for complete rollback, without proof or handoff', async () => {
+    const f = fixture(); const failure = Error('Second lot BOM invalid');
+    ports.engine.mockResolvedValueOnce({ root_of_id: 101, batch_id: 'batch-one', ofs: [] }).mockRejectedValueOnce(failure);
+    await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toBe(failure);
+    expect(ports.engine).toHaveBeenCalledTimes(2);
+    expect(f.calls.filter(call => call.sql.startsWith('INSERT'))).toHaveLength(0);
+    expect(ports.audit).not.toHaveBeenCalled(); expect(ports.outbox).not.toHaveBeenCalled(); expect(ports.notify).not.toHaveBeenCalled();
+  });
+
   it('propagates engine failure to the transaction owner without launch evidence, audit, notification or local commit', async () => {
     const f = fixture(); const failure = Error('BOM invalid'); ports.engine.mockRejectedValue(failure);
     await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toBe(failure);
@@ -203,16 +253,17 @@ describe('anticipated generation transaction boundary', () => {
 
   it('publishes roots and children with their immutable audit identity before the client event and planner handoff', async () => {
     const f = fixture(); await launchPreparedContractReplenishmentTx(f.tx, f.input);
-    expect(ports.outbox.mock.calls.map(call => call[1].entityId)).toEqual(['101', '102', '195']);
+    expect(ports.outbox.mock.calls.map(call => call[1].entityId)).toEqual(['101', '102', '103', '104', '195']);
     expect(ports.outbox).toHaveBeenNthCalledWith(1, f.tx, expect.objectContaining({ module: 'production', action: 'created',
       at: '2026-10-10T07:00:00Z', invalidateKeys: expect.arrayContaining(['production:ofs', 'production:of:101']) }),
       { deduplicationKey: 'production-audit:audit-1:of:101' });
     expect(ports.notify).toHaveBeenCalledExactlyOnceWith(f.tx, expect.objectContaining({ clientId: '195', contractId,
-      roots: [expect.objectContaining({ root_of_id: 101, child_of_ids: [102] })] }));
+      roots: [expect.objectContaining({ root_of_id: 101, child_of_ids: [102] }), expect.objectContaining({ root_of_id: 103, child_of_ids: [104] })] }));
   });
 
   it('deduplicates children when the canonical generation result contains a repeated child', async () => {
-    const f = fixture(); const generated = await ports.engine.getMockImplementation()!();
+    const f = fixture(); f.plan.proposals[0].lot_count = '1'; f.plan.proposals[0].proposed_quantity = '20';
+    const generated = await ports.engine.getMockImplementation()!();
     generated.ofs.push({ id: 102, parent_of_id: 101 }); ports.engine.mockResolvedValue(generated);
     await launchPreparedContractReplenishmentTx(f.tx, f.input);
     expect(ports.outbox.mock.calls.filter(call => call[1].entityId === '102')).toHaveLength(1);

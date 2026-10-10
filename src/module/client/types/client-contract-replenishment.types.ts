@@ -2,7 +2,7 @@ import type { ClientContractArticle } from './client-contract.types';
 import type { ContractCoverageResult } from './client-contract-coverage.types';
 
 export type ReplenishmentPlanLaunchLink = {
-  proposal_id: string; root_of_id: number; number: string; status: string; quantity: string; target_date: string;
+  proposal_id: string; lot_index?: number | null; root_of_id: number; number: string; status: string; quantity: string; target_date: string;
 };
 
 /** Preparation evidence only; these quantities never increase physical coverage. */

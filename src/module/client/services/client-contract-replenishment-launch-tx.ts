@@ -19,7 +19,7 @@ type Tx = Pick<PoolClient, 'query'>;
 type FreshPreparation = ReturnType<typeof prepareContractReplenishmentWithIntents>;
 export type ReplenishmentLaunchResult = {
   launch_id: string; plan_id: string; contract_id: string;
-  roots: { proposal_id: string; root_of_id: number; number: string; batch_id: string;
+  roots: { proposal_id: string; lot_index?: number; root_of_id: number; number: string; batch_id: string;
     article_id: string; quantity: string; target_date: string; target_overdue: boolean; child_of_ids: number[] }[];
 };
 
@@ -73,27 +73,41 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
     || fresh.report.contract_version !== plan.contract_version || fresh.report.snapshot_hash !== plan.coverage_snapshot_hash)
     throw new HttpError(409, 'CONTRACT_REPLENISHMENT_COVERAGE_CHANGED', 'Le stock, les besoins ou les OF prévus ont changé. Repréparez avant de lancer.');
   // Validate the whole selection before the first canonical engine invocation.
+  let totalLots = 0n;
   for (const proposal of selected) {
     if (!proposal || !/^\d+(\.\d{1,3})?$/.test(proposal.proposed_quantity)
       || parseCumpDecimal(proposal.proposed_quantity) <= 0n || parseCumpDecimal(proposal.proposed_quantity) > parseCumpDecimal('1000000000'))
       throw new HttpError(422, 'CONTRACT_REPLENISHMENT_QUANTITY_INVALID', 'La quantité de la proposition est hors du périmètre de génération.');
+    if (!/^\d+(\.\d{1,3})?$/.test(proposal.lot_quantity) || parseCumpDecimal(proposal.lot_quantity) <= 0n
+      || !/^[1-9]\d{0,9}$/.test(proposal.lot_count)
+      || parseCumpDecimal(proposal.lot_quantity) * BigInt(proposal.lot_count) !== parseCumpDecimal(proposal.proposed_quantity))
+      throw new HttpError(422, 'CONTRACT_REPLENISHMENT_LOTS_INVALID', 'Les lots ne correspondent plus à la quantité proposée. Recalculez les besoins.');
+    totalLots += BigInt(proposal.lot_count);
   }
+  // Bound synchronous recursive generation, without truncating or partially
+  // committing a proposal. The full selection is qualified before any OF.
+  if (totalLots > 1000n)
+    throw new HttpError(422, 'CONTRACT_REPLENISHMENT_LOT_LIMIT', 'Le lancement dépasse 1 000 lots. Réduisez la sélection ou l’horizon, puis recalculez.');
   const result: ReplenishmentLaunchResult = { launch_id: randomUUID(), plan_id: plan.id, contract_id: input.contract_id, roots: [] };
   for (const proposal of selected) {
     if (!proposal) throw new Error('CONTRACT_REPLENISHMENT_SELECTION_NOT_VALIDATED');
-    const generated = await createRecursiveOrdresFabrication(tx, {
-      source_type: 'MANUAL', commande_id: null, commande_numero: null, commande_ligne_id: null, livraison_affaire_id: null,
-      client_id: input.client_id, root_article_id: proposal.article.article_id, root_piece_technique_id: proposal.article.piece_technique_id,
-      root_pinned_version_id: proposal.article.piece_technique_version_id, qty_to_produce: Number(proposal.proposed_quantity),
-      user_id: input.audit.user_id, force_preparation: true, idempotency_key: proposal.id,
-      request_hash: createHash('sha256').update(JSON.stringify({ plan: plan.id, proposal })).digest('hex'),
-    });
-    const root = (await tx.query<{ numero: string }>('SELECT numero FROM public.ordres_fabrication WHERE id=$1', [generated.root_of_id])).rows[0];
-    if (!root?.numero) throw new Error('CONTRACT_REPLENISHMENT_ROOT_NOT_VISIBLE');
-    result.roots.push({ proposal_id: proposal.id, root_of_id: generated.root_of_id, number: root.numero,
-      batch_id: generated.batch_id, article_id: proposal.article.article_id, quantity: proposal.proposed_quantity,
-      target_date: proposal.target_date, target_overdue: proposal.target_overdue,
-      child_of_ids: generated.ofs.filter(of => of.parent_of_id !== null).map(of => of.id) });
+    for (let lotIndex = 1; lotIndex <= Number(proposal.lot_count); lotIndex++) {
+      const lotKey = createHash('sha256').update(`client-replenishment-lot:${plan.id}:${proposal.id}:${lotIndex}`).digest('hex');
+      const idempotencyKey = `${lotKey.slice(0,8)}-${lotKey.slice(8,12)}-5${lotKey.slice(13,16)}-8${lotKey.slice(17,20)}-${lotKey.slice(20,32)}`;
+      const generated = await createRecursiveOrdresFabrication(tx, {
+        source_type: 'MANUAL', commande_id: null, commande_numero: null, commande_ligne_id: null, livraison_affaire_id: null,
+        client_id: input.client_id, root_article_id: proposal.article.article_id, root_piece_technique_id: proposal.article.piece_technique_id,
+        root_pinned_version_id: proposal.article.piece_technique_version_id, qty_to_produce: Number(proposal.lot_quantity),
+        user_id: input.audit.user_id, force_preparation: true, idempotency_key: idempotencyKey,
+        request_hash: createHash('sha256').update(JSON.stringify({ plan: plan.id, proposal, lot_index: lotIndex })).digest('hex'),
+      });
+      const root = (await tx.query<{ numero: string }>('SELECT numero FROM public.ordres_fabrication WHERE id=$1', [generated.root_of_id])).rows[0];
+      if (!root?.numero) throw new Error('CONTRACT_REPLENISHMENT_ROOT_NOT_VISIBLE');
+      result.roots.push({ proposal_id: proposal.id, lot_index: lotIndex, root_of_id: generated.root_of_id, number: root.numero,
+        batch_id: generated.batch_id, article_id: proposal.article.article_id, quantity: proposal.lot_quantity,
+        target_date: proposal.target_date, target_overdue: proposal.target_overdue,
+        child_of_ids: generated.ofs.filter(of => of.parent_of_id !== null).map(of => of.id) });
+    }
   }
   await tx.query(`INSERT INTO public.client_contract_replenishment_launches(id,plan_id,contract_id,actor_user_id,
     idempotency_key,request_hash,intent_snapshot_hash,result_payload) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8::jsonb)`,
@@ -101,10 +115,10 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
   for (const root of result.roots) {
     const proposal = plan.proposals.find(item => item.id === root.proposal_id)!;
     await tx.query(`INSERT INTO public.client_contract_replenishment_roots(launch_id,plan_id,contract_id,proposal_id,root_of_id,
-      article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8::uuid,$9::uuid,$10::numeric,$11::date)`,
+      article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date,lot_index)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8::uuid,$9::uuid,$10::numeric,$11::date,$12)`,
     [result.launch_id, plan.id, input.contract_id, proposal.id, root.root_of_id, proposal.article.article_id,
-      proposal.article.piece_technique_id, proposal.article.piece_technique_version_id, proposal.article.unit_id, proposal.proposed_quantity, proposal.target_date]);
+      proposal.article.piece_technique_id, proposal.article.piece_technique_version_id, proposal.article.unit_id, root.quantity, proposal.target_date, root.lot_index]);
   }
   const inserted = await repoInsertAuditLog({ tx, user_id: input.audit.user_id, ip: input.audit.ip, user_agent: input.audit.user_agent,
     device_type: input.audit.device_type, os: input.audit.os, browser: input.audit.browser,

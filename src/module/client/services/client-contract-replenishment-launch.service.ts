@@ -29,7 +29,8 @@ export async function generateClientContractReplenishment(clientId: string, cont
       await tx.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
       const installed = (await tx.query<{ installed: boolean }>(`SELECT
         to_regclass('public.client_contract_replenishment_launches') IS NOT NULL
-        AND to_regclass('public.client_contract_replenishment_roots') IS NOT NULL AS installed`)).rows[0];
+        AND to_regclass('public.client_contract_replenishment_roots') IS NOT NULL
+        AND to_regprocedure('public.fn_client_replenishment_fixed_lots_1032()') IS NOT NULL AS installed`)).rows[0];
       if (!installed?.installed)
         throw new HttpError(409, 'CONTRACT_REPLENISHMENT_NOT_INSTALLED', 'Le lancement du réapprovisionnement n’est pas encore installé. Contactez l’administrateur.');
       return launchPreparedContractReplenishmentTx(tx, {
@@ -54,7 +55,8 @@ export async function generateClientContractReplenishment(clientId: string, cont
   } catch (error) {
     const dbError = error as { code?: string; constraint?: string };
     if (['40001', '40P01'].includes(dbError.code ?? '') || (dbError.code === '23505'
-      && ['client_contract_replenishment_roots_proposal_id_key', 'client_contract_replenishment_roots_root_of_id_key'].includes(dbError.constraint ?? '')))
+      && ['client_contract_replenishment_roots_proposal_id_key', 'client_replenishment_roots_proposal_lot_key',
+        'client_contract_replenishment_roots_root_of_id_key'].includes(dbError.constraint ?? '')))
       throw new HttpError(409, 'CONTRACT_REPLENISHMENT_CONCURRENT_CHANGE', 'La préparation ou ses OF ont changé pendant le lancement. Actualisez puis réessayez avec la même tentative.');
     throw error;
   }

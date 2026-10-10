@@ -15,8 +15,9 @@ DO $$ BEGIN
   END IF;
   IF EXISTS(SELECT 1 FROM public.client_contract_replenishment_roots r
     JOIN public.client_contract_replenishment_proposals p ON p.id=r.proposal_id
-    WHERE (r.plan_id,r.contract_id,r.article_id,r.unit_id,r.quantity,r.target_date)
-      IS DISTINCT FROM (p.plan_id,p.contract_id,p.article_id,p.unit_id,p.proposed_quantity,p.target_date)
+    WHERE (r.plan_id,r.contract_id,r.article_id,r.unit_id,r.target_date)
+      IS DISTINCT FROM (p.plan_id,p.contract_id,p.article_id,p.unit_id,p.target_date)
+      OR r.quantity NOT IN (p.proposed_quantity,p.lot_quantity)
       OR r.piece_technique_id::text IS DISTINCT FROM p.article_snapshot->>'piece_technique_id'
       OR r.piece_technique_version_id::text IS DISTINCT FROM p.article_snapshot->>'piece_technique_version_id') THEN
     RAISE EXCEPTION 'Replenishment root evidence differs from its original proposal';

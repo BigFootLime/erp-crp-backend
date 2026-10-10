@@ -82,6 +82,16 @@ Preparation and generation return the transport acknowledgement's explicit `repl
 
 The existing authenticated production capabilities response now includes `generate`, evaluated by the existing OF capability function in the production module context. Client-write access must not imply this capability. The workspace checks both the account's production module access and this qualified response before offering generation; the production route continues to enforce both guards independently on every mutation.
 
+## Fixed-lot roots (feature under validation)
+
+A monthly proposal containing several fixed replenishment lots creates one canonical root OF per lot, not one OF for the aggregate quantity. A shortage of 95 with a contract lot of 40 yields three OFs of 40; grouping remains an explicit downstream decision under the existing PT/material rules. The server validates the complete decimal quantity/count product before invoking the recursive engine. Each lot has a stable plan/proposal/position key, its own root proof and the unchanged original target.
+
+The additive fixed-lots patch leaves existing launch acknowledgements and historical aggregate root evidence untouched. Historical roots keep a null lot position and cannot be mixed with new per-lot evidence. New proofs have a unique proposal/position identity. A deferred database guard requires every expected lot, the exact total quantity and one launch before commit. A later engine, proof, audit or notification failure rolls back the entire caller transaction. Retrying the durable actor-owned attempt returns all saved roots without regenerating or re-notifying. The synchronous endpoint refuses more than 1,000 total lots before creating any OF, with an actionable request to reduce selection/horizon; it never truncates a proposal.
+
+The contract workspace merges acknowledged and persisted roots by OF identity, displays every lot link and preserves individual cancellation badges. Installation qualification requires the fixed-lot guard, so an older schema cannot silently activate the new generation code. Migration verification accepts untouched legacy evidence and validates indexed lots independently. Rollback is limited to an unused per-lot installation; recorded lot proofs cannot be removed.
+
+This correction still requires real PostgreSQL rehearsal, canonical engine acceptance, deployment and the shared industrial recipe. It does not resolve the remaining producer-quality/group-loss disposition or legacy-contract reconciliation criteria by itself.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.
