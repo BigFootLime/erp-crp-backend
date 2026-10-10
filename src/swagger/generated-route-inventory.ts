@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "6c4dc3de6380f9709c3ebe73271fdfbcc7813b3578ebed04a52bd8791f86e5c6";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "f827615c74b8c394bcb4ffa74fa1a119c18d8959b9a965d02b7a22ea68b1aa77";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -7762,7 +7762,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:101",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:102",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7780,7 +7780,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:103",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:106",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7798,7 +7798,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:130",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:133",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7816,7 +7816,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/livraisons/{id}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:141",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:144",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7834,7 +7834,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/creation-snapshot",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:133",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:136",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7852,7 +7852,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:135",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:138",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7870,7 +7870,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:134",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:137",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7888,7 +7888,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:136",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:139",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7906,7 +7906,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/documents",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:183",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:186",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7925,7 +7925,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/livraisons/{id}/documents/{docId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:189",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:192",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7943,7 +7943,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/documents/{docId}/file",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:194",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:197",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7961,7 +7961,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/lignes/{lineId}/allocations",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:147",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:150",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7979,7 +7979,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/livraisons/{id}/lignes/{lineId}/allocations/{allocationId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:152",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:155",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7997,7 +7997,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/lines",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:143",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:146",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8015,7 +8015,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/livraisons/{id}/lines/{lineId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:145",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:148",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8033,7 +8033,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/livraisons/{id}/lines/{lineId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:144",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:147",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8051,7 +8051,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/official-documents/shipped",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:137",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:140",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8069,7 +8069,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/official-documents/shipped/{documentId}/download",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:139",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:142",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8087,7 +8087,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/official-documents/shipped/{documentId}/preview",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:138",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:141",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8105,7 +8105,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/official-documents/shipped/{documentId}/print-intents",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:140",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:143",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8123,7 +8123,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/pack/download/{documentId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:238",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:241",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8141,7 +8141,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/pack/generate",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:233",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:236",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8159,7 +8159,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/pack/preview",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:228",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:231",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8177,7 +8177,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/pack/revoke/{versionId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:243",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:246",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8195,7 +8195,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/pdf",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:205",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:208",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8213,7 +8213,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/pdf",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:206",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:209",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8231,7 +8231,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/pdf/availability",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:200",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:203",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8249,7 +8249,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/preparation",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:158",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:161",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8267,7 +8267,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/preparation/allocations/{allocationId}/confirm",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:163",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:166",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8285,7 +8285,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/preparation/allocations/{allocationId}/reset",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:168",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:171",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8303,7 +8303,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/print-status",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:131",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:134",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8321,7 +8321,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/print/retry",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:132",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:135",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8339,7 +8339,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/proofs",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:181",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:184",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8357,7 +8357,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/quality-dossier",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:212",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:215",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8375,7 +8375,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/quality-dossier/freeze",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:217",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:220",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8393,7 +8393,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/quality-dossier/revoke/{versionId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:222",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:225",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8411,7 +8411,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/ship",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:179",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:182",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8429,7 +8429,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/{id}/shipment-preview",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:174",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:177",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8447,7 +8447,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/{id}/status",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:180",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:183",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8465,7 +8465,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/affaires",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:102",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:103",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8481,9 +8481,45 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/livraisons/affaires/allocations/{allocationId}/reservation-preview",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:104",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireLivraisonCapability(read)",
+      "previewDeliveryStockRecovery"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireLivraisonCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/livraisons/affaires/allocations/{allocationId}/reserve-stock",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:105",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireLivraisonCapability(allocate)",
+      "reserveDeliveryStockRecovery"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireLivraisonCapability(allocate)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/livraisons/from-commande/{commandeId}",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:104",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:107",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8501,7 +8537,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/from-reservations",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:124",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:127",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8519,7 +8555,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/livraisons/preparation-cart",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:109",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8537,7 +8573,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/preparation-cart/correct",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:119",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:122",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8555,7 +8591,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/livraisons/preparation-cart/verify-lot",
-    "source": "src/module/livraisons/routes/livraisons.routes.ts:114",
+    "source": "src/module/livraisons/routes/livraisons.routes.ts:117",
     "middleware": [
       "anonymous",
       "authenticateToken",

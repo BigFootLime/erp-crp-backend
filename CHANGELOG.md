@@ -1,5 +1,10 @@
 # Changelog
 
+## Delivery stock recovery — #1123 — 2026-10-10
+
+- Preview the existing affair remainder and reserve eligible free physical stock through the canonical transaction. Retain cancelled BLs, released reservations, OLD documents and initial AR promises; create no duplicate affair, OF, shipment or email.
+- Require a fresh stock/quality/version preview and a durable idempotency key. Bound shared batch, location and lot entitlement; reject stale, cross-client, blocked or committed-lane stock. Audit and module notifications commit with the reservation. Actual Test UI replay and the overall industrial recipe remain pending.
+
 ## Reservation-cart shipment promises — 2026-10-10
 
 - Allow verified partial reservation-cart preparation and retain the consumed/restant quantities. Keep legacy preparation and shipment exact by default. Backend #1110 / OBS061.
