@@ -1,5 +1,11 @@
 # Changelog
 
+## Customer order v2 fully reserved from stock — 2026-10-10
+
+- Prepare the AR without a fictitious planning gate when the launch reserves the complete order from OLD/NEW and generates no OF. Production, technical preparation and contract supply keep their existing gates.
+- Explicit replay repairs only an invalid v2 planning state with exact existing allocation and reservation coverage, no OF/BL/sent AR/pending contract supply. Reservations and delivery affairs are reused unchanged; history and audit remain transactional.
+- OBS-046 / WP-285 / #1081. No migration. Full industrial recipe remains in progress.
+
 ## Persist OF planning notifications — 2026-10-10
 
 - Persist planning submissions, time variance proposals and AR follow-ups with their realtime outbox in the owning OF transaction. Configured active recipients can open the OF directly. Distinct decisions have distinct dedupe keys; a replay emits no second event.
