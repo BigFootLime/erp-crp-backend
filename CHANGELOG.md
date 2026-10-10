@@ -1,5 +1,10 @@
 # Changelog
 
+## Persist OF planning notifications — 2026-10-10
+
+- Persist planning submissions, time variance proposals and AR follow-ups with their realtime outbox in the owning OF transaction. Configured active recipients can open the OF directly. Distinct decisions have distinct dedupe keys; a replay emits no second event.
+- OBS-043 / WP-285 / #1032. No migration. Full industrial recipe remains in progress.
+
 ## Contract fixed-lot projection — 2026-10-10
 
 - Calculate fixed replenishment lots from authoritative monthly shortages, with exact decimals and surplus carried once into later months. Expose a read-only projection without treating it as stock or creating OFs. Seven targeted regressions; no migration.
