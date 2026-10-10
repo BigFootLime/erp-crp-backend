@@ -1549,6 +1549,7 @@ export async function readNotificationCandidates(
             COALESCE(ARRAY_AGG(ura.role_key) FILTER (WHERE ura.role_key IS NOT NULL), '{}') AS roles
        FROM public.users u
        LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
+      WHERE COALESCE(NULLIF(lower(trim(u.status)), ''), 'active') NOT IN ('inactive', 'blocked', 'suspended')
       GROUP BY u.id, u.username, u.role`
   );
   return res.rows.map((row) => ({

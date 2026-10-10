@@ -10,6 +10,28 @@
 - Save immutable fixed-lot proposal snapshots, original targets and applicable technical identities. Recompute the shared coverage in the caller transaction, require freshness proofs and preserve idempotent replies, audit and outbox. No OF, stock, reservation or purchase is created.
 - Add guarded PostgreSQL preparation evidence, one current plan per contract and unused-only rollback. WP-286 / #1032 generation and full business recipe remain in progress.
 
+## Stock valuation verifier successor — #1087 — 2026-10-10
+
+- Verify the exact six-column #1007 key before #1022 and its seven-column successor afterward, retaining valid `NULLS NOT DISTINCT` uniqueness and the validated invoice correction identity.
+- Add seven transactional negative cases to the disposable migration rehearsal. No migration, application runtime, route or permission change. Native publication remains pending complete qualification.
+- Test the documented legacy shape with retained archives, prove that the old supplier rollback refuses current financial dependencies, and run the original SOL-06 rollback on its restored source prefix. Preserve immutable-patch validation, current-schema integrity, backup fingerprint checks and failure evidence.
+
+## Customer-facing acknowledgement notes — 2026-10-10
+
+- New AR editions exclude the form’s internal operational markers and priority, while preserving public notes and customer requirements. The snapshot and its exact PDF use one public projection.
+- Previously archived editions and raw source fingerprints remain unchanged. OBS048 / WP-285 / #1084. No schema or email-delivery change. Runtime and full business recipe remain pending.
+
+## Customer order v2 fully reserved from stock — 2026-10-10
+
+- Prepare the AR without a fictitious planning gate when the launch reserves the complete order from OLD/NEW and generates no OF. Production, technical preparation and contract supply keep their existing gates.
+- Explicit replay repairs only an invalid v2 planning state with exact existing allocation and reservation coverage, no OF/BL/sent AR/pending contract supply. Reservations and delivery affairs are reused unchanged; history and audit remain transactional.
+- OBS-046 / WP-285 / #1081. No migration. Full industrial recipe remains in progress.
+
+## Persist OF planning notifications — 2026-10-10
+
+- Persist planning submissions, time variance proposals and AR follow-ups with their realtime outbox in the owning OF transaction. Configured active recipients can open the OF directly. Distinct decisions have distinct dedupe keys; a replay emits no second event.
+- OBS-043 / WP-285 / #1032. No migration. Full industrial recipe remains in progress.
+
 ## Contract fixed-lot projection — 2026-10-10
 
 - Calculate fixed replenishment lots from authoritative monthly shortages, with exact decimals and surplus carried once into later months. Expose a read-only projection without treating it as stock or creating OFs. Seven targeted regressions; no migration.
