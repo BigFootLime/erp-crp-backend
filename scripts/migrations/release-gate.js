@@ -828,7 +828,7 @@ async function rehearse(options = {}) {
         if (verifySql) {
           await runSqlFile(verifyClient, verifySql);
           if (patch === "20261008_stock_value_adjustments_1007.sql") {
-            report.stock_value_uniqueness = await verifyStockValueUniqueness(verifyClient, fs.readFileSync(verifySql, "utf8"));
+            report.stock_value_uniqueness = await verifyStockValueUniqueness(verifyClient, verifySql);
           }
         }
       }
