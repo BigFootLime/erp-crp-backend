@@ -970,7 +970,7 @@ export async function releaseLivraisonReservationsInTransaction(
     [targetReservations.map(row => row.id), bonLivraisonId]
   );
   if (shared.rows[0]?.exists) {
-    throw new HttpError(409, "DELIVERY_RESERVATION_SHARED", "Un autre BL utilise cette réservation. Annulez ou terminez sa préparation avant de libérer le stock.");
+    throw new HttpError(409, "DELIVERY_RESERVATION_SHARED", "Un autre BL utilise cette réservation. Terminez ou corrigez cette préparation avant de libérer le stock.");
   }
 
   const grouped = new Map<string, { level: string; batch: string | null; qty: number }>()
