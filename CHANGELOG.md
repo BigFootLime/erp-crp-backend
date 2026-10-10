@@ -1,5 +1,11 @@
 # Changelog
 
+## Delivery document routes and subcontract audit — 2026-10-10
+
+- Validate BL and document UUID parameters together so archived pack PDFs and linked documents can be viewed and downloaded. Preserve document linkage, bounded storage, authentication and deletion conflicts. Backend #1102 / OBS058.
+- Use the canonical transactional ACTION audit writer for subcontract custody actions and RELEASE/RETURN, preserving actor, quality gates, transaction and outbox delivery. Backend #1099 / OBS057. No migration.
+
+
 ## Historical stock and packaging audit — 2026-10-10
 
 - Use the shared transactional ACTION audit writer when adding an OLD document reference or creating finished packaging. Preserve idempotency, quality checks and rollback; retain durable audit delivery. Backend #1098 / WP-285 / OBS056. No migration.
