@@ -47,6 +47,7 @@ let receiptRepository: ReceiptRepository;
 let deliveryRepository: DeliveryRepository;
 let shipmentRepository: ShipmentRepository;
 let commandeRepository: CommandeRepository;
+let recoveryRepository: typeof import("../module/livraisons/repository/delivery-stock-recovery.repository");
 
 function requireSafeIntegrationDatabase() {
   if (!integrationDatabaseUrl) throw new Error("CERP_INTEGRATION_DATABASE_URL is required for this suite");
@@ -772,6 +773,67 @@ async function shipPartialFixture(db: Pool, id: string, key: string) {
   expect(replay.stock_movement_ids).toEqual(first.stock_movement_ids);
 }
 
+
+const recoveryAudit = {user_id:7,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:'/integration/recovery',page_key:'livraisons',client_session_id:null};
+async function installRecoverySchema(db: Pool) {
+  await db.query(`
+    ALTER TABLE public.articles ADD COLUMN code text DEFAULT 'PT-INT',ADD COLUMN designation text DEFAULT 'Pièce';
+    ALTER TABLE public.clients ADD COLUMN client_code text DEFAULT 'CLI-INT';
+    ALTER TABLE public.commande_client ADD COLUMN code_client text DEFAULT 'PO-INT',ADD COLUMN statut text DEFAULT 'VALIDEE';
+    ALTER TABLE public.delivery_promise_roots ADD COLUMN initial_due_date date DEFAULT '2026-09-01';
+    ALTER TABLE public.stock_reservations ADD COLUMN expires_at timestamptz;
+    ALTER TABLE public.commande_ligne ADD COLUMN quantite numeric(18,3) DEFAULT 10,ADD COLUMN article_id uuid,ADD COLUMN piece_technique_version_id uuid;
+    ALTER TABLE public.commande_ligne ALTER COLUMN delai_client TYPE date USING delai_client::date;
+    ALTER TABLE public.commande_ligne_affaire_allocation ADD COLUMN qty_to_produce numeric(18,3) DEFAULT 0;
+    ALTER TABLE public.stock_batches ADD COLUMN lot_id uuid;
+    ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS origin_stock_scope text,ADD COLUMN IF NOT EXISTS stock_scope text,ADD COLUMN piece_technique_version_id uuid,ADD COLUMN expiry_at timestamptz;
+    ALTER TABLE public.emplacements ADD COLUMN location_type text DEFAULT 'STORAGE',ADD COLUMN is_scrap boolean DEFAULT false,ADD COLUMN allow_inbound boolean DEFAULT true,ADD COLUMN allow_outbound boolean DEFAULT true;
+    CREATE TABLE public.warehouses(id uuid PRIMARY KEY,stock_scope text DEFAULT 'NEW');
+    CREATE TABLE public.pieces_techniques(id uuid PRIMARY KEY,client_id uuid);
+    CREATE TABLE public.piece_technique_versions(id uuid PRIMARY KEY,piece_technique_id uuid,indice text);
+    CREATE VIEW public.v_technical_stock_compatibility_832 AS SELECT id AS stock_version_id,id AS target_version_id FROM public.piece_technique_versions;
+    CREATE TABLE public.affaire(id bigint PRIMARY KEY,reference text,statut text DEFAULT 'OUVERTE',delivery_readiness_state text DEFAULT 'READY_FOR_BL');
+    CREATE TABLE public.old_stock_document_references(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lot_id uuid,location text);
+    CREATE TABLE public.stock_lane_locations(location_id uuid PRIMARY KEY,lane text);
+    CREATE TABLE public.stock_lane_destinations(lane text PRIMARY KEY,location_id uuid);
+    CREATE TABLE public.stock_command_receipts(actor_user_id integer,idempotency_key text,request_hash text,command_type text,resource_type text,resource_id text,request_payload jsonb,result_payload jsonb,correlation_id uuid,UNIQUE(actor_user_id,idempotency_key));
+    CREATE TABLE public.quality_control(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lot_id uuid,source_type text,source_id text,qty_released numeric DEFAULT 0,qty_held numeric DEFAULT 0,qty_consumed numeric DEFAULT 0,unite text DEFAULT 'u',validation_date timestamptz,verdict text,trigger_type text,reception_ligne_id uuid,control_date timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
+    CREATE TABLE public.non_conformity(id uuid PRIMARY KEY,lot_id uuid,status text);
+    CREATE TABLE public.non_conformity_dispositions(non_conformity_id uuid);
+    CREATE TABLE public.quality_release_decision(id uuid PRIMARY KEY,quality_control_id uuid,derogation_id uuid,decided_at timestamptz);
+    CREATE TABLE public.quality_derogation(id uuid PRIMARY KEY,status text,valid_to timestamptz);
+    CREATE TABLE public.of_material_consumptions(stock_movement_line_id uuid,reservation_id uuid);
+    CREATE TABLE public.reception_stock_portions(id uuid PRIMARY KEY,source_lot_id uuid,receipt_line_id uuid,stock_quantity numeric,stock_movement_id uuid,packaging_id uuid,stock_lot_id uuid);
+    CREATE TABLE public.reception_fournisseur_lignes(id uuid PRIMARY KEY,stock_unit text,lot_id uuid,receipt_quality_required boolean);
+    CREATE TABLE public.reception_packaging(id uuid PRIMARY KEY,voided_at timestamptz);
+    CREATE TABLE public.consumable_receipt_admissions(id uuid PRIMARY KEY,quantity numeric,unit text,receipt_line_id uuid,lot_id uuid);
+  `);
+}
+async function seedRecovery(db:Pool) {
+  await seedDeliveryScenario(db);
+  await db.query('INSERT INTO public.warehouses(id) VALUES($1)',[ids.warehouse]);
+  await db.query('INSERT INTO public.pieces_techniques(id,client_id) VALUES($1,$2)',[ids.pieceTechnique,ids.client]);
+  await db.query("INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice) VALUES($1,$1,'A')",[ids.pieceTechnique]);
+  await db.query("INSERT INTO public.affaire(id,reference) VALUES(700,'AFF-INT')");
+  await db.query('UPDATE public.commande_ligne SET quantite=3,article_id=$1,piece_technique_version_id=$2',[ids.article,ids.pieceTechnique]);
+  await db.query('UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=3,qty_reserved=3,qty_remaining=3');
+  await db.query('UPDATE public.stock_reservations SET qty_reserved=3');
+  await db.query('UPDATE public.stock_levels SET qty_total=3,qty_reserved=3');
+  await db.query('UPDATE public.stock_batches SET qty_total=3,qty_reserved=3,lot_id=$1',[ids.lot]);
+  await db.query("UPDATE public.lots SET source_scope='OLD'");
+  await db.query("INSERT INTO public.old_stock_document_references(lot_id,location) VALUES($1,'/fixture/old-proof.pdf')",[ids.lot]);
+  await db.query("INSERT INTO public.stock_lane_locations(location_id,lane) VALUES($1,'FREE')",[ids.location]);
+  await db.query(`WITH root AS (INSERT INTO public.delivery_promise_roots(allocation_id) VALUES(900) RETURNING id)
+    INSERT INTO public.delivery_promise_parts(root_id,quantity,due_date) SELECT id,3,'2026-09-01' FROM root`);
+  const bl=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:ids.reservation,qty:3}]},user_id:7,idempotency_key:'recovery-cancel-bl'});
+  await deliveryRepository.repoUpdateLivraisonStatus(bl.id,'CANCELLED',7,{commentaire:'Annulation avant expédition, recette isolée'});
+  return bl;
+}
+async function recoverCurrent(key:string){
+  const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+  return recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise de la réservation',idempotencyKey:key,audit:recoveryAudit});
+}
+
 describePg("stock/delivery repositories — isolated PostgreSQL invariants", () => {
   beforeAll(async () => {
     requireSafeIntegrationDatabase();
@@ -781,6 +843,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     await harnessPool.query(`CREATE UNIQUE INDEX bl_allocations_reservation_226_uq
       ON public.bon_livraison_ligne_allocations(reservation_id) WHERE reservation_id IS NOT NULL`);
     await applyPartialDeliveryScope(harnessPool);
+    await installRecoverySchema(harnessPool);
 
     // Import only after the safety check so the production singleton pool is
     // bound to this disposable test database, never a developer's .env URL.
@@ -790,10 +853,12 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     deliveryRepository = await import("../module/livraisons/repository/livraisons.repository");
     shipmentRepository = await import("../module/livraisons/repository/livraisons-shipment.repository");
     commandeRepository = await import("../module/commande-client/repository/commande-client.repository");
+    recoveryRepository = await import("../module/livraisons/repository/delivery-stock-recovery.repository");
   });
 
   beforeEach(async () => {
     if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await harnessPool.query("TRUNCATE public.pieces_techniques,public.piece_technique_versions,public.affaire,public.warehouses,public.old_stock_document_references,public.stock_lane_locations,public.stock_lane_destinations,public.stock_command_receipts,public.quality_control,public.non_conformity,public.non_conformity_dispositions,public.quality_release_decision,public.quality_derogation");
     await clearScenario(harnessPool);
   });
 
@@ -1382,6 +1447,67 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       expect(countValue((await harnessPool.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
     }
   });
+
+  it('#1123 recovers the same affair after a real cancellation, with replay and unchanged AR/history',async()=>{
+    const db=harnessPool!;const cancelled=await seedRecovery(db);
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    expect(preview).toMatchObject({uncovered_qty:3,reservable_qty:3,shortage_qty:0,reserved_qty:0});
+    const args={allocationId:900,previewHash:preview.preview_hash,reason:'Reprise de la réservation',idempotencyKey:'recovery-same-affair',audit:recoveryAudit};
+    const first=await recoveryRepository.repoReserveDeliveryStockRecovery(args),replay=await recoveryRepository.repoReserveDeliveryStockRecovery(args);
+    expect(first.reserved_qty).toBe(3);expect(replay.idempotent_replay).toBe(true);expect(replay.reservation_ids).toEqual(first.reservation_ids);
+    expect((await db.query('SELECT status,qty_consumed::float8 AS consumed FROM public.stock_reservations WHERE id=$1',[ids.reservation])).rows).toEqual([{status:'RELEASED',consumed:0}]);
+    expect((await db.query('SELECT statut FROM public.bon_livraison WHERE id=$1',[cancelled.id])).rows).toEqual([{statut:'CANCELLED'}]);
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved,qty_remaining::float8 AS remaining,qty_to_produce::float8 AS missing FROM public.commande_ligne_affaire_allocation')).rows).toEqual([{reserved:3,remaining:3,missing:0}]);
+    for(const table of ['affaire','commande_client','commande_ligne_affaire_allocation','old_stock_document_references','stock_command_receipts'])expect(Number((await db.query('SELECT count(*)::int AS count FROM public.'+table)).rows[0].count)).toBe(1);
+    expect((await db.query('SELECT count(*)::int AS count FROM public.ordres_fabrication')).rows[0].count).toBe(0);
+    expect((await db.query('SELECT count(*)::int AS count FROM public.stock_movements')).rows[0].count).toBe(0);
+    expect((await db.query('SELECT due_date::text FROM public.delivery_promise_parts')).rows).toEqual([{due_date:'2026-09-01'}]);
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).uncovered_qty).toBe(0);
+  });
+  it('#1123 rejects stale stock and reused keys without changing balances',async()=>{
+    const db=harnessPool!;await seedRecovery(db);const p=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    await db.query('UPDATE public.stock_batches SET qty_total=2');
+    const args={allocationId:900,previewHash:p.preview_hash,reason:'Reprise',idempotencyKey:'recovery-stale-key',audit:recoveryAudit};
+    await expect(recoveryRepository.repoReserveDeliveryStockRecovery(args)).rejects.toMatchObject({code:'DELIVERY_STOCK_PREVIEW_CHANGED',status:409});
+    const result=await recoverCurrent('recovery-fresh-key');expect(result.reserved_qty).toBe(2);expect(result.shortage_qty).toBe(1);
+    await expect(recoveryRepository.repoReserveDeliveryStockRecovery({...args,idempotencyKey:'recovery-fresh-key'})).rejects.toMatchObject({code:'IDEMPOTENCY_KEY_REUSED'});
+    expect((await db.query('SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches')).rows).toEqual([{total:2,reserved:2}]);
+  });
+  it('#1123 prevents concurrent excess and duplicate confirmations',async()=>{
+    const db=harnessPool!;await seedRecovery(db);const p=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    const command=(key:string)=>recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:p.preview_hash,reason:'Reprise',idempotencyKey:key,audit:recoveryAudit});
+    const result=await Promise.allSettled([command('recovery-race-A'),command('recovery-race-B')]);
+    expect(result.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect((await db.query("SELECT count(*)::int AS count FROM public.stock_reservations WHERE status='ACTIVE'")).rows[0].count).toBe(1);
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:3}]);
+  });
+  it('#1123 excludes delivery/assembly zones, blocked OLD and missing historical documents',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    for(const lane of ['DELIVERY','ASSEMBLY']){await db.query('UPDATE public.stock_lane_locations SET lane=$1',[lane]);expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);}
+    await db.query("UPDATE public.stock_lane_locations SET lane='FREE';UPDATE public.lots SET lot_status='BLOQUE'");
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).lots[0].blocker).toBeTruthy();
+    await db.query("UPDATE public.lots SET lot_status='LIBERE';DELETE FROM public.old_stock_document_references");
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
+    await expect(recoverCurrent('recovery-blocked')).rejects.toMatchObject({code:'DELIVERY_STOCK_NOT_AVAILABLE'});
+  });
+  it('#1123 rejects cross-client stock and incompatible technical version',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    await db.query('UPDATE public.pieces_techniques SET client_id=$1',[ids.otherClient]);
+    await expect(recoveryRepository.repoPreviewDeliveryStockRecovery(900)).rejects.toMatchObject({code:'DELIVERY_STOCK_CLIENT_MISMATCH'});
+    await db.query('UPDATE public.pieces_techniques SET client_id=$1',[ids.client]);
+    await db.query("UPDATE public.lots SET source_scope='NEW'");
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).lots[0].blocker).toBe('Indice ou version incompatible');
+  });
+  it('#1123 bounds NEW by actual quality release and keeps pending/revoked stock unavailable',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    await db.query("UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
+    await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,2,now(),'CONFORME')",[ids.lot]);
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);expect(preview.reservable_qty).toBe(2);expect(preview.shortage_qty).toBe(1);
+    const reserved=await recoverCurrent('recovery-quality-2');expect(reserved.reserved_qty).toBe(2);
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
+  });
+
 });
 
 afterAll(async () => {
