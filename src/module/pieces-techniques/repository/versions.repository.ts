@@ -8,6 +8,7 @@ import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-g
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
+import { COPY_VERSION_PURCHASES_SQL } from "./version-purchases.sql"
 import type {
   CreateNextVersionBodyDTO,
   CreateVersionBodyDTO,
@@ -644,13 +645,7 @@ export async function repoCreateNextVersion(
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
     await client.query(
-      `INSERT INTO public.pieces_techniques_achats
-        (piece_technique_id,piece_technique_version_id,phase,nom,designation,article_id,
-         fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat)
-       SELECT piece_technique_id,$2::uuid,phase,nom,designation,article_id,
-              fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat
-       FROM public.pieces_techniques_achats
-       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$3::uuid`,
+      COPY_VERSION_PURCHASES_SQL,
       [pieceTechniqueId, row.id, sourceVersionId]
     )
 
