@@ -1,5 +1,10 @@
 # Changelog
 
+## Metrology measurement persistence — 2026-10-10
+
+- Persist the computed verdict and deviation with each reading or motivated correction, without a second unversioned update rejected by the canonical history trigger. Preserve the trigger, audit, idempotency and validated execution immutability.
+- Regression reproduces initial and corrected reading failures. 120 targeted tests pass. No migration; WP-285 full recipe remains in progress.
+
 ## Supplier recommendation context — 2026-10-10
 
 - Return the validated numeric OF identity in supplier recommendation evidence when PostgreSQL bigint identifiers arrive as strings. Preserve permissions, ranking and coherent read scope.
