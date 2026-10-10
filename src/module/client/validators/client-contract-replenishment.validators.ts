@@ -8,3 +8,11 @@ export const clientReplenishmentPreparationSchema = z.object({
   start_month: forecastMonthSchema, months: z.number().int().min(1).max(36),
 }).strict();
 export type ClientReplenishmentPreparationCommand = z.infer<typeof clientReplenishmentPreparationSchema>;
+
+export const clientReplenishmentLaunchSchema = z.object({
+  action: z.literal('GENERATE'),
+  plan_id: z.string().uuid().transform(value => value.toLowerCase()),
+  proposal_ids: z.array(z.string().uuid().transform(value => value.toLowerCase())).min(1).max(100)
+    .refine(values => new Set(values).size === values.length, 'Sélectionnez des propositions distinctes.'),
+}).strict();
+export type ClientReplenishmentLaunchCommand = z.infer<typeof clientReplenishmentLaunchSchema>;

@@ -7,6 +7,7 @@ import { createRecursiveOrdresFabrication } from '../../production/domain/of-gen
 import { roleHasOfCapability } from '../../production/domain/of-rbac';
 import { parseCumpDecimal } from '../../stock/domain/cump-decimal';
 import { readReplenishmentPlan } from '../repository/client-contract-replenishment.repository';
+import { readReplenishmentLaunchReplay } from '../repository/client-contract-replenishment-launch.repository';
 import type { AuditContext } from '../repository/client.repository';
 import type { prepareContractReplenishmentWithIntents } from '../domain/client-contract-replenishment-intent-preparation';
 import type { PreparedContractReplenishmentPlan } from '../types/client-contract-replenishment.types';
@@ -41,10 +42,7 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
   const isolation = (await tx.query<{ transaction_isolation: string }>('SHOW transaction_isolation')).rows[0];
   if (isolation?.transaction_isolation !== 'serializable') throw new Error('CONTRACT_REPLENISHMENT_SERIALIZABLE_TRANSACTION_REQUIRED');
   await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`client-replenishment-launch:${input.audit.user_id}:${input.key}`]);
-  const replay = (await tx.query<{ client_id: string; contract_id: string; request_hash: string; result_payload: ReplenishmentLaunchResult }>(
-    `SELECT contract.client_id::text,launch.contract_id::text,launch.request_hash,launch.result_payload
-     FROM public.client_contract_replenishment_launches launch JOIN public.client_contracts contract ON contract.id=launch.contract_id
-     WHERE launch.actor_user_id=$1 AND launch.idempotency_key=$2::uuid`, [input.audit.user_id, input.key])).rows[0];
+  const replay = await readReplenishmentLaunchReplay(tx, input.audit.user_id, input.key);
   if (replay) {
     if (replay.client_id !== input.client_id || replay.contract_id !== input.contract_id || replay.request_hash !== input.request_hash)
       throw new HttpError(409, 'CONTRACT_REPLENISHMENT_KEY_CONFLICT', 'Cette tentative correspond à un autre lancement.');
