@@ -7,8 +7,10 @@ DO $$ BEGIN
   END IF;
   IF has_table_privilege('cerp_app','public.client_contract_replenishment_roots','UPDATE,DELETE')
     OR has_table_privilege('cerp_app','public.client_contract_replenishment_launches','UPDATE,DELETE')
-    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_roots','SELECT,INSERT')
-    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_launches','SELECT,INSERT') THEN
+    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_roots','SELECT')
+    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_roots','INSERT')
+    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_launches','SELECT')
+    OR NOT has_table_privilege('cerp_app','public.client_contract_replenishment_launches','INSERT') THEN
     RAISE EXCEPTION 'Replenishment evidence privileges mismatch';
   END IF;
   IF EXISTS(SELECT 1 FROM public.client_contract_replenishment_roots r

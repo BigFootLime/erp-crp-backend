@@ -127,4 +127,10 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     finally { await tx.query('ROLLBACK'); tx.release(); }
     await db.query(await sql('.verify'));
   });
+  it('detects a missing INSERT privilege instead of accepting SELECT alone', async () => {
+    await db.query('REVOKE INSERT ON public.client_contract_replenishment_roots FROM cerp_app');
+    try { await expect(db.query(await sql('.verify'))).rejects.toMatchObject({ code: 'P0001' }); }
+    finally { await db.query('GRANT INSERT ON public.client_contract_replenishment_roots TO cerp_app'); }
+    await db.query(await sql('.verify'));
+  });
 });
