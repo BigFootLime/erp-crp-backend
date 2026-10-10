@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { insertReplenishmentPlan } from '../module/client/repository/client-contract-replenishment.repository';
 import { prepareContractReplenishmentSnapshot } from '../module/client/domain/client-contract-replenishment-preparation';
 import type { ContractCoverageResult } from '../module/client/types/client-contract-coverage.types';
+import { readReplenishmentProducerIntents } from '../module/client/repository/client-contract-replenishment-intents.repository';
 
 const url = process.env.CLIENT_REPLENISHMENT_ROOTS_1032_TEST_DATABASE_URL;
 describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
@@ -20,8 +21,8 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
       throw Error('Use an empty disposable PostgreSQL17 cerp_replenishment_roots_1032_test database; ERP schemas are forbidden.');
     await db.query(`CREATE ROLE cerp_app NOLOGIN;
       CREATE TABLE public.users(id integer PRIMARY KEY,username text NOT NULL);
-      CREATE TABLE public.units(id uuid PRIMARY KEY);
-      CREATE TABLE public.articles(id uuid PRIMARY KEY);
+      CREATE TABLE public.units(id uuid PRIMARY KEY,code text NOT NULL DEFAULT 'U');
+      CREATE TABLE public.articles(id uuid PRIMARY KEY,unite text NOT NULL DEFAULT 'U');
       CREATE TABLE public.pieces_techniques(id uuid PRIMARY KEY);
       CREATE TABLE public.piece_technique_versions(id uuid PRIMARY KEY);
       CREATE TABLE public.client_contracts(id uuid PRIMARY KEY,client_id text NOT NULL);
@@ -31,14 +32,20 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
         statut text NOT NULL,commande_id bigint,commande_ligne_id bigint,affaire_id bigint,article_id uuid,piece_technique_id uuid,
         piece_technique_version_id uuid,quantite_lancee numeric,quantite_bonne numeric DEFAULT 0,quantite_rebut numeric DEFAULT 0,
         client_id text,created_by integer,technical_preparation jsonb);
-      CREATE TABLE public.of_output_lots(of_id bigint NOT NULL REFERENCES public.ordres_fabrication(id));
+      CREATE TABLE public.of_output_lots(of_id bigint NOT NULL REFERENCES public.ordres_fabrication(id),qty_ok numeric(18,3) NOT NULL DEFAULT 0);
+      CREATE TABLE public.of_receipts(id uuid PRIMARY KEY,of_id bigint REFERENCES public.ordres_fabrication(id),qty_ok numeric(18,3) NOT NULL);
+      CREATE TABLE public.production_receipt_lane_assignments(receipt_id uuid REFERENCES public.of_receipts(id),quantity numeric(18,3) NOT NULL);
+      CREATE TABLE public.production_consolidations(id uuid PRIMARY KEY,producer_of_id bigint REFERENCES public.ordres_fabrication(id),state text NOT NULL);
+      CREATE TABLE public.production_consolidation_allocations(id uuid PRIMARY KEY,consolidation_id uuid REFERENCES public.production_consolidations(id),
+        source_of_id bigint REFERENCES public.ordres_fabrication(id),quantity numeric(18,3) NOT NULL,received_quantity numeric(18,3) NOT NULL DEFAULT 0,state text NOT NULL);
       CREATE FUNCTION public.fn_protect_stock_immutable_evidence() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RAISE EXCEPTION 'Immutable evidence' USING ERRCODE='55000'; END $$;
       INSERT INTO public.users VALUES(1,'Test Author');
       GRANT SELECT ON public.users,public.units,public.articles,public.pieces_techniques,public.piece_technique_versions,public.of_output_lots TO cerp_app;
+      GRANT SELECT ON public.of_receipts,public.production_receipt_lane_assignments,public.production_consolidations,public.production_consolidation_allocations TO cerp_app;
       GRANT SELECT,INSERT,UPDATE ON public.client_contracts,public.client_contract_lines,public.ordres_fabrication TO cerp_app;`);
-    await db.query('INSERT INTO public.units VALUES($1)', [article.unit_id]);
-    await db.query('INSERT INTO public.articles VALUES($1),($2)', [article.article_id, article.root_article_id]);
+    await db.query('INSERT INTO public.units(id) VALUES($1)', [article.unit_id]);
+    await db.query('INSERT INTO public.articles(id) VALUES($1),($2)', [article.article_id, article.root_article_id]);
     await db.query('INSERT INTO public.pieces_techniques VALUES($1)', [article.piece_technique_id]);
     await db.query('INSERT INTO public.piece_technique_versions VALUES($1)', [article.piece_technique_version_id]);
     await db.query(await readFile('db/patches/20261010_client_replenishment_preparations_1032.sql', 'utf8'));
@@ -96,7 +103,7 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     await db.query("UPDATE public.ordres_fabrication SET statut='BROUILLON' WHERE id=$1", [f.ofId]);
     await db.query("UPDATE public.client_contract_replenishment_plans SET status='SUPERSEDED' WHERE id=$1", [f.planId]);
     await expect(insert(f)).rejects.toMatchObject({ code: '23514' });
-    const output = await fixture(); await db.query('INSERT INTO public.of_output_lots VALUES($1)', [output.ofId]);
+    const output = await fixture(); await db.query('INSERT INTO public.of_output_lots(of_id) VALUES($1)', [output.ofId]);
     await expect(insert(output)).rejects.toMatchObject({ code: '23514' });
   });
   it('allows one record only for a proposal during concurrent retries', async () => {
@@ -132,5 +139,49 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     try { await expect(db.query(await sql('.verify'))).rejects.toMatchObject({ code: 'P0001' }); }
     finally { await db.query('GRANT INSERT ON public.client_contract_replenishment_roots TO cerp_app'); }
     await db.query(await sql('.verify'));
+  });
+
+  async function receive(ofId: string, quantity: string, assigned: string) {
+    const receiptId = randomUUID();
+    await db.query('INSERT INTO public.of_receipts VALUES($1,$2,$3)', [receiptId,ofId,quantity]);
+    await db.query('INSERT INTO public.of_output_lots VALUES($1,$2)', [ofId,quantity]);
+    if (assigned !== '0') await db.query('INSERT INTO public.production_receipt_lane_assignments VALUES($1,$2)', [receiptId,assigned]);
+  }
+  it('reads canonical unbound draft identities under application privileges in the caller transaction', async () => {
+    const f = await fixture(); await insert(f); const tx = await db.connect();
+    const evidenceId = (await db.query('SELECT id::text FROM public.client_contract_replenishment_roots WHERE root_of_id=$1',[f.ofId])).rows[0].id;
+    try {
+      await tx.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); await tx.query('SET LOCAL ROLE cerp_app');
+      const rows = await readReplenishmentProducerIntents(tx,[article.article_id],[]);
+      expect(rows.find(row=>row.id===evidenceId)).toMatchObject({quantity:'20',target_date:'2026-09-30',status:'OPEN'});
+      expect(rows.find(row=>row.coverage_source_ids.length)).toBeUndefined();
+    } finally { await tx.query('ROLLBACK');tx.release(); }
+  });
+  it('keeps pending quality receipts under review and retires fully attributed closed production', async () => {
+    const pending = await fixture(); await insert(pending);
+    const pendingId = (await db.query('SELECT id::text FROM public.client_contract_replenishment_roots WHERE root_of_id=$1',[pending.ofId])).rows[0].id;
+    await receive(pending.ofId,'10','5');
+    expect((await readReplenishmentProducerIntents(db,[article.article_id],[])).find(row=>row.id===pendingId)?.status).toBe('REVIEW_REQUIRED');
+    const finished = await fixture(); await insert(finished);
+    const finishedId = (await db.query('SELECT id::text FROM public.client_contract_replenishment_roots WHERE root_of_id=$1',[finished.ofId])).rows[0].id;
+    await receive(finished.ofId,'20','20');
+    await db.query("UPDATE public.ordres_fabrication SET statut='CLOTURE' WHERE id=$1",[finished.ofId]);
+    expect((await readReplenishmentProducerIntents(db,[article.article_id],[])).some(row=>row.id===finishedId)).toBe(false);
+  });
+  it('maps two anticipated roots to distinct active producer shares and preserves only each share receipt', async () => {
+    const one = await fixture(),two = await fixture(); await insert(one);await insert(two);
+    const ids = (await db.query('SELECT id::text,root_of_id::text FROM public.client_contract_replenishment_roots WHERE root_of_id=ANY($1::bigint[])',[[one.ofId,two.ofId]])).rows;
+    const producer = (await db.query(`INSERT INTO public.ordres_fabrication(statut,article_id,piece_technique_id,piece_technique_version_id,
+      quantite_lancee,client_id,created_by) VALUES('EN_COURS',$1,$2,$3,40,'195',1) RETURNING id::text`,
+      [article.article_id,article.piece_technique_id,article.piece_technique_version_id])).rows[0].id;
+    const groupId = randomUUID(),shareOne=randomUUID(),shareTwo=randomUUID();
+    await db.query("INSERT INTO public.production_consolidations VALUES($1,$2,'ACTIVE')",[groupId,producer]);
+    await db.query("INSERT INTO public.production_consolidation_allocations VALUES($1,$2,$3,20,20,'ACTIVE'),($4,$2,$5,20,10,'ACTIVE')",[shareOne,groupId,one.ofId,shareTwo,two.ofId]);
+    await receive(producer,'30','30');
+    const source = { id:`production:${producer}:share:${shareTwo}`,kind:'PRODUCTION' as const,article_id:article.article_id,unit:'U',
+      quantity:'10',available_date:'2026-10-20',order_line_id:null,allocation_id:null,reference_id:producer,label:'Grouped fixture' };
+    const rows = await readReplenishmentProducerIntents(db,[article.article_id],[source]);
+    expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===one.ofId).id)).toMatchObject({ received_quantity:'20.000',received_reconciled:true,coverage_source_ids:[] });
+    expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===two.ofId).id)).toMatchObject({ received_quantity:'10.000',received_reconciled:true,coverage_source_ids:[source.id] });
   });
 });

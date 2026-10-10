@@ -6,6 +6,10 @@ import type { ContractCoverageAllocation, ContractCoverageDemand, ContractCovera
 export type ContractReplenishmentOpenIntent = {
   id: string; article_id: string; unit: string; quantity: string; scrap_quantity: string; received_quantity: string;
   target_date: string; status: 'OPEN' | 'CANCELLED' | 'REVIEW_REQUIRED';
+  /** Only the persistent reader may confirm that all received units have an
+   * immutable quality/lane attribution. Browser input cannot set this proof. */
+  received_reconciled?: boolean;
+  order_line_id?: string | null;
   /** Authoritatively reconciled source identities of this producer, not caller-provided aliases. */
   coverage_source_ids: readonly string[];
 };
@@ -48,11 +52,12 @@ export function allocateOpenContractReplenishmentIntents(input: {
   for (const intent of active) {
     if (ids.has(intent.id)) fail('Un OF de réapprovisionnement apparaît plusieurs fois.');
     ids.add(intent.id);
-    if (intent.status === 'REVIEW_REQUIRED' || parseCumpDecimal(intent.received_quantity) !== 0n)
+    const received = parseCumpDecimal(intent.received_quantity);
+    if (intent.status === 'REVIEW_REQUIRED' || (received !== 0n && intent.received_reconciled !== true))
       fail('Un OF déjà créé a des pièces reçues ou une affectation à rapprocher. Vérifiez cet OF avant une nouvelle génération.');
     if (intent.status === 'CANCELLED') { remaining.set(intent.id, 0n); continue; }
     const launched = parseCumpDecimal(intent.quantity), scrap = parseCumpDecimal(intent.scrap_quantity);
-    if (scrap > launched) fail('La perte déclarée dépasse la quantité de l’OF.');
+    if (scrap + received > launched) fail('Les pièces reçues et les pertes dépassent la quantité de l’OF.');
     let alreadyCounted = 0n;
     for (const sourceId of intent.coverage_source_ids) {
       const source = sourceById.get(sourceId);
@@ -60,8 +65,8 @@ export function allocateOpenContractReplenishmentIntents(input: {
         fail('Une source de production est attribuée à plusieurs OF ou n’est plus compatible.');
       owners.add(sourceId); alreadyCounted += spentSource.get(sourceId) ?? 0n;
     }
-    if (alreadyCounted > launched - scrap) fail('L’OF a déjà couvert davantage que sa quantité restante.');
-    remaining.set(intent.id, launched - scrap - alreadyCounted);
+    if (alreadyCounted > launched - scrap - received) fail('L’OF a déjà couvert davantage que sa quantité restante.');
+    remaining.set(intent.id, launched - scrap - received - alreadyCounted);
   }
   const allocations: ContractReplenishmentIntentAllocation[] = [];
   const outstanding = [...input.demands].sort((a, b) => a.target_date.localeCompare(b.target_date)
@@ -70,6 +75,7 @@ export function allocateOpenContractReplenishmentIntents(input: {
     for (const intent of active) {
       if (!needed) break;
       if (intent.status !== 'OPEN' || intent.article_id !== demand.article_id || intent.unit !== demand.unit) continue;
+      if (intent.order_line_id != null && intent.order_line_id !== demand.order_line_id) continue;
       const available = remaining.get(intent.id)!;
       const accepted = needed < available ? needed : available;
       if (!accepted) continue;
