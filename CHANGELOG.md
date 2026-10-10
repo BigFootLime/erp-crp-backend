@@ -238,3 +238,7 @@
 ## 2026-10-10 — #1116
 
 - Commande client : conserver les dates civiles lors de la duplication ; éviter HTTP500 dû au passage DATE PostgreSQL vers String(Date). Lecture ISO dédiée, sans mutation des délais sources ni reprise des réservations/AR.
+
+## 2026-10-10 — #1119
+
+- Accusé de réception : afficher et archiver le délai de livraison de chaque ligne, sans décalage de jour ni réécriture des anciens AR.
