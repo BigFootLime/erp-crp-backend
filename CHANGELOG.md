@@ -1,5 +1,10 @@
 # Changelog
 
+## Contract replenishment preparation — 2026-10-10
+
+- Save immutable fixed-lot proposal snapshots, original targets and applicable technical identities. Recompute the shared coverage in the caller transaction, require freshness proofs and preserve idempotent replies, audit and outbox. No OF, stock, reservation or purchase is created.
+- Add guarded PostgreSQL preparation evidence, one current plan per contract and unused-only rollback. WP-286 / #1032 generation and full business recipe remain in progress.
+
 ## Contract fixed-lot projection — 2026-10-10
 
 - Calculate fixed replenishment lots from authoritative monthly shortages, with exact decimals and surplus carried once into later months. Expose a read-only projection without treating it as stock or creating OFs. Seven targeted regressions; no migration.
