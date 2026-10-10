@@ -1,5 +1,10 @@
 # Changelog
 
+## Customer-facing acknowledgement notes — 2026-10-10
+
+- New AR editions exclude the form’s internal operational markers and priority, while preserving public notes and customer requirements. The snapshot and its exact PDF use one public projection.
+- Previously archived editions and raw source fingerprints remain unchanged. OBS048 / WP-285 / #1084. No schema or email-delivery change. Runtime and full business recipe remain pending.
+
 ## Customer order v2 fully reserved from stock — 2026-10-10
 
 - Prepare the AR without a fictitious planning gate when the launch reserves the complete order from OLD/NEW and generates no OF. Production, technical preparation and contract supply keep their existing gates.
