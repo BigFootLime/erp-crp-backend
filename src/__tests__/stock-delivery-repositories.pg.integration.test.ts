@@ -494,7 +494,6 @@ async function installMinimalSchema(db: Pool) {
     CREATE TABLE public.delivery_promise_shipments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),part_id UUID NOT NULL,bl_allocation_id UUID NOT NULL,quantity NUMERIC NOT NULL,due_date_at_shipment DATE NOT NULL,UNIQUE(part_id,bl_allocation_id));
     ALTER TABLE public.lots ADD COLUMN origin_stock_scope TEXT NULL, ADD COLUMN stock_scope TEXT NULL;
     ALTER TABLE public.magasins ADD COLUMN stock_scope TEXT NULL;
-    ALTER TABLE public.stock_levels ADD COLUMN qty_depreciated NUMERIC NOT NULL DEFAULT 0;
     CREATE VIEW public.v_bon_livraison_reliquats_226 AS
       SELECT commande_ligne_id,sum(qty_ordered) AS quantite_commandee,sum(qty_delivered) AS quantite_expediee,
         sum(qty_ordered-qty_delivered) AS quantite_restante
