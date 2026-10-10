@@ -32,6 +32,7 @@ import { listContracts, listContractArticles, readContract, postContractCommand,
 import { listLegacyContractOrders, readLegacyContractPreview, postLegacyContractAssociation } from "../controllers/client-contract-legacy.controller";
 import { listClientContractForecasts, postClientContractForecastCommand } from "../controllers/client-contract-forecast.controller";
 import { readClientContractCoverage } from "../controllers/client-contract-coverage.controller";
+import { readClientContractReplenishment, postClientContractReplenishment } from "../controllers/client-contract-replenishment.controller";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
@@ -53,6 +54,9 @@ router.get("/:id/contracts", listContracts);
 router.get("/:id/contracts/articles", listContractArticles);
 router.get("/:id/contracts/:contractId/calls", listContractCalls);
 router.get("/:id/contracts/:contractId/coverage", readClientContractCoverage);
+router.get("/:id/contracts/:contractId/replenishment", readClientContractReplenishment);
+router.get("/:id/contracts/:contractId/replenishment/:planId/history", readClientContractReplenishment);
+router.post("/:id/contracts/:contractId/replenishment/commands", requireClientWriteRole, postClientContractReplenishment);
 router.get("/:id/contracts/:contractId/forecasts", listClientContractForecasts);
 router.get("/:id/contracts/:contractId/forecasts/:forecastId/history", listClientContractForecasts);
 router.post("/:id/contracts/:contractId/forecasts/commands", requireClientWriteRole, postClientContractForecastCommand);

@@ -11,6 +11,7 @@ import {hydrateDurationEstimates,readLearningState} from './duration-learning.re
 import {readPlanningCoverageTx} from './planning-coverage.repository';
 import {emptyPlanningCoverage} from '../domain/planning-material-coverage';
 import {hydrateExternalPlanning} from './planning-external.repository';
+import {earliestReplenishmentTarget,readReplenishmentPlanningTargets} from './planning-replenishment-targets.repository';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -274,6 +275,11 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
     query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null]);
   const more = rows.length > query.limit;
   const visible = more ? rows.slice(0,query.limit) : rows;
+  const targets=await readReplenishmentPlanningTargets(tx,visible.flatMap(row=>row.of_id==null?[]:[num(row.of_id)]));
+  for(const row of visible) {
+    const target=targets.get(num(row.of_id));
+    if(target)row.commercial_due=earliestReplenishmentTarget(str(row.commercial_due??row.due),target);
+  }
   const tasks = visible.map(row => taskFromRow(row));
   const operationIds = tasks.flatMap(task => task.operationId ? [task.operationId] : []);
   if (operationIds.length) {
