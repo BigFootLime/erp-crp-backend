@@ -17,6 +17,7 @@ import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/
 import { createRecursiveOrdresFabrication } from "../../production/domain/of-generation"
 import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf"
 
+import { captureShipmentPromises } from "../../affaire/repository/delivery-promises.repository"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import {
   assertOperationalLotQualityEligibility,
@@ -5299,7 +5300,7 @@ export async function repoCreateLivraisonFromReservations(params: {
     // directly as READY without a misleading second "reserve stock" action.
     // This also rebinds the existing reservations to their BL lines and keeps
     // the usual PREPARATION_READY event/audit trail.
-    await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
+    await prepareLivraisonInTransaction(db, bonLivraisonId, userId, "PARTIAL_CART")
 
     const result = { id: bonLivraisonId, numero, shipping_version: 1, preview_hash: previewHash }
     await db.query(
@@ -5766,6 +5767,8 @@ export async function repoShipLivraison(params: {
       `,
       [params.bon_livraison_id, params.user_id]
     )
+    // Promise evidence belongs to the same transaction as stock and shipment.
+    await captureShipmentPromises(db, params.bon_livraison_id)
     await db.query(
       `UPDATE public.bon_livraison_ship_receipts SET result_payload = $2::jsonb WHERE id = $1::uuid`,
       [receiptId, JSON.stringify(result)]

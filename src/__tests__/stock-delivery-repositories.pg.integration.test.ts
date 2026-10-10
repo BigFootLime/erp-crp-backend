@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type ReceiptRepository = typeof import("../module/production/repository/production-receipts.repository");
 type DeliveryRepository = typeof import("../module/livraisons/repository/livraisons.repository");
+type ShipmentRepository = typeof import("../module/livraisons/repository/livraisons-shipment.repository");
 type CommandeRepository = typeof import("../module/commande-client/repository/commande-client.repository");
 
 const integrationDatabaseUrl = process.env.CERP_INTEGRATION_DATABASE_URL;
@@ -42,6 +43,7 @@ let harnessPool: Pool | null = null;
 let applicationPool: Pool | null = null;
 let receiptRepository: ReceiptRepository;
 let deliveryRepository: DeliveryRepository;
+let shipmentRepository: ShipmentRepository;
 let commandeRepository: CommandeRepository;
 
 function requireSafeIntegrationDatabase() {
@@ -261,10 +263,15 @@ async function installMinimalSchema(db: Pool) {
       id BIGINT PRIMARY KEY,
       numero TEXT NOT NULL,
       client_id UUID NOT NULL,
-      destinataire_id UUID NULL
+      destinataire_id UUID NULL,
+      order_type TEXT NOT NULL DEFAULT 'FERME',
+      ar_sent_at TIMESTAMPTZ NOT NULL DEFAULT '2026-08-01 12:00Z'
     );
+    CREATE TABLE public.client_contract_calls (commande_id BIGINT, contract_id UUID);
+    CREATE TABLE public.client_contract_legacy_orders (commande_id BIGINT, contract_id UUID);
     CREATE TABLE public.commande_ligne (
       id BIGINT PRIMARY KEY,
+      commande_id BIGINT NOT NULL DEFAULT 42,
       designation TEXT NOT NULL,
       code_piece TEXT NULL,
       unite TEXT NULL,
@@ -299,6 +306,11 @@ async function installMinimalSchema(db: Pool) {
       status TEXT NOT NULL,
       commande_ligne_affaire_allocation_id BIGINT NULL,
       livraison_affaire_id BIGINT NULL,
+      commande_ligne_id BIGINT NULL,
+      bon_livraison_ligne_id UUID NULL,
+      affaire_id BIGINT NULL,
+      reason TEXT NULL,
+      correlation_id UUID NULL,
       lot_id UUID NULL,
       stock_level_id UUID NULL,
       stock_batch_id UUID NULL,
@@ -396,6 +408,7 @@ async function installMinimalSchema(db: Pool) {
       date_expedition DATE NULL,
       commentaire_interne TEXT NULL,
       shipping_version INTEGER NOT NULL DEFAULT 1,
+      row_version INTEGER NOT NULL DEFAULT 1,
       shipping_preview_hash TEXT NULL,
       shipped_at TIMESTAMPTZ NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -454,7 +467,12 @@ async function installMinimalSchema(db: Pool) {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       bon_livraison_id UUID NOT NULL,
       version INTEGER NOT NULL,
-      status TEXT NOT NULL
+      status TEXT NOT NULL,
+      checksum_sha256 TEXT NULL,
+      quality_release_state TEXT NULL,
+      quality_release_preview_sha256 TEXT NULL,
+      quality_policy_sha256 TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE TABLE public.bon_livraison_prepare_receipts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -478,6 +496,15 @@ async function installMinimalSchema(db: Pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (actor_user_id, idempotency_key)
     );
+    CREATE TABLE public.delivery_promise_roots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), allocation_id BIGINT NOT NULL UNIQUE);
+    CREATE TABLE public.delivery_promise_parts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),root_id UUID NOT NULL,quantity NUMERIC NOT NULL,due_date DATE NOT NULL,retired_at TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT now());
+    CREATE TABLE public.delivery_promise_shipments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),part_id UUID NOT NULL,bl_allocation_id UUID NOT NULL,quantity NUMERIC NOT NULL,due_date_at_shipment DATE NOT NULL,UNIQUE(part_id,bl_allocation_id));
+    ALTER TABLE public.lots ADD COLUMN origin_stock_scope TEXT NULL, ADD COLUMN stock_scope TEXT NULL;
+    ALTER TABLE public.magasins ADD COLUMN stock_scope TEXT NULL;
+    CREATE VIEW public.v_bon_livraison_reliquats_226 AS
+      SELECT commande_ligne_id,sum(qty_ordered) AS quantite_commandee,sum(qty_delivered) AS quantite_expediee,
+        sum(qty_ordered-qty_delivered) AS quantite_restante
+      FROM public.commande_ligne_affaire_allocation GROUP BY commande_ligne_id;
     CREATE TABLE public.delivery_outbox (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       event_type TEXT NOT NULL,
@@ -531,6 +558,11 @@ async function installMinimalSchema(db: Pool) {
 async function clearScenario(db: Pool) {
   await db.query(`
     TRUNCATE TABLE
+      public.delivery_promise_shipments,
+      public.delivery_promise_parts,
+      public.delivery_promise_roots,
+      public.client_contract_calls,
+      public.client_contract_legacy_orders,
       public.erp_outbox_events,
       public.realtime_stream_enqueue_state,
       public.erp_audit_logs,
@@ -732,6 +764,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     applicationPool = databaseModule.default;
     receiptRepository = await import("../module/production/repository/production-receipts.repository");
     deliveryRepository = await import("../module/livraisons/repository/livraisons.repository");
+    shipmentRepository = await import("../module/livraisons/repository/livraisons-shipment.repository");
     commandeRepository = await import("../module/commande-client/repository/commande-client.repository");
   });
 
@@ -1123,6 +1156,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       [preparation.id]
     );
 
+    await harnessPool.query(`WITH root AS (INSERT INTO public.delivery_promise_roots(allocation_id) VALUES(900) RETURNING id) INSERT INTO public.delivery_promise_parts(root_id,quantity,due_date) SELECT id,10,'2026-09-01' FROM root`);
     const shipmentBody = {
       expected_shipping_version: preview.shipping_version,
       preview_hash: preview.preview_hash,
@@ -1177,6 +1211,8 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       [preparation.id]
     );
 
+    const promises = await harnessPool.query<{quantity:number;due_date:string}>("SELECT quantity::float8 AS quantity,due_date_at_shipment::text AS due_date FROM public.delivery_promise_shipments");
+    expect(promises.rows).toEqual([{quantity:5,due_date:'2026-09-01'}]);
     expect(reservation.rows).toEqual([{ qty_reserved: 10, qty_consumed: 5, qty_prepared: 0, status: "ACTIVE" }]);
     expect(allocation.rows).toEqual([{ qty_reserved: 5, qty_delivered: 5, qty_remaining: 5, delivery_status: "PARTIELLEMENT_LIVREE" }]);
     expect(stock.rows).toEqual([{ total: 5, reserved: 5 }]);
@@ -1187,6 +1223,63 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       { event_type: "DELIVERY.PRINT_REQUESTED", attempts: 0, published_at: null },
       { event_type: "DELIVERY.SHIPPED", attempts: 0, published_at: null },
     ]);
+
+    // The remaining reservation can form another cart without re-reserving
+    // stock or shipping anything during preparation.
+    const remainder = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: preparationBody, user_id: 7, idempotency_key: "delivery-prepare-remainder",
+    });
+    expect(remainder.id).not.toBe(preparation.id);
+    expect((await harnessPool.query("SELECT statut FROM public.bon_livraison WHERE id=$1", [remainder.id])).rows).toEqual([{ statut: "READY" }]);
+    expect((await harnessPool.query("SELECT qty_prepared::float8 AS prepared,qty_consumed::float8 AS consumed FROM public.stock_reservations")).rows).toEqual([{ prepared: 5, consumed: 5 }]);
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.stock_movements")).rows[0])).toBe(1);
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.delivery_promise_shipments")).rows[0])).toBe(1);
+  });
+
+  it("keeps legacy exact reservation policy when a cart allocation is smaller", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    const preparation = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: {items:[{reservation_id:ids.reservation,qty:5}]}, user_id:7,
+      idempotency_key:"delivery-prepare-legacy-exact-check",
+    });
+    const db = await harnessPool.connect();
+    try {
+      await db.query("BEGIN");
+      await db.query("UPDATE public.bon_livraison SET statut='DRAFT' WHERE id=$1",[preparation.id]);
+      await expect(shipmentRepository.prepareLivraisonInTransaction(db,preparation.id,7)).rejects.toMatchObject({
+        code:"DELIVERY_PREPARATION_BLOCKED",
+        details:{blockers:expect.arrayContaining([expect.objectContaining({code:"RESERVATION_QUANTITY_MISMATCH"})])},
+      });
+    } finally {
+      await db.query("ROLLBACK");
+      db.release();
+    }
+    expect((await harnessPool.query("SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels")).rows).toEqual([{total:10,reserved:10}]);
+  });
+
+  it("rolls back stock when promise capture refuses the reservation-cart shipment", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    const preparation = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: { items: [{ reservation_id: ids.reservation, qty: 5 }] }, user_id: 7,
+      idempotency_key: "delivery-promise-rollback-prepare",
+    });
+    const preview = await deliveryRepository.repoGetLivraisonPreparationPreview(preparation.id);
+    if (!preview) throw new Error("Expected preparation preview");
+    await harnessPool.query(`INSERT INTO public.bon_livraison_pack_versions(bon_livraison_id,version,status) VALUES($1,1,'GENERATED')`, [preparation.id]);
+    await harnessPool.query(`WITH root AS (INSERT INTO public.delivery_promise_roots(allocation_id) VALUES(900) RETURNING id)
+      INSERT INTO public.delivery_promise_parts(root_id,quantity,due_date) SELECT id,1,'2026-09-01' FROM root`);
+    await expect(deliveryRepository.repoShipLivraison({ bon_livraison_id: preparation.id,
+      body: { expected_shipping_version: preview.shipping_version, preview_hash: preview.preview_hash },
+      user_id: 7, idempotency_key: "delivery-promise-rollback-ship",
+    })).rejects.toMatchObject({ code: "PROMISE_SHIPMENT_EXCEEDS_ORDER" });
+    expect((await harnessPool.query("SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels")).rows).toEqual([{ total: 10, reserved: 10 }]);
+    expect((await harnessPool.query("SELECT qty_delivered::float8 AS delivered FROM public.commande_ligne_affaire_allocation")).rows).toEqual([{ delivered: 0 }]);
+    expect((await harnessPool.query("SELECT statut FROM public.bon_livraison")).rows).toEqual([{ statut: "READY" }]);
+    for (const table of ["stock_movements", "bon_livraison_ship_receipts", "delivery_outbox", "delivery_promise_shipments"]) {
+      expect(countValue((await harnessPool.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
+    }
   });
 });
 

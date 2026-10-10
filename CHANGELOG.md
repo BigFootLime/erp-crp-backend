@@ -1,5 +1,13 @@
 # Changelog
 
+## Reservation-cart shipment promises — 2026-10-10
+
+- Allow verified partial reservation-cart preparation and retain the consumed/restant quantities. Keep legacy preparation and shipment exact by default. Backend #1110 / OBS061.
+
+- Capture immutable delivery promise quantities/dates in the reservation-cart shipment transaction, alongside stock and receipt/outbox writes. Preserve shipment retry idempotency and proof-based OTD. Backend #1109 / OBS060.
+- Append documented reconciliation for proven historical unchanged promises only; revised, partial or unsupported evidence remains flagged for explicit review. Original AR and stock/movement records are retained.
+
+
 ## Independent fixed-lot replenishment roots — #1032 — 2026-10-10
 
 - Create one canonical draft OF per fixed contract lot, with distinct stable identities, original targets and all root links in the workspace. Validate the full selection before generation and return every root on durable replay.
