@@ -1,5 +1,10 @@
 # Changelog
 
+## Recipe decimal precision — 2026-10-10
+
+- Retain fractional technical unit prices and method/OF times with six decimal places. Preserve historical values and the active-execution view permissions; monetary totals remain in cents.
+- Isolated PostgreSQL application/replay and history/permission checks passed. WP-285 business acceptance remains in progress.
+
 ## Complete backend acceptance fixtures — 2026-10-10
 
 - Register seven CUMP suites in Vitest; refresh contract, lane and scope fixtures without weakening runtime guards (#1059).
