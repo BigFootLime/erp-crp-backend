@@ -78,7 +78,7 @@ export async function getOfSupplierRecommendations(ofId: number,
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     // PG17 bounds the entire coherent snapshot, including delegated qualification reads.
     await tx.query("SET LOCAL statement_timeout='2s'; SET LOCAL transaction_timeout='9s'");
-    const contextRow = (await tx.query<{ of_id: number; of_updated_at: string; technical_version_id: string | null }>(
+    const contextRow = (await tx.query<{ of_id: string; of_updated_at: string; technical_version_id: string | null }>(
       SUPPLIER_RECOMMENDATION_CONTEXT_SQL, [ofId])).rows[0];
     if (!contextRow) throw new HttpError(404, 'OF_NOT_FOUND', 'OF introuvable.');
     const scope = (await tx.query<PurchaseScopeLine>(OF_PURCHASE_SCOPE_SQL, [ofId, input.articleId])).rows[0];
@@ -136,7 +136,9 @@ export async function getOfSupplierRecommendations(ofId: number,
     const sourced = sorted.map(item => ({ ...item, sources: suggestions.find(source => source.supplier_id === item.supplier_id)!.sources }));
     const recommended = sorted.find(item => item.can_engage && item.review_outcome!=='UNSATISFACTORY' && (item.sent_orders>0 || item.estimated_ht!==null));
     const truncated = rows.length > 40 || catalogues.length === 400;
-    const evidence = supplierRecommendationEvidence({ ...contextRow, article_id: input.articleId,
+    // PostgreSQL bigint IDs arrive as strings. The public context uses the
+    // numeric identity already validated and used to scope this read.
+    const evidence = supplierRecommendationEvidence({ ...contextRow, of_id: ofId, article_id: input.articleId,
       quantity: input.quantity ?? null, unit: input.unit ?? null, currency: input.currency }, sourced, canReadPrices, truncated);
     await tx.query('COMMIT');
     return { data: { checked_at: clock.checked_at, article_id: input.articleId, recommended_supplier_id: recommended?.supplier_id ?? null,
