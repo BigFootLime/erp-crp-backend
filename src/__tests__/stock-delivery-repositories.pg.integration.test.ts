@@ -780,7 +780,8 @@ async function installRecoverySchema(db: Pool) {
   await db.query(`
     ALTER TABLE public.articles ADD COLUMN code text DEFAULT 'PT-INT',ADD COLUMN designation text DEFAULT 'Pièce';
     ALTER TABLE public.clients ADD COLUMN client_code text DEFAULT 'CLI-INT';
-    ALTER TABLE public.commande_client ADD COLUMN code_client text DEFAULT 'PO-INT',ADD COLUMN statut text DEFAULT 'VALIDEE';
+    ALTER TABLE public.commande_client ADD COLUMN code_client text DEFAULT 'PO-INT';
+    CREATE TABLE public.commande_historique(id bigserial PRIMARY KEY,commande_id bigint NOT NULL,nouveau_statut text NOT NULL,date_action timestamptz NOT NULL DEFAULT now());
     ALTER TABLE public.delivery_promise_roots ADD COLUMN initial_due_date date DEFAULT '2026-09-01';
     ALTER TABLE public.stock_reservations ADD COLUMN expires_at timestamptz,ADD COLUMN released_by integer,ADD COLUMN row_version integer DEFAULT 1;
     ALTER TABLE public.bon_livraison ADD COLUMN date_livraison date,ADD COLUMN transporteur text,ADD COLUMN tracking_number text,ADD COLUMN commentaire_client text,ADD COLUMN reception_nom_signataire text,ADD COLUMN reception_date_signature timestamptz;
@@ -862,7 +863,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
 
   beforeEach(async () => {
     if (!harnessPool) throw new Error("Integration pool was not initialized");
-    await harnessPool.query("TRUNCATE public.pieces_techniques,public.piece_technique_versions,public.affaire,public.warehouses,public.old_stock_document_references,public.stock_lane_locations,public.stock_lane_destinations,public.stock_command_receipts,public.quality_control,public.non_conformity,public.non_conformity_dispositions,public.quality_release_decision,public.quality_derogation");
+    await harnessPool.query("TRUNCATE public.commande_historique,public.pieces_techniques,public.piece_technique_versions,public.affaire,public.warehouses,public.old_stock_document_references,public.stock_lane_locations,public.stock_lane_destinations,public.stock_command_receipts,public.quality_control,public.non_conformity,public.non_conformity_dispositions,public.quality_release_decision,public.quality_derogation");
     await clearScenario(harnessPool);
   });
 
@@ -1581,9 +1582,9 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
   });
   it('#1123 refuses cancelled orders and pending undisposed non-conformities',async()=>{
     const db=harnessPool!;await seedRecovery(db);
-    await db.query("UPDATE public.commande_client SET statut='ANNULEE'");
+    await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'ANNULE','2026-10-11T01:00:00Z')");
     await expect(recoveryRepository.repoPreviewDeliveryStockRecovery(900)).rejects.toMatchObject({code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
-    await db.query("UPDATE public.commande_client SET statut='VALIDEE'");
+    await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'PRET_LIVRAISON','2026-10-11T01:00:01Z')");
     await db.query("UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
     await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,3,now(),'CONFORME')",[ids.lot]);
     await db.query("INSERT INTO public.non_conformity(id,lot_id,status) VALUES(gen_random_uuid(),$1,'OPEN')",[ids.lot]);
@@ -1644,6 +1645,20 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
     expect((await harnessPool!.query(`SELECT (${remainingReservedQuantitySql})::float8 AS remaining FROM public.stock_reservations r`)).rows).toEqual([{remaining}]);
   });
 });
+
+  it('#OBS074 reads the canonical append-only order history without a fictitious status column',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    const columns=(await db.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='commande_client' AND column_name IN('statut','status')")).rows;
+    expect(columns).toEqual([]);
+    expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(3);
+    await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'ANNULE','2026-10-11T01:00:00Z'),(42,'PRET_LIVRAISON','2026-10-10T01:00:00Z')");
+    await expect(recoveryRepository.repoPreviewDeliveryStockRecovery(900)).rejects.toMatchObject({status:409,code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
+    await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'PRET_LIVRAISON','2026-10-11T01:00:00Z')");
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);expect(preview.reservable_qty).toBe(3);
+    await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'ANNULE','2026-10-11T01:00:01Z')");
+    await expect(recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise test',idempotencyKey:'history-cancelled-recovery',audit:recoveryAudit})).rejects.toMatchObject({status:409,code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+  });
 
 });
 

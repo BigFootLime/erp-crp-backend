@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — reprise de réservation et statut commande (#1123)
+
+- Lire le statut réel depuis le dernier événement de commande_historique, ordonné par date puis identifiant. La table commande_client ne contient aucun statut de workflow : sa lecture provoquait une erreur500.
+- Retirer la colonne inventée des fixtures PostgreSQL et vérifier le refus des commandes annulées, les événements hors ordre et une annulation entre contrôle et réservation. Aucun changement de schéma ou de données métier.
+
 ## Delivery quantity projections — #1132 — 2026-10-10
 
 - Read reserved quantity as the unconsumed remainder, including any current preparation. Preserve historical reservation totals and all stock writers.
