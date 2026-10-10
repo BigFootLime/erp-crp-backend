@@ -1,5 +1,10 @@
 # Changelog
 
+## Supplier recommendation context — 2026-10-10
+
+- Return the validated numeric OF identity in supplier recommendation evidence when PostgreSQL bigint identifiers arrive as strings. Preserve permissions, ranking and coherent read scope.
+- Regression reproduces the browser contract failure with default bigint driver values. No migration. WP-285 full recipe remains in progress.
+
 ## Preserve purchases in technical revisions — 2026-10-10
 
 - Preserve purchase dimensions, cutting coefficient, supplier details, price basis, VAT and totals when copying a technical version. Source rows and frozen dossiers remain unchanged.
