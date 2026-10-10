@@ -9,6 +9,7 @@ import { beginStockCommand, completeStockCommand, type AuditContext } from "../.
 import { lockStockLaneTopology, readStockLaneRoutingTx } from "../../stock/repository/stock-lane-routing.repository";
 import { formatCumpDecimal, parseCumpDecimal } from "../../stock/domain/cump-decimal";
 import { readOperationalLotQualityEligibility, assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
+import { isLotExpired } from "../../qualite/domain/lot-shelf-life";
 import { reserveProducedDeliveryDemands } from "../../production/repository/receipt-delivery-reservations.repository";
 import { planDeliveryStockRecovery, type RecoveryStockCandidate } from "../domain/delivery-stock-recovery";
 import { DELIVERY_RECOVERY_CONTEXT_SQL, DELIVERY_RECOVERY_STOCK_SQL } from "./delivery-stock-recovery.sql";
@@ -32,7 +33,7 @@ type Candidate = RecoveryStockCandidate & {
   quality_evidence?: unknown;
 };
 const num = (value: string) => Number(value);
-const conflict = (code: string, message: string): never => { throw new HttpError(409, code, message); };
+function conflict(code: string, message: string): never { throw new HttpError(409, code, message); }
 
 async function readPlan(tx: Db, allocationId: number) {
   const context = (await tx.query<Context>(DELIVERY_RECOVERY_CONTEXT_SQL, [allocationId])).rows[0];
@@ -59,7 +60,7 @@ async function readPlan(tx: Db, allocationId: number) {
     let blocker: string | null = null, qualityAvailable = context.line_ordered;
     if (!['OLD','NEW'].includes(row.source_scope)) blocker = "Origine du stock à vérifier";
     else if (row.lot_status !== "LIBERE") blocker = "Lot non libéré par la qualité";
-    else if (row.expiry_at && new Date(row.expiry_at).getTime() <= Date.now()) blocker = "Lot périmé";
+    else if (isLotExpired(row.expiry_at, new Date())) blocker = "Lot périmé";
     else if (!row.version_compatible && !(row.source_scope === 'OLD' && row.stock_version_id === null)) blocker = "Indice ou version incompatible";
     else if (row.source_scope === 'OLD' && !row.old_documents) blocker = "Dossier historique OLD à compléter";
     // OLD is explicitly historical, without invented NEW quality evidence. It

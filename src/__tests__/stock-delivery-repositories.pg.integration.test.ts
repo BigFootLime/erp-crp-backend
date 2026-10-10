@@ -1507,8 +1507,22 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
     await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,2,now(),'CONFORME')",[ids.lot]);
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);expect(preview.reservable_qty).toBe(2);expect(preview.shortage_qty).toBe(1);
+    await db.query('UPDATE public.quality_control SET validation_date=NULL');
+    await expect(recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise',idempotencyKey:'recovery-revoked',audit:recoveryAudit})).rejects.toMatchObject({code:'DELIVERY_STOCK_PREVIEW_CHANGED'});
+    expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+    await db.query('UPDATE public.quality_control SET validation_date=now()');
     const reserved=await recoverCurrent('recovery-quality-2');expect(reserved.reserved_qty).toBe(2);
     expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
+  });
+  it('#1123 refuses cancelled orders and pending undisposed non-conformities',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    await db.query("UPDATE public.commande_client SET statut='ANNULEE'");
+    await expect(recoveryRepository.repoPreviewDeliveryStockRecovery(900)).rejects.toMatchObject({code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
+    await db.query("UPDATE public.commande_client SET statut='VALIDEE';UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
+    await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,3,now(),'CONFORME')",[ids.lot]);
+    await db.query("INSERT INTO public.non_conformity(id,lot_id,status) VALUES(gen_random_uuid(),$1,'OPEN')",[ids.lot]);
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    expect(preview.reservable_qty).toBe(0);expect(preview.lots[0].blocker).toMatch(/non.conformité/i);
   });
 
 });
