@@ -35,10 +35,18 @@ fingerprint validation remains required. Failure reports retain partial proof.
 
 The branch starts from official dev including the already deployed
 f212bf11 public-comment fix; its files remain untouched. Targeted rehearsal
-and complete release qualification are pending. Initial targeted attempts
+PASS on immutable commit `918767cb`: all seven alterations rejected, documented
+shape rollback with retained archives PASS, current destructive rollback
+refusal PASS, legacy prefix rollback PASS, migration replay applies zero
+patches, backup restoration has the identical table/ledger fingerprint.
+Strict typecheck/build PASS (1451 inventoried OpenAPI operations), collection
+579 files PASS, 43 existing runner/migration/isolation tests PASS. Full isolated
+E2E and both canonical release gates remain pending. Initial targeted attempts
 are preserved: corrected SQL passed; first attempt failed on an argument type
 in the new helper, second passed its seven negative cases but exposed the
-legacy rollback's retained-archive dependency. Neither reached E2E or publication.
+legacy rollback's retained-archive dependency. Third attempt failed on misuse
+of the restricted `--only` API; its failed report retains all preceding passed
+checks. None of these failed attempts reached E2E or publication.
 
 Project Office `DESKTOP-MIGRATION-1087`: helper refused in dry-run before network
 because its destination is unconfigured. No remote state or DONE claimed.
