@@ -86,8 +86,8 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
   }
   // Bound synchronous recursive generation, without truncating or partially
   // committing a proposal. The full selection is qualified before any OF.
-  if (totalLots > 1000n)
-    throw new HttpError(422, 'CONTRACT_REPLENISHMENT_LOT_LIMIT', 'Le lancement dépasse 1 000 lots. Réduisez la sélection ou l’horizon, puis recalculez.');
+  if (totalLots + BigInt(fresh.intent_context.intents.length) > 500n)
+    throw new HttpError(422, 'CONTRACT_REPLENISHMENT_LOT_LIMIT', 'Ce lancement dépasserait 500 OF anticipés actifs dans ce périmètre. Réduisez la sélection ou terminez les OF déjà ouverts.');
   const result: ReplenishmentLaunchResult = { launch_id: randomUUID(), plan_id: plan.id, contract_id: input.contract_id, roots: [] };
   for (const proposal of selected) {
     if (!proposal) throw new Error('CONTRACT_REPLENISHMENT_SELECTION_NOT_VALIDATED');

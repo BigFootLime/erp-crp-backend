@@ -32,7 +32,8 @@ function fixture() {
         unit_id: '00000000-0000-4000-8000-000000000008', unit: 'U' } }],
   };
   const fresh = { fingerprint: plan.fingerprint, intent_fingerprint: 'd'.repeat(64),
-    report: { contract_id: contractId, contract_version: 7, snapshot_hash: plan.coverage_snapshot_hash } };
+    report: { contract_id: contractId, contract_version: 7, snapshot_hash: plan.coverage_snapshot_hash },
+    intent_context: { intents: [] as { id: string }[] } };
   const state = { isolation: 'serializable', ownerVersion: 7 as number | null, existing: false,
     replay: null as null | { client_id: string; contract_id: string; request_hash: string; result_payload: ReplenishmentLaunchResult } };
   const calls: { sql: string; values: unknown[] }[] = [];
@@ -198,7 +199,13 @@ describe('anticipated generation transaction boundary', () => {
   });
 
   it('bounds the whole synchronous launch without silently truncating it', async () => {
-    const f = fixture(); Object.assign(f.plan.proposals[0], { lot_count: '1001', proposed_quantity: '20020' });
+    const f = fixture(); Object.assign(f.plan.proposals[0], { lot_count: '501', proposed_quantity: '10020' });
+    await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toMatchObject({ status: 422, code: 'CONTRACT_REPLENISHMENT_LOT_LIMIT' });
+    expect(ports.engine).not.toHaveBeenCalled();
+  });
+
+  it('includes already open producer intentions in the same bounded scope before generation', async () => {
+    const f = fixture(); f.fresh.intent_context.intents = Array.from({ length: 499 }, (_, i) => ({ id: String(i) }));
     await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toMatchObject({ status: 422, code: 'CONTRACT_REPLENISHMENT_LOT_LIMIT' });
     expect(ports.engine).not.toHaveBeenCalled();
   });
