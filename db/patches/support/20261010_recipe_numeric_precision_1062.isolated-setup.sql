@@ -11,6 +11,17 @@ CREATE TABLE public.of_operations(id int PRIMARY KEY,tp numeric(12,3),tf_unit nu
 INSERT INTO public.pieces_techniques_achats VALUES(1,0.03,0.03,2.76);
 INSERT INTO public.pieces_techniques_operations VALUES(1,0.383);
 INSERT INTO public.of_operations VALUES(1,0.333,0.05,0.383,0.017);
+CREATE TABLE public.precision_trigger_audit(id int);
+CREATE FUNCTION public.precision_operation_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN INSERT INTO public.precision_trigger_audit VALUES(NEW.id); RETURN NEW; END $$;
+CREATE TRIGGER of_dossier_operation_changed AFTER UPDATE ON public.of_operations
+  FOR EACH ROW WHEN(OLD.tp IS DISTINCT FROM NEW.tp OR OLD.tf_unit IS DISTINCT FROM NEW.tf_unit)
+  EXECUTE FUNCTION public.precision_operation_changed();
+ALTER TABLE public.of_operations ENABLE ALWAYS TRIGGER of_dossier_operation_changed;
+COMMENT ON TRIGGER of_dossier_operation_changed ON public.of_operations IS 'Preserve invalidation';
+CREATE TABLE public.precision_trigger_before AS SELECT pg_get_triggerdef(t.oid,true) AS definition,
+  t.tgenabled AS enabled,obj_description(t.oid,'pg_trigger') AS comment FROM pg_trigger t
+  WHERE t.tgrelid='public.of_operations'::regclass AND t.tgname='of_dossier_operation_changed';
 CREATE VIEW public.v_production_active_executions WITH (security_barrier=true) AS
   SELECT id AS pointage_id,temps_total_planned,temps_total_real FROM public.of_operations;
 COMMENT ON VIEW public.v_production_active_executions IS 'Isolated execution view comment';
