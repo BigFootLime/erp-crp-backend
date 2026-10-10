@@ -1,5 +1,10 @@
 # Changelog
 
+## Recipe email routing — 2026-10-10
+
+- Base Test redirects all outgoing mail exclusively to the recipe owner’s authorized mailbox; other internal and external recipients are excluded. Production routing and the isolated E2E sink retain their existing behavior. OBS050 / WP-285. No schema or authentication change.
+
+
 ## Stock valuation verifier successor — #1087 — 2026-10-10
 
 - Verify the exact six-column #1007 key before #1022 and its seven-column successor afterward, retaining valid `NULLS NOT DISTINCT` uniqueness and the validated invoice correction identity.

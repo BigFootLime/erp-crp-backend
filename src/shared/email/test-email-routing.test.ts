@@ -14,13 +14,14 @@ describe("test email routing safety boundary", () => {
     expect(isTestEmailEnvironment({ CERP_ENVIRONMENT: "production", DATABASE_URL: "postgresql://db/cerp" } as NodeJS.ProcessEnv)).toBe(false);
   });
 
-  it("replaces every intended test recipient with the two internal mailboxes", () => {
+  it("replaces every intended test recipient with the authorized recipe mailbox only", () => {
     const delivery = resolveOutboundEmailRecipients(
       ["client@example.com", "another-client@example.com"],
       { CERP_ENVIRONMENT: "test" } as NodeJS.ProcessEnv
     );
 
     expect(delivery).toEqual({ recipients: [...TEST_EMAIL_RECIPIENTS], rerouted: true });
+    expect(delivery.recipients).toEqual(["kesmartin2004@croix-rousse-precision.fr"]);
     expect(delivery.recipients).not.toContain("client@example.com");
     expect(testSafeEmailSubject("Accuse de reception", delivery.rerouted)).toMatch(/^\[TEST/);
   });
