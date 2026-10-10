@@ -2,6 +2,8 @@
 
 ## Reservation-cart shipment promises — 2026-10-10
 
+- Allow verified partial reservation-cart preparation and retain the consumed/restant quantities. Keep legacy preparation and shipment exact by default. Backend #1110 / OBS061.
+
 - Capture immutable delivery promise quantities/dates in the reservation-cart shipment transaction, alongside stock and receipt/outbox writes. Preserve shipment retry idempotency and proof-based OTD. Backend #1109 / OBS060.
 - Append documented reconciliation for proven historical unchanged promises only; revised, partial or unsupported evidence remains flagged for explicit review. Original AR and stock/movement records are retained.
 

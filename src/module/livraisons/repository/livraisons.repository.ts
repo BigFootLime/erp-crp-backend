@@ -5300,7 +5300,7 @@ export async function repoCreateLivraisonFromReservations(params: {
     // directly as READY without a misleading second "reserve stock" action.
     // This also rebinds the existing reservations to their BL lines and keeps
     // the usual PREPARATION_READY event/audit trail.
-    await prepareLivraisonInTransaction(db, bonLivraisonId, userId)
+    await prepareLivraisonInTransaction(db, bonLivraisonId, userId, "PARTIAL_CART")
 
     const result = { id: bonLivraisonId, numero, shipping_version: 1, preview_hash: previewHash }
     await db.query(

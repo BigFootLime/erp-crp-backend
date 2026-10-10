@@ -84,6 +84,7 @@ type AllocationRow = {
   reservation_id: string | null
   reservation_status: string | null
   reservation_quantity: number | null
+  reservation_consumed: number | null
   stock_movement_line_id: string | null
   quantite: number
   unite: string | null
@@ -92,6 +93,8 @@ type AllocationRow = {
   qty_depreciated: number | null
   pick_confirmed: boolean
 }
+
+type PreparationReservationPolicy = "EXACT" | "PARTIAL_CART"
 
 type ShipmentSnapshot = {
   header: HeaderRow
@@ -184,6 +187,7 @@ async function loadShipmentSnapshot(
         allocation.reservation_id::text AS reservation_id,
         reservation.status AS reservation_status,
         reservation.qty_reserved::float8 AS reservation_quantity,
+        reservation.qty_consumed::float8 AS reservation_consumed,
         allocation.stock_movement_line_id::text AS stock_movement_line_id,
         allocation.quantite::float8 AS quantite,
         allocation.unite,
@@ -282,7 +286,8 @@ function buildPreview(
   qualityRelease: DeliveryQualityRelease | null = null,
   enforceQuality = false,
   enforcePicking = false,
-  enforceAcknowledgement = false
+  enforceAcknowledgement = false,
+  reservationPolicy: PreparationReservationPolicy = "EXACT"
 ): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
   if (snapshot.contract_boundary.blocker) blockers.push(snapshot.contract_boundary.blocker)
@@ -414,11 +419,15 @@ function buildPreview(
     }
     if (
       allocation.reservation_quantity !== null &&
-      Math.abs(allocation.reservation_quantity - allocation.quantite) > EPSILON
+      (reservationPolicy === "PARTIAL_CART"
+        ? allocation.reservation_quantity + EPSILON < allocation.quantite
+        : Math.abs(allocation.reservation_quantity - allocation.quantite) > EPSILON)
     ) {
       blockers.push({
         code: "RESERVATION_QUANTITY_MISMATCH",
-        message: "La réservation ne couvre pas exactement la quantité allouée.",
+        message: reservationPolicy === "PARTIAL_CART"
+          ? "Le restant de la réservation ne couvre pas la quantité allouée."
+          : "La réservation ne couvre pas exactement la quantité allouée.",
         allocation_id: allocation.id,
       })
     }
@@ -643,7 +652,8 @@ export async function repoGetLivraisonShipmentPreview(
 export async function prepareLivraisonInTransaction(
   client: PoolClient,
   bonLivraisonId: string,
-  userId: number
+  userId: number,
+  reservationPolicy: PreparationReservationPolicy = "EXACT"
 ): Promise<void> {
   const snapshot = await loadShipmentSnapshot(client, bonLivraisonId, true)
   if (!snapshot) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
@@ -665,11 +675,15 @@ export async function prepareLivraisonInTransaction(
       reservation_status: allocation.reservation_id
         ? allocation.reservation_status
         : "ACTIVE",
+      // Only the cart has already locked/verified the remaining reservation
+      // and held qty_prepared. Legacy shipping still requires an exact match.
       reservation_quantity: allocation.reservation_id
-        ? allocation.reservation_quantity
+        ? reservationPolicy === "PARTIAL_CART"
+          ? Math.max(Number(allocation.reservation_quantity ?? 0) - Number(allocation.reservation_consumed ?? 0), 0)
+          : allocation.reservation_quantity
         : allocation.quantite,
     })),
-  })
+  }, null, false, false, false, reservationPolicy)
   const relevantBlockers = draftPreview.blockers.filter(
     (blocker) =>
       blocker.code !== "ACTIVE_RESERVATION_REQUIRED" &&

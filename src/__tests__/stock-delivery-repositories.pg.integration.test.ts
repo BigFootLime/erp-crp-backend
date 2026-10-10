@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 type ReceiptRepository = typeof import("../module/production/repository/production-receipts.repository");
 type DeliveryRepository = typeof import("../module/livraisons/repository/livraisons.repository");
+type ShipmentRepository = typeof import("../module/livraisons/repository/livraisons-shipment.repository");
 type CommandeRepository = typeof import("../module/commande-client/repository/commande-client.repository");
 
 const integrationDatabaseUrl = process.env.CERP_INTEGRATION_DATABASE_URL;
@@ -42,6 +43,7 @@ let harnessPool: Pool | null = null;
 let applicationPool: Pool | null = null;
 let receiptRepository: ReceiptRepository;
 let deliveryRepository: DeliveryRepository;
+let shipmentRepository: ShipmentRepository;
 let commandeRepository: CommandeRepository;
 
 function requireSafeIntegrationDatabase() {
@@ -757,6 +759,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     applicationPool = databaseModule.default;
     receiptRepository = await import("../module/production/repository/production-receipts.repository");
     deliveryRepository = await import("../module/livraisons/repository/livraisons.repository");
+    shipmentRepository = await import("../module/livraisons/repository/livraisons-shipment.repository");
     commandeRepository = await import("../module/commande-client/repository/commande-client.repository");
   });
 
@@ -1215,6 +1218,39 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       { event_type: "DELIVERY.PRINT_REQUESTED", attempts: 0, published_at: null },
       { event_type: "DELIVERY.SHIPPED", attempts: 0, published_at: null },
     ]);
+
+    // The remaining reservation can form another cart without re-reserving
+    // stock or shipping anything during preparation.
+    const remainder = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: preparationBody, user_id: 7, idempotency_key: "delivery-prepare-remainder",
+    });
+    expect(remainder.id).not.toBe(preparation.id);
+    expect((await harnessPool.query("SELECT statut FROM public.bon_livraison WHERE id=$1", [remainder.id])).rows).toEqual([{ statut: "READY" }]);
+    expect((await harnessPool.query("SELECT qty_prepared::float8 AS prepared,qty_consumed::float8 AS consumed FROM public.stock_reservations")).rows).toEqual([{ prepared: 5, consumed: 5 }]);
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.stock_movements")).rows[0])).toBe(1);
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.delivery_promise_shipments")).rows[0])).toBe(1);
+  });
+
+  it("keeps legacy exact reservation policy when a cart allocation is smaller", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    const preparation = await deliveryRepository.repoCreateLivraisonFromReservations({
+      body: {items:[{reservation_id:ids.reservation,qty:5}]}, user_id:7,
+      idempotency_key:"delivery-prepare-legacy-exact-check",
+    });
+    const db = await harnessPool.connect();
+    try {
+      await db.query("BEGIN");
+      await db.query("UPDATE public.bon_livraison SET statut='DRAFT' WHERE id=$1",[preparation.id]);
+      await expect(shipmentRepository.prepareLivraisonInTransaction(db,preparation.id,7)).rejects.toMatchObject({
+        code:"DELIVERY_PREPARATION_BLOCKED",
+        details:{blockers:expect.arrayContaining([expect.objectContaining({code:"RESERVATION_QUANTITY_MISMATCH"})])},
+      });
+    } finally {
+      await db.query("ROLLBACK");
+      db.release();
+    }
+    expect((await harnessPool.query("SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels")).rows).toEqual([{total:10,reserved:10}]);
   });
 
   it("rolls back stock when promise capture refuses the reservation-cart shipment", async () => {
