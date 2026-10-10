@@ -48,6 +48,10 @@ The persistent reader now derives grouped identities from active consolidation a
 
 Pending quality output, terminal unexplained quantities and grouped losses without source attribution require an explicit review; they never cause a guessed replacement or false delivery coverage. This does not yet resolve grouped scrap or pending-quality disposition reconciliation. PostgreSQL tests exercise the real query with minimal application privileges, partial quality attribution, retired output and distinct grouped shares. The reader and launch primitive remain unrouted, and the PREPARE service is still unchanged. Outer transaction reconciliation, interface, planning dates and combined business acceptance remain unfinished.
 
+## Routing permission boundary
+
+The eventual generation endpoint must live under the production module gate. An ordinary client-module grant cannot be promoted by the legacy OF role helper's global granted context; the launch primitive checks both the module and authenticated actor before SQL. Explicit elevated access retains the canonical policy. No existing role/module access is changed and no generation route is introduced here.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.

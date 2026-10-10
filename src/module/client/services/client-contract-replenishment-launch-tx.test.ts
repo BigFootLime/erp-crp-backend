@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PoolClient } from 'pg';
 import type { PreparedContractReplenishmentPlan } from '../types/client-contract-replenishment.types';
 import type { ReplenishmentLaunchResult } from './client-contract-replenishment-launch-tx';
+import { runWithAccountModuleAccess } from '../../access-control/context/account-module-access.context';
 
 const ports = vi.hoisted(() => ({ engine: vi.fn(), readPlan: vi.fn(), audit: vi.fn(), outbox: vi.fn() }));
 vi.mock('../../production/domain/of-generation', () => ({ createRecursiveOrdresFabrication: ports.engine }));
@@ -104,6 +105,27 @@ describe('anticipated generation transaction boundary', () => {
     const f = fixture(); f.input.user_role = 'Commercial';
     await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toMatchObject({ status: 403 });
     expect(f.query).not.toHaveBeenCalled();
+  });
+
+  it('does not turn an ordinary clients-module grant into OF generation permission', async () => {
+    const f = fixture();
+    const attempt = new Promise((resolve,reject) => runWithAccountModuleAccess({ userId:12,moduleKey:'clients',elevated:false },
+      () => { void launchPreparedContractReplenishmentTx(f.tx,f.input).then(resolve,reject); }));
+    await expect(attempt).rejects.toMatchObject({ status:403 }); expect(f.query).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing production-module grant for its authenticated actor', async () => {
+    const f = fixture(); f.input.user_role='Commercial';
+    const attempt = new Promise((resolve,reject) => runWithAccountModuleAccess({ userId:12,moduleKey:'production',elevated:false },
+      () => { void launchPreparedContractReplenishmentTx(f.tx,f.input).then(resolve,reject); }));
+    await expect(attempt).resolves.toMatchObject({ replayed:false }); expect(ports.engine).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a caller identity different from the authenticated production grant', async () => {
+    const f = fixture();
+    const attempt = new Promise((resolve,reject) => runWithAccountModuleAccess({ userId:13,moduleKey:'production',elevated:false },
+      () => { void launchPreparedContractReplenishmentTx(f.tx,f.input).then(resolve,reject); }));
+    await expect(attempt).rejects.toMatchObject({ status:403 }); expect(f.query).not.toHaveBeenCalled();
   });
 
   it('refuses repeatable-read because a competing contract could add another root', async () => {

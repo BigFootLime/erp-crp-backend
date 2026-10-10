@@ -10,6 +10,7 @@ import { readReplenishmentPlan } from '../repository/client-contract-replenishme
 import type { AuditContext } from '../repository/client.repository';
 import type { prepareContractReplenishmentWithIntents } from '../domain/client-contract-replenishment-intent-preparation';
 import type { PreparedContractReplenishmentPlan } from '../types/client-contract-replenishment.types';
+import { getAccountModuleAccessContext } from '../../access-control/context/account-module-access.context';
 
 type Tx = Pick<PoolClient, 'query'>;
 type FreshPreparation = ReturnType<typeof prepareContractReplenishmentWithIntents>;
@@ -28,7 +29,11 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
   key: string; request_hash: string; audit: AuditContext; user_role: string | null | undefined;
   rereadSharedPreparation: (tx: Tx, plan: PreparedContractReplenishmentPlan) => Promise<FreshPreparation>;
 }) {
-  if (!roleHasOfCapability(input.user_role, 'generate'))
+  // A client-module grant must not implicitly become a production grant through
+  // the legacy role helper's global context. Route generation under production.
+  const access = getAccountModuleAccessContext();
+  if ((access?.granted && (access.userId !== input.audit.user_id || (access.moduleKey !== 'production' && !access.elevated)))
+    || !roleHasOfCapability(input.user_role, 'generate'))
     throw new HttpError(403, 'CONTRACT_REPLENISHMENT_GENERATE_FORBIDDEN', 'Vous ne pouvez pas générer les OF de réapprovisionnement.');
   if (!input.proposal_ids.length || input.proposal_ids.length > 100 || new Set(input.proposal_ids).size !== input.proposal_ids.length)
     throw new HttpError(422, 'CONTRACT_REPLENISHMENT_SELECTION_INVALID', 'Sélectionnez de 1 à 100 propositions distinctes.');
