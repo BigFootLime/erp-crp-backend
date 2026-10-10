@@ -4,6 +4,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
+import { readCommandeDuplicateLinesTx } from "./commande-duplicate-lines.repository";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -7478,30 +7479,7 @@ export async function repoDuplicateCommande(id: string) {
       return null;
     }
 
-    const lignesRes = await client.query(
-      `
-      SELECT
-        designation,
-        code_piece,
-        article_id::text AS article_id,
-        piece_technique_id::text AS piece_technique_id,
-        source_article_devis_id::text AS source_article_devis_id,
-        source_dossier_devis_id::text AS source_dossier_devis_id,
-        quantite,
-        unite,
-        prix_unitaire_ht,
-        remise_ligne,
-        taux_tva,
-        delai_client,
-        delai_interne,
-        devis_numero,
-        famille
-      FROM commande_ligne
-      WHERE commande_id = $1
-      ORDER BY id ASC
-      `,
-      [originalCommandeId]
-    );
+    const duplicateLines = await readCommandeDuplicateLinesTx(client, originalCommandeId);
 
     const seq = await client.query<{ id: string }>(
       `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
@@ -7574,8 +7552,8 @@ export async function repoDuplicateCommande(id: string) {
       ]
     );
 
-    if (lignesRes.rows.length) {
-      const lignesPayload = lignesRes.rows.map((r) => ({
+    if (duplicateLines.length) {
+      const lignesPayload = duplicateLines.map((r) => ({
         designation: r.designation as string,
         article_id: (r.article_id as string | null) ?? null,
         source_article_devis_id: (r.source_article_devis_id as string | null) ?? null,
