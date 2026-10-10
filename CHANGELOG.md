@@ -1,5 +1,10 @@
 # Changelog
 
+## Historical stock and packaging audit — 2026-10-10
+
+- Use the shared transactional ACTION audit writer when adding an OLD document reference or creating finished packaging. Preserve idempotency, quality checks and rollback; retain durable audit delivery. Backend #1098 / WP-285 / OBS056. No migration.
+
+
 ## Quality delivery policy audit events — 2026-10-10
 
 - Persist activation as ACTIVATED and return to draft as UPDATED, matching the existing audit constraint. Preserve signed policy contents, release gates and transactional rollback. Backend #1095 / WP-285 / OBS054. No migration.

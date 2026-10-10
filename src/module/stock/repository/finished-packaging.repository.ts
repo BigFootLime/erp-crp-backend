@@ -8,6 +8,7 @@ import type { PackagingCommand } from '../validators/finished-packaging.validato
 import { randomUUID } from 'node:crypto';
 import { repoFindActiveLabel, repoFindEntity, repoInsertLabel, repoInsertAudit } from '../../identification/identification.repository';
 import { buildHumanCode } from '../../identification/domain/identification';
+import { repoInsertAuditLog } from '../../audit-logs/repository/audit-logs.repository';
 type Db = Pick<PoolClient, 'query'>;
 async function readPackagingTx(tx: Db, lotId: string) {
     const outputs = (await tx.query<{
@@ -111,7 +112,12 @@ export async function createFinishedPackaging(lotId: string, body: PackagingComm
             const label = await repoInsertLabel(tx, { public_id: randomUUID(), entity, human_code: buildHumanCode('STOCK_LOT', entity.canonical_code), actor: labelActor });
             await repoInsertAudit(tx, { actor: labelActor, action: 'IDENTIFICATION_LABEL_ISSUED', entity_type: 'STOCK_LOT', entity_id: lotId, label_id: label.id, details: { packagingId: row.id } });
         }
-        await tx.query(`INSERT INTO public.erp_audit_logs(user_id,action,entity_type,entity_id,details) VALUES($1,'stock.finished-packaging.create','LOT',$2,$3::jsonb)`, [actor, lotId, JSON.stringify({ packagingId: row.id, portions, reason: body.reason })]);
+        await repoInsertAuditLog({
+            user_id: actor, tx, ip: null, user_agent: null, device_type: null, os: null, browser: null,
+            body: { event_type: 'ACTION', action: 'stock.finished-packaging.create', page_key: 'stock',
+                entity_type: 'LOT', entity_id: lotId,
+                details: { packagingId: row.id, portions, reason: body.reason } },
+        });
         await tx.query('COMMIT');
         return { id: row.id, replayed: false };
     }
