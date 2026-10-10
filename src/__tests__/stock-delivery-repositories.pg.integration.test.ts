@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { repoPath } from "./helpers/repo-paths";
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -752,11 +754,33 @@ function countValue(row: { count: string } | undefined): number {
   return Number(row?.count ?? 0);
 }
 
+
+async function applyPartialDeliveryScope(db: Pool) {
+  await db.query(readFileSync(repoPath("db/patches/support/20261010_partial_delivery_reservation_scope_1124.preflight.sql"), "utf8"));
+  await db.query(readFileSync(repoPath("db/patches/20261010_partial_delivery_reservation_scope_1124.sql"), "utf8"));
+  await db.query(readFileSync(repoPath("db/patches/support/20261010_partial_delivery_reservation_scope_1124.verify.sql"), "utf8"));
+}
+
+async function shipPartialFixture(db: Pool, id: string, key: string) {
+  const preview=await deliveryRepository.repoGetLivraisonPreparationPreview(id);
+  if (!preview) throw new Error("Missing partial delivery preview");
+  await db.query("INSERT INTO public.bon_livraison_pack_versions(bon_livraison_id,version,status) VALUES($1,1,'GENERATED')", [id]);
+  const args={bon_livraison_id:id,body:{expected_shipping_version:preview.shipping_version,preview_hash:preview.preview_hash},user_id:7,idempotency_key:key};
+  const first=await deliveryRepository.repoShipLivraison(args);
+  const replay=await deliveryRepository.repoShipLivraison(args);
+  expect(replay.idempotent_replay).toBe(true);
+  expect(replay.stock_movement_ids).toEqual(first.stock_movement_ids);
+}
+
 describePg("stock/delivery repositories — isolated PostgreSQL invariants", () => {
   beforeAll(async () => {
     requireSafeIntegrationDatabase();
     harnessPool = new Pool({ connectionString: integrationDatabaseUrl });
     await installMinimalSchema(harnessPool);
+    // Include the actual deployed index: omitting it hid second-BL failures.
+    await harnessPool.query(`CREATE UNIQUE INDEX bl_allocations_reservation_226_uq
+      ON public.bon_livraison_ligne_allocations(reservation_id) WHERE reservation_id IS NOT NULL`);
+    await applyPartialDeliveryScope(harnessPool);
 
     // Import only after the safety check so the production singleton pool is
     // bound to this disposable test database, never a developer's .env URL.
@@ -1234,6 +1258,83 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     expect((await harnessPool.query("SELECT qty_prepared::float8 AS prepared,qty_consumed::float8 AS consumed FROM public.stock_reservations")).rows).toEqual([{ prepared: 5, consumed: 5 }]);
     expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.stock_movements")).rows[0])).toBe(1);
     expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.delivery_promise_shipments")).rows[0])).toBe(1);
+  });
+
+  it("preserves historical allocations while shipping one then two from the same reservation (#1124)", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await harnessPool.query(`UPDATE public.stock_levels SET qty_total=3,qty_reserved=3;
+      UPDATE public.stock_batches SET qty_total=3,qty_reserved=3;
+      UPDATE public.stock_reservations SET qty_reserved=3;
+      UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=3,qty_reserved=3,qty_remaining=3;
+      WITH root AS (INSERT INTO public.delivery_promise_roots(allocation_id) VALUES(900) RETURNING id)
+      INSERT INTO public.delivery_promise_parts(root_id,quantity,due_date) SELECT id,3,'2026-09-01' FROM root;
+      DROP INDEX public.bl_allocations_line_reservation_1124_uq;
+      CREATE UNIQUE INDEX bl_allocations_reservation_226_uq
+        ON public.bon_livraison_ligne_allocations(reservation_id) WHERE reservation_id IS NOT NULL`);
+    try {
+      const first=await deliveryRepository.repoCreateLivraisonFromReservations({
+        body:{items:[{reservation_id:ids.reservation,qty:1}]},user_id:7,idempotency_key:"partial1124-prepare-one",
+      });
+      await shipPartialFixture(harnessPool,first.id,"partial1124-ship-one");
+      const historical=await harnessPool.query("SELECT * FROM public.bon_livraison_ligne_allocations ORDER BY id");
+      const args={body:{items:[{reservation_id:ids.reservation,qty:2}]},user_id:7,idempotency_key:"partial1124-prepare-two"};
+      // Reproduce the real obsolete production constraint and transactional rollback.
+      await expect(deliveryRepository.repoCreateLivraisonFromReservations(args)).rejects.toMatchObject({code:"23505",constraint:"bl_allocations_reservation_226_uq"});
+      expect((await harnessPool.query("SELECT qty_prepared::float8 AS prepared,qty_consumed::float8 AS consumed FROM public.stock_reservations")).rows).toEqual([{prepared:0,consumed:1}]);
+      expect((await harnessPool.query("SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels")).rows).toEqual([{total:2,reserved:2}]);
+      expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.bon_livraison")).rows[0])).toBe(1);
+      await applyPartialDeliveryScope(harnessPool);
+      await applyPartialDeliveryScope(harnessPool); // Deployment retries are harmless.
+      expect((await harnessPool.query("SELECT * FROM public.bon_livraison_ligne_allocations ORDER BY id")).rows).toEqual(historical.rows);
+      const second=await deliveryRepository.repoCreateLivraisonFromReservations(args);
+      const replay=await deliveryRepository.repoCreateLivraisonFromReservations(args);
+      expect(replay.id).toBe(second.id);
+      expect(replay.idempotent_replay).toBe(true);
+      await shipPartialFixture(harnessPool,second.id,"partial1124-ship-two");
+      expect((await harnessPool.query("SELECT qty_reserved::float8 AS reserved,qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations")).rows).toEqual([{reserved:3,consumed:3,prepared:0,status:"CONSUMED"}]);
+      expect((await harnessPool.query("SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels")).rows).toEqual([{total:0,reserved:0}]);
+      expect((await harnessPool.query("SELECT quantite::float8 AS quantity,qty_consumed::float8 AS consumed FROM public.bon_livraison_ligne_allocations ORDER BY quantite")).rows).toEqual([{quantity:1,consumed:1},{quantity:2,consumed:2}]);
+      expect((await harnessPool.query("SELECT qty::float8 AS quantity,status FROM public.stock_movements ORDER BY qty")).rows).toEqual([{quantity:1,status:"POSTED"},{quantity:2,status:"POSTED"}]);
+      expect((await harnessPool.query("SELECT quantity::float8 AS quantity,due_date_at_shipment::text AS due_date FROM public.delivery_promise_shipments ORDER BY quantity")).rows).toEqual([{quantity:1,due_date:"2026-09-01"},{quantity:2,due_date:"2026-09-01"}]);
+      expect((await harnessPool.query("SELECT * FROM public.bon_livraison_ligne_allocations WHERE id=$1",[historical.rows[0].id])).rows).toEqual(historical.rows);
+      expect((await harnessPool.query("SELECT qty_reserved::float8 AS reserved,qty_delivered::float8 AS delivered,qty_remaining::float8 AS remaining FROM public.commande_ligne_affaire_allocation WHERE id=900")).rows).toEqual([{reserved:0,delivered:3,remaining:0}]);
+      const db=await harnessPool.connect();
+      try {
+        await expect(db.query(readFileSync(repoPath("db/patches/support/20261010_partial_delivery_reservation_scope_1124.rollback.sql"),"utf8"))).rejects.toThrow("Cannot restore global reservation uniqueness");
+      } finally {await db.query("ROLLBACK");db.release();}
+      await harnessPool.query(readFileSync(repoPath("db/patches/support/20261010_partial_delivery_reservation_scope_1124.verify.sql"),"utf8"));
+    } finally {await applyPartialDeliveryScope(harnessPool);}
+  });
+
+  it("rejects duplicate reservation requests and duplicate allocations within a delivery line (#1124)", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await expect(deliveryRepository.repoCreateLivraisonFromReservations({
+      body:{items:[{reservation_id:ids.reservation,qty:1},{reservation_id:ids.reservation,qty:1}]},user_id:7,idempotency_key:"partial1124-duplicate-request",
+    })).rejects.toMatchObject({code:"DUPLICATE_RESERVATION"});
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.bon_livraison")).rows[0])).toBe(0);
+    await deliveryRepository.repoCreateLivraisonFromReservations({
+      body:{items:[{reservation_id:ids.reservation,qty:1}]},user_id:7,idempotency_key:"partial1124-duplicate-allocation",
+    });
+    await expect(harnessPool.query(`INSERT INTO public.bon_livraison_ligne_allocations
+      (bon_livraison_ligne_id,article_id,quantite,reservation_id)
+      SELECT bon_livraison_ligne_id,article_id,quantite,reservation_id FROM public.bon_livraison_ligne_allocations`))
+      .rejects.toMatchObject({code:"23505",constraint:"bl_allocations_line_reservation_1124_uq"});
+    expect(countValue((await harnessPool.query<{count:string}>("SELECT count(*)::text AS count FROM public.bon_livraison_ligne_allocations")).rows[0])).toBe(1);
+  });
+
+  it("allows a guarded schema rollback before any partial delivery history exists (#1124)", async () => {
+    if (!harnessPool) throw new Error("Integration pool was not initialized");
+    await seedDeliveryScenario(harnessPool);
+    await deliveryRepository.repoCreateLivraisonFromReservations({
+      body:{items:[{reservation_id:ids.reservation,qty:1}]},user_id:7,idempotency_key:"partial1124-before-history",
+    });
+    const historical=await harnessPool.query("SELECT * FROM public.bon_livraison_ligne_allocations");
+    await harnessPool.query(readFileSync(repoPath("db/patches/support/20261010_partial_delivery_reservation_scope_1124.rollback.sql"),"utf8"));
+    expect((await harnessPool.query("SELECT to_regclass('public.bl_allocations_reservation_226_uq')::text AS old_index")).rows).toEqual([{old_index:"bl_allocations_reservation_226_uq"}]);
+    expect((await harnessPool.query("SELECT * FROM public.bon_livraison_ligne_allocations")).rows).toEqual(historical.rows);
+    await applyPartialDeliveryScope(harnessPool);
   });
 
   it("keeps legacy exact reservation policy when a cart allocation is smaller", async () => {
