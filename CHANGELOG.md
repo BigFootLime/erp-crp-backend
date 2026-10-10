@@ -1,5 +1,10 @@
 # Changelog
 
+## Invoice reference catalogue — 2026-10-10
+
+- Return qualified billing-frame code/category/French-label records expected by the published invoice workflow, preserving the canonical catalogue and Finance read permissions. Backend #1105 / OBS059. No migration or legal/provider configuration.
+
+
 ## Delivery document routes and subcontract audit — 2026-10-10
 
 - Validate BL and document UUID parameters together so archived pack PDFs and linked documents can be viewed and downloaded. Preserve document linkage, bounded storage, authentication and deletion conflicts. Backend #1102 / OBS058.
