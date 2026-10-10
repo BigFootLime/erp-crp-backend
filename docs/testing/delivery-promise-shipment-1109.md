@@ -1,0 +1,11 @@
+# Reservation-cart delivery promises — #1109
+
+The real Test recipe shipped a reservation-cart BL, decrementing stock and increasing the commercial allocation's delivered quantity. Its promise part still remained due because only the older shipment path called `captureShipmentPromises`. The ensuing contract MRP correctly refused the inconsistent quantities.
+
+Both paths now capture inside their stock/shipment transaction. A promise refusal must roll back stock, receipt and outbox. Shipment retry must return the same stock and promise evidence. Original AR promises remain unchanged; revised parts retain their own dates, and OTD still requires delivery proof.
+
+`delivery-promise-shipment-1109.postgres.integration.test.ts` uses an empty loopback database named exactly `cerp_delivery_promises_1109_test`, with matching `DATABASE_URL` and `DELIVERY_PROMISE_1109_TEST_DATABASE_URL`. It reproduces the coverage failure, exercises real SQL capture/retry/revised splits/rollback, and tests the historical migration. `stock-delivery-repositories.pg.integration.test.ts` exercises the actual reservation-cart transaction with concurrent preparation, concurrent shipment replay and rollback on insufficient promise capacity.
+
+The additive migration appends an immutable reconciliation journal. A missing capture is automatic only for an unchanged initial part proven to exist before shipment, one persisted canonical shipment receipt, and equal consumed quantity on a posted OUT movement tied to the BL. Partial capture, revisions, unknown dates or insufficient quantity are retained as `REVIEW_REQUIRED`, with evidence; original due dates are never reconstructed from current planning dates. The migration does not alter stock, allocations or headers. Rollback retains all evidence and restores the previous runtime.
+
+Deployment requires a recent verified backup, preflight, canonical patch ledger, verify and retry showing no pending patch/checksum drift. After Test replay, verify delivered firm demand disappears, repeated calculation is stable, original/revised OTD dates remain intact and no second stock movement exists. No real customer email or Prod fixture is involved. Full industrial and native recipes remain separate acceptance gates.
