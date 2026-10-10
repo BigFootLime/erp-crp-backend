@@ -781,7 +781,10 @@ async function installRecoverySchema(db: Pool) {
     ALTER TABLE public.clients ADD COLUMN client_code text DEFAULT 'CLI-INT';
     ALTER TABLE public.commande_client ADD COLUMN code_client text DEFAULT 'PO-INT',ADD COLUMN statut text DEFAULT 'VALIDEE';
     ALTER TABLE public.delivery_promise_roots ADD COLUMN initial_due_date date DEFAULT '2026-09-01';
-    ALTER TABLE public.stock_reservations ADD COLUMN expires_at timestamptz;
+    ALTER TABLE public.stock_reservations ADD COLUMN expires_at timestamptz,ADD COLUMN released_by integer,ADD COLUMN row_version integer DEFAULT 1;
+    ALTER TABLE public.bon_livraison ADD COLUMN date_livraison date,ADD COLUMN transporteur text,ADD COLUMN tracking_number text,ADD COLUMN commentaire_client text,ADD COLUMN reception_nom_signataire text,ADD COLUMN reception_date_signature timestamptz;
+    CREATE TABLE public.users(id integer PRIMARY KEY,username text,name text,surname text);
+    CREATE TABLE public.adresse_livraison(delivery_address_id uuid PRIMARY KEY,name text,street text,house_number text,postal_code text,city text,country text);
     ALTER TABLE public.commande_ligne ADD COLUMN quantite numeric(18,3) DEFAULT 10,ADD COLUMN article_id uuid,ADD COLUMN piece_technique_version_id uuid;
     ALTER TABLE public.commande_ligne ALTER COLUMN delai_client TYPE date USING delai_client::date;
     ALTER TABLE public.commande_ligne_affaire_allocation ADD COLUMN qty_to_produce numeric(18,3) DEFAULT 0;
