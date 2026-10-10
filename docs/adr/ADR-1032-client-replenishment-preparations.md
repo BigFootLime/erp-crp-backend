@@ -22,6 +22,14 @@ This increment exposes preparation evidence only. Canonical recursive OF generat
 
 Any future generation path must recheck shared coverage and generation permissions in its own transaction, reuse the canonical generation engine, preserve the original target and record every generated root against its proposal. Previously generated drafts need an explicit intent reconciliation; otherwise a refresh could duplicate production even though it correctly excludes drafts from available coverage.
 
+## Additional-launch intention calculation (not routed)
+
+The pure `prepareContractReplenishmentWithIntents` adapter allocates existing producer intentions once across all competing contracts after canonical physical/secured coverage. It subtracts any already counted producer allocation from that producer's intention budget. Only the additional-launch projection changes; actual delivery shortages and OTD coverage remain unchanged. The preparation fingerprint includes this separate intention context, so a changed draft cannot silently reuse an earlier launch calculation.
+
+For actual shortages17/28/5 and lot20, an existing draft20 leaves only an additional40 proposal. Existing drafts20+40 leave no additional proposal and10 unassigned units, while actual cumulative delivery shortages still read17/45/50. A later draft target is retained and explicitly marked for planner review. No stock, reservation or delivery date is changed.
+
+This domain increment is not connected to an API, database intent reader or generation mutation yet. Its caller must supply authoritatively reconciled producer identities. Received and grouped/ambiguous producers currently require reconciliation; the guard prevents duplicate generation rather than pretending these cases are finished. Persistence of roots, canonical generation, received/grouped adapters and frontend acceptance remain unfinished.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.
