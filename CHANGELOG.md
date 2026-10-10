@@ -10,6 +10,38 @@
 - Save immutable fixed-lot proposal snapshots, original targets and applicable technical identities. Recompute the shared coverage in the caller transaction, require freshness proofs and preserve idempotent replies, audit and outbox. No OF, stock, reservation or purchase is created.
 - Add guarded PostgreSQL preparation evidence, one current plan per contract and unused-only rollback. WP-286 / #1032 generation and full business recipe remain in progress.
 
+## Invoice reference catalogue — 2026-10-10
+
+- Return qualified billing-frame code/category/French-label records expected by the published invoice workflow, preserving the canonical catalogue and Finance read permissions. Backend #1105 / OBS059. No migration or legal/provider configuration.
+
+
+## Delivery document routes and subcontract audit — 2026-10-10
+
+- Validate BL and document UUID parameters together so archived pack PDFs and linked documents can be viewed and downloaded. Preserve document linkage, bounded storage, authentication and deletion conflicts. Backend #1102 / OBS058.
+- Use the canonical transactional ACTION audit writer for subcontract custody actions and RELEASE/RETURN, preserving actor, quality gates, transaction and outbox delivery. Backend #1099 / OBS057. No migration.
+
+
+## Historical stock and packaging audit — 2026-10-10
+
+- Use the shared transactional ACTION audit writer when adding an OLD document reference or creating finished packaging. Preserve idempotency, quality checks and rollback; retain durable audit delivery. Backend #1098 / WP-285 / OBS056. No migration.
+
+
+## Quality delivery policy audit events — 2026-10-10
+
+- Persist activation as ACTIVATED and return to draft as UPDATED, matching the existing audit constraint. Preserve signed policy contents, release gates and transactional rollback. Backend #1095 / WP-285 / OBS054. No migration.
+
+
+## Delivery calendar dates — 2026-10-10
+
+- Return delivery-line due dates as calendar text from PostgreSQL in detail, line edit and both preparation paths. A 16 October promise stays 16 October in every timezone, without rewriting stock, orders, promises or existing official documents. WP-285 / OBS051. No migration.
+
+
+## Recipe email routing — 2026-10-10
+
+- Base Test redirects all outgoing mail exclusively to the recipe owner’s authorized mailbox; other internal and external recipients are excluded. Production routing and the isolated E2E sink retain their existing behavior. OBS050 / WP-285. No schema or authentication change.
+
+
+
 ## Stock valuation verifier successor — #1087 — 2026-10-10
 
 - Verify the exact six-column #1007 key before #1022 and its seven-column successor afterward, retaining valid `NULLS NOT DISTINCT` uniqueness and the validated invoice correction identity.
