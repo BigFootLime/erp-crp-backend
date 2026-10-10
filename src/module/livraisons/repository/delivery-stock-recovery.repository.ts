@@ -67,12 +67,15 @@ async function readPlan(tx: Db, allocationId: number) {
     else if (row.source_scope === 'NEW') {
       let quality = qualities.get(row.lot_id);
       if (!quality) {
-        quality = await readOperationalLotQualityEligibility({ client: tx, lotId: row.lot_id, qty: 0, unit: context.unit, purpose: 'RESERVE' });
+        quality = await readOperationalLotQualityEligibility({ client: tx, lotId: row.lot_id,
+          qty: num(context.line_ordered), unit: context.unit, purpose: 'RESERVE' });
         qualities.set(row.lot_id, quality);
       }
       qualityAvailable = quality.available.toFixed(3);
-      blocker = !quality.eligibility.allowed ? quality.eligibility.blocks[0]?.message ?? "Contrôle qualité à compléter"
-        : quality.available <= 0 ? "Aucune quantité libérée disponible" : null;
+      // A partial release supplies only its finite entitlement. Quantity shortage
+      // reduces the plan; every other quality refusal excludes the entire lot.
+      const refusal = quality.eligibility.blocks.find(block => block.code !== 'QTY_NOT_RELEASED');
+      blocker = refusal?.message ?? (quality.available <= 0 ? "Aucune quantité libérée disponible" : null);
     }
     candidates.push({ ...row, quality_available: qualityAvailable, blocker,
       quality_evidence: qualities.get(row.lot_id) ? {
