@@ -17,6 +17,13 @@ no cascading removal occurs.
 A short lock timeout bounds lock waiting. An application rollback retains the
 wider schema so newly entered decimals are not lost.
 
+The first canonical Test application failed on the existing operation dossier
+invalidation trigger's WHEN expression. PostgreSQL rolled back the patch and
+the prior Test backend was restarted; Prod was not changed. The un-applied patch
+now captures and restores conditional OF triggers in the same transaction,
+including their definition, enabled mode and comment. The isolated fixture
+includes this dependency and checks that invalidation still executes.
+
 Executed on an isolated PostgreSQL 17 container with no network or production
 volume: application and replay PASS; 0.025 and 0.000001 unit prices retained;
 23, 1 and 0.5 minute totals and fractional OF times retained; historic values,

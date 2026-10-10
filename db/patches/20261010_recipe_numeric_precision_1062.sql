@@ -20,6 +20,8 @@ DECLARE
   column_comments jsonb;
   grant_record jsonb;
   comment_record jsonb;
+  conditional_triggers jsonb;
+  trigger_record jsonb;
   privilege_name text;
   grantee text;
 BEGIN
@@ -52,6 +54,20 @@ BEGIN
       ON d.objoid=a.attrelid AND d.objsubid=a.attnum AND d.classoid='pg_class'::regclass
     WHERE a.attrelid='public.v_production_active_executions'::regclass AND a.attnum>0 AND NOT a.attisdropped;
 
+  -- PostgreSQL cannot widen a column referenced by a trigger WHEN expression.
+  -- Preserve only these dependent triggers, including their original enabled mode.
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.of_operations'::regclass
+      AND NOT tgisinternal AND tgqual IS NOT NULL AND (tgconstraint<>0 OR tgparentid<>0)) THEN
+    RAISE EXCEPTION 'Conditional execution trigger has a constraint or partition parent; review required';
+  END IF;
+  SELECT COALESCE(jsonb_agg(jsonb_build_object('name',tgname,'definition',pg_get_triggerdef(oid,true),
+      'enabled',tgenabled,'comment',obj_description(oid,'pg_trigger'))),'[]'::jsonb)
+    INTO conditional_triggers FROM pg_trigger
+    WHERE tgrelid='public.of_operations'::regclass AND NOT tgisinternal AND tgqual IS NOT NULL;
+  FOR trigger_record IN SELECT value FROM jsonb_array_elements(conditional_triggers) LOOP
+    EXECUTE format('DROP TRIGGER %I ON public.of_operations RESTRICT',trigger_record->>'name');
+  END LOOP;
+
   -- RESTRICT deliberately fails if another view depends on this one. No cascade.
   DROP VIEW public.v_production_active_executions RESTRICT;
   ALTER TABLE public.of_operations
@@ -64,6 +80,15 @@ BEGIN
     || CASE WHEN view_options IS NULL THEN '' ELSE ' WITH ('||array_to_string(view_options, ', ')||')' END
     || ' AS '||view_definition;
   EXECUTE format('ALTER VIEW public.v_production_active_executions OWNER TO %I',view_owner);
+
+  FOR trigger_record IN SELECT value FROM jsonb_array_elements(conditional_triggers) LOOP
+    EXECUTE trigger_record->>'definition';
+    EXECUTE format('ALTER TABLE public.of_operations %s TRIGGER %I',
+      CASE trigger_record->>'enabled' WHEN 'O' THEN 'ENABLE' WHEN 'R' THEN 'ENABLE REPLICA'
+        WHEN 'A' THEN 'ENABLE ALWAYS' WHEN 'D' THEN 'DISABLE' END,trigger_record->>'name');
+    EXECUTE format('COMMENT ON TRIGGER %I ON public.of_operations IS %L',
+      trigger_record->>'name',trigger_record->>'comment');
+  END LOOP;
 
   -- Remove default privileges inherited during recreation, then restore the exact grants.
   FOR grantee IN
