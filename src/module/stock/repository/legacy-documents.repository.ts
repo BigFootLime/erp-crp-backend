@@ -1,6 +1,7 @@
 import pool from '../../../config/database';
 import { HttpError } from '../../../utils/httpError';
 import { coverageFingerprint } from '../../production/domain/of-material';
+import { repoInsertAuditLog } from '../../audit-logs/repository/audit-logs.repository';
 import type { LegacyDocumentCommand } from '../validators/legacy-documents.validators';
 export async function readLegacyDocuments(lotId: string) {
     const lot = (await pool.query<{
@@ -39,7 +40,12 @@ export async function appendLegacyDocument(lotId: string, command: LegacyDocumen
             id: string;
         }>(`INSERT INTO public.old_stock_document_references(lot_id,type,label,location,reason,created_by,idempotency_key,request_hash)
       VALUES($1::uuid,$2,$3,$4,$5,$6,$7::uuid,$8) RETURNING id::text`, [lotId, command.type, command.label, command.location, command.reason, actor, command.idempotencyKey, hash])).rows[0];
-        await tx.query(`INSERT INTO public.erp_audit_logs(user_id,action,entity_type,entity_id,details) VALUES($1,'stock.old-document.append','LOT',$2,$3::jsonb)`, [actor, lotId, JSON.stringify({ referenceId: row.id, type: command.type, reason: command.reason })]);
+        await repoInsertAuditLog({
+            user_id: actor, tx, ip: null, user_agent: null, device_type: null, os: null, browser: null,
+            body: { event_type: 'ACTION', action: 'stock.old-document.append', page_key: 'stock',
+                entity_type: 'LOT', entity_id: lotId,
+                details: { referenceId: row.id, type: command.type, reason: command.reason } },
+        });
         await tx.query('COMMIT');
         return { id: row.id, replayed: false };
     }
