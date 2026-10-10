@@ -6,6 +6,7 @@ import type { AuditContext } from "../../client/repository/client.repository";
 import {
   EINVOICE_BILLING_FRAME_CATALOG_VERSION,
   EINVOICE_BILLING_FRAME_CODES,
+  EINVOICE_BILLING_FRAMES,
   EINVOICE_OPERATION_CATEGORIES,
   EINVOICE_TRANSACTION_SCOPES,
 } from "./electronic-invoice-regulatory.domain";
@@ -72,7 +73,11 @@ function auditContext(req: Request): AuditContext {
 export const getElectronicInvoiceReferenceData: RequestHandler = (_req, res) => {
   res.json({
     billing_frame_catalog_version: EINVOICE_BILLING_FRAME_CATALOG_VERSION,
-    billing_frame_codes: EINVOICE_BILLING_FRAME_CODES,
+    billing_frame_codes: EINVOICE_BILLING_FRAME_CODES.map((code) => ({
+      code,
+      operationCategory: EINVOICE_BILLING_FRAMES[code].operationCategory,
+      labelFr: EINVOICE_BILLING_FRAMES[code].label,
+    })),
     operation_categories: EINVOICE_OPERATION_CATEGORIES,
     transaction_scopes: EINVOICE_TRANSACTION_SCOPES,
   });
