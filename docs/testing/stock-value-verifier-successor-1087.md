@@ -26,7 +26,9 @@ changed. The current schema must refuse the legacy supplier rollback because
 the retained financial archives reference its invoice lines. The rehearsal
 proves that refusal and rechecks the intact current guards, then restores only
 its owned disposable `cerp_test` database from the source backup and applies
-the original SOL-06 prefix through the normal immutable `--only` runner. The
+the original SOL-06 prefix through the normal runner's `runUp`, using a prefix
+of the complete canonical inventory, with its locks, applied-file checksum
+and realtime provenance checks. The registered `--only` API remains unchanged. The
 legacy rollback is tested on that prefix; the complete current migration,
 replay, integrity and archive protection are tested separately. Backup restore
 fingerprint validation remains required. Failure reports retain partial proof.

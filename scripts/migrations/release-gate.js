@@ -876,8 +876,8 @@ async function rehearse(options = {}) {
     }
     // The legacy SOL-06 rollback recipe belongs to its original patch prefix,
     // not to a schema with subsequent immutable financial dependencies. Restore
-    // only this owned disposable database and apply that prefix with the normal
-    // immutable-patch runner, retaining its checksum/provenance validation.
+    // only this owned disposable database and apply that prefix through the
+    // normal runner, retaining its locks, checksum and provenance validation.
     if (!containerStarted || !/^cerp-sol06-\d+-\d+$/.test(container)) fail("unexpected disposable rollback container");
     command("docker", ["exec", container, "dropdb", "-U", "cerp_e2e", "cerp_test"]);
     command("docker", ["exec", container, "createdb", "-U", "cerp_e2e", "cerp_test"]);
@@ -888,8 +888,21 @@ async function rehearse(options = {}) {
       fail("legacy rollback prefix does not precede protected financial archives");
     }
     const rollbackPrefix = expectedPending.slice(0, rollbackBoundary + 1);
-    for (const filename of rollbackPrefix) {
-      command(process.execPath, ["scripts/db-patches.js", "up", "--only", filename], { env: migrationEnv });
+    const { listPatches, runUp } = require("../db-patches");
+    const completeInventory = listPatches(PATCH_DIR);
+    const prefixEnd = completeInventory.findIndex((patch) => patch.filename === rollbackPrefix.at(-1));
+    if (prefixEnd < 0) fail("legacy rollback boundary is missing from the canonical inventory");
+    const canonicalPrefix = completeInventory.slice(0, prefixEnd + 1);
+    if (JSON.stringify(canonicalPrefix.filter((patch) => rollbackPrefix.includes(patch.filename)).map((patch) => patch.filename))
+        !== JSON.stringify(rollbackPrefix)) fail("legacy rollback dependency order differs from canonical inventory");
+    const prefixClient = databaseClient({ connectionString: databaseUrl });
+    await prefixClient.connect();
+    try {
+      const identity = await prefixClient.query("SELECT current_database() AS database");
+      if (identity.rows[0]?.database !== "cerp_test") fail("legacy rollback prefix requires the owned cerp_test database");
+      await runUp(prefixClient, canonicalPrefix, { dryRun: false, only: null });
+    } finally {
+      await prefixClient.end();
     }
     report.rollback = await proveRollback(databaseUrl);
     report.rollback.scope = "Legacy SOL-06 prefix on restored disposable source; current financial archives separately protected";
