@@ -30,6 +30,12 @@ For actual shortages17/28/5 and lot20, an existing draft20 leaves only an additi
 
 This domain increment is not connected to an API, database intent reader or generation mutation yet. Its caller must supply authoritatively reconciled producer identities. Received and grouped/ambiguous producers currently require reconciliation; the guard prevents duplicate generation rather than pretending these cases are finished. Persistence of roots, canonical generation, received/grouped adapters and frontend acceptance remain unfinished.
 
+## Durable root identity (generation mutation still pending)
+
+The additive root-evidence schema binds one anticipated draft root to each immutable proposal and preserves its quantity, original target, applicable PT/version, article and unit. It checks the contract owner, unbound commercial links, actor and draft state at insertion. A concurrent second insert cannot reuse the same proposal or root. A superseded proposal and an already started or received producer are rejected. Launch acknowledgements are immutable and actor-scoped idempotency keys are unique.
+
+Application privileges intentionally exclude UPDATE/DELETE on this evidence and on proposals. The root guard locks the mutable current plan, while reading immutable proposals without an unnecessary UPDATE privilege. The separate PostgreSQL17 test uses an empty disposable database and exercises these canonical application privileges, identity mismatches, concurrency, immutable acknowledgements and unused-only rollback. No ERP database or generation endpoint is changed by installing the schema alone.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.
