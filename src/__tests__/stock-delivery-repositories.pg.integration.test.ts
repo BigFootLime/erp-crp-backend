@@ -1451,6 +1451,26 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     }
   });
 
+  it('#OBS071 can cancel the unshipped remainder after an earlier partial shipment',async()=>{
+    const db=harnessPool!;await seedRecovery(db);
+    const recovered=await recoverCurrent('partial-cancel-recover');
+    const reservation=recovered.reservation_ids[0];
+    // This fixture records the physical lot verification before asking the
+    // canonical cart to prepare a BL; cancellation is the behavior under test.
+    await db.query(`INSERT INTO public.stock_reservation_verifications(reservation_id,verified_qty,scanned_lot_code,snapshot,verified_by)
+      VALUES($1,3,'LOT-INT-001',$2::jsonb,7)`,[reservation,JSON.stringify({verified_qty:3,lot_code:'LOT-INT-001',source_scope:'OLD'})]);
+    const first=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:1}]},user_id:7,idempotency_key:'partial-cancel-first'});
+    await shipPartialFixture(db,first.id,'partial-cancel-first-ship');
+    const second=await deliveryRepository.repoCreateLivraisonFromReservations({body:{items:[{reservation_id:reservation,qty:2}]},user_id:7,idempotency_key:'partial-cancel-remainder'});
+    await expect(deliveryRepository.repoUpdateLivraisonStatus(second.id,'CANCELLED',7,{commentaire:'Reste annulé après expédition partielle'})).resolves.toMatchObject({statut:'CANCELLED'});
+    expect((await db.query('SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{total:2,reserved:0}]);
+    expect((await db.query('SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches')).rows).toEqual([{total:2,reserved:0}]);
+    expect((await db.query('SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1',[reservation])).rows).toEqual([{consumed:1,prepared:0,status:'RELEASED'}]);
+    expect((await db.query('SELECT statut FROM public.bon_livraison WHERE id=$1',[first.id])).rows).toEqual([{statut:'SHIPPED'}]);
+    expect((await db.query('SELECT qty_delivered::float8 AS delivered FROM public.commande_ligne_affaire_allocation')).rows).toEqual([{delivered:1}]);
+    const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
+    expect(preview).toMatchObject({shipped_qty:1,uncovered_qty:2,reservable_qty:2});
+  });
   it('#1123 recovers the same affair after a real cancellation, with replay and unchanged AR/history',async()=>{
     const db=harnessPool!;const cancelled=await seedRecovery(db);
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);
