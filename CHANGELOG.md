@@ -1,5 +1,15 @@
 # Changelog
 
+## Independent fixed-lot replenishment roots — #1032 — 2026-10-10
+
+- Create one canonical draft OF per fixed contract lot, with distinct stable identities, original targets and all root links in the workspace. Validate the full selection before generation and return every root on durable replay.
+- Add an immutable per-lot identity and deferred completeness guard; preserve legacy acknowledgements and forbid partial or mixed launches. PostgreSQL and common business acceptance remain under validation.
+
+## Contract replenishment preparation — 2026-10-10
+
+- Save immutable fixed-lot proposal snapshots, original targets and applicable technical identities. Recompute the shared coverage in the caller transaction, require freshness proofs and preserve idempotent replies, audit and outbox. No OF, stock, reservation or purchase is created.
+- Add guarded PostgreSQL preparation evidence, one current plan per contract and unused-only rollback. WP-286 / #1032 generation and full business recipe remain in progress.
+
 ## Invoice reference catalogue — 2026-10-10
 
 - Return qualified billing-frame code/category/French-label records expected by the published invoice workflow, preserving the canonical catalogue and Finance read permissions. Backend #1105 / OBS059. No migration or legal/provider configuration.
@@ -29,6 +39,7 @@
 ## Recipe email routing — 2026-10-10
 
 - Base Test redirects all outgoing mail exclusively to the recipe owner’s authorized mailbox; other internal and external recipients are excluded. Production routing and the isolated E2E sink retain their existing behavior. OBS050 / WP-285. No schema or authentication change.
+
 
 
 ## Stock valuation verifier successor — #1087 — 2026-10-10
