@@ -12,6 +12,8 @@ import type { AuditContext } from '../repository/client.repository';
 import type { prepareContractReplenishmentWithIntents } from '../domain/client-contract-replenishment-intent-preparation';
 import type { PreparedContractReplenishmentPlan } from '../types/client-contract-replenishment.types';
 import { getAccountModuleAccessContext } from '../../access-control/context/account-module-access.context';
+import { enqueueProductionOfChanged } from '../../production/repository/production-realtime.repository';
+import { notifyReplenishmentPlanning } from '../../production/repository/production-replenishment-notifications.repository';
 
 type Tx = Pick<PoolClient, 'query'>;
 type FreshPreparation = ReturnType<typeof prepareContractReplenishmentWithIntents>;
@@ -109,8 +111,14 @@ export async function launchPreparedContractReplenishmentTx(tx: Tx, input: {
       page_key: 'clients.contracts.replenishment', path: input.audit.path, client_session_id: input.audit.client_session_id,
       details: { launch_id: result.launch_id, plan_id: plan.id, contract_id: input.contract_id, roots: result.roots } } });
   if (!inserted) throw new Error('CONTRACT_REPLENISHMENT_AUDIT_INSERT_FAILED');
+  const ofIds = new Set(result.roots.flatMap(root => [root.root_of_id, ...root.child_of_ids]));
+  for (const ofId of ofIds) {
+    await enqueueProductionOfChanged(tx, { ofId, auditId: inserted.id, action: 'created', occurredAt: inserted.created_at });
+  }
+  await notifyReplenishmentPlanning(tx, { launchId: result.launch_id, contractId: input.contract_id,
+    clientId: input.client_id, roots: result.roots });
   await enqueueEntityChanged(tx, { module: 'clients', entityType: 'CLIENT', entityId: input.client_id, action: 'updated',
-    at: new Date().toISOString(), invalidateKeys: [`client:${input.client_id}`, 'client-contract-replenishment'] },
+    at: inserted.created_at, invalidateKeys: [`client:${input.client_id}`, 'client-contract-replenishment'] },
   { deduplicationKey: `client-replenishment-launch:${result.launch_id}` });
   return { result, replayed: false };
 }

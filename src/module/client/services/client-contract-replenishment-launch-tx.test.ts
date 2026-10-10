@@ -4,11 +4,12 @@ import type { PreparedContractReplenishmentPlan } from '../types/client-contract
 import type { ReplenishmentLaunchResult } from './client-contract-replenishment-launch-tx';
 import { runWithAccountModuleAccess } from '../../access-control/context/account-module-access.context';
 
-const ports = vi.hoisted(() => ({ engine: vi.fn(), readPlan: vi.fn(), audit: vi.fn(), outbox: vi.fn() }));
+const ports = vi.hoisted(() => ({ engine: vi.fn(), readPlan: vi.fn(), audit: vi.fn(), outbox: vi.fn(), notify: vi.fn() }));
 vi.mock('../../production/domain/of-generation', () => ({ createRecursiveOrdresFabrication: ports.engine }));
 vi.mock('../repository/client-contract-replenishment.repository', () => ({ readReplenishmentPlan: ports.readPlan }));
 vi.mock('../../audit-logs/repository/audit-logs.repository', () => ({ repoInsertAuditLog: ports.audit }));
 vi.mock('../../../shared/realtime/realtime-outbox.service', () => ({ enqueueEntityChanged: ports.outbox }));
+vi.mock('../../production/repository/production-replenishment-notifications.repository', () => ({ notifyReplenishmentPlanning: ports.notify }));
 import { launchPreparedContractReplenishmentTx } from './client-contract-replenishment-launch-tx';
 
 const contractId = '00000000-0000-4000-8000-000000000001';
@@ -50,8 +51,9 @@ function fixture() {
   ports.readPlan.mockResolvedValue(plan);
   ports.engine.mockResolvedValue({ root_of_id: 101, batch_id: 'batch-1', ofs: [{ id: 101, parent_of_id: null }, { id: 102, parent_of_id: 101 }],
     source_hash: 'engine-hash', purchase_requirements: [], warnings: [] });
-  ports.audit.mockResolvedValue(true);
+  ports.audit.mockResolvedValue({ id: 'audit-1', created_at: '2026-10-10T07:00:00Z' });
   ports.outbox.mockResolvedValue(undefined);
+  ports.notify.mockResolvedValue({ recipients: 1, notifications: 1 });
   const reread = vi.fn(async () => fresh);
   const input = { client_id: '195', contract_id: contractId, plan_id: planId, proposal_ids: [proposalId], key, request_hash: hash,
     audit: { user_id: 12, ip: null, user_agent: null, device_type: null, os: null, browser: null,
@@ -89,7 +91,7 @@ describe('anticipated generation transaction boundary', () => {
     f.state.ownerVersion = null;
     expect(await launchPreparedContractReplenishmentTx(f.tx, f.input)).toEqual({ result: saved, replayed: true });
     expect(f.reread).not.toHaveBeenCalled(); expect(ports.engine).not.toHaveBeenCalled();
-    expect(ports.audit).not.toHaveBeenCalled(); expect(ports.outbox).not.toHaveBeenCalled();
+    expect(ports.audit).not.toHaveBeenCalled(); expect(ports.outbox).not.toHaveBeenCalled(); expect(ports.notify).not.toHaveBeenCalled();
   });
 
   it.each(['client_id', 'contract_id', 'request_hash'] as const)('refuses a replay belonging to another %s', async field => {
@@ -196,6 +198,30 @@ describe('anticipated generation transaction boundary', () => {
   it('also fails the caller transaction if its outbox cannot be written', async () => {
     const f = fixture(); ports.outbox.mockRejectedValue(Error('outbox unavailable'));
     await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toThrow('outbox unavailable');
+    expect(f.calls.some(call => call.sql === 'COMMIT')).toBe(false);
+  });
+
+  it('publishes roots and children with their immutable audit identity before the client event and planner handoff', async () => {
+    const f = fixture(); await launchPreparedContractReplenishmentTx(f.tx, f.input);
+    expect(ports.outbox.mock.calls.map(call => call[1].entityId)).toEqual(['101', '102', '195']);
+    expect(ports.outbox).toHaveBeenNthCalledWith(1, f.tx, expect.objectContaining({ module: 'production', action: 'created',
+      at: '2026-10-10T07:00:00Z', invalidateKeys: expect.arrayContaining(['production:ofs', 'production:of:101']) }),
+      { deduplicationKey: 'production-audit:audit-1:of:101' });
+    expect(ports.notify).toHaveBeenCalledExactlyOnceWith(f.tx, expect.objectContaining({ clientId: '195', contractId,
+      roots: [expect.objectContaining({ root_of_id: 101, child_of_ids: [102] })] }));
+  });
+
+  it('deduplicates children when the canonical generation result contains a repeated child', async () => {
+    const f = fixture(); const generated = await ports.engine.getMockImplementation()!();
+    generated.ofs.push({ id: 102, parent_of_id: 101 }); ports.engine.mockResolvedValue(generated);
+    await launchPreparedContractReplenishmentTx(f.tx, f.input);
+    expect(ports.outbox.mock.calls.filter(call => call[1].entityId === '102')).toHaveLength(1);
+  });
+
+  it('keeps a failed planner handoff inside the transaction instead of returning a successful launch', async () => {
+    const f = fixture(); ports.notify.mockRejectedValue(Error('notification unavailable'));
+    await expect(launchPreparedContractReplenishmentTx(f.tx, f.input)).rejects.toThrow('notification unavailable');
+    expect(ports.outbox.mock.calls.some(call => call[1].module === 'clients')).toBe(false);
     expect(f.calls.some(call => call.sql === 'COMMIT')).toBe(false);
   });
 });
