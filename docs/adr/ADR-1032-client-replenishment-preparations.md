@@ -36,6 +36,12 @@ The additive root-evidence schema binds one anticipated draft root to each immut
 
 Application privileges intentionally exclude UPDATE/DELETE on this evidence and on proposals. The root guard locks the mutable current plan, while reading immutable proposals without an unnecessary UPDATE privilege. The separate PostgreSQL17 test uses an empty disposable database and exercises these canonical application privileges, identity mismatches, concurrency, immutable acknowledgements and unused-only rollback. No ERP database or generation endpoint is changed by installing the schema alone.
 
+## Canonical generation transaction primitive (not routed)
+
+The internal launch primitive requires the existing OF generation capability and a caller-owned SERIALIZABLE transaction. It rereads the shared preparation in that same transaction, checks current contract/plan/coverage and all selected server quantities before invoking the existing recursive generation engine. Roots are unbound anticipated drafts with the applicable PT version, immutable proposal identity and original target, including an overdue target. Launch acknowledgement, root proofs, audit and realtime outbox use the caller transaction. Durable replays return their original result without another OF or success event. Engine, proof, audit and outbox failures propagate to the transaction owner; this primitive never commits independently.
+
+Port-level tests exercise stale shared coverage, ownership/capability refusals, durable replay conflicts, quantity validation before the first generation, canonical parameters and transaction failure propagation. They do not replace a real-engine PostgreSQL/business recipe. This primitive remains unrouted until the received/grouped-producer adapter, outer commit reconciliation and conflict mapping are implemented. The current PREPARE service still uses the physical-only snapshot; no deployed endpoint generates an anticipated OF in this increment.
+
 ## Validation and migration
 
 Domain and service tests cover fixed quantities, date retention, fingerprint changes, strict request validation, retries, concurrent version conflicts, audit failures and transaction ownership. A disposable PostgreSQL 17 test verifies real repository SQL, one-current-plan concurrency, identity/quantity/target guards, immutable events and rollback refusal once evidence exists. It refuses ERP databases and existing schemas. The migration is additive, depends on forecast conversion #1032 and includes preflight, verify and unused-installation rollback scripts.
