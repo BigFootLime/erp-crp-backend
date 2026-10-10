@@ -1,5 +1,10 @@
 # Changelog
 
+## Delivery calendar dates — 2026-10-10
+
+- Return delivery-line due dates as calendar text from PostgreSQL in detail, line edit and both preparation paths. A 16 October promise stays 16 October in every timezone, without rewriting stock, orders, promises or existing official documents. WP-285 / OBS051. No migration.
+
+
 ## Recipe email routing — 2026-10-10
 
 - Base Test redirects all outgoing mail exclusively to the recipe owner’s authorized mailbox; other internal and external recipients are excluded. Production routing and the isolated E2E sink retain their existing behavior. OBS050 / WP-285. No schema or authentication change.
