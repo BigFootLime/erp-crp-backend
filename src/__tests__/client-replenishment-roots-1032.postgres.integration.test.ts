@@ -6,6 +6,7 @@ import { insertReplenishmentPlan } from '../module/client/repository/client-cont
 import { prepareContractReplenishmentSnapshot } from '../module/client/domain/client-contract-replenishment-preparation';
 import type { ContractCoverageResult } from '../module/client/types/client-contract-coverage.types';
 import { readReplenishmentProducerIntents } from '../module/client/repository/client-contract-replenishment-intents.repository';
+import { readReplenishmentPlanningTargets } from '../module/planning/repository/planning-replenishment-targets.repository';
 
 const url = process.env.CLIENT_REPLENISHMENT_ROOTS_1032_TEST_DATABASE_URL;
 describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
@@ -53,14 +54,16 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     await db.query(await sql('.rollback')); await db.query(await sql());
   }, 30000);
   afterAll(async () => { await db.end(); });
-  async function fixture() {
+  async function fixture(target = '2026-09-30') {
+    const date=new Date(target+'T00:00:00Z');
+    const month=new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,1)).toISOString().slice(0,7);
     const contractId = randomUUID(), lineId = randomUUID(), planId = randomUUID(), launchId = randomUUID(), key = randomUUID();
     await db.query('INSERT INTO public.client_contracts VALUES($1,$2)', [contractId, '195']);
     await db.query('INSERT INTO public.client_contract_lines VALUES($1,$2,$3,$4)', [lineId, contractId, article.root_article_id, article.unit_id]);
     const report: ContractCoverageResult = { contract_id: contractId, contract_version: 1, generated_at: '2026-10-10T08:00:00Z',
-      planning_revision: null, start_month: '2026-10', months: 3, readonly: true, snapshot_hash: 'a'.repeat(64),
+      planning_revision: null, start_month: month, months: 3, readonly: true, snapshot_hash: 'a'.repeat(64),
       lines: [{ contract_line_id: lineId, article, replenishment_qty: '20', months: [], replenishment_projection: [{
-        month: '2026-10', target_date: '2026-09-30', target_overdue: true, uncovered_quantity: '17', carried_quantity: '0',
+        month, target_date: target, target_overdue: true, uncovered_quantity: '17', carried_quantity: '0',
         lot_quantity: '20', lot_count: '1', proposed_quantity: '20', surplus_quantity: '3' }] }],
       demands: [], sources: [], allocations: [], issues: [] };
     const preparation = prepareContractReplenishmentSnapshot(report, '2026-10-10');
@@ -72,12 +75,12 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
       created_by,technical_preparation) VALUES('BROUILLON',$1,$2,20,'195',1,jsonb_build_object('selected_version_id',$3::text)) RETURNING id::text`,
       [article.article_id, article.piece_technique_id, article.piece_technique_version_id])).rows[0].id;
     await db.query('UPDATE public.ordres_fabrication SET root_of_id=id WHERE id=$1', [ofId]);
-    return { launchId, planId, contractId, proposalId: proposals[0].id, ofId, key };
+    return { launchId, planId, contractId, proposalId: proposals[0].id, ofId, key, target };
   }
   const insert = (f: Awaited<ReturnType<typeof fixture>>, overrides: Record<string, unknown> = {}, queryer: Pick<PoolClient, 'query'> = db) => {
     const values = { id: randomUUID(), launch: f.launchId, plan: f.planId, contract: f.contractId, proposal: f.proposalId,
       of: f.ofId, article: article.article_id, piece: article.piece_technique_id, version: article.piece_technique_version_id,
-      unit: article.unit_id, quantity: '20', target: '2026-09-30', ...overrides };
+      unit: article.unit_id, quantity: '20', target: f.target, ...overrides };
     return queryer.query(`INSERT INTO public.client_contract_replenishment_roots(id,launch_id,plan_id,contract_id,proposal_id,root_of_id,
       article_id,piece_technique_id,piece_technique_version_id,unit_id,quantity,target_date) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, Object.values(values));
   };
@@ -183,5 +186,31 @@ describe.skipIf(!url)('anticipated root evidence PostgreSQL 17', () => {
     const rows = await readReplenishmentProducerIntents(db,[article.article_id],[source]);
     expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===one.ofId).id)).toMatchObject({ received_quantity:'20.000',received_reconciled:true,coverage_source_ids:[] });
     expect(rows.find(row=>row.id===ids.find(i=>i.root_of_id===two.ofId).id)).toMatchObject({ received_quantity:'10.000',received_reconciled:true,coverage_source_ids:[source.id] });
+  });
+  it('keeps the original planning target on an unbound root and its child under application privileges',async()=>{
+    const f=await fixture();await insert(f);
+    const child=(await db.query("INSERT INTO public.ordres_fabrication(root_of_id,parent_of_id,statut) VALUES($1,$1,'BROUILLON') RETURNING id::int",[f.ofId])).rows[0].id;
+    const tx=await db.connect();
+    try {
+      await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await tx.query('SET LOCAL ROLE cerp_app');
+      expect(await readReplenishmentPlanningTargets(tx,[Number(f.ofId),child])).toEqual(new Map([[Number(f.ofId),'2026-09-30'],[child,'2026-09-30']]));
+    } finally {await tx.query('ROLLBACK');tx.release();}
+  });
+  it('retires the anticipated target when commercial ownership is bound or the source is cancelled',async()=>{
+    const firm=await fixture(),cancelled=await fixture();await insert(firm);await insert(cancelled);
+    await db.query('UPDATE public.ordres_fabrication SET commande_ligne_id=42 WHERE id=$1',[firm.ofId]);
+    await db.query("UPDATE public.ordres_fabrication SET statut='ANNULE' WHERE id=$1",[cancelled.ofId]);
+    expect(await readReplenishmentPlanningTargets(db,[Number(firm.ofId),Number(cancelled.ofId)])).toEqual(new Map());
+  });
+  it('inherits only remaining active source targets on a grouped producer',async()=>{
+    const fulfilled=await fixture('2026-08-31'),remaining=await fixture();await insert(fulfilled);await insert(remaining);
+    const producer=(await db.query("INSERT INTO public.ordres_fabrication(statut) VALUES('EN_COURS') RETURNING id::int")).rows[0].id;
+    await db.query('UPDATE public.ordres_fabrication SET root_of_id=id WHERE id=$1',[producer]);
+    const group=randomUUID();await db.query("INSERT INTO public.production_consolidations VALUES($1,$2,'ACTIVE')",[group,producer]);
+    await db.query("INSERT INTO public.production_consolidation_allocations VALUES($1,$2,$3,20,20,'ACTIVE'),($4,$2,$5,20,0,'ACTIVE')",
+      [randomUUID(),group,fulfilled.ofId,randomUUID(),remaining.ofId]);
+    expect(await readReplenishmentPlanningTargets(db,[producer])).toEqual(new Map([[producer,'2026-09-30']]));
+    await db.query("UPDATE public.production_consolidations SET state='CANCELLED' WHERE id=$1",[group]);
+    expect(await readReplenishmentPlanningTargets(db,[producer])).toEqual(new Map());
   });
 });
