@@ -7,6 +7,7 @@ import {evaluateDossier,type DossierFacts,type DossierOperation} from "../domain
 import {evaluateOfPreparation,preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
 import {readForecastState} from '../../planning/repository/planning-forecast.repository';
+import {earliestReplenishmentTarget,readReplenishmentPlanningTargets} from '../../planning/repository/planning-replenishment-targets.repository';
 
 export type DossierDb=Pick<PoolClient,"query">;
 export async function materialWorkflowEnabled(tx:DossierDb=pool) {
@@ -47,11 +48,15 @@ export async function readOfDossierTx(tx:DossierDb,id:number) {
     COALESCE((SELECT jsonb_agg(DISTINCT issue) FROM public.planning_tasks ft JOIN public.of_operations fp ON fp.id=ft.operation_id
       CROSS JOIN LATERAL jsonb_array_elements_text(ft.forecast_issues) issue WHERE fp.id=ANY($1::uuid[])),'[]'::jsonb) AS issues
     FROM public.planning_tasks t JOIN public.of_operations p ON p.id=t.operation_id WHERE p.id=ANY($1::uuid[])`,[operations.map(o=>o.id)])).rows[0];
+  // The anticipated contract target is display/planning evidence, not a new AR.
+  // Read it on the same snapshot; committed slots and dossier fingerprint stay intact.
+  const replenishmentTarget=(await readReplenishmentPlanningTargets(tx,[id])).get(id);
+  const internalDue=replenishmentTarget ? earliestReplenishmentTarget(row.internal_due,replenishmentTarget) : row.internal_due;
   const version=createHash("sha256").update(JSON.stringify([row.updated_at,dossier.sourceHash,operations.map(o=>[o.id,o.start,o.end,o.status]),validation])).digest("hex");
   const warnings = row.preparation_rules_version == null ? [] : (await evaluateOfPreparation(tx,id)).warnings;
   return {enabled:true,ofId:id,number:row.numero,version,executionStatus:row.status,technicalReadiness:row.technical_readiness,
     quantity:row.quantite_lancee,...dossier,warnings,validation,operations,forecastState:await readForecastState(tx),forecastIssues:forecast?.issues??[],
-    dates:{customerDue:row.customer_due,internalDue:row.internal_due,committedStart:starts[0]??null,committedEnd:ends.at(-1)??null,
+    dates:{customerDue:row.customer_due,internalDue,committedStart:starts[0]??null,committedEnd:ends.at(-1)??null,
       forecastEnd:forecast?.end??null,actualStart:row.date_lancement_reelle,actualEnd:row.date_fin_reelle}};
 }
 export async function repoOfDossier(id:number) {
