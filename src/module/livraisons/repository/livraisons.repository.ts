@@ -26,6 +26,7 @@ import {
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import { deliveryContractBoundary, deliveryContractGroupKey } from "../domain/delivery-contract-boundary"
 import { assertDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import { deliveryRemainderQuantitySql, remainingReservedQuantitySql } from "./delivery-quantity-projections.sql"
 import {
   assertStockConsumptionAllowed,
   getEmplacementMapping as getStockEmplacementMapping,
@@ -1038,11 +1039,7 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         ) AS article_indice,
         COALESCE(technical_version.version_interne, applicable_version.version_interne)::int AS article_version,
         commande_allocation.qty_ordered AS quantite_commandee,
-        CASE
-          WHEN delivery.statut IN ('DRAFT', 'READY')
-            THEN GREATEST(0, COALESCE(commande_allocation.qty_remaining, commande_allocation.qty_ordered, 0) - a.quantite)
-          ELSE GREATEST(0, COALESCE(commande_allocation.qty_remaining, 0))
-        END AS quantite_restante,
+        ${deliveryRemainderQuantitySql} AS quantite_restante,
         COALESCE(
           NULLIF(a.verification_snapshot->>'of_number', ''),
           NULLIF(fabrication.numero, ''),
@@ -3680,7 +3677,7 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
         cl.delai_client::text AS delai_client,
         COALESCE(cl.designation, art.designation) AS designation,
         a.qty_ordered::float8 AS requested_qty,
-        r.qty_reserved::float8 AS reserved_qty,
+        (${remainingReservedQuantitySql})::float8 AS reserved_qty,
         (r.qty_reserved - r.qty_consumed - r.qty_prepared)::float8 AS deliverable_qty,
         r.lot_id::text AS lot_id,
         l.lot_code,

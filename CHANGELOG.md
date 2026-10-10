@@ -1,5 +1,11 @@
 # Changelog
 
+## Delivery quantity projections — #1132 — 2026-10-10
+
+- Read reserved quantity as the unconsumed remainder, including any current preparation. Preserve historical reservation totals and all stock writers.
+- Project a draft/ready BL's remainder from requested minus actually delivered minus the whole preparation for that order-affair allocation on this BL, including multiple lots/lines. Shipped and cancelled BLs report the current real remainder; an unbound demand stays unknown.
+- Cover the canonical SQL projections under isolated PostgreSQL. No migration or business-data repair. Actual Base Test replay, light/dark visual acceptance and the whole ERP recipe remain pending.
+
 ## 2026-10-10 — annulation après expédition partielle (#1129)
 
 - Libérer uniquement le restant non consommé, conserver les traces déjà expédiées et vider la préparation annulée dans la même transaction.
