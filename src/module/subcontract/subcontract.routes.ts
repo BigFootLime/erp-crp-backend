@@ -10,6 +10,7 @@ import { repoListSubcontractWorkPackagesForOf } from "./subcontract.repository";
 import { getFlow, getCreationOptions, postTransfer } from './subcontract-flow.controller';
 import { subcontractFlowInstalled } from './subcontract-flow.repository';
 import { getProcurement,postProcurement,postDemands } from './subcontract-procurement.controller';
+import { appendSubcontractAudit } from './subcontract-audit.repository';
 
 const router = Router();
 const activeOrderStates = ["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"];
@@ -25,7 +26,7 @@ const access = (write: boolean): RequestHandler => (req, _res, next) => {
 };
 async function lockRevision(c:any){if(await subcontractFlowInstalled(c))await c.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');}
 async function audit(c: any, user: number | undefined, action: string, packageId: string, details: unknown) {
-  await c.query("INSERT INTO public.erp_audit_logs(user_id,action,entity_type,entity_id,details) VALUES($1,$2,'SUBCONTRACT_WORK_PACKAGE',$3,$4::jsonb)", [user ?? null, action, packageId, JSON.stringify(details)]);
+  await appendSubcontractAudit(c, user, action, packageId, details);
 }
 async function lockPackage(c: any, packageId: string) {
   const r = await c.query(`SELECT p.*,l.type,l.statut_ligne,origin.material_origin_id,cf.statut order_status FROM public.subcontract_work_packages p JOIN public.commande_fournisseur_ligne l ON l.id=p.supplier_order_line_id JOIN public.commande_fournisseur cf ON cf.id=l.commande_id LEFT JOIN public.subcontract_purchase_origins origin ON origin.line_id=l.id WHERE p.id=$1::uuid FOR UPDATE OF p,l`, [packageId]);
