@@ -1,5 +1,10 @@
 # Changelog
 
+## Contract fixed-lot projection — 2026-10-10
+
+- Calculate fixed replenishment lots from authoritative monthly shortages, with exact decimals and surplus carried once into later months. Expose a read-only projection without treating it as stock or creating OFs. Seven targeted regressions; no migration.
+- Project Office WP-286 / #1032. Persistence, canonical OF generation and common business acceptance remain in progress.
+
 ## Metrology measurement persistence — 2026-10-10
 
 - Persist the computed verdict and deviation with each reading or motivated correction, without a second unversioned update rejected by the canonical history trigger. Preserve the trigger, audit, idempotency and validated execution immutability.

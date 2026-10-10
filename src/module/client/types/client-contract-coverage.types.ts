@@ -1,4 +1,5 @@
 import type { ClientContractArticle } from './client-contract.types';
+import type { ContractReplenishmentMonth } from '../domain/client-contract-replenishment';
 
 export type CoveragePeriod = { month: string; target_date: string; end_date: string };
 export type ContractCoverageDemand = {
@@ -25,6 +26,7 @@ export type ContractCoverageMonth = CoveragePeriod & {
 export type ContractCoverageLine = {
   contract_line_id: string; replenishment_qty: string; article: ClientContractArticle;
   months: ContractCoverageMonth[];
+  replenishment_projection: ContractReplenishmentMonth[];
 };
 export type ContractCoverageIssue = { code: string; message: string; reference_id?: string };
 export type ContractCoverageResult = {

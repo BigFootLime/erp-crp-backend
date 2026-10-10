@@ -7,6 +7,7 @@ import { CONTRACT_COVERAGE_PERIODS_SQL, readContractCoverageDemands } from '../r
 import { readContractCoverageStock } from '../repository/client-contract-coverage-stock.repository';
 import { readContractCoverageProduction } from '../repository/client-contract-coverage-production.repository';
 import { allocateContractCoverage, projectContractCoverageMonths } from '../domain/client-contract-coverage';
+import { projectContractReplenishmentLots } from '../domain/client-contract-replenishment';
 import type { ClientContractCoverageQuery } from '../validators/client-contract-coverage.validators';
 import type { ContractCoverageResult, CoveragePeriod } from '../types/client-contract-coverage.types';
 
@@ -39,9 +40,12 @@ export async function getClientContractCoverage(clientId: string, contractId: st
     const allocations = allAllocations.filter(allocation => selected.has(allocation.demand_id));
     const sourceIds = new Set(allocations.map(allocation => allocation.source_id));
     const sources = allSources.filter(source => sourceIds.has(source.id));
-    const lines = contract.lines.map(line => ({ contract_line_id: line.id, replenishment_qty: line.replenishment_qty,
-      article: line.proposed_article!, months: projectContractCoverageMonths({ periods, today: clock.today,
-        demands: demands.filter(demand => demand.contract_line_id === line.id), allocations }) }));
+    const lines = contract.lines.map(line => {
+      const months = projectContractCoverageMonths({ periods, today: clock.today,
+        demands: demands.filter(demand => demand.contract_line_id === line.id), allocations });
+      return { contract_line_id: line.id, replenishment_qty: line.replenishment_qty, article: line.proposed_article!, months,
+        replenishment_projection: projectContractReplenishmentLots({ months, today: clock.today, replenishmentQty: line.replenishment_qty }) };
+    });
     const lateProduction = allSources.some(source => source.kind === 'PRODUCTION' && source.available_date &&
       demands.some(demand => source.order_line_id !== null && source.order_line_id === demand.order_line_id &&
         source.available_date! > demand.target_date));
