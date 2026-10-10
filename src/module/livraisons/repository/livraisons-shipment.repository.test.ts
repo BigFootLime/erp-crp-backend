@@ -273,7 +273,7 @@ describe("releaseLivraisonReservationsInTransaction", () => {
             id,
             stock_level_id: stockLevelId,
             stock_batch_id: stockBatchId,
-            qty_reserved: index === 0 ? 1.25 : 0.75,
+            qty_to_release: index === 0 ? 1.25 : 0.75,
           })),
         };
       }
