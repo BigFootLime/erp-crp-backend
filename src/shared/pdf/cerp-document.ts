@@ -368,7 +368,15 @@ export class CerpDocumentContext {
         width: cellWidth - 12,
       })
     )
-    const height = paddingV * 2 + 9 + Math.max(...valueHeights)
+    const labelHeights = cells.map((cell) =>
+      this.doc.font("Helvetica").fontSize(6.9).heightOfString(toPdfSafeText(cell.label.toUpperCase()), {
+        width: cellWidth - 12,
+        characterSpacing: 0.75,
+      })
+    )
+    // Keep the existing one-line offset; wrapped labels must end before every value starts.
+    const valueOffset = Math.max(11, Math.max(...labelHeights) + 3)
+    const height = paddingV * 2 + valueOffset + Math.max(...valueHeights)
 
     if (!options.compact) this.cursor += 16
     this.ensureSpace(height)
@@ -396,7 +404,7 @@ export class CerpDocumentContext {
         .font(filled ? "Helvetica-Bold" : "Helvetica")
         .fontSize(BODY_SIZE)
         .fillColor(filled ? CERP_DOC_COLORS.ink : CERP_DOC_COLORS.steel)
-      this.doc.text(toPdfSafeText(filled ? (cell.value as string) : "Non renseigné"), x, this.cursor + paddingV + 11, {
+      this.doc.text(toPdfSafeText(filled ? (cell.value as string) : "Non renseigné"), x, this.cursor + paddingV + valueOffset, {
         width: cellWidth - 12,
       })
     })
