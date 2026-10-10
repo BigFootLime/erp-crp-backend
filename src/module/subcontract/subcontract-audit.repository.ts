@@ -7,7 +7,7 @@ export async function appendSubcontractAudit(
   actor: number | null | undefined,
   action: string,
   packageId: string,
-  details: unknown,
+  details: Record<string, unknown>,
 ) {
   await repoInsertAuditLog({
     tx, user_id: actor ?? null,

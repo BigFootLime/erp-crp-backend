@@ -25,7 +25,7 @@ const access = (write: boolean): RequestHandler => (req, _res, next) => {
   next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet pas cette action de sous-traitance."));
 };
 async function lockRevision(c:any){if(await subcontractFlowInstalled(c))await c.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');}
-async function audit(c: any, user: number | undefined, action: string, packageId: string, details: unknown) {
+async function audit(c: any, user: number | undefined, action: string, packageId: string, details: Record<string, unknown>) {
   await appendSubcontractAudit(c, user, action, packageId, details);
 }
 async function lockPackage(c: any, packageId: string) {
