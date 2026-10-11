@@ -33,6 +33,8 @@ export type CentralTask = {
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
   clientId?: string | null;
+  /** Canonical type from the frozen routing, never inferred from its label. */
+  operationType?: string | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
   /** Canonical operation phase; absent in older API versions, null for non-operations. */
   phase?: number | null;
