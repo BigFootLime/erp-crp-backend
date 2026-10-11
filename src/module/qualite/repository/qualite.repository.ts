@@ -15,6 +15,7 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { lockLegacyControlForWrite } from "./quality-legacy-write.repository";
+import { resolveNcControlContext } from "./nc-control-context.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { repoGetMetrologieBlockState } from "../../metrologie/repository/metrologie.repository";
@@ -2428,9 +2429,10 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
 }
 
 export async function repoCreateNonConformity(params: { body: CreateNonConformityBodyDTO; audit: AuditContext }): Promise<NonConformityDetail> {
-  const { body, audit } = params;
+  const { audit } = params;
   const client = await pool.connect();
   const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const body = await resolveNcControlContext(tx, params.body);
     // Match invoice issuance scope ordering: delivery key before lot key. This
     // makes a newly inserted NC visible-or-blocked, never invisible in the
     // middle of an invoice quality decision.
