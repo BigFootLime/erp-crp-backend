@@ -89,7 +89,7 @@ export async function renderInternalCreationSnapshotPdf({ archive }: { archive: 
     subtitle: `Création archivée le ${createdAt.toLocaleDateString("fr-FR")}`,
     status: "BROUILLON", monogramName: source.entity_label, entityImage, generatedAt: createdAt.toLocaleDateString("fr-FR"),
     flag: "INTERNE / BROUILLON", watermark: "INTERNE / BROUILLON",
-    footerNote: `Instantané interne GED — non opposable — SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,
+    footerNote: "Instantané interne GED — non opposable",
     legalIdentity: issuerIdentityLine(source.issuer) ?? "Croix Rousse Precision",
     legalMentions: issuerLegalMentions(source.issuer),
     title: `${source.entity_label} — ${source.reference}`, subject: "INTERNE / BROUILLON — instantané de création non opposable", creationDate: createdAt,

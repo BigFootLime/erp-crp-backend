@@ -133,7 +133,6 @@ export async function svcRenderPackCofcPdf(args: {
           value: quality.policy ? `${quality.policy.code} v${quality.policy.version}` : "—",
         },
         { label: "Signature", value: quality.policy?.signature_reference ?? "—" },
-        { label: "Empreinte", value: quality.preview_sha256 },
       ])
 
       if (quality.derogation_ids.length) {
@@ -147,7 +146,6 @@ export async function svcRenderPackCofcPdf(args: {
             { key: "nom", label: "Document", flex: 4 },
             { key: "type", label: "Type", flex: 2 },
             { key: "revision", label: "Révision", flex: 1.3 },
-            { key: "sha", label: "SHA-256", flex: 4 },
           ],
           rows: quality.required_evidence.map((document) => ({
             cells: {

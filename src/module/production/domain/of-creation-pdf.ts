@@ -100,7 +100,6 @@ export async function queueRootOfCreationPdf(
       sections: [
         { title: "Pièce technique", rows: [
           { label: "Référence", value: root.piece_technique_id }, { label: "Version", value: root.piece_technique_version_id },
-          { label: "Empreinte du snapshot", value: root.technical_snapshot_sha256 },
         ] },
         { title: "Planification", rows: [
           { label: "Début prévu", value: root.date_lancement_prevue }, { label: "Fin prévue", value: root.date_fin_prevue },

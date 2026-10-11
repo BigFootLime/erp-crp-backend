@@ -127,7 +127,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
       // Le gabarit figure au pied : deux PDF de même contenu rendus par deux
       // gabarits différents ne sont pas le même document, et une réimpression
       // doit pouvoir le prouver sans ouvrir la base.
-      footerNote: `${payload.ofNumero} ${payload.revisionCode} — instantané ${payload.snapshotId} — empreinte ${payload.snapshotSha256.slice(0, 16)} — gabarit ${payload.templateVersion}`,
+      footerNote: `${payload.ofNumero} ${payload.revisionCode} — instantané ${payload.snapshotId} — gabarit ${payload.templateVersion}`,
       title: `Ordre de fabrication ${payload.ofNumero} ${payload.revisionCode}`,
       subject: `OF ${payload.ofNumero} révision ${payload.revisionCode}`,
       creationDate: generatedAt,

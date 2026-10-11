@@ -32,5 +32,5 @@ export function termsKind(scope: CommercialTermsScope): "CGV" | "CGA" {
 export function generalTermsReference(value: unknown): string | null {
   if (value == null) return null;
   const terms = generalTermsSnapshotSchema.parse(value);
-  return `${terms.kind} : ${terms.title} · ${terms.code} · version ${terms.version_number}\nDocument joint : ${terms.filename}\nSHA-256 : ${terms.sha256}`;
+  return `${terms.kind} : ${terms.title} · ${terms.code} · version ${terms.version_number}\nDocument joint : ${terms.filename}`;
 }

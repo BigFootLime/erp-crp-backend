@@ -65,7 +65,6 @@ export function buildOfTraveler(source: unknown) {
           { label: "Commande", value: of.commande },
           { label: "Référence plan", value: of.plan },
           { label: "Version technique (UUID)", value: of.version_id },
-          { label: "Empreinte technique OF", value: of.technical_hash },
           { label: "Échéance client de la ligne", value: of.customer_due },
           { label: "Échéance interne de la ligne", value: of.internal_due },
         ],
@@ -292,7 +291,6 @@ export function buildOfTraveler(source: unknown) {
             { key: "role", label: "Rôle" },
             { key: "document", label: "Document GED" },
             { key: "version", label: "Version GED" },
-            { key: "sha", label: "SHA-256" },
           ],
           rows: documents.map((d) => ({
             role: d.role,
