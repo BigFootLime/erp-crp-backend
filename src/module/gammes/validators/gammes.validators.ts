@@ -16,6 +16,7 @@ export const operationTypeSchema = z.enum([
   "FRAISAGE",
   "DECOUPE",
   "REPRISE",
+  "ASSEMBLAGE",
   "CONTROLE",
   "LAVAGE",
   "SOUS_TRAITANCE",
