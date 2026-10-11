@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Qualité : protéger les contrôles à plan figé (#1137)
+
+- Les routes historiques refusent les contrôles liés à un plan avant toute écriture et conservent les vrais contrôles historiques.
+- Verrou transactionnel partagé avec le poste Qualité ; aucune migration ni modification des permissions.
+
 ## 2026-10-11 — reprise de réservation et statut commande (#1123)
 
 - Lire le statut réel depuis le dernier événement de commande_historique, ordonné par date puis identifiant. La table commande_client ne contient aucun statut de workflow : sa lecture provoquait une erreur500.

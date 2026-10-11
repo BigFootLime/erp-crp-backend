@@ -14,6 +14,7 @@ import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
+import { lockLegacyControlForWrite } from "./quality-legacy-write.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { repoGetMetrologieBlockState } from "../../metrologie/repository/metrologie.repository";
@@ -1192,6 +1193,7 @@ export async function repoPatchControl(params: { id: string; body: PatchControlB
   const { id, body, audit } = params;
   const client = await pool.connect();
   const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    if (!await lockLegacyControlForWrite(tx, id)) return false;
     const before = await selectControlSnapshot(tx, id);
     if (!before) return false;
     if (before.control.validation_date) {
@@ -1270,6 +1272,7 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
   const { id, body, audit } = params;
   const client = await pool.connect();
   const updated = await withRealtimeOutboxTransaction(client, async (tx) => {
+    if (!await lockLegacyControlForWrite(tx, id)) return false;
     const before = await selectControlSnapshot(tx, id);
     if (!before) return false;
     if (before.control.validation_date) {
