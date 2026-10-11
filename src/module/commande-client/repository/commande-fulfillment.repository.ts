@@ -153,7 +153,7 @@ export async function listIssuedInvoiceCommandeIds(
         AND source.allocation_status = 'CONSUMED'
         AND delivery.commande_id IS NOT NULL
         AND upper(COALESCE(commande.order_type, '')) <> 'INTERNE'
-      ORDER BY delivery.commande_id
+      ORDER BY commande_id
     `,
     [factureId]
   );
