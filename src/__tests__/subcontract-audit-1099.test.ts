@@ -3,7 +3,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const f = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn(), enqueue: vi.fn(), quality: vi.fn(),
-  flows: vi.fn(), auditFailure: false, lotStatus: 'LIBERE', custodyBalance: 0 }));
+  flows: vi.fn(), auditFailure: false, packageEligible: true, lotStatus: 'LIBERE', custodyBalance: 0 }));
 vi.mock('../config/database', () => ({ default: {
   query: f.query, connect: async () => ({ query: f.query, release: f.release }),
 } }));
@@ -41,22 +41,28 @@ app.use((error: Error & { status?: number; statusCode?: number; code?: string },
 });
 
 beforeEach(() => {
-  vi.resetAllMocks(); f.auditFailure = false; f.lotStatus = 'LIBERE'; f.custodyBalance = 0;
+  vi.resetAllMocks(); f.auditFailure = false; f.packageEligible = true; f.lotStatus = 'LIBERE'; f.custodyBalance = 0;
   f.enqueue.mockResolvedValue('outbox-1'); f.quality.mockResolvedValue(undefined);
   f.flows.mockResolvedValue([{ packageId, version, returns: [{ id: returnId, transferable: 4, transferred: 0 }] }]);
   f.query.mockImplementation(async (raw: string, values: unknown[] = []) => {
     const sql = raw.replace(/\s+/g, ' ').trim();
+    // The deployed GED registry rejects this unsupported parent. An evidence
+    // reference must not change the existing document's canonical ownership.
+    if (sql.startsWith('INSERT INTO public.ged_document_links') && sql.includes('SUBCONTRACT_WORK_PACKAGE')) {
+      throw Object.assign(new Error('GED parent type is not registered'), { code: '23514' });
+    }
     if (/INSERT INTO (?:public\.)?erp_audit_logs/.test(sql)) {
       if (!sql.split('VALUES')[0].includes('event_type')) throw Object.assign(new Error('event_type is required'), { code: '23502' });
       if (f.auditFailure) throw new Error('audit unavailable');
       expect(values[1]).toBe('ACTION');
       return { rows: [{ id: '9002', created_at: '2026-10-10T15:00:00Z' }] };
     }
+    if (sql.startsWith('INSERT INTO public.subcontract_work_packages') && !f.packageEligible) return { rows: [] };
     if (sql.startsWith('INSERT INTO public.subcontract_work_packages') || sql.startsWith('SELECT p.*,l.type')
       || sql.startsWith('SELECT p.*,o.quantite_lancee') || sql.startsWith('UPDATE public.subcontract_work_packages')) {
       return { rows: [{ id: packageId, status: 'SENT', of_status: 'EN_COURS', unit: 'U', qty_planned: 10,
         type: 'SOUS_TRAITANCE', statut_ligne: 'ACTIVE', order_status: 'ENVOYEE',
-        of_operation_id: operationId, supplier_order_line_id: lineId, row_version: 1 }] };
+        of_operation_id: operationId, supplier_order_line_id: lineId, ged_evidence_document_id: evidenceId, row_version: 1 }] };
     }
     if (sql.startsWith('SELECT id,package_id,event_type')) return { rows: [] };
     if (sql.startsWith('SELECT lot_status')) return { rows: [{ lot_status: f.lotStatus }] };
@@ -82,6 +88,26 @@ const transfer = (action: SubcontractTransferInput['action'] = 'RELEASE', quanti
   { user_id: 7, role: 'Production Achat', request_id: null, correlation_id: null }, 'transfer-recipe-1');
 
 describe('subcontract custody writes use the complete canonical audit', () => {
+  it('retains the documentary evidence without adding another canonical GED parent', async () => {
+    const response = await create();
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({ id: packageId, ged_evidence_document_id: evidenceId });
+    const insert = f.query.mock.calls.find(([sql]) => String(sql).startsWith('INSERT INTO public.subcontract_work_packages'));
+    expect(insert?.[1]).toMatchObject({ 0: lineId, 1: operationId, 4: evidenceId });
+    expect(statements().some(sql => /INSERT INTO public\.ged_document_links/.test(sql))).toBe(false);
+    expect(JSON.parse(String(auditValues()[13]))).toMatchObject({ line: lineId, operation: operationId, evidence: evidenceId });
+    expect(statements().at(-1)).toBe('COMMIT');
+  });
+  it('still refuses creation when the canonical line, operation or active evidence prerequisites fail', async () => {
+    f.packageEligible = false;
+    const response = await create();
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe('SUBCONTRACT_PACKAGE_PREREQUISITES');
+    expect(statements().at(-1)).toBe('ROLLBACK');
+    expect(auditValues()).toBeUndefined();
+    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(f.release).toHaveBeenCalledOnce();
+  });
   it.each(['CREATE', 'ISSUE', 'RETURN', 'CLOSED', 'CANCELLED'])('persists ACTION and its outbox for %s', async (action) => {
     f.lotStatus = action === 'RETURN' ? 'QUARANTAINE' : 'LIBERE';
     f.custodyBalance = action === 'RETURN' ? 10 : 0;
