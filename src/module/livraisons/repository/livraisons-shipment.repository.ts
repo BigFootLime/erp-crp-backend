@@ -8,7 +8,7 @@ import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.s
 import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository"
-import { syncCommandeAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
+import { syncCommandesAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import {
   assertStockConsumptionAllowed,
@@ -1461,12 +1461,7 @@ export async function repoShipLivraison(
       tx: client,
     })
 
-    const commandeId = snapshot.header.commande_id === null
-      ? null
-      : Number(snapshot.header.commande_id)
-    if (commandeId !== null && Number.isInteger(commandeId)) {
-      await syncCommandeAfterShipment(client, commandeId, userId)
-    }
+    await syncCommandesAfterShipment(client, bonLivraisonId, userId)
 
     const result: BonLivraisonShipResult = {
       id: bonLivraisonId,

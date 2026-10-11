@@ -11,6 +11,7 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
 import { HttpError } from "../../../utils/httpError"
+import { syncCommandesAfterShipment } from "../../commande-client/repository/commande-fulfillment.repository"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildDeliveryCreationSnapshotInput } from "../services/delivery-authoritative-document"
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition"
@@ -5770,6 +5771,7 @@ export async function repoShipLivraison(params: {
     )
     // Promise evidence belongs to the same transaction as stock and shipment.
     await captureShipmentPromises(db, params.bon_livraison_id)
+    await syncCommandesAfterShipment(db, params.bon_livraison_id, params.user_id)
     await db.query(
       `UPDATE public.bon_livraison_ship_receipts SET result_payload = $2::jsonb WHERE id = $1::uuid`,
       [receiptId, JSON.stringify(result)]

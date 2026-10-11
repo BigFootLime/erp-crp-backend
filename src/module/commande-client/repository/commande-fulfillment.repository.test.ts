@@ -10,6 +10,7 @@ import {
   assertCommandeQualityReleased,
   syncCommandeAfterInvoiceIssue,
   syncCommandeAfterShipment,
+  syncCommandesAfterShipment,
 } from "./commande-fulfillment.repository";
 
 function queryable(
@@ -27,6 +28,61 @@ const completeState = {
 };
 
 describe("commande fulfillment invariants", () => {
+  it("reconciles a legacy completed delivery before invoice issue without duplicating history on replay", async () => {
+    let status = "PRET_LIVRAISON";
+    const transitions: unknown[][] = [];
+    const tx = queryable(async (sql, values) => {
+      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("SELECT order_type")) return { rows: [{ order_type: "STANDARD" }] };
+      if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
+      if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: status }] };
+      if (sql.includes("INSERT INTO commande_historique")) {
+        transitions.push(values ?? []);
+        status = String(values?.[3]);
+        return { rows: [{ id: String(transitions.length) }] };
+      }
+      return { rows: [] };
+    });
+    await expect(syncCommandeAfterInvoiceIssue(tx, 12, 9)).resolves.toEqual({ advanced: true, status: "FACTURE" });
+    expect(transitions.map(v => v.slice(2, 4))).toEqual([["PRET_LIVRAISON", "LIVRE"], ["LIVRE", "FACTURE"]]);
+    await expect(syncCommandeAfterInvoiceIssue(tx, 12, 9)).resolves.toEqual({ advanced: false, status: "FACTURE" });
+    expect(transitions).toHaveLength(2);
+    expect(tx.query.mock.calls.filter(([sql]) => sql.includes("UPDATE public.commande_client_workflow_checkpoint"))).toHaveLength(2);
+  });
+
+  it("does not repair a partial invoice or bypass an earlier command gate", async () => {
+    let fullyInvoiced = false;
+    const tx = queryable(async sql => {
+      if (sql.includes("WITH shipped_by_line AS")) return { rows: [{ ...completeState, fully_invoiced: fullyInvoiced }] };
+      if (sql.includes("SELECT order_type")) return { rows: [{ order_type: "STANDARD" }] };
+      if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
+      if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "ATTENTE_PLANNING" }] };
+      return { rows: [] };
+    });
+    await expect(syncCommandeAfterInvoiceIssue(tx, 12, 9)).resolves.toEqual({ advanced: false, status: null });
+    fullyInvoiced = true;
+    await expect(syncCommandeAfterInvoiceIssue(tx, 12, 9)).rejects.toMatchObject({ code: "ILLEGAL_COMMAND_STATUS_TRANSITION" });
+    expect(tx.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO commande_historique"))).toBe(false);
+  });
+
+  it("synchronizes each grouped order independently and leaves a partially shipped order pending", async () => {
+    const transitioned: number[] = [];
+    const locked: number[] = [];
+    const tx = queryable(async (sql, values) => {
+      const id = Number(values?.[0]);
+      if (sql.includes("SELECT DISTINCT COALESCE(order_line.commande_id")) return { rows: [{ commande_id: 12 }, { commande_id: 13 }] };
+      if (sql.includes("SELECT order_type")) { locked.push(id); return { rows: [{ order_type: "STANDARD" }] }; }
+      if (sql.includes("WITH shipped_by_line AS")) return { rows: [{ ...completeState, fully_shipped: id === 12 }] };
+      if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id, numero: `CC-${id}`, client_id: "001" }] };
+      if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "PRET_LIVRAISON" }] };
+      if (sql.includes("INSERT INTO commande_historique")) { transitioned.push(id); return { rows: [{ id: "1" }] }; }
+      return { rows: [] };
+    });
+    await syncCommandesAfterShipment(tx, "22222222-2222-4222-8222-222222222222", 7);
+    expect(locked).toEqual([12, 13]);
+    expect(transitioned).toEqual([12]);
+  });
+
   it("ignores cancelled OF when validating planning", async () => {
     const tx = queryable(async (sql) => {
       expect(sql).toContain("statut::text <> 'ANNULE'");
