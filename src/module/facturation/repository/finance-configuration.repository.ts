@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { normalizeElectronicAddress } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 import {
   insertGlobalFinanceAudit,
   issuerSnapshotAt,
@@ -33,6 +34,9 @@ type BillerRow = {
   biller_id: string;
   biller_name: string;
   bank_details_complete: boolean;
+  snapshot_date: string;
+  electronic_address: Record<string, unknown> | null;
+  routing_identity: { siren: string | null; updated_at: string; version: number } | null;
 };
 
 function missingLegalKeys(snapshot: Record<string, unknown> | null): string[] {
@@ -62,12 +66,28 @@ export async function repoGetFinanceConfigurationReadiness(
   const [billers, policy, sequences] = await Promise.all([
     pool.query<BillerRow>(
       `
-        SELECT biller_id::text AS biller_id, biller_name,
+        SELECT f.biller_id::text AS biller_id, f.biller_name, CURRENT_DATE::text AS snapshot_date,
+          (SELECT jsonb_build_object('siren', m.siren, 'updated_at', m.created_at, 'version', m.version)
+           FROM public.finance_legal_mentions m WHERE m.biller_id = f.biller_id
+             AND m.effective_from <= CURRENT_DATE AND (m.effective_to IS NULL OR m.effective_to > CURRENT_DATE)
+           ORDER BY m.effective_from DESC, m.version DESC LIMIT 1) AS routing_identity,
+          (
+            SELECT jsonb_build_object(
+              'scheme', m.electronic_address_scheme,
+              'value', m.electronic_address_value,
+              'directory_entry_id', m.electronic_address_directory_entry_id,
+              'verified_at', m.electronic_address_verified_at
+            )
+            FROM public.finance_legal_mentions m
+            WHERE m.biller_id = f.biller_id AND m.effective_from <= CURRENT_DATE
+              AND (m.effective_to IS NULL OR m.effective_to > CURRENT_DATE)
+            ORDER BY m.effective_from DESC, m.version DESC LIMIT 1
+          ) AS electronic_address,
           (NULLIF(trim(COALESCE(default_bank_name, '')), '') IS NOT NULL
            AND NULLIF(trim(COALESCE(default_iban, '')), '') IS NOT NULL
            AND NULLIF(trim(COALESCE(default_bic, '')), '') IS NOT NULL) AS bank_details_complete
-        FROM public.factureur
-        ORDER BY biller_name, biller_id
+        FROM public.factureur f
+        ORDER BY f.biller_name, f.biller_id
       `
     ),
     pool.query(
@@ -93,18 +113,30 @@ export async function repoGetFinanceConfigurationReadiness(
     billers.rows.map(async (biller) => {
       let snapshot: Record<string, unknown> | null = null;
       try {
-        snapshot = await issuerSnapshotAt(pool, biller.biller_id, `${periodKey}-01-01`);
+        snapshot = await issuerSnapshotAt(pool, biller.biller_id, biller.snapshot_date);
       } catch (error) {
         if (!isMissingSchemaError(error)) throw error;
         legalFunctionAvailable = false;
       }
       const missing_legal_fields = missingLegalKeys(snapshot);
+      let electronicAddressBlocker: { code: string; message: string } | null = null;
+      try {
+        // Use the same rules as invoice creation: a filled address is not a verified address.
+        normalizeElectronicAddress(biller.electronic_address ?? {}, "de l’émetteur");
+      } catch (error) {
+        if (!(error instanceof HttpError) || error.status !== 422) throw error;
+        electronicAddressBlocker = { code: error.code, message: error.message };
+      }
       return {
         legal_entity_code: biller.biller_id,
         name: biller.biller_name,
         bank_details_complete: biller.bank_details_complete,
         legal_snapshot_complete: missing_legal_fields.length === 0,
         missing_legal_fields,
+        electronic_address_ready: electronicAddressBlocker === null,
+        electronic_address_blocker: electronicAddressBlocker,
+        routing_identity: biller.routing_identity,
+        electronic_address: biller.electronic_address,
       };
     })
   );
@@ -120,6 +152,7 @@ export async function repoGetFinanceConfigurationReadiness(
   if (activePolicy) {
     const activeIssuer = issuers.find((issuer) => issuer.legal_entity_code === activePolicy.legal_entity_code);
     if (!activeIssuer?.legal_snapshot_complete) blockers.push({ code: "FINANCE_LEGAL_MENTIONS_NOT_CONFIGURED", message: "Les mentions légales de l'émetteur sélectionné par la politique active sont incomplètes." });
+    if (activeIssuer?.electronic_address_blocker) blockers.push(activeIssuer.electronic_address_blocker);
   }
   if (activePolicy && !sequences.rows.some((sequence) => sequence.document_type === "FACTURE" && sequence.entity_code === activePolicy.legal_entity_code && sequence.active)) {
     blockers.push({ code: "FINANCE_LEGAL_SEQUENCE_NOT_CONFIGURED", message: "La séquence FACTURE active de l'émetteur sélectionné est absente pour cette année." });

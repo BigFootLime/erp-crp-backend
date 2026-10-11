@@ -17,6 +17,8 @@ vi.mock("../module/facturation/electronic-invoicing/electronic-invoice-directory
 
 import { errorHandler } from "../middlewares/errorHandler";
 import electronicInvoiceDirectoryRoutes from "../module/facturation/electronic-invoicing/electronic-invoice-directory.routes";
+import facturesRoutes from "../module/facturation/routes/factures.routes";
+import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 import {
   EINVOICE_BILLING_FRAME_CATALOG_VERSION,
   EINVOICE_BILLING_FRAME_CODES,
@@ -40,11 +42,14 @@ const webReferenceDataContract = z.object({
 
 function app(role?: string) {
   const server = express();
+  server.use(express.json());
   server.use(((req, _res, next) => {
     if (role) req.user = { id: 7, username: "recipe", email: "recipe@test.invalid", role };
     next();
   }) as RequestHandler);
   server.use("/electronic-invoicing", electronicInvoiceDirectoryRoutes);
+  server.use("/factures", facturesRoutes);
+  server.use(validationErrorMiddleware);
   server.use(errorHandler);
   return server;
 }
@@ -52,6 +57,26 @@ function app(role?: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+describe("issuer routing qualification permissions", () => {
+  const route = "/factures/configuration/issuers/b7c1e5a2-3f4d-4e8b-9a06-380569012000/electronic-invoicing/verify";
+  const body = { identifier: "0225:999999998", expected_updated_at: "2026-10-11T12:00:00Z" };
+  it.each([undefined, "Comptable", "Operateur"])("refuses a caller without Finance settings rights (%s)", async (role) => {
+    const response = await request(app(role)).post(route).set("Idempotency-Key", "issuer-test-1219").send(body);
+    expect(response.status).toBe(role ? 403 : 401);
+    expect(directory.verify).not.toHaveBeenCalled();
+  });
+  it("qualifies only through the service with the authenticated administrator and replay key", async () => {
+    directory.verify.mockResolvedValue({ idempotent_replay: false, resource_type: "ISSUER" });
+    const response = await request(app("Administrateur Systeme et Reseau")).post(route).set("Idempotency-Key", "issuer-test-1219").send(body);
+    expect(response.status).toBe(201);
+    expect(directory.verify).toHaveBeenCalledWith(expect.objectContaining({ resourceType: "ISSUER", identifier: body.identifier, idempotencyKey: "issuer-test-1219", audit: expect.objectContaining({ user_id: 7 }) }));
+  });
+  it("refuses a missing replay key before querying the directory", async () => {
+    const response = await request(app("Directeur")).post(route).send(body);
+    expect(response.status).toBe(400); expect(directory.verify).not.toHaveBeenCalled();
+  });
 });
 
 describe("electronic invoice reference-data HTTP contract (OBS059)", () => {
