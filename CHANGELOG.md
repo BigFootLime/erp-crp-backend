@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Applicable assembly BOM scope (#1161)
+
+- Generation, frozen-source preparation, child reconciliation, commercial component preview and technical sheets share one applicable BOM scope. Preserve legacy-only occurrences; exclude other indices once a piece has version-scoped definitions. Keep frozen/engaged orders and stock guards intact. No migration or historical rewrite.
+- Add isolated PostgreSQL regression coverage for the observed cancellation of both assembly sub-orders, repeated synchronization, revision selection, distinct occurrences and refusal guards. Actual recipe replay remains pending.
+
 ## 2026-10-11 — Exact assembly enum regression (#1162)
 
 - Keep the exact operation enum assertion aligned with the canonical ASSEMBLAGE type delivered by #1146; explicitly verify its accepted payload. No runtime, timeout, retry or skip changes.

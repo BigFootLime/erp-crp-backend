@@ -1,17 +1,22 @@
+import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+
 // Match the selected OF definition: legacy purchases are a fallback only when
 // that exact version has no purchases. Keep distinct source lines and paths.
 export const ASSEMBLY_PURCHASED_REQUIREMENTS_SQL = `SELECT line.id::text AS source_line_id,
             line.parent_piece_technique_id::text AS piece_technique_id,
-            line.parent_piece_technique_version_id::text AS parent_piece_technique_version_id,
+            wanted.version_id::text AS parent_piece_technique_version_id,
             article.id::text AS article_id,
             article.code AS article_code,
             COALESCE(line.designation, article.designation) AS designation,
             line.quantite::float8 AS quantity_per_parent,
             'BOM'::text AS source_kind
        FROM public.pieces_techniques_nomenclature line
+       JOIN (SELECT DISTINCT piece_id, version_id FROM unnest($1::uuid[], $2::uuid[]) AS selection(piece_id, version_id)) wanted
+         ON wanted.piece_id = line.parent_piece_technique_id
        JOIN public.articles article ON article.id = line.child_article_id
       WHERE line.parent_piece_technique_id = ANY($1::uuid[])
         AND line.child_article_id IS NOT NULL
+        AND ${applicableBomScopeSql('line', 'wanted.piece_id', 'wanted.version_id')}
       UNION ALL
      SELECT purchase.id::text AS source_line_id,
             purchase.piece_technique_id::text AS piece_technique_id,
