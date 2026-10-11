@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-11 — Exact supplier PDF unit prices (#1176)
+
+- Preserve sub-cent prices such as 0.025 EUR/mm and show exact quantities without database decimal padding in newly rendered official supplier purchase orders.
+- Keep monetary totals rounded to cents, immutable snapshots and previously archived PDF bytes unchanged; no schema migration or business-data rewrite.
+- Add precise-decimal, invalid-value and real-PDF rendering regressions, including the 3000 mm / 75 EUR HT / 90 EUR TTC recipe case.
+
+
 ## 2026-10-11 — Availability of incomplete quality executions (#1173)
 
 - Detail and verdict preview report zero releasable quantity while mandatory checks are incomplete, including old positive ledgers. New measurement recalculations no longer mark partially checked units as conforming.

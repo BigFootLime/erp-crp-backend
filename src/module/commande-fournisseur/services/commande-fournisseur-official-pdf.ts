@@ -1,5 +1,5 @@
 import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document";
-import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
+import { formatDateFR, money, percent, quantity, unitPrice } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 import { generalTermsReference, type GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
@@ -66,7 +66,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
   const rows: CerpLineRow[] = source.lines.map((line) => ({
     cells: {
       pos: String(line.position), reference: line.reference ?? "—", designation: line.designation,
-      quantity: line.quantity, unit: line.unit ?? "—", price: line.unit_price_ht ? money(line.unit_price_ht, source.currency) : "—",
+      quantity: quantity(line.quantity), unit: line.unit ?? "—", price: line.unit_price_ht != null ? unitPrice(line.unit_price_ht, source.currency) : "—",
       vat: line.vat_pct ? percent(line.vat_pct) : "—", total: line.net_ht ? money(line.net_ht, source.currency) : "—",
     },
     meta: [line.need_date ? `Besoin : ${formatDateFR(line.need_date)}` : null, line.discount_pct ? `Remise : ${percent(line.discount_pct)}` : null].filter(Boolean).join(" · ") || null,
