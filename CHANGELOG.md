@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Définition de fabrication des assemblages (#1149)
+
+- Le premier indice reprend le type de pièce choisi. Un indice brouillon peut corriger son mode de fabrication depuis la fiche, avec contrôle de concurrence et audit ; les versions publiées restent figées. La recette complète reste en cours.
+
 ## 2026-10-11 — Montage canonique (#1146)
 
 - Le type Assemblage est reconnu dans la gamme et le parcours OF. Le montage sans machine CN utilise uniquement son poste autonome actif, explicitement affecté. Les contrôles composants/qualité et dossiers figés sont conservés ; recette complète encore en cours.

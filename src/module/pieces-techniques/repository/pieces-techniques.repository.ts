@@ -1850,9 +1850,9 @@ export async function repoCreatePieceTechnique(
         `INSERT INTO public.piece_technique_versions (
            piece_technique_id, indice, plan_reference, indice_externe_original, indice_externe_normalise,
            version_interne, code_metier, statut, is_current, raison_changement, motif_modification, date_application, date_effet,
-           date_revision, created_by, updated_by
+           date_revision, created_by, updated_by, manufacturing_mode, assembly_supply_strategy
          )
-         VALUES ($1::uuid, $2, $3, $4, $5, 1, $6, 'BROUILLON', false, $7, $7, $8::date, $8::date, now(), $9, $9)`,
+         VALUES ($1::uuid, $2, $3, $4, $5, 1, $6, 'BROUILLON', false, $7, $7, $8::date, $8::date, now(), $9, $9, $10, 'MAKE_TO_ORDER')`,
         [
           pieceId,
           indiceExterne ?? "NA",
@@ -1863,6 +1863,7 @@ export async function repoCreatePieceTechnique(
           body.motif_modification ?? "Création initiale",
           body.date_effet ?? null,
           actorUserId,
+          body.ensemble ? "ASSEMBLY" : "SIMPLE",
         ]
       );
     }
