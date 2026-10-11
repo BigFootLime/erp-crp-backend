@@ -1,6 +1,18 @@
 import { createHash } from "node:crypto";
 
 export const PREPARATION_RULES_VERSION = 2;
+/** Unfrozen drafts adopt the current policy at review; frozen evidence keeps
+ * the policy under which it was approved, even before production starts. */
+export function preparationRulesVersion(order: {
+  statut: string;
+  preparation_rules_version: number | null;
+  technical_snapshot_sha256: string | null;
+}): number {
+  const stored = order.preparation_rules_version ?? PREPARATION_RULES_VERSION;
+  return order.statut === "BROUILLON" && !order.technical_snapshot_sha256
+    ? Math.max(stored, PREPARATION_RULES_VERSION)
+    : stored;
+}
 const REQUIRED_PREPARATION_KEYS = new Set(["plan", "material", "treatment", "subcontract"]);
 export type PreparationStatus =
   | "READY"
