@@ -1,5 +1,9 @@
 # Changelog
 
+## OBS080 — #1140 (2026-10-11)
+
+- Filtre UUID du BL dans le comptage et les sources paginées de facturation ; intersection des filtres et éligibilité existantes conservées. Aucune migration.
+
 ## 2026-10-11 — Qualité : protéger les contrôles à plan figé (#1137)
 
 - Les routes historiques refusent les contrôles liés à un plan avant toute écriture et conservent les vrais contrôles historiques.

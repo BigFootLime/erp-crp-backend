@@ -33,6 +33,7 @@ export const eligibleSourcesQuerySchema = z
     q: z.string().trim().max(120).optional(),
     client_id: z.string().trim().min(1).max(120).optional(),
     commande_id: z.coerce.number().int().positive().optional(),
+    livraison_id: z.string().uuid().optional(),
     affaire_id: z.coerce.number().int().positive().optional(),
     page: z.coerce.number().int().min(1).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
