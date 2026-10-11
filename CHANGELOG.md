@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Exact central planning timestamps (#1197)
+
+- Preserve PostgreSQL Date milliseconds when mapping occupied, forecast and actual intervals. Adjacent cuts now start at the full persisted end instead of overlapping its final fraction of a second and failing the database exclusion constraint.
+- Keep existing slots, capacity rules and transaction protections unchanged. No migration or historical rewrite. Reproduce the observed 600 ms overlap with mapped PostgreSQL dates and verify exact adjacency.
+
 ## 2026-10-11 — Ready upstream planning and pending future steps (#1194)
 
 - Allow ready cutting/turning commitments while an unrequested, uncommitted and never-started downstream step awaits preparation. Keep its warning visible and leave it undated; no external availability or OF completion is invented.
