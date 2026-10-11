@@ -23,6 +23,7 @@ import {
   listPlans,
   planApplicability,
   previewExecution,
+  ofOperationExecutionContext,
   previewVerdict,
   qualityCenter,
   qualityIntelligence,
@@ -48,6 +49,7 @@ import {
  */
 const router = Router();
 router.use(authenticateToken);
+router.get('/of/:ofId/operations/:operationId/execution-context', requireQualityCapability('execution_run'), ofOperationExecutionContext);
 
 /**
  * La capacité exigée dépend de la transition demandée : soumettre relève du

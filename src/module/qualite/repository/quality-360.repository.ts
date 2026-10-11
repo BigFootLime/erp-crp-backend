@@ -8,6 +8,8 @@ import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing
 
 import type { PoolClient } from "pg";
 import {resolveStockLotContext} from "./quality-stock-lot-context";
+import { executionPreviewSchema } from "../validators/quality-360.validators";
+import { isOfQualitySource, readFrozenQualityPlanId, readQualityOfIdentity, qualityOfPopulationCeiling, resolveQualityOfContext } from "./quality-of-context";
 import {applyMaterialLotDecision} from "./quality-material-lot-decision";
 import { lockReceiptReleaseScope, assertReceiptReleaseAvailable } from "../../receptions/repository/receipt-quality-release.repository";
 
@@ -974,7 +976,7 @@ async function buildExecutionSnapshot(
   characteristics: QualityCharacteristicSpec[];
   snapshot: { payload: Record<string, unknown>; sha256: string };
 }> {
-  const applicability = ofSnapshotOnly ? await frozenOfPlan(q,body) : await resolveApplicablePlan(q, {
+  const applicability = ofSnapshotOnly || isOfQualitySource(body) ? await frozenOfPlan(q,body) : await resolveApplicablePlan(q, {
     trigger: body.trigger,
     article_id: body.article_id ?? undefined,
     piece_technique_id: body.piece_technique_id ?? undefined,
@@ -1014,11 +1016,8 @@ async function buildExecutionSnapshot(
 // already snapshotted by a control of this OF and trigger. No latest revision.
 async function frozenOfPlan(q:DbQueryer,body:ExecutionPreviewBodyDTO) {
   if(!body.of_id)throw new HttpError(422,'QUALITY_OF_REQUIRED','OF obligatoire.');
-  const frozen=(await q.query<{plan_id:string|null}>(`SELECT COALESCE(
-    (SELECT c.plan_id::text FROM public.quality_control c WHERE c.of_id=o.id AND c.trigger_type=$2 AND c.plan_id IS NOT NULL ORDER BY c.control_date,c.id LIMIT 1),
-    o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id') AS plan_id
-    FROM public.ordres_fabrication o WHERE o.id=$1`,[body.of_id,body.trigger])).rows[0];
-  const row=frozen?.plan_id?await selectPlanRow(q,frozen.plan_id):null;
+  const planId = await readFrozenQualityPlanId(q, body.of_id, body.operation_id ?? null, body.trigger);
+  const row=planId?await selectPlanRow(q,planId):null;
   if(!row||row.trigger_type!==body.trigger||!['PUBLISHED','ARCHIVED'].includes(row.status))throw new HttpError(409,'QUALITY_OF_PLAN_MISSING','Aucun plan de contrôle applicable figé pour ce déclencheur. La qualité doit compléter le dossier de l’OF.');
   return {plan:planRowToCandidate(row),label:row.label,published_at:row.published_at,characteristics:await selectPlanCharacteristics(q,row.id)};
 }
@@ -1155,18 +1154,39 @@ async function resolveLotReleaseAllocation(
 
 export async function repoPreviewExecution(body: ExecutionPreviewBodyDTO,ofSnapshotOnly=false): Promise<ExecutionPreview> {
   assertSourceRef({ source_type: body.source_type, source_id: body.source_id });
-  const scopedBody = await resolveStockLotContext(pool, await resolveLotReleaseAllocation(pool, body));
+  const scopedBody = await resolveQualityOfContext(pool, await resolveStockLotContext(pool, await resolveLotReleaseAllocation(pool, body)));
   const built = await buildExecutionSnapshot(pool, scopedBody,ofSnapshotOnly);
   return {
     plan: { id: built.plan.id, code: built.plan.code, version: built.plan.version },
     snapshot_sha256: built.snapshot.sha256,
-    population: body.population,
-    unite: body.unite,
+    population: scopedBody.population,
+    unite: scopedBody.unite,
     characteristics: built.characteristics.map((spec) => ({
       ...spec,
-      required_samples: requiredSampleCount(spec, body.population),
+      required_samples: requiredSampleCount(spec, scopedBody.population),
     })),
   };
+}
+
+/** Session callers receive the same authoritative OF scope as native terminals. */
+export async function repoOfOperationExecutionContext(ofId: number, operationId: string) {
+  const identity = await readQualityOfIdentity(pool, ofId, operationId);
+  const planId = await readFrozenQualityPlanId(pool, ofId, operationId, null);
+  const plan = planId ? await selectPlanRow(pool, planId) : null;
+  if (!plan || !['PUBLISHED', 'ARCHIVED'].includes(plan.status)) throw new HttpError(409, 'QUALITY_OF_PLAN_MISSING', "Aucun plan de contrôle figé. Préparez la fiche d'autocontrôle de cet OF.");
+  const pending = (await pool.query<{ id: string; reference: string; population: number }>(`SELECT id::text,reference,qty_population::float8 AS population FROM public.quality_control
+    WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2)
+      AND trigger_type=$3 AND plan_id=$4::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`,
+    [ofId, operationId, plan.trigger_type, plan.id])).rows[0] ?? null;
+  const population = await qualityOfPopulationCeiling(pool, identity);
+  if (population <= 0 && !pending) throw new HttpError(409, 'QUALITY_OF_POPULATION_UNAVAILABLE', "Aucune pièce disponible à contrôler. Vérifiez l'étape précédente.");
+  const source = executionPreviewSchema.shape.body.parse({
+    source_type: 'OF_OPERATION', source_id: operationId, of_id: ofId, operation_id: operationId,
+    trigger: plan.trigger_type, population: pending?.population ?? population, unite: identity.unit, article_id: identity.article_id,
+    piece_technique_id: identity.piece_id, piece_version_id: identity.version_id, famille_id: identity.famille_id,
+    operation_code: String(identity.phase),
+  });
+  return { source, of: { id: ofId, numero: identity.numero }, operation: { id: operationId, phase: identity.phase, label: identity.label }, plan: { id: plan.id, code: plan.code, version: plan.version }, existing_execution: pending ? { id: pending.id, reference: pending.reference } : null };
 }
 
 export type ExecutionDetail = {
@@ -1439,7 +1459,13 @@ export async function repoCreateExecution(params: {
       if (replayed) return buildExecutionDetail(replayed, await selectMeasurements(client, replayed.id));
     }
 
-    const scopedBody = await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true);
+    const scopedBody = await resolveQualityOfContext(client, await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true), true);
+    if(scopedBody.source_type === 'OF_OPERATION') {
+      const pending = (await client.query<{id:string;reference:string}>(`SELECT id::text,reference FROM public.quality_control
+        WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2) AND trigger_type=$3
+          AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`, [scopedBody.of_id,scopedBody.operation_id,scopedBody.trigger])).rows[0];
+      if (pending) throw new HttpError(409,'QUALITY_OF_CONTROL_PENDING',`Le contrôle ${pending.reference} est déjà ouvert pour cette opération.`, {control_id:pending.id});
+    }
     if(scopedBody.source_type==="LOT"&&["RECHECK","RECEPTION"].includes(scopedBody.trigger)){
       const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
       if(pending)throw new HttpError(409,"QUALITY_LOT_CONTROL_PENDING",`Le contrôle ${pending.reference} est déjà ouvert pour ce lot. Terminez-le avant d’en créer un autre.`,{control_id:pending.id});
@@ -1469,7 +1495,7 @@ export async function repoCreateExecution(params: {
         )
         VALUES (
           $1, $2::public.quality_control_type, 'IN_PROGRESS', now(), $3,
-          NULL, $4, $5::uuid, NULL,
+          NULL, $4, $5::uuid, $23::uuid,
           $6::uuid, $7, $8::jsonb, $9,
           $10, $11, $12,
           $13::uuid, $14::uuid, $15::uuid, $16::uuid,
@@ -1483,7 +1509,7 @@ export async function repoCreateExecution(params: {
         reference,
         controlType,
         params.body.controlled_by ?? params.actor.user_id,
-        params.body.of_id ?? null,
+        scopedBody.of_id ?? null,
         scopedBody.piece_technique_id ?? null,
         built.plan.id,
         built.plan.version,
@@ -1498,10 +1524,11 @@ export async function repoCreateExecution(params: {
         params.body.reception_ligne_id ?? null,
         params.body.bon_livraison_id ?? null,
         params.body.delivery_allocation_id ?? null,
-        params.body.unite,
+        scopedBody.unite,
         params.body.population,
         params.body.comments ?? null,
         params.actor.user_id,
+        scopedBody.operation_id ?? null,
       ]
     );
 

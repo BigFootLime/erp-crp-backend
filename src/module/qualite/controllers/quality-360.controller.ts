@@ -26,6 +26,7 @@ import {
   derogationTransitionSchema,
   eligibilityQuerySchema,
   executionPreviewSchema,
+  ofOperationExecutionContextSchema,
   idParamSchema,
   listDerogationsQuerySchema,
   listExecutionsQuerySchema,
@@ -64,6 +65,7 @@ import {
   svcListPlans,
   svcPlanApplicability,
   svcPreviewExecution,
+  svcOfOperationExecutionContext,
   svcPreviewVerdict,
   svcQualityCenter,
   svcQualityIntelligence,
@@ -83,6 +85,11 @@ import {
 /* -------------------------------------------------------------------------- */
 /* Politique globale de liberation des BL                                     */
 /* -------------------------------------------------------------------------- */
+
+export const ofOperationExecutionContext: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(ofOperationExecutionContextSchema, { params: req.params });
+  res.json(await svcOfOperationExecutionContext(params.ofId, params.operationId));
+});
 
 export const listDeliveryPolicies: RequestHandler = asyncHandler(async (_req, res) => {
   const items = await svcListDeliveryPolicies();
