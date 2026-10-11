@@ -33,6 +33,9 @@ export type CentralTask = {
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
   clientId?: string | null;
+  /** Optional canonical client metadata for operation identification; no client-list permission required. */
+  clientName?: string | null;
+  clientColor?: string | null;
   /** Canonical type from the frozen routing, never inferred from its label. */
   operationType?: string | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
