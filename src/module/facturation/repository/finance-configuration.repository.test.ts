@@ -60,7 +60,8 @@ describe("Finance issuer readiness", () => {
     mocks.readQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM public.factureur")) return { rows: [
         { biller_id: input.legal_entity_code, biller_name: "Issuer", bank_details_complete: true,
-          snapshot_date: "2026-10-11", electronic_address: address },
+          snapshot_date: "2026-10-11", electronic_address: address,
+          routing_identity: { siren: "999 999 998", updated_at: "2026-01-01T00:00:00Z", version: 1 } },
         ...(additionalIssuer ? [{ biller_id: "other", biller_name: "Other", bank_details_complete: true,
           snapshot_date: "2026-10-11", electronic_address: null }] : []),
       ] };
@@ -94,6 +95,7 @@ describe("Finance issuer readiness", () => {
     const result = await repoGetFinanceConfigurationReadiness({ year: 2026 });
     expect(result.readiness).toMatchObject({ ready: true, blockers: [] });
     expect(result.issuers[0]).toMatchObject({ electronic_address_ready: true, electronic_address_blocker: null });
+    expect(result.issuers[0].routing_identity?.siren).toBe("999999998");
     expect(mocks.issuerSnapshot).toHaveBeenCalledWith(expect.anything(), input.legal_entity_code, "2026-10-11");
   });
 
