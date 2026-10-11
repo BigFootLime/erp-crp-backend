@@ -33,7 +33,12 @@ const entriesQuerySchema = z.object({
 
 const verificationBodySchema = z.object({
   identifier: z.string().trim().max(205).regex(/^[A-Za-z0-9]{4}:[^\s\u0000-\u001F\u007F]+$/, "Adresse électronique d'annuaire invalide"),
-  expected_updated_at: z.string().datetime({ offset: true }),
+  // Client/supplier GETs expose PostgreSQL text revisions. Canonicalize the
+  // syntax without Date/toISOString, which would discard microseconds.
+  expected_updated_at: z.string().trim().max(40).transform(value => value.replace(
+    /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)([+-]\d{2})(?::?(\d{2}))?$/,
+    (_match, date: string, time: string, offset: string, minutes: string | undefined) => `${date}T${time}${offset}:${minutes ?? "00"}`
+  )).pipe(z.string().datetime({ offset: true })),
 }).strict();
 
 function idempotencyKey(req: Request): string {
