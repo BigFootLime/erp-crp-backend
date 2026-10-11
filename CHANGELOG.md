@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Exact assembly enum regression (#1162)
+
+- Keep the exact operation enum assertion aligned with the canonical ASSEMBLAGE type delivered by #1146; explicitly verify its accepted payload. No runtime, timeout, retry or skip changes.
+
 ## Current draft preparation policy — #1158 — 2026-10-11
 
 - Generate root/child/incomplete/deferred orders and batch metadata with the shared policy version. Re-evaluate only unfrozen drafts under current mandatory rubrics; retain frozen and historical policy, normal review/audit and execution gates. No migration or historical data rewrite.
