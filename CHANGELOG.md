@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Client dans le snapshot de planning (#1206)
+
+- La lecture centrale joint la fiche client existante et expose le nom et la couleur en complément du code. Ces métadonnées participent à la version de l’opération. Aucun changement de droits, de calcul, de ressource ou de schéma.
+
 ## 2026-10-11 — Canonical routing type in planning (#1203 / WP-287)
 
 - Expose the frozen operation type alongside the existing canonical phase. Machine planning distinguishes machining operations without parsing free-text designations.
