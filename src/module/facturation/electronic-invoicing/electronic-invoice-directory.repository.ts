@@ -5,8 +5,9 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { AuditContext } from "../../client/repository/client.repository";
+import { qualifyIssuerElectronicAddress } from "./electronic-invoice-issuer.repository";
 
-export type ElectronicInvoiceDirectoryResourceType = "CLIENT" | "FOURNISSEUR";
+export type ElectronicInvoiceDirectoryResourceType = "CLIENT" | "FOURNISSEUR" | "ISSUER";
 
 export type ElectronicInvoiceDirectoryVerificationResult = {
   resource_type: ElectronicInvoiceDirectoryResourceType;
@@ -24,18 +25,31 @@ export type ElectronicInvoiceDirectoryVerificationResult = {
 type DbQueryer = Pick<PoolClient, "query">;
 
 function resourceSql(resourceType: ElectronicInvoiceDirectoryResourceType) {
-  return resourceType === "CLIENT"
+  return resourceType === "ISSUER"
+    ? {
+        table: "public.finance_legal_mentions",
+        idColumn: "biller_id",
+        updatedColumn: "created_at",
+        predicate: "AND effective_from <= CURRENT_DATE AND (effective_to IS NULL OR effective_to > CURRENT_DATE)",
+        notFoundCode: "FINANCE_LEGAL_MENTIONS_NOT_CONFIGURED",
+        entityType: "finance_legal_mentions",
+      }
+    : resourceType === "CLIENT"
     ? {
         table: "public.clients",
         idColumn: "client_id",
         notFoundCode: "CLIENT_NOT_FOUND",
         entityType: "client",
+        updatedColumn: "updated_at",
+        predicate: "",
       }
     : {
         table: "public.fournisseurs",
         idColumn: "id",
         notFoundCode: "FOURNISSEUR_NOT_FOUND",
         entityType: "FOURNISSEUR",
+        updatedColumn: "updated_at",
+        predicate: "",
       };
 }
 
@@ -73,9 +87,9 @@ export async function readDirectoryVerificationResource(
 ): Promise<{ siren: string; updated_at: string }> {
   const target = resourceSql(resourceType);
   const current = await pool.query<{ siren: string | null; updated_at: string }>(
-    `SELECT siren, updated_at::text AS updated_at
+    `SELECT siren, ${target.updatedColumn}::text AS updated_at
        FROM ${target.table}
-      WHERE ${target.idColumn}::text = $1
+      WHERE ${target.idColumn}::text = $1 ${target.predicate}
       LIMIT 1`,
     [resourceId]
   );
@@ -132,22 +146,35 @@ export async function persistDirectoryVerification(params: {
       await client.query("ROLLBACK");
       return replay;
     }
-    const locked = await client.query<{ siren: string | null; updated_at: string }>(
-      `SELECT siren, updated_at::text AS updated_at
+    if (params.resourceType === "ISSUER") {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`finance_legal_mentions:${params.resourceId}`]);
+    }
+    const locked = await client.query<{ siren: string | null; updated_at: string; previous_address: Record<string, unknown> }>(
+      `SELECT siren, ${target.updatedColumn}::text AS updated_at,
+         jsonb_build_object('scheme', electronic_address_scheme, 'value', electronic_address_value,
+           'directory_entry_id', electronic_address_directory_entry_id, 'verified_at', electronic_address_verified_at) AS previous_address
          FROM ${target.table}
-        WHERE ${target.idColumn}::text = $1
+        WHERE ${target.idColumn}::text = $1 ${target.predicate}
         FOR UPDATE`,
       [params.resourceId]
     );
     const current = locked.rows[0];
     if (!current) throw new HttpError(404, target.notFoundCode, "Référentiel introuvable.");
+    // A concurrent identical request may have committed while this transaction waited.
+    const concurrentReplay = await findReplay(client, params.idempotencyKey, hash);
+    if (concurrentReplay) {
+      await client.query("ROLLBACK");
+      return concurrentReplay;
+    }
     if (current.siren !== params.siren) {
       throw new HttpError(409, "EINVOICE_SIREN_CHANGED", "Le SIREN a changé pendant la consultation de l'annuaire.");
     }
     if (new Date(current.updated_at).getTime() !== new Date(params.expectedUpdatedAt).getTime()) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le référentiel a été modifié ; rechargez-le avant de vérifier l'adresse.");
     }
-    const updated = await client.query<{ verified_at: string }>(
+    const updated = params.resourceType === "ISSUER"
+      ? await qualifyIssuerElectronicAddress(client, { issuerId: params.resourceId, scheme, value, identifier: params.identifier, actorId: params.audit.user_id })
+      : await client.query<{ verified_at: string }>(
       `UPDATE ${target.table}
           SET electronic_address_scheme = $2,
               electronic_address_value = $3,
@@ -195,7 +222,7 @@ export async function persistDirectoryVerification(params: {
         path: params.audit.path,
         page_key: params.audit.page_key,
         client_session_id: params.audit.client_session_id,
-        details: { siren: params.siren, scheme, directory_entry_id: params.identifier },
+        details: { siren: params.siren, scheme, directory_entry_id: params.identifier, previous_address: current.previous_address },
       },
     });
     await client.query("COMMIT");

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { verifyIssuerElectronicInvoiceAddress } from "../electronic-invoicing/electronic-invoice-directory.controller";
 import {
   createFacture,
   deleteFacture,
@@ -98,6 +99,11 @@ router.get("/:id/official-documents/:documentId/download", requireFinanceCapabil
 router.post("/:id/official-documents/:documentId/print-intents", requireFinanceCapability("documents_read"), factureLegalArchive.print);
 
 // Must precede `/:id`: configuration is a Finance settings resource, not a legacy invoice id.
+router.post(
+  "/configuration/issuers/:id/electronic-invoicing/verify",
+  requireFinanceCapability("settings_manage"),
+  verifyIssuerElectronicInvoiceAddress
+);
 router.get(
   "/configuration",
   requireFinanceCapability("settings_manage"),

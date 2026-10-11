@@ -48,7 +48,7 @@ export async function verifyElectronicInvoiceDirectoryAddress(params: {
   if (replay) return replay;
   const entries = await listElectronicInvoiceDirectoryEntries(resource.siren);
   const selected = entries.find((entry) => entry.identifier === params.identifier);
-  if (!selected) {
+  if (!selected || selected.company.number !== resource.siren) {
     throw new HttpError(422, "EINVOICE_DIRECTORY_ENTRY_NOT_FOUND", "Cette adresse n'appartient pas au SIREN qualifié dans l'annuaire.");
   }
   if (!selected.is_active) {

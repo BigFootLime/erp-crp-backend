@@ -32,7 +32,7 @@ const entriesQuerySchema = z.object({
 }).strict();
 
 const verificationBodySchema = z.object({
-  identifier: z.string().trim().regex(/^[A-Za-z0-9]{4}:[^\s\u0000-\u001F\u007F]+$/, "Adresse électronique d'annuaire invalide"),
+  identifier: z.string().trim().max(205).regex(/^[A-Za-z0-9]{4}:[^\s\u0000-\u001F\u007F]+$/, "Adresse électronique d'annuaire invalide"),
   expected_updated_at: z.string().datetime({ offset: true }),
 }).strict();
 
@@ -130,3 +130,4 @@ function verificationHandler(resourceType: ElectronicInvoiceDirectoryResourceTyp
 
 export const verifyClientElectronicInvoiceAddress = verificationHandler("CLIENT");
 export const verifyFournisseurElectronicInvoiceAddress = verificationHandler("FOURNISSEUR");
+export const verifyIssuerElectronicInvoiceAddress = verificationHandler("ISSUER");
