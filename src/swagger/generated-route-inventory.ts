@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "592fa0febbb9ecec30ccd334f4990d31c0183e0b6fcd44a04d6964d846fa5922";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "fb97dc95e0b5542e6f07871ecf18403faa7e8a4c52943b98c146a748a05ddc28";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -22183,7 +22183,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/cancel",
-    "source": "src/module/subcontract/subcontract.routes.ts:112",
+    "source": "src/module/subcontract/subcontract.routes.ts:113",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22199,7 +22199,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/close",
-    "source": "src/module/subcontract/subcontract.routes.ts:111",
+    "source": "src/module/subcontract/subcontract.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22231,7 +22231,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/issues",
-    "source": "src/module/subcontract/subcontract.routes.ts:108",
+    "source": "src/module/subcontract/subcontract.routes.ts:109",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -22247,7 +22247,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/returns",
-    "source": "src/module/subcontract/subcontract.routes.ts:109",
+    "source": "src/module/subcontract/subcontract.routes.ts:110",
     "middleware": [
       "anonymous",
       "authenticateToken",

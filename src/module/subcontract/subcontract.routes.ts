@@ -68,7 +68,8 @@ router.post("/", access(true), async (req: any, res, next) => { try {
        AND EXISTS(SELECT 1 FROM public.subcontract_purchase_origins origin WHERE origin.line_id=l.id AND origin.operation_id=o.id)
        AND o.status::text<>'CANCELLED' AND(o.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions revision WHERE revision.id=o.revision_id AND revision.statut='ACTIVE')) RETURNING *`, [line, operation, packageUnit, planned, evidence, req.user?.id ?? null, activeOrderStates]);
     if (!r.rows[0]) throw new HttpError(409, "SUBCONTRACT_PACKAGE_PREREQUISITES", "La ligne sous-traitance active, l'opération OF canonique et la preuve GED active doivent correspondre.");
-    await c.query("INSERT INTO public.ged_document_links(document_id,entity_type,entity_id,link_role,created_by) VALUES($1,'SUBCONTRACT_WORK_PACKAGE',$2,'EVIDENCE',$3) ON CONFLICT DO NOTHING", [evidence,r.rows[0].id,req.user?.id ?? null]);
+    // The immutable evidence FK records the package's documentary reference.
+    // Preserve the source document's canonical GED parent and read policy.
     await audit(c,req.user?.id,"CREATE",r.rows[0].id,{line,operation,evidence,unit:packageUnit,qty_planned:planned}); await c.query("COMMIT"); res.status(201).json(r.rows[0]);
   } catch (e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
 } catch (e) { next(e); } });
