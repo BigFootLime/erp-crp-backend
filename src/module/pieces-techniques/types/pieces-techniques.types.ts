@@ -58,6 +58,8 @@ export type PieceTechniqueHistoryEntry = {
 
 export type PieceTechniqueDocument = {
   id: string
+  document_type_code?: string | null
+  piece_technique_version_id?: string | null
   piece_technique_id: string
   original_name: string
   stored_name: string

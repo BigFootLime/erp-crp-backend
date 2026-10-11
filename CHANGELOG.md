@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Canonical plan handoff (#1155)
+
+- Document dossiers recognise the same published, scan-released revision plans as OF preparation. Archives retain their type/revision metadata and remain preserved.
+
 ## 2026-10-11 — Assembly purchased requirements (#1152)
 
 - Assembly supply analysis uses purchases from each selected technical version. Historical unversioned purchases remain a fallback, without counting obsolete revisions or merging distinct requirements.

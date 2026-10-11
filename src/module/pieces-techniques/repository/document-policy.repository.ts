@@ -18,6 +18,7 @@ import {
   type PieceDocumentType,
 } from "../domain/document-policy";
 import type { AuditContext } from "./pieces-techniques.repository";
+import { CANONICAL_PIECE_PLANS_SQL } from "./canonical-piece-plans.sql";
 
 type Queryer = Pick<PoolClient, "query">;
 
@@ -483,9 +484,12 @@ export async function repoGetPieceDocumentContext(
               created_at::text AS created_at, removed_at::text AS removed_at
          FROM public.pieces_techniques_documents
         WHERE piece_technique_id = $1::uuid AND removed_at IS NULL
+          AND document_type_code IS DISTINCT FROM 'PLAN'
         ORDER BY created_at DESC`,
       [pieceTechniqueId]
     );
+
+    const plans = await tx.query<AttachedDocument>(CANONICAL_PIECE_PLANS_SQL, [pieceTechniqueId]);
 
     return {
       piece_technique_id: row.piece_technique_id,
@@ -502,7 +506,7 @@ export async function repoGetPieceDocumentContext(
       current_version_statut: row.current_version_statut,
       frozen_at: row.frozen_at,
       frozen_policy: row.frozen_policy ? normalizeClientDocumentPolicy(row.frozen_policy) : null,
-      documents: docs.rows.map((d) => ({
+      documents: [...plans.rows.map((d) => ({ ...d, size_bytes: d.size_bytes === null ? null : Number(d.size_bytes) })), ...docs.rows.map((d) => ({
         id: d.id,
         original_name: d.original_name,
         mime_type: d.mime_type,
@@ -511,7 +515,7 @@ export async function repoGetPieceDocumentContext(
         piece_technique_version_id: d.piece_technique_version_id,
         created_at: d.created_at,
         removed_at: d.removed_at,
-      })),
+      }))],
     };
   } catch (err) {
     if (isMissingRelation(err)) throw new DocumentPolicyInfrastructureMissing("public.piece_document_types");
