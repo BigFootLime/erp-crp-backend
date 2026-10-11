@@ -1453,9 +1453,10 @@ async function readCoverage(
       `SELECT COALESCE(SUM(qty_ordered), 0)::float8    AS demandee,
               COALESCE(SUM(qty_from_stock), 0)::float8 AS from_stock,
               COALESCE(SUM(qty_reserved), 0)::float8   AS reserved
-         FROM public.commande_ligne_affaire_allocation
-        WHERE commande_ligne_id = $1`,
-      [header.commande_ligne_id]
+         FROM public.commande_ligne_affaire_allocation allocation
+         JOIN public.ordres_fabrication courant ON courant.id = $2 AND courant.parent_of_id IS NULL
+        WHERE allocation.commande_ligne_id = $1`,
+      [header.commande_ligne_id, header.of_id]
     );
     if (res.rows[0]) {
       quantiteDemandee = Number(res.rows[0].demandee) || header.quantite_lancee;
@@ -1472,16 +1473,24 @@ async function readCoverage(
   );
   quantiteLivree = recu.rows[0] ? Number(recu.rows[0].bonne) : 0;
 
-  // Autres OF ACTIFS sur la même ligne de commande. L'OF courant est exclu, et
-  // les OF terminés ou annulés le sont aussi : leur sortie est déjà en stock.
+  // Une ligne de commande peut porter l'ensemble et tous ses sous-OF. Seule
+  // la même pièce/version dans la même branche fournit la même sortie : les
+  // composants ne sont jamais des ensembles livrables. Les OF terminés ou
+  // annulés restent exclus : leur sortie est déjà en stock.
   let couvertAutresOf = 0;
   if (header.commande_ligne_id !== null) {
     const autres = await tx.query(
-      `SELECT COALESCE(SUM(quantite_lancee), 0)::float8 AS q
-         FROM public.ordres_fabrication
-        WHERE commande_ligne_id = $1
-          AND id <> $2
-          AND statut::text NOT IN ('TERMINE', 'CLOTURE', 'ANNULE')`,
+      `SELECT COALESCE(SUM(autre.quantite_lancee), 0)::float8 AS q
+         FROM public.ordres_fabrication autre
+         JOIN public.ordres_fabrication courant ON courant.id = $2
+        WHERE autre.commande_ligne_id = $1
+          AND autre.id <> courant.id
+          AND autre.piece_technique_id = courant.piece_technique_id
+          AND autre.piece_technique_version_id IS NOT DISTINCT FROM courant.piece_technique_version_id
+          AND autre.parent_of_id IS NOT DISTINCT FROM courant.parent_of_id
+          AND autre.source_bom_line_id IS NOT DISTINCT FROM courant.source_bom_line_id
+          AND autre.client_id IS NOT DISTINCT FROM courant.client_id
+          AND autre.statut::text NOT IN ('TERMINE', 'CLOTURE', 'ANNULE')`,
       [header.commande_ligne_id, header.of_id]
     );
     couvertAutresOf = autres.rows[0] ? Number(autres.rows[0].q) : 0;
@@ -1494,6 +1503,28 @@ async function readCoverage(
     couvertAutresOf,
     quantiteAffecteeCetOf: header.quantite_lancee,
   };
+}
+
+/** Une exemption matière doit être justifiée dans les preuves figées du montage.
+ * L'absence de dimensions, à elle seule, ne dispense jamais de la découpe. */
+export async function readDocumentMaterialExemption(ofId: number, tx: DbQueryer = pool): Promise<boolean> {
+  const result = await tx.query(
+    `SELECT COALESCE(
+        technical_snapshot_sha256 IS NOT NULL
+        AND technical_snapshot #>> '{preparation_evidence,version,manufacturing_mode}' = 'ASSEMBLY'
+        AND technical_snapshot #>> '{preparation_decisions,material,mode}' = 'NOT_REQUIRED'
+        AND length(btrim(technical_snapshot #>> '{preparation_decisions,material,reason}')) >= 3
+        AND jsonb_typeof(technical_snapshot #> '{preparation_evidence,purchases}') = 'array'
+        AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(technical_snapshot #> '{preparation_evidence,purchases}') = 'array'
+              THEN technical_snapshot #> '{preparation_evidence,purchases}' ELSE '[]'::jsonb END
+          ) purchase WHERE purchase->>'type_achat' = 'MATIERE'
+        ), false) AS not_required
+       FROM public.ordres_fabrication WHERE id = $1`,
+    [ofId]
+  );
+  return result.rows[0]?.not_required === true;
 }
 
 async function readLastFabrication(

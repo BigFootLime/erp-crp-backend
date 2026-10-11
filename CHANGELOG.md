@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-11 — Assembly quantities on manufacturing documents (#1170)
+
+- Other active-order coverage counts the same technical piece/version, customer and assembly/BOM branch. Assembly components no longer count as deliverable finished assemblies; child demand does not inherit finished-assembly stock allocations.
+- A justified frozen assembly exemption prints material as non-applicable instead of warning about an impossible missing cut length. Unverified, machining and material-consuming definitions retain the warning.
+- Add isolated PostgreSQL coverage and document regression checks. Preserve archived documents, internal integrity checks, API authorization and business records. No schema migration.
+
 ## 2026-10-11 — Présentation simplifiée des documents (#1167)
 
 - Retire les empreintes des futurs PDF métier et des motifs GED générés. Conserve les empreintes stockées, les contrôles d'intégrité, l'audit et les alertes de provenance manquante ; aucune réécriture des archives ni migration.
