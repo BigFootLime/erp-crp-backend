@@ -49,6 +49,7 @@ import {
   buildPlanSnapshot,
   characteristicsFromSnapshot,
   computeExecutionVerdict,
+  computeExecutionQuantities,
   evaluateSample,
   requiredSampleCount,
   resolveCharacteristicBounds,
@@ -65,7 +66,7 @@ import {
   evaluateDerogationUsage,
   evaluateQualityEligibility,
   evaluateReleaseRequest,
-  releasableQty,
+  executionReleasableQty,
   type DerogationState,
   type EligibilityTarget,
   type QualityEligibilityPurpose,
@@ -1346,7 +1347,8 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
     snapshot_integrity: integrity,
     unite: row.unite,
     ledger,
-    releasable_qty: ledger.population > 0 ? releasableQty(ledger) : 0,
+    releasable_qty: ledger.population > 0
+      ? executionReleasableQty(ledger, row.verdict ?? legacyResultToVerdict(row.result)) : 0,
     control_date: row.control_date,
     validation_date: row.validation_date,
     created_at: row.created_at,
@@ -1956,29 +1958,7 @@ async function recomputeExecutionLedger(
   const samples = await loadSamples(tx, controlId);
   const computation = computeExecutionVerdict({ characteristics: specs, samples, population });
 
-  // Quantité contrôlée = nombre d'unités distinctes réellement évaluées,
-  // plafonné par la population. Quantité conforme = unités sans aucun NOK.
-  const unitsEvaluated = new Set<number>();
-  const unitsWithNok = new Set<number>();
-  for (const evaluation of computation.evaluations) {
-    if (evaluation.result === "PENDING") continue;
-    unitsEvaluated.add(evaluation.sample_no);
-    if (evaluation.result === "NOK") unitsWithNok.add(evaluation.sample_no);
-  }
-  const sampled = Math.min(unitsEvaluated.size, population > 0 ? population : unitsEvaluated.size);
-  const conformingSamples = Math.max(0, sampled - unitsWithNok.size);
-
-  // L'extrapolation à la population n'est jamais implicite : quand le plan est
-  // en échantillonnage, la quantité conforme reste la quantité réellement
-  // contrôlée, sauf verdict CONFORME sur la totalité de la population.
-  const controlled =
-    computation.verdict === "CONFORME" && sampled > 0 && population > 0 ? population : sampled;
-  const conforming =
-    computation.verdict === "CONFORME"
-      ? controlled
-      : computation.verdict === "NON_CONFORME"
-        ? 0
-        : conformingSamples;
+  const { controlled, conforming } = computeExecutionQuantities(computation, population);
 
   const ledger: QuantityLedger = { ...rowToLedger(row), controlled, conforming };
   if (population > 0) assertQuantityLedger(ledger);
@@ -2037,7 +2017,7 @@ export async function repoPreviewVerdict(id: string): Promise<VerdictPreview | n
     missing: computation.missing,
     blocking: computation.blocking,
     ledger,
-    releasable_qty: population > 0 ? releasableQty(ledger) : 0,
+    releasable_qty: population > 0 ? executionReleasableQty(ledger, computation.verdict) : 0,
     preview_sha256: qualitySha256(payload),
   };
 }
