@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-11 — Single authorized metrology validator (#1179)
+
+- Apply the requested ordinary workflow: an authorized user may record measurements and validate that execution's verdict. Keep verdict-validation permissions, measurement/certificate requirements, fresh previews, frozen records and actor audit.
+- Preserve explicit stricter policies, exceptional due-date approval and return-from-quarantine rules. No authentication/MFA change, migration or historical validation rewrite.
+- Cover same-author verification/calibration/intervention, a different validator and explicit separation alongside existing metrology guards.
+
 ## 2026-10-11 — Exact supplier PDF unit prices (#1176)
 
 - Preserve sub-cent prices such as 0.025 EUR/mm and show exact quantities without database decimal padding in newly rendered official supplier purchase orders.
