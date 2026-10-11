@@ -16,6 +16,28 @@ export {
 
 type Queryable = Pick<PoolClient, "query">;
 
+/** Reconcile every order represented by the BL, including grouped deliveries. */
+export async function syncCommandesAfterShipment(
+  tx: Queryable,
+  deliveryId: string,
+  userId: number
+): Promise<void> {
+  const orders = await tx.query<{ commande_id: number }>(
+    `SELECT DISTINCT COALESCE(order_line.commande_id, delivery.commande_id)::int AS commande_id
+     FROM public.bon_livraison delivery
+     LEFT JOIN public.bon_livraison_ligne delivery_line ON delivery_line.bon_livraison_id = delivery.id
+     LEFT JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
+     WHERE delivery.id = $1::uuid
+       AND COALESCE(order_line.commande_id, delivery.commande_id) IS NOT NULL
+     ORDER BY commande_id`,
+    [deliveryId]
+  );
+  // Stable order matches invoice synchronization and serializes partial shipments.
+  for (const row of orders.rows) {
+    await syncCommandeAfterShipment(tx, Number(row.commande_id), userId);
+  }
+}
+
 export async function syncCommandeAfterShipment(
   tx: Queryable,
   commandeId: number,
@@ -96,6 +118,10 @@ export async function syncCommandeAfterInvoiceIssue(
   const state = await loadCommandeFulfillmentState(tx, commandeId);
   if (!state.fully_invoiced) return { advanced: false, status: null };
 
+  // Older shipment paths could omit LIVRE. Reconcile the evidenced delivery
+  // through the same guarded transition before invoicing; never skip earlier gates.
+  await syncCommandeAfterShipment(tx, commandeId, userId);
+
   const transition = await repoEnsureCommandeWorkflowStatus({
     tx,
     commande_id: commandeId,
@@ -140,18 +166,19 @@ export async function listIssuedInvoiceCommandeIds(
 ): Promise<number[]> {
   const result = await tx.query<{ commande_id: number }>(
     `
-      SELECT DISTINCT delivery.commande_id::int AS commande_id
+      SELECT DISTINCT COALESCE(order_line.commande_id, delivery.commande_id)::int AS commande_id
       FROM public.facture_source_allocations source
       JOIN public.bon_livraison_ligne delivery_line
         ON source.source_type = 'DELIVERY_LINE'
        AND source.source_line_id = delivery_line.id::text
       JOIN public.bon_livraison delivery
         ON delivery.id = delivery_line.bon_livraison_id
+      LEFT JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
       JOIN public.commande_client commande
-        ON commande.id = delivery.commande_id
+        ON commande.id = COALESCE(order_line.commande_id, delivery.commande_id)
       WHERE source.facture_id = $1
         AND source.allocation_status = 'CONSUMED'
-        AND delivery.commande_id IS NOT NULL
+        AND COALESCE(order_line.commande_id, delivery.commande_id) IS NOT NULL
         AND upper(COALESCE(commande.order_type, '')) <> 'INTERNE'
       ORDER BY commande_id
     `,
