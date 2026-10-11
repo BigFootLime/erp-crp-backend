@@ -13,6 +13,7 @@ import type { CentralSimulationInput, CentralUnplanInput } from "../validators/p
 import type { CentralSnapshot, ScheduleResult } from "../types/planning-central.types";
 import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "../../production/repository/production-preparation.repository";
 import {scopeClientUrgency,assertUrgencyResult} from './client-urgency-scope';
+import { isPendingRecoveryPlanningTx } from '../repository/recovery-planning-permission.repository';
 
 const levels: CentralSnapshot["activation"][] = ["OBSERVE","READ","SIMULATE","COMMIT","EXECUTE","LEARN"];
 function commandResult(result:ScheduleResult):ScheduleResult {
@@ -39,7 +40,7 @@ export async function unplanCentral(input: CentralUnplanInput, audit: AuditConte
       if(task.source==="OPERATION") {
         if(task.external){
           const frozen=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
-          if(frozen.rows[0]?.ar_sent_at)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+          if(frozen.rows[0]?.ar_sent_at&&!await isPendingRecoveryPlanningTx(tx,task.ofId))throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
         }
         const events=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
         if((!events.rows.length&&!task.external) || events.rows.some(event=>event.status!=="PLANNED"))
@@ -177,7 +178,7 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
       if(task.external){
         if(task.external.packages.some(p=>p.departedAt))throw stale();
         const orderLock=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
-        if(orderLock.rows[0]?.ar_sent_at&&!input.urgency)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        if(orderLock.rows[0]?.ar_sent_at&&!input.urgency&&!await isPendingRecoveryPlanningTx(tx,task.ofId))throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
         const lock=await tx.query('SELECT id FROM public.of_operations WHERE id=$1::uuid FOR UPDATE',[task.operationId]);
         if(!lock.rowCount)throw stale();
         const legacy=await tx.query<{id:string;status:string}>("SELECT id::text,status::text FROM public.planning_events WHERE of_operation_id=$1::uuid AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE",[task.operationId]);
@@ -194,7 +195,7 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
         await assertResourceSchedulable(tx,resource);
         await assertOperationResourceCompatible({tx,of_operation_id:task.operationId,resource});
         const lock=await tx.query("SELECT cc.ar_sent_at FROM public.ordres_fabrication o LEFT JOIN public.commande_client cc ON cc.id=o.commande_id WHERE o.id=$1 FOR UPDATE OF o",[task.ofId]);
-        if(lock.rows[0]?.ar_sent_at&&!input.urgency)throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
+        if(lock.rows[0]?.ar_sent_at&&!input.urgency&&!await isPendingRecoveryPlanningTx(tx,task.ofId))throw new HttpError(409,"PLANNING_LOCKED_AFTER_AR","Le dossier figé nécessite le parcours de révision de l'OF.");
         const existing=await tx.query<{id:string}>(`SELECT id FROM public.planning_events WHERE of_operation_id=$1::uuid
           AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE`,[task.operationId]);
         if(existing.rows.length>1)throw new HttpError(409,"PLANNING_SPLIT_OPERATION","Cette opération possède plusieurs créneaux à rapprocher.");

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar } from "../controllers/planning-central.controller";
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
 import { masterPlan } from '../controllers/planning-master-plan.controller';
+import { approveRecovery, previewRecoveryApproval } from '../controllers/urgency-approval.controller';
 const router=Router();
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
@@ -15,4 +16,6 @@ router.post("/preview",requirePlanningCapability("manage_schedule"),centralPrevi
 router.get("/simulations/:id",requirePlanningCapability("manage_schedule"),centralGetSimulation);
 router.post("/simulations/:id/apply",requirePlanningCapability("manage_schedule"),centralApply);
 router.post("/unplan",requirePlanningCapability("manage_schedule"),centralUnplan);
+router.get('/urgency-requests/:requestId/approval-preview',requirePlanningCapability('manage_schedule'),previewRecoveryApproval);
+router.post('/urgency-requests/:requestId/approve',requirePlanningCapability('manage_schedule'),approveRecovery);
 export default router;

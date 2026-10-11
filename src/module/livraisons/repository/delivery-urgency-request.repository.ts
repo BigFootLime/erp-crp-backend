@@ -15,7 +15,7 @@ import { readDeliveryUrgencyPlan } from './delivery-urgency.repository';
 
 type Db = Pick<PoolClient, 'query'>;
 type RequestRow = {
-  id: string; beneficiary_allocation_id: number; status: 'WAITING_PLANNER' | 'CANCELLED';
+  id: string; beneficiary_allocation_id: number; status: 'WAITING_PLANNER' | 'APPROVED' | 'CANCELLED';
   version: number; quantity: string; reason: string; created_at: string;
   cancelled_at: string | null; cancellation_reason: string | null;
 };
@@ -68,7 +68,7 @@ export async function repoCreateDeliveryUrgencyRequest(args: {
     const initial = await readDeliveryUrgencyPlan(tx, args.allocationId, args.body.quantity);
     await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`delivery-urgency-client:${initial.context.client_id}`]);
     const pending = (await tx.query<{ id: string }>(`SELECT id::text FROM public.delivery_urgency_requests
-      WHERE beneficiary_allocation_id=$1 AND status='WAITING_PLANNER'`, [args.allocationId])).rows[0];
+      WHERE beneficiary_allocation_id=$1 AND status IN('WAITING_PLANNER','APPROVED')`, [args.allocationId])).rows[0];
     if (pending) throw new HttpError(409, 'URGENCY_ALREADY_PENDING', 'Une demande est déjà en attente pour cette affaire. Ouvrez son suivi.');
     if (initial.response.preview_hash !== args.body.preview_hash)
       throw new HttpError(409, 'URGENCY_PREVIEW_CHANGED', 'Les réservations ou les affaires ont changé. Actualisez la proposition.');

@@ -30,6 +30,9 @@ INSERT INTO urgency_1033_fixture.ordres_fabrication VALUES
     '{"selected_version_id":"bbbbbbbb-0000-4000-8000-000000000001"}'),
   (102,2,2,20,'aaaaaaaa-0000-4000-8000-000000000001','client1','BROUILLON',2,NULL,
     '{"selected_version_id":"bbbbbbbb-0000-4000-8000-000000000001"}');
+ALTER TABLE urgency_1033_fixture.ordres_fabrication ADD COLUMN root_of_id bigint;
+INSERT INTO urgency_1033_fixture.ordres_fabrication(id,root_of_id,statut) VALUES
+  (103,NULL,'BROUILLON'),(104,102,'BROUILLON'),(105,102,'ANNULE');
 GRANT USAGE ON SCHEMA urgency_1033_fixture TO cerp_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA urgency_1033_fixture TO cerp_app;
 -- The source identity trigger acquires a row lock as the application does.

@@ -17,14 +17,16 @@ export type DeliveryUrgencyDonor = UrgencyDonor & {
   piece_technique_id: string; technical_version_id: string;
 };
 
-export async function readDeliveryUrgencyPlan(tx: Pick<PoolClient, 'query'>, allocationId: number, requestedQuantity?: string) {
+export async function readDeliveryUrgencyPlan(tx: Pick<PoolClient, 'query'>, allocationId: number, requestedQuantity?: string,
+  existing?: { requestId: string; sourceReservationIds: string[] }) {
     const recovery = await readDeliveryStockRecoveryPlan(tx, allocationId);
     const { context, preview } = recovery;
     if (preview.lane_status !== 'ACTIVE')
       throw new HttpError(409, 'URGENCY_LANES_NOT_CONFIGURED', 'Configurez les trois pistes de stock avant une demande de prélèvement urgent.');
     const today = (await tx.query<{ day: string }>("SELECT (now() AT TIME ZONE 'Europe/Paris')::date::text AS day")).rows[0].day;
     const raw = (await tx.query<DeliveryUrgencyDonor>(DELIVERY_URGENCY_DONORS_SQL,
-      [context.client_id, context.article_id, context.technical_version_id, allocationId])).rows;
+      [context.client_id, context.article_id, context.technical_version_id, allocationId,
+        existing?.requestId ?? null, existing?.sourceReservationIds ?? null])).rows;
     const qualityByLot = new Map<string, Awaited<ReturnType<typeof readOperationalLotQualityEligibility>>>();
     const donors: DeliveryUrgencyDonor[] = [];
     for (const row of raw.slice(0, 200)) {

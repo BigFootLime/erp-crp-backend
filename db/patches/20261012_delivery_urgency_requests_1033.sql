@@ -4,7 +4,7 @@ SET LOCAL lock_timeout='5s';
 CREATE TABLE public.delivery_urgency_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   beneficiary_allocation_id bigint NOT NULL REFERENCES public.commande_ligne_affaire_allocation(id) ON DELETE RESTRICT,
-  status text NOT NULL DEFAULT 'WAITING_PLANNER' CHECK(status IN ('WAITING_PLANNER','CANCELLED')),
+  status text NOT NULL DEFAULT 'WAITING_PLANNER' CHECK(status IN ('WAITING_PLANNER','APPROVED','CANCELLED')),
   version integer NOT NULL DEFAULT 1 CHECK(version>0),
   quantity numeric(18,3) NOT NULL CHECK(quantity>0 AND quantity<1000000000),
   reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 10 AND 1000),
@@ -17,13 +17,31 @@ CREATE TABLE public.delivery_urgency_requests (
   cancelled_by integer REFERENCES public.users(id) ON DELETE RESTRICT,
   cancelled_at timestamptz,
   cancellation_reason text,
+  approved_id uuid,
   UNIQUE(created_by,request_key),
-  CHECK((status='WAITING_PLANNER' AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL)
+  CHECK((status IN ('WAITING_PLANNER','APPROVED') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL)
     OR (status='CANCELLED' AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL
-      AND length(btrim(cancellation_reason)) BETWEEN 10 AND 1000))
+      AND length(btrim(cancellation_reason)) BETWEEN 10 AND 1000)),
+  CHECK((status='APPROVED')=(approved_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX delivery_urgency_active_beneficiary_idx
-  ON public.delivery_urgency_requests(beneficiary_allocation_id) WHERE status='WAITING_PLANNER';
+  ON public.delivery_urgency_requests(beneficiary_allocation_id) WHERE status IN ('WAITING_PLANNER','APPROVED');
+CREATE TABLE public.delivery_urgency_approvals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid NOT NULL REFERENCES public.delivery_urgency_requests(id) ON DELETE RESTRICT,
+  request_version integer NOT NULL CHECK(request_version>0),
+  preview_hash text NOT NULL CHECK(preview_hash ~ '^[0-9a-f]{64}$'),
+  planning_revision bigint NOT NULL,
+  evidence jsonb NOT NULL CHECK(jsonb_typeof(evidence)='object'),
+  response jsonb NOT NULL CHECK(jsonb_typeof(response)='object'),
+  request_key uuid NOT NULL,
+  request_hash text NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+  created_by integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(id,request_id), UNIQUE(request_id,request_version), UNIQUE(created_by,request_key)
+);
+ALTER TABLE public.delivery_urgency_requests ADD CONSTRAINT delivery_urgency_approval_owner
+  FOREIGN KEY(approved_id,id) REFERENCES public.delivery_urgency_approvals(id,request_id) ON DELETE RESTRICT;
 CREATE TABLE public.delivery_urgency_recoveries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   request_id uuid NOT NULL REFERENCES public.delivery_urgency_requests(id) ON DELETE RESTRICT,
@@ -50,9 +68,14 @@ BEGIN
     NEW.request_key,NEW.request_hash,NEW.created_by,NEW.created_at) IS DISTINCT FROM
     (OLD.id,OLD.beneficiary_allocation_id,OLD.quantity,OLD.reason,OLD.preview_hash,OLD.snapshot,
     OLD.request_key,OLD.request_hash,OLD.created_by,OLD.created_at)
-    OR OLD.status<>'WAITING_PLANNER' OR NEW.status<>'CANCELLED' OR NEW.version<>OLD.version+1 THEN
-    RAISE EXCEPTION 'Retain urgency identity and evidence; only explicit cancellation is enabled' USING ERRCODE='55000';
+    OR NEW.version<>OLD.version+1 THEN
+    RAISE EXCEPTION 'Retain urgency identity, version and evidence' USING ERRCODE='55000';
   END IF;
+  IF OLD.status='WAITING_PLANNER' AND NEW.status='CANCELLED' AND NEW.approved_id IS NULL THEN RETURN NEW; END IF;
+  IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='APPROVED'
+    AND EXISTS(SELECT 1 FROM public.delivery_urgency_approvals approval WHERE approval.id=NEW.approved_id
+      AND approval.request_id=OLD.id AND approval.request_version=OLD.version) THEN RETURN NEW; END IF;
+  RAISE EXCEPTION 'Explicit approval or draft cancellation required' USING ERRCODE='55000';
   RETURN NEW;
 END $$;
 CREATE TRIGGER delivery_urgency_request_identity BEFORE UPDATE OR DELETE ON public.delivery_urgency_requests
@@ -61,6 +84,19 @@ CREATE TRIGGER delivery_urgency_recoveries_immutable BEFORE UPDATE OR DELETE ON 
   FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
 CREATE TRIGGER delivery_urgency_sources_immutable BEFORE UPDATE OR DELETE ON public.delivery_urgency_sources
   FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
+CREATE TRIGGER delivery_urgency_approvals_immutable BEFORE UPDATE OR DELETE ON public.delivery_urgency_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
+CREATE FUNCTION public.fn_delivery_urgency_approval_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE request record;
+BEGIN
+  SELECT * INTO request FROM public.delivery_urgency_requests WHERE id=NEW.request_id FOR UPDATE;
+  IF request.status NOT IN ('WAITING_PLANNER','APPROVED') OR request.version IS DISTINCT FROM NEW.request_version THEN
+    RAISE EXCEPTION 'Approval requires the current active request version' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER delivery_urgency_approval_identity BEFORE INSERT ON public.delivery_urgency_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_approval_identity_1033();
 CREATE FUNCTION public.fn_delivery_urgency_recovery_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE beneficiary record; donor record; producer record;
 BEGIN
@@ -98,7 +134,7 @@ BEGIN
   SELECT COALESCE(sum(existing.quantity),0) INTO pending FROM public.delivery_urgency_sources existing
     JOIN public.delivery_urgency_recoveries recovery ON recovery.id=existing.recovery_id
     JOIN public.delivery_urgency_requests request ON request.id=recovery.request_id
-    WHERE existing.donor_reservation_id=NEW.donor_reservation_id AND request.status='WAITING_PLANNER';
+    WHERE existing.donor_reservation_id=NEW.donor_reservation_id AND request.status IN ('WAITING_PLANNER','APPROVED');
   IF source.allocation_id IS DISTINCT FROM donor_allocation OR source.status IS DISTINCT FROM 'ACTIVE'
     OR source.lane IS DISTINCT FROM 'DELIVERY' OR source.remaining IS NULL OR NEW.quantity+pending>source.remaining THEN
     RAISE EXCEPTION 'Urgency source must belong to the protected donor delivery reservation' USING ERRCODE='23514';
@@ -129,11 +165,11 @@ CREATE CONSTRAINT TRIGGER delivery_urgency_recovery_quantities AFTER INSERT ON p
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_quantities_1033();
 CREATE CONSTRAINT TRIGGER delivery_urgency_source_quantities AFTER INSERT ON public.delivery_urgency_sources
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_quantities_1033();
-REVOKE ALL ON public.delivery_urgency_requests,public.delivery_urgency_recoveries,public.delivery_urgency_sources FROM PUBLIC,cerp_app;
+REVOKE ALL ON public.delivery_urgency_requests,public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals FROM PUBLIC,cerp_app;
 GRANT SELECT,INSERT,UPDATE ON public.delivery_urgency_requests TO cerp_app;
-GRANT SELECT,INSERT ON public.delivery_urgency_recoveries,public.delivery_urgency_sources TO cerp_app;
+GRANT SELECT,INSERT ON public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals TO cerp_app;
 REVOKE ALL ON FUNCTION public.fn_delivery_urgency_request_identity_1033(),public.fn_delivery_urgency_recovery_identity_1033(),
-  public.fn_delivery_urgency_source_identity_1033(),public.fn_delivery_urgency_quantities_1033() FROM PUBLIC;
+  public.fn_delivery_urgency_source_identity_1033(),public.fn_delivery_urgency_quantities_1033(),public.fn_delivery_urgency_approval_identity_1033() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.fn_delivery_urgency_request_identity_1033(),public.fn_delivery_urgency_recovery_identity_1033(),
-  public.fn_delivery_urgency_source_identity_1033(),public.fn_delivery_urgency_quantities_1033() TO cerp_app;
+  public.fn_delivery_urgency_source_identity_1033(),public.fn_delivery_urgency_quantities_1033(),public.fn_delivery_urgency_approval_identity_1033() TO cerp_app;
 COMMIT;

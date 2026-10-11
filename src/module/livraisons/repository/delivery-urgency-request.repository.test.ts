@@ -65,7 +65,7 @@ describe('durable urgency recovery requests',()=>{
   });
   it('keeps the original request when another request for the same affair is pending',async()=>{
     mocks.query.mockImplementation(async(sql:string,values:unknown[]=[])=>
-      sql.includes("status='WAITING_PLANNER'")?{rows:[{id:'pending'}]}:defaultQuery(sql,values));
+      sql.includes("status IN('WAITING_PLANNER','APPROVED')")?{rows:[{id:'pending'}]}:defaultQuery(sql,values));
     await expect(repoCreateDeliveryUrgencyRequest(args)).rejects.toMatchObject({code:'URGENCY_ALREADY_PENDING'});
     expect(mocks.generate).not.toHaveBeenCalled();
   });

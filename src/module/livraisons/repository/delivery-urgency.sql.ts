@@ -15,7 +15,8 @@ SELECT reservation.id::text AS reservation_id, reservation.version AS reservatio
   COALESCE((SELECT sum(source.quantity) FROM public.delivery_urgency_sources source
     JOIN public.delivery_urgency_recoveries recovery ON recovery.id=source.recovery_id
     JOIN public.delivery_urgency_requests request ON request.id=recovery.request_id
-    WHERE source.donor_reservation_id=reservation.id AND request.status='WAITING_PLANNER'),0)::text AS pending_quantity,
+    WHERE source.donor_reservation_id=reservation.id AND request.status IN('WAITING_PLANNER','APPROVED')
+      AND ($5::uuid IS NULL OR request.id<>$5::uuid)),0)::text AS pending_quantity,
   GREATEST(reservation.qty_prepared,COALESCE((SELECT sum(bl_alloc.quantite-bl_alloc.qty_consumed)
     FROM public.bon_livraison_ligne_allocations bl_alloc
     JOIN public.bon_livraison_ligne bl_line ON bl_line.id=bl_alloc.bon_livraison_ligne_id
@@ -53,6 +54,7 @@ JOIN public.warehouses warehouse ON warehouse.id=level.warehouse_id
 JOIN public.emplacements emplacement ON emplacement.location_id=location.id
 JOIN public.magasins magasin ON magasin.id=emplacement.magasin_id
 WHERE command.client_id::text=$1 AND level.article_id=$2::uuid AND line.article_id=$2::uuid
+  AND ($6::uuid[] IS NULL OR reservation.id=ANY($6::uuid[]))
   AND allocation.id<>$4::bigint AND command.order_type<>'INTERNE'
   AND affair.statut::text NOT IN('ANNULE','ANNULEE','CANCELLED')
   AND COALESCE((SELECT history.nouveau_statut::text FROM public.commande_historique history

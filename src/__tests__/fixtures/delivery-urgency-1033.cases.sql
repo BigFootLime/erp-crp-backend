@@ -1,6 +1,6 @@
 SET LOCAL ROLE cerp_app;
 DO $$
-DECLARE request_uuid uuid:=gen_random_uuid(); recovery_uuid uuid:=gen_random_uuid(); blocked boolean;
+DECLARE request_uuid uuid:=gen_random_uuid(); recovery_uuid uuid:=gen_random_uuid(); approval_uuid uuid:=gen_random_uuid(); blocked boolean;
 BEGIN
   INSERT INTO urgency_1033_fixture.delivery_urgency_requests
     (id,beneficiary_allocation_id,quantity,reason,preview_hash,snapshot,request_key,request_hash,created_by)
@@ -69,5 +69,58 @@ BEGIN
   IF (SELECT qty_reserved FROM urgency_1033_fixture.stock_reservations WHERE id='dddddddd-0000-4000-8000-000000000001')<>4
     THEN RAISE EXCEPTION 'Donor reservation changed during preparation'; END IF;
   RAISE NOTICE 'URGENCY_CONSTRAINT_FIXTURE_PASS';
+
+  SET CONSTRAINTS ALL DEFERRED;
+  request_uuid:=gen_random_uuid(); recovery_uuid:=gen_random_uuid();
+  INSERT INTO urgency_1033_fixture.delivery_urgency_requests
+    (id,beneficiary_allocation_id,quantity,reason,preview_hash,snapshot,request_key,request_hash,created_by)
+    VALUES(request_uuid,1,2,'Fixture demande à approuver',repeat('a',64),'{}',gen_random_uuid(),repeat('b',64),1);
+  INSERT INTO urgency_1033_fixture.delivery_urgency_recoveries
+    (id,request_id,donor_allocation_id,recovery_of_id,quantity,protected_due_date,initial_ar_due_date,donor_snapshot)
+    VALUES(recovery_uuid,request_uuid,2,102,2,current_date+30,current_date+30,'{}');
+  INSERT INTO urgency_1033_fixture.delivery_urgency_sources(recovery_id,donor_reservation_id,quantity,reservation_snapshot)
+    VALUES(recovery_uuid,'dddddddd-0000-4000-8000-000000000001',2,'{}');
+  SET CONSTRAINTS ALL IMMEDIATE;
+  blocked:=false;
+  BEGIN
+    UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='APPROVED',version=2 WHERE id=request_uuid;
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Approval without evidence accepted'; END IF;
+  blocked:=false;
+  BEGIN
+    INSERT INTO urgency_1033_fixture.delivery_urgency_approvals
+      (request_id,request_version,preview_hash,planning_revision,evidence,response,request_key,request_hash,created_by)
+      VALUES(request_uuid,99,repeat('c',64),7,'{}','{}',gen_random_uuid(),repeat('d',64),1);
+  EXCEPTION WHEN check_violation THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Stale approval accepted'; END IF;
+  INSERT INTO urgency_1033_fixture.delivery_urgency_approvals
+    (id,request_id,request_version,preview_hash,planning_revision,evidence,response,request_key,request_hash,created_by)
+    VALUES(approval_uuid,request_uuid,1,repeat('c',64),7,'{}','{}',gen_random_uuid(),repeat('d',64),1);
+  UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='APPROVED',version=2,approved_id=approval_uuid WHERE id=request_uuid;
+  blocked:=false;
+  BEGIN
+    INSERT INTO urgency_1033_fixture.delivery_urgency_requests
+      (beneficiary_allocation_id,quantity,reason,preview_hash,snapshot,request_key,request_hash,created_by)
+      VALUES(1,2,'Fixture après approbation',repeat('a',64),'{}',gen_random_uuid(),repeat('b',64),1);
+  EXCEPTION WHEN unique_violation THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Approved request no longer protects beneficiary'; END IF;
+  blocked:=false;
+  BEGIN UPDATE urgency_1033_fixture.delivery_urgency_approvals SET evidence='{"changed":true}' WHERE id=approval_uuid;
+  EXCEPTION WHEN insufficient_privilege OR object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Approval history mutable'; END IF;
+  blocked:=false;
+  BEGIN UPDATE urgency_1033_fixture.delivery_urgency_requests SET version=3 WHERE id=request_uuid;
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Old approval reused for a new version'; END IF;
+  approval_uuid:=gen_random_uuid();
+  INSERT INTO urgency_1033_fixture.delivery_urgency_approvals
+    (id,request_id,request_version,preview_hash,planning_revision,evidence,response,request_key,request_hash,created_by)
+    VALUES(approval_uuid,request_uuid,2,repeat('e',64),8,'{}','{}',gen_random_uuid(),repeat('f',64),1);
+  UPDATE urgency_1033_fixture.delivery_urgency_requests SET version=3,approved_id=approval_uuid WHERE id=request_uuid;
+  IF (SELECT count(*) FROM urgency_1033_fixture.delivery_urgency_approvals WHERE request_id=request_uuid)<>2
+    THEN RAISE EXCEPTION 'Previous approval lost during renewal'; END IF;
+  IF (SELECT qty_reserved FROM urgency_1033_fixture.stock_reservations WHERE id='dddddddd-0000-4000-8000-000000000001')<>4
+    THEN RAISE EXCEPTION 'Approval withdrew donor stock'; END IF;
+  RAISE NOTICE 'URGENCY_APPROVAL_FIXTURE_PASS';
 END $$;
 RESET ROLE;
