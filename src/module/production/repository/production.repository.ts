@@ -76,6 +76,7 @@ import { findAssetIdsByStorageKeys } from "../../operational-media/repository/op
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
 import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules } from './production-preparation.repository';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx} from './operation-readiness.repository';
+import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
 
 export type AuditContext = {
   user_id: number;
@@ -292,6 +293,7 @@ export async function repoReleaseOrdreFabrication(params: { id: number; body: Re
     const of = locked.rows[0];
     if (!of) throw new HttpError(404, "OF_NOT_FOUND", "Ordre de fabrication introuvable.");
     if (!["BROUILLON", "PLANIFIE"].includes(of.statut)) throw new HttpError(409, "OF_RELEASE_INVALID_STATE", "Seul un OF non démarré peut être libéré.", { statut: of.statut });
+    await assertUrgencyRecoveryStartTx(client,params.id);
     if (params.body.expected_updated_at && of.updated_at !== params.body.expected_updated_at) throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié par une autre session. Rechargez la fiche avant de libérer.");
     // Freeze every reservation row used as release evidence until the decision
     // and OF transition commit. Concurrent release/consumption must wait.

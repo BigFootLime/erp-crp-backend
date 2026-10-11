@@ -35,7 +35,7 @@ type Candidate = RecoveryStockCandidate & {
 const num = (value: string) => Number(value);
 function conflict(code: string, message: string): never { throw new HttpError(409, code, message); }
 
-async function readPlan(tx: Db, allocationId: number) {
+export async function readDeliveryStockRecoveryPlan(tx: Db, allocationId: number) {
   const context = (await tx.query<Context>(DELIVERY_RECOVERY_CONTEXT_SQL, [allocationId])).rows[0];
   if (!context) throw new HttpError(404, "DELIVERY_ALLOCATION_NOT_FOUND", "L'affaire ou son article technique est introuvable.");
   if (context.piece_client_id !== context.client_id)
@@ -112,7 +112,7 @@ export async function repoPreviewDeliveryStockRecovery(allocationId: number) {
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const result = (await readPlan(tx, allocationId)).preview;
+    const result = (await readDeliveryStockRecoveryPlan(tx, allocationId)).preview;
     await tx.query('COMMIT');
     return result;
   } catch (error) { await tx.query('ROLLBACK'); throw error; }
@@ -130,7 +130,7 @@ export async function repoReserveDeliveryStockRecovery(args: {
       } } });
     if (command.existing) return deliveryStockRecoveryResult.parse({ ...command.existing.result_payload, idempotent_replay: true });
     await lockStockLaneTopology(tx);
-    const initial = await readPlan(tx, args.allocationId);
+    const initial = await readDeliveryStockRecoveryPlan(tx, args.allocationId);
     if (initial.preview.preview_hash !== args.previewHash)
       conflict('DELIVERY_STOCK_PREVIEW_CHANGED', 'Le stock ou l’affaire a changé. Actualisez le contrôle avant de réserver.');
     if (!initial.plan.rows.length)
@@ -169,7 +169,7 @@ export async function repoReserveDeliveryStockRecovery(args: {
       JOIN public.magasins magasin ON magasin.id=emplacement.magasin_id
       WHERE location.id=ANY($1::uuid[]) ORDER BY location.id
       FOR SHARE OF location,warehouse,emplacement,magasin NOWAIT`, [selected.map(r => r.candidate.location_id)]);
-    const current = await readPlan(tx, args.allocationId);
+    const current = await readDeliveryStockRecoveryPlan(tx, args.allocationId);
     if (current.preview.preview_hash !== args.previewHash)
       conflict('DELIVERY_STOCK_PREVIEW_CHANGED', 'Le stock ou l’affaire a changé. Actualisez le contrôle avant de réserver.');
     const reservationIds: string[] = [];

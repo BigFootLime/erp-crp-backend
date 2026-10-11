@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express"
 import { listDeliveryAffairs } from "../controllers/delivery-affairs.controller"
 import { previewDeliveryStockRecovery, reserveDeliveryStockRecovery } from "../controllers/delivery-stock-recovery.controller"
+import { previewDeliveryUrgency, createDeliveryUrgencyRequest, listDeliveryUrgencyRequests, cancelDeliveryUrgencyRequest } from "../controllers/delivery-urgency.controller"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
@@ -102,6 +103,10 @@ const requireStockCorrectionPermission = requireLivraisonCapability("allocate")
 router.get("/", requireLivraisonCapability("read"), listLivraisons)
 router.get("/affaires", requireLivraisonCapability("read"), listDeliveryAffairs)
 router.get("/affaires/allocations/:allocationId/reservation-preview", requireLivraisonCapability("read"), previewDeliveryStockRecovery)
+router.get("/affaires/allocations/:allocationId/urgency-preview", requireLivraisonCapability("read"), previewDeliveryUrgency)
+router.get("/affaires/allocations/:allocationId/urgency-requests", requireLivraisonCapability("read"), listDeliveryUrgencyRequests)
+router.post("/affaires/allocations/:allocationId/urgency-requests", requireLivraisonCapability("allocate"), createDeliveryUrgencyRequest)
+router.post("/urgency-requests/:requestId/cancel", requireLivraisonCapability("allocate"), cancelDeliveryUrgencyRequest)
 router.post("/affaires/allocations/:allocationId/reserve-stock", requireLivraisonCapability("allocate"), reserveDeliveryStockRecovery)
 router.post("/", requireLivraisonCapability("prepare"), createLivraison)
 router.post(

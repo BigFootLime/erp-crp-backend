@@ -10,6 +10,7 @@ import {assertOperationalLotQualityEligibility} from "../../qualite/repository/q
 import {readOfComponentCoverageTx} from './of-component-coverage.repository';
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
+import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
 
 type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
@@ -124,6 +125,7 @@ export async function getOperationReadiness(ofId:number){
 export async function assertMaterialOperationStartTx(tx:PoolClient,ofId:number,operationId:string|null|undefined,expectedVersion?:string,machineId?:string|null,acknowledgedWarnings?:string[]){
   if(!await usesOperationReadiness(tx,ofId))return null;
   await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
+  await assertUrgencyRecoveryStartTx(tx,ofId);
   await tx.query('SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE',[ofId]);
   if(!operationId)throw new HttpError(409,'OPERATION_REQUIRED','Choisissez l’opération à démarrer dans le dossier OF.');
   const reservations=(await tx.query<{lot_id:string}>(`SELECT DISTINCT r.lot_id::text FROM public.stock_reservations r
