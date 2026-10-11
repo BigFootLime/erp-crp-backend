@@ -1,3 +1,5 @@
+import { applicableBomScopeSql } from "./bom-version-scope.sql";
+
 /** One SQL statement gives a coherent view of the selected technical revision. */
 export const TECHNICAL_SHEET_SOURCE_SQL = `
 SELECT jsonb_build_object(
@@ -27,10 +29,7 @@ SELECT jsonb_build_object(
     LEFT JOIN public.pieces_techniques child ON child.id=n.child_piece_technique_id
     LEFT JOIN public.piece_technique_versions cv ON cv.id=n.child_piece_technique_version_id
     LEFT JOIN public.articles a ON a.id=n.child_article_id
-    WHERE n.parent_piece_technique_id=p.id AND (n.parent_piece_technique_version_id=v.id OR
-      (n.parent_piece_technique_version_id IS NULL AND NOT EXISTS(
-        SELECT 1 FROM public.pieces_techniques_nomenclature scoped WHERE scoped.parent_piece_technique_id=p.id
-          AND scoped.parent_piece_technique_version_id IS NOT NULL)))), '[]'::jsonb),
+    WHERE ${applicableBomScopeSql('n', 'p.id', 'v.id')}), '[]'::jsonb),
   'achats',COALESCE((SELECT jsonb_agg(jsonb_build_object('phase',pa.phase,'type',pa.type_achat,
     'reference',COALESCE(a.code,pa.nom),'designation',pa.designation,'qty',pa.quantite,
     'pieces',pa.quantite_pieces,'longueur_mm',pa.longueur_mm,'brut_mm',pa.quantite_brut_mm,

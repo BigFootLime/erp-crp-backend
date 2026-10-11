@@ -3,6 +3,7 @@
 // (src/module/production/domain/of-generation.ts), le même que le lancement de
 // commande #168 : aucun second moteur.
 
+import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
 import crypto from "node:crypto";
 
 import pool from "../../../config/database";
@@ -420,8 +421,7 @@ export async function repoGetOfTechnicalSnapshot(params: { of_id: number }): Pro
              ), 0) AS operations_count,
              COALESCE((
                SELECT count(*)::int FROM public.pieces_techniques_nomenclature bom
-               WHERE bom.parent_piece_technique_id = $1::uuid
-                 AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
+               WHERE ${applicableBomScopeSql('bom', '$1::uuid', 'v.id')}
              ), 0) AS nomenclature_count
       FROM public.piece_technique_versions v
       LEFT JOIN public.gammes g ON g.piece_technique_version_id = v.id AND g.is_current = true

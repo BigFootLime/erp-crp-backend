@@ -18,6 +18,7 @@ import { PREPARATION_RULES_VERSION } from './preparation-rules';
 // Un composant présent dans plusieurs branches produit UN OF PAR OCCURRENCE
 // (clé = chemin technique complet). Aucun regroupement implicite.
 
+import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
 import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
@@ -124,7 +125,7 @@ export async function loadFabricationGenerationTree(
         ) av ON true
         WHERE tree.level < $2::int
           AND NOT tree.is_cycle
-          AND (n.parent_piece_technique_version_id IS NULL OR n.parent_piece_technique_version_id = av.id)
+          AND ${applicableBomScopeSql('n', 'tree.piece_technique_id', 'av.id')}
       )
       SELECT
         array_to_string(path_ids::text[], '/') AS key,
@@ -497,8 +498,7 @@ export async function loadApplicableTechnicalSnapshot(
             'repere', bom.repere
           ) ORDER BY bom.rang, bom.id)
           FROM public.pieces_techniques_nomenclature bom
-          WHERE bom.parent_piece_technique_id = pt.id
-            AND (bom.parent_piece_technique_version_id = v.id OR bom.parent_piece_technique_version_id IS NULL)
+          WHERE ${applicableBomScopeSql('bom', 'pt.id', 'v.id')}
         ), '[]'::jsonb),
         'achats', COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
