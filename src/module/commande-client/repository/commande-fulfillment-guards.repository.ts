@@ -156,13 +156,51 @@ export async function assertCommandeQualityReleased(tx: Queryable, commandeId: n
           AND control.delivery_allocation_id IS NOT NULL
           AND decision.object_type = control.source_type
           AND decision.object_id = control.source_id
-      ), released AS (
+      ), legacy_released AS (
         SELECT of_id AS object_id,
           COALESCE(SUM(qty) FILTER (
             WHERE decision IN ('FULL','PARTIAL') AND verdict IN ('CONFORME','PARTIEL')
           ), 0)::numeric AS qty_released
         FROM release_evidence
         GROUP BY of_id
+      ), operation_released AS (
+        SELECT control.of_id::text AS object_id, operation.id,
+               MAX(decision.qty)::numeric AS qty_released
+        FROM public.quality_release_decision decision
+        JOIN public.quality_control control ON control.id = decision.quality_control_id
+        JOIN public.of_operations operation
+          ON operation.id::text = control.source_id AND operation.of_id = control.of_id
+        WHERE control.of_id IN (SELECT id FROM active_of)
+          AND control.source_type = 'OF_OPERATION' AND control.trigger_type = 'FINAL'
+          AND operation.status::text = 'DONE' AND control.validation_date IS NOT NULL
+          AND decision.object_type = control.source_type AND decision.object_id = control.source_id
+          AND decision.decision IN ('FULL','PARTIAL') AND decision.verdict IN ('CONFORME','PARTIEL')
+        GROUP BY control.of_id, operation.id
+      ), output_lot_released AS (
+        SELECT output.of_id::text AS object_id, output.lot_id,
+               LEAST(output.qty_ok, MAX(decision.qty))::numeric AS qty_released
+        FROM public.of_output_lots output
+        JOIN public.quality_control control
+          ON control.source_type = 'LOT' AND control.source_id = output.lot_id::text
+        JOIN public.quality_release_decision decision ON decision.quality_control_id = control.id
+        WHERE output.of_id IN (SELECT id FROM active_of)
+          AND control.trigger_type IN ('RECHECK','LOT_RELEASE')
+          AND control.validation_date IS NOT NULL
+          AND decision.object_type = 'LOT' AND decision.object_id = output.lot_id::text
+          AND decision.decision IN ('FULL','PARTIAL') AND decision.verdict IN ('CONFORME','PARTIEL')
+        GROUP BY output.of_id, output.lot_id, output.qty_ok
+      ), release_channels AS (
+        SELECT object_id, qty_released FROM legacy_released
+        UNION ALL
+        SELECT object_id, MAX(qty_released) FROM operation_released GROUP BY object_id
+        UNION ALL
+        SELECT object_id, SUM(qty_released) FROM output_lot_released GROUP BY object_id
+      ), released AS (
+        -- Final-operation and produced-lot checks cover the same physical pieces.
+        -- Never add their coverage together or reuse a raw-material lot as an output.
+        SELECT object_id, MAX(qty_released)::numeric AS qty_released
+        FROM release_channels
+        GROUP BY object_id
       )
       SELECT
         (SELECT COUNT(*)::int FROM active_of) AS total,
