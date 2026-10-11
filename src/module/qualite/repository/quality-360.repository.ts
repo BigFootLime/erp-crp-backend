@@ -1175,7 +1175,7 @@ export async function repoOfOperationExecutionContext(ofId: number, operationId:
   const plan = planId ? await selectPlanRow(pool, planId) : null;
   if (!plan || !['PUBLISHED', 'ARCHIVED'].includes(plan.status)) throw new HttpError(409, 'QUALITY_OF_PLAN_MISSING', "Aucun plan de contrôle figé. Préparez la fiche d'autocontrôle de cet OF.");
   const pending = (await pool.query<{ id: string; reference: string; population: number }>(`SELECT id::text,reference,qty_population::float8 AS population FROM public.quality_control
-    WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2)
+    WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2::text)
       AND trigger_type=$3 AND plan_id=$4::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`,
     [ofId, operationId, plan.trigger_type, plan.id])).rows[0] ?? null;
   const population = await qualityOfPopulationCeiling(pool, identity);
@@ -1462,7 +1462,7 @@ export async function repoCreateExecution(params: {
     const scopedBody = await resolveQualityOfContext(client, await resolveStockLotContext(client, await resolveLotReleaseAllocation(client, params.body), true), true);
     if(scopedBody.source_type === 'OF_OPERATION') {
       const pending = (await client.query<{id:string;reference:string}>(`SELECT id::text,reference FROM public.quality_control
-        WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2) AND trigger_type=$3
+        WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2::text) AND trigger_type=$3
           AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`, [scopedBody.of_id,scopedBody.operation_id,scopedBody.trigger])).rows[0];
       if (pending) throw new HttpError(409,'QUALITY_OF_CONTROL_PENDING',`Le contrôle ${pending.reference} est déjà ouvert pour cette opération.`, {control_id:pending.id});
     }
