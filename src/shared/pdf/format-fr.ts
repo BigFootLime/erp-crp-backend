@@ -6,7 +6,7 @@
  * s'impriment aussi sur le bon de livraison et l'accuse de reception, qui ne peuvent pas
  * dependre du module facturation.
  *
- * Monetary values are canonicalised to two decimal places at the rendering
+ * Monetary totals are canonicalised to two decimal places at the rendering
  * boundary. Database numerics arrive as strings, but legacy float paths can
  * otherwise leak tails such as `6172.799999999999` into a legal document.
  */
@@ -53,6 +53,26 @@ export function money(amount: string | number, currency: string): string {
   const decimals = (cents % 100n).toString().padStart(2, "0")
   const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, " ")
   return `${sign}${grouped},${decimals} ${symbol}`
+}
+
+/** Exact decimal strings from a frozen snapshot; never convert through a JS float. */
+function exactDecimal(value: string | number, minimumDecimals: number, error: string): string {
+  const match = String(value ?? "").trim().match(/^(-?)(\d+)(?:[.,](\d+))?$/)
+  if (!match) throw new Error(error)
+  const [, sign, whole, decimalPart = ""] = match
+  const integer = BigInt(whole).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ")
+  const decimals = decimalPart.replace(/0+$/, "").padEnd(minimumDecimals, "0")
+  return `${sign}${integer}${decimals ? `,${decimals}` : ""}`
+}
+
+/** Unit prices can be smaller than a cent (e.g. 0,025 EUR/mm). Preserve their precision. */
+export function unitPrice(amount: string | number, currency: string): string {
+  return `${exactDecimal(amount, 2, "PDF_UNIT_PRICE_INVALID")} ${currency === "EUR" ? "€" : currency}`
+}
+
+/** Quantity without storage padding: 3000.000 -> 3 000; 12.500 -> 12,5. */
+export function quantity(value: string | number): string {
+  return exactDecimal(value, 0, "PDF_QUANTITY_INVALID")
 }
 
 /**
