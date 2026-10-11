@@ -3561,7 +3561,11 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
     "r.status = 'ACTIVE'",
     "r.qty_reserved > r.qty_consumed + r.qty_prepared",
     "af.is_principal = false",
-    "af.delivery_readiness_state = 'READY_FOR_BL'",
+    `(af.delivery_readiness_state = 'READY_FOR_BL' OR (
+      af.delivery_readiness_state = 'WAITING_STOCK'
+      AND NOT EXISTS (SELECT 1 FROM public.ordres_fabrication production
+        WHERE production.commande_id=cc.id AND production.statut::text NOT IN ('ANNULE','TERMINE','CLOTURE'))
+    ))`,
   ]
   const values: unknown[] = []
   const push = (value: unknown) => {

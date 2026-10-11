@@ -10,7 +10,11 @@ WITH sources AS (
     command.numero AS commande_numero, command.code_client AS customer_order_reference,
     command.client_id, command.order_type, customer.company_name AS client_name,
     customer.client_code, COALESCE(command.destinataire_id,customer.delivery_address_id)::text AS delivery_address_id,
-    affaire.reference AS affaire_reference, affaire.delivery_readiness_state,
+    affaire.reference AS affaire_reference,
+    CASE WHEN affaire.delivery_readiness_state = 'WAITING_STOCK'
+      AND NOT EXISTS (SELECT 1 FROM public.ordres_fabrication production
+        WHERE production.commande_id=command.id AND production.statut::text NOT IN ('ANNULE','TERMINE','CLOTURE'))
+      THEN 'READY_FOR_BL' ELSE affaire.delivery_readiness_state END AS delivery_readiness_state,
     article.id::text AS article_id, COALESCE(article.code,line.code_piece) AS article_code,
     COALESCE(line.designation,article.designation) AS designation,
     line.unite AS unit, technical.indice AS article_indice,
