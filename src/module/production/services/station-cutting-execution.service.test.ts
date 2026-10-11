@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import type { StationContext } from "../middlewares/station-authorization.middleware";
 import type { AuditContext } from "../repository/production.repository";
 vi.mock("../repository/station-cutting.repository", () => ({
@@ -61,6 +62,13 @@ it("starts canonical time for the identified operator without a selected machine
   expect(call.actor.id).toBe(17);
   expect(call.audit.user_id).toBe(17);
   expect(call.body.machine_id).toBeNull();
+  // Exercise the adapter/SQL contract that rejected the real station START.
+  const sourceConstraint = readFileSync(
+    "db/patches/20260814_planning_execution_intelligence_0021.sql",
+    "utf8",
+  ).match(/CHECK \(source IN \(([^)]+)\)\)/)?.[1];
+  expect(sourceConstraint).toBeDefined();
+  expect(sourceConstraint).toContain(`'${call.source}'`);
   await call.transactionHooks!.beforeEffect({} as never);
   expect(authorizeCuttingTx).toHaveBeenCalledWith(
     {},
