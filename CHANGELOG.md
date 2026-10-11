@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Subcontract documentary evidence ownership (#1200)
+
+- Keep the work package's immutable evidence reference without adding an unsupported GED parent to the source document. Creating a package from a sent supplier order now preserves the plan's canonical ownership and private read policy.
+- Retain canonical line/operation/evidence prerequisites and atomic audit/outbox rollback. Reproduce the deployed registry rejection and cover successful creation and prerequisite refusal. No migration or historical-data change.
+
 ## 2026-10-11 — Exact central planning timestamps (#1197)
 
 - Preserve PostgreSQL Date milliseconds when mapping occupied, forecast and actual intervals. Adjacent cuts now start at the full persisted end instead of overlapping its final fraction of a second and failing the database exclusion constraint.
