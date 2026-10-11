@@ -864,16 +864,26 @@ describe("#229 verdict d'exécution", () => {
     ).not.toThrow();
   });
 
-  it("interdit l'auto-validation, sauf étalonnage externe sans opérateur interne", () => {
+  it.each(["VERIFICATION", "ETALONNAGE", "AJUSTAGE", "REPARATION"] as const)("autorise le même utilisateur habilité à valider %s", (operationType) => {
     expect(() =>
-      assertVerdictSeparation({ operatorUserId: 5, validatorUserId: 5, operationType: "VERIFICATION" })
-    ).toThrowError(/ne peut pas valider lui-même/);
+      assertVerdictSeparation({ operatorUserId: 5, validatorUserId: 5, operationType })
+    ).not.toThrow();
+  });
+
+  it("accepte toujours un autre valideur et les étalonnages externes", () => {
     expect(() =>
       assertVerdictSeparation({ operatorUserId: 5, validatorUserId: 9, operationType: "VERIFICATION" })
     ).not.toThrow();
     expect(() =>
       assertVerdictSeparation({ operatorUserId: null, validatorUserId: 5, operationType: "ETALONNAGE" })
     ).not.toThrow();
+  });
+
+  it("conserve une politique explicite imposant un second valideur", () => {
+    expect(() => assertVerdictSeparation({
+      operatorUserId: 5, validatorUserId: 5, operationType: "VERIFICATION",
+      policy: { allowSelfVerdictValidation: false, allowSelfRelease: false },
+    })).toThrowError(/ne peut pas valider lui-même/);
   });
 
   it("interdit l'auto-libération après intervention", () => {

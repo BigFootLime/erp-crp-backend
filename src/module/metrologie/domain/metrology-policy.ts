@@ -444,13 +444,15 @@ export function assertManualVerdictOverride(input: ManualVerdictOverride): void 
 /* -------------------------------------------------------------------------- */
 
 export type SeparationPolicy = {
-  // Exception explicitement configurée, justifiée et auditée (jamais implicite).
+  // La capacité verdict_validate reste contrôlée par la route authentifiée.
+  // Une politique locale plus stricte peut imposer un second valideur.
   allowSelfVerdictValidation: boolean;
   allowSelfRelease: boolean;
 };
 
 export const DEFAULT_METROLOGY_SEPARATION: SeparationPolicy = {
-  allowSelfVerdictValidation: false,
+  // Workflow métier #1179 : un même utilisateur habilité peut relever et valider.
+  allowSelfVerdictValidation: true,
   allowSelfRelease: false,
 };
 
