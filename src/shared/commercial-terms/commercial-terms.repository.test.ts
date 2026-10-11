@@ -85,7 +85,9 @@ describe("approved general terms issuance", () => {
       termsKind("commande-client"),
       termsKind("commande-fournisseur"),
     ]).toEqual(["CGV", "CGV", "CGA"]);
-    expect(generalTermsReference(terms)).toContain(terms.sha256);
+    expect(generalTermsReference(terms)).toContain(terms.title);
+    expect(generalTermsReference(terms)).toContain(`version ${terms.version_number}`);
+    expect(generalTermsReference(terms)).not.toContain(terms.sha256);
     expect(generalTermsReference(null)).toBeNull();
   });
 });

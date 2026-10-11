@@ -38,7 +38,7 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     entityImage,
     generatedAt: createdAt.toLocaleDateString("fr-FR"),
     flag: blocked ? "CLIENT BLOQUÉ" : undefined,
-    footerNote: `Fiche client GED — v${archive.documentVersion} — SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,
+    footerNote: `Fiche client GED — v${archive.documentVersion}`,
     legalIdentity: issuerIdentityLine(source.issuer) ?? "Croix Rousse Precision",
     legalMentions: issuerLegalMentions(source.issuer),
     title: `Fiche client ${source.reference} — ${source.entity_label}`,

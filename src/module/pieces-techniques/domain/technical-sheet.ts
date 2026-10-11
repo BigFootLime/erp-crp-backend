@@ -198,7 +198,6 @@ export function buildTechnicalSheet(source: unknown) {
             { key: "title", label: "Document" },
             { key: "version", label: "Version GED" },
             { key: "status", label: "Statut" },
-            { key: "sha", label: "SHA-256" },
           ],
           rows: documents.map((d) => ({
             role: d.role,

@@ -37,7 +37,7 @@ export async function renderCurrentTechnicalDocumentPdf({
        generatedAt: created.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" }),
       flag: draft ? "BROUILLON" : obsolete ? "VERSION OBSOLÈTE" : undefined,
       watermark: draft ? "BROUILLON" : obsolete ? "OBSOLÈTE" : undefined,
-      footerNote: `${name} — édition v${archive.documentVersion} — source SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,
+      footerNote: `${name} — édition v${archive.documentVersion}`,
       legalIdentity:
         issuerIdentityLine(source.issuer) ?? "Croix Rousse Precision",
       legalMentions: issuerLegalMentions(source.issuer),
