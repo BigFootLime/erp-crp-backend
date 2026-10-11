@@ -70,12 +70,14 @@ describe("Gammes — opérations", () => {
       "FRAISAGE",
       "DECOUPE",
       "REPRISE",
+      "ASSEMBLAGE",
       "CONTROLE",
       "LAVAGE",
       "SOUS_TRAITANCE",
       "EMBALLAGE",
       "AUTRE",
     ])
+    expect(addGammeOperationSchema.safeParse({ body: { designation: "Montage", type_operation: "ASSEMBLAGE" } }).success).toBe(true)
     expect(addGammeOperationSchema.safeParse({ body: { designation: "x", type_operation: "USINAGE" } }).success).toBe(false)
   })
 
