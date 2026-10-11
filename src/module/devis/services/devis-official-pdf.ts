@@ -56,7 +56,7 @@ export async function renderDevisOfficialPdf({ archive }: { archive: Authoritati
     status: source.status, monogramName: customer, generatedAt: formatDateFR(archivedAt.toISOString()),
     flag: draft ? "INTERNE / BROUILLON" : null,
     watermark: draft ? "INTERNE / BROUILLON" : null,
-    footerNote: draft ? "Instantané interne GED — non opposable" : `Original GED · SHA-256 ${archive.snapshotSha256.slice(0, 16)}…`,
+    footerNote: draft ? "Instantané interne GED — non opposable" : "Original GED",
     legalIdentity: issuerIdentityLine(source.issuer), legalMentions: issuerLegalMentions(source.issuer),
     title: `Devis ${source.number}`, subject: draft ? "Instantané interne CERP — brouillon" : "Devis CERP", creationDate: archivedAt,
   }, (ctx) => {

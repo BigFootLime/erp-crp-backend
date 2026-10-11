@@ -280,7 +280,7 @@ export async function archiveClaimedAuthoritativePdf(
   const existingDocumentId = await repoFindLatestGedDocumentForAuthoritativePdf(tx, item.archive.entityType, item.archive.entityId, item.archive.documentKind);
   const gedPolicy = authoritativePdfGedPolicy(item.archive.documentKind);
   const gedEntityType = authoritativePdfGedEntityType(item.archive.entityType);
-  const changeReason = `Édition ${item.archive.documentVersion}; rendu ${item.archive.renderVersion}; instantané ${item.archive.snapshotSha256}`;
+  const changeReason = `Édition ${item.archive.documentVersion}; rendu ${item.archive.renderVersion}`;
   let documentId: string;
   let versionId: string;
   if (existingDocumentId) {

@@ -78,7 +78,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
     status: source.status, monogramName: supplierName, generatedAt: formatDateFR(archivedAt.toISOString()),
     flag: draft ? "INTERNE / BROUILLON" : null,
     watermark: draft ? "INTERNE / BROUILLON" : null,
-    footerNote: draft ? "Instantané interne GED — non opposable" : `Original GED · SHA-256 ${input.archive.snapshotSha256.slice(0, 16)}…`,
+    footerNote: draft ? "Instantané interne GED — non opposable" : "Original GED",
     legalIdentity: issuerIdentityLine(source.issuer), legalMentions: issuerLegalMentions(source.issuer),
     title: `Bon de commande fournisseur ${source.code}`, subject: draft ? "Instantané interne CERP — brouillon" : "Bon de commande fournisseur CERP",
     creationDate: archivedAt,
@@ -128,7 +128,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
       ctx.notesSection("Appel de commande ouverte",`${contract.reference} · avenant / révision ${contract.revision}\nRéférence d’appel : ${contract.call_id}`);
       const dossiers=[...new Set(contract.technical_sources.map(piece=>`${piece.piece_code??'Pièce'} · plan ${piece.plan_reference??'à compléter'} · indice ${piece.external_index??'à compléter'} · version ${piece.internal_version??'à compléter'}${piece.required_documents.length?'\nDocuments exigés : '+piece.required_documents.map(doc=>doc.label).join(', '):''}`))];
       if(dossiers.length)ctx.notesSection("Dossiers techniques de l’appel",dossiers.join('\n'));
-      if(contract.documents?.length)ctx.notesSection("Documents de référence de l’appel",contract.documents.map(doc=>`${doc.title} · ${doc.original_name}\nSHA-256 : ${doc.sha256}`).join('\n'));
+      if(contract.documents?.length)ctx.notesSection("Documents de référence de l’appel",contract.documents.map(doc=>`${doc.title} · ${doc.original_name}`).join('\n'));
     }
     const terms = generalTermsReference(source.general_terms);
     if (terms) ctx.notesSection("Conditions générales d’achat jointes", terms);

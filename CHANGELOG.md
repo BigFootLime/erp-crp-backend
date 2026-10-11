@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Présentation simplifiée des documents (#1167)
+
+- Retire les empreintes des futurs PDF métier et des motifs GED générés. Conserve les empreintes stockées, les contrôles d'intégrité, l'audit et les alertes de provenance manquante ; aucune réécriture des archives ni migration.
+
 ## 2026-10-11 — Applicable assembly BOM scope (#1161)
 
 - Generation, frozen-source preparation, child reconciliation, commercial component preview and technical sheets share one applicable BOM scope. Preserve legacy-only occurrences; exclude other indices once a piece has version-scoped definitions. Keep frozen/engaged orders and stock guards intact. No migration or historical rewrite.

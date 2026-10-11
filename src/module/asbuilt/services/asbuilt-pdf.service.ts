@@ -53,7 +53,7 @@ function section(doc: PDFKit.PDFDocument, title: string) {
  *
  * Le PDF porte désormais tout ce qu'exige un dossier de conformité opposable :
  * version, date de génération, date de référence (`as_of`), périmètre, auteur
- * autorisé, empreintes des preuves, ET la liste explicite de ce qui manque.
+ * autorisé, références des preuves et liste explicite de ce qui manque.
  * L'empreinte du PDF lui-même n'est pas imprimée dans le PDF (elle est
  * calculée sur le fichier fini et conservée en base) : un document ne peut pas
  * contenir son propre hachage.
@@ -125,8 +125,8 @@ export async function svcRenderAsbuiltPdf(args: {
         section(doc, "Definition technique figee")
         for (const v of e.technical_versions.slice(0, 30)) {
           doc.text(
-            `- OF ${v.of_numero} : indice ${v.indice ?? "-"}, plan ${v.plan_reference ?? "-"}, ` +
-              `empreinte ${v.snapshot_sha256 ? v.snapshot_sha256.slice(0, 16) + "..." : "MANQUANTE"}`
+            `- OF ${v.of_numero} : indice ${v.indice ?? "-"}, plan ${v.plan_reference ?? "-"}` +
+              (v.snapshot_sha256 ? "" : " [DEFINITION FIGEE NON DOCUMENTEE]")
           )
         }
       }
@@ -191,7 +191,8 @@ export async function svcRenderAsbuiltPdf(args: {
             `- ${c.reference ?? c.control_id.slice(0, 8)} (${c.control_type ?? "-"}) le ${formatDateFR(c.control_date)} : ` +
               `verdict ${c.verdict ?? c.verdict_computed ?? "-"} | ` +
               `controle ${n(c.qty_controlled, c.unit)}, conforme ${n(c.qty_conforming, c.unit)} | ` +
-              `plan v${c.plan_version ?? "-"} empreinte ${c.plan_snapshot_sha256 ? c.plan_snapshot_sha256.slice(0, 16) + "..." : "MANQUANTE"}`
+              `plan v${c.plan_version ?? "-"}` +
+              (c.plan_snapshot_sha256 ? "" : " [PLAN FIGE NON DOCUMENTE]")
           )
         }
       }
@@ -292,7 +293,7 @@ export async function svcRenderAsbuiltPdf(args: {
         .fontSize(8)
         .fillColor("#6b7280")
         .text(
-          "Document genere automatiquement par CERP. Les elements marques MANQUANTE ou SANS ... signalent une lacune de donnees reelle, non une erreur de generation. L'empreinte SHA-256 de ce fichier est conservee en base et permet d'en verifier l'integrite."
+          "Document genere automatiquement par CERP. Les elements marques MANQUANTE ou SANS ... signalent une lacune de donnees reelle, non une erreur de generation."
         )
       doc.fillColor("#111111")
     },
