@@ -17,6 +17,7 @@ import {
   repoListPlans,
   repoPlanApplicability,
   repoPreviewExecution,
+  repoOfOperationExecutionContext,
   repoPreviewVerdict,
   repoQualityCenter,
   repoRecordMeasurements,
@@ -61,6 +62,7 @@ export const svcPlanApplicability = repoPlanApplicability;
 export const svcListExecutions = repoListExecutions;
 export const svcGetExecution = repoGetExecution;
 export const svcPreviewExecution = repoPreviewExecution;
+export const svcOfOperationExecutionContext = repoOfOperationExecutionContext;
 export const svcCreateExecution = repoCreateExecution;
 export const svcRecordMeasurements = repoRecordMeasurements;
 export const svcPreviewVerdict = repoPreviewVerdict;

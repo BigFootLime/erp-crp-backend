@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Frozen OF operation quality context (#1185)
+
+- Prepare session quality controls from the owning OF, active operation, physical population and frozen plan; use the READY self-inspection provenance for a plan attached after the initial dossier freeze.
+- Preserve the operation link in canonical executions, reject conflicting scope and concurrent duplicate pending controls, and keep newer published revisions from silently replacing the captured plan. Existing measurements and snapshots remain immutable; no database migration or permission change.
+
 ## 2026-10-11 — Cutting station execution provenance (#1182)
 
 - Start cutting time with the existing ADAPTER provenance accepted by the canonical pointage constraint, fixing the observed HTTP500/23514 at the first station start. No schema or historical-data change.

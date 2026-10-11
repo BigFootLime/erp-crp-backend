@@ -294,11 +294,16 @@ export const executionPreviewSchema = z.object({
       bon_livraison_id: optionalUuid,
       delivery_allocation_id: optionalUuid,
       of_id: z.number().int().positive().nullable().optional(),
+      operation_id: optionalUuid,
       reception_ligne_id: optionalUuid,
     })
     .strict(),
 });
 export type ExecutionPreviewBodyDTO = z.infer<typeof executionPreviewSchema>["body"];
+
+export const ofOperationExecutionContextSchema = z.object({
+  params: z.object({ ofId: z.coerce.number().int().positive().safe(), operationId: uuid }).strict(),
+});
 
 export const createExecutionSchema = z.object({
   body: executionPreviewSchema.shape.body.extend({
