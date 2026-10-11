@@ -220,6 +220,16 @@ describe("#374 E — instantané et filigrane", () => {
     expect(payload.totaux.finalLabel).toBe("71 h");
   });
 
+  it("affiche le montage exempté sans inventer une longueur ou alerter sur sa découpe", () => {
+    const input = buildFixtureInput({ decoupe: { longueurBrutMm: null, nombreBruts: null, piecesParBrut: null, masseTotaleKg: null } });
+    const payload = buildOfDocumentPayload({ ...input, decoupeNotRequired: true });
+    expect(payload.decoupe.longueurTotaleMm).toBeNull();
+    expect(payload.decoupe.methodeCalcul).toBe("Non applicable : montage sans matière première directe.");
+    expect(payload.avertissements.some(w => w.code === "DECOUPE_INCOMPLETE")).toBe(false);
+    const unverified = buildOfDocumentPayload(input);
+    expect(unverified.avertissements.some(w => w.code === "DECOUPE_INCOMPLETE")).toBe(true);
+  });
+
   it("exige un filigrane sur un brouillon et sur une révision périmée", () => {
     expect(watermarkFor({ revisionStatut: "ACTIVE", documentStatut: "OFFICIEL" })).toBeNull();
     expect(watermarkFor({ revisionStatut: "ACTIVE", documentStatut: "BROUILLON" })).toBe("BROUILLON");

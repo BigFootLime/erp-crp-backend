@@ -995,11 +995,12 @@ export async function buildDocumentPayload(
     );
   }
 
-  const [operations, visaRows, familles, commercial] = await Promise.all([
+  const [operations, visaRows, familles, commercial, decoupeNotRequired] = await Promise.all([
     repo.listOperations(ofId, revision.id),
     repo.listVisas(ofId, revision.id),
     repo.readMachineFamilies(),
     repo.readCommercialContext(header),
+    repo.readDocumentMaterialExemption(ofId),
   ]);
 
   const visas: Record<number, Record<string, unknown>> = {};
@@ -1069,6 +1070,7 @@ export async function buildDocumentPayload(
       methodeCalcul: null,
     },
 
+    decoupeNotRequired,
     operations,
     visas,
     familles,
