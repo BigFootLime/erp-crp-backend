@@ -77,7 +77,8 @@ export async function executeStationCutting(params: {
       return svcStartExecution({
         ...context,
         body: { ...command.payload, machine_id: machineId },
-        source: "station_cutting",
+        // The station is an adapter of canonical execution, using its SQL provenance taxonomy.
+        source: "ADAPTER",
         transactionHooks,
       });
     case "pause":
