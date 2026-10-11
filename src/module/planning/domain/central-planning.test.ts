@@ -178,6 +178,79 @@ describe("planning central — contraintes et engagement", () => {
     expect(capacitySlot([resource], occupied, Date.parse(from), 300)?.start).toBe("2026-09-07T09:00:00.000Z");
   });
 });
+describe("planning central — ready upstream and pending downstream", () => {
+  const dependencies = ["cut", "turn", "external", "control", "pack"].slice(1).map((id, i) => ({
+    predecessorId: ["cut", "turn", "external", "control"][i], successorId: id,
+    transferQuantity: null, releasedQuantity: 0, lagMinutes: 0,
+  }));
+  const chain = (patch: Partial<CentralTask> = {}) => [task("cut"), task("turn"),
+    task("external", { view: "external", resourceIds: [], eligibleResourceIds: [],
+      external: { packages: [], fullReadyAt: null, firstBatchReadyAt: null, issues: [] }, ...patch }),
+    task("control"), task("pack")];
+  const run = (tasks: CentralTask[], ids = ["cut"]) => schedule({ tasks, dependencies, resources: [resource], from,
+    requested: ids.map(taskId => ({ taskId, earliestStart: from })) });
+
+  it("allows cutting and turning while an unrequested future treatment remains undated", () => {
+    const tasks = chain(), before = JSON.stringify(tasks), result = run(tasks);
+    expect(result.feasible).toBe(true);
+    expect(result.changes.map(change => change.taskId)).toEqual(["cut", "turn"]);
+    expect(Object.keys(result.forecasts)).toEqual(["cut", "turn"]);
+    expect(result.conflicts.map(c => [c.taskId, c.code, c.blocking])).toEqual([
+      ["external", "EXTERNAL_RETURN_UNAVAILABLE", false],
+      ["control", "PREDECESSOR_UNAVAILABLE", false],
+      ["pack", "PREDECESSOR_UNAVAILABLE", false],
+    ]);
+    expect(JSON.stringify(tasks)).toBe(before);
+    expect(run(tasks)).toEqual(result);
+  });
+  it("keeps an explicitly requested treatment or successor blocking", () => {
+    for (const requested of [["cut", "external"], ["cut", "control"], ["cut", "turn", "external", "control", "pack"]]) {
+      const result = run(chain(), requested);
+      expect(result.feasible).toBe(false);
+      expect(result.conflicts.some(c => requested.includes(c.taskId) && c.blocking !== false)).toBe(true);
+    }
+  });
+  it.each([
+    { commitment: "COMMITTED" as const, committed: { start: from, end: "2026-09-08T07:00:00.000Z" } },
+    { locked: true }, { commitment: "STARTED" as const }, { actual: { start: from } },
+    { good: 1 }, { released: 1 },
+  ])("never downgrades an existing or real downstream commitment: %j", patch => {
+    const result = run(chain(patch));
+    expect(result.feasible).toBe(false);
+    expect(result.conflicts.find(c => c.taskId === "external")?.blocking).not.toBe(false);
+    expect(result.changes.some(c => c.taskId === "external")).toBe(false);
+  });
+  it("keeps missing material for the requested cutting operation blocking", () => {
+    const tasks = chain(); tasks[0] = task("cut", { blockers: ["Material not physically available"] });
+    const result = run(tasks);
+    expect(result.feasible).toBe(false);
+    expect(result.changes).toEqual([]);
+    expect(result.conflicts[0]).toMatchObject({ taskId: "cut", code: "PREREQUISITE_MISSING" });
+    expect(result.conflicts[0].blocking).not.toBe(false);
+  });
+  it("keeps a previously planned downstream successor blocking when its prerequisite has no date", () => {
+    const tasks = chain();
+    tasks[3] = task("control", { commitment: "COMMITTED", committed: { start: "2026-09-08T07:00:00.000Z", end: "2026-09-08T09:00:00.000Z" } });
+    const result = run(tasks);
+    expect(result.feasible).toBe(false);
+    expect(result.conflicts.find(c => c.taskId === "control")?.blocking).not.toBe(false);
+    expect(tasks[3].committed?.start).toBe("2026-09-08T07:00:00.000Z");
+  });
+  it("does not turn invalid dates, qualifications or dependency cycles into warnings", () => {
+    const tasks = [task("cut"), task("turn", { resourceIds: ["machine:unknown"] })];
+    const base = { tasks, resources: [resource], from, requested: [{ taskId: "cut", earliestStart: from }], dependencies: dependencies.slice(0, 1) };
+    const invalid = schedule({ ...base, tasks: [task("cut"), task("turn", { earliestStart: "invalid" })] });
+    expect(invalid.feasible).toBe(false);
+    expect(invalid.conflicts.find(c => c.code === "DATE_INVALID")?.blocking).not.toBe(false);
+    const unqualified = schedule({ ...base, tasks: [task("cut"), task("turn", { eligibleResourceIds: [] })] });
+    expect(unqualified.feasible).toBe(false);
+    expect(unqualified.conflicts.find(c => c.code === "RESOURCE_NOT_QUALIFIED")?.blocking).not.toBe(false);
+    const cycle = schedule({ ...base, dependencies: [...base.dependencies, { ...base.dependencies[0], predecessorId: "turn", successorId: "cut" }] });
+    expect(cycle.feasible).toBe(false);
+    expect(cycle.conflicts.every(c => c.blocking !== false)).toBe(true);
+  });
+});
+
 describe("planning central — temps civil", () => {
   it("respecte le passage à l'heure d'hiver: une heure locale répétée vaut 120 minutes", () => {
     const windows = expandCalendar({ timezone: "Europe/Paris", shifts: [{ weekday: 0, startMinute: 120, endMinute: 180 }],

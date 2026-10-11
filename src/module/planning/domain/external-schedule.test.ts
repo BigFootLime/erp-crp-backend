@@ -112,6 +112,20 @@ const external = () =>
   });
 const machine: Resource = { ...supplier, id: "machine:m", kind: "MACHINE" };
 describe("retours externes et effets sur la suite", () => {
+  it.each([
+    { departedAt: from, issued: 0, returned: 0 },
+    { departedAt: null, issued: 1, returned: 0 },
+    { departedAt: null, issued: 0, returned: 1 },
+  ])("never defers an incomplete external step with real supplier activity: %j", activity => {
+    const upstream = task("cut"), downstream = external();
+    downstream.external!.packages = [{ ...flow, ...activity, planned: 40, released: 0, transferred: 0 }];
+    const result = schedule({ tasks: [upstream, downstream], resources: [machine, supplier], from,
+      dependencies: [{ predecessorId: upstream.id, successorId: downstream.id, transferQuantity: null, releasedQuantity: 0, lagMinutes: 0 }],
+      requested: [{ taskId: upstream.id, earliestStart: from }] });
+    expect(result.feasible).toBe(false);
+    expect(result.conflicts.find(c => c.taskId === downstream.id)?.blocking).not.toBe(false);
+    expect(result.changes.map(c => c.taskId)).toEqual([upstream.id]);
+  });
   it("compte cinq jours ouvrés après le départ en excluant fermeture et week-end", () =>
     expect(
       externalCompletion(

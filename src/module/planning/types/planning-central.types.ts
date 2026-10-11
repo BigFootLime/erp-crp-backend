@@ -34,6 +34,8 @@ export type CentralTask = {
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
   clientId?: string | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
+  /** Canonical operation phase; absent in older API versions, null for non-operations. */
+  phase?: number | null;
   view: Exclude<CentralView, "global" | "machines" | "internal"> | "machines";
   internal: boolean; internalPurpose: string | null; quantity: number;
   good: number; scrap: number; rework: number; released: number;
@@ -46,7 +48,11 @@ export type CentralTask = {
   priority: number; createdAt: string; version: string; estimate: Estimate | null;
 };
 export type ScheduleChange = { taskId: string; before: Interval | null; beforeResourceIds?: string[]; after: Interval; resourceIds: string[] };
-export type ScheduleConflict = { taskId: string; code: string; message: string; relatedTaskId?: string };
+export type ScheduleConflict = {
+  taskId: string; code: string; message: string; relatedTaskId?: string;
+  /** False only for an unrequested, uncommitted downstream step awaiting preparation. Absence blocks. */
+  blocking?: boolean;
+};
 export type ScheduleResult = {
   changes: ScheduleChange[]; forecasts: Record<string, Interval>;
   conflicts: ScheduleConflict[]; feasible: boolean; affected: string[];

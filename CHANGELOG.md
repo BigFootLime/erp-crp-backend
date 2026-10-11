@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-11 — Ready upstream planning and pending future steps (#1194)
+
+- Allow ready cutting/turning commitments while an unrequested, uncommitted and never-started downstream step awaits preparation. Keep its warning visible and leave it undated; no external availability or OF completion is invented.
+- Explicit requests, existing commitments, locks, real production and supplier departures remain blocking. Preserve canonical recomputation, qualification, capacity, dependency-cycle and client-urgency guards. No migration or historical-data change.
+- Add the canonical operation phase to the central task DTO for guided backlog ordering; no label parsing.
+
 ## 2026-10-11 — Receipt context version timestamp (#1191)
 
 - Return the OF receipt context version as ISO 8601 UTC with PostgreSQL microsecond precision, so its unchanged optimistic-version token satisfies the strict receipt validator. Fix the observed HTTP400 before lot or stock creation.

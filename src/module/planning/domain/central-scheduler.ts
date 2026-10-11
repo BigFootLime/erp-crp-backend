@@ -3,6 +3,10 @@ import {externalCompletion} from './external-schedule';
 import { dependencyClosure, dependencyIndex } from './central-dependencies';
 const ms = (v: string) => Date.parse(v);
 const iso = (v: number) => new Date(v).toISOString();
+const pendingDownstreamCodes = new Set([
+  "EXTERNAL_RETURN_UNAVAILABLE", "PREDECESSOR_UNAVAILABLE", "PREREQUISITE_MISSING",
+  "DURATION_MISSING", "RESOURCE_MISSING", "NO_CAPACITY",
+]);
 function intersects(a: Interval, b: Interval) { return ms(a.start) < ms(b.end) && ms(b.start) < ms(a.end); }
 type NumericInterval = { start: number; end: number };
 function normalized(intervals: NumericInterval[]): NumericInterval[] {
@@ -85,7 +89,16 @@ export function schedule(input: {
   }
   const conflicted = new Set<string>();
   const conflict = (taskId: string, code: string, message: string, relatedTaskId?: string) => {
-    conflicted.add(taskId); result.conflicts.push({ taskId, code, message, ...(relatedTaskId ? { relatedTaskId } : {}) });
+    const task = byId.get(taskId);
+    // A future step without any commitment may await preparation. Its unavailable
+    // date still blocks successors; it must not veto ready upstream commitments.
+    const pendingDownstream = pendingDownstreamCodes.has(code) && !requests.has(taskId) &&
+      task?.commitment === "FORECAST" && !task.committed && !task.actual && !task.locked &&
+      task.good === 0 && task.scrap === 0 && task.rework === 0 && task.released === 0 &&
+      !task.external?.packages.some(p => p.departedAt || p.issued > 0 || p.returned > 0);
+    conflicted.add(taskId);
+    result.conflicts.push({ taskId, code, message, ...(relatedTaskId ? { relatedTaskId } : {}),
+      ...(pendingDownstream ? { blocking: false } : {}) });
   };
   const predecessorDate = (parent: CentralTask | undefined) => {
     if (!parent) return null;
@@ -191,7 +204,7 @@ export function schedule(input: {
       !(d.transferQuantity !== null && d.releasedQuantity >= d.transferQuantity && (!byId.get(d.predecessorId)?.external||d.releasedQuantity>=child.quantity)))
       conflict(child.id, "LOCKED_DEPENDENCY", "Le créneau verrouillé précède la disponibilité du prérequis.", d.predecessorId);
   }
-  result.feasible = !result.conflicts.length;
+  result.feasible = !result.conflicts.some(conflict => conflict.blocking !== false);
   return result;
 }
 export function intervalsOverlap(a: Interval, b: Interval): boolean { return intersects(a, b); }
