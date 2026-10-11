@@ -11,9 +11,10 @@ import { getFlow, getCreationOptions, postTransfer } from './subcontract-flow.co
 import { subcontractFlowInstalled } from './subcontract-flow.repository';
 import { getProcurement,postProcurement,postDemands } from './subcontract-procurement.controller';
 import { appendSubcontractAudit } from './subcontract-audit.repository';
+import { ACTIVE_SUBCONTRACT_ORDER_STATES, isSubcontractPackageEligible } from "./subcontract-package-policy";
 
 const router = Router();
-const activeOrderStates = ["ENVOYEE", "ACCUSE_RECU", "PARTIELLEMENT_RECUE"];
+const activeOrderStates = ACTIVE_SUBCONTRACT_ORDER_STATES;
 const id = (v: unknown) => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
 const unit = (v: unknown) => String(v ?? "").trim().toUpperCase();
 const qty = (v: unknown) => Number(v);
@@ -28,10 +29,10 @@ async function lockRevision(c:any){if(await subcontractFlowInstalled(c))await c.
 async function audit(c: any, user: number | undefined, action: string, packageId: string, details: Record<string, unknown>) {
   await appendSubcontractAudit(c, user, action, packageId, details);
 }
-async function lockPackage(c: any, packageId: string) {
+async function lockPackage(c: any, packageId: string, action: "CUSTODY" | "CLOSE" = "CUSTODY") {
   const r = await c.query(`SELECT p.*,l.type,l.statut_ligne,origin.material_origin_id,cf.statut order_status FROM public.subcontract_work_packages p JOIN public.commande_fournisseur_ligne l ON l.id=p.supplier_order_line_id JOIN public.commande_fournisseur cf ON cf.id=l.commande_id LEFT JOIN public.subcontract_purchase_origins origin ON origin.line_id=l.id WHERE p.id=$1::uuid FOR UPDATE OF p,l`, [packageId]);
   const row = r.rows[0];
-  if (!row || row.status !== "SENT" || row.type !== "SOUS_TRAITANCE" || row.statut_ligne !== "ACTIVE" || !activeOrderStates.includes(row.order_status)) throw new HttpError(409, "SUBCONTRACT_PACKAGE_NOT_ELIGIBLE", "Dossier sous-traitance non éligible.");
+  if (!isSubcontractPackageEligible(row, action)) throw new HttpError(409, "SUBCONTRACT_PACKAGE_NOT_ELIGIBLE", "Dossier sous-traitance non éligible.");
   return row;
 }
 
@@ -108,7 +109,7 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
 } catch(e) { next(e); } }
 router.post("/:id/issues",access(true),(req,res,next)=>ledger("ISSUE",req,res,next));
 router.post("/:id/returns",access(true),(req,res,next)=>ledger("RETURN",req,res,next));
-async function finalise(status:"CLOSED"|"CANCELLED",req:any,res:any,next:any){try{const packageId=id(req.params.id),expected=qty(req.body?.expected_row_version),reason=String(req.body?.reason??"").trim();required(packageId&&Number.isInteger(expected)&&expected>0&&reason,"expected_row_version et motif sont obligatoires.");const c=await pool.connect();try{await c.query("BEGIN");await lockRevision(c);const p=await lockPackage(c,packageId!);if(Number(p.row_version)!==expected)throw new HttpError(409,"SUBCONTRACT_CONCURRENT_OR_FINAL","Dossier modifié ou déjà finalisé.");const b=await c.query<any>("SELECT COALESCE(sum(qty) FILTER(WHERE event_type='ISSUE'),0)-COALESCE(sum(qty) FILTER(WHERE event_type='RETURN'),0) qty FROM public.subcontract_work_package_ledger WHERE package_id=$1::uuid",[packageId]);if(Number(b.rows[0].qty)!==0)throw new HttpError(409,"SUBCONTRACT_CUSTODY_OPEN","Finalisation refusée : matière toujours chez le sous-traitant.");await assertReceiptProcessingClosed(c,{orderLineId:p.supplier_order_line_id});const r=await c.query<any>("UPDATE public.subcontract_work_packages SET status=$2,row_version=row_version+1,closed_at=now(),closed_by=$3,close_reason=$4 WHERE id=$1::uuid AND status='SENT' AND row_version=$5 RETURNING *",[packageId,status,req.user?.id??null,reason,expected]);if(!r.rows[0])throw new HttpError(409,"SUBCONTRACT_CONCURRENT_OR_FINAL","Dossier modifié ou déjà finalisé.");await audit(c,req.user?.id,status,packageId!,{reason});await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");throw e}finally{c.release()}}catch(e){next(e)}}
+async function finalise(status:"CLOSED"|"CANCELLED",req:any,res:any,next:any){try{const packageId=id(req.params.id),expected=qty(req.body?.expected_row_version),reason=String(req.body?.reason??"").trim();required(packageId&&Number.isInteger(expected)&&expected>0&&reason,"expected_row_version et motif sont obligatoires.");const c=await pool.connect();try{await c.query("BEGIN");await lockRevision(c);const p=await lockPackage(c,packageId!,status==="CLOSED"?"CLOSE":"CUSTODY");if(Number(p.row_version)!==expected)throw new HttpError(409,"SUBCONTRACT_CONCURRENT_OR_FINAL","Dossier modifié ou déjà finalisé.");const b=await c.query<any>("SELECT COALESCE(sum(qty) FILTER(WHERE event_type='ISSUE'),0)-COALESCE(sum(qty) FILTER(WHERE event_type='RETURN'),0) qty FROM public.subcontract_work_package_ledger WHERE package_id=$1::uuid",[packageId]);if(Number(b.rows[0].qty)!==0)throw new HttpError(409,"SUBCONTRACT_CUSTODY_OPEN","Finalisation refusée : matière toujours chez le sous-traitant.");await assertReceiptProcessingClosed(c,{orderLineId:p.supplier_order_line_id});const r=await c.query<any>("UPDATE public.subcontract_work_packages SET status=$2,row_version=row_version+1,closed_at=now(),closed_by=$3,close_reason=$4 WHERE id=$1::uuid AND status='SENT' AND row_version=$5 RETURNING *",[packageId,status,req.user?.id??null,reason,expected]);if(!r.rows[0])throw new HttpError(409,"SUBCONTRACT_CONCURRENT_OR_FINAL","Dossier modifié ou déjà finalisé.");await audit(c,req.user?.id,status,packageId!,{reason});await c.query("COMMIT");res.json(r.rows[0]);}catch(e){await c.query("ROLLBACK");throw e}finally{c.release()}}catch(e){next(e)}}
 router.post("/:id/close",access(true),(req,res,next)=>finalise("CLOSED",req,res,next));
 router.post("/:id/cancel",access(true),(req,res,next)=>finalise("CANCELLED",req,res,next));
 export default router;
