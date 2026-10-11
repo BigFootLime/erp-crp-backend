@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Receipt context version timestamp (#1191)
+
+- Return the OF receipt context version as ISO 8601 UTC with PostgreSQL microsecond precision, so its unchanged optimistic-version token satisfies the strict receipt validator. Fix the observed HTTP400 before lot or stock creation.
+- Preserve version comparisons, authorization, idempotence, quality and lane routing. Verify the actual context SELECT and validator under multiple database time zones; no migration or historical-data rewrite.
+
 ## 2026-10-11 — OF quality pending execution SQL (#1188)
 
 - Compare the source identifier as text when the same SQL parameter also denotes the operation UUID. Fix the observed PostgreSQL42883/HTTP500 when opening an operation control and the same lookup during creation.
