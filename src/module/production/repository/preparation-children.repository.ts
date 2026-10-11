@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
 import { HttpError } from "../../../utils/httpError";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { PREPARATION_RULES_VERSION } from "../domain/preparation-rules";
@@ -68,8 +69,8 @@ export async function synchronizeDraftChildrenTx(
     if (policy?.assembly_supply_strategy === "INTERNAL_CONTRACT") return;
     const lines = (
       await tx.query<Line>(
-        `SELECT id::text,child_piece_technique_id::text,child_piece_technique_version_id::text,child_article_id::text,quantite::float8,rang FROM public.pieces_techniques_nomenclature WHERE parent_piece_technique_version_id=$1::uuid ORDER BY rang,id`,
-        [o.version_id],
+        `SELECT id::text,child_piece_technique_id::text,child_piece_technique_version_id::text,child_article_id::text,quantite::float8,rang FROM public.pieces_techniques_nomenclature b WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')} ORDER BY rang,id`,
+        [o.version_id, o.piece_technique_id],
       )
     ).rows;
     const retained: number[] = [];

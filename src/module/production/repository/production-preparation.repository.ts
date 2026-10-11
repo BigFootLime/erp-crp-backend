@@ -1,3 +1,4 @@
+import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -276,7 +277,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
         ELSE '{}'::jsonb END ORDER BY p.phase,p.id) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
       'documents',COALESCE((SELECT jsonb_agg(to_jsonb(docs) ORDER BY docs.id,docs.role) FROM docs),'[]'),
       'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
-      'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE b.parent_piece_technique_version_id=$1::uuid),'[]'),
+      'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')}),'[]'),
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
       'characteristics',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.position,c.id) FROM public.quality_control_plan_characteristic c WHERE c.plan_id=(SELECT id FROM qp)),'[]'),
       'missing_documents',(SELECT count(*) FROM public.piece_version_document_requirements r WHERE r.piece_technique_version_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM docs WHERE role=r.document_type_code)),
