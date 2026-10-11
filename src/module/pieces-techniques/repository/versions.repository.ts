@@ -92,9 +92,10 @@ async function insertAudit(
   })
 }
 
-async function assertPieceExists(tx: Pick<PoolClient, "query">, pieceId: string): Promise<void> {
-  const res = await tx.query(`SELECT 1 FROM public.pieces_techniques WHERE id = $1 AND deleted_at IS NULL`, [pieceId])
+async function assertPieceExists(tx: Pick<PoolClient, "query">, pieceId: string): Promise<boolean> {
+  const res = await tx.query<{ ensemble: boolean }>(`SELECT ensemble FROM public.pieces_techniques WHERE id = $1 AND deleted_at IS NULL`, [pieceId])
   if (res.rowCount === 0) throw new HttpError(404, "NOT_FOUND", "Pièce technique introuvable")
+  return res.rows[0]?.ensemble === true
 }
 
 async function assertVersionEffectiveToday(
@@ -177,7 +178,7 @@ export async function repoCreateVersion(
   const client = await db.connect()
   try {
     await client.query("BEGIN")
-    await assertPieceExists(client, pieceTechniqueId)
+    const isAssembly = await assertPieceExists(client, pieceTechniqueId)
     const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, body.plan_reference, body.indice)
 
     const res = await client.query<PieceTechniqueVersionRow>(
@@ -200,7 +201,7 @@ export async function repoCreateVersion(
         body.impact_interchangeabilite ?? null,
         body.impact_parents ?? null,
         audit.user_id,
-        body.manufacturing_mode ?? "SIMPLE",
+        body.manufacturing_mode ?? (isAssembly ? "ASSEMBLY" : "SIMPLE"),
         body.assembly_supply_strategy ?? "MAKE_TO_ORDER",
         JSON.stringify(body.packaging_policy ?? {mode:"GLOBAL",lotSize:null}),
       ]
@@ -293,7 +294,11 @@ export async function repoUpdateVersion(
       values
     )
     const row = res.rows[0]
-    await insertAudit(client, audit, "pieces-techniques.version.update", versionId, { piece_technique_id: pieceTechniqueId })
+    await insertAudit(client, audit, "pieces-techniques.version.update", versionId, {
+      piece_technique_id: pieceTechniqueId,
+      ...(body.manufacturing_mode !== undefined ? { manufacturing_mode: { before: current.manufacturing_mode, after: row.manufacturing_mode } } : {}),
+      ...(body.assembly_supply_strategy !== undefined ? { assembly_supply_strategy: { before: current.assembly_supply_strategy, after: row.assembly_supply_strategy } } : {}),
+    })
     await client.query("COMMIT")
     return row
   } catch (e) {
