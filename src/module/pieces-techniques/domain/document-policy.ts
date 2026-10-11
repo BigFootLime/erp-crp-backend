@@ -225,6 +225,8 @@ export function isPreviewableMimeType(mimeType: string | null | undefined): bool
 
 export type AttachedDocument = {
   id: string;
+  content_source?: "GED" | "LEGACY";
+  ged_version_id?: string | null;
   original_name: string;
   mime_type: string | null;
   size_bytes: number | null;
@@ -285,7 +287,11 @@ export function buildDocumentSlots(input: BuildDocumentSlotsInput): DocumentSlot
       // Le plus récent fait foi : un redépôt corrige un document, il ne l'empile pas.
       const document =
         matching.length > 0
-          ? [...matching].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))[0]
+          ? [...matching].sort((a, b) =>
+              Number(b.piece_technique_version_id === input.currentVersionId) -
+              Number(a.piece_technique_version_id === input.currentVersionId) ||
+              String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || b.id.localeCompare(a.id)
+            )[0]
           : null;
 
       const base = {

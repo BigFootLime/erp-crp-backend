@@ -876,6 +876,8 @@ export async function repoListAffairePieceTechniques(affaireId: number): Promise
 
 type PieceTechniqueDocumentRow = {
   id: string;
+  document_type_code?: string | null;
+  piece_technique_version_id?: string | null;
   piece_technique_id: string;
   original_name: string;
   stored_name: string;
@@ -894,6 +896,8 @@ type PieceTechniqueDocumentRow = {
 function mapDocRow(r: PieceTechniqueDocumentRow): PieceTechniqueDocument {
   return {
     id: r.id,
+    document_type_code: r.document_type_code ?? null,
+    piece_technique_version_id: r.piece_technique_version_id ?? null,
     piece_technique_id: r.piece_technique_id,
     original_name: r.original_name,
     stored_name: r.stored_name,
@@ -921,6 +925,8 @@ export async function repoListPieceTechniqueDocuments(pieceTechniqueId: string):
     `
       SELECT
         id::text AS id,
+        to_jsonb(legacy)->>'document_type_code' AS document_type_code,
+        to_jsonb(legacy)->>'piece_technique_version_id' AS piece_technique_version_id,
         piece_technique_id::text AS piece_technique_id,
         original_name,
         stored_name,
@@ -934,7 +940,7 @@ export async function repoListPieceTechniqueDocuments(pieceTechniqueId: string):
         uploaded_by,
         removed_at::text AS removed_at,
         removed_by
-      FROM pieces_techniques_documents
+      FROM pieces_techniques_documents legacy
       WHERE piece_technique_id = $1::uuid
         AND removed_at IS NULL
       ORDER BY created_at DESC, id DESC

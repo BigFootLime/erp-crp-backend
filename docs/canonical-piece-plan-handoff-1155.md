@@ -1,0 +1,9 @@
+# Canonical piece plan handoff (#1155 / #1390)
+
+OBS088: creation accepted a legacy PLAN, while OF preparation required a published canonical GED document. New guided and quick creation now bind PLAN_CLIENT to the exact piece revision. The piece document tab and OF preparation expose the same plan panel. The dossier/PDF reader only recognises published, clean/released canonical plans; a legacy archive cannot masquerade as readiness. Current-revision documents take priority over newer documents of another revision.
+
+Existing versioned PLAN archives can be explicitly reimported from that exact piece/revision. Their bytes and size are checked against the source SHA before the normal authenticated GED upload, antivirus and review lifecycle. Originals remain intact. A retry reuses only server-authorised clean documents of the same business piece with matching bytes, never a global hash search; a concurrent unrelated duplicate remains an error. No automated approval, frozen OF snapshot rewrite, migration or auth change. A database/session change stops the chained write. Unversioned old archives require explicit manual document review, without invented provenance.
+
+Shared CERP document controls retain class/parent selection, preview/download, review and publication. Pending documents remain pending and do not satisfy OF readiness. Cache invalidation follows GED transitions so the dossier/OF can read the published state.
+
+Targeted tests cover source identity, bytes changed, retry/race, session/base changes, selected revision, existing canonical control behaviour and real PostgreSQL plan eligibility. They do not replace the full end-to-end recipe. Base Test ENS/PLAT replay, light/dark, dev/main and public/HYPERBOX2 delivery are still required before OBS088 is closed. Web/APK/Electron global acceptance remains in progress.
