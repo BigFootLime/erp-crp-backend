@@ -663,7 +663,7 @@ export async function assertOperationResourceCompatible(params: {
   if (!row) throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
   // A manual route explicitly assigns its autonomous workstation on the OF.
   // Never infer a qualification from a label or accept an arbitrary workstation.
-  if (!row.required_machine_family_code && ["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(row.operation_type ?? "")) {
+  if (!row.required_machine_family_code && ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(row.operation_type ?? "")) {
     if (!row.machine_id && !row.operation_machine_id && !params.resource.machine_id && row.poste_active &&
         row.assigned_poste_id && row.assigned_poste_id === row.selected_poste_id) return;
     throw new HttpError(422, "PLANNING_MANUAL_POSTE_REQUIRED",

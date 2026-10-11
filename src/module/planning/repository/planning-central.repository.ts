@@ -296,7 +296,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
       )
       SELECT op.id::text,NULLIF(btrim(op.machine_family_code),'') AS family,frozen.operation_type,
         CASE WHEN NULLIF(btrim(op.machine_family_code),'') IS NULL
-          AND frozen.operation_type IN ('DECOUPE','CONTROLE','LAVAGE','EMBALLAGE','AUTRE')
+          AND frozen.operation_type IN ('DECOUPE','ASSEMBLAGE','CONTROLE','LAVAGE','EMBALLAGE','AUTRE')
           AND p.id IS NOT NULL AND p.is_active AND p.archived_at IS NULL AND p.machine_id IS NULL AND op.machine_id IS NULL
           THEN ARRAY['poste:'||p.id::text]
           ELSE COALESCE(array_agg(r.id ORDER BY r.id) FILTER(WHERE r.id IS NOT NULL),'{}'::text[]) END AS eligible
@@ -314,7 +314,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
       const qualification = byId.get(task.operationId);
       task.eligibleResourceIds = qualification?.eligible ?? [];
       if (!qualification?.family) {
-        const manual = ["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(qualification?.operation_type ?? "");
+        const manual = ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(qualification?.operation_type ?? "");
         if (!manual) task.blockers.push("Famille machine à définir dans la gamme.");
         else if (!task.eligibleResourceIds.length) task.blockers.push("Poste de travail à affecter dans la fiche OF.");
       }

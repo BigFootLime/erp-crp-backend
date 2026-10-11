@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — Montage canonique (#1146)
+
+- Le type Assemblage est reconnu dans la gamme et le parcours OF. Le montage sans machine CN utilise uniquement son poste autonome actif, explicitement affecté. Les contrôles composants/qualité et dossiers figés sont conservés ; recette complète encore en cours.
+
 - NC liée à un contrôle : héritage des liens lot/réception/fournisseur connus avant verrou qualité, refus des contradictions (#1143).
 
 ## OBS080 — #1140 (2026-10-11)
