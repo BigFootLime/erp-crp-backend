@@ -116,9 +116,11 @@ WITH operation_rows AS (
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
 ), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
  SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows), filtered AS (
-SELECT tasks.*,owner.client_id,
+SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
+  COALESCE(to_jsonb(customer)->>'color_hex',to_jsonb(customer)->>'color') AS client_color,
   COALESCE(promise.due::text,tasks.due) AS commercial_due
   FROM tasks LEFT JOIN public.ordres_fabrication owner ON owner.id=tasks.of_id
+  LEFT JOIN public.clients customer ON customer.client_id=owner.client_id
   LEFT JOIN LATERAL (SELECT min(p.due_date) AS due FROM public.delivery_promise_roots r
     JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
     WHERE r.line_id=owner.commande_ligne_id AND p.quantity>COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)) promise ON true
@@ -153,6 +155,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
   const committed = interval(row.committed_start,row.committed_end);
   return { id:String(row.id),source:row.source as CentralTask["source"],operationId:str(row.operation_id),
     programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
+    clientName:str(row.client_name),clientColor:str(row.client_color),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
     phase:row.source==="OPERATION" && row.phase != null ? num(row.phase) : null,
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
