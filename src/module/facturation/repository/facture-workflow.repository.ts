@@ -205,6 +205,7 @@ function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unk
   };
   if (filters.client_id) where.push(`bl.client_id = ${push(filters.client_id)}`);
   if (filters.commande_id) where.push(`bl.commande_id = ${push(filters.commande_id)}::bigint`);
+  if (filters.livraison_id) where.push(`bl.id = ${push(filters.livraison_id)}::uuid`);
   if (filters.affaire_id) where.push(`bl.affaire_id = ${push(filters.affaire_id)}::bigint`);
   if (filters.q) {
     const parameter = push(`%${filters.q}%`);
