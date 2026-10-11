@@ -135,7 +135,10 @@ export async function repoGetFinanceConfigurationReadiness(
         missing_legal_fields,
         electronic_address_ready: electronicAddressBlocker === null,
         electronic_address_blocker: electronicAddressBlocker,
-        routing_identity: biller.routing_identity,
+        routing_identity: biller.routing_identity ? {
+          ...biller.routing_identity,
+          siren: biller.routing_identity.siren?.replace(/\s/g, "") ?? null,
+        } : null,
         electronic_address: biller.electronic_address,
       };
     })

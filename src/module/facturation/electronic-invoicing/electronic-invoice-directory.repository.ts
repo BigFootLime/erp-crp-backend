@@ -95,10 +95,11 @@ export async function readDirectoryVerificationResource(
   );
   const row = current.rows[0];
   if (!row) throw new HttpError(404, target.notFoundCode, "Référentiel introuvable.");
-  if (!row.siren || !/^\d{9}$/.test(row.siren)) {
+  const siren = row.siren?.replace(/\s/g, "") ?? "";
+  if (!/^\d{9}$/.test(siren)) {
     throw new HttpError(422, "EINVOICE_SIREN_REQUIRED", "Un SIREN à 9 chiffres doit être qualifié avant la vérification dans l'annuaire.");
   }
-  return { siren: row.siren, updated_at: row.updated_at };
+  return { siren, updated_at: row.updated_at };
 }
 
 export async function findDirectoryVerificationReplay(params: {
@@ -166,7 +167,7 @@ export async function persistDirectoryVerification(params: {
       await client.query("ROLLBACK");
       return concurrentReplay;
     }
-    if (current.siren !== params.siren) {
+    if (current.siren?.replace(/\s/g, "") !== params.siren) {
       throw new HttpError(409, "EINVOICE_SIREN_CHANGED", "Le SIREN a changé pendant la consultation de l'annuaire.");
     }
     if (new Date(current.updated_at).getTime() !== new Date(params.expectedUpdatedAt).getTime()) {
