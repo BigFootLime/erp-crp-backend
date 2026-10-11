@@ -34,8 +34,9 @@ export const activateFinanceConfigurationBodySchema = z
       .min(1)
       .max(2)
       .refine((values) => new Set(values).size === values.length, "Statuts dupliqués interdits."),
-    // Historical column name retained: this controls creator/validator separation of duties.
-    require_distinct_issuer: z.boolean().default(true),
+    // Deprecated wire field: accept older callers, but the business decision of
+    // 2026-10-11 permits the same qualified actor at each explicit step.
+    require_distinct_issuer: z.boolean().optional().transform(() => false),
     sequences: z
       .object({
         facture: sequenceSchema,

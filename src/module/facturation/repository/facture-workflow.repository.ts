@@ -10,7 +10,6 @@ import {
 } from "../../commande-client/repository/commande-fulfillment.repository";
 import {
   assertFactureTransition,
-  assertSeparationOfDuties,
   financePreviewHash,
   type FactureWorkflowStatus,
 } from "../domain/finance-policy";
@@ -1217,12 +1216,6 @@ export async function repoValidateFacture(params: {
     if (facture.row_version !== params.input.expected_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La facture a changé.");
     }
-    if (params.input.decision === "APPROVE") {
-      assertSeparationOfDuties({
-        creatorUserId: facture.created_by,
-        validatorUserId: params.actor.userId,
-      });
-    }
     const target: FactureWorkflowStatus = params.input.decision === "APPROVE" ? "APPROVED" : "DRAFT";
     assertFactureTransition(facture.statut, target);
     const updated = await client.query<{ row_version: number }>(
@@ -1335,17 +1328,6 @@ export async function repoIssueFacture(params: {
       );
     }
     if (!policy) throw new HttpError(503, "BILLING_POLICY_NOT_ACTIVE", "Politique Finance absente.");
-    if (
-      policy.require_distinct_issuer &&
-      facture.approved_by !== null &&
-      facture.approved_by === params.actor.userId
-    ) {
-      throw new HttpError(
-        403,
-        "FINANCE_ISSUER_VALIDATOR_CONFLICT",
-        "La politique active impose un émetteur distinct du valideur."
-      );
-    }
     assertFactureTransition(facture.statut, "ISSUED");
     const qualityReleases = await assertInvoiceDeliveryQuality(client, params.factureId);
     const issueDate = new Date().toISOString().slice(0, 10);
