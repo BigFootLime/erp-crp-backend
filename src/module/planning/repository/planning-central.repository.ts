@@ -17,7 +17,8 @@ export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => v === null || v === undefined ? null : String(v);
 const num = (v: unknown): number => Number(v ?? 0);
-const instant = (v: unknown): string | null => v == null ? null : new Date(String(v)).toISOString();
+const instant = (v: unknown): string | null => v == null ? null :
+  (v instanceof Date ? v : new Date(String(v))).toISOString();
 const strings = (v: unknown): string[] => Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 const interval = (a: unknown, b: unknown) => a && b ? { start: instant(a)!, end: instant(b)! } : null;
 export async function readCentralSettings(tx: CentralQuery = pool) {
