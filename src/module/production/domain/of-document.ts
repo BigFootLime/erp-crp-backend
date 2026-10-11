@@ -436,6 +436,8 @@ export type OfDocumentBuildInput = {
   documentsAFournir: string[];
   matiere: { reference: string | null; designation: string | null; nuance: string | null };
   decoupe: Omit<OfDocumentDecoupe, "longueurTotaleMm"> & { longueurTotaleMm?: number | null };
+  /** Exemption explicite et figée d'un montage sans matière première directe. */
+  decoupeNotRequired?: boolean;
 
   operations: OfRevisionOperation[];
   /** VISA par phase, tel qu'enregistré. Absent = phase non visée, zone imprimée vide. */
@@ -558,15 +560,16 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
 
   // La méthode est imprimée sous le tableau : un magasinier doit pouvoir refaire
   // le calcul, pas le croire sur parole.
-  const methodeCalcul =
-    input.decoupe.methodeCalcul ??
+  const methodeCalcul = input.decoupeNotRequired === true
+    ? "Non applicable : montage sans matière première directe."
+    : input.decoupe.methodeCalcul ??
     (input.decoupe.longueurTotaleMm !== null && input.decoupe.longueurTotaleMm !== undefined
       ? "Longueur totale fournie par la définition matière."
       : calculable
         ? `Longueur totale = longueur de brut (${formatNumberFr(input.decoupe.longueurBrutMm, 1)} mm) x nombre de bruts (${formatQuantity(input.decoupe.nombreBruts)}).`
         : null);
 
-  if (longueurTotaleMm === null) {
+  if (longueurTotaleMm === null && input.decoupeNotRequired !== true) {
     avertissements.push({
       code: "DECOUPE_INCOMPLETE",
       severite: "ATTENTION",
