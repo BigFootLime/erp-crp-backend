@@ -1032,7 +1032,7 @@ export async function repoGetOfReceiptContext(params: { of_id: number }): Promis
         o.quantite_lancee::float8 AS quantite_lancee,
         o.quantite_bonne::float8 AS quantite_bonne,
         o.statut::text AS statut,
-        o.updated_at::text AS updated_at,
+        to_char(o.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
         o.affaire_id::bigint::int AS affaire_id,
         o.commande_id::bigint::int AS commande_id,
         o.commande_ligne_id::bigint::int AS commande_ligne_id,
