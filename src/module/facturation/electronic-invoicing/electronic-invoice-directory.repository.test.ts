@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn(), release: vi.fn(), audit: vi.fn(), qualify: vi.fn() }));
-vi.mock("../../../config/database", () => ({ default: { connect: mocks.connect, query: vi.fn() } }));
+const mocks = vi.hoisted(() => ({ readQuery: vi.fn(), query: vi.fn(), connect: vi.fn(), release: vi.fn(), audit: vi.fn(), qualify: vi.fn() }));
+vi.mock("../../../config/database", () => ({ default: { connect: mocks.connect, query: mocks.readQuery } }));
 vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: mocks.audit }));
 vi.mock("./electronic-invoice-issuer.repository", () => ({ qualifyIssuerElectronicAddress: mocks.qualify }));
-import { persistDirectoryVerification } from "./electronic-invoice-directory.repository";
+import { persistDirectoryVerification, readDirectoryVerificationResource } from "./electronic-invoice-directory.repository";
 const params = { resourceType: "ISSUER" as const, resourceId: "issuer", siren: "999999998", identifier: "0225:999999998", expectedUpdatedAt: "2026-01-01T00:00:00Z", idempotencyKey: "issuer-1219-key", audit: { user_id: 7, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: null, client_session_id: null } };
 let current: { siren: string; updated_at: string; previous_address: object };
 beforeEach(() => {
@@ -14,6 +14,15 @@ beforeEach(() => {
   mocks.qualify.mockResolvedValue({ rows: [{ verified_at: "2026-10-11T12:00:00Z" }] });
 });
 describe("issuer directory mutation atomicity", () => {
+  it("normalizes display spaces in a legacy SIREN before directory lookup", async () => {
+    mocks.readQuery.mockResolvedValue({ rows: [{ siren: "999\u00a0999 998", updated_at: params.expectedUpdatedAt }] });
+    await expect(readDirectoryVerificationResource("ISSUER", "issuer")).resolves.toEqual({ siren: params.siren, updated_at: params.expectedUpdatedAt });
+  });
+  it("compares normalized identity after locking without rewriting the legal record", async () => {
+    current.siren = "999 999 998";
+    await expect(persistDirectoryVerification(params)).resolves.toMatchObject({ siren: params.siren });
+    expect(mocks.query).not.toHaveBeenCalledWith(expect.stringMatching(/SET\s+siren/i), expect.anything());
+  });
   it("qualifies, records the replay receipt and audits in the same transaction", async () => {
     const result = await persistDirectoryVerification(params);
     expect(result).toMatchObject({ resource_type: "ISSUER", idempotent_replay: false });
