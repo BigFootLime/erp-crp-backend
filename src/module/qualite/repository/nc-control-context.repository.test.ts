@@ -29,7 +29,7 @@ describePg("NC1143 — source du contrôle, PostgreSQL isolé", () => {
     await db.query("TRUNCATE public.quality_control");
     await db.query(`INSERT INTO public.quality_control
       (id,lot_id,reception_ligne_id,fournisseur_id,source_type,source_id)
-      VALUES ($1,$2,$3,$4,'LOT',$2::text)`, [control, lot, receipt, supplier]);
+      VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,'LOT',($2::uuid)::text)`, [control, lot, receipt, supplier]);
   });
   afterAll(async () => { if (db) await db.end(); });
 
