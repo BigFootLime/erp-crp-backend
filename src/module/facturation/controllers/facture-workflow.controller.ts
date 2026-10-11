@@ -3,6 +3,7 @@ import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
 import {
+  svcGetFactureWorkflow,
   svcCreateFactureDraft,
   svcIssueFacture,
   svcListEligibleFactureSources,
@@ -44,6 +45,14 @@ export const listEligibleFactureSources: RequestHandler = async (req, res, next)
   } catch (error) {
     next(error);
   }
+};
+
+export const getFactureWorkflow: RequestHandler = async (req, res, next) => {
+  try {
+    actorFromRequest(req);
+    const { id } = financeLegacyIdParamsSchema.parse(req.params);
+    res.json(await svcGetFactureWorkflow(id));
+  } catch (error) { next(error); }
 };
 
 export const previewFacture: RequestHandler = async (req, res, next) => {
