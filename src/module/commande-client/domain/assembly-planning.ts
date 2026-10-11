@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { ASSEMBLY_PURCHASED_REQUIREMENTS_SQL } from "./assembly-purchased-requirements.sql";
 
 import {
   loadApplicableTechnicalSnapshot,
@@ -165,7 +166,11 @@ async function loadPurchasedRequirements(
   parents: Array<{ structure_path: string; piece_technique_id: string; piece_technique_version_id: string; production_qty: number; depth: number }>
 ) {
   if (parents.length === 0) return [];
-  const parentPieceIds = Array.from(new Set(parents.map((parent) => parent.piece_technique_id)));
+  const selectedParents = Array.from(new Map(parents.map((parent) => [
+    `${parent.piece_technique_id}:${parent.piece_technique_version_id}`, parent,
+  ])).values());
+  const parentPieceIds = selectedParents.map((parent) => parent.piece_technique_id);
+  const parentVersionIds = selectedParents.map((parent) => parent.piece_technique_version_id);
   const rows = await tx.query<{
     source_line_id: string;
     piece_technique_id: string;
@@ -176,32 +181,8 @@ async function loadPurchasedRequirements(
     quantity_per_parent: number;
     source_kind: "BOM" | "PURCHASE";
   }>(
-    `SELECT line.id::text AS source_line_id,
-            line.parent_piece_technique_id::text AS piece_technique_id,
-            line.parent_piece_technique_version_id::text AS parent_piece_technique_version_id,
-            article.id::text AS article_id,
-            article.code AS article_code,
-            COALESCE(line.designation, article.designation) AS designation,
-            line.quantite::float8 AS quantity_per_parent,
-            'BOM'::text AS source_kind
-       FROM public.pieces_techniques_nomenclature line
-       JOIN public.articles article ON article.id = line.child_article_id
-      WHERE line.parent_piece_technique_id = ANY($1::uuid[])
-        AND line.child_article_id IS NOT NULL
-      UNION ALL
-     SELECT purchase.id::text AS source_line_id,
-            purchase.piece_technique_id::text AS piece_technique_id,
-            NULL::text AS parent_piece_technique_version_id,
-            article.id::text AS article_id,
-            article.code AS article_code,
-            COALESCE(purchase.nom, article.designation) AS designation,
-            purchase.quantite::float8 AS quantity_per_parent,
-            'PURCHASE'::text AS source_kind
-       FROM public.pieces_techniques_achats purchase
-       JOIN public.articles article ON article.id = purchase.article_id
-      WHERE purchase.piece_technique_id = ANY($1::uuid[])
-        AND purchase.article_id IS NOT NULL`,
-    [parentPieceIds]
+    ASSEMBLY_PURCHASED_REQUIREMENTS_SQL,
+    [parentPieceIds, parentVersionIds]
   );
   return parents.flatMap((parent) => rows.rows
     .filter((row) => row.piece_technique_id === parent.piece_technique_id
