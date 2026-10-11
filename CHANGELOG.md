@@ -1,5 +1,7 @@
 # Changelog
 
+- NC liée à un contrôle : héritage des liens lot/réception/fournisseur connus avant verrou qualité, refus des contradictions (#1143).
+
 ## OBS080 — #1140 (2026-10-11)
 
 - Filtre UUID du BL dans le comptage et les sources paginées de facturation ; intersection des filtres et éligibilité existantes conservées. Aucune migration.
