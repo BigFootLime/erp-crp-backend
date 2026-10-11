@@ -150,6 +150,12 @@ export function releasableQty(ledger: QuantityLedger): number {
   return Math.max(0, Math.min(ledger.conforming - ledger.released, remainingUndisposedQty(ledger)));
 }
 
+// Keep read models consistent with the incomplete-verdict decision gate,
+// including historical executions whose ledger predates that calculation.
+export function executionReleasableQty(ledger: QuantityLedger, verdict: QualityVerdict): number {
+  return verdict === "EN_ATTENTE" ? 0 : releasableQty(ledger);
+}
+
 /* -------------------------------------------------------------------------- */
 /* 3) Décision de libération                                                  */
 /* -------------------------------------------------------------------------- */

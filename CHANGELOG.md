@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-11 — Availability of incomplete quality executions (#1173)
+
+- Detail and verdict preview report zero releasable quantity while mandatory checks are incomplete, including old positive ledgers. New measurement recalculations no longer mark partially checked units as conforming.
+- Preserve completed conforming/partial controls, approved sampling, existing measurement history and the authenticated incomplete-verdict release gate. No migration or stock movement.
+- Add recipe-based domain regression cases for missing dimensions, completed and partial controls, pending values and historical ledgers.
+
 ## 2026-10-11 — Assembly quantities on manufacturing documents (#1170)
 
 - Other active-order coverage counts the same technical piece/version, customer and assembly/BOM branch. Assembly components no longer count as deliverable finished assemblies; child demand does not inherit finished-assembly stock allocations.
