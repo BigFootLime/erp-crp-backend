@@ -153,6 +153,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
   return { id:String(row.id),source:row.source as CentralTask["source"],operationId:str(row.operation_id),
     programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
+    phase:row.source==="OPERATION" && row.phase != null ? num(row.phase) : null,
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
     released:num(row.released),resourceIds,eligibleResourceIds:resourceIds,
     forecastResourceIds:row.forecast_resource_ids == null ? null : strings(row.forecast_resource_ids),
