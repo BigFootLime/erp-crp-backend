@@ -17,6 +17,15 @@ import { requiredRouteParam } from "../module/methodes/controllers/methodes.cont
 import { HttpError } from "../utils/httpError"
 
 describe("Opération de gamme — contrat d'entrée", () => {
+  it("accepte ASSEMBLAGE pour la création et la modification sans machine CN", () => {
+    const body = { type_operation: "ASSEMBLAGE", designation: "Montage axe et platine", numero_operation: 10, temps_preparation_minutes: 5, temps_unitaire_minutes: 2, machine_family_code: null, machine_id: null }
+    expect(addGammeOperationSchema.parse({ body }).body).toMatchObject(body)
+    expect(updateGammeOperationSchema.parse({ body: { ...body, expected_updated_at: "2026-10-11T03:00:00Z" } }).body).toMatchObject(body)
+    for (const type_operation of ["Assemblage", "MONTAGE", " ASSEMBLAGE", "UNKNOWN"]) {
+      expect(addGammeOperationSchema.safeParse({ body: { ...body, type_operation } }).success).toBe(false)
+    }
+  })
+
   it("accepte le type DECOUPE sans retirer les types existants", () => {
     expect(operationTypeSchema.options).toContain("DECOUPE")
     for (const type of ["TOURNAGE", "FRAISAGE", "SOUS_TRAITANCE", "CONTROLE", "AUTRE"]) {

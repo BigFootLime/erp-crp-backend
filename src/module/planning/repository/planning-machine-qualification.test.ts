@@ -22,7 +22,7 @@ async function expectCode(row: Record<string, unknown>, code: string) {
 }
 
 describe("planning machine qualification invariant", () => {
-  it.each(["DECOUPE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"])("accepts an explicitly assigned autonomous poste for %s", async (operation_type) => {
+  it.each(["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"])("accepts an explicitly assigned autonomous poste for %s", async (operation_type) => {
     const tx = queryer({ operation_id: operationId, operation_type, required_machine_family_code: null,
       machine_id: null, assigned_poste_id: "poste-1", selected_poste_id: "poste-1", poste_active: true });
     await expect(assertOperationResourceCompatible({ tx, of_operation_id: operationId,
