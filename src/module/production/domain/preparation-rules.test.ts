@@ -4,11 +4,41 @@ import {
   isPreparationReady,
   preparationWarnings,
   programmingDecisionDefined,
+  preparationRulesVersion,
+  PREPARATION_RULES_VERSION,
   planningUrgency,
   preparationOperationIssues,
   sourceHash,
   type PreparationFacts,
 } from "./preparation-rules";
+
+describe("preparation policy lifecycle", () => {
+  const draft = { statut: "BROUILLON", preparation_rules_version: 1, technical_snapshot_sha256: null };
+  it("reviews an unfrozen legacy draft with current rubrics and visible optional warnings", () => {
+    const version = preparationRulesVersion(draft);
+    const facts = { ...complete(), sheet_current: false, stock_review_current: false,
+      quality_plan_id: null, quality_characteristic_count: 0 };
+    const items = evaluatePreparation(facts, version);
+    expect(version).toBe(PREPARATION_RULES_VERSION);
+    expect(isPreparationReady(items)).toBe(true);
+    expect(preparationWarnings(items).map(item => item.key)).toEqual(["quality", "stock_compatibility", "self_inspection"]);
+    expect(draft.preparation_rules_version).toBe(1);
+  });
+  it.each(["BROUILLON", "PLANIFIE", "EN_COURS", "TERMINE"])("retains approved policy and evidence for a frozen %s", statut => {
+    const version = preparationRulesVersion({ ...draft, statut, technical_snapshot_sha256: "frozen-proof" });
+    const items = evaluatePreparation({ ...complete(), sheet_current: false }, version);
+    expect(version).toBe(1);
+    expect(isPreparationReady(items)).toBe(false);
+    expect(items.find(item => item.key === "self_inspection")?.required).toBe(true);
+  });
+  it.each(["PLANIFIE", "EN_COURS", "EN_PAUSE", "TERMINE", "ANNULE"])("does not retroactively change an unfrozen historical %s", statut => {
+    expect(preparationRulesVersion({ ...draft, statut })).toBe(1);
+  });
+  it("uses the default only for an unversioned order and never downgrades a newer policy", () => {
+    expect(preparationRulesVersion({ ...draft, preparation_rules_version: null })).toBe(PREPARATION_RULES_VERSION);
+    expect(preparationRulesVersion({ ...draft, preparation_rules_version: 3 })).toBe(3);
+  });
+});
 
 describe("programming choices frozen before planning", () => {
   it.each([

@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { synchronizeDraftChildrenTx } from "../repository/preparation-children.repository";
+import { PREPARATION_RULES_VERSION } from "./preparation-rules";
 import type {
   RecursiveOfGenerationResult,
   OfGenerationSourceType,
@@ -93,7 +94,7 @@ export async function createPreparationDraftTree(
     .digest("hex");
   await tx.query(
     `INSERT INTO public.of_generation_batches(id,source_type,commande_id,commande_ligne_id,affaire_id,root_piece_technique_id,requested_qty,source_hash,created_by,idempotency_key,request_hash,metadata)
-    VALUES($1::uuid,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,jsonb_build_object('preparation_rules_version',1))`,
+    VALUES($1::uuid,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$11,jsonb_build_object('preparation_rules_version',$12::int))`,
     [
       batch,
       p.source_type ?? "COMMANDE_CLIENT",
@@ -106,11 +107,12 @@ export async function createPreparationDraftTree(
       p.user_id,
       p.idempotency_key ?? null,
       p.request_hash ?? null,
+      PREPARATION_RULES_VERSION,
     ],
   );
   await tx.query(
     `INSERT INTO public.ordres_fabrication(id,numero,client_id,article_id,piece_technique_id,commande_id,commande_ligne_id,affaire_id,root_of_id,generation_batch_id,generation_level,structure_path,quantity_per_parent,quantity_cumulative,quantite_lancee,statut,technical_preparation,preparation_rules_version,created_by,updated_by)
-    VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$1,$9::uuid,0,$10,1,1,$11,'BROUILLON',jsonb_build_object('selected_version_id',$12::text),1,$13,$13)`,
+    VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$1,$9::uuid,0,$10,1,1,$11,'BROUILLON',jsonb_build_object('selected_version_id',$12::text),$14,$13,$13)`,
     [
       id,
       numero,
@@ -125,6 +127,7 @@ export async function createPreparationDraftTree(
       p.qty_to_produce,
       piece.version_id,
       p.user_id,
+      PREPARATION_RULES_VERSION,
     ],
   );
   await synchronizeDraftChildrenTx(tx, id, p.user_id);
