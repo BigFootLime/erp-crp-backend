@@ -384,6 +384,27 @@ export function computeExecutionVerdict(params: {
   return { verdict, evaluations, missing, blocking, ok_count: okCount, nok_count: nokCount };
 }
 
+// Une mesure d'aspect seule ne prouve pas la conformité d'une unité lorsque
+// ses autres caractéristiques obligatoires sont encore manquantes.
+export function computeExecutionQuantities(
+  computation: VerdictComputation,
+  population: number
+): { controlled: number; conforming: number } {
+  const evaluatedUnits = new Set<number>();
+  const nonconformingUnits = new Set<number>();
+  for (const evaluation of computation.evaluations) {
+    if (evaluation.result === "PENDING") continue;
+    evaluatedUnits.add(evaluation.sample_no);
+    if (evaluation.result === "NOK") nonconformingUnits.add(evaluation.sample_no);
+  }
+  const sampled = Math.min(evaluatedUnits.size, population > 0 ? population : evaluatedUnits.size);
+  const controlled = computation.verdict === "CONFORME" && sampled > 0 && population > 0
+    ? population : sampled;
+  const conforming = computation.verdict === "CONFORME" ? controlled
+    : computation.verdict === "PARTIEL" ? Math.max(0, sampled - nonconformingUnits.size) : 0;
+  return { controlled, conforming };
+}
+
 /* -------------------------------------------------------------------------- */
 /* 5) Applicabilité d'un plan                                                 */
 /* -------------------------------------------------------------------------- */
