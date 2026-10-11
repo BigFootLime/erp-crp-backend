@@ -9,7 +9,7 @@ const validCommand = {
   effective_from: "2026-01-01",
   effective_to: null,
   eligible_delivery_statuses: ["SHIPPED", "DELIVERED"],
-  require_distinct_issuer: true,
+  require_distinct_issuer: false,
   sequences: {
     facture: { year: 2026, prefix: "FAC-2026-", next_value: 1, padding: 6 },
   },
@@ -18,6 +18,11 @@ const validCommand = {
 describe("activateFinanceConfigurationBodySchema", () => {
   it("accepts a confirmed command with the mandatory FACTURE sequence", () => {
     expect(activateFinanceConfigurationBodySchema.parse(validCommand)).toMatchObject(validCommand);
+  });
+
+  it("accepts legacy clients without reintroducing actor separation", () => {
+    expect(activateFinanceConfigurationBodySchema.parse({ ...validCommand, require_distinct_issuer: true }).require_distinct_issuer).toBe(false);
+    expect(activateFinanceConfigurationBodySchema.parse({ ...validCommand, require_distinct_issuer: undefined }).require_distinct_issuer).toBe(false);
   });
 
   it("refuses a command that has not been explicitly confirmed", () => {

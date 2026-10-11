@@ -242,19 +242,6 @@ export function assertAvoirTransition(
   }
 }
 
-export function assertSeparationOfDuties(params: {
-  creatorUserId: number | null;
-  validatorUserId: number;
-}): void {
-  if (params.creatorUserId !== null && params.creatorUserId === params.validatorUserId) {
-    throw new HttpError(
-      403,
-      "FINANCE_SEPARATION_OF_DUTIES",
-      "Le créateur ne peut pas valider son propre document financier."
-    );
-  }
-}
-
 export function normalizeIdempotencyKey(value: string | null | undefined): string {
   const normalized = (value ?? "").trim();
   if (normalized.length < 8 || normalized.length > 200) {

@@ -91,7 +91,7 @@ export async function repoGetFinanceConfigurationReadiness(
       `
     ),
     pool.query(
-      `SELECT policy_version, legal_entity_code, eligible_delivery_statuses, require_distinct_issuer,
+      `SELECT policy_version, legal_entity_code, eligible_delivery_statuses, FALSE AS require_distinct_issuer,
               effective_from::text AS effective_from, effective_to::text AS effective_to
        FROM public.finance_billing_policies
        WHERE active = TRUE AND effective_from <= CURRENT_DATE

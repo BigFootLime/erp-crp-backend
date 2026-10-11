@@ -7,7 +7,6 @@ import { queueCreationPdfArchive } from "../../../shared/authoritative-documents
 import { parseInvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 import {
   assertAvoirTransition,
-  assertSeparationOfDuties,
   financePreviewHash,
   isInvoiceIssuedForSettlement,
   type AvoirWorkflowStatus,
@@ -665,12 +664,6 @@ export async function repoValidateAvoir(params: {
     if (avoir.statut !== "PENDING_VALIDATION" || avoir.row_version !== params.input.expected_version) {
       throw new HttpError(409, "AVOIR_CONCURRENT_MODIFICATION", "L'avoir a changé.");
     }
-    if (params.input.decision === "APPROVE") {
-      assertSeparationOfDuties({
-        creatorUserId: avoir.created_by,
-        validatorUserId: params.actor.userId,
-      });
-    }
     const target: AvoirWorkflowStatus =
       params.input.decision === "APPROVE" ? "APPROVED" : "DRAFT";
     assertAvoirTransition(avoir.statut, target);
@@ -710,6 +703,14 @@ export async function repoValidateAvoir(params: {
       correlationId,
       idempotencyKey: receipt.idempotencyKey,
       reason: params.input.reason,
+    });
+    await insertGlobalFinanceAudit({
+      client,
+      actor: params.actor,
+      action: `facturation.${commandType.toLowerCase()}`,
+      entityType: "avoir",
+      entityId: avoir.uuid,
+      details: { decision: params.input.decision, correlation_id: correlationId },
     });
     await saveFinanceReceipt({
       client,
@@ -805,17 +806,6 @@ export async function repoIssueAvoir(params: {
     const activePolicy = policy.rows[0];
     if (!activePolicy) {
       throw new HttpError(503, "BILLING_POLICY_NOT_ACTIVE", "Politique Finance absente.");
-    }
-    if (
-      activePolicy.require_distinct_issuer &&
-      avoir.approved_by !== null &&
-      avoir.approved_by === params.actor.userId
-    ) {
-      throw new HttpError(
-        403,
-        "FINANCE_ISSUER_VALIDATOR_CONFLICT",
-        "La politique active impose un émetteur distinct du valideur."
-      );
     }
     const issueDate = new Date().toISOString().slice(0, 10);
     // An avoir is itself a fiscal document. Resolve and validate its own legal version before
