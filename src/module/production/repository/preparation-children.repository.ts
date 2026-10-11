@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { PREPARATION_RULES_VERSION } from "../domain/preparation-rules";
 type Db = Pick<PoolClient, "query">;
 type Order = {
   id: number;
@@ -183,7 +184,7 @@ export async function synchronizeDraftChildrenTx(
             });
             await tx.query(
               `INSERT INTO public.ordres_fabrication(id,numero,client_id,article_id,piece_technique_id,commande_id,commande_ligne_id,affaire_id,parent_of_id,root_of_id,generation_level,source_bom_line_id,structure_path,quantity_per_parent,quantity_cumulative,quantite_lancee,statut,technical_preparation,preparation_rules_version,created_by,updated_by)
-            VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$18,$15,'BROUILLON',jsonb_build_object('selected_version_id',$16::text),1,$17,$17)`,
+            VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$18,$15,'BROUILLON',jsonb_build_object('selected_version_id',$16::text),$19,$17,$17)`,
               [
                 childId,
                 numero,
@@ -203,6 +204,7 @@ export async function synchronizeDraftChildrenTx(
                 childVersion,
                 userId,
                 line.quantite * o.quantity_cumulative,
+                PREPARATION_RULES_VERSION,
               ],
             );
             affected.push(childId);

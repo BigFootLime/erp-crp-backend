@@ -1,5 +1,6 @@
 import {createPreparationDraftTree} from './preparation-generation';
 import {synchronizeDraftChildrenTx} from '../repository/preparation-children.repository';
+import { PREPARATION_RULES_VERSION } from './preparation-rules';
 // Moteur unique de génération récursive des OF (#55/#141/#170).
 //
 // Ce module de domaine est LE service partagé exigé par #170 : le lancement de
@@ -677,6 +678,7 @@ export async function createIncompleteDraftOrdreFabrication(tx: Queryable, param
   );
   if (existing.rows[0]) return existing.rows[0];
 
+  const preparationEnabled = await usesPreparationRules(tx);
   const ofId = await allocateOrdreFabricationId(tx);
   const batchId = crypto.randomUUID();
   const numero = await generateTransactionalBusinessCode(tx, { prefix: "OF" });
@@ -709,6 +711,7 @@ export async function createIncompleteDraftOrdreFabrication(tx: Queryable, param
         commande_numero: params.commande_numero,
         technical_readiness: "INCOMPLETE",
         assembly_feature_enabled: params.assembly_feature_enabled === true,
+        preparation_rules_version: preparationEnabled ? PREPARATION_RULES_VERSION : undefined,
       }),
       sourceHash,
       params.user_id,
@@ -763,8 +766,8 @@ export async function createIncompleteDraftOrdreFabrication(tx: Queryable, param
     ]
   );
 
-  if(await usesPreparationRules(tx)){
-    await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=1 WHERE id=$1',[ofId]);
+  if(preparationEnabled){
+    await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=$2 WHERE id=$1',[ofId, PREPARATION_RULES_VERSION]);
     await synchronizeDraftChildrenTx(tx,ofId,params.user_id);
   }
   return {
@@ -902,6 +905,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     commande_numero: params.commande_numero,
     source_type: sourceType,
     completed_from_incomplete_root: existingRoot ? true : undefined,
+    preparation_rules_version: preparationEnabled ? PREPARATION_RULES_VERSION : undefined,
   });
   if (existingRoot) {
     if (!existingRoot.generation_batch_id) {
@@ -1124,7 +1128,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
       );
     }
 
-    if (deferPreparation) await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=1 WHERE id=$1',[ofId]);
+    if (deferPreparation) await tx.query('UPDATE public.ordres_fabrication SET preparation_rules_version=$2 WHERE id=$1',[ofId, PREPARATION_RULES_VERSION]);
     const operationsCount = deferPreparation ? 0 : await copyPieceOperationsToOf(tx, {
       of_id: ofId,
       piece_technique_id: node.piece_technique_id,

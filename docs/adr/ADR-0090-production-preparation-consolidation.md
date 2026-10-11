@@ -24,6 +24,27 @@ Les OF issus de commande peuvent précéder une définition industrielle complè
 11. La dissolution est compensatrice et disponible avant engagement uniquement. Elle conserve l'historique et restitue les besoins/réservations ; aucune suppression de traçabilité.
 12. Deux flags indépendants activent le poste de préparation et la création de regroupements. Leur désactivation ne retire ni les protections SQL ni l'accès aux dossiers déjà soumis aux nouvelles règles.
 
+## Politique des brouillons — correction 2026-10-11 / #1158
+
+Les quatre chemins de génération (préparation, sous-OF, racine commerciale
+incomplète et enfant différé) utilisent `PREPARATION_RULES_VERSION`, également
+inscrite dans les métadonnées du lot. La revue d’un ancien OF `BROUILLON` sans
+empreinte figée évalue la politique courante : plan client, MP, traitement et
+sous-traitance requis, avec dispenses motivées ; autres manques en avertissement.
+La nouvelle empreinte invalide une approbation commune calculée sous l’ancienne
+politique : soumission et validation ordinaires restent requises. La validation
+enregistre la politique évaluée avec le snapshot.
+
+Un OF avec empreinte figée conserve sa politique stockée, même en `BROUILLON`.
+Les autres statuts historiques ne sont pas réinterprétés ; une politique plus
+récente n’est pas rétrogradée. Aucune migration ne réécrit snapshot, mesures,
+réservations, opérations ou statuts. Les gates matière, composants, qualité et
+exécution restent indépendants de la possibilité de planifier.
+
+Régression ciblée : racine/enfant et quantités, racine incomplète, enfant différé,
+rejeu/conflit, politique d’un brouillon et conservation du dossier figé. Rejeu
+authentifié après livraison et qualification intégrale restent requis.
+
 ## Frontières et limites explicites
 
 Les statuts commerciaux, AR, BL, facturation et règles de libération qualité restent canoniques. Les demandes futures confirmées sont de vrais OF sélectionnés ; une anticipation sans commande est un surplus motivé, sans commande fictive. La part des quantités n'est pas un coût en euros : le moteur actuel déclare encore ce coût non calculable en l'absence de règles de taux/temps indirect complètes. Les OF d'articles distincts ne sont pas fusionnés ni substitués implicitement.

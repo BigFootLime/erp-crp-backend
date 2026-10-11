@@ -1,5 +1,11 @@
 # Changelog
 
+## Current draft preparation policy — #1158 — 2026-10-11
+
+- Generate root/child/incomplete/deferred orders and batch metadata with the shared policy version. Re-evaluate only unfrozen drafts under current mandatory rubrics; retain frozen and historical policy, normal review/audit and execution gates. No migration or historical data rewrite.
+- Add regression coverage for policy lifecycle, generated quantities, deferred children and durable replay/conflict. Actual Test replay and the full ERP recipe remain pending.
+
+
 ## 2026-10-11 — Canonical plan handoff (#1155)
 
 - Document dossiers recognise the same published, scan-released revision plans as OF preparation. Archives retain their type/revision metadata and remain preserved.

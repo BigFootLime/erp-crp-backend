@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createRecursiveOrdresFabrication } from "./of-generation";
+import { PREPARATION_RULES_VERSION } from "./preparation-rules";
 
 const rootPieceId = "11111111-1111-4111-8111-111111111111";
 const childPieceId = "22222222-2222-4222-8222-222222222222";
@@ -11,13 +12,14 @@ const rootPath = rootPieceId;
 const childPath = `${rootPieceId}/${childPieceId}`;
 
 describe("createRecursiveOrdresFabrication — maturation d'un OF racine", () => {
-  it("réutilise le brouillon racine et ne crée qu'un sous-OF pour le manque calculé", async () => {
+  it.each([false, true])("réutilise le brouillon racine et ne crée qu'un sous-OF pour le manque calculé (préparation=%s)", async (preparationEnabled) => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     let nextOfId = 100;
     const tx = {
       query: vi.fn(async (sql: unknown, params: unknown[] = []) => {
         const text = String(sql);
         calls.push({ sql: text, params });
+        if (text.includes("AS enabled")) return { rows: [{ enabled: preparationEnabled }] };
         if (text.includes("WITH RECURSIVE tree") && text.includes("pieces_techniques_nomenclature")) {
           return {
             rows: [
@@ -102,5 +104,16 @@ describe("createRecursiveOrdresFabrication — maturation d'un OF racine", () =>
     const rootUpdate = calls.find((call) => call.sql.includes("UPDATE public.ordres_fabrication") && call.sql.includes("completed_from_draft"));
     expect(rootUpdate?.params[0]).toBe(100);
     expect(rootUpdate?.params[14]).toBe(10);
+    const policies = calls.filter(call => call.sql.includes("SET preparation_rules_version="));
+    expect(policies.map(call => call.params)).toEqual(preparationEnabled
+      ? [[101, PREPARATION_RULES_VERSION]] : []);
+    if (preparationEnabled) {
+      const batchUpdate = calls.find(call => call.sql.includes("metadata = COALESCE(metadata"));
+      expect(JSON.parse(String(batchUpdate?.params[8]))).toMatchObject({ preparation_rules_version: PREPARATION_RULES_VERSION });
+      expect(ofInserts[0]?.params[22]).toBe(true);
+      expect(ofInserts[0]?.params[8]).toBe(null);
+      expect(ofInserts[0]?.params[9]).toBe(null);
+      expect(calls.some(call => call.sql.includes("INSERT INTO public.of_operations") && call.params[0] === 101)).toBe(false);
+    }
   });
 });

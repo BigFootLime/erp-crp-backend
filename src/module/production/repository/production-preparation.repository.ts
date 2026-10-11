@@ -12,6 +12,7 @@ import {
   preparationWarnings,
   programmingDecisionDefined,
   PREPARATION_RULES_VERSION,
+  preparationRulesVersion,
   sourceHash,
   type PreparationDecisions,
   type PreparationFacts,
@@ -289,7 +290,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     ],
   );
   const frozenSources = of.technical_snapshot?.preparation_evidence;
-  const rulesVersion = of.preparation_rules_version ?? PREPARATION_RULES_VERSION;
+  const rulesVersion = preparationRulesVersion(of);
   const sources = frozenSources && !frozenSources.quality_plan
     ? {...frozenSources, ...(of.technical_preparation?.execution_quality ?? {
         quality_plan: rows[0].sources.quality_plan,
