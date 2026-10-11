@@ -1,3 +1,5 @@
+import { repoGetFactureWorkflow } from "../repository/facture-workflow-read.repository";
+
 import {
   repoCreateFactureDraft,
   repoIssueFacture,
@@ -16,6 +18,8 @@ import type {
 } from "../validators/workflow.validators";
 import { writeImmutableFactureDocument } from "./finance-document.service";
 import { svcAutoQueueIssuedElectronicDocument } from "../electronic-invoicing/electronic-invoice.service";
+
+export const svcGetFactureWorkflow = (factureId: number) => repoGetFactureWorkflow(factureId);
 
 export const svcListEligibleFactureSources = (filters: EligibleSourcesQueryDTO) =>
   repoListEligibleFactureSources(filters);

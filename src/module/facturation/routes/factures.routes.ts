@@ -10,6 +10,7 @@ import {
   updateFacture,
 } from "../controllers/factures.controller";
 import {
+  getFactureWorkflow,
   createFactureDraftWorkflow,
   issueFactureWorkflow,
   listEligibleFactureSources,
@@ -78,6 +79,7 @@ router.get(
   requireFinanceCapability("read"),
   listEligibleFactureSources
 );
+router.get("/workflow/:id", requireFinanceCapability("read"), getFactureWorkflow);
 router.post("/workflow/preview", requireFinanceCapability("draft_write"), previewFacture);
 router.post("/workflow/drafts", requireFinanceCapability("draft_write"), createFactureDraftWorkflow);
 router.post(
