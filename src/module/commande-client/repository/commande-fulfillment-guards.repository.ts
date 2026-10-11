@@ -20,7 +20,8 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
         SELECT delivery_line.commande_ligne_id, COALESCE(SUM(delivery_line.quantite), 0)::numeric AS quantity
         FROM public.bon_livraison_ligne delivery_line
         JOIN public.bon_livraison delivery ON delivery.id = delivery_line.bon_livraison_id
-        WHERE delivery.commande_id = $1
+        JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
+        WHERE order_line.commande_id = $1
           AND delivery.statut IN ('SHIPPED', 'DELIVERED')
           AND delivery_line.commande_ligne_id IS NOT NULL
         GROUP BY delivery_line.commande_ligne_id
@@ -38,7 +39,10 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
         EXISTS(SELECT 1 FROM public.commande_ligne line WHERE line.commande_id = $1) AS has_lines,
         EXISTS(
           SELECT 1 FROM public.bon_livraison delivery
-          WHERE delivery.commande_id = $1 AND delivery.statut IN ('READY', 'SHIPPED', 'DELIVERED')
+          LEFT JOIN public.bon_livraison_ligne delivery_line ON delivery_line.bon_livraison_id = delivery.id
+          LEFT JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
+          WHERE COALESCE(order_line.commande_id, delivery.commande_id) = $1
+            AND delivery.statut IN ('READY', 'SHIPPED', 'DELIVERED')
         ) AS has_ready_delivery,
         NOT EXISTS(
           SELECT 1 FROM public.commande_ligne line
@@ -49,8 +53,9 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
         NOT EXISTS(
           SELECT 1 FROM public.bon_livraison_ligne delivery_line
           JOIN public.bon_livraison delivery ON delivery.id = delivery_line.bon_livraison_id
+          JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
           LEFT JOIN invoiced_by_delivery_line invoiced ON invoiced.source_line_id = delivery_line.id::text
-          WHERE delivery.commande_id = $1
+          WHERE order_line.commande_id = $1
             AND delivery.statut IN ('SHIPPED', 'DELIVERED')
             AND COALESCE(invoiced.quantity, 0) + 0.000000001 < delivery_line.quantite
         ) AS fully_invoiced
