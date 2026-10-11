@@ -314,14 +314,17 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
     const byId = new Map(qualifications.map(row => [row.id,row]));
     for (const task of tasks) if (task.operationId && task.view!=='external') {
       const qualification = byId.get(task.operationId);
+      task.operationType = str(qualification?.operation_type);
       task.eligibleResourceIds = qualification?.eligible ?? [];
       if (!qualification?.family) {
         const manual = ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(qualification?.operation_type ?? "");
         if (!manual) task.blockers.push("Famille machine à définir dans la gamme.");
         else if (!task.eligibleResourceIds.length) task.blockers.push("Poste de travail à affecter dans la fiche OF.");
       }
-      task.version = createHash("sha256").update(task.version+JSON.stringify(task.eligibleResourceIds)).digest("hex");
+      task.version = createHash("sha256").update(task.version+JSON.stringify([task.eligibleResourceIds,task.operationType])).digest("hex");
     }
+    for (const task of tasks) if (task.operationId && task.view==='external')
+      task.operationType = str(byId.get(task.operationId)?.operation_type);
   }
   const resources = await readCentralResources(tx,query.from,query.to);
   await hydrateDurationEstimates(tx,tasks,resources,settings.activation==='LEARN');

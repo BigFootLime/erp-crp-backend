@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Canonical routing type in planning (#1203 / WP-287)
+
+- Expose the frozen operation type alongside the existing canonical phase. Machine planning distinguishes machining operations without parsing free-text designations.
+- Include the qualification-derived type in internal task versions. Resource eligibility, calendars, permissions and atomic simulation/apply guards remain authoritative. No database migration.
+
 ## 2026-10-11 — Subcontract documentary evidence ownership (#1200)
 
 - Keep the work package's immutable evidence reference without adding an unsupported GED parent to the source document. Creating a package from a sent supplier order now preserves the plan's canonical ownership and private read policy.
