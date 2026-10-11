@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Cutting station execution provenance (#1182)
+
+- Start cutting time with the existing ADAPTER provenance accepted by the canonical pointage constraint, fixing the observed HTTP500/23514 at the first station start. No schema or historical-data change.
+- Preserve identified-operator audit, transaction authorization, idempotence, material/readiness guards and machine-independent cutting. Add an adapter/SQL source-contract regression that fails on the original value.
+
 ## 2026-10-11 — Single authorized metrology validator (#1179)
 
 - Apply the requested ordinary workflow: an authorized user may record measurements and validate that execution's verdict. Keep verdict-validation permissions, measurement/certificate requirements, fresh previews, frozen records and actor audit.
