@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — OF quality pending execution SQL (#1188)
+
+- Compare the source identifier as text when the same SQL parameter also denotes the operation UUID. Fix the observed PostgreSQL42883/HTTP500 when opening an operation control and the same lookup during creation.
+- Reproduce the original error and execute both corrected SELECTs with PostgreSQL-inferred parameter types in a READ ONLY transaction as cerp_app. No migration or historical-data change.
+
 ## 2026-10-11 — Frozen OF operation quality context (#1185)
 
 - Prepare session quality controls from the owning OF, active operation, physical population and frozen plan; use the READY self-inspection provenance for a plan attached after the initial dossier freeze.
