@@ -173,6 +173,30 @@ describe("Wave-1 official PDF renderers", () => {
     expect(text).not.toContain("ORIGINALGED");
   });
 
+  it("renders a supplier material PO with its exact sub-cent price and readable quantity", async () => {
+    const source = {
+      type: "SUPPLIER_PURCHASE_ORDER", code: "BCF-1176", status: "APPROUVEE", issued_at: "2026-10-11T10:00:00Z",
+      supplier: { code: "SUP-1176", name: "Fournisseur fictif" }, currency: "EUR", need_date: "2026-10-12", incoterm: null,
+      payment_terms: null, transport_mode: null, public_comment: null, delivery_address: null,
+      lines: [{ position: 1, reference: "MP-35", designation: "Barre 42CrMo4", unit: "mm", quantity: "3000.000", unit_price_ht: "0.0250", discount_pct: null, vat_pct: "20", net_ht: "75.00", need_date: null }],
+      totals: { total_ht: "75.00", total_discount: "0.00", total_vat: "15.00", freight_ht: "0.00", total_ttc: "90.00" }, issuer,
+    };
+    const record = archive(source);
+    const frozenBefore = JSON.stringify(record);
+    const bytes = await renderSupplierPurchaseOrderOfficialPdf({ archive: record });
+    const text = compactPdfText(pageTexts(bytes).join(" "));
+    expect(text).toContain("0,025");
+    expect(text).not.toContain("0,03");
+    expect(text).toContain("3000");
+    expect(text).not.toContain("3000.000");
+    expect(text).toContain("75,00");
+    expect(text).toContain("90,00");
+    expect(text).toContain("ORIGINALGED");
+    expect(text).not.toContain("SHA256");
+    expect(JSON.stringify(record)).toBe(frozenBefore);
+    expect(bytes.toString("latin1").match(/\/Type \/Page\b/g)).toHaveLength(1);
+  });
+
   it("renders a quote from precise decimal-string totals", async () => {
     const bytes = await renderDevisOfficialPdf({ archive: archive({
       type: "CUSTOMER_QUOTE", number: "DEV-2026-0042", status: "BROUILLON", issued_at: "2026-08-23T10:00:00Z", valid_until: "2026-09-22", version: "1",
