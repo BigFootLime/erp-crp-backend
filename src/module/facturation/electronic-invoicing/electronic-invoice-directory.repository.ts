@@ -150,14 +150,15 @@ export async function persistDirectoryVerification(params: {
     if (params.resourceType === "ISSUER") {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`finance_legal_mentions:${params.resourceId}`]);
     }
-    const locked = await client.query<{ siren: string | null; updated_at: string; previous_address: Record<string, unknown> }>(
+    const locked = await client.query<{ siren: string | null; updated_at: string; revision_matches: boolean; previous_address: Record<string, unknown> }>(
       `SELECT siren, ${target.updatedColumn}::text AS updated_at,
+         ${target.updatedColumn} = $2::timestamptz AS revision_matches,
          jsonb_build_object('scheme', electronic_address_scheme, 'value', electronic_address_value,
            'directory_entry_id', electronic_address_directory_entry_id, 'verified_at', electronic_address_verified_at) AS previous_address
          FROM ${target.table}
         WHERE ${target.idColumn}::text = $1 ${target.predicate}
         FOR UPDATE`,
-      [params.resourceId]
+      [params.resourceId, params.expectedUpdatedAt]
     );
     const current = locked.rows[0];
     if (!current) throw new HttpError(404, target.notFoundCode, "Référentiel introuvable.");
@@ -170,7 +171,7 @@ export async function persistDirectoryVerification(params: {
     if (current.siren?.replace(/\s/g, "") !== params.siren) {
       throw new HttpError(409, "EINVOICE_SIREN_CHANGED", "Le SIREN a changé pendant la consultation de l'annuaire.");
     }
-    if (new Date(current.updated_at).getTime() !== new Date(params.expectedUpdatedAt).getTime()) {
+    if (!current.revision_matches) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le référentiel a été modifié ; rechargez-le avant de vérifier l'adresse.");
     }
     const updated = params.resourceType === "ISSUER"

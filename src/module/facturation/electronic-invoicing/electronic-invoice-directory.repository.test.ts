@@ -5,10 +5,10 @@ vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsert
 vi.mock("./electronic-invoice-issuer.repository", () => ({ qualifyIssuerElectronicAddress: mocks.qualify }));
 import { persistDirectoryVerification, readDirectoryVerificationResource } from "./electronic-invoice-directory.repository";
 const params = { resourceType: "ISSUER" as const, resourceId: "issuer", siren: "999999998", identifier: "0225:999999998", expectedUpdatedAt: "2026-01-01T00:00:00Z", idempotencyKey: "issuer-1219-key", audit: { user_id: 7, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: null, client_session_id: null } };
-let current: { siren: string; updated_at: string; previous_address: object };
+let current: { siren: string; updated_at: string; revision_matches: boolean; previous_address: object };
 beforeEach(() => {
   vi.resetAllMocks();
-  current = { siren: params.siren, updated_at: params.expectedUpdatedAt, previous_address: {} };
+  current = { siren: params.siren, updated_at: params.expectedUpdatedAt, revision_matches: true, previous_address: {} };
   mocks.query.mockImplementation(async (sql: string) => ({ rows: sql.includes("FOR UPDATE") ? [current] : [] }));
   mocks.connect.mockResolvedValue({ query: mocks.query, release: mocks.release });
   mocks.qualify.mockResolvedValue({ rows: [{ verified_at: "2026-10-11T12:00:00Z" }] });
@@ -35,8 +35,21 @@ describe("issuer directory mutation atomicity", () => {
   });
   it.each(["siren", "updated_at"] as const)("refuses a concurrent change to %s without qualification", async (field) => {
     current[field] = field === "siren" ? "111111111" : "2026-10-11T12:00:00Z";
+    if (field === "updated_at") current.revision_matches = false;
     await expect(persistDirectoryVerification(params)).rejects.toMatchObject({ status: 409 });
     expect(mocks.qualify).not.toHaveBeenCalled(); expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.query).toHaveBeenLastCalledWith("ROLLBACK");
+  });
+  it("delegates exact revision comparison to the locked PostgreSQL row", async () => {
+    await persistDirectoryVerification({ ...params, expectedUpdatedAt: "2026-10-11T22:47:46.123456+02:00" });
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringMatching(/created_at = \$2::timestamptz AS revision_matches[\s\S]*FOR UPDATE/), [params.resourceId, "2026-10-11T22:47:46.123456+02:00"]);
+  });
+  it("rejects a revision differing below JavaScript millisecond precision", async () => {
+    current.updated_at = "2026-10-11 20:47:46.123457+00";
+    current.revision_matches = false;
+    await expect(persistDirectoryVerification({ ...params, expectedUpdatedAt: "2026-10-11T20:47:46.123456Z" })).rejects.toMatchObject({ code: "CONCURRENT_MODIFICATION" });
+    expect(mocks.qualify).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
     expect(mocks.query).toHaveBeenLastCalledWith("ROLLBACK");
   });
   it("rolls back the routing and receipt when the audit fails", async () => {
