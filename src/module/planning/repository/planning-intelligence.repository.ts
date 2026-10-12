@@ -5,6 +5,7 @@ import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { defaultPlanningPreferences } from "../domain/planning-intelligence";
+import { isReservedPlanningClientColor } from "../domain/planning-client-color-policy";
 import type {
   PlanningCapacityRawRow,
   PlanningIntelligenceEventRow,
@@ -546,7 +547,7 @@ function mapPreferences(row: Record<string, unknown> | undefined): PlanningPrefe
     show_weekends: Boolean(row.show_weekends),
     machine_ids: Array.isArray(row.machine_ids) ? row.machine_ids.map(String) : [],
     status_colors: recordOfStrings(row.status_colors),
-    client_color_overrides: recordOfStrings(row.client_color_overrides),
+    client_color_overrides: Object.fromEntries(Object.entries(recordOfStrings(row.client_color_overrides)).filter(([, color]) => !isReservedPlanningClientColor(color))),
     updated_at: text(row.updated_at),
   };
 }
