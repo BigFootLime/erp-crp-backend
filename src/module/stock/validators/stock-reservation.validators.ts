@@ -66,6 +66,10 @@ export const createStockReservationSchema = z.object({
       emplacement_id: z.coerce.number().int().positive(),
       lot_id: uuid.optional().nullable(),
       qty: z.coerce.number().positive().max(1_000_000_000),
+      barAllocations: z.array(z.object({
+        barId: uuid, quantityMm: z.number().finite().positive().max(1e9).multipleOf(.001),
+        expectedVersion: z.number().int().positive(),
+      }).strict()).min(1).max(1000).optional(),
       source: stockReservationSourceSchema,
       reason: z.string().trim().min(3).max(500),
       expires_at: z.string().datetime({ offset: true }).optional().nullable(),

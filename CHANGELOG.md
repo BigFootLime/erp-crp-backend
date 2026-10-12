@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-12 — Décisions qualité et barres (#1246)
+
+- Source physique et contexte réception pour les décisions guidées.
+- Réessai idempotent ; un rebut partiel conserve le verdict du reliquat du lot.
+
+
+## 2026-10-12 — Comptage matière guidé (#1246)
+
+- Les lignes d’inventaire indiquent leur unité et l’obligation de compter les barres, sans divulguer les longueurs théoriques en mode aveugle.
+
+
 ## 2026-10-12 — Couleurs clients et maintenance annuelle (#1169 / #888)
 
 - Palette client commune sans rouge ; rouge réservé aux problèmes.

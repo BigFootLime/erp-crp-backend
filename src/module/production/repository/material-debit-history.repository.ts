@@ -5,6 +5,9 @@ export async function readMaterialDebitsTx(tx:DossierDb,ofId:number){
   return (await tx.query(`SELECT d.id::text,d.operation_id::text AS "operationId",d.created_at AS "createdAt",d.note,
     d.compensates_id::text AS "compensatesId",c.id::text AS "correctedBy",d.quantity_kind AS "quantityKind",q.qty_good::float8 AS good,q.qty_scrap::float8 AS scrap,
     COALESCE(u.username,u.id::text) AS actor,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object('eventId',e.id,'barId',e.bar_id,'action',e.action,
+      'before',e.before_state,'after',e.after_state) ORDER BY e.bar_id)
+      FROM public.stock_material_bar_events e WHERE e.command_key=d.command_key AND e.action IN('CUT','COMPENSATE')),'[]'::jsonb) AS bars,
     COALESCE((SELECT jsonb_agg(jsonb_build_object('reservationId',s.reservation_id,'movementId',s.stock_movement_id,
       'lotId',r.lot_id,'lotCode',l.lot_code,'unit',n.unit,'planned',COALESCE(s.planned_qty,abs(m.qty)),
       'actual',COALESCE(s.actual_qty,abs(m.qty)),'cut',COALESCE(s.cut_qty,s.actual_qty,abs(m.qty)),

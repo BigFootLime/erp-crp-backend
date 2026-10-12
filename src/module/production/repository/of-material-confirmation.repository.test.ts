@@ -24,6 +24,69 @@ beforeEach(()=>{
   m.read.mockImplementation(async()=>current);m.reserve.mockResolvedValue({reservation:{id:'reservation'}});m.draft.mockResolvedValue([{id:'draft',code:'BCF-TEST'}]);
 });
 describe('physical and future material confirmation',()=>{
+  it('passes the physical top-up to the canonical reservation without another purchase',async()=>{
+    Object.assign(current.needs[0],{required:221,reserved:210,unit:'mm',futureSupplies:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},
+      reservations:[{id:'receipt',stock_batch_id:'batch',status:'ACTIVE',unexpired:true,qty_reserved:210,qty_consumed:0}],
+      barInventories:{batch:{status:'CONFIRMED',version:'bars',warning:null,
+        bars:[{id:'bar',batchId:'batch',lengthMm:1000,version:7}],holds:[{barId:'bar',reservationId:'receipt',remainingMm:210}]}}});
+    current.needs[0].candidates[0].available=790;current.needs[0].candidates[0].lot.unit='mm';
+    await confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:11}],futureSelections:[]},audit,true);
+    expect(m.reserve).toHaveBeenCalledWith(expect.objectContaining({qty:11,
+      barAllocations:[{barId:'bar',quantityMm:11,expectedVersion:7}]}),audit,expect.any(String),tx,'need');
+    expect(m.draft).toHaveBeenCalledWith(tx,[],audit);
+  });
+  it('does not combine separate remnants when confirming a batch selection',async()=>{
+    Object.assign(current.needs[0],{required:331.5,reserved:0,unit:'mm',futureSupplies:[],reservations:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},
+      barInventories:{batch:{status:'CONFIRMED',version:'bars',warning:null,
+        bars:[{id:'bar1',batchId:'batch',lengthMm:200,version:1},{id:'bar2',batchId:'batch',lengthMm:200,version:1}],holds:[]}}});
+    current.needs[0].candidates[0].available=400;current.needs[0].candidates[0].lot.unit='mm';
+    await expect(confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:331.5}],futureSelections:[]},audit,true))
+      .rejects.toMatchObject({code:'MATERIAL_FRAGMENTED_SELECTION'});
+    expect(m.reserve).not.toHaveBeenCalled();expect(m.draft).not.toHaveBeenCalled();
+  });
+  it('waits for geometry review before automatically buying apparently missing material',async()=>{
+    Object.assign(current.needs[0],{blockers:['Vérifiez les barres du stock existant avant de préparer un achat.']});
+    await expect(confirmOfMaterial(19,{...body,selections:[],futureSelections:[]},audit,true)).rejects.toMatchObject({code:'MATERIAL_PREPARATION_REQUIRED'});
+    expect(m.reserve).not.toHaveBeenCalled();expect(m.draft).not.toHaveBeenCalled();
+  });
+  it('refreshes a shared bar version between two needs inside the same confirmation',async()=>{
+    const geometry={status:'CONFIRMED',version:'bars',warning:null,bars:[{id:'bar',batchId:'batch',lengthMm:400,version:1}],holds:[] as Array<{barId:string;reservationId:string;remainingMm:number}>};
+    const first=current.needs[0],second=need();second.id='need2';second.key='source2';current.needs.push(second);
+    for(const n of current.needs){
+      Object.assign(n,{required:110.5,reserved:0,unit:'mm',futureSupplies:[],reservations:[],barInventories:{batch:geometry},
+        debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true}});
+      n.candidates[0].available=400;n.candidates[0].lot.unit='mm';
+    }
+    m.reserve.mockImplementation(async()=>{
+      const id=`reservation-${m.reserve.mock.calls.length}`;
+      geometry.bars[0].version++;geometry.holds.push({barId:'bar',reservationId:id,remainingMm:110.5});
+      return {reservation:{id}};
+    });
+    await confirmOfMaterial(19,{...body,selections:[{needKey:first.key,batchId:'batch',quantity:110.5},
+      {needKey:second.key,batchId:'batch',quantity:110.5}],futureSelections:[]},audit,true);
+    expect(m.reserve.mock.calls.map(([input])=>input.barAllocations[0].expectedVersion)).toEqual([1,2]);
+    expect(m.draft).toHaveBeenCalledWith(tx,[],audit);
+  });
+  it('completes 2000 + 210 mm with an 11 mm hold, preserving receipt reservations and buying nothing',async()=>{
+    Object.assign(current.needs[0],{required:2210,reserved:2210,unit:'mm',futureSupplies:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},
+      reservations:[{id:'receipt1',stock_batch_id:'batch1',status:'ACTIVE',unexpired:true,qty_reserved:2000,qty_consumed:0},
+        {id:'receipt2',stock_batch_id:'batch',status:'ACTIVE',unexpired:true,qty_reserved:210,qty_consumed:0}]});
+    current.needs[0].candidates[0].available=790;current.needs[0].candidates[0].lot.unit='mm';
+    await confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:11}],futureSelections:[]},audit,true);
+    expect(m.reserve).toHaveBeenCalledWith(expect.objectContaining({qty:11}),audit,expect.any(String),tx,'need');
+    expect(m.draft).toHaveBeenCalledWith(tx,[],audit);
+    expect(tx.query).toHaveBeenCalledWith('COMMIT');
+  });
+  it('rejects a rounded-looking length that cannot complete a whole blank',async()=>{
+    Object.assign(current.needs[0],{required:2210,reserved:0,unit:'mm',futureSupplies:[],reservations:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true}});
+    current.needs[0].candidates[0].available=2000;current.needs[0].candidates[0].lot.unit='mm';
+    await expect(confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:2000}],futureSelections:[]},audit,true)).rejects.toMatchObject({code:'MATERIAL_FRAGMENTED_SELECTION'});
+    expect(m.reserve).not.toHaveBeenCalled();expect(m.draft).not.toHaveBeenCalled();
+  });
   it('reserves 60, assigns an existing 25 and buys only 15 for a need of 100',async()=>{
     await confirmOfMaterial(19,body,audit,true);
     expect(m.reserve).toHaveBeenCalledWith(expect.objectContaining({qty:60}),audit,expect.any(String),tx,'need');

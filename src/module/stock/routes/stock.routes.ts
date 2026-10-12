@@ -5,6 +5,7 @@ import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.mi
 import { SUPPLIER_WRITE_ROLES } from "../../fournisseurs/fournisseurs.permissions";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
+import { getMaterialBarInventory, putMaterialBarInventory } from '../controllers/material-bars.controller';
 import {
   attachStockArticleDocuments,
   attachStockMovementDocuments,
@@ -154,6 +155,8 @@ router.post(
   createStockIntelligencePolicy
 );
 router.get("/positions", requireStockCapability("read"), listConsolidatedInventory);
+router.get('/material-bars/batches/:batchId', requireStockCapability('read'), getMaterialBarInventory);
+router.put('/material-bars/batches/:batchId', requireStockCapability('inventory_approve'), putMaterialBarInventory);
 router.get("/inventory", requireStockCapability("read"), listConsolidatedInventory);
 router.post("/historical-imports", requireStockCapability("movement_create"), createHistoricalImport);
 router.get("/article-categories", requireStockCapability("read"), listStockArticleCategories);

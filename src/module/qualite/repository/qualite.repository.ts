@@ -1,5 +1,8 @@
+import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
+import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from '../../stock/repository/material-bar-posting.repository';
+import type { MaterialBarMovementCommand } from '../../stock/domain/material-bar-movement';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -2359,6 +2362,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
   const documents = await selectDocuments(pool, "NON_CONFORMITY", id);
   const events = await selectEvents(pool, "NON_CONFORMITY", id);
   const dispositions = await selectNcDispositions(pool, id);
+  const receiptDispositionContext = await readReceiptDispositionContext(pool, id, r.lot_id);
 
   const actions: QualityActionListItem[] = actionsRes.rows.map((a) => ({
     id: a.id,
@@ -2377,6 +2381,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
   }));
 
   return {
+    receipt_disposition_context: receiptDispositionContext,
     id: r.id,
     reference: r.reference,
     description: r.description,
@@ -2899,6 +2904,7 @@ async function resolveStockSourceForLot(tx: DbQueryer, lotId: string, qtyRequire
 }
 
 async function createPostedStockMovementForDisposition(tx: DbQueryer, args: {
+  material_bars?: MaterialBarMovementCommand;
   movement_type: "OUT" | "SCRAP";
   lot_id: string;
   qty: number;
@@ -2918,6 +2924,10 @@ async function createPostedStockMovementForDisposition(tx: DbQueryer, args: {
   );
   const articleId = lot.rows[0]?.article_id;
   if (!articleId) throw new HttpError(400, "INVALID_LOT", "Unknown lot_id");
+
+  const barScope = await lockMaterialBarPostingScopeTx(tx, { articleId, lotIds: [args.lot_id], explicit: !!args.material_bars });
+  if (args.material_bars && args.unite && args.unite.trim().toLowerCase() !== 'mm')
+    throw new HttpError(422, 'MATERIAL_BAR_UNIT_REQUIRED', 'Les longueurs des barres et de la décision qualité doivent être exprimées en millimètres.');
 
   const unitId = await resolveUnitIdForArticle(tx, articleId, args.unite);
   const map = await getEmplacementMapping(tx, args.src_magasin_id, args.src_emplacement_id, "src");
@@ -2990,6 +3000,9 @@ async function createPostedStockMovementForDisposition(tx: DbQueryer, args: {
     [movementId, articleId, args.lot_id, args.qty, args.unite, args.src_magasin_id, args.src_emplacement_id, args.notes ?? null, args.audit.user_id]
   );
 
+  const barMovement = await prepareMaterialBarPostingTx(tx, { scope: barScope,
+    movement: { id: movementId, batchId: stockBatchId, type: args.movement_type, quantity: args.qty, reversalOf: null },
+    command: args.material_bars, externalTransaction: true });
   await tx.query(
     `
       UPDATE public.stock_movements
@@ -2999,6 +3012,7 @@ async function createPostedStockMovementForDisposition(tx: DbQueryer, args: {
     [movementId, args.audit.user_id]
   );
 
+  if (barMovement) await applyMaterialBarPostingTx(tx, barMovement, args.audit.user_id);
   return { movement_id: movementId, movement_no: movementNo };
 }
 
@@ -3010,6 +3024,16 @@ export async function repoCreateNonConformityDisposition(params: {
   const { id, body, audit } = params;
   const client = await pool.connect();
   const dispositionId = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const receipt = body.idempotency_key
+      ? await acquireIdempotency({
+          client: tx,
+          actor: audit,
+          idempotencyKeyRaw: body.idempotency_key,
+          commandType: "quality.nc.disposition",
+          requestPayload: { id, ...body },
+        })
+      : null;
+    if (receipt?.replay) return String(receipt.replay.dispositionId);
     await lockStockLaneTopology(tx);
     const nc = await tx.query<{ id: string; reference: string; lot_id: string | null }>(
       `SELECT id::text AS id, reference, lot_id::text AS lot_id FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE`,
@@ -3043,6 +3067,8 @@ export async function repoCreateNonConformityDisposition(params: {
     const lotId = row.lot_id;
     const needsMovement = body.disposition_type === "SCRAP" || body.disposition_type === "RETURN_SUPPLIER";
     const preStock=needsMovement && await recordPreStockReceiptDisposition(tx,{ncId:id,dispositionId,lotId,quantity:body.qty??null,unit:body.unite??null,type:body.disposition_type,audit});
+    if (body.material_bars && (!needsMovement || preStock))
+      throw new HttpError(422, 'MATERIAL_BAR_QUALITY_INVALID', 'La sélection de barres concerne une décision sur de la matière déjà en stock.');
     if (needsMovement && !preStock) {
       if (!lotId) throw new HttpError(409, "LOT_REQUIRED", "Cette disposition necessite un lot lie a la NC");
       const qty = body.qty ?? null;
@@ -3062,6 +3088,7 @@ export async function repoCreateNonConformityDisposition(params: {
       const idempotencyKey = `qualite:nc:${id}:disposition:${dispositionId}:movement`;
 
       const movement = await createPostedStockMovementForDisposition(tx, {
+        material_bars: body.material_bars,
         movement_type: movementType,
         lot_id: lotId,
         qty,
@@ -3081,10 +3108,8 @@ export async function repoCreateNonConformityDisposition(params: {
         [dispositionId, movement.movement_id, audit.user_id]
       );
 
-      await tx.query(
-        `UPDATE public.lots SET lot_status = 'BLOQUE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
-        [lotId, `NC ${row.reference} : ${body.disposition_type}`, audit.user_id]
-      );
+      // A quantified scrap/return affects that quantity, not the accepted remainder.
+      // Preserve the current lot verdict: only HOLD/RELEASE may change it here.
     } else if (lotId) {
       if (body.disposition_type === "HOLD") {
         await tx.query(
@@ -3121,6 +3146,20 @@ export async function repoCreateNonConformityDisposition(params: {
       details: { nc_id: id, disposition_type: body.disposition_type, note: body.note ?? null },
     });
 
+    if (receipt) {
+      await saveReceipt({
+        client: tx,
+        actor: audit,
+        idempotencyKey: receipt.idempotencyKey,
+        requestHash: receipt.requestHash,
+        commandType: "quality.nc.disposition",
+        aggregateType: "DISPOSITION",
+        aggregateId: dispositionId,
+        requestPayload: { id, ...body },
+        resultPayload: { dispositionId },
+        correlationId: crypto.randomUUID(),
+      });
+    }
     return dispositionId;
   });
   const created = (await selectNcDispositions(pool, id)).find((d) => d.id === dispositionId) ?? null;
@@ -3561,3 +3600,4 @@ export async function repoPatchAction(params: { id: string; body: PatchActionBod
   return updated ? repoGetAction(id) : null;
 }
 import {recordPreStockReceiptDisposition} from "../../receptions/repository/receipt-disposition.repository";
+import {readReceiptDispositionContext} from "../../receptions/repository/receipt-disposition-context.repository";

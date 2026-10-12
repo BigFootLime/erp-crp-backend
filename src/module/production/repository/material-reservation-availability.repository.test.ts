@@ -34,3 +34,35 @@ it('treats a disappeared stock batch as unavailable',async()=>{
   const m=fixture();m.needs[0].candidates=[];
   expect((await readMaterialReservationAvailabilityTx(tx,m)).get('n')!.usable).toBe(0);
 });
+
+it('blocks the 20-piece gate for 2000 + 210 mm, but keeps raw holds available to measured debit',async()=>{
+  const m=fixture(),need=m.needs[0];
+  need.debitRule={form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true};
+  need.reservations=[{...need.reservations[0],qty_reserved:2000,qty_consumed:0},
+    {...need.reservations[0],id:'r2',stock_batch_id:'b2',qty_reserved:210,qty_consumed:0}];
+  need.candidates.push({...need.candidates[0],lot:{...need.candidates[0].lot,batchId:'b2'}});
+  const result=(await readMaterialReservationAvailabilityTx(tx,m)).get('n')!;
+  expect(result.usable).toBe(2099.5);
+  expect(result.reservations.get('r2')).toBe(210);
+  need.reservations.push({...need.reservations[1],id:'topup',qty_reserved:11});
+  expect((await readMaterialReservationAvailabilityTx(tx,m)).get('n')!.usable).toBe(2210);
+});
+
+it('uses physical bar boundaries for the shared planning and operation gate',async()=>{
+  const material=fixture(),need=material.needs[0];
+  need.debitRule={form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true};
+  Object.assign(need.reservations[0],{qty_reserved:400,qty_consumed:0});
+  need.barInventories={b:{status:'CONFIRMED',version:'v',warning:null,
+    bars:[{id:'bar1',batchId:'b',lengthMm:200,version:1},{id:'bar2',batchId:'b',lengthMm:200,version:1}],
+    holds:[{barId:'bar1',reservationId:'r',remainingMm:200},{barId:'bar2',reservationId:'r',remainingMm:200}]}};
+  expect((await readMaterialReservationAvailabilityTx(tx,material)).get('n')!.usable).toBe(221);
+  quality.mockResolvedValue({eligibility:{blocks:[{message:'Contrôle requis'}]}});
+  expect((await readMaterialReservationAvailabilityTx(tx,material)).get('n')!.usable).toBe(0);
+});
+
+it('explains stale bar geometry instead of unlocking production from an aggregate hold',async()=>{
+  const material=fixture(),need=material.needs[0];
+  need.debitRule={form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true};
+  need.barInventories={b:{status:'REVIEW_REQUIRED',version:'v',warning:'Vérifiez les barres.',bars:[],holds:[]}};
+  expect((await readMaterialReservationAvailabilityTx(tx,material)).get('n')).toMatchObject({usable:0,blockers:['Vérifiez les barres.']});
+});

@@ -8,6 +8,13 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
   currentRole: { value: "Administrateur Systeme et Reseau" },
+  readBars: vi.fn(),
+  confirmBars: vi.fn(),
+}));
+
+vi.mock('../module/stock/services/material-bars.service', () => ({
+  readMaterialBarInventory: mocks.readBars,
+  confirmMaterialBarInventory: mocks.confirmBars,
 }));
 
 vi.mock("pg", () => {
@@ -70,6 +77,8 @@ beforeEach(() => {
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
+  mocks.readBars.mockReset();
+  mocks.confirmBars.mockReset();
   vi.mocked(queueCreationPdfArchive).mockReset();
   mocks.currentRole.value = "Administrateur Systeme et Reseau";
 
@@ -80,6 +89,33 @@ beforeEach(() => {
 });
 
 describe("/api/v1/stock", () => {
+  const barBatch = '00000000-0000-4000-8000-000000001246';
+  const barCount = { expectedVersion: 'a'.repeat(64), idempotencyKey: '00000000-0000-4000-8000-000000001247', reason: 'Comptage vérifié', bars: [] };
+  it('exposes bar inventory with the current user confirmation capability', async () => {
+    mocks.readBars.mockResolvedValue({ status:'UNCONFIRMED', bars:[] });
+    const allowed = await request(app).get(`/api/v1/stock/material-bars/batches/${barBatch}`);
+    expect(allowed.status).toBe(200); expect(allowed.body.canConfirm).toBe(true);
+    mocks.currentRole.value = 'Employe';
+    const readOnly = await request(app).get(`/api/v1/stock/material-bars/batches/${barBatch}`);
+    expect(readOnly.status).toBe(200); expect(readOnly.body.canConfirm).toBe(false);
+  });
+  it('rejects a bar confirmation without inventory approval access', async () => {
+    mocks.currentRole.value = 'Employe';
+    const result = await request(app).put(`/api/v1/stock/material-bars/batches/${barBatch}`).send(barCount);
+    expect(result.status).toBe(403); expect(mocks.confirmBars).not.toHaveBeenCalled();
+  });
+  it('validates bar lengths before any stock command', async () => {
+    const result = await request(app).put(`/api/v1/stock/material-bars/batches/${barBatch}`).send({ ...barCount, bars:[{id:barBatch,lengthMm:'3 000',allocations:[]}] });
+    expect(result.status).toBe(400); expect(mocks.confirmBars).not.toHaveBeenCalled();
+  });
+  it('passes the authenticated actor and distinguishes idempotent replay', async () => {
+    mocks.confirmBars.mockResolvedValue({ inventory:{status:'CONFIRMED'}, replayed:false });
+    const first = await request(app).put(`/api/v1/stock/material-bars/batches/${barBatch}`).send(barCount);
+    expect(first.status).toBe(201); expect(mocks.confirmBars).toHaveBeenCalledWith(barBatch,barCount,expect.objectContaining({user_id:1}));
+    mocks.confirmBars.mockResolvedValue({ inventory:{status:'CONFIRMED'}, replayed:true });
+    const replay = await request(app).put(`/api/v1/stock/material-bars/batches/${barBatch}`).send(barCount);
+    expect(replay.status).toBe(200);
+  });
   it("GET /api/v1/stock/units returns the canonical referential behind stock read access", async () => {
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ code: "PCE", label: "Pièce" }, { code: "u", label: "Unité" }, { code: "MM", label: "Millimètre" }] });
 

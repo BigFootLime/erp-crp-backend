@@ -8,6 +8,8 @@ import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossi
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
 import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {physicalMaterialInventoryBlockers} from '../domain/of-material-bars';
+import {readMaterialBarCoverageTx} from './material-bar-coverage.repository';
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
 import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 import {readMaterialDebitsTx} from './material-debit-history.repository';
@@ -147,17 +149,24 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       rowVersion:row?.row_version??null,consumptionAdjustment};
   });
   const originPolicy=await readMaterialOriginPolicyTx(tx,[ofId],lots.map(l=>l.id));
+  const barArticles=new Set(needs.filter(n=>n.debitRule?.form==='BAR').map(n=>n.articleId));
+  const barInventories=await readMaterialBarCoverageTx(tx,lots.filter(l=>barArticles.has(l.articleId)).map(l=>l.batchId));
+  for(const lot of lots)if(barArticles.has(lot.articleId))lot.barInventory=barInventories[lot.batchId];
   // Per-need checks are never generalized to another reference or revision.
   const remaining=new Map(lots.map(l=>[l.batchId,l.available]));
   const remainingQuality=new Map(lots.map(l=>[l.id,l.qualityAvailable??0]));
   const remainingLevels=new Map(lots.filter(l=>l.stockLevelId).map(l=>[l.stockLevelId!,l.levelAvailable!]));
   const proposedOrigins=new Set(originPolicy.usedOrigins);
-  const coverage=needs.map(need=>{
+  const proposedBarAvailability=new Map<string,number>();
+  const coverage=needs.map(source=>{
+    const need={...source,...(source.debitRule?.form==='BAR'?{barInventories}:{})};
     const candidates=lots.map(l=>({...l,available:remaining.get(l.batchId)??0,qualityAvailable:remainingQuality.get(l.id)??0,levelAvailable:l.stockLevelId?remainingLevels.get(l.stockLevelId):undefined,manualVerified:checks.some(c=>c.need_id===need.id&&c.lot_id===l.id&&c.requirements_hash===coverageFingerprint(need.requirements)&&c.lot_properties_hash===l.propertiesHash&&c.manual_checks_confirmed)}));
     const proposal=proposeMaterialCoverage([need],candidates,{maximumLots:originPolicy.maximumLots,
-      usedOrigins:proposedOrigins,originsByLot:originPolicy.originsByLot})[0];
+      usedOrigins:proposedOrigins,originsByLot:originPolicy.originsByLot},proposedBarAvailability)[0];
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
-    return {...need,...proposal,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
+    const blockers=[...need.blockers,...physicalMaterialInventoryBlockers(need),
+      ...(proposal.purchaseRequiresBarReview?['Vérifiez les barres du stock existant avant de préparer un achat.']:[])];
+    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
   });
   const historicalNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)).map(n=>{
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);
@@ -175,7 +184,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     technicalVersion:of.revision as string|null,technicalHash:of.hash as string|null,needs:coverage,previousNeeds,operations:dossier.operations}),ofId,'MATIERE');
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,executionStatus:dossier.executionStatus,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,references:defaults.references,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy,defaults}),needs:coverage,customerCalls,debits,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,destinations,reconciliations,originPolicy,defaults,barInventories}),needs:coverage,customerCalls,debits,
     previousNeeds,purchasePreparations:preparation.items,purchasePreparationsSyncRequired:preparation.requiresSync,
     retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,

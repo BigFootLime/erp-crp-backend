@@ -1,5 +1,6 @@
 import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
 import { receiptArticleContextSql } from './receipt-article-context';
+import { proposeReceivedMaterialBars } from '../../stock/domain/material-bar-receipt';
 import type { PoolClient } from "pg";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import pool from "../../../config/database";
@@ -28,6 +29,8 @@ import {
 
 type Queryable = Pick<PoolClient, "query">;
 export type ProcessingLine = {
+  flowContext?: { material?: { barToCut?: boolean; sourceLengthMm?: number | null } | null };
+  materialBarProposal?: ReturnType<typeof proposeReceivedMaterialBars>;
   transferred?: number;
   id: string;
   receptionId: string;
@@ -245,6 +248,11 @@ export async function readProcessingLine(
   }
   return {
     ...row,
+    materialBarProposal: proposeReceivedMaterialBars({
+      required: row.policy === 'STANDARD' && row.stockManaged && row.stockUnit?.trim().toLowerCase() === 'mm' && row.flowContext?.material?.barToCut === true,
+      receiptUnit: row.unit ?? '', stockUnit: row.stockUnit ?? '', coefficient: row.coefficient,
+      quantity: progress.queues.TO_STOCK, sourceLengthMm: row.flowContext?.material?.sourceLengthMm,
+    }),
     transferred,
     accepted,
     controlId,

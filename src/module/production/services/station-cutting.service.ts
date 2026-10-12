@@ -10,6 +10,8 @@ import {
   authorizeCuttingTx,
   cuttingPointageTx,
 } from "../repository/station-cutting.repository";
+import { cuttingScanSource } from "../domain/station-cutting-scan";
+import { repoFindScanEvent } from "../../identification/identification.repository";
 import { resolveIdentification } from "../../identification/identification.service";
 import { roleHasOfCapability } from "../domain/of-rbac";
 import type { PoolClient } from "pg";
@@ -89,14 +91,15 @@ export async function scanStationCutting(
   eventId: string,
 ) {
   await assertCuttingRead(station, ofId, operationId);
+  const previous = await repoFindScanEvent(eventId);
   const resolved = await resolveIdentification(
     {
       event_id: eventId,
       code,
       source: "KEYBOARD",
       flow: "CONSUME",
-      expected_entity_types: ["STOCK_LOT"],
-      client_scanned_at: new Date().toISOString(),
+      expected_entity_types: ["STOCK_LOT", "STOCK_MATERIAL_BAR"],
+      client_scanned_at: previous?.actor_user_id === station.user.id ? previous.client_scanned_at : new Date().toISOString(),
       device_id: station.device_code,
     },
     {
@@ -106,31 +109,9 @@ export async function scanStationCutting(
       correlation_id: null,
     },
   );
-  if (!resolved.ok || resolved.entity?.type !== "STOCK_LOT")
+  if (!resolved.ok || !resolved.entity || !["STOCK_LOT", "STOCK_MATERIAL_BAR"].includes(resolved.entity.type))
     throw new HttpError(422, "STATION_CUTTING_SCAN_REFUSED", resolved.message);
   const material = await getOfMaterial(ofId);
-  const reservations = material.enabled
-    ? material.needs
-        .filter((n) => n.operationId === operationId)
-        .flatMap((n) => n.reservations)
-        .filter(
-          (r) =>
-            r.lot_id === resolved.entity!.id &&
-            r.status === "ACTIVE" &&
-            r.unexpired &&
-            r.qty_reserved > r.qty_consumed,
-        )
-    : [];
-  if (!reservations.length)
-    throw new HttpError(
-      409,
-      "STATION_CUTTING_LOT_NOT_RESERVED",
-      "Ce lot n’est pas réservé pour cette découpe. Choisissez une barre proposée ou faites vérifier la préparation.",
-    );
-  return {
-    lotId: resolved.entity.id,
-    lotCode: resolved.entity.code,
-    reservationIds: reservations.map((r) => r.id),
-    message: "Lot identifié. Choisissez la barre puis confirmez les quantités.",
-  };
+  return cuttingScanSource(material.enabled ? material.needs : [], operationId,
+    { ...resolved.entity, type: resolved.entity.type as "STOCK_LOT" | "STOCK_MATERIAL_BAR" });
 }
