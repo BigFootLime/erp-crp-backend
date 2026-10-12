@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const database = vi.hoisted(() => ({
   query: vi.fn(),
   connect: vi.fn(),
+  previewBars: vi.fn(),
 }));
 
 vi.mock("../config/database", () => ({ default: database }));
+vi.mock('../module/stock/repository/material-bar-compensation.repository',()=>({previewMaterialBarCompensationTx:database.previewBars}));
+import { HttpError } from '../utils/httpError';
 
 import { hashStockCommand } from "../module/stock/domain/stock-command";
 import {
@@ -42,6 +45,7 @@ function movementRow(args: {
   status?: string;
   postedAt?: string | null;
   movementType?: string;
+  batchId?: string;
 } = {}) {
   return {
     id: args.id ?? ORIGINAL_ID,
@@ -50,7 +54,7 @@ function movementRow(args: {
     status: args.status ?? "POSTED",
     article_id: ARTICLE_ID,
     stock_level_id: null,
-    stock_batch_id: null,
+    stock_batch_id: args.batchId ?? null,
     qty: 5,
     effective_at: "2026-08-04T07:55:00.000Z",
     posted_at: args.postedAt === undefined ? POSTED_AT : args.postedAt,
@@ -103,6 +107,7 @@ function mockMovementQueries(args: {
   originalPostedAt?: string | null;
   existingCompensation?: { id: string; movement_no: string; status: string } | null;
   requestedMovementId?: string;
+  batchId?: string;
 } = {}) {
   database.query.mockImplementation(async (sql: unknown, values?: unknown[]) => {
     const text = String(sql);
@@ -118,7 +123,7 @@ function mockMovementQueries(args: {
                 postedAt: null,
                 movementType: "OUT",
               })
-            : movementRow({ postedAt: args.originalPostedAt }),
+            : movementRow({ postedAt: args.originalPostedAt,batchId:args.batchId }),
         ],
       };
     }
@@ -137,9 +142,26 @@ function mockMovementQueries(args: {
 beforeEach(() => {
   database.query.mockReset();
   database.connect.mockReset();
+  database.previewBars.mockReset();
 });
 
 describe("BUG-CERP-0014 stock compensation feedback", () => {
+  it('checks physical eligibility in a read-only transaction and releases its client',async()=>{
+    mockMovementQueries({batchId:COMPENSATION_ID});const client={query:vi.fn().mockResolvedValue({rows:[]}),release:vi.fn()};
+    database.connect.mockResolvedValue(client);database.previewBars.mockResolvedValue(true);
+    const preview=await repoPreviewMovementCompensation(ORIGINAL_ID,BODY);
+    expect(preview?.prerequisites).toContainEqual(expect.objectContaining({code:'MATERIAL_BAR_COMPENSATION_READY',satisfied:true}));
+    expect(client.query.mock.calls.map(c=>c[0])).toEqual(['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY','COMMIT']);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+  it('reports a stale physical bar before proposing an inverse draft',async()=>{
+    mockMovementQueries({batchId:COMPENSATION_ID});const client={query:vi.fn().mockResolvedValue({rows:[]}),release:vi.fn()};
+    database.connect.mockResolvedValue(client);database.previewBars.mockRejectedValue(new HttpError(409,'MATERIAL_BAR_COMPENSATION_CHANGED','Une barre a été utilisée depuis ce mouvement.'));
+    const preview=await repoPreviewMovementCompensation(ORIGINAL_ID,BODY);
+    expect(preview).toMatchObject({compensable:false,proposed_movement:null,outcome:'INELIGIBLE'});
+    expect(preview?.blockers).toContainEqual(expect.objectContaining({code:'MATERIAL_BAR_COMPENSATION_CHANGED'}));
+    expect(client.query).toHaveBeenCalledWith('ROLLBACK');expect(client.release).toHaveBeenCalledOnce();
+  });
   it("returns an explicit, authoritative eligible terminal state", async () => {
     mockMovementQueries();
 

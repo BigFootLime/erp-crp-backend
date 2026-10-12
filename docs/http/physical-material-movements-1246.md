@@ -73,10 +73,38 @@ de correction propres ; aucun contournement par la compensation générale.
 ## Limites de livraison de cette branche
 
 Les écrans doivent encore proposer ces commandes et préparer l'emplacement de
-destination avant un transfert. Les sessions de comptage doivent être raccordées
-à leurs mesures physiques, au lieu de produire un simple total. `SCRAP` et `DEPRECIATE` conservent
+destination avant un transfert. Les sessions de comptage acceptent maintenant
+leurs mesures physiques ; les écrans doivent les saisir et les présenter.
+`SCRAP` et `DEPRECIATE` conservent
 la quantité physique dans le ledger : ils ne sont pas acceptés comme `ISSUE`.
 Leur affectation qualité par barre reste à raccorder. Les anciennes routes sont
 protégées au commit mais ne constituent pas encore un parcours métier complet.
 Recette sur schéma ERP complet et validation web/tablette restent nécessaires
 avant fusion et déploiement. Ce document ne vaut pas validation métier.
+
+## Comptage physique des barres
+
+Le corps de saisie d'une ligne d'inventaire accepte `material_bars`, au format de
+confirmation des barres : `expectedVersion`, `idempotencyKey`, `reason` et `bars`
+(`id`, `lengthMm`, `allocations` avec `reservationId` et `quantityMm`). L'interface
+réutilise les identifiants scannés et calcule `counted_qty` depuis les longueurs ;
+le serveur vérifie leur égalité. Aucune longueur ou identité n'est déduite du
+seul total. Une nouvelle barre nécessite une nouvelle identité.
+
+La réponse de ligne expose `stock_batch_id`, `count_event_id` et `material_bars`
+(relevé enregistré ou null). Un comptage matière suivi sans détail des barres
+renvoie 422 `MATERIAL_BAR_COUNT_REQUIRED`. Le relevé est immuable ; toute nouvelle
+mesure ajoute un événement. Enregistrer un relevé ne change ni stock ni barres.
+
+La validation et la clôture contrôlent versions, longueurs initiales et totalité
+des réservations OF. Un second comptage, s'il est configuré, est exigé aussi
+lorsque la géométrie change sans écart de quantité. La clôture applique dans une
+transaction unique l'ajustement canonique et le relevé des barres. Un écart nul
+ne crée pas de mouvement fictif, mais conserve la preuve du recomptage. Une
+mesure devenue périmée exige de reprendre le relevé avant validation.
+
+Ordre de migration : barres, mouvements, comptages
+(`20261012_physical_material_bar_counts_1246.sql`). Le rollback du comptage est
+refusé dès qu'un relevé existe : son historique doit être conservé. Une correction
+d'inventaire passe par un nouveau comptage, pas par une compensation générale
+qui inventerait les barres à restituer.

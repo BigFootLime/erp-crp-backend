@@ -331,3 +331,29 @@ migration is required by this increment; the fixture adds reversal_of_id already
 present in the real ERP schema. These still exercise physical repositories with
 simulated canonical ledger writes, not complete ERP HTTP acceptance. Stocktaking,
 per-bar quality allocation, UI and full-schema business acceptance remain open.
+
+## Recorded stocktaking — 12 October 2026
+
+Inventory count events now retain immutable measured bar identities, lengths
+and reservation allocations. Save only records a measurement; approval checks
+its physical version and second-count requirements; close posts canonical
+adjustments and updates geometry in one transaction. Equal-total changes still
+produce a physical reconciliation without an artificial stock movement. Counts
+cover initial untracked stock, shortages, extra bars and explicit hold allocation.
+Existing bar initial lengths cannot be enlarged and another batch's barcode
+cannot be reused. A stale physical snapshot cannot close even if its total is
+unchanged. The read model returns the recorded measurement.
+
+Migration dependencies enforce bars → movements → counts. The additive count
+table binds evidence to its open canonical count, batch and quantity, prevents
+rewrite/deletion, and refuses rollback once evidence exists. The broader stock
+compatibility suite also exposed an obsolete compensation-preview fixture: the
+non-batch/duplicate path now avoids an unnecessary physical transaction, and
+two dedicated tests cover successful and refused physical previews.
+
+78 targeted stock/count/route/validator checks pass, plus the focused migration
+ordering check. 19 PostgreSQL count checks join the 25 movement, 9 debit/correction
+and 14 compensation checks. Migration, verify, rollback and reapplication are
+tested on the isolated schema. The repositories are real but canonical ledger
+writes are simulated; full ERP inventory-session/HTTP acceptance and visual
+web/tablet recipe remain required. No Test/Prod database was changed.

@@ -9,6 +9,8 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from './material-bar-posting.repository';
 import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
+import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMaterialBarCountSessionTx,
+  applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
 import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
@@ -7280,7 +7282,7 @@ export async function repoPreviewMovementCompensation(
   const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
     UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
   if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
-  if (!built.blockers.length) {
+  if (!built.blockers.length && detail.movement.stock_batch_id && !existing.rows.length) {
     const physicalPreview = await db.connect();
     try {
       await physicalPreview.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -9499,6 +9501,8 @@ async function queryInventorySessionLines(
         snapshot.id::text AS snapshot_line_id,
         snapshot.session_id::text AS session_id,
         snapshot.line_no::int AS line_no,
+        snapshot.stock_batch_id::text AS stock_batch_id,
+        latest_count.id::text AS count_event_id,
         snapshot.article_id::text AS article_id,
         article.code AS article_code,
         article.designation AS article_designation,
@@ -9585,6 +9589,7 @@ async function queryInventorySessionLines(
        AND materialized.lot_id IS NOT DISTINCT FROM snapshot.lot_id
       LEFT JOIN LATERAL (
         SELECT
+          event.id,
           event.count_round,
           event.counted_qty,
           event.reason_code,
@@ -9606,7 +9611,8 @@ async function queryInventorySessionLines(
     [sessionId, lineId]
   );
 
-  return res.rows;
+  const physicalCounts = await readMaterialBarCountsTx(db,res.rows.flatMap(row=>row.count_event_id?[row.count_event_id]:[]));
+  return res.rows.map(row=>({...row,material_bars:row.count_event_id ? physicalCounts.get(row.count_event_id) ?? null : null}));
 }
 
 async function repoGetInventoryLineById(lineId: string): Promise<StockInventorySessionLine | null> {
@@ -9950,6 +9956,10 @@ export async function repoUpsertInventoryLine(
       ["MP_LOT", body.mp_references] as const,
       ["TRAITEMENT_LOT", body.tr_references] as const,
     ].filter((entry): entry is readonly ["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]] => entry[1] !== undefined);
+    const physicalCount = await prepareMaterialBarCountEntryTx(client, { line: {
+      snapshotId:snapshotLine.id,batchId:snapshotLine.stock_batch_id,articleId:snapshotLine.article_id,
+      lotId:snapshotLine.lot_id,theoreticalQty:snapshotLine.theoretical_qty,countedQty:body.counted_qty,
+    },body:body.material_bars });
     if (traceUpdates.length > 0 && !body.lot_id) {
       throw new HttpError(
         422,
@@ -10048,6 +10058,7 @@ export async function repoUpsertInventoryLine(
     );
     const countEventId = countEvent.rows[0]?.id;
     if (!countEventId) throw new Error("Failed to append inventory count event");
+    if (physicalCount) await recordMaterialBarCountTx(client,countEventId,physicalCount);
 
     const existing = await client.query<{ id: string }>(
       `
@@ -10288,6 +10299,8 @@ export async function repoApproveInventorySession(
         `${counts.discrepancy_without_reason} discrepancies have no reason`
       );
     }
+
+    await prepareMaterialBarCountSessionTx(client,id,await loadMaterialBarCountLinesTx(client,id),row.requires_second_count);
 
     await client.query(
       `
@@ -10545,6 +10558,7 @@ export async function repoCloseInventorySession(
       );
     }
 
+    const physicalCounts = await prepareMaterialBarCountSessionTx(client,id,await loadMaterialBarCountLinesTx(client,id));
     const states = await lockStockStates(
       client,
       lines.rows.map((line) => ({
@@ -10582,6 +10596,7 @@ export async function repoCloseInventorySession(
       }))
       .filter((line) => Math.abs(line.delta_qty) > 1e-9);
     const postedAt = new Date().toISOString();
+    const physicalAdjustmentIds = new Map<string,string>();
     const drafts = await client.query<{
       id: string;
       snapshot_line_id: string;
@@ -10742,7 +10757,11 @@ export async function repoCloseInventorySession(
           [id, movementId, adj.snapshot_line_id]
         );
       }
+      physicalAdjustmentIds.set(adj.snapshot_line_id,movementId);
     }
+
+    for (const [snapshotId, physicalCount] of physicalCounts)
+      await applyMaterialBarCountTx(client,physicalCount,physicalAdjustmentIds.get(snapshotId) ?? null,audit.user_id);
 
     for (const draft of drafts.rows) {
       if (postedDraftIds.has(draft.id)) continue;

@@ -746,6 +746,9 @@ export type StockInventorySessionListItem = {
 };
 
 export type StockInventorySessionLine = {
+  stock_batch_id: string | null;
+  count_event_id: string | null;
+  material_bars?: import('../validators/material-bars.validators').MaterialBarInventoryCommand | null;
   id: string;
   snapshot_line_id: string;
   session_id: string;
