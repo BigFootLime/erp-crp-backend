@@ -60,7 +60,7 @@ export async function debitOfMaterial(ofId:number,body:MaterialDebit,audit:Audit
     const balances=needs.map(need=>({need,balance:actualDebitBalance({rule:need.debitRule!,blanks:body.good+body.scrap,varianceReason:body.varianceReason,
       sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,quantity:s.source.quantity+(s.source.barClosure?.discardedQuantity??0),remnant:remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0}))})}));
     const yields=needs.flatMap(need=>materialSourceYields({rule:need.debitRule!,good:body.good,scrap:body.scrap,varianceReason:body.varianceReason,
-      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,yield:s.source.yield,
+      sources:sources.filter(s=>s.need.id===need.id).map(s=>({id:s.source.reservationId,groupKey:s.candidate.lot.batchId,yield:s.source.yield,
         quantity:s.source.quantity-(remnants.find(r=>r.reservationId===s.source.reservationId)?.quantity??0)}))}));
     for(const remnant of remnants){
       const need=sources.find(s=>s.source.reservationId===remnant.reservationId)?.need;

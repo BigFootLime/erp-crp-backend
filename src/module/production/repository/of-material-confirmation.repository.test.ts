@@ -24,6 +24,24 @@ beforeEach(()=>{
   m.read.mockImplementation(async()=>current);m.reserve.mockResolvedValue({reservation:{id:'reservation'}});m.draft.mockResolvedValue([{id:'draft',code:'BCF-TEST'}]);
 });
 describe('physical and future material confirmation',()=>{
+  it('completes 2000 + 210 mm with an 11 mm hold, preserving receipt reservations and buying nothing',async()=>{
+    Object.assign(current.needs[0],{required:2210,reserved:2210,unit:'mm',futureSupplies:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},
+      reservations:[{id:'receipt1',stock_batch_id:'batch1',status:'ACTIVE',unexpired:true,qty_reserved:2000,qty_consumed:0},
+        {id:'receipt2',stock_batch_id:'batch',status:'ACTIVE',unexpired:true,qty_reserved:210,qty_consumed:0}]});
+    current.needs[0].candidates[0].available=790;current.needs[0].candidates[0].lot.unit='mm';
+    await confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:11}],futureSelections:[]},audit,true);
+    expect(m.reserve).toHaveBeenCalledWith(expect.objectContaining({qty:11}),audit,expect.any(String),tx,'need');
+    expect(m.draft).toHaveBeenCalledWith(tx,[],audit);
+    expect(tx.query).toHaveBeenCalledWith('COMMIT');
+  });
+  it('rejects a rounded-looking length that cannot complete a whole blank',async()=>{
+    Object.assign(current.needs[0],{required:2210,reserved:0,unit:'mm',futureSupplies:[],reservations:[],
+      debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true}});
+    current.needs[0].candidates[0].available=2000;current.needs[0].candidates[0].lot.unit='mm';
+    await expect(confirmOfMaterial(19,{...body,selections:[{needKey:'source',batchId:'batch',quantity:2000}],futureSelections:[]},audit,true)).rejects.toMatchObject({code:'MATERIAL_FRAGMENTED_SELECTION'});
+    expect(m.reserve).not.toHaveBeenCalled();expect(m.draft).not.toHaveBeenCalled();
+  });
   it('reserves 60, assigns an existing 25 and buys only 15 for a need of 100',async()=>{
     await confirmOfMaterial(19,body,audit,true);
     expect(m.reserve).toHaveBeenCalledWith(expect.objectContaining({qty:60}),audit,expect.any(String),tx,'need');

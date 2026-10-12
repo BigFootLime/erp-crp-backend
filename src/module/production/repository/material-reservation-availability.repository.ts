@@ -1,6 +1,6 @@
 import type { DossierDb } from './of-dossier.repository';
 import type { readMaterialTx } from './of-material.repository';
-import { lotCompatibility, quantity } from '../domain/of-material';
+import { lotCompatibility, materialReservedCapacity, quantity } from '../domain/of-material';
 import { readOperationalLotQualityEligibility } from '../../qualite/repository/quality-operational-gate.repository';
 
 export type MaterialReservationAvailability = Map<string, { usable: number; reservations: Map<string, number>; blockers: string[] }>;
@@ -22,7 +22,10 @@ export async function readMaterialReservationAvailabilityTx(tx: DossierDb, mater
       if (incompatible.length) blockers.push(...incompatible);
       else reservations.set(String(reservation.id), quantity(Math.max(0, Number(reservation.qty_reserved) - Number(reservation.qty_consumed))));
     }
-    result.set(need.key, {usable: quantity([...reservations.values()].reduce((s, q) => s + q, 0)), reservations, blockers: [...new Set(blockers)]});
+    const usable=materialReservedCapacity({...need,
+      reserved:quantity([...reservations.values()].reduce((s,q)=>s+q,0)),
+      reservations:need.reservations.filter(r=>reservations.has(String(r.id)))});
+    result.set(need.key, {usable, reservations, blockers: [...new Set(blockers)]});
   }
   return result;
 }
