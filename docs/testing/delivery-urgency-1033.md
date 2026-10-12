@@ -4,7 +4,7 @@ Parent : frontend #1252. Project Office : FLUX-20261009-06, recette WP285/S06. L
 
 ## État du chantier
 
-Le contrôle des donneurs, la demande persistante, la génération des récupérations en brouillon, leur approbation par le planificateur, le transfert atomique des réservations et l’annulation des brouillons inutilisés sont implémentés côté serveur. **Le forfait, la réconciliation après engagement, l’ajout au regroupement et l’interface restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Les routes de prélèvement sont présentes dans la branche de développement ; le lot n’est pas déployé.
+Le contrôle des donneurs, la demande persistante, la génération des récupérations en brouillon, leur approbation par le planificateur, le transfert atomique des réservations, le forfait unique par commande et l’annulation des brouillons inutilisés sont implémentés côté serveur. **La réconciliation après engagement, l’ajout au regroupement et l’interface restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Les routes de prélèvement sont présentes dans la branche de développement ; le lot n’est pas déployé.
 
 `GET /livraisons/affaires/allocations/:allocationId/urgency-preview?quantity=…` exige une session et la capacité livraison `read`. Le calcul lit un instantané PostgreSQL repeatable-read en lecture seule. Il réutilise le contrôle canonique du stock libre, puis recherche uniquement les réservations d’un même client et article sur la piste physique DELIVERY. Il exclut la piste assemblage, les affaires annulées, les réservations expirées, les incompatibilités techniques et les quantités déjà préparées pour un BL. Les lots NEW passent le contrôle Qualité existant pour la totalité des engagements actuels, sans ajouter une seconde fois la réservation donneuse. OLD conserve l’exigence de ses références documentaires.
 
@@ -12,7 +12,7 @@ Les capacités physiques des lots et emplacements sont partagées entre candidat
 
 ## Suite obligatoire
 
-1. Raccorder le forfait figé une fois par commande, son paramétrage client et sa facturation unique, y compris BL partiels.
+1. Exposer le paramétrage du forfait client et le montant accepté dans l’interface CERP, puis valider le parcours réel jusqu’à la facture et l’avoir. Le serveur et la facturation canonique sont raccordés.
 2. Interface planificateur : exposer le contrôle serveur des opérations et capacités engagées, des approvisionnements confirmés et de la fin réalisable avant l’échéance protégée.
 3. Raccorder l’interface au prélèvement transactionnel désormais disponible : aperçu actualisé puis confirmation de sa version, sans saisie manuelle des lots ou de la quantité déjà approuvée.
 4. Annulation après engagement/prélèvement, conservation des preuves et remboursement du donneur par la production effective. L’annulation des arbres encore inutilisés est déjà disponible.
@@ -66,3 +66,21 @@ L’approbation lie les définitions techniques, opérations, ressources et cré
 La mutation verrouille les affaires, réservations, lots, niveaux et emplacements, puis relit le contrôle avant transfert. Le stock physique reste identique. Seule la part non consommée et non préparée au BL quitte la réservation donneuse ; la réservation bénéficiaire passe par l’allocateur canonique et conserve le même article, lot, emplacement, base OLD/NEW et quantité exacte. La couverture du donneur est actualisée même après libération totale de sa réservation. Aucun AR ni indicateur OTD n’est réécrit.
 
 Le journal conserve chaque source et les réservations avant/après. PostgreSQL impose que toutes les sources soient transférées et la demande marquée WITHDRAWN dans la même transaction. L’audit et les notifications des deux commandes font partie de cette transaction. Toute erreur annule l’ensemble ; le rejeu d’une requête déjà enregistrée restitue son résultat sans second prélèvement. Les tableaux d’historique exposent aussi les identifiants d’approbation et de prélèvement.
+
+## Forfait par commande — serveur et facturation
+
+`GET/PUT /clients/:id/urgency-fee` lit/enregistre un montant HT explicite, la devise client et la version attendue. Les rôles d’écriture Client existants s’appliquent ; la modification est auditée et notifiée dans la même transaction. Un montant nul est autorisé explicitement ; une configuration absente ne devient jamais automatiquement gratuite.
+
+La proposition d’urgence affiche le forfait, son taux de TVA repris de la ligne concernée et sa version de paramétrage. Le montant est inclus dans la confirmation et figé dans la demande. Les demandes suivantes de la même commande réutilisent le forfait déjà accepté. Une modification ultérieure de la fiche client ne réécrit pas cet engagement.
+
+Le prélèvement crée la charge une seule fois par commande, dans sa transaction de transfert. Une contrainte unique, des verrous et un journal immuable protègent les demandes concurrentes et les rejeux. Si la charge ne peut pas être enregistrée, les réservations sont également annulées.
+
+Le workflow de facture ajoute automatiquement une ligne `ORDER_CHARGE` pour chaque commande sélectionnée ayant une charge non encore rattachée. Deux BL partiels de la même commande donnent une seule ligne de forfait. Les montants exacts alimentent TVA, échéancier et total ; la remise globale suit le calcul canonique existant. La charge est réservée au brouillon de facture sous verrou, puis réutilisée à son émission. Une charge créée après ce brouillon sera proposée à une facture suivante ; elle ne modifie pas silencieusement le brouillon accepté. La ligne n’est pas une quantité livrée et n’entre pas dans `facture_source_allocations`.
+
+Pour les BL regroupés, la commande de chaque ligne prime sur la commande d’en-tête. PostgreSQL vérifie le client, la devise, la commande réellement livrée, le montant, la TVA et le lien de facture. Le workflow d’avoir peut lire cette ligne de facture comme toute autre ligne ; sa recette authentifiée reste à faire. Un avoir ne supprime pas l’historique du forfait et ne le propose pas à nouveau automatiquement. L’annulation des brouillons de facture n’a pas de route canonique disponible : ne pas supprimer manuellement le lien du forfait.
+
+Vérification de cette étape : 412 tests ciblés Urgence/Finance/démarrage API, puis quatre tests HTTP du forfait avec le middleware réel de rôles Client. Build, TypeScript, frontière de données et OpenAPI (1 470 opérations) passent. Douze requêtes compilent sur le schéma Test avec le rôle applicatif, dans une transaction annulée. Dix-sept contrôles de contraintes exécutés sur un schéma fictif vérifient notamment l’unicité, les BL regroupés, les prix et les écritures immuables. Tous les objets fictifs sont supprimés par rollback ; aucune donnée métier ni base Prod modifiée.
+
+Anomalie détectée et corrigée pendant ces contrôles : PostgreSQL exige un droit UPDATE de colonne pour `FOR UPDATE`. Le rôle applicatif reçoit ce droit uniquement sur l’identifiant de la charge ; le trigger immuable interdit toute véritable modification. Les montants restent non modifiables. Le précontrôle de migration refuse toute ancienne demande active sans prix accepté, afin d’éviter un tarif inventé. Les scripts verify/rollback sont fournis ; le rollback refuse de supprimer des paramètres ou preuves déjà utilisés.
+
+Le lot reste en brouillon, sans migration ni déploiement applicatif. Prochaines étapes : interface guidée, réconciliation de récupération, regroupement avant fin de découpe et recette S06 complète.

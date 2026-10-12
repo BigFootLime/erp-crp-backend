@@ -9,6 +9,7 @@ import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing
 import type { AuditContext } from '../../production/repository/production.repository';
 import { preparationAudit } from '../../production/repository/production-preparation.repository';
 import { readUrgencyWithdrawalTx } from './delivery-urgency-withdrawal-preview.repository';
+import { recordDeliveryUrgencyFeeTx } from './delivery-urgency-fee.repository';
 import { refreshUrgencyDonorCoverageTx, transferUrgencyReservationTx, type UrgencyStockTransfer } from './urgency-withdrawal-stock.repository';
 /** Reassign existing physical stock only after a current, feasible planner approval. */
 export async function repoWithdrawDeliveryUrgency(args: {
@@ -95,7 +96,9 @@ export async function repoWithdrawDeliveryUrgency(args: {
             }
             await refreshUrgencyDonorCoverageTx(tx, checked.current.recoveries.map(r => r.donor_allocation_id));
             const withdrawalId = randomUUID();
+            const charge = await recordDeliveryUrgencyFeeTx(tx, { requestId: args.requestId, withdrawalId, actor: args.audit.user_id });
             const response = { id: withdrawalId, request_id: args.requestId, approval_id: checked.approval!.id,
+                urgency_charge: charge,
                 status: 'WITHDRAWN' as const, request_version: args.expectedVersion + 1, quantity: checked.current.request.quantity,
                 beneficiary_allocation_id: checked.current.request.beneficiary_allocation_id,
                 transfers: transfers.map(({ reservation_evidence: _evidence, ...transfer }) => transfer),

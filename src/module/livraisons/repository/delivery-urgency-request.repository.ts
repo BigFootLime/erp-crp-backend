@@ -12,6 +12,7 @@ import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing
 import { buildUrgencyRecoveries } from '../domain/delivery-urgency-request';
 import type { DeliveryUrgencyBody } from '../validators/delivery-urgency.validators';
 import { readDeliveryUrgencyPlan } from './delivery-urgency.repository';
+import { acceptedUrgencyFee, type UrgencyOrderFee } from '../domain/urgency-order-fee';
 
 type Db = Pick<PoolClient, 'query'>;
 type RequestRow = {
@@ -19,6 +20,7 @@ type RequestRow = {
   version: number; quantity: string; reason: string; created_at: string;
   cancelled_at: string | null; cancellation_reason: string | null;
   approved_id: string | null; withdrawn_id: string | null;
+  urgency_fee: UrgencyOrderFee | null;
 };
 type RecoveryRow = {
   id: string; request_id: string; donor_allocation_id: number; recovery_of_id: number;
@@ -28,7 +30,8 @@ type RecoveryRow = {
 
 export async function readUrgencyRequests(tx: Db, allocationId: number) {
   const requests = (await tx.query<RequestRow>(`SELECT id::text,beneficiary_allocation_id::int,status,version,
-    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,approved_id::text,withdrawn_id::text
+    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,approved_id::text,withdrawn_id::text,
+    snapshot->'preview'->'urgency_fee' AS urgency_fee
     FROM public.delivery_urgency_requests WHERE beneficiary_allocation_id=$1 ORDER BY created_at DESC,id`, [allocationId])).rows;
   const recoveries = requests.length ? (await tx.query<RecoveryRow>(`SELECT recovery.id::text,recovery.request_id::text,
     recovery.donor_allocation_id::int,recovery.recovery_of_id::int,recovery.quantity::text,
@@ -88,6 +91,7 @@ export async function repoCreateDeliveryUrgencyRequest(args: {
     const current = await readDeliveryUrgencyPlan(tx, args.allocationId, args.body.quantity);
     if (current.response.preview_hash !== args.body.preview_hash)
       throw new HttpError(409, 'URGENCY_PREVIEW_CHANGED', 'Les réservations ou les affaires ont changé. Actualisez la proposition.');
+    acceptedUrgencyFee(current.response.urgency_fee);
     const recoveries = buildUrgencyRecoveries(current.response), requestId = randomUUID();
     await tx.query(`INSERT INTO public.delivery_urgency_requests
       (id,beneficiary_allocation_id,quantity,reason,preview_hash,snapshot,request_key,request_hash,created_by)

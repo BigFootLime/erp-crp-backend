@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn(), read: vi.fn(), quality: vi.fn(), topology: vi.fn(),
-  transfer: vi.fn(), refresh: vi.fn(), audit: vi.fn(), ofAudit: vi.fn(), enqueue: vi.fn() }));
+  transfer: vi.fn(), refresh: vi.fn(), audit: vi.fn(), ofAudit: vi.fn(), enqueue: vi.fn(), fee: vi.fn() }));
+vi.mock('./delivery-urgency-fee.repository', () => ({ recordDeliveryUrgencyFeeTx: mocks.fee }));
 vi.mock('../../../config/database', () => ({ default: { connect: async () => ({ query: mocks.query, release: mocks.release }) } }));
 vi.mock('./delivery-urgency-withdrawal-preview.repository', () => ({ readUrgencyWithdrawalTx: mocks.read }));
 vi.mock('./urgency-withdrawal-stock.repository', () => ({ transferUrgencyReservationTx: mocks.transfer, refreshUrgencyDonorCoverageTx: mocks.refresh }));
@@ -33,8 +34,15 @@ beforeEach(() => {
   vi.clearAllMocks(); previous = null; control = initial(); mocks.query.mockImplementation(query); mocks.read.mockImplementation(async () => structuredClone(control));
   mocks.transfer.mockResolvedValue({ source_id: 'source', donor_reservation_id: 'donor', beneficiary_reservation_id: 'beneficiary', quantity: '2.5', reservation_evidence: { before: {}, after: {} } });
   mocks.quality.mockResolvedValue(undefined); mocks.enqueue.mockResolvedValue(undefined);
+  mocks.fee.mockResolvedValue({id:'charge',already_applied:false});
 });
 describe('atomic urgency withdrawal', () => {
+  it('rolls back reservations when their accepted fee cannot be recorded', async () => {
+    mocks.fee.mockRejectedValueOnce(new Error('fee changed'));
+    await expect(repoWithdrawDeliveryUrgency(args)).rejects.toThrow('fee changed');
+    expect(mocks.transfer).toHaveBeenCalledOnce(); expect(previous).toBeNull();
+    expect(mocks.query.mock.calls.at(-1)![0]).toBe('ROLLBACK'); expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
   it('rechecks under locks, writes its ledger and notifies both orders in the same transaction', async () => {
     const result = await repoWithdrawDeliveryUrgency(args);
     expect(result).toMatchObject({ replayed: false, withdrawal: { status: 'WITHDRAWN', request_version: 3, quantity: '2.5', recovery_of_ids: [101] } });
@@ -52,6 +60,7 @@ describe('atomic urgency withdrawal', () => {
     const first = await repoWithdrawDeliveryUrgency(args);
     expect(await repoWithdrawDeliveryUrgency(args)).toEqual({ withdrawal: first.withdrawal, replayed: true });
     expect(mocks.transfer).toHaveBeenCalledOnce(); expect(mocks.read).toHaveBeenCalledTimes(2);
+    expect(mocks.fee).toHaveBeenCalledOnce();
     await expect(repoWithdrawDeliveryUrgency({ ...args, expectedVersion: 3 })).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
   });
   it.each(['version', 'hash', 'approval'] as const)('refuses stale or unapproved evidence: %s', async field => {

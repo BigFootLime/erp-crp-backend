@@ -34,7 +34,7 @@ describe("#1140 contextual invoice source reads", () => {
     for (const index of [1, 2]) {
       const [sql, values] = mocks.query.mock.calls[index];
       expect(sql).toContain("bl.client_id = $1");
-      expect(sql).toContain("bl.commande_id = $2::bigint");
+      expect(sql).toContain("COALESCE(cl.commande_id, bl.commande_id) = $2::bigint");
       expect(sql).toContain("bl.id = $3::uuid");
       expect(sql).toContain("bl.affaire_id = $4::bigint");
       expect(values.slice(0, 4)).toEqual(["195", 112, delivery, 193]);

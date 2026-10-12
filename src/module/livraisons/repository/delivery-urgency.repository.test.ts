@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({ query:vi.fn(),release:vi.fn(),read:vi.fn(),quality:vi.fn() }));
+const mocks=vi.hoisted(()=>({ query:vi.fn(),release:vi.fn(),read:vi.fn(),quality:vi.fn(),fee:vi.fn() }));
+vi.mock('./delivery-urgency-fee.repository',()=>({readDeliveryUrgencyFeeTx:mocks.fee}));
 vi.mock('../../../config/database',()=>({default:{connect:vi.fn(async()=>({query:mocks.query,release:mocks.release}))}}));
 vi.mock('./delivery-stock-recovery.repository',()=>({readDeliveryStockRecoveryPlan:mocks.read}));
 vi.mock('../../qualite/repository/quality-operational-gate.repository',()=>({readOperationalLotQualityEligibility:mocks.quality}));
@@ -14,8 +15,16 @@ beforeEach(()=>{
     plan:{reserved_quantity:'1'},preview:{lane_status:'ACTIVE',uncovered_qty:5,preview_hash:'hash',candidate_limit_reached:false}});
   mocks.query.mockImplementation(async(sql:string)=>({rows:sql.includes(' AS day')?[{day:'2026-10-12'}]:sql.includes('AS reservation_id')?[{...row}]:[]}));
   mocks.quality.mockResolvedValue({eligibility:{allowed:true,blocks:[]}});
+  mocks.fee.mockResolvedValue({fee:{amount_ht:'25.00',currency:'EUR',tax_rate_percent:'20.0000',settings_version:1},charged:false,blocker:null});
 });
 describe('urgency read transaction',()=>{
+  it('invalidates a submitted preview when the proposed client fee changes',async()=>{
+    const first=await repoPreviewDeliveryUrgency(1);
+    mocks.fee.mockResolvedValue({fee:{amount_ht:'30.00',currency:'EUR',tax_rate_percent:'20.0000',settings_version:2},charged:false,blocker:null});
+    const second=await repoPreviewDeliveryUrgency(1);
+    expect(second.preview_hash).not.toBe(first.preview_hash);
+    expect(second.urgency_fee?.amount_ht).toBe('30.00');
+  });
   it('reads one repeatable snapshot and rechecks existing quality commitments without charging them twice',async()=>{
     const result=await repoPreviewDeliveryUrgency(1);
     expect(result).toMatchObject({free_quantity:'1',recovery_quantity:'4',can_withdraw:false});

@@ -16,6 +16,7 @@ const donor=(id:string)=>({reservation_id:id,allocation_id:2,client_id:'195',art
   piece_technique_id:'pt1',technical_version_id:'donor-version',initial_ar_due_date:'2026-12-10',lot_id:'lot1'});
 const plan=()=>({context:{client_id:'195',commande_id:10,livraison_affaire_id:12},donors:[donor('r1'),donor('r2')],
   response:{requested_quantity:'5',free_quantity:'0',shortage_quantity:'0',recovery_quantity:'5',preview_hash:args.body.preview_hash,
+    urgency_fee:{amount_ht:'25.00',currency:'EUR',tax_rate_percent:'20.0000',settings_version:1},
     donors:[{reservation_id:'r1',allocation_id:2,proposed_quantity:'2',protected_due_date:'2026-11-30'},
       {reservation_id:'r2',allocation_id:2,proposed_quantity:'3',protected_due_date:'2026-11-30'}]}});
 let storedId:string|undefined;
@@ -29,6 +30,14 @@ beforeEach(()=>{
   mocks.read.mockImplementation(async()=>plan()); mocks.generate.mockResolvedValue({root_of_id:101,ofs:[{id:101}]});
 });
 describe('durable urgency recovery requests',()=>{
+  it('requires an explicit fee before creating recoveries and freezes it in the accepted request',async()=>{
+    mocks.read.mockResolvedValueOnce(plan()).mockResolvedValueOnce({...plan(),response:{...plan().response,urgency_fee:null}});
+    await expect(repoCreateDeliveryUrgencyRequest(args)).rejects.toMatchObject({code:'URGENCY_FEE_REQUIRED'});
+    expect(mocks.generate).not.toHaveBeenCalled(); expect(storedId).toBeUndefined();
+    await repoCreateDeliveryUrgencyRequest(args);
+    const insert=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO public.delivery_urgency_requests'))!;
+    expect(JSON.parse(insert[1][5]).preview.urgency_fee).toEqual(plan().response.urgency_fee);
+  });
   it('creates one exact recovery draft for two donor lots, linked to the donor order and affair',async()=>{
     const result=await repoCreateDeliveryUrgencyRequest(args);
     expect(result).toMatchObject({request:{status:'WAITING_PLANNER',can_withdraw:false},replayed:false});
