@@ -15,7 +15,7 @@ const weekly = z.object({
     targets: z.array(target).min(1).max(100),
 }).strict();
 const annual = z.object({
-    ...base, kind: z.literal('LEVEL_2_ANNUAL'), year: z.number().int().min(2026).max(2100),
+    ...base, kind: z.literal('LEVEL_2_ANNUAL'), duration_days: z.number().int().min(1).max(30).default(1), year: z.number().int().min(2026).max(2100),
     entries: z.array(target.extend({
         start_date: date, start_time: time, execution_mode: z.enum(['INTERNAL', 'EXTERNAL']), provider_id: uuid.nullable().default(null),
     }).strict()).min(1).max(100),
@@ -32,7 +32,7 @@ export const maintenanceScheduleDefinitionSchema = z.discriminatedUnion('kind', 
     else
         v.entries.forEach((t, index) => {
             if (Number(t.start_date.slice(0, 4)) !== v.year)
-                ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entries', index, 'start_date'], message: 'La semaine doit commencer dans l’année choisie.' });
+                ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entries', index, 'start_date'], message: 'La maintenance doit commencer dans l’année choisie.' });
             if (t.execution_mode === 'EXTERNAL' && !t.provider_id)
                 ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entries', index, 'provider_id'], message: 'Choisissez le prestataire externe.' });
             if (t.execution_mode === 'INTERNAL' && t.provider_id)

@@ -8,6 +8,8 @@ All routes require ERP authentication. Read: `machine.read`. Preview/publish: `m
 
 Definition kinds: `LEVEL_1_WEEKLY` (date period up to 366 days, ISO weekday, HH:mm, duration, machine targets) and `LEVEL_2_ANNUAL` (year, one entry per machine with local date/time, INTERNAL/EXTERNAL, provider required when external). Optional plan must belong to the machine; assignee must be active and is internal only.
 
+Update, 12 October 2026 (#888 / web #1169): new annual definitions accept `duration_days` (integer 1–30, default **1**), measured between equal local times in Europe/Paris. This is one calendar day even across DST (23/25 elapsed hours). Persisted legacy definitions without this property retain seven days when read; changing unrelated rules never shortens an existing maintenance. A user can explicitly modify its duration through preview/publication. Weekly defaults remain ISO Thursday (4) and 60 minutes. No schema migration or automatic booking is needed for this change.
+
 Disable: existing schedule/version with `definition:null`. Reactivation supplies its definition with the expected current version. Kind cannot change; make a distinct rule instead. New rules cannot begin in the past. All validation is strict; no extra fields are accepted.
 
 409 `MAINTENANCE_PREVIEW_STALE`: refresh the preview; 409 `MAINTENANCE_SCHEDULE_CONFLICT`: resolve the occupied machine explicitly; 422: repair the invalid references/date/input. An uncertain transport/commit result must use the exact same publish payload/key. A role or module grant never bypasses the maintenance-manager check.

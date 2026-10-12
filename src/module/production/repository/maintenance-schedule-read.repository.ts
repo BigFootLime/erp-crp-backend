@@ -18,7 +18,7 @@ export const MAINTENANCE_SCHEDULE_EXPANSION_SQL = `WITH definitions AS (
  UNION ALL
  SELECT d.id,d.version,d.definition,t.target,
   (t.target->>'start_date')::date+(t.target->>'start_time')::time,
-  (t.target->>'start_date')::date+(t.target->>'start_time')::time+interval '7 days',NULL::integer
+  (t.target->>'start_date')::date+(t.target->>'start_time')::time+COALESCE((d.definition->>'duration_days')::integer,7)*interval '1 day',NULL::integer
  FROM definitions d CROSS JOIN LATERAL jsonb_array_elements(d.definition->'entries') t(target)
  WHERE d.definition->>'kind'='LEVEL_2_ANNUAL'
 ), instants AS (
@@ -40,7 +40,8 @@ export async function readMaintenanceSchedules(tx: Queryer, lock = false): Promi
  FROM public.production_maintenance_schedules s JOIN public.production_maintenance_schedule_revisions r ON r.schedule_id=s.id AND r.version=s.version
  ORDER BY s.id ${lock ? 'FOR UPDATE OF s' : ''}`);
     return result.rows.map(s => {
-        const parsed = maintenanceScheduleDefinitionSchema.safeParse(s.definition);
+        const parsed = maintenanceScheduleDefinitionSchema.safeParse(s.definition?.kind === 'LEVEL_2_ANNUAL'
+            ? { ...s.definition, duration_days: s.definition.duration_days ?? 7 } : s.definition);
         if (!parsed.success)
             throw new HttpError(503, 'MAINTENANCE_SCHEDULE_INVALID', 'Une définition enregistrée est incohérente. Faites vérifier ce référentiel.', { schedule_id: s.id });
         return { ...s, definition: parsed.data };

@@ -49,6 +49,14 @@
 
 - #1209 — Sous-traitance : clôture après réception complète, sans autoriser de nouveaux mouvements.
 
+## 2026-10-12 — Couleurs clients et maintenance annuelle (#1169 / #888)
+
+- Palette client commune sans rouge ; rouge réservé aux problèmes.
+- Une heure le jeudi, toutes les machines actives proposées ; un jour annuel par défaut, règles existantes préservées.
+
+
+- #1209 — Sous-traitance : clôture après réception complète, sans autoriser de nouveaux mouvements.
+
 ## 2026-10-11 — Client dans le snapshot de planning (#1206)
 
 - La lecture centrale joint la fiche client existante et expose le nom et la couleur en complément du code. Ces métadonnées participent à la version de l’opération. Aucun changement de droits, de calcul, de ressource ou de schéma.
