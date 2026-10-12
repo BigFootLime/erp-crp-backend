@@ -57,6 +57,18 @@ describe("SOL-30 identification contract", () => {
     expect(targetRoute("QUALITY_CONTROL", publicId)).toBe(`/qualite/controles/${publicId}`);
   });
 
+  it('accepts material bars for consumption and quality but not finished-goods shipment', () => {
+    expect(FLOW_ENTITY_TYPES.CONSUME).toContain('STOCK_MATERIAL_BAR');
+    expect(FLOW_ENTITY_TYPES.QUALITY_CONTROL).toContain('STOCK_MATERIAL_BAR');
+    expect(FLOW_ENTITY_TYPES.SHIP).not.toContain('STOCK_MATERIAL_BAR');
+    expect(roleCanReadEntity('Opérateur atelier','STOCK_MATERIAL_BAR')).toBe(true);
+    expect(roleCanManageEntity('Opérateur atelier','STOCK_MATERIAL_BAR')).toBe(false);
+    expect(roleCanManageEntity('Magasinier','STOCK_MATERIAL_BAR')).toBe(true);
+    expect(forbiddenStatusReason('STOCK_MATERIAL_BAR','SOLDE','CONSUME')).toMatch(/Barre/);
+    expect(forbiddenStatusReason('STOCK_MATERIAL_BAR','EN_ATTENTE','CONSUME')).toMatch(/Barre/);
+    expect(forbiddenStatusReason('STOCK_MATERIAL_BAR','SOLDE','TRACEABILITY')).toBeNull();
+  });
+
   it("accepts only an exact idempotent scan replay", () => {
     const stored = {
       actor_user_id: 31,

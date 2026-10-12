@@ -115,7 +115,7 @@ function barcodeSvg(symbology: IdentificationSymbology, payload: string, profile
     bcid,
     text: payload,
     scale: small ? 2 : 3,
-    height: symbology === "CODE_128" ? (small ? 8 : 12) : undefined,
+    ...(symbology === "CODE_128" ? { height: small ? 8 : 12 } : {}),
     includetext: false,
     paddingwidth: 2,
     paddingheight: 2,
@@ -338,8 +338,8 @@ export async function resolveIdentification(input: ResolveIdentificationDTO, act
   if (forbidden) return recordScan(input, actor, { ok: false, result_code: "FORBIDDEN_STATUS", message: `${forbidden} : l'action demandée est interdite.`, requires_online_confirmation: true, label_id: label.id, entity_type: label.entity_type, entity_id: label.entity_id });
   return recordScan(input, actor, {
     ok: true, result_code: "RESOLVED", message: "Identifiant vérifié. Confirmez l'action dans le module métier.",
-    requires_online_confirmation: true, target_route: targetRoute(label.entity_type, label.entity_id),
-    label: presentLabel(label), entity: { type: entity.entity_type, id: entity.entity_id, code: entity.canonical_code, label: entity.label, status: entity.status },
+    requires_online_confirmation: true, target_route: entity.entity_type === "STOCK_MATERIAL_BAR" && entity.parent_entity_id ? targetRoute("STOCK_LOT", entity.parent_entity_id) : targetRoute(label.entity_type, label.entity_id),
+    label: presentLabel(label), entity: { type: entity.entity_type, id: entity.entity_id, code: entity.entity_type === "STOCK_MATERIAL_BAR" ? buildHumanCode(entity.entity_type, entity.canonical_code) : entity.canonical_code, label: entity.label, status: entity.status },
     label_id: label.id, entity_type: label.entity_type, entity_id: label.entity_id,
   });
 }

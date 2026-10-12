@@ -49,6 +49,19 @@ it("orders immutable dependent patches identically for the canonical runner and 
   expect(files.indexOf("20260909_consumables.sql")).toBeLessThan(files.indexOf("20260909_consumable_procurement.sql"));
   expect(files.indexOf("20260909_consumable_procurement.sql")).toBeLessThan(files.indexOf("20260909_grouped_supplier_receipts.sql"));
   expect(files.indexOf("20260908_supplier_consultations.sql")).toBeLessThan(files.indexOf("20260908_consultation_documents.sql"));
+  const materialOrder = orderPatchDependencies([
+    '20261012_physical_material_bar_quality_1246.sql',
+    '20261012_physical_material_bar_counts_1246.sql',
+    '20261012_physical_material_bar_movements_1246.sql',
+    '20261012_physical_material_bars_1246.sql',
+  ]);
+  expect(materialOrder.slice(0, 2)).toEqual([
+    '20261012_physical_material_bars_1246.sql',
+    '20261012_physical_material_bar_movements_1246.sql',
+  ]);
+  expect(new Set(materialOrder.slice(2))).toEqual(new Set([
+    '20261012_physical_material_bar_counts_1246.sql', '20261012_physical_material_bar_quality_1246.sql',
+  ]));
   const selection = ["20260909_consumable_procurement.sql"];
   expect(orderPatchDependencies(selection)).toEqual(selection);
   expect(orderPatchDependencies(["legacy-a.sql", "legacy-b.sql"])).toEqual(["legacy-a.sql", "legacy-b.sql"]);

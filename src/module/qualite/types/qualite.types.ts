@@ -192,6 +192,7 @@ export type NonConformityListItem = {
 };
 
 export type NonConformityDetail = NonConformityListItem & {
+  receipt_disposition_context?: import('../../receptions/types/receipt-disposition.types').ReceiptDispositionContext | null;
   root_cause: string | null;
   impact: string | null;
 

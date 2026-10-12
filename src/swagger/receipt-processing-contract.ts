@@ -12,6 +12,12 @@ export const RECEIPT_PROCESSING_ACTIONS = [
   "void-packaging",
 ] as const;
 const stages = ["TO_CONTROL", "TO_PACK", "TO_STOCK", "DONE", "BLOCKED"];
+const materialBars = { type: 'array', minItems: 1, maxItems: 1000, description: 'Barres réellement reçues. Le total doit égaler la quantité convertie en mm ; 1 000 barres maximum par entrée.', items: {
+  type: 'object', additionalProperties: false, required: ['lengthMm','count'], properties: {
+    lengthMm: { type: 'number', minimum: 0, exclusiveMinimum: true, maximum: 1000000000, multipleOf: .001 },
+    count: { type: 'integer', minimum: 1, maximum: 1000 },
+  },
+} };
 export const receiptProcessingSchemas: Record<string, ObjectSchema> = {
   ReceiptProcessingLine: {
     type: "object",
@@ -41,6 +47,10 @@ export const receiptProcessingSchemas: Record<string, ObjectSchema> = {
       unit: { type: "string" },
       stockUnit: { type: "string" },
       coefficient: positive,
+      materialBarProposal: { type: 'object', properties: {
+        required: { type: 'boolean' }, groups: { ...materialBars, nullable: true },
+        source: { type: 'string', nullable: true, enum: ['PURCHASE_CONVERSION','ARTICLE'] },
+      } },
       policy: {
         type: "string",
         enum: ["STANDARD", "PIECES_CONTROLE_EMBALLAGE"],
@@ -232,6 +242,7 @@ export function receiptProcessingOperation(
               idempotencyKey: uuid,
               expectedVersion: { type: "integer", minimum: 1 },
               ...payloads[action],
+              ...(action === 'stock' ? { materialBars } : {}),
               ...(action === "pack"
                 ? { notes: { type: "string", maxLength: 2000, nullable: true } }
                 : {}),

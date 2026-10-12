@@ -73,6 +73,7 @@ export const stockProcessing = asyncHandler(async (req, res) => {
       dst_magasin_id: body.magasinId,
       dst_emplacement_id: body.emplacementId,
       expected_processing_version: body.expectedVersion,
+      ...(body.materialBars ? { material_bars: body.materialBars } : {}),
     },
     buildAuditContext(req),
     body.idempotencyKey,

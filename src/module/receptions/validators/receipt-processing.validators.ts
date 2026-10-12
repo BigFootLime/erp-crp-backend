@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { receivedMaterialBarsSchema } from '../../stock/validators/material-bars.validators';
 const command = {
   idempotencyKey: z.string().uuid(),
   expectedVersion: z.number().int().positive(),
@@ -31,6 +32,7 @@ export const stockProcessingSchema = z
     quantity: z.number().finite().positive(),
     magasinId: z.string().uuid(),
     emplacementId: z.number().int().positive(),
+    materialBars: receivedMaterialBarsSchema.optional(),
   })
   .strict();
 export const toolStockProcessingSchema = z

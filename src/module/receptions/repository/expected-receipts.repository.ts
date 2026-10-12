@@ -5,8 +5,9 @@ import { coverageFingerprint,quantity } from '../../production/domain/of-materia
 import type { ExpectedReceiptsQuery } from '../validators/grouped-receipts.validators';
 import { readReceiptLotQualityEligibility } from '../../qualite/repository/quality-operational-gate.repository';
 import { HttpError } from '../../../utils/httpError';
+import { groupedMaterialBarProposal,type GroupedMaterialLine } from '../domain/grouped-material-bars';
 
-export type ExpectedReceiptLine={id:string;orderId:string;orderCode:string;supplierId:string;supplierName:string;supplierCode:string|null;articleId:string|null;articleCode:string|null;crpReference:string|null;supplierReference:string|null;
+export type ExpectedReceiptLine=GroupedMaterialLine&{materialBarProposal?:ReturnType<typeof groupedMaterialBarProposal>;id:string;orderId:string;orderCode:string;supplierId:string;supplierName:string;supplierCode:string|null;articleId:string|null;articleCode:string|null;crpReference:string|null;supplierReference:string|null;
   designation:string;type:string;categories:string[];unit:string|null;stockUnit:string|null;coefficient:number;ordered:number;received:number;remaining:number;accepted:number;stocked:number;
   stockManaged:boolean;qualityRequired:boolean;consumptionMode:string;lotTracking:boolean;due:string|null;destinationId:string|null;price:number|null;currency:string;
   processingPolicy?:'STANDARD'|'PIECES_CONTROLE_EMBALLAGE';toolId?:number|null;
@@ -60,6 +61,7 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
       }catch(e){if(!(e instanceof HttpError)||e.status>=500)throw e;}
     }
     item.accepted=quantity(item.accepted);
+    item.materialBarProposal=groupedMaterialBarProposal(item,item.remaining);
     const {total:_total,version:lineVersion,...facts}=item;
     item.version=coverageFingerprint({...facts,lineVersion});
   }

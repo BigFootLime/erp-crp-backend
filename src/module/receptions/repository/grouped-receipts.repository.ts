@@ -10,6 +10,7 @@ import { readOffStockSurplusTx } from './off-stock-surplus.repository';
 import {postToolReceiptTx} from './receipt-tool-stock.repository';
 import type { PrepareGroupedReceipt,ConfirmGroupedReceipt } from '../validators/grouped-receipts.validators';
 import { roleHasCommandeFournisseurCapability } from '../../commande-fournisseur/domain/commande-fournisseur-rbac';
+import { groupedMaterialBarPortions } from '../domain/grouped-material-bars';
 
 export async function prepareGroupedReceipt(body:PrepareGroupedReceipt,audit:AuditContext){
   return consumableCommand({},'RECEIPT_PREPARE',body,audit,async tx=>{
@@ -45,6 +46,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
         throw new HttpError(403,'RECEIPT_OVER_DELIVERY_FORBIDDEN','Une sur-réception exige l’autorisation dédiée et une justification.');
       if(line.stockManaged&&!choice.destination)throw new HttpError(422,'RECEIPT_DESTINATION_REQUIRED','Confirmez le magasin et l’emplacement de réception.');
       if(line.consumptionMode==='GLOBAL_PACK'&&!choice.packs.length)throw new HttpError(422,'RECEIPT_PACKS_REQUIRED','Identifiez séparément chaque palette ou conditionnement reçu.');
+      groupedMaterialBarPortions(line,choice);
       if(choice.destination){
         const valid=(await tx.query('SELECT id FROM public.emplacements WHERE id=$1 AND magasin_id=$2::uuid',[choice.destination.emplacementId,choice.destination.magasinId])).rows[0];
         if(!valid)throw new HttpError(422,'RECEIPT_DESTINATION_INVALID','Cet emplacement n’appartient pas au magasin choisi.');
@@ -53,7 +55,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
     const results:Array<{orderLineId:string;receiptLineId:string;quantity:number;lotId:string|null;lotCode:string|null;state:'STOCKED'|'QUALITY_PENDING'|'ACCEPTED_OFF_STOCK'}>=[];
     for(const choice of body.lines){
       const expected=current.items.find(i=>i.id===choice.lineId)!;
-      const portions=choice.packs.length?choice.packs:[{quantity:choice.quantity,supplierLotCode:choice.supplierLotCode}];
+      const portions=groupedMaterialBarPortions(expected,choice);
       for(const [index,portion] of portions.entries()){
         const created=await repoCreateLine(receiptId,{article_id:expected.articleId!,designation:expected.designation,qty_received:portion.quantity,unite:expected.unit,
           supplier_lot_code:portion.supplierLotCode,commande_fournisseur_ligne_id:choice.lineId,notes:choice.overReceiptReason},audit,{client:tx,batchConfirmation:true});
@@ -73,7 +75,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
         if(expected.stockManaged&&!expected.qualityRequired){
           const installed=await lockMaterialReceiptRecipientsTx(tx,created.id);
           const posted=await repoCreateStockReceiptLocked(tx,installed,receiptId,created.id,{qty:portion.quantity,dst_magasin_id:choice.destination!.magasinId,dst_emplacement_id:choice.destination!.emplacementId,
-            unite:expected.unit!,notes:`Réception ${receipt.number} · BL confirmé`},audit,`${body.idempotencyKey}:${choice.lineId}:${index}`);
+            unite:expected.unit!,notes:`Réception ${receipt.number} · BL confirmé`,...(portion.materialBars?{material_bars:portion.materialBars}:{})},audit,`${body.idempotencyKey}:${choice.lineId}:${index}`);
           if(!posted)throw new HttpError(409,'RECEIPT_STOCK_NOT_POSTED','L’entrée en stock n’a pas pu être enregistrée.');
         }
         if(expected.toolId&&!expected.qualityRequired)await postToolReceiptTx(tx,receiptId,created.id,portion.quantity,audit);
