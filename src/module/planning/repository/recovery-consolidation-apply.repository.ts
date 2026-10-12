@@ -13,6 +13,7 @@ import {validateRecoveryProducerDossierTx} from '../../production/repository/rec
 import {preparationAudit} from '../../production/repository/production-preparation.repository';
 import type {AuditContext} from '../../production/repository/production.repository';
 import type {RecoveryConsolidationApplyInput} from '../validators/recovery-consolidation.validators';
+import {extendRecoverySupplierPreparationsTx} from '../../subcontract/recovery-supplier-preparations.repository';
 
 export async function applyRecoveryGrouping(recoveryId:string,consolidationId:string,input:RecoveryConsolidationApplyInput,audit:AuditContext) {
   try {return await withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
@@ -50,7 +51,9 @@ export async function applyRecoveryGrouping(recoveryId:string,consolidationId:st
     const operations=selected.map(task=>{
       const change=preview.changes.find(c=>c.taskId===task.id),interval=change?.after??task.committed;
       if(!task.operationId||!interval)throw new HttpError(409,'RECOVERY_OPERATION_UNPLANNED','Une opération ne dispose pas de créneau engagé.');
-      return {operation_id:task.operationId,start:interval.start,end:interval.end,resource_id:(change?.resourceIds??task.resourceIds)[0]};
+      return {operation_id:task.operationId,start:interval.start,end:interval.end,resource_id:(change?.resourceIds??task.resourceIds)[0],
+        ...(task.external?{external:true,resource_ids:change?.resourceIds??task.resourceIds,
+          preparations:control.externalPreparations.get(task.operationId)?.preparations??[]}:{}),};
     });
     const response={id:additionId,recovery_id:recoveryId,request_id:context.context.request_id,consolidation_id:consolidationId,
       producer_of_id:context.producer.id,recovery_of_id:context.recovery.id,quantity:preview.proposed_quantity,
@@ -87,10 +90,11 @@ export async function applyRecoveryGrouping(recoveryId:string,consolidationId:st
     [allocationId,consolidationId,context.recovery.id,preview.additional_quantity,preview.finish_before,context.recovery.updated_at]);
     await tx.query(`UPDATE public.ordres_fabrication SET quantite_lancee=$2,updated_at=clock_timestamp(),updated_by=$3 WHERE id=$1`,
       [context.producer.id,preview.proposed_quantity,audit.user_id]);
+    const supplierPreparations=await extendRecoverySupplierPreparationsTx(tx,context.producer.id,control.externalPreparations,audit);
     await applyRecoveryCommitmentsTx(tx,context.producer.id,snapshot,preview.changes,audit);
     await validateRecoveryProducerDossierTx(tx,context.producer.id,additionId,validationId,audit);
     for(const ofId of ofIds)await preparationAudit(tx,audit,ofId,'production.consolidation.recovery-addition',{
-      ...response,material_transfers:transfers,dossier_validation_id:validationId,operations});
+      ...response,material_transfers:transfers,supplier_preparations:supplierPreparations,dossier_validation_id:validationId,operations});
     await repoInsertAuditLog({...audit,tx,body:{event_type:'ACTION',action:'RECOVERY_CONSOLIDATION_ADDED',entity_type:'production_consolidation',
       entity_id:consolidationId,page_key:audit.page_key,path:audit.path,client_session_id:audit.client_session_id,details:response}});
     await enqueueEntityChanged(tx,{entityType:'COMMANDE_CLIENT',entityId:String(context.recovery.commande_id),module:'commandes-clients',

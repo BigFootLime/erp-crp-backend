@@ -9,6 +9,7 @@ import { readUrgencyRecoveryScopesTx } from '../../production/repository/urgency
 import { readCentralDependencies, readCentralSnapshot } from './planning-central.repository';
 import { dependencyClosure } from '../domain/central-dependencies';
 import { previewRecoveryConsolidation, type RecoveryGroupingIssue } from '../domain/recovery-consolidation-preview';
+import { readExternalPreparationsTx } from '../../subcontract/subcontract-planning-preparation.repository';
 
 /** The same transaction sees the promises, material, calendars and operations.
  * This endpoint never changes quantities, commitments, reservations or approval. */
@@ -36,6 +37,8 @@ export async function readRecoveryConsolidationControlTx(
   const capacities = new Set(selected.resources.filter(r=>resourceIds.has(r.id)).map(r=>r.capacityId??r.id));
   const capacityResourceIds = selected.resources.filter(r=>resourceIds.has(r.id)||capacities.has(r.capacityId??r.id)).map(r=>r.id);
   const snapshot = await readCentralSnapshot({...query,capacityResourceIds},tx,false);
+  const externalPreparations=await readExternalPreparationsTx(tx,snapshot.tasks
+    .filter(t=>t.ofId===producer.id&&t.external&&t.operationId).map(t=>t.operationId!),recovery.quantity);
   if (selected.nextCursor) issues.push({code:'GROUPING_SNAPSHOT_INCOMPLETE',message:'La chaîne dépasse la fenêtre de contrôle.'});
   const components = [];
   for (const of of [producer,recovery]) {
@@ -54,9 +57,9 @@ export async function readRecoveryConsolidationControlTx(
     recoveryAlreadyCovered:recovery.covered,originalIdentityMatches:context.originalIdentityMatches,
     sameClientSources:context.sameClientSources,deadlines:context.deadlines,issues,
   };
-  const preview = previewRecoveryConsolidation({snapshot,evidence,now:planningAt});
+  const preview = previewRecoveryConsolidation({snapshot,evidence,now:planningAt,externalPreparations});
   const previewHash = createHash('sha256').update(JSON.stringify({context,material:material.version,
-    components:components.map(c=>[c.ofId,c.version]),revision:snapshot.revision,
+    components:components.map(c=>[c.ofId,c.version]),externalPreparations:[...externalPreparations],revision:snapshot.revision,
     tasks:snapshot.tasks.map(t=>[t.id,t.version,t.committed,t.actual,t.resourceIds]),
     resources:snapshot.resources.map(r=>[r.id,r.version]),dependencies:snapshot.dependencies,
   })).digest('hex');
@@ -69,7 +72,7 @@ export async function readRecoveryConsolidationControlTx(
       needs:material.groups.map(({recovery_reservation_ids,...need})=>need)},
     components:components.map(c=>({of_id:c.ofId,ready:c.ready,missing:c.items.reduce((sum,i)=>sum+i.missing,0)})),
   };
-  return {context,material,components,snapshot,evidence,response};
+  return {context,material,components,snapshot,evidence,response,externalPreparations};
 }
 export async function readRecoveryConsolidationPreviewTx(
   tx:Pick<PoolClient,'query'>, recoveryId:string, groupingId:string, now=new Date().toISOString(),

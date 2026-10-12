@@ -91,7 +91,7 @@ export function externalCompletion(
       );
     else if (
       Date.parse(end) < Date.parse(now) ||
-      Date.parse(end) < Date.parse(earliest)
+      Date.parse(end) < Date.parse(p.departedAt ?? earliest)
     )
       issues.push(
         `${p.supplierName} : date de retour dépassée ou incompatible, nouvelle promesse nécessaire.`,

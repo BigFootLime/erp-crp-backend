@@ -50,8 +50,10 @@ export async function assertSubcontractPurchaseReadyTx(tx: Db, orderId: string) 
         due: string | null;
         delay: number | null;
         status: string | null;
+        purchase_id: string | null;
     }>(`
     SELECT l.id::text,l.of_id::int,p.operation_id::text,p.material_origin_id::text,l.quantite::float8 AS quantity,
+      p.preparation_snapshot->'purchase'->>'id' AS purchase_id,
       COALESCE(l.date_besoin,l.date_promesse,c.date_besoin,c.date_promesse)::text AS due,l.delai_jours AS delay,o.status::text,o.of_id::int AS operation_of_id,
       (o.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=o.revision_id AND r.statut='ACTIVE')) AS active,
       fab.quantite_lancee::float8 AS of_quantity,l.unite AS unit
@@ -60,7 +62,7 @@ export async function assertSubcontractPurchaseReadyTx(tx: Db, orderId: string) 
     JOIN public.ordres_fabrication fab ON fab.id=l.of_id
     WHERE c.id=$1::uuid AND l.type='SOUS_TRAITANCE' AND l.of_id IS NOT NULL AND l.statut_ligne='ACTIVE' ORDER BY l.of_id,l.id`, [orderId])).rows;
     for (const line of lines) {
-        if (!line.operation_id || !line.status || line.status === 'CANCELLED' || !line.active || line.operation_of_id !== line.of_id)
+        if (!line.operation_id || !line.purchase_id || !line.status || line.status === 'CANCELLED' || !line.active || line.operation_of_id !== line.of_id)
             throw new HttpError(409, 'SUBCONTRACT_ORIGIN_REQUIRED', 'Préparez la sous-traitance depuis l’OF, avec une ligne par origine matière.', { lineId: line.id });
         if (!Number.isInteger(line.quantity) || line.quantity <= 0)
             throw new HttpError(422, 'SUBCONTRACT_PIECE_QUANTITY_REQUIRED', 'Chaque origine doit porter un nombre entier de pièces.', { lineId: line.id });
@@ -71,7 +73,8 @@ export async function assertSubcontractPurchaseReadyTx(tx: Db, orderId: string) 
         const predecessors = await readSubcontractPredecessorsTx(tx, line.operation_id);
         const total = Number((await tx.query(`SELECT COALESCE(sum(l.quantite),0)::float8 AS quantity FROM public.subcontract_purchase_origins p
       JOIN public.commande_fournisseur_ligne l ON l.id=p.line_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
-      WHERE p.operation_id=$1::uuid AND l.statut_ligne='ACTIVE' AND c.statut<>'ANNULEE'`, [line.operation_id])).rows[0].quantity);
+      WHERE p.operation_id=$1::uuid AND p.preparation_snapshot->'purchase'->>'id'=$2
+        AND l.statut_ligne='ACTIVE' AND c.statut<>'ANNULEE'`, [line.operation_id, line.purchase_id])).rows[0].quantity);
         assertSubcontractQuantityCeiling(total, line.of_quantity, predecessors);
         if (!line.due && line.delay === null)
             throw new HttpError(422, 'SUBCONTRACT_DELAY_REQUIRED', 'Confirmez une date ou un délai pour chaque ligne de sous-traitance.', { lineId: line.id });

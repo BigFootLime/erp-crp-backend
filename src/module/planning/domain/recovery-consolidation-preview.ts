@@ -2,6 +2,9 @@ import type { CentralSnapshot, CentralTask, Estimate, ScheduleChange } from '../
 import { schedule } from './central-scheduler';
 import { dependencyClosure } from './central-dependencies';
 import { quantity } from '../../production/domain/of-material';
+import type { ExternalServicePreparation } from '../../subcontract/subcontract-flow.types';
+
+export type RecoveryExternalPreparations = Map<string,{preparations:ExternalServicePreparation[];issues:string[]}>;
 
 export type RecoveryGroupingOf = {
   id: number; number: string; clientId: string | null; articleId: string | null;
@@ -33,6 +36,7 @@ function extendEstimate(estimate: Estimate | null, additional: number): Estimate
  * operation IDs, starts, counters, reservations and client promises unchanged. */
 export function previewRecoveryConsolidation(input: {
   snapshot: CentralSnapshot; evidence: RecoveryGroupingEvidence; now: string;
+  externalPreparations?: RecoveryExternalPreparations;
 }) {
   const { snapshot, evidence, now } = input, { recovery, producer } = evidence;
   const issues: RecoveryGroupingIssue[] = [...evidence.issues];
@@ -77,6 +81,10 @@ export function previewRecoveryConsolidation(input: {
     proposed_quantity: quantity(producer.quantity+recovery.quantity), previous_finish: oldFinish,
     finish_before: Number.isFinite(earliestDeadline)?new Date(earliestDeadline).toISOString():null,
     fallback: { action: 'KEEP_SEPARATE_OF' as const, of_id: recovery.id },
+    external_supplements: [...(input.externalPreparations?.values()??[])].flatMap(state=>state.preparations).map(p=>({
+      operation_id:p.operationId,purchase_id:p.purchaseId,supplier_id:p.supplierId,supplier_name:p.supplierName,
+      label:p.label,quantity:p.quantity,additional_quantity:recovery.quantity,
+    })),
   };
   const blocked = () => ({ ...base, feasible: false, issues, changes: [] as ScheduleChange[], proposed_finish: null as string|null,
     additional_minutes: 0, operations: [] as Array<{task_id:string;phase:number|null;before_minutes:number;after_minutes:number;good:number;scrap:number}> });
@@ -88,12 +96,22 @@ export function previewRecoveryConsolidation(input: {
   const sourceMapping = new Map(source.map(t=>[t.id,byPhase.get(t.phase)!.id]));
   const targets = new Set(selected.map(t=>t.id));
   const assignedEstimate = (t: CentralTask) => t.resourceIds.length===1 ? t.resourceEstimates?.[t.resourceIds[0]]??t.estimate : t.estimate;
-  const operations = selected.map(t=>({task_id:t.id,phase:t.phase??null,before_minutes:assignedEstimate(t)?.remainingMinutes??0,
-    after_minutes:extendEstimate(assignedEstimate(t),recovery.quantity)?.remainingMinutes??0,good:t.good,scrap:t.scrap}));
+  const operations = selected.map(t=>({task_id:t.id,phase:t.phase??null,before_minutes:t.external?0:assignedEstimate(t)?.remainingMinutes??0,
+    after_minutes:t.external?0:extendEstimate(assignedEstimate(t),recovery.quantity)?.remainingMinutes??0,good:t.good,scrap:t.scrap}));
   const tasks = snapshot.tasks.filter(t=>!sourceMapping.has(t.id)).map(task => {
     if (!targets.has(task.id)) return { ...task, locked:true };
     if (task.readiness!=='READY' || task.locked) issue('GROUPING_OPERATION_LOCKED','Une opération du regroupement est verrouillée ou incomplète.',task.id);
-    if (task.external) issue('GROUPING_EXTERNAL_CAPACITY','Complétez une proposition fournisseur pour la quantité supplémentaire avant cet ajout.',task.id);
+    if (task.external) {
+      const prepared=input.externalPreparations?.get(task.operationId!);
+      if (!prepared?.preparations.length || prepared.issues.length
+        || prepared.preparations.some(p=>p.quantity!==base.proposed_quantity||!p.catalogueId))
+        issue('GROUPING_EXTERNAL_CAPACITY',prepared?.issues.join(' ')||'Confirmez le fournisseur et le délai du complément dans l’OF de regroupement.',task.id);
+      const resourceIds=[...new Set([...task.external.packages.map(p=>'supplier:'+p.supplierId),
+        ...(prepared?.preparations??[]).map(p=>'supplier:'+p.supplierId)])];
+      return {...task,quantity:base.proposed_quantity,resourceIds,eligibleResourceIds:resourceIds,
+        external:{...task.external,preparations:prepared?.preparations,preparationIssues:prepared?.issues},
+        commitment:'COMMITTED' as const,actual:null,locked:false};
+    }
     const estimate = extendEstimate(task.estimate,recovery.quantity);
     if (!estimate || !extendEstimate(assignedEstimate(task),recovery.quantity))
       issue('GROUPING_DURATION_MISSING','Définissez le temps par pièce pour calculer la charge supplémentaire.',task.id);
@@ -131,13 +149,13 @@ export function previewRecoveryConsolidation(input: {
   }
   if (issues.length) return blocked();
   const result = schedule({tasks,resources:snapshot.resources,dependencies,from:now,
-    requested:selected.map(t=>({ taskId:t.id, resourceIds:t.resourceIds,
+    requested:selected.map(t=>({ taskId:t.id, resourceIds:byId.get(t.id)!.resourceIds,
       earliestStart:new Date(Math.max(instant(now),instant(t.committed?.start)||instant(now))).toISOString() })) });
   for (const conflict of result.conflicts) if (conflict.blocking!==false) issue(conflict.code,conflict.message,conflict.taskId);
   for (const task of selected) {
     const proposed=result.forecasts[task.id];
     if (!proposed) issue('GROUPING_OPERATION_UNSCHEDULED','Une opération ne dispose pas de créneau réalisable.',task.id);
-    if ((task.commitment==='STARTED'||task.actual?.start)&&proposed&&instant(proposed.start)!==instant(now))
+    if (!task.external&&(task.commitment==='STARTED'||task.actual?.start)&&proposed&&instant(proposed.start)!==instant(now))
       issue('GROUPING_RUNNING_INTERRUPTION','La charge supplémentaire obligerait à interrompre l’opération en cours.',task.id);
   }
   if (result.changes.some(c=>!targets.has(c.taskId))) issue('GROUPING_OTHER_COMMITMENT','La proposition modifierait un autre OF. Gardez un OF séparé.');
@@ -146,12 +164,18 @@ export function previewRecoveryConsolidation(input: {
     issues.push({code:'GROUPING_DELIVERY_TOO_LATE',message:`${deadline.label} : la nouvelle fin dépasse le délai à protéger.`,of_id:deadline.of_id});
   // A running operation keeps its original planned and actual start. Only its
   // future finish can be extended, explicitly in the proposed change list.
-  const changes = result.changes.filter(c=>targets.has(c.taskId)).map(change=>{
+  // External operations already in flight keep their historical start; the
+  // canonical scheduler forecasts their new end without changing the shipment.
+  const externalChanges=selected.filter(t=>t.external&&result.forecasts[t.id]&&!result.changes.some(c=>c.taskId===t.id)).map(t=>({
+    taskId:t.id,before:t.committed,beforeResourceIds:t.resourceIds,after:result.forecasts[t.id],resourceIds:byId.get(t.id)!.resourceIds,
+  }));
+  const changes = [...result.changes,...externalChanges].filter(c=>targets.has(c.taskId)).map(change=>{
     const original=selected.find(t=>t.id===change.taskId)!;
     const after = (original.commitment==='STARTED'||original.actual?.start)&&original.committed
       ? {...change.after,start:original.committed.start} : change.after;
     return {...change,before:original.committed,after};
-  }).filter(c=>!c.before||c.before.start!==c.after.start||c.before.end!==c.after.end);
+  }).filter(c=>!c.before||c.before.start!==c.after.start||c.before.end!==c.after.end
+    ||c.resourceIds.join('|')!==selected.find(t=>t.id===c.taskId)!.resourceIds.join('|'));
   return { ...base, feasible:issues.length===0, issues, changes, proposed_finish:proposedFinish,
     additional_minutes:operations.reduce((sum,o)=>sum+o.after_minutes-o.before_minutes,0),operations };
 }

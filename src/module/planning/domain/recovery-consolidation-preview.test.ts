@@ -2,6 +2,7 @@ import { describe,expect,it } from 'vitest';
 import { previewRecoveryConsolidation,type RecoveryGroupingEvidence } from './recovery-consolidation-preview';
 import { estimateDuration } from './central-estimation';
 import type { CentralTask,CentralSnapshot } from '../types/planning-central.types';
+import type {ExternalServicePreparation,SubcontractFlow} from '../../subcontract/subcontract-flow.types';
 
 const at=(h:number)=>`2026-10-12T${String(h).padStart(2,'0')}:00:00.000Z`,now=at(8);
 function task(id:string,ofId:number,phase:number,patch:Partial<CentralTask>={}):CentralTask {
@@ -113,5 +114,43 @@ describe('recovery grouping before cutting closes',()=>{
   it('does not accept an already engaged or covered recovery',()=>{
     expect(codes(f=>{f.snapshot.tasks[2].committed={start:at(8),end:at(9)};})).toContain('RECOVERY_ENGAGED');
     expect(codes(f=>{f.evidence.recoveryAlreadyCovered=true;})).toContain('RECOVERY_ENGAGED');
+  });
+});
+
+describe('external recovery supplements',()=>{
+  const externalFixture=()=>{
+    const f=fixture();
+    for(const task of f.snapshot.tasks.filter(t=>t.phase===20))Object.assign(task,{
+      operationType:'SOUS_TRAITANCE',view:'external',resourceIds:['supplier:s'],eligibleResourceIds:['supplier:s'],estimate:null,
+      external:{packages:[],preparations:[],fullReadyAt:null,firstBatchReadyAt:null,issues:[]},
+    });
+    f.snapshot.resources.push({id:'supplier:s',kind:'SUPPLIER',label:'Traitement',timezone:'Europe/Paris',version:'1',availability:[{start:at(6),end:at(15)}]});
+    const preparation:ExternalServicePreparation={id:'prep',operationId:'mill',purchaseId:'treatment',catalogueId:'offer',label:'Anodisation',
+      supplierId:'s',supplierName:'Traitement',quantity:110,due:null,leadDays:0,orderLineIds:[],version:'1'};
+    return {...f,externalPreparations:new Map([['mill',{preparations:[preparation],issues:[] as string[]}]])};
+  };
+  it('prepares the reviewed balance using supplier time, without adding fictional machine hours or shipments',()=>{
+    const f=externalFixture(),before=structuredClone(f),result=previewRecoveryConsolidation(f);
+    expect(result).toMatchObject({feasible:true,proposed_finish:at(15),additional_minutes:10,
+      external_supplements:[{quantity:110,additional_quantity:10,supplier_id:'s'}]});
+    expect(result.changes.find(c=>c.taskId==='op:mill')).toMatchObject({after:{end:at(15)},resourceIds:['supplier:s']});
+    expect(f).toEqual(before);
+  });
+  it('retains the historical start and released pieces when a first supplier batch already returned',()=>{
+    const f=externalFixture(),external=f.snapshot.tasks[1];
+    const work:SubcontractFlow={packageId:'work',operationId:'mill',ofId:1,supplierId:'s',supplierName:'Traitement',orderId:'order',orderCode:'CF-1',orderLineId:'line',
+      unit:'U',planned:100,issued:100,returned:100,custody:0,released:100,transferred:0,promisedDate:null,promiseSource:'ESTIMATE',
+      departedAt:at(6),lastReturnAt:at(7),status:'CLOSED',version:'1',returns:[]};
+    external.external!.packages=[work];external.commitment='STARTED';external.actual={start:at(6)};external.committed={start:at(6),end:at(12)};
+    f.externalPreparations.get('mill')!.preparations[0].orderLineIds=['line'];
+    const before=structuredClone(f),result=previewRecoveryConsolidation(f);
+    expect(result.feasible).toBe(true);expect(result.changes.find(c=>c.taskId===external.id)?.after).toEqual({start:at(6),end:at(15)});
+    expect(f).toEqual(before);
+  });
+  it('protects the donor deadline and never treats a missing offer as supplier capacity',()=>{
+    const f=externalFixture();f.evidence.deadlines[1].before=at(15);
+    expect(previewRecoveryConsolidation(f).issues.map(i=>i.code)).toContain('GROUPING_DELIVERY_TOO_LATE');
+    f.externalPreparations.get('mill')!.preparations[0].catalogueId=null;
+    expect(previewRecoveryConsolidation(f).issues.map(i=>i.code)).toContain('GROUPING_EXTERNAL_CAPACITY');
   });
 });

@@ -211,7 +211,7 @@ describe("retours externes et effets sur la suite", () => {
 
 describe('saved purchasing forecasts before physical subcontracting',()=>{
   const preparation=(patch:Partial<ExternalServicePreparation>={}):ExternalServicePreparation=>({id:'prep',operationId:'external',
-    purchaseId:'service',label:'Anodisation',supplierId:'s',supplierName:'Traitement',quantity:100,due:null,leadDays:3,orderLineIds:[],version:'1',...patch});
+    purchaseId:'service',catalogueId:'offer',label:'Anodisation',supplierId:'s',supplierName:'Traitement',quantity:100,due:null,leadDays:3,orderLineIds:[],version:'1',...patch});
   it('uses the chosen working-day delay without inventing any shipped or received piece',()=>{
     const saved=preparation(),before=structuredClone(saved);
     expect(externalCompletion([],100,from,[supplier],from,[saved])).toEqual({fullReadyAt:'2026-09-18T14:00:00.000Z',issues:[]});
@@ -251,7 +251,8 @@ describe('saved purchasing forecasts before physical subcontracting',()=>{
   });
   it('starts the additional forecast after the newly calculated predecessor, not the first historical shipment',()=>{
     const after='2026-09-24T06:00:00.000Z';
-    expect(externalCompletion([flow],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBeNull();
+    expect(externalCompletion([flow],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBe('2026-09-29T14:00:00.000Z');
+    expect(externalCompletion([{...flow,departedAt:null}],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBeNull();
     const old={...flow,returned:100,released:100,lastReturnAt:'2026-09-23T10:00:00.000Z'};
     expect(externalCompletion([old],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBe('2026-09-29T14:00:00.000Z');
   });

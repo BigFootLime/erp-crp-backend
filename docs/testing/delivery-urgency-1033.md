@@ -161,3 +161,15 @@ Les préparations périmées, quantités incohérentes, conditions inactives, re
 Preuves : 25 tests ciblés prévision/lecture des préparations, 94 tests de non-régression du moteur, de l’approbation et du regroupement ; compilation backend réussie. Deux requêtes réelles compilées sous cerp_app sur Test avec rollback, aucune donnée métier modifiée (urgency1034-external-sql-compile.json).
 
 Reste pour #1034 : appliquer et persister les compléments fournisseur lors de l’ajout au producteur, prendre en charge les phases clôturées hors découpe, puis l’annulation/réconciliation et la recette S06 authentifiée. Le garde-fou GROUPING_EXTERNAL_CAPACITY reste donc actif. Ces prévisions seules n’autorisent aucun regroupement externe ni prélèvement.
+
+## État courant — compléments fournisseur transactionnels (#1034)
+
+L’ajout à un regroupement dont la découpe reste ouverte inclut maintenant le complément de chaque prestation externe. La proposition recalcule les retours avec les choix enregistrés ; la confirmation met à jour les préparations pour la nouvelle quantité et les créneaux fournisseur canoniques dans la même transaction que matière, allocation et dossier. Un fournisseur, catalogue, délai ou dossier modifié fait annuler l’ensemble. Les commandes, expéditions et réceptions existantes restent inchangées. Les commandes complémentaires se préparent ensuite depuis l’OF et passent par la validation fournisseur existante.
+
+Les quantités déjà commandées sont comptées par prestation et par opération, sans additionner deux prestations différentes. Un complément après une commande engagée peut reprendre la même origine ; un brouillon déjà ouvert doit être ajusté. Une ligne historique sans identité de prestation exige un rapprochement explicite.
+
+Découpe terminée (statut DONE ou date de fin) : aucun ajout, même si les autres opérations restent ouvertes. La vérification est répétée lors de la confirmation et par la contrainte transactionnelle. La solution est un OF séparé, ou le refus de l’urgence si son délai est irréalisable.
+
+Preuves : 274 tests ciblés, build, démarrage API, OpenAPI et frontières de données réussis ; 29 requêtes réelles compilées sous cerp_app ; 36 cas de contraintes (dont deux prestations externes) et six assertions de quantités SQL. Essais sur Test dans des transactions annulées et schémas isolés ; aucune donnée métier ni Prod modifiée. Fichiers de preuve urgency1034-supplements-validation.json, urgency1034-apply-sql-proof.json, urgency1034-apply-constraints-proof.json et urgency1034-service-quantities-proof.json du dossier d’audit.
+
+Le lot reste en PR brouillon. Restent les phases clôturées hors découpe lorsque la découpe est encore ouverte, l’annulation/réconciliation après engagements et la recette S06 authentifiée jusqu’à facture/avoir. Aucune migration ni livraison applicative de ce lot n’est annoncée.

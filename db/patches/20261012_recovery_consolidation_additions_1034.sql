@@ -94,7 +94,7 @@ BEGIN
 END $$;
 
 CREATE FUNCTION public.fn_recovery_consolidation_addition_complete_1034() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE producer record; source record; allocation record; validation record; operation jsonb; slot record; actual_count integer;
+DECLARE producer record; source record; allocation record; validation record; operation jsonb; preparation jsonb; slot record; actual_count integer;
 BEGIN
   SELECT * INTO producer FROM public.ordres_fabrication WHERE id=NEW.producer_of_id;
   SELECT * INTO source FROM public.ordres_fabrication WHERE id=NEW.recovery_of_id;
@@ -120,6 +120,39 @@ BEGIN
     RAISE EXCEPTION 'Recovery finish must match its last reviewed operation' USING ERRCODE='23514';
   END IF;
   FOR operation IN SELECT * FROM jsonb_array_elements(NEW.evidence->'operations') LOOP
+    IF (operation->>'end')::timestamptz>=NEW.finish_before OR (operation->>'end')::timestamptz<=(operation->>'start')::timestamptz THEN
+      RAISE EXCEPTION 'Every reviewed operation must finish before the protected deadline' USING ERRCODE='23514';
+    END IF;
+    IF COALESCE((operation->>'external')::boolean,false) THEN
+      SELECT count(*) AS count,min(t.committed_start) AS start_at,max(t.committed_end) AS end_at INTO slot
+        FROM public.planning_tasks t JOIN public.of_operations op ON op.id=t.operation_id
+        WHERE op.id=(operation->>'operation_id')::uuid AND op.of_id=NEW.producer_of_id
+          AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(producer.technical_snapshot->'operations','[]'::jsonb)) frozen
+            WHERE frozen->>'phase'=op.phase::text AND frozen->>'type_operation'='SOUS_TRAITANCE');
+      IF slot.count<>1 OR slot.start_at IS DISTINCT FROM (operation->>'start')::timestamptz
+        OR slot.end_at IS DISTINCT FROM (operation->>'end')::timestamptz
+        OR EXISTS(SELECT 1 FROM public.planning_events WHERE of_operation_id=(operation->>'operation_id')::uuid AND archived_at IS NULL AND status<>'CANCELLED')
+        OR jsonb_typeof(operation->'preparations') IS DISTINCT FROM 'array' OR jsonb_array_length(operation->'preparations')=0 THEN
+        RAISE EXCEPTION 'External recovery operation requires its canonical commitment and supplier preparations' USING ERRCODE='23514';
+      END IF;
+      IF jsonb_array_length(operation->'preparations')<>(SELECT count(DISTINCT p->>'purchaseId') FROM jsonb_array_elements(operation->'preparations') p) THEN
+        RAISE EXCEPTION 'A supplier preparation must cover one distinct service' USING ERRCODE='23514';
+      END IF;
+      FOR preparation IN SELECT * FROM jsonb_array_elements(operation->'preparations') LOOP
+        IF (preparation->>'quantity')::numeric IS DISTINCT FROM NEW.new_quantity OR NOT EXISTS(
+          SELECT 1 FROM public.production_purchase_preparations prep WHERE prep.id=(preparation->>'id')::uuid
+            AND prep.of_id=NEW.producer_of_id AND prep.kind='PRESTATION' AND prep.status<>'PERIMEE'
+            AND prep.source_ref::text=preparation->>'purchaseId' AND prep.supplier_id::text=preparation->>'supplierId'
+            AND prep.technical_hash=NEW.technical_hash AND prep.technical_version_id=producer.piece_technique_version_id
+            AND prep.of_revision_id IS NOT DISTINCT FROM (SELECT r.id FROM public.of_revisions r WHERE r.of_id=NEW.producer_of_id AND r.statut='ACTIVE')
+            AND prep.snapshot->'service'->'selection'->>'operationId'=operation->>'operation_id'
+            AND prep.snapshot->'service'->'selection'->>'catalogueId'=preparation->>'catalogueId'
+            AND (prep.snapshot->'service'->>'forecastQuantity')::numeric=NEW.new_quantity) THEN
+          RAISE EXCEPTION 'External recovery supplement was not saved for the exact reviewed quantity and supplier' USING ERRCODE='23514';
+        END IF;
+      END LOOP;
+      CONTINUE;
+    END IF;
     SELECT count(*) AS count,min(e.start_ts) AS start_at,max(e.end_ts) AS end_at,
       min(COALESCE('machine:'||e.machine_id::text,'poste:'||e.poste_id::text)) AS resource
       INTO slot FROM public.planning_events e JOIN public.of_operations op ON op.id=e.of_operation_id

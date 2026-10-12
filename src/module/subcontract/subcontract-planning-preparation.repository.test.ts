@@ -37,4 +37,15 @@ describe('canonical saved supplier selections for planning',()=>{
     tx.query.mockImplementation(async(sql:string)=>sql.includes('AS required_purchase')?{rows:[{operation_id:id,required_purchase:'second',covered:false}]}:original(sql));
     expect((await readExternalPreparationsTx(tx,[id])).get(id)?.issues).toEqual(['Complétez les prestations fournisseur de cette phase avant de planifier.']);
   });
+  it('projects the extra quantity from the current saved selection without accepting expired terms',async()=>{
+    const value=row();value.packaged_quantity=120;
+    const result=await readExternalPreparationsTx(db([value]),[id],10);
+    expect(result.get(id)?.preparations[0]).toMatchObject({quantity:130,catalogueId:catalogue});
+    value.supplier_active=false;
+    expect((await readExternalPreparationsTx(db([value]),[id],10)).get(id)?.preparations).toEqual([]);
+  });
+  it('requires a current base quantity even when the additional forecast is requested',async()=>{
+    const value=row();value.snapshot.service.forecastQuantity=100;
+    expect((await readExternalPreparationsTx(db([value]),[id],10)).get(id)?.issues).toHaveLength(1);
+  });
 });

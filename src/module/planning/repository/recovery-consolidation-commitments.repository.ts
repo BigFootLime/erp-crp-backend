@@ -16,8 +16,31 @@ export async function applyRecoveryCommitmentsTx(tx:PoolClient,producerId:number
   for(const task of selected) {
     const change=changes.find(c=>c.taskId===task.id);
     const interval=change?.after??task.committed,resources=change?.resourceIds??task.resourceIds;
-    if(task.external||!task.operationId||task.locked||task.commitment==='DONE'||task.actual?.end||!interval||resources.length!==1)
+    if(!task.operationId||task.locked||task.commitment==='DONE'||task.actual?.end||!interval)
       throw new HttpError(409,'RECOVERY_OPERATION_CHANGED','Une opération ne peut plus recevoir cet ajout.');
+    if(task.external) {
+      if(!resources.length||resources.some(id=>!id.startsWith('supplier:')))
+        throw new HttpError(409,'RECOVERY_SUPPLIER_CHANGED','Le complément doit conserver des fournisseurs identifiés.');
+      const record=(await tx.query<{start:string|null;end:string|null}>(`SELECT committed_start::text AS start,committed_end::text AS end
+        FROM public.planning_tasks WHERE id=$1 AND operation_id=$2::uuid FOR UPDATE`,[task.id,task.operationId])).rows[0];
+      const legacy=await tx.query(`SELECT id FROM public.planning_events WHERE of_operation_id=$1::uuid
+        AND archived_at IS NULL AND status<>'CANCELLED' FOR UPDATE`,[task.operationId]);
+      if(!record||legacy.rows.length)throw new HttpError(409,'RECOVERY_EXTERNAL_PLAN_CHANGED',
+        'Rapprochez le planning de cette prestation avant de confirmer le complément.');
+      if((task.commitment==='STARTED'||task.actual?.start)&&record.start&&Date.parse(record.start)!==Date.parse(interval.start))
+        throw new HttpError(409,'RECOVERY_RUNNING_OPERATION_MOVED','La prestation commencée conserve son début engagé.');
+      if(change) {
+        await tx.query(`UPDATE public.planning_tasks SET committed_start=$2,committed_end=$3,version=version+1,updated_at=clock_timestamp() WHERE id=$1`,
+          [task.id,interval.start,interval.end]);
+        await tx.query('UPDATE public.planning_central_settings SET revision=revision+1,updated_at=clock_timestamp() WHERE singleton');
+        await tx.query(`INSERT INTO public.planning_recalculation_jobs(entity_table,entity_id,source_revision)
+          SELECT 'planning_tasks',$1,revision FROM public.planning_central_settings WHERE singleton`,[task.id]);
+      }else if(!record.start||!record.end||Date.parse(record.start)!==Date.parse(interval.start)||Date.parse(record.end)!==Date.parse(interval.end))
+        throw new HttpError(409,'RECOVERY_EXTERNAL_PLAN_CHANGED','Le créneau fournisseur a changé. Actualisez la proposition.');
+      final.push({operation_id:task.operationId,start:interval.start,end:interval.end,resource_id:resources[0]});
+      continue;
+    }
+    if(resources.length!==1)throw new HttpError(422,'PLANNING_RESOURCE_INVALID','Sélectionnez une seule machine ou un poste.');
     const resourceId=resources[0],resource={machine_id:resourceId.startsWith('machine:')?resourceId.slice(8):null,poste_id:resourceId.startsWith('poste:')?resourceId.slice(6):null};
     if(!resource.machine_id&&!resource.poste_id)throw new HttpError(422,'PLANNING_RESOURCE_INVALID','Sélectionnez une machine ou un poste compatible.');
     await assertResourceSchedulable(tx,resource);

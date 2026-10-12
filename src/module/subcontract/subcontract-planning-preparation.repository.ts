@@ -13,7 +13,8 @@ export type ExternalPreparationState = { preparations: ExternalServicePreparatio
 
 /** One batch for the visible operations. Canonical purchase selections stay authoritative;
  * inactive offers and stale quantities cannot silently become a new supplier promise. */
-export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, operationIds: string[]) {
+export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, operationIds: string[], additionalQuantity = 0) {
+  if (!Number.isFinite(additionalQuantity) || additionalQuantity < 0) throw new RangeError('Invalid additional supplier quantity');
   const result = new Map<string,ExternalPreparationState>();
   if (!operationIds.length) return result;
   const installed = (await tx.query<{installed:boolean}>(`SELECT to_regclass('public.production_purchase_preparations') IS NOT NULL AS installed`)).rows[0]?.installed;
@@ -52,7 +53,7 @@ export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, o
       COALESCE((SELECT sum(work.qty_planned) FROM public.subcontract_work_packages work
         JOIN public.subcontract_purchase_origins origin ON origin.line_id=work.supplier_order_line_id
         WHERE work.of_operation_id=op.id AND work.status<>'CANCELLED'
-          AND origin.preparation_snapshot->'purchase'->>'id'=purchase->>'id'),0)>=fab.quantite_lancee AS covered
+          AND origin.preparation_snapshot->'purchase'->>'id'=purchase->>'id'),0)>=fab.quantite_lancee+$2::numeric AS covered
     FROM public.of_operations op JOIN public.ordres_fabrication fab ON fab.id=op.of_id,
       LATERAL jsonb_array_elements(COALESCE(fab.technical_snapshot->'preparation_evidence'->'purchases','[]'::jsonb)) purchase
     WHERE op.id=ANY($1::uuid[]) AND purchase->>'type_achat' IN('SOUS_TRAITANCE','TRAITEMENT')
@@ -66,7 +67,7 @@ export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, o
             AND other.of_revision_id IS NOT DISTINCT FROM (SELECT r.id FROM public.of_revisions r WHERE r.of_id=fab.id AND r.statut='ACTIVE')
             AND other.snapshot->'service'->'selection'->>'operationId' IS NOT NULL
             AND other.snapshot->'service'->'selection'->>'operationId'<>op.id::text)))
-    ORDER BY op.id,purchase->>'id'`,[operationIds])).rows;
+    ORDER BY op.id,purchase->>'id'`,[operationIds,additionalQuantity])).rows;
   for(const need of required) if(!need.covered&&!rows.some(row=>row.operation_id===need.operation_id&&row.purchase_id===need.required_purchase)) {
     const state=result.get(need.operation_id)??{preparations:[],issues:[]};
     state.issues.push('Complétez les prestations fournisseur de cette phase avant de planifier.');
@@ -77,9 +78,11 @@ export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, o
     if (!state) {state={preparations:[],issues:[]};result.set(row.operation_id,state);}
     const snapshot=row.snapshot as {service?:{selection?:unknown;forecastQuantity?:unknown}}|null;
     const selection=subcontractSelection.safeParse(snapshot?.service?.selection);
-    const needsEstimate=row.packaged_quantity<row.quantity;
+    const targetQuantity=row.quantity+additionalQuantity;
+    const needsEstimate=row.packaged_quantity<targetQuantity;
     if (!selection.success || selection.data.purchaseId!==row.purchase_id || selection.data.operationId!==row.operation_id
-      || !Number.isFinite(row.quantity) || row.quantity<=0 || needsEstimate&&snapshot?.service?.forecastQuantity!==row.quantity) {
+      || !Number.isFinite(row.quantity) || row.quantity<=0 || !Number.isFinite(targetQuantity)
+      || needsEstimate&&snapshot?.service?.forecastQuantity!==row.quantity) {
       state.issues.push('Actualisez la préparation fournisseur pour la quantité de cet OF.'); continue;
     }
     if (!row.supplier_id || needsEstimate&&(!row.supplier_active || !row.catalogue_id || !row.unit || !isSubcontractPieceUnit(row.unit))) {
@@ -88,8 +91,8 @@ export async function readExternalPreparationsTx(tx: Pick<PoolClient,'query'>, o
     if (needsEstimate && !selection.data.due && (row.delay===null || !Number.isInteger(row.delay) || row.delay<0)) {
       state.issues.push('Renseignez la date de retour estimée ou le délai fournisseur.'); continue;
     }
-    const preparation={id:row.id,operationId:row.operation_id,purchaseId:row.purchase_id,label:row.designation,
-      supplierId:row.supplier_id,supplierName:row.supplier_name??'Fournisseur',quantity:row.quantity,
+    const preparation={id:row.id,operationId:row.operation_id,purchaseId:row.purchase_id,catalogueId:selection.data.catalogueId,label:row.designation,
+      supplierId:row.supplier_id,supplierName:row.supplier_name??'Fournisseur',quantity:targetQuantity,
       due:selection.data.due,leadDays:row.delay,orderLineIds:row.order_line_ids};
     state.preparations.push({...preparation,version:createHash('sha256').update(JSON.stringify([preparation,row.updated_at])).digest('hex')});
   }

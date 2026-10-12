@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-12 — Compléments de récupération (#1034, en préparation)
+
+- Enregistrer les compléments fournisseur et créneaux du regroupement dans la même transaction ; corriger le comptage par prestation.
+- Branche Urgences non déployée ; recette globale et annulation en cours.
+
+
 ## 2026-10-12 — Prévisions fournisseur (#1034, en préparation)
 
 - Prévoir le retour des prestations avec les préparations fournisseur enregistrées, sans inventer d’envoi ni contourner la qualité.

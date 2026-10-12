@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {AuditContext} from '../../production/repository/production.repository';
-const mocks=vi.hoisted(()=>({query:vi.fn(),release:vi.fn(),context:vi.fn(),control:vi.fn(),holds:vi.fn(),components:vi.fn(),dossier:vi.fn(),commitments:vi.fn(),audit:vi.fn(),ofAudit:vi.fn(),enqueue:vi.fn()}));
+const mocks=vi.hoisted(()=>({query:vi.fn(),release:vi.fn(),context:vi.fn(),control:vi.fn(),holds:vi.fn(),components:vi.fn(),dossier:vi.fn(),commitments:vi.fn(),suppliers:vi.fn(),audit:vi.fn(),ofAudit:vi.fn(),enqueue:vi.fn()}));
 vi.mock('../../../config/database',()=>({default:{connect:vi.fn(async()=>({query:mocks.query,release:mocks.release}))}}));
 vi.mock('./recovery-consolidation-context.repository',()=>({readRecoveryConsolidationContextTx:mocks.context}));
 vi.mock('./recovery-consolidation-preview.repository',()=>({readRecoveryConsolidationControlTx:mocks.control}));
@@ -11,13 +11,14 @@ vi.mock('../../production/repository/recovery-consolidation-dossier.repository',
 vi.mock('../../production/repository/production-preparation.repository',()=>({preparationAudit:mocks.ofAudit}));
 vi.mock('../../audit-logs/repository/audit-logs.repository',()=>({repoInsertAuditLog:mocks.audit}));
 vi.mock('../../../shared/realtime/realtime-outbox.service',()=>({enqueueEntityChanged:mocks.enqueue}));
+vi.mock('../../subcontract/recovery-supplier-preparations.repository',()=>({extendRecoverySupplierPreparationsTx:mocks.suppliers}));
 import {applyRecoveryGrouping} from './recovery-consolidation-apply.repository';
 const now='2026-10-12T08:00:00.000Z',reference='2026-10-12T08:01:00.000Z';
 const body={expected_request_version:2,preview_hash:'a'.repeat(64),proposal_hash:'b'.repeat(64),planning_reference_at:reference,idempotency_key:'9f8483e3-0178-4813-bfa9-c447cb2a3a53'};
 const audit={user_id:8} as AuditContext;
 let decision:{request_hash:string;response:unknown}|undefined,activation:string;
 const context=()=>({producer:{id:10,technicalHash:'c'.repeat(64)},recovery:{id:20,commande_id:30,updated_at:now},context:{request_id:'request',request_status:'WAITING_PLANNER',donor_snapshot:{}}});
-const control=()=>({context:context(),material:{version:'material'},components:[{ofId:20,assembly:false,version:'components'}],
+const control=()=>({context:context(),material:{version:'material'},externalPreparations:new Map(),components:[{ofId:20,assembly:false,version:'components'}],
  snapshot:{tasks:[{id:'op:cut',operationId:'cut',ofId:10,source:'OPERATION',resourceIds:['machine:1'],committed:{start:now,end:'2026-10-12T10:00:00.000Z'}}]},
  response:{request_version:2,preview_hash:body.preview_hash,proposal_hash:body.proposal_hash,planning_revision:'7',feasible:true,previous_quantity:100,additional_quantity:10,proposed_quantity:110,proposed_finish:'2026-10-12T10:10:00.000Z',finish_before:'2026-10-13T22:00:00.000Z',changes:[{taskId:'op:cut',resourceIds:['machine:1'],after:{start:now,end:'2026-10-12T10:10:00.000Z'}}],issues:[]}});
 function query(sql:string,p:unknown[]=[]){
@@ -61,7 +62,7 @@ describe('atomic addition of a recovery to a running group',()=>{
   mocks.components.mockResolvedValue({ready:false,version:'components'});await expect(call()).rejects.toMatchObject({code:'RECOVERY_COMPONENTS_CHANGED'});
   expect(mocks.holds).toHaveBeenCalledOnce();expect(decision).toBeUndefined();expect(mocks.commitments).not.toHaveBeenCalled();expect(mocks.query.mock.calls.at(-1)![0]).toBe('ROLLBACK');
  });
- it.each(['dossier','commitments','enqueue'] as const)('rolls back every write if %s fails',async step=>{
+ it.each(['dossier','commitments','enqueue','suppliers'] as const)('rolls back every write if %s fails',async step=>{
   mocks[step].mockRejectedValue(new Error('failed'));await expect(call()).rejects.toThrow('failed');expect(decision).toBeUndefined();
   expect(mocks.query.mock.calls.at(-1)![0]).toBe('ROLLBACK');expect(mocks.release).toHaveBeenCalledOnce();
  });

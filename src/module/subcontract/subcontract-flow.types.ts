@@ -43,6 +43,7 @@ export type ExternalServicePreparation = {
   id: string;
   operationId: string;
   purchaseId: string;
+  catalogueId: string | null;
   label: string;
   supplierId: string;
   supplierName: string;
