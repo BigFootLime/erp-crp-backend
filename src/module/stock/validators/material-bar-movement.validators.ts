@@ -10,6 +10,8 @@ export const materialBarMovementCommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('RECEIVE'), expectedVersion: revision, bars: receivedMaterialBarsSchema }).strict(),
   z.object({ kind: z.literal('ISSUE'), expectedVersion: revision,
     bars: z.array(selection.extend({ quantityMm: z.number().finite().positive().max(1e9).multipleOf(.001) }).strict()).min(1).max(1000) }).strict(),
+  z.object({ kind: z.literal('DEPRECIATE'), expectedVersion: revision,
+    bars: z.array(selection.extend({ quantityMm: z.number().finite().positive().max(1e9).multipleOf(.001) }).strict()).min(1).max(1000) }).strict(),
   z.object({ kind: z.literal('TRANSFER'), expectedVersion: revision, expectedDestinationVersion: revision, bars: selectedBars }).strict(),
 ]).superRefine((body, context) => {
   if (body.kind !== 'RECEIVE' && new Set(body.bars.map(bar => bar.barId)).size !== body.bars.length)

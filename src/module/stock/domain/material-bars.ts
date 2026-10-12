@@ -4,6 +4,7 @@ export type MaterialBar = {
   id: string;
   batchId: string;
   lengthMm: number;
+  depreciatedMm?: number;
   version: number;
 };
 export type MaterialBarHold = { barId: string; reservationId: string; remainingMm: number };
@@ -22,23 +23,25 @@ const conflict = (message: string): never => { throw new HttpError(409, 'MATERIA
 export function reconcileMaterialBars(input: {
   bars: readonly MaterialBar[];
   holds: readonly MaterialBarHold[];
-  batches: ReadonlyArray<{ id: string; physicalMm: number; reservedMm: number }>;
+  batches: ReadonlyArray<{ id: string; physicalMm: number; reservedMm: number; depreciatedMm?: number }>;
   reservations: ReadonlyArray<{ id: string; batchId: string; remainingMm: number }>;
 }) {
-  const bars = new Map<string, MaterialBar>(), batchLengths = new Map<string, number>();
-  const batches = new Map<string, { physical: number; reserved: number }>();
+  const bars = new Map<string, MaterialBar>(), batchLengths = new Map<string, number>(), batchDepreciated = new Map<string, number>();
+  const batches = new Map<string, { physical: number; reserved: number; depreciated: number }>();
   const reservations = new Map<string, { batchId: string; remaining: number }>();
   for (const batch of input.batches) {
     if (batches.has(batch.id)) conflict('Un emplacement matière est présent deux fois.');
-    const physical = units(batch.physicalMm), reserved = units(batch.reservedMm);
-    if (reserved > physical) conflict('Les réservations dépassent le stock physique.');
-    batches.set(batch.id, { physical, reserved });
+    const physical = units(batch.physicalMm), reserved = units(batch.reservedMm), depreciated = units(batch.depreciatedMm ?? 0);
+    if (reserved + depreciated > physical) conflict('Les réservations dépassent la matière utilisable.');
+    batches.set(batch.id, { physical, reserved, depreciated });
   }
   for (const bar of input.bars) {
     if (!bar.id || bars.has(bar.id) || !batches.has(bar.batchId) || !Number.isSafeInteger(bar.version) || bar.version < 1)
       conflict('Une barre est dupliquée ou ne correspond plus à son stock.');
     bars.set(bar.id, bar);
     batchLengths.set(bar.batchId, (batchLengths.get(bar.batchId) ?? 0) + units(bar.lengthMm));
+    if (units(bar.depreciatedMm ?? 0) > units(bar.lengthMm)) conflict('La longueur dépréciée dépasse la barre physique.');
+    batchDepreciated.set(bar.batchId, (batchDepreciated.get(bar.batchId) ?? 0) + units(bar.depreciatedMm ?? 0));
   }
   const batchReservations = new Map<string, number>();
   for (const reservation of input.reservations) {
@@ -59,12 +62,13 @@ export function reconcileMaterialBars(input: {
     heldByBar.set(hold.barId, (heldByBar.get(hold.barId) ?? 0) + held);
     heldByReservation.set(hold.reservationId, (heldByReservation.get(hold.reservationId) ?? 0) + held);
   }
-  for (const [id, bar] of bars) if ((heldByBar.get(id) ?? 0) > units(bar.lengthMm))
-    conflict('La longueur réservée dépasse une barre physique.');
+  for (const [id, bar] of bars) if ((heldByBar.get(id) ?? 0) + units(bar.depreciatedMm ?? 0) > units(bar.lengthMm))
+    conflict('La réservation utilise de la matière dépréciée ou dépasse la barre physique.');
   for (const [id, reservation] of reservations) if ((heldByReservation.get(id) ?? 0) !== reservation.remaining)
     conflict('Rapprochez les barres avec les réservations existantes.');
   for (const [id, batch] of batches) {
     if ((batchLengths.get(id) ?? 0) !== batch.physical) conflict('Confirmez les barres réelles : leurs longueurs ne correspondent plus au stock.');
+    if ((batchDepreciated.get(id) ?? 0) !== batch.depreciated) conflict('Affectez la longueur dépréciée aux barres concernées.');
     if ((batchReservations.get(id) ?? 0) !== batch.reserved) conflict('Rapprochez les réservations avec le stock avant de préparer la découpe.');
   }
   return { bars: input.bars, holds: input.holds, heldByBar };
@@ -93,7 +97,7 @@ export function proposeMaterialBarAllocation(input: {
   let budget = input.maximumAdditionalMm === undefined ? Infinity : units(input.maximumAdditionalMm);
   const planned = new Map<string, MaterialBarAllocation>(), freeByBar = new Map<string, number>();
   for (const bar of input.inventory.bars) {
-    const physicalFree = units(bar.lengthMm) - (input.inventory.heldByBar.get(bar.id) ?? 0);
+    const physicalFree = units(bar.lengthMm) - units(bar.depreciatedMm ?? 0) - (input.inventory.heldByBar.get(bar.id) ?? 0);
     const proposedFree = input.availableMmByBar?.get(bar.id);
     freeByBar.set(bar.id, Math.min(physicalFree, proposedFree === undefined ? Infinity : units(proposedFree)));
   }
@@ -140,6 +144,8 @@ export function consumeMaterialBar(input: {
   if (input.close && cut + discarded !== length)
     throw new HttpError(422, 'MATERIAL_BAR_CLOSURE_INCOMPLETE', 'Le solde doit inclure toute la longueur restante de la barre.');
   if (length - cut - discarded < other) conflict('Cette barre conserve une quantité réservée à un autre besoin.');
+  if (length - cut - discarded < other + units(input.bar.depreciatedMm ?? 0))
+    conflict('Cette barre conserve de la matière dépréciée. Traitez les non-conformités avant de la solder.');
   if (discarded > 150000 && !input.acknowledgedLargeRemainder)
     throw new HttpError(409, 'MATERIAL_BAR_CLOSURE_WARNING', 'Le reliquat dépasse 150 mm. Confirmez son solde pour continuer.');
   return { remainingMm: (length - cut - discarded) / 1000, nextVersion: input.bar.version + 1 };

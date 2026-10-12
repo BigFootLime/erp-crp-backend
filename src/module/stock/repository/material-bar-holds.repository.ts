@@ -27,7 +27,7 @@ export function planMaterialBarReservation(current: MaterialBarInventory | null,
   const quantity = Math.round(quantityMm * 1000);
   if (!Number.isFinite(quantityMm) || quantityMm <= 0 || quantityMm > 1e9 || Math.abs(quantityMm * 1000 - quantity) > 1e-6)
     throw new HttpError(422, 'MATERIAL_BAR_LENGTH_INVALID', 'La longueur doit être positive, avec trois décimales maximum.');
-  const free = new Map(current.bars.map(bar => [bar.id, Math.round(bar.lengthMm * 1000) - current.holds.filter(h => h.barId === bar.id).reduce((sum,h) => sum + Math.round(h.remainingMm * 1000),0)]));
+  const free = new Map(current.bars.map(bar => [bar.id, Math.round(bar.lengthMm * 1000) - Math.round((bar.depreciatedMm ?? 0) * 1000) - current.holds.filter(h => h.barId === bar.id).reduce((sum,h) => sum + Math.round(h.remainingMm * 1000),0)]));
   let plan = selected ? [...selected] : [];
   if (!selected) {
     let missing = quantity;

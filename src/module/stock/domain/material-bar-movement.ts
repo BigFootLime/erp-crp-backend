@@ -6,13 +6,15 @@ import { receivedMaterialBarLengths, type ReceivedBarGroup } from './material-ba
 export type MaterialBarMovementStock = {
   version: string;
   status: 'CONFIRMED' | 'UNCONFIRMED' | 'REVIEW_REQUIRED';
-  batch: { id: string; articleId: string; lotId: string; physicalMm: number; reservedMm: number };
+  batch: { id: string; articleId: string; lotId: string; physicalMm: number; reservedMm: number; depreciatedMm?: number };
   bars: readonly MaterialBar[];
   holds: readonly MaterialBarHold[];
   reservations: ReadonlyArray<{ id: string; batchId: string; remainingMm: number }>;
 };
 export type MaterialBarSelection = { barId: string; expectedVersion: number };
+export type MaterialBarQualityCommand = { kind: 'DEPRECIATE'; expectedVersion: string; bars: ReadonlyArray<MaterialBarSelection & { quantityMm: number }> };
 export type MaterialBarMovementCommand =
+  | MaterialBarQualityCommand
   | { kind: 'RECEIVE'; expectedVersion: string; bars: readonly ReceivedBarGroup[] }
   | { kind: 'ISSUE'; expectedVersion: string; bars: ReadonlyArray<MaterialBarSelection & { quantityMm: number }> }
   | { kind: 'TRANSFER'; expectedVersion: string; expectedDestinationVersion: string; bars: readonly MaterialBarSelection[] };
@@ -45,6 +47,7 @@ export function planMaterialBarMovement(input: {
   command: MaterialBarMovementCommand;
 }) {
   const { source, destination, command } = input;
+  if (command.kind === 'DEPRECIATE') invalid('La dépréciation doit conserver la longueur physique de la barre.');
   const quantity = milli(input.quantityMm);
   if (quantity <= 0) invalid('La quantité du mouvement doit être strictement positive.');
   const reconciled = verifyStock(source, command.expectedVersion, command.kind === 'RECEIVE');
@@ -67,10 +70,10 @@ export function planMaterialBarMovement(input: {
     const length = milli(bar.lengthMm), held = reconciled.heldByBar.get(bar.id) ?? 0;
     const amount = command.kind === 'ISSUE' ? milli((selection as MaterialBarSelection & { quantityMm: number }).quantityMm) : length;
     if (amount <= 0 || amount > length) invalid('La longueur sortie dépasse la barre sélectionnée ou est nulle.');
-    if (amount > length - held)
+    if (amount > length - held - milli(bar.depreciatedMm ?? 0))
       changed(command.kind === 'TRANSFER'
-        ? 'Cette barre est réservée à un OF. Réaffectez sa réservation avant de la déplacer.'
-        : 'La sortie utiliserait de la matière réservée à un OF. Sélectionnez une longueur libre.');
+        ? 'Cette barre est réservée ou dépréciée. Traitez son affectation avant de la déplacer.'
+        : 'La sortie utiliserait de la matière réservée ou dépréciée. Sélectionnez une longueur utilisable.');
     total += amount;
     if (total > quantity) invalid('Les barres sélectionnées dépassent la quantité du mouvement.');
     changes.push({ bar, quantityMm: amount / 1000, remainingMm: (length - amount) / 1000, nextVersion: bar.version + 1 });

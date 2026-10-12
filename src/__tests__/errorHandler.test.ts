@@ -41,6 +41,15 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     expect(JSON.stringify(json.mock.calls[0][0])).not.toContain('stock_material_geometry_complete_1246');
   });
 
+  it.each(['stock_material_quality_complete_1246','stock_material_bar_quality_length_1246'])('maps %s to a quality conflict without database details', (constraint) => {
+    const {req,res,status,json}=mockReqRes('/api/v1/qualite/non-conformities/id/dispositions');
+    errorHandler({code:'23514',constraint,message:'private SQL detail'},req,res,()=>{});
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0][0]).toMatchObject({code:'MATERIAL_BAR_QUALITY_INCOMPLETE',message:expect.stringContaining('dépréciées')});
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain('private SQL');
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain(constraint);
+  });
+
   it("erreur inconnue (erreur SQL) → 500 + message générique + code INTERNAL_ERROR, pas de fuite", () => {
     const { req, res, status, json } = mockReqRes();
     const leak = "column o.parent_of_id does not exist";

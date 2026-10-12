@@ -23,8 +23,8 @@ export function validateMaterialBarCount(current:MaterialBarInventory, body:Mate
   const measured=body.bars.reduce((sum,b)=>sum+milli(b.lengthMm),0);
   if (measured!==milli(countedQty)) throw new HttpError(422,'MATERIAL_BAR_COUNT_TOTAL_MISMATCH','Le total doit correspondre aux longueurs des barres comptées.');
   proposedBarInventory({...current,batch:{...current.batch,physicalMm:countedQty}},body);
-  const geometry=(bars:ReadonlyArray<{id:string;lengthMm:number}>)=>bars.filter(b=>b.lengthMm>0)
-    .map(b=>[b.id,milli(b.lengthMm)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const geometry=(bars:ReadonlyArray<{id:string;lengthMm:number;depreciatedMm?:number}>)=>bars.filter(b=>b.lengthMm>0)
+    .map(b=>[b.id,milli(b.lengthMm),milli(b.depreciatedMm??0)]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
   const allocations=(holds:ReadonlyArray<{barId:string;reservationId:string;remainingMm:number}>)=>holds.filter(h=>h.remainingMm>0)
     .map(h=>[h.barId,h.reservationId,milli(h.remainingMm)]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   const nextHolds=body.bars.flatMap(b=>b.allocations.map(a=>({barId:b.id,reservationId:a.reservationId,remainingMm:a.quantityMm})));

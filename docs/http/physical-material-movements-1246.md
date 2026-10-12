@@ -108,3 +108,35 @@ Ordre de migration : barres, mouvements, comptages
 refusé dès qu'un relevé existe : son historique doit être conservé. Une correction
 d'inventaire passe par un nouveau comptage, pas par une compensation générale
 qui inventerait les barres à restituer.
+
+## Qualité des barres
+
+Après la migration `20261012_physical_material_bar_quality_1246.sql`, le stock
+physique expose `batch.depreciatedMm` et `bars[].depreciatedMm`, en millimètres.
+Le total des longueurs dépréciées doit correspondre au stock canonique. Elles
+restent physiquement présentes, mais sont exclues des réservations et du débit.
+Les statuts qualité du lot et les autres contrôles existants continuent à s'appliquer.
+
+La comptabilisation d'un mouvement `SCRAP` ou `DEPRECIATE` accepte :
+
+```json
+{"material_bars":{"kind":"DEPRECIATE","expectedVersion":"<version chargée>","bars":[{"barId":"<barre sélectionnée>","expectedVersion":2,"quantityMm":1000}]}}
+```
+
+Le même champ accompagne une disposition `SCRAP` de non-conformité portant sur
+de la matière déjà en stock. Un retour fournisseur utilise `kind: "ISSUE"` pour
+les barres effectivement sorties. Le serveur refuse une sélection qui recoupe
+des réservations OF ou une longueur déjà dépréciée ; la sélection est obligatoire
+pour un stock dont les barres sont suivies. La décision avant entrée en stock
+conserve son parcours Réception et n'accepte pas d'identités de barres inexistantes.
+
+Le comptage accepte aussi `bars[].depreciatedMm` : il réaffecte la dépréciation
+existante aux identités mesurées, sans pouvoir changer sa quantité totale. Un
+changement d'affectation à total égal compte comme un changement du relevé.
+L'inventaire historique est à rapprocher lorsqu'on connaît la quantité
+dépréciée globale sans savoir quelles barres elle concerne.
+
+Un transfert ordinaire ne peut pas emporter une barre dépréciée sans déplacer
+ses soldes qualité ; ce cas nécessite encore le parcours qualité dédié. La
+compensation générale des `SCRAP`/`DEPRECIATE` reste orientée vers Qualité.
+Les écrans de sélection et le parcours complet réel restent à qualifier.

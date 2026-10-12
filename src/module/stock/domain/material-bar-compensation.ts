@@ -6,7 +6,7 @@ import type { MaterialBarMovementStock } from './material-bar-movement';
 export type MaterialBarMovementProof = { barId: string; action: string; before: unknown; after: unknown };
 const length = z.number().finite().min(0).max(1e9).refine(n => Math.abs(n * 1000 - Math.round(n * 1000)) < 1e-6);
 const state = z.object({ id: z.string().min(1), batchId: z.string().min(1), lengthMm: length,
-  version: z.number().int().positive() }).passthrough();
+  depreciatedMm: length.optional(), version: z.number().int().positive() }).passthrough();
 const afterState = state.extend({ source: z.literal('STOCK_MOVEMENT') }).passthrough();
 function changed(message: string): never { throw new HttpError(409, 'MATERIAL_BAR_COMPENSATION_CHANGED', message); }
 const milli = (value: number) => Math.round(value * 1000);
@@ -39,7 +39,8 @@ export function planMaterialBarCompensation(input: {
     const bar = source.bars.find(item => item.id === proof.barId);
     if (!after.success || !bar || selected.has(proof.barId) || after.data.id !== proof.barId
       || after.data.batchId !== source.batch.id || bar.batchId !== source.batch.id
-      || bar.version !== after.data.version || milli(bar.lengthMm) !== milli(after.data.lengthMm))
+      || bar.version !== after.data.version || milli(bar.lengthMm) !== milli(after.data.lengthMm)
+      || milli(bar.depreciatedMm ?? 0) !== milli(after.data.depreciatedMm ?? 0))
       changed('Une barre a été utilisée, déplacée ou recomptée depuis ce mouvement. Corrigez d’abord les opérations suivantes.');
     selected.add(proof.barId);
     let restoredMm = 0;
@@ -56,7 +57,7 @@ export function planMaterialBarCompensation(input: {
         : proof.action !== 'MOVE' || milli(restoredMm) !== milli(bar.lengthMm))
         changed('L’historique des longueurs ne correspond pas au mouvement d’origine.');
     }
-    if (kind !== 'RESTORE' && (reconciled.heldByBar.get(bar.id) ?? 0) > 0)
+    if (kind !== 'RESTORE' && ((reconciled.heldByBar.get(bar.id) ?? 0) > 0 || (bar.depreciatedMm ?? 0) > 0))
       changed('Cette barre est réservée. Libérez sa réservation avant de corriger son entrée ou son transfert.');
     return { bar, restoredMm, nextVersion: bar.version + 1 };
   });

@@ -6,6 +6,8 @@ import { prepareMaterialBarMovementTx, applyMaterialBarMovementTx } from './mate
 import { prepareMaterialBarCompensationTx, applyMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import { consumeMaterialBarPostingOwner, type MaterialBarPostingOwner } from './material-bar-posting-owner';
 
+import { prepareMaterialBarQualityTx, applyMaterialBarQualityTx } from './material-bar-quality.repository';
+
 type Db = Pick<PoolClient, 'query'>;
 export type MaterialBarPostingScope = { enabled: boolean; required: boolean };
 
@@ -24,7 +26,8 @@ export async function lockMaterialBarPostingScopeTx(tx: Db, input: {
   }
   const schema = (await tx.query<{ installed: boolean; ready: boolean }>(`SELECT
     to_regclass('public.stock_material_bar_inventories') IS NOT NULL AS installed,
-    to_regprocedure('public.check_material_bar_stock_1246()') IS NOT NULL AS ready`)).rows[0];
+    to_regprocedure('public.check_material_bar_stock_1246()') IS NOT NULL
+    AND to_regprocedure('public.check_material_bar_quality_1246()') IS NOT NULL AS ready`)).rows[0];
   if ((!schema?.ready || !schema?.installed) && (schema?.installed || article.required || input.explicit))
     throw new HttpError(409, 'MATERIAL_BARS_NOT_INSTALLED', 'La mise à jour du suivi des barres doit précéder les mouvements de cette matière.');
   if (!schema?.installed) return { enabled: false, required: false };
@@ -58,11 +61,16 @@ export async function prepareMaterialBarPostingTx(tx: Db, input: {
     return prepareMaterialBarCompensationTx(tx, { movementId: movement.id, destinationBatchId: input.destinationBatchId ?? undefined });
   }
   if (!command) throw new HttpError(422, 'MATERIAL_BAR_MOVEMENT_REQUIRED', 'Sélectionnez les barres et leurs longueurs avant de comptabiliser ce mouvement.');
+  if (command.kind === 'DEPRECIATE') {
+    if (input.destinationBatchId) throw new HttpError(422, 'MATERIAL_BAR_QUALITY_INVALID', 'Une dépréciation ne déplace pas la barre.');
+    return prepareMaterialBarQualityTx(tx, { movementId: movement.id, batchId: movement.batchId, command });
+  }
   return prepareMaterialBarMovementTx(tx, { movementId: movement.id, sourceBatchId: movement.batchId,
     destinationBatchId: input.destinationBatchId ?? undefined, command });
 }
 
 export async function applyMaterialBarPostingTx(tx: Db, prepared: NonNullable<Awaited<ReturnType<typeof prepareMaterialBarPostingTx>>>, actor: number) {
+  if ('kind' in prepared && prepared.kind === 'QUALITY') return applyMaterialBarQualityTx(tx, prepared, actor);
   if ('plan' in prepared) return applyMaterialBarMovementTx(tx, prepared, actor);
   return applyMaterialBarCompensationTx(tx, prepared, actor);
 }

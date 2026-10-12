@@ -154,7 +154,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   const physicalStockConflict = err && typeof err === 'object' && 'code' in err && err.code === '23514'
     && 'constraint' in err && err.constraint === 'stock_material_geometry_complete_1246'
     ? new HttpError(409, 'MATERIAL_BAR_STOCK_INCOMPLETE', 'Le mouvement a été annulé : les longueurs des barres ne correspondent pas au stock. Actualisez les barres avant de recommencer.') : null;
-  const handledError = mappedReferenceDataError ?? sealedCall ?? maintenanceSeal ?? physicalStockConflict ?? err;
+  const physicalQualityConflict = err && typeof err === 'object' && 'code' in err && err.code === '23514'
+    && 'constraint' in err && ['stock_material_quality_complete_1246', 'stock_material_bar_quality_length_1246'].includes(String(err.constraint))
+    ? new HttpError(409, 'MATERIAL_BAR_QUALITY_INCOMPLETE', 'L’opération a été annulée : vérifiez les barres dépréciées et les réservations concernées avant de recommencer.') : null;
+  const handledError = mappedReferenceDataError ?? sealedCall ?? maintenanceSeal ?? physicalStockConflict ?? physicalQualityConflict ?? err;
   const isKnown = handledError instanceof HttpError || handledError instanceof ApiError;
   const status = isKnown ? handledError.status : 500;
   const code = isKnown ? handledError.code : "INTERNAL_ERROR";

@@ -357,3 +357,35 @@ and 14 compensation checks. Migration, verify, rollback and reapplication are
 tested on the isolated schema. The repositories are real but canonical ledger
 writes are simulated; full ERP inventory-session/HTTP acceptance and visual
 web/tablet recipe remain required. No Test/Prod database was changed.
+
+## Per-bar depreciation
+
+The additive quality patch assigns canonical depreciation to specific physical
+bars without reducing their remaining length. Reservation proposals, explicit
+allocations, ordinary issues and production debit exclude the assigned amount.
+Counting preserves the canonical depreciation total, including equal-total
+reallocations which require the configured second count. Missing historical
+allocations require explicit reconciliation instead of guessing rejected bars.
+
+The canonical posting adapter routes a strict `DEPRECIATE` selection to a private
+transaction-bound capability. The existing quality disposition command also
+uses this boundary before posting `SCRAP` or a supplier-return `OUT`. Readiness,
+ledger effect, bar versions, reservations and movement watermark are checked.
+Deferred SQL guards reject mismatches even when a legacy command writes directly.
+Known geometry/quality constraints return an actionable 409, not a server error.
+
+The targeted domain/adapter/validator suite contains 150 passing checks; the
+quality/stock route and error boundary suite contains 65. PostgreSQL fixtures
+cover selected-bar depreciation, remaining usable capacity, replay and wrong
+transaction refusal, incorrect ledger rollback, no double depreciation,
+immutable history, reservation overlap and retention on rollback. Canonical
+fixture ledger writes are simulated; they do not prove complete ERP-schema or
+HTTP business acceptance. Build and exact-tree verification are recorded with
+the release evidence. Full-schema quality, web/tablet selection, physical
+disposal/quality corrections and end-to-end recipe remain required.
+
+Two initial failures were assertions on the existing reservation error wording;
+the original message is retained and quality gets its own explanation. An order
+test was corrected to assert only required dependencies: counting and quality
+both follow movements, with no artificial ordering between these independent
+patches. No Test/Prod database was changed during these checks.

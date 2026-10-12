@@ -11,6 +11,7 @@ export const materialBarInventoryCommand = z.object({
   bars: z.array(z.object({
     id: z.string().uuid(),
     lengthMm: mm.positive(),
+    depreciatedMm: mm.optional(),
     allocations: z.array(z.object({ reservationId: z.string().uuid(), quantityMm: mm.positive() }).strict()).max(500),
   }).strict()).max(1000),
 }).strict().superRefine((body, ctx) => {

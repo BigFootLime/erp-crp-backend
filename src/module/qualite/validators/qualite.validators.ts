@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { materialBarMovementCommandSchema } from '../../stock/validators/material-bar-movement.validators';
 
 const uuid = z.string().uuid();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
@@ -253,6 +254,7 @@ export const createNonConformityDispositionSchema = z.object({
     .object({
       note: z.string().trim().min(1).max(2000).optional().nullable(),
       disposition_type: nonConformityDispositionTypeSchema,
+      material_bars: materialBarMovementCommandSchema.optional(),
       qty: z.coerce.number().finite().positive().optional().nullable(),
       unite: z.string().trim().min(1).max(30).optional().nullable(),
       comment: z.string().trim().min(1).max(5000).optional().nullable(),

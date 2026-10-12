@@ -25,6 +25,7 @@ async function readMovement(tx: Db, id: string) {
 }
 
 function matchingKind(movement: LedgerMovement, kind: MaterialBarMovementCommand['kind']) {
+  if (kind === 'DEPRECIATE') return false;
   if (!Number.isFinite(movement.quantity) || movement.quantity === 0) return false;
   if (kind === 'TRANSFER') return movement.type === 'TRANSFER' && movement.quantity > 0;
   if (kind === 'RECEIVE') return movement.quantity > 0 && ['IN', 'ADJUST', 'ADJUSTMENT'].includes(movement.type);
@@ -94,7 +95,7 @@ export async function applyMaterialBarMovementTx(tx: Db, prepared: PreparedMater
     const current = await readMaterialBarInventoryTx(tx, before.batch.id);
     const delta = plan.kind === 'RECEIVE' || before === destination ? plan.quantityMm : -plan.quantityMm;
     const postedCount = ledger.filter(m => m.batchId === before.batch.id).length;
-    if (!sameGeometry(before, current) || milli(current.batch.physicalMm) !== milli(before.batch.physicalMm) + milli(delta)
+    if (!sameGeometry(before, current) || milli(current.batch.depreciatedMm ?? 0) !== milli(before.batch.depreciatedMm ?? 0) || milli(current.batch.physicalMm) !== milli(before.batch.physicalMm) + milli(delta)
       || BigInt(current.batch.movementCount) !== BigInt(before.batch.movementCount) + BigInt(postedCount))
       changed('Le stock ou les réservations ont changé pendant le mouvement. Aucune modification n’est conservée.');
     await tx.query(`INSERT INTO public.stock_material_bar_inventories(stock_batch_id,movement_count,confirmed_by,note)
