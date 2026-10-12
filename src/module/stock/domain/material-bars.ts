@@ -78,6 +78,8 @@ export function proposeMaterialBarAllocation(input: {
   requiredBlanks: number;
   blankLengthMm: number;
   kerfMm: number;
+  maximumAdditionalMm?: number;
+  availableMmByBar?: ReadonlyMap<string, number>;
 }) {
   if (!Number.isSafeInteger(input.requiredBlanks) || input.requiredBlanks < 0 || input.requiredBlanks > 1e9)
     throw new HttpError(422, 'MATERIAL_BAR_BLANK_COUNT_INVALID', 'La quantité de bruts doit être entière, positive ou nulle.');
@@ -88,19 +90,36 @@ export function proposeMaterialBarAllocation(input: {
     heldByBar.set(hold.barId, (heldByBar.get(hold.barId) ?? 0) + units(hold.remainingMm));
   const usableHeldBlanks = [...heldByBar.values()].reduce((sum, held) => sum + Math.floor(held / step), 0);
   let missing = Math.max(0, input.requiredBlanks - usableHeldBlanks);
-  const allocations: MaterialBarAllocation[] = [];
-  // Complete a blank already partly held before reserving a different bar.
-  const ordered = [...input.inventory.bars].sort((a, b) => Number((heldByBar.get(b.id) ?? 0) % step > 0) - Number((heldByBar.get(a.id) ?? 0) % step > 0));
-  for (const bar of ordered) {
-    if (!missing) break;
-    const remainder = (heldByBar.get(bar.id) ?? 0) % step;
-    const free = units(bar.lengthMm) - (input.inventory.heldByBar.get(bar.id) ?? 0);
-    const blanks = Math.min(missing, Math.floor((free + remainder) / step));
-    if (!blanks) continue;
-    allocations.push({ barId: bar.id, batchId: bar.batchId, expectedVersion: bar.version, quantityMm: (blanks * step - remainder) / 1000 });
-    missing -= blanks;
+  let budget = input.maximumAdditionalMm === undefined ? Infinity : units(input.maximumAdditionalMm);
+  const planned = new Map<string, MaterialBarAllocation>(), freeByBar = new Map<string, number>();
+  for (const bar of input.inventory.bars) {
+    const physicalFree = units(bar.lengthMm) - (input.inventory.heldByBar.get(bar.id) ?? 0);
+    const proposedFree = input.availableMmByBar?.get(bar.id);
+    freeByBar.set(bar.id, Math.min(physicalFree, proposedFree === undefined ? Infinity : units(proposedFree)));
   }
-  return { usableHeldBlanks, allocations, missingBlanks: missing };
+  const take = (bar: MaterialBar, length: number, blanks: number) => {
+    const previous = planned.get(bar.id);
+    planned.set(bar.id, { barId: bar.id, batchId: bar.batchId, expectedVersion: bar.version,
+      quantityMm: ((previous ? units(previous.quantityMm) : 0) + length) / 1000 });
+    freeByBar.set(bar.id, (freeByBar.get(bar.id) ?? 0) - length);
+    budget -= length;
+    missing -= blanks;
+  };
+  // Finish existing partial blanks first, cheapest top-up first. Otherwise a
+  // tight quality/location budget could buy one blank while two are possible.
+  const partials = [...input.inventory.bars].sort((a, b) => (heldByBar.get(b.id) ?? 0) % step - (heldByBar.get(a.id) ?? 0) % step);
+  for (const bar of partials) {
+    if (!missing) break;
+    const remainder = (heldByBar.get(bar.id) ?? 0) % step, topup = step - remainder;
+    if (remainder && topup <= Math.min(budget, freeByBar.get(bar.id) ?? 0)) take(bar, topup, 1);
+  }
+  // Remaining full blanks use the physical FIFO order, without joining bars.
+  for (const bar of input.inventory.bars) {
+    if (!missing) break;
+    const blanks = Math.min(missing, Math.floor(Math.min(budget, freeByBar.get(bar.id) ?? 0) / step));
+    if (blanks > 0) take(bar, blanks * step, blanks);
+  }
+  return { usableHeldBlanks, allocations: [...planned.values()], missingBlanks: missing };
 }
 
 /** Physical closure cannot eat another OF's hold. Warnings remain confirmable;

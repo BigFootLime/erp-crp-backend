@@ -1,6 +1,7 @@
 import type { DossierDb } from './of-dossier.repository';
 import type { readMaterialTx } from './of-material.repository';
-import { lotCompatibility, quantity } from '../domain/of-material';
+import { lotCompatibility, materialReservedCapacity, quantity } from '../domain/of-material';
+import { physicalMaterialInventoryBlockers } from '../domain/of-material-bars';
 import { readOperationalLotQualityEligibility } from '../../qualite/repository/quality-operational-gate.repository';
 
 export type MaterialReservationAvailability = Map<string, { usable: number; reservations: Map<string, number>; blockers: string[] }>;
@@ -11,7 +12,7 @@ export async function readMaterialReservationAvailabilityTx(tx: DossierDb, mater
   const result: MaterialReservationAvailability = new Map();
   const quality = new Map<string, Awaited<ReturnType<typeof readOperationalLotQualityEligibility>>>();
   for (const need of material.needs) {
-    const reservations = new Map<string, number>(), blockers: string[] = [];
+    const reservations = new Map<string, number>(), blockers = physicalMaterialInventoryBlockers(need);
     for (const reservation of need.reservations) {
       if (reservation.status !== 'ACTIVE' || !reservation.unexpired || Number(reservation.qty_reserved) <= Number(reservation.qty_consumed)) continue;
       const candidate = need.candidates.find(c => c.lot.id === reservation.lot_id && c.lot.batchId === reservation.stock_batch_id);
@@ -22,7 +23,10 @@ export async function readMaterialReservationAvailabilityTx(tx: DossierDb, mater
       if (incompatible.length) blockers.push(...incompatible);
       else reservations.set(String(reservation.id), quantity(Math.max(0, Number(reservation.qty_reserved) - Number(reservation.qty_consumed))));
     }
-    result.set(need.key, {usable: quantity([...reservations.values()].reduce((s, q) => s + q, 0)), reservations, blockers: [...new Set(blockers)]});
+    const usable=materialReservedCapacity({...need,
+      reserved:quantity([...reservations.values()].reduce((s,q)=>s+q,0)),
+      reservations:need.reservations.filter(r=>reservations.has(String(r.id)))});
+    result.set(need.key, {usable, reservations, blockers: [...new Set(blockers)]});
   }
   return result;
 }

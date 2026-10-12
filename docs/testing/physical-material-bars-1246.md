@@ -1,7 +1,7 @@
 # Physical material bars — #1246
 
-Status: domain, additive schema, inventory API and canonical reservation creation /
-release are implemented. Receipt, debit, compensation and grouping integration are
+Status: domain, additive schema, inventory API, canonical reservation creation /
+release, OF proposals and planning/start coverage are implemented. Receipt, debit, compensation and grouping integration are
 still pending. Do not merge/deploy this branch yet: the deferred checks require
 atomic updates from all participating stock commands once an inventory is confirmed.
 
@@ -70,6 +70,33 @@ strict input rejection before mutation, authenticated actor and replay status.
   and other reservations intact. Generic consumption of tracked bars requires
   the cutting path; that path is not connected yet on this branch.
 
+## OF coverage integration
+
+This branch incorporates #1244's batch-level correction as a dependency, then
+replaces its aggregate bar assumption with measured geometry. The OF preview bulk
+loads canonical balances, bars, holds and movement versions in five queries for
+all relevant batches. Its optimistic fingerprint includes geometry changes.
+Unknown or stale geometry contributes no usable held capacity. If compatible
+stock exists but its shape needs review, purchase preparation remains incomplete
+instead of silently buying that stock again.
+
+Whole-blank proposals complete existing partial holds on their own bar first,
+with the smallest top-ups first when quality/location availability is limited.
+Full blanks then follow FIFO. Shared preview budgets prevent another need from
+claiming the same free length. Actual confirmation derives per-bar allocations
+server-side and sends their versions to the canonical reservation command. It
+re-reads those versions between needs sharing a bar inside the transaction.
+Planning and operation-start checks reuse the same physical held capacity, while
+retaining quality eligibility and the maximum of two material origins (one for
+critical parts). Bar count does not become an origin count.
+
+110 targeted tests pass, including physical coverage, legacy/unit stock, quality,
+origin limits, separate remnants, limited shared budgets, confirmation and the
+existing debit regression suite. The PostgreSQL repository exercise now has 18
+checks: the added checks verify bulk reads, an actual 31.5 mm top-up across two
+bars, and movement invalidation of both preview and readiness. These remain
+isolated minimal-schema tests, not the full ERP recipe.
+
 ## Reproduce
 
 Run `npm run test:run -- src/module/stock/domain/material-bars.test.ts`.
@@ -93,8 +120,8 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
    finish the remaining stock command integrations listed below.
 2. Receipt/inventory: propose known article/supplier purchase lengths (e.g. 3 m),
    confirm actual physical bars and reconcile pre-existing allocations explicitly.
-3. OF preparation/grouping: use physical yield and existing origin/quality rules;
-   prepare only missing purchases; retain material confirmations upstream.
+3. OF preparation and planning now use physical yield; grouping still needs exact
+   per-bar hold transfers and restoration under the existing origin/quality rules.
 4. Debit, partial changes, compensation, consolidation and movement: update canonical
    stock, bar holds, remainder/version and immutable event in the same transaction,
    with command idempotency and concurrency coverage. No bypass via legacy routes.

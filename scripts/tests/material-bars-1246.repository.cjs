@@ -6,6 +6,8 @@ const root=process.env.MATERIAL_BAR_COMPILED_ROOT;
 if(!root)throw Error('MATERIAL_BAR_COMPILED_ROOT is required');
 const {assertMaterialBarSchema,readMaterialBarInventoryTx,lockMaterialBarInventoryTx,writeMaterialBarInventoryTx}=require(path.join(root,'src/module/stock/repository/material-bar-inventory.repository.js'));
 const {readTrackedMaterialBarInventoryTx,planMaterialBarReservation,allocateMaterialBarReservationTx,releaseMaterialBarReservationTx,reservationHasPhysicalBarsTx}=require(path.join(root,'src/module/stock/repository/material-bar-holds.repository.js'));
+const {readMaterialBarCoverageTx}=require(path.join(root,'src/module/production/repository/material-bar-coverage.repository.js'));
+const {materialReservedCapacity,proposeMaterialCoverage}=require(path.join(root,'src/module/production/domain/of-material.js'));
 const cfg=JSON.parse(fs.readFileSync(0,'utf8'));
 assert.equal(cfg.database,'material_bars_1246');
 const tx=new Client(cfg),other=new Client({...cfg,application_name:'material1246-race'}),id=()=>crypto.randomUUID();
@@ -88,6 +90,32 @@ async function main(){
   await assert.rejects(allocateMaterialBarReservationTx(tx,old,stalePlan,{reservationId:failedId,actor:1246,commandKey:id(),reason:'Obsolete selection'}),/a changé/);
   await tx.query('ROLLBACK');
   current=await readMaterialBarInventoryTx(tx,batch);assert.equal(current.status,'CONFIRMED');assert.equal(current.batch.reservedMm,300);assert.equal((await tx.query('SELECT id FROM public.stock_reservations WHERE id=$1',[failedId])).rows.length,0);pass('stale bar write rolls back canonical reservation and counters');
+  let geometry=await readMaterialBarCoverageTx(tx,[batch]);
+  assert.equal(geometry[batch].status,'CONFIRMED');assert.equal(geometry[batch].bars.length,2);assert.equal(geometry[batch].bars.some(b=>b.id===barB),false);
+  const need={key:'need',articleId:article,unit:'mm',required:331.5,reserved:300,consumed:0,expected:0,receivedBlocked:0,
+    requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]},
+    debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},barInventories:geometry,
+    reservations:[{id:reservationA,stock_batch_id:batch,status:'ACTIVE',unexpired:true,qty_reserved:200,qty_consumed:0},
+      {id:reservationB,stock_batch_id:batch,status:'ACTIVE',unexpired:true,qty_reserved:100,qty_consumed:0}]};
+  assert.equal(materialReservedCapacity(need),110.5);pass('OF bulk read retains bar boundaries and excludes retired identities');
+  const proposal=proposeMaterialCoverage([need],[{id:lot,batchId:batch,articleId:article,code:'FIXTURE',unit:'mm',quality:'LIBERE',available:2700,
+    receivedAt:'2026-01-01',grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false}])[0];
+  assert.equal(proposal.selections.length,1);assert.equal(proposal.selections[0].quantity,31.5);assert.equal(proposal.purchaseMissing,0);
+  const topupId=id(),topup=proposal.selections[0];
+  await tx.query('BEGIN');current=await lockMaterialBarInventoryTx(tx,batch);
+  const topupPlan=planMaterialBarReservation(current,topup.quantity,topup.barAllocations);
+  await tx.query('UPDATE public.stock_batches SET qty_reserved=qty_reserved+$2 WHERE id=$1',[batch,topup.quantity]);
+  await tx.query("INSERT INTO public.stock_reservations(id,stock_batch_id,qty_reserved,qty_consumed,status) VALUES($1,$2,$3,0,'ACTIVE')",[topupId,batch,topup.quantity]);
+  await allocateMaterialBarReservationTx(tx,current,topupPlan,{reservationId:topupId,actor:1246,commandKey:id(),reason:'Whole-blank top-up from OF proposal'});
+  await tx.query('COMMIT');
+  geometry=await readMaterialBarCoverageTx(tx,[batch]);
+  assert.equal(geometry[batch].status,'CONFIRMED');
+  const after={...need,reserved:331.5,barInventories:geometry,reservations:[...need.reservations,{id:topupId,stock_batch_id:batch,status:'ACTIVE',unexpired:true,qty_reserved:31.5,qty_consumed:0}]};
+  assert.equal(materialReservedCapacity(after),331.5);pass('whole-blank proposal reserves exactly 31.5 mm across the two correct bars');
+  await tx.query("INSERT INTO public.stock_movements VALUES($1,$2,'POSTED')",[id(),batch]);
+  const changed=await readMaterialBarCoverageTx(tx,[batch]);assert.equal(changed[batch].status,'REVIEW_REQUIRED');
+  assert.notEqual(changed[batch].version,geometry[batch].version);assert.equal(materialReservedCapacity({...after,barInventories:changed}),0);
+  pass('a new canonical movement invalidates both the preview version and planning readiness');
   console.log(`MATERIAL1246_REPOSITORY_PASS: ${passed} real PostgreSQL repository checks`);
 }
 main().catch(error=>{console.error(error.name+': '+error.message);process.exitCode=1;}).finally(async()=>{await Promise.allSettled([tx.end(),other.end()]);});
