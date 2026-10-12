@@ -2,8 +2,9 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID:id}=require('node:crypto'),{Client}=require('pg');
 const root=process.env.MATERIAL_BAR_COMPILED_ROOT,load=file=>require(path.join(root,`src/module/stock/repository/${file}.repository.js`));
 const {readMaterialBarInventoryTx,lockMaterialBarInventoryTx,writeMaterialBarInventoryTx}=load('material-bar-inventory');
-const {prepareMaterialBarDebitTx,applyMaterialBarDebitTx,materialBarConsumptionExtra}=load('material-bar-debit');
-const {prepareMaterialBarCorrectionTx,applyMaterialBarCorrectionTx}=load('material-bar-correction');
+const {prepareMaterialBarDebitTx,applyMaterialBarDebitTx,materialBarConsumptionExtra,materialBarDebitPostingOwner}=load('material-bar-debit');
+const {prepareMaterialBarCorrectionTx,applyMaterialBarCorrectionTx,materialBarCorrectionPostingOwner}=load('material-bar-correction');
+const {consumeMaterialBarPostingOwner}=require(path.join(root,'src/module/stock/repository/material-bar-posting-owner.js'));
 const config=JSON.parse(fs.readFileSync(0,'utf8'));assert.equal(config.database,'material_bars_1246');
 const tx=new Client(config);let passed=0;
 const pass=label=>{passed++;console.log(`PASS: ${label}`);};
@@ -27,17 +28,21 @@ async function post(plan,batch){
   assert.equal(materialBarConsumptionExtra(a,reservationId,a.quantityMm),a.extraMm);
   await tx.query('UPDATE public.stock_batches SET qty_total=qty_total-$2,qty_reserved=qty_reserved+$3-$2 WHERE id=$1',[batch,a.quantityMm,a.extraMm]);
   await tx.query("UPDATE public.stock_reservations SET qty_reserved=qty_reserved+$3,qty_consumed=qty_consumed+$2,status=CASE WHEN qty_reserved+$3=qty_consumed+$2 THEN 'CONSUMED' ELSE 'ACTIVE' END,row_version=row_version+1 WHERE id=$1",[reservationId,a.quantityMm,a.extraMm]);
-  const stockMovementId=id();await tx.query("INSERT INTO public.stock_movements VALUES($1,$2,'POSTED')",[stockMovementId,batch]);
+  const stockMovementId=id(),owner=materialBarDebitPostingOwner(tx,a,stockMovementId);
+  consumeMaterialBarPostingOwner(tx,owner,{id:stockMovementId,batchId:batch,type:'OUT',quantity:a.quantityMm,reversalOf:null});
+  await tx.query("INSERT INTO public.stock_movements(id,stock_batch_id,status) VALUES($1,$2,'POSTED')",[stockMovementId,batch]);
   consumed.push({reservationId,stockMovementId,quantity:a.quantityMm,extended:a.extraMm});
  }
  return consumed;
 }
-async function restore(batch,consumed){
+async function restore(batch,consumed,proofs){
  const inverses=[];
  for(const c of consumed){
   await tx.query('UPDATE public.stock_batches SET qty_total=qty_total+$2,qty_reserved=qty_reserved+$2-$3 WHERE id=$1',[batch,c.quantity,c.extended]);
   await tx.query("UPDATE public.stock_reservations SET qty_reserved=qty_reserved-$3,qty_consumed=qty_consumed-$2,status='ACTIVE',row_version=row_version+1 WHERE id=$1",[c.reservationId,c.quantity,c.extended]);
-  const movementId=id();await tx.query("INSERT INTO public.stock_movements VALUES($1,$2,'POSTED')",[movementId,batch]);inverses.push({reservationId:c.reservationId,movementId});
+  const movementId=id(),owner=materialBarCorrectionPostingOwner(tx,proofs,c.stockMovementId,movementId);assert.ok(owner);
+  consumeMaterialBarPostingOwner(tx,owner,{id:movementId,batchId:batch,type:'IN',quantity:c.quantity,reversalOf:c.stockMovementId});
+  await tx.query("INSERT INTO public.stock_movements(id,stock_batch_id,status) VALUES($1,$2,'POSTED')",[movementId,batch]);inverses.push({reservationId:c.reservationId,movementId});
  }
  return inverses;
 }
@@ -65,7 +70,7 @@ async function main(){
  await tx.query('BEGIN');await tx.query('UPDATE public.stock_material_bars SET row_version=row_version+1 WHERE id=$1',[f.barIds[0]]);
  await assert.rejects(prepareMaterialBarCorrectionTx(tx,commandKey,originals),/changé/);await tx.query('ROLLBACK');pass('a later bar change refuses compensation before any inverse posting');
  await tx.query('BEGIN');let proofs=await prepareMaterialBarCorrectionTx(tx,commandKey,originals);assert.equal(proofs.length,1);
- let inverses=await restore(f.batch,consumed);await applyMaterialBarCorrectionTx(tx,proofs,{commandKey:id(),actor:1246,reason:'Correction of fixture cut',inverses});await tx.query('COMMIT');
+ let inverses=await restore(f.batch,consumed,proofs);await applyMaterialBarCorrectionTx(tx,proofs,{commandKey:id(),actor:1246,reason:'Correction of fixture cut',inverses});await tx.query('COMMIT');
  stock=await readMaterialBarInventoryTx(tx,f.batch);assert.equal(stock.status,'CONFIRMED');assert.equal(stock.batch.physicalMm,1500);assert.equal(stock.batch.reservedMm,521);
  assert.equal(stock.bars.find(b=>b.id===f.barIds[0]).lengthMm,1000);assert.equal(stock.bars.find(b=>b.id===f.barIds[0]).version,3);assert.equal(stock.holds.length,3);
  pass('compensation restores exact source holds and length with a new monotonic version');
@@ -81,7 +86,7 @@ async function main(){
  assert.equal(stock.bars.find(b=>b.id===g.barIds[0]).lengthMm,0);assert.equal(stock.holds.find(h=>h.reservationId===g.r('a')).remainingMm,100);
  pass('closure extends only the discarded free length and preserves its own hold on another bar');
  await tx.query('BEGIN');proofs=await prepareMaterialBarCorrectionTx(tx,closeKey,consumed.map(c=>({reservationId:c.reservationId,movementId:c.stockMovementId,quantity:c.quantity,extended:c.extended})));
- inverses=await restore(g.batch,consumed);await applyMaterialBarCorrectionTx(tx,proofs,{commandKey:id(),actor:1246,reason:'Correct physical bar closure',inverses});await tx.query('COMMIT');
+ inverses=await restore(g.batch,consumed,proofs);await applyMaterialBarCorrectionTx(tx,proofs,{commandKey:id(),actor:1246,reason:'Correct physical bar closure',inverses});await tx.query('COMMIT');
  stock=await readMaterialBarInventoryTx(tx,g.batch);assert.equal(stock.status,'CONFIRMED');assert.equal(stock.batch.physicalMm,1000);assert.equal(stock.batch.reservedMm,250);
  assert.equal(stock.reservations.find(r=>r.id===g.r('a')).remainingMm,200);pass('closure compensation removes its temporary extension and restores both original holds');
  console.log(`MATERIAL1246_DEBIT_REPOSITORY_PASS: ${passed} real PostgreSQL debit/correction checks`);

@@ -47,4 +47,45 @@ BEGIN
   RETURN NEW;
 END $$;
 ALTER FUNCTION public.protect_material_bar_identity_1246() OWNER TO cerp_app;
+
+-- A managed receipt/debit/correction may finish geometry after posting its
+-- canonical movement. It must do so BEFORE COMMIT. Legacy command paths get
+-- the same invariant; they cannot silently leave a confirmed inventory stale.
+CREATE OR REPLACE FUNCTION public.check_material_bar_stock_1246() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE affected uuid[]; batch uuid; canonical numeric; physical numeric; watermark bigint; posted bigint;
+BEGIN
+  IF TG_TABLE_NAME='stock_batches' THEN
+    IF TG_OP='DELETE' THEN affected:=ARRAY[OLD.id]; ELSE affected:=ARRAY[NEW.id]; END IF;
+  ELSE
+    IF TG_OP='INSERT' THEN affected:=ARRAY[NEW.stock_batch_id];
+    ELSIF TG_OP='DELETE' THEN affected:=ARRAY[OLD.stock_batch_id];
+    ELSE affected:=ARRAY[OLD.stock_batch_id,NEW.stock_batch_id]; END IF;
+  END IF;
+  FOR batch IN SELECT DISTINCT id FROM unnest(affected) AS id WHERE id IS NOT NULL ORDER BY id LOOP
+    SELECT b.qty_total,i.movement_count INTO canonical,watermark FROM public.stock_batches b
+      JOIN public.stock_material_bar_inventories i ON i.stock_batch_id=b.id WHERE b.id=batch FOR UPDATE OF b,i;
+    IF NOT FOUND THEN CONTINUE; END IF;
+    SELECT COALESCE(sum(remaining_length_mm),0) INTO physical FROM public.stock_material_bars
+      WHERE stock_batch_id=batch AND retired_at IS NULL;
+    SELECT count(*) INTO posted FROM public.stock_movements WHERE stock_batch_id=batch AND status='POSTED';
+    IF physical IS DISTINCT FROM canonical OR watermark IS DISTINCT FROM posted THEN
+      RAISE EXCEPTION 'Physical bars and canonical stock must reconcile before commit'
+        USING ERRCODE='23514',CONSTRAINT='stock_material_geometry_complete_1246';
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS stock_material_bar_stock_1246 ON public.stock_material_bars;
+CREATE CONSTRAINT TRIGGER stock_material_bar_stock_1246 AFTER INSERT OR UPDATE OR DELETE ON public.stock_material_bars
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_material_bar_stock_1246();
+DROP TRIGGER IF EXISTS stock_material_inventory_stock_1246 ON public.stock_material_bar_inventories;
+CREATE CONSTRAINT TRIGGER stock_material_inventory_stock_1246 AFTER INSERT OR UPDATE OR DELETE ON public.stock_material_bar_inventories
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_material_bar_stock_1246();
+DROP TRIGGER IF EXISTS stock_material_movement_stock_1246 ON public.stock_movements;
+CREATE CONSTRAINT TRIGGER stock_material_movement_stock_1246 AFTER INSERT OR UPDATE OR DELETE ON public.stock_movements
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_material_bar_stock_1246();
+DROP TRIGGER IF EXISTS stock_material_batch_stock_1246 ON public.stock_batches;
+CREATE CONSTRAINT TRIGGER stock_material_batch_stock_1246 AFTER UPDATE ON public.stock_batches
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_material_bar_stock_1246();
+ALTER FUNCTION public.check_material_bar_stock_1246() OWNER TO cerp_app;
 COMMIT;

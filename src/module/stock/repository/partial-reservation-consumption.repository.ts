@@ -5,7 +5,7 @@ import {assertOperationalLotQualityEligibility} from '../../qualite/repository/q
 import {assertStockConsumptionAllowed,beginStockCommand,completeStockCommand,lockStockStates,stockTargetKey,repoCreateMovement,repoPostMovement,type AuditContext} from './stock.repository';
 import { RESERVATION_CONSUMPTION_SOURCE_SQL, ASSEMBLY_CONSUMPTION_PROOF_SQL } from './reserved-consumption-source.sql';
 import {reservationHasPhysicalBarsTx} from './material-bar-holds.repository';
-import {materialBarConsumptionExtra,type MaterialBarConsumption} from './material-bar-debit.repository';
+import {materialBarConsumptionExtra,materialBarDebitPostingOwner,type MaterialBarConsumption} from './material-bar-debit.repository';
 
 type Input={reservationId:string;ofId:number;operationId:string|null;kind?:'MATIERE'|'CONSOMMABLE';quantity:number;expectedVersion:number;idempotencyKey:string;reason:string;barDiscardAllowance?:number;physicalBarDebit?:MaterialBarConsumption};
 type Result={reservationId:string;stockMovementId:string;quantity:number;remaining:number;status:'ACTIVE'|'CONSUMED';extendedQuantity?:number};
@@ -75,7 +75,8 @@ async function consumeReservationTx(tx: PoolClient, input: ReservedInput, audit:
   // posted movement to this reservation, including for several partial issues.
   await tx.query(`UPDATE public.stock_reservations SET qty_consumed=$2,qty_prepared=$3,status=$4,consumed_stock_movement_id=$5::uuid,
     consumed_at=now(),consumed_by=$6,updated_at=now(),updated_by=$6,reason=$7 WHERE id=$1::uuid`,[input.reservationId,next.consumed,next.prepared,next.status,movementId,audit.user_id,input.reason]);
-  const posted=await repoPostMovement(movementId,{},audit,`${command.key}:post`,tx,{reservationId:input.reservationId});
+  const posted=await repoPostMovement(movementId,{},audit,`${command.key}:post`,tx,{reservationId:input.reservationId},
+    input.physicalBarDebit?materialBarDebitPostingOwner(tx,input.physicalBarDebit,movementId):undefined);
   if(posted?.movement.status!=='POSTED')throw new HttpError(409,'MATERIAL_CONSUMPTION_NOT_POSTED','La sortie matière n’a pas été comptabilisée. Aucun débit n’est conservé.');
   const result:Result={reservationId:input.reservationId,stockMovementId:movementId,quantity:input.quantity,remaining:next.remaining,status:next.status,extendedQuantity:extra};
   await completeStockCommand(tx,{audit,command,command_type:'RESERVATION_CONSUME',resource_type:'stock_reservation',resource_id:input.reservationId,result_payload:result});

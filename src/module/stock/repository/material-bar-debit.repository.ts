@@ -2,14 +2,21 @@ import type { PoolClient } from 'pg';
 import { HttpError } from '../../../utils/httpError';
 import { planPhysicalBarDebit, type PhysicalBarDebitSource } from '../domain/material-bar-debit';
 import { lockMaterialBarInventoryTx, readMaterialBarInventoryTx } from './material-bar-inventory.repository';
+import { createMaterialBarPostingOwner } from './material-bar-posting-owner';
 
 type Db=Pick<PoolClient,'query'>;
 export type MaterialBarConsumption={reservationId:string;quantityMm:number;extraMm:number;barIds:string[]};
-const authorizedConsumptions=new WeakSet<MaterialBarConsumption>();
+const authorizedConsumptions=new WeakMap<MaterialBarConsumption,{tx:Db;batchId:string}>();
 export function materialBarConsumptionExtra(value:MaterialBarConsumption,reservationId:string,quantity:number){
   if(!authorizedConsumptions.has(value)||value.reservationId!==reservationId||Math.round(value.quantityMm*1000)!==Math.round(quantity*1000))
     throw new HttpError(409,'MATERIAL_BAR_DEBIT_REQUIRED','Sélectionnez les barres dans le parcours de découpe.');
   return value.extraMm;
+}
+
+export function materialBarDebitPostingOwner(tx:Db,value:MaterialBarConsumption,movementId:string){
+  const authorization=authorizedConsumptions.get(value);
+  if(!authorization||authorization.tx!==tx)throw new HttpError(409,'MATERIAL_BAR_DEBIT_REQUIRED','Préparez les barres dans la transaction de découpe.');
+  return createMaterialBarPostingOwner(tx,'DEBIT',{movementId,batchId:authorization.batchId,type:'OUT',quantityMm:value.quantityMm});
 }
 
 /** Planning/OF and all source lots are already locked by the production owner.
@@ -28,7 +35,7 @@ export async function prepareMaterialBarDebitTx(tx:Db,sources:PhysicalBarDebitSo
     const value={reservationId:source.reservationId,barIds:source.bars.map(b=>b.barId),
       quantityMm:allocations.reduce((sum,s)=>sum+Math.round((s.cutMm+s.discardedMm)*1000),0)/1000,
       extraMm:allocations.reduce((sum,s)=>sum+Math.round(s.extraMm*1000),0)/1000};
-    authorizedConsumptions.add(value);consumptions.set(source.reservationId,value);
+    authorizedConsumptions.set(value,{tx,batchId:source.batchId});consumptions.set(source.reservationId,value);
   }
   return {changes,consumptions,batchIds:inventories.map(i=>i.batch.id)};
 }

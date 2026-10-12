@@ -1,6 +1,7 @@
 import { subcontractDefinitionSchema } from "./subcontract-definition";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
+import { materialBarMovementCommandSchema } from './material-bar-movement.validators';
 
 export const articleSupplierConditionSchema = createCatalogueSchema.shape.body.omit({article_id:true,type:true,designation:true}).partial().extend({
   supplier_id: z.string().uuid(), catalogue_id: z.string().uuid().optional(), preferred: z.boolean().default(false),
@@ -982,6 +983,7 @@ export type CompensateMovementBodyDTO = z.infer<typeof compensateMovementSchema>
 export const postMovementSchema = z.object({
   body: z
     .object({
+      material_bars: materialBarMovementCommandSchema.optional(),
       negative_stock_override: z
         .object({
           maximum_negative_qty: z.coerce.number().positive().max(1_000_000),

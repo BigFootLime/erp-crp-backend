@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { HttpError } from '../../../utils/httpError';
 import { receivedMaterialBarLengths, type ReceivedBarGroup } from '../domain/material-bar-receipt';
 import { assertMaterialBarSchema, lockMaterialBarInventoryTx, readMaterialBarInventoryTx, type MaterialBarInventory } from './material-bar-inventory.repository';
+import { createMaterialBarPostingOwner, type MaterialBarPostingOwner } from './material-bar-posting-owner';
 
 type Db = Pick<PoolClient, 'query'>;
-export type MaterialBarReceiptPlan = { current: MaterialBarInventory; movementId: string; quantityMm: number; lengths: number[] };
+export type MaterialBarReceiptPlan = { current: MaterialBarInventory; movementId: string; quantityMm: number; lengths: number[]; postingOwner: MaterialBarPostingOwner };
 
 /** Take canonical lot/reservation locks BEFORE movement creation can create or
  * lock the destination batch. Same order as reservation, debit and inventory. */
@@ -34,7 +35,8 @@ export async function prepareMaterialBarReceiptTx(tx: Db, input: {
   if (current.status !== 'CONFIRMED' && !(current.status === 'UNCONFIRMED' && current.batch.physicalMm === 0
     && current.batch.reservedMm === 0 && !current.bars.length && !current.holds.length && !current.reservations.length))
     throw new HttpError(409, 'MATERIAL_BAR_RECEIPT_EXISTING_STOCK', 'Confirmez les barres déjà présentes dans ce lot, ou choisissez un autre emplacement avant la mise en stock.');
-  return { current, movementId: input.movementId, quantityMm: movement.quantityMm, lengths };
+  return { current, movementId: input.movementId, quantityMm: movement.quantityMm, lengths,
+    postingOwner: createMaterialBarPostingOwner(tx, 'RECEIPT', { movementId: input.movementId, batchId: current.batch.id, type: 'IN', quantityMm: movement.quantityMm }) };
 }
 
 /** Canonical IN is already posted in this same transaction. Only append the

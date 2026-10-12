@@ -1902,7 +1902,9 @@ export async function repoCreateStockReceiptLocked(
     {},
     audit,
     `rf-post-${stockCommandKey}`,
-    tx
+    tx,
+    undefined,
+    barReceipt?.postingOwner
   )
   if (!posted) throw new Error("Failed to post stock movement")
   if(barReceipt)await applyMaterialBarReceiptTx(tx,barReceipt,audit.user_id)

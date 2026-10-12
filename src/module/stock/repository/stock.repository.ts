@@ -7,6 +7,9 @@ import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-arti
 import { syncArticleCommercialTx } from './article-commercial.repository';
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
+import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx } from './material-bar-posting.repository';
+import { applyMaterialBarMovementTx } from './material-bar-movement.repository';
+import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -7877,7 +7880,8 @@ export async function repoPostMovement(
   audit: AuditContext,
   idempotencyKey: string,
   externalClient?: PoolClient,
-  reservedConsumption?: {reservationId:string}
+  reservedConsumption?: {reservationId:string},
+  physicalBarOwner?: MaterialBarPostingOwner
 ): Promise<StockMovementDetail | null> {
   const client = externalClient ?? await db.connect();
   const ownsTransaction = !externalClient;
@@ -7907,6 +7911,7 @@ export async function repoPostMovement(
       stock_batch_id: string | null;
       qty: number;
       notes: string | null;
+      reversal_of_id: string | null;
     }>(
       `
         SELECT
@@ -7919,7 +7924,8 @@ export async function repoPostMovement(
           stock_level_id::text AS stock_level_id,
           stock_batch_id::text AS stock_batch_id,
           qty::float8 AS qty,
-          notes
+          notes,
+          reversal_of_id::text AS reversal_of_id
         FROM public.stock_movements
         WHERE id = $1::uuid
         FOR UPDATE
@@ -7972,6 +7978,11 @@ export async function repoPostMovement(
     );
     await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
     await assertPieceReceiptMovement(client, id, m.movement_type, draftLines.rows);
+    const barScope = await lockMaterialBarPostingScopeTx(client, { articleId: m.article_id,
+      lotIds: draftLines.rows.flatMap(line => line.lot_id ? [line.lot_id] : []), explicit: !!body.material_bars || !!physicalBarOwner });
+    if (physicalBarOwner?.kind === 'DEBIT' && !reservedConsumption)
+      throw new HttpError(409, 'MATERIAL_BAR_POST_OWNER_INVALID', 'Le débit des barres doit consommer la réservation de son OF.');
+    const physicalMovement = { id, batchId: m.stock_batch_id, type: m.movement_type, quantity: m.qty, reversalOf: m.reversal_of_id };
 
     // A direct material issue does not have to be created through a stock
     // reservation.  It is nevertheless an irreversible physical use of a
@@ -8041,6 +8052,9 @@ export async function repoPostMovement(
       const uniformLotId = assertSameLotIfSet(movementLines);
       const srcBatchId = uniformLotId ? await ensureStockBatchId(client, { stock_level_id: srcStockLevelId, lot_id: uniformLotId }) : null;
       const dstBatchId = uniformLotId ? await ensureStockBatchId(client, { stock_level_id: dstStockLevelId, lot_id: uniformLotId }) : null;
+
+      const barMovement = await prepareMaterialBarPostingTx(client, { scope: barScope, movement: physicalMovement,
+        destinationBatchId: dstBatchId, command: body.material_bars, owner: physicalBarOwner, externalTransaction: !!externalClient });
 
       const lockedStates = await lockStockStates(client, [
         { stock_level_id: srcStockLevelId, stock_batch_id: srcBatchId },
@@ -8234,6 +8248,8 @@ export async function repoPostMovement(
         [id, audit.user_id, command.correlation_id]
       );
 
+      if (barMovement) await applyMaterialBarMovementTx(client, barMovement, audit.user_id);
+
       await insertMovementEvent(client, {
         movement_id: id,
         event_type: "POSTED",
@@ -8282,6 +8298,8 @@ export async function repoPostMovement(
       return await repoGetMovement(id, externalClient);
     }
 
+    const barMovement = await prepareMaterialBarPostingTx(client, { scope: barScope, movement: physicalMovement,
+      command: body.material_bars, owner: physicalBarOwner, externalTransaction: !!externalClient });
     const lockedStates = await lockStockStates(client, [
       { stock_level_id: m.stock_level_id, stock_batch_id: m.stock_batch_id },
     ]);
@@ -8316,6 +8334,8 @@ export async function repoPostMovement(
       `,
       [id, audit.user_id, command.correlation_id]
     );
+
+    if (barMovement) await applyMaterialBarMovementTx(client, barMovement, audit.user_id);
 
     await insertMovementEvent(client, {
       movement_id: id,

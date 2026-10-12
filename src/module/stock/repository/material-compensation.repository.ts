@@ -1,10 +1,12 @@
 import type {PoolClient} from 'pg';
 import {HttpError} from '../../../utils/httpError';
 import {repoGetMovement,repoCreateMovement,repoPostMovement,lockStockStates,stockTargetKey,type AuditContext} from './stock.repository';
+import {materialBarCorrectionPostingOwner,prepareMaterialBarCorrectionTx} from './material-bar-correction.repository';
 
 /** Internal, full reversal of one original material entry. All effects belong
  * to the production correction transaction, including restored reservations. */
-export async function compensateMaterialMovementTx(tx:PoolClient,input:{movementId:string;ofId:number;kind:'SOURCE'|'REMNANT';key:string;reason:string},audit:AuditContext){
+export async function compensateMaterialMovementTx(tx:PoolClient,input:{movementId:string;ofId:number;kind:'SOURCE'|'REMNANT';key:string;reason:string;
+  physicalBarCorrection?:Awaited<ReturnType<typeof prepareMaterialBarCorrectionTx>>},audit:AuditContext){
   await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`stock-compensation:${input.movementId}`]);
   const owned=(await tx.query(`SELECT m.id FROM public.stock_movements m WHERE m.id=$1::uuid AND (
     ($3='SOURCE' AND EXISTS(SELECT 1 FROM public.production_material_debit_sources s JOIN public.production_material_debits d ON d.id=s.debit_id WHERE s.stock_movement_id=m.id AND d.of_id=$2 AND d.compensates_id IS NULL)) OR
@@ -27,7 +29,8 @@ export async function compensateMaterialMovementTx(tx:PoolClient,input:{movement
       unit_cost:line.unit_cost,currency:line.currency,note:input.reason,...(input.kind==='SOURCE'?{dst_magasin_id:line.src_magasin_id,dst_emplacement_id:line.src_emplacement_id}:
         {src_magasin_id:line.dst_magasin_id,src_emplacement_id:line.dst_emplacement_id,direction:'OUT' as const})}]},audit,{client:tx,trusted_source_flow:true});
   await tx.query('UPDATE public.stock_movements SET reversal_of_id=$2::uuid WHERE id=$1::uuid',[created.movement.id,input.movementId]);
-  const posted=await repoPostMovement(created.movement.id,{},audit,`${input.key}:post`,tx);
+  const owner=input.physicalBarCorrection?materialBarCorrectionPostingOwner(tx,input.physicalBarCorrection,input.movementId,created.movement.id):undefined;
+  const posted=await repoPostMovement(created.movement.id,{},audit,`${input.key}:post`,tx,undefined,owner);
   if(posted?.movement.status!=='POSTED')throw new HttpError(409,'MATERIAL_COMPENSATION_NOT_POSTED','La compensation stock a échoué ; aucune correction n’est conservée.');
   return {movementId:created.movement.id,quantity:qty};
 }

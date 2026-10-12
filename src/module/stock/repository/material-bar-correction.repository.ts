@@ -3,6 +3,7 @@ import {z} from 'zod';
 import {HttpError} from '../../../utils/httpError';
 import {lockMaterialBarInventoryTx} from './material-bar-inventory.repository';
 import {refreshMaterialBarBatchesTx} from './material-bar-debit.repository';
+import {createMaterialBarPostingOwner} from './material-bar-posting-owner';
 
 type Db=Pick<PoolClient,'query'>;
 const length=z.number().finite().nonnegative().max(1e9);
@@ -11,6 +12,7 @@ const proofSchema=z.object({id:z.string().uuid(),barId:z.string().uuid(),batchId
   after:shape.extend({sources:z.array(z.object({reservationId:z.string().uuid(),stockMovementId:z.string().uuid(),
     cutMm:length,discardedMm:length,heldBeforeMm:length,heldAfterMm:length,extraMm:length})).min(1)})});
 type CutProof=z.infer<typeof proofSchema>;
+const preparedCorrections=new WeakMap<CutProof[],{tx:Db;originals:Original[]}>();
 type Original={reservationId:string;movementId:string;quantity:number;extended:number};
 function conflict():never{throw new HttpError(409,'MATERIAL_BAR_CORRECTION_CHANGED',
   'La barre ou ses réservations ont changé après ce débit. Le stock doit vérifier la correction avant de restaurer sa longueur.');}
@@ -43,7 +45,16 @@ export async function prepareMaterialBarCorrectionTx(tx:Db,commandKey:string,ori
   }
   for(const [id,total] of totals){const original=originals.find(o=>o.reservationId===id)!;
     if(total.quantity!==Math.round(original.quantity*1000)||total.extended!==Math.round(original.extended*1000))conflict();}
+  preparedCorrections.set(proofs,{tx,originals:originals.map(o=>({...o}))});
   return proofs;
+}
+
+export function materialBarCorrectionPostingOwner(tx:Db,proofs:CutProof[],originalMovementId:string,movementId:string){
+  if(!proofs.length)return undefined;
+  const prepared=preparedCorrections.get(proofs),original=prepared?.originals.find(o=>o.movementId===originalMovementId);
+  const batches=[...new Set(proofs.filter(p=>p.after.sources.some(s=>s.stockMovementId===originalMovementId)).map(p=>p.batchId))];
+  if(!prepared||prepared.tx!==tx||!original||batches.length!==1)conflict();
+  return createMaterialBarPostingOwner(tx,'CORRECTION',{movementId,batchId:batches[0],type:'IN',quantityMm:original.quantity,correctionOf:originalMovementId});
 }
 
 export async function applyMaterialBarCorrectionTx(tx:Db,proofs:CutProof[],input:{commandKey:string;actor:number;reason:string;

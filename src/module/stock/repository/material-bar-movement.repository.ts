@@ -28,7 +28,9 @@ function matchingKind(movement: LedgerMovement, kind: MaterialBarMovementCommand
   if (!Number.isFinite(movement.quantity) || movement.quantity === 0) return false;
   if (kind === 'TRANSFER') return movement.type === 'TRANSFER' && movement.quantity > 0;
   if (kind === 'RECEIVE') return movement.quantity > 0 && ['IN', 'ADJUST', 'ADJUSTMENT'].includes(movement.type);
-  return (movement.quantity > 0 && ['OUT', 'SCRAP'].includes(movement.type))
+  // SCRAP and DEPRECIATE keep qty_total in the canonical ledger. They require
+  // a quality allocation, never a physical length subtraction through ISSUE.
+  return (movement.quantity > 0 && movement.type === 'OUT')
     || (movement.quantity < 0 && ['ADJUST', 'ADJUSTMENT'].includes(movement.type));
 }
 

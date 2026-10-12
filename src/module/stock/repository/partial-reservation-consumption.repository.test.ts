@@ -1,9 +1,9 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
-const m=vi.hoisted(()=>({begin:vi.fn(),complete:vi.fn(),quality:vi.fn(),create:vi.fn(),post:vi.fn(),states:vi.fn(),assert:vi.fn(),tracked:vi.fn(),physicalExtra:vi.fn()}));
+const m=vi.hoisted(()=>({begin:vi.fn(),complete:vi.fn(),quality:vi.fn(),create:vi.fn(),post:vi.fn(),states:vi.fn(),assert:vi.fn(),tracked:vi.fn(),physicalExtra:vi.fn(),physicalOwner:vi.fn()}));
 vi.mock('./stock.repository',()=>({beginStockCommand:m.begin,completeStockCommand:m.complete,repoCreateMovement:m.create,repoPostMovement:m.post,lockStockStates:m.states,assertStockConsumptionAllowed:m.assert,stockTargetKey:()=> 'source'}));
 vi.mock('../../qualite/repository/quality-operational-gate.repository',()=>({assertOperationalLotQualityEligibility:m.quality}));
 vi.mock('./material-bar-holds.repository',()=>({reservationHasPhysicalBarsTx:m.tracked}));
-vi.mock('./material-bar-debit.repository',()=>({materialBarConsumptionExtra:m.physicalExtra}));
+vi.mock('./material-bar-debit.repository',()=>({materialBarConsumptionExtra:m.physicalExtra,materialBarDebitPostingOwner:m.physicalOwner}));
 import {consumeMaterialReservationTx} from './partial-reservation-consumption.repository';
 const input={reservationId:'reservation',ofId:19,operationId:'cut',quantity:20,expectedVersion:4,idempotencyKey:'debit-20',reason:'Débit de 20 bruts'};
 const audit={user_id:1} as never;
@@ -31,9 +31,12 @@ describe('orchestration du débit de réservation dans la transaction propriéta
       [{article_id:'article',lot_id:'lot',stock_batch_id:'batch',stock_level_id:'level',magasin_id:'magasin',emplacement_id:1,unit:'mm',
         qty_reserved:200,qty_consumed:0,qty_prepared:0,row_version:4,status:'ACTIVE',unexpired:true}]:[]}))};
     const physicalBarDebit={reservationId:input.reservationId,quantityMm:500,extraMm:400,barIds:['bar']};
+    const owner={kind:'DEBIT'};m.physicalOwner.mockReturnValue(owner);
     const result=await consumeMaterialReservationTx(tx as never,{...input,quantity:500,barDiscardAllowance:400,physicalBarDebit},audit);
     expect(result).toMatchObject({quantity:500,remaining:100,extendedQuantity:400,status:'ACTIVE'});
     expect(m.physicalExtra).toHaveBeenCalledWith(physicalBarDebit,input.reservationId,500);
+    expect(m.physicalOwner).toHaveBeenCalledWith(tx,physicalBarDebit,'movement');
+    expect(m.post.mock.calls[0][6]).toBe(owner);
     expect(m.quality).toHaveBeenCalledWith(expect.objectContaining({qty:400,unit:'mm'}));
   });
   it('retire uniquement 20 du stock réservé, publie la sortie et conserve 40',async()=>{
@@ -42,7 +45,7 @@ describe('orchestration du débit de réservation dans la transaction propriéta
     const changes=tx.query.mock.calls.filter(([sql])=>sql.startsWith('UPDATE public.stock_'));
     expect(changes).toHaveLength(3);
     expect(m.assert).toHaveBeenCalledWith({}, {movement_type:'UNRESERVE',qty:20});
-    expect(m.post).toHaveBeenCalledWith('movement',{},audit,'command:post',tx,{reservationId:'reservation'});
+    expect(m.post).toHaveBeenCalledWith('movement',{},audit,'command:post',tx,{reservationId:'reservation'},undefined);
     expect(m.quality).toHaveBeenCalledWith(expect.objectContaining({qty:0,lotId:'lot'}));
     expect(tx.query.mock.calls.some(([sql])=>/COMMIT|ROLLBACK/.test(sql))).toBe(false);
   });

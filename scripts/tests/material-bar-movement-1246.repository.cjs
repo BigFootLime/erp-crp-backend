@@ -5,6 +5,8 @@ const load=name=>require(path.join(process.env.MATERIAL_BAR_COMPILED_ROOT,`src/m
 const {readMaterialBarInventoryTx}=load('material-bar-inventory');
 const {prepareMaterialBarMovementTx,applyMaterialBarMovementTx}=load('material-bar-movement');
 const {planMaterialBarReservation,allocateMaterialBarReservationTx}=load('material-bar-holds');
+const {lockMaterialBarPostingScopeTx,prepareMaterialBarPostingTx}=load('material-bar-posting');
+const {prepareMaterialBarReceiptTx,applyMaterialBarReceiptTx}=load('material-bar-receipt');
 const config=JSON.parse(fs.readFileSync(0,'utf8'));assert.equal(config.database,'material_bars_1246');
 const tx=new Client(config);let passed=0;const pass=label=>{passed++;console.log(`PASS: ${label}`);};
 async function setup(existing){
@@ -84,6 +86,28 @@ async function main(){
  const forged=multipleDest.bars[0];await tx.query(`INSERT INTO public.stock_material_bar_events(bar_id,command_key,action,stock_movement_id,before_state,after_state,reason,created_by)
   VALUES($1,$2,'MOVE',$2,$3::jsonb,$4::jsonb,'Incomplete transfer fixture',1246)`,[forged.id,back.movement.id,JSON.stringify(forged),JSON.stringify({...forged,batchId:multi.batch,version:forged.version+1})]);
  await assert.rejects(tx.query('UPDATE public.stock_material_bars SET stock_batch_id=$2,row_version=row_version+1 WHERE id=$1',[forged.id,multi.batch]),e=>e.code==='23514');await tx.query('ROLLBACK');pass('SQL rejects incomplete physical proof even with both canonical transfer legs posted');
+ await tx.query('BEGIN');const abandoned=await prepare(f,1,'ISSUE',[{...selection(available),quantityMm:1}]);await ledger(abandoned);
+ await assert.rejects(tx.query('COMMIT'),e=>e.code==='23514'&&e.constraint==='stock_material_geometry_complete_1246');await tx.query('ROLLBACK');
+ assert.equal((await readMaterialBarInventoryTx(tx,f.batch)).status,'CONFIRMED');pass('COMMIT rolls back a posted legacy movement that forgot to update physical bars');
+ await tx.query('BEGIN');await tx.query('UPDATE public.stock_material_bars SET remaining_length_mm=remaining_length_mm-1,row_version=row_version+1 WHERE id=$1',[available.id]);
+ await assert.rejects(tx.query('COMMIT'),e=>e.code==='23514');await tx.query('ROLLBACK');pass('COMMIT refuses a physical length change without its canonical stock movement');
+ await tx.query('BEGIN');const scope=await lockMaterialBarPostingScopeTx(tx,{articleId:f.article,lotIds:[f.lot],explicit:false});
+ const unchanged=await readMaterialBarInventoryTx(tx,f.batch),boundaryMovement=id();await tx.query("INSERT INTO public.stock_movements(id,stock_batch_id,article_id,qty,status,movement_type) VALUES($1,$2,$3,1,'DRAFT','OUT')",[boundaryMovement,f.batch,f.article]);
+ const request={scope,movement:{id:boundaryMovement,batchId:f.batch,type:'OUT',quantity:1,reversalOf:null},externalTransaction:true};
+ await assert.rejects(prepareMaterialBarPostingTx(tx,request),e=>e.code==='MATERIAL_BAR_MOVEMENT_REQUIRED');
+ const boundaryPlan=await prepareMaterialBarPostingTx(tx,{...request,command:{kind:'ISSUE',expectedVersion:unchanged.version,bars:[{...selection(available),quantityMm:1}]}});
+ await ledger(boundaryPlan);await applyMaterialBarMovementTx(tx,boundaryPlan,1246);await tx.query('COMMIT');pass('posting boundary requires and applies explicit geometry even with an external transaction');
+ const received=await setup();await tx.query('BEGIN');const receiptScope=await lockMaterialBarPostingScopeTx(tx,{articleId:received.article,lotIds:[received.lot],explicit:true});
+ const receiptMovement=id();await tx.query("INSERT INTO public.stock_movements(id,stock_batch_id,article_id,qty,status,movement_type) VALUES($1,$2,$3,3000,'DRAFT','IN')",[receiptMovement,received.batch,received.article]);
+ const receiptPlan=await prepareMaterialBarReceiptTx(tx,{movementId:receiptMovement,required:true,groups:[{lengthMm:3000,count:1}]});
+ assert.equal(await prepareMaterialBarPostingTx(tx,{scope:receiptScope,movement:{id:receiptMovement,batchId:received.batch,type:'IN',quantity:3000,reversalOf:null},owner:receiptPlan.postingOwner,externalTransaction:true}),null);
+ await tx.query("UPDATE public.stock_movements SET status='POSTED' WHERE id=$1",[receiptMovement]);await tx.query('UPDATE public.stock_batches SET qty_total=qty_total+3000 WHERE id=$1',[received.batch]);
+ await applyMaterialBarReceiptTx(tx,receiptPlan,1246);await tx.query('COMMIT');assert.equal((await readMaterialBarInventoryTx(tx,received.batch)).bars.length,1);pass('managed receipt owner posts once and completes geometry before deferred commit checks');
+ const receivedBar=(await readMaterialBarInventoryTx(tx,received.batch)).bars[0];
+ for(const type of ['SCRAP','DEPRECIATE']){
+  await tx.query('BEGIN');await assert.rejects(prepare(received,100,'ISSUE',[{...selection(receivedBar),quantityMm:100}],undefined,type),e=>e.code==='MATERIAL_BAR_MOVEMENT_CHANGED');await tx.query('ROLLBACK');
+  assert.equal((await readMaterialBarInventoryTx(tx,received.batch)).bars[0].lengthMm,3000);pass(`${type} cannot masquerade as physical removal when its canonical quantity stays in stock`);
+ }
  console.log(`MATERIAL1246_MOVEMENT_REPOSITORY_PASS: ${passed} real PostgreSQL adapter checks`);
 }
 main().catch(async error=>{try{await tx.query('ROLLBACK');}catch{}console.error(error);process.exitCode=1;}).finally(()=>tx.end());

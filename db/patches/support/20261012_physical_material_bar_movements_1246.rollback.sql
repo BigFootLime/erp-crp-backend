@@ -1,6 +1,11 @@
 -- Restore the former strict guard. Historical moves and bar locations remain
 -- intact; a rollback never reverses physical stock or erases its audit trail.
 BEGIN;
+DROP TRIGGER IF EXISTS stock_material_bar_stock_1246 ON public.stock_material_bars;
+DROP TRIGGER IF EXISTS stock_material_inventory_stock_1246 ON public.stock_material_bar_inventories;
+DROP TRIGGER IF EXISTS stock_material_movement_stock_1246 ON public.stock_movements;
+DROP TRIGGER IF EXISTS stock_material_batch_stock_1246 ON public.stock_batches;
+DROP FUNCTION IF EXISTS public.check_material_bar_stock_1246();
 CREATE OR REPLACE FUNCTION public.protect_material_bar_identity_1246() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_TABLE_NAME='stock_material_bars' THEN

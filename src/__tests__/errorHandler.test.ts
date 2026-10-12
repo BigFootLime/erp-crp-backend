@@ -32,6 +32,15 @@ describe("CA-SEC-04 — errorHandler ne fuite pas d'internes sur 5xx", () => {
     errSpy.mockRestore();
   });
 
+  it('maps the physical stock commit guard to an actionable conflict without SQL details', () => {
+    const {req,res,status,json}=mockReqRes('/api/v1/stock/movements/id/post');
+    errorHandler({code:'23514',constraint:'stock_material_geometry_complete_1246',message:'private SQL detail'},req,res,()=>{});
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json.mock.calls[0][0]).toMatchObject({code:'MATERIAL_BAR_STOCK_INCOMPLETE',message:expect.stringContaining('mouvement a été annulé')});
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain('private SQL');
+    expect(JSON.stringify(json.mock.calls[0][0])).not.toContain('stock_material_geometry_complete_1246');
+  });
+
   it("erreur inconnue (erreur SQL) → 500 + message générique + code INTERNAL_ERROR, pas de fuite", () => {
     const { req, res, status, json } = mockReqRes();
     const leak = "column o.parent_of_id does not exist";

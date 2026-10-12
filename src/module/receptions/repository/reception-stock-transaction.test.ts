@@ -32,11 +32,12 @@ beforeEach(()=>{
 });
 describe("Stock receipt transaction ownership",()=>{
   it('records received bar geometry before automatic OF allocation, in the canonical transaction',async()=>{
-    const plan={movementId:'movement',lengths:[3000,3000]};mocks.barPrepare.mockResolvedValueOnce(plan);
+    const plan={movementId:'movement',lengths:[3000,3000],postingOwner:{kind:'RECEIPT'}};mocks.barPrepare.mockResolvedValueOnce(plan);
     await repoCreateStockReceipt('reception','line',{...request,material_bars:[{lengthMm:3000,count:2}]},audit,'receipt-test-key');
     expect(mocks.barLock).toHaveBeenCalledWith(client,'lot');
     expect(mocks.barPrepare).toHaveBeenCalledWith(client,{movementId:'movement',required:false,groups:[{lengthMm:3000,count:2}]});
     expect(mocks.barApply).toHaveBeenCalledWith(client,plan,1);
+    expect(mocks.post.mock.calls[0][6]).toBe(plan.postingOwner);
     expect(mocks.barLock.mock.invocationCallOrder[0]).toBeLessThan(mocks.create.mock.invocationCallOrder[0]);
     expect(mocks.barPrepare.mock.invocationCallOrder[0]).toBeLessThan(mocks.post.mock.invocationCallOrder[0]);
     expect(mocks.post.mock.invocationCallOrder[0]).toBeLessThan(mocks.barApply.mock.invocationCallOrder[0]);

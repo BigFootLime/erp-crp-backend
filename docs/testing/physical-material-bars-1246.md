@@ -4,7 +4,8 @@ Status: domain, additive schema, inventory API, canonical reservation creation /
 release, OF proposals, planning/start coverage, measured debit and correction are
 implemented, along with normal grouping and its exact dissolution and standard
 material receipts. The general movement domain and transactional adapter are
-tested; wiring every stock command and the web/tablet screens is still pending.
+connected to posting, with explicit receipt/debit/correction ownership. General
+compensations, stocktaking and web/tablet screens still need their full workflow.
 Do not merge/deploy this branch yet: the deferred checks require
 atomic updates from all participating stock commands once an inventory is confirmed.
 
@@ -25,7 +26,8 @@ pieces). The inventory movement counter detects untracked stock movements, even
 an OUT/IN pair whose net quantity is unchanged. Explicit remeasurement reconciles
 it. Debit and correction now maintain geometry and this counter in their stock
 transaction; standard receipts append actual bars in that transaction too.
-General stock commands still need to invoke the movement adapter below.
+General posting now invokes the movement adapter below; remaining legacy paths
+are protected by a deferred consistency check, pending their complete workflow.
 
 The domain proposes the missing length on the correct physical bar, preserves
 other OF reservations, keeps FIFO between untouched bars, and refuses fictitious
@@ -225,11 +227,12 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
 3. OF preparation, planning and normal grouping use physical yield and exact
    ownership transfers. Integrate the separate recovery candidate with these
    helpers and validate the full grouping transaction on the ERP schema.
-4. Debit, correction and dissolution are connected. General movements have a
-   domain planner and transactional adapter, but `repoPostMovement` and its
-   managed receipt/debit/correction callers still need to invoke them once,
-   in their shared transaction. The strict command schema is not accepted by
-   HTTP yet: never expose a request field that the route would ignore.
+4. Debit, correction, dissolution and general `repoPostMovement` are connected.
+   Explicit ownership avoids double application in managed receipts/debits and
+   their corrections. Finish generic stock compensations and stocktaking with
+   exact physical measurements/proof, plus SCRAP/DEPRECIATE quality allocations
+   that retain physical stock, then verify the entire canonical command
+   on the full ERP schema. Deferred guards prevent legacy bypass meanwhile.
 5. Web/tablet UI: scan or select the bar, prefill known values and display remaining
    length with CERP components. No machine selection for the dedicated cutting app.
 6. Replay the real recipe on Test; integrate dev then main and deploy Test/Prod
@@ -275,3 +278,34 @@ Reproduce with the base fixture/migration, receipt fixture, then
 tests write canonical quantities explicitly on a minimal schema. They **do not
 validate `repoPostMovement`, the HTTP path, full ERP ledger triggers or the real
 business recipe**. No Test/Prod data or schema was changed by these tests.
+
+## Posting integration — 12 October 2026
+
+`repoPostMovement` now invokes the physical preparer before posting and applies
+the geometry before completing its command. Article unit/lot locks are resolved
+before stock locks. The strict `material_bars` HTTP field is consumed, never
+ignored. Non-bar articles retain their normal posting path.
+
+Managed receipt, reserved debit and its correction use an opaque, single-use
+capability created by their own preparer. It is bound to the transaction client,
+movement, batch, quantity, direction and original movement for a correction.
+The generic path cannot skip tracking merely because it has an external SQL
+client. `check_material_bar_stock_1246` defers physical/ledger reconciliation
+until commit; an owner that forgets to finish its updates causes full rollback.
+Its specific constraint is exposed as an actionable 409 without SQL details.
+
+161 targeted tests pass, covering the new boundary, managed call sites and error
+mapping alongside the physical domain. PostgreSQL verification now includes 25
+movement/boundary checks and the 9 debit/correction checks with their real owner
+capabilities under the new deferred triggers. The fixture still simulates the
+canonical ledger. Full `repoPostMovement`/ERP-schema acceptance remains open;
+this is not a complete HTTP or business recipe validation.
+
+The actual canonical ledger keeps SCRAP and DEPRECIATE quantities in stock and
+reduces availability. ISSUE explicitly rejects those types; treating them as
+physical cuts would remove stock twice. Per-bar quality allocation is an open
+integration, not silently approximated by a bar-length subtraction.
+
+API contract and remaining stocktaking/compensation/quality gaps:
+`docs/http/physical-material-movements-1246.md`. Do not merge/deploy the branch
+until those workflows, UI and the real Test recipe are ready.

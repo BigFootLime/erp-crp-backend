@@ -31,7 +31,7 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
     for(const r of remnants)await compensateMaterialMovementTx(tx,{movementId:r.stock_movement_id,ofId,kind:'REMNANT',key:`${body.idempotencyKey}:remnant:${r.lot_id}`,reason:body.reason},audit);
     const inverses=[];
     for(const source of sources){
-      const inverse=await compensateMaterialMovementTx(tx,{movementId:source.stock_movement_id,ofId,kind:'SOURCE',key:`${body.idempotencyKey}:source:${source.reservation_id}`,reason:body.reason},audit);
+      const inverse=await compensateMaterialMovementTx(tx,{movementId:source.stock_movement_id,ofId,kind:'SOURCE',key:`${body.idempotencyKey}:source:${source.reservation_id}`,reason:body.reason,physicalBarCorrection:barProofs},audit);
       if(Math.abs(inverse.quantity-source.actual)>.000001)throw new HttpError(409,'MATERIAL_DEBIT_PROOF_MISMATCH','La quantité du mouvement ne correspond plus à la preuve de débit.');
       await restoreMaterialReservationTx(tx,{reservationId:source.reservation_id,quantity:inverse.quantity,reason:body.reason,releaseExtraQuantity:source.extended},audit);
       inverses.push({...source,movementId:inverse.movementId});
