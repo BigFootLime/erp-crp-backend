@@ -9,6 +9,7 @@ import {reconcileReleasedConsolidationLot} from '../../production/repository/pro
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from './material-bar-posting.repository';
 import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
+import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';
 import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMaterialBarCountSessionTx,
   applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
 import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
@@ -9612,7 +9613,10 @@ async function queryInventorySessionLines(
   );
 
   const physicalCounts = await readMaterialBarCountsTx(db,res.rows.flatMap(row=>row.count_event_id?[row.count_event_id]:[]));
-  return res.rows.map(row=>({...row,material_bars:row.count_event_id ? physicalCounts.get(row.count_event_id) ?? null : null}));
+  const barRequirements = await readMaterialBarCountRequirementsTx(db, res.rows);
+  return res.rows.map(row=>({...row,
+    ...barRequirements.get(`${row.article_id}:${row.stock_batch_id ?? ''}`),
+    material_bars:row.count_event_id ? physicalCounts.get(row.count_event_id) ?? null : null}));
 }
 
 async function repoGetInventoryLineById(lineId: string): Promise<StockInventorySessionLine | null> {
