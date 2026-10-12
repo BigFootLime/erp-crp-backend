@@ -10,9 +10,9 @@ import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgency
 import { validationErrorMiddleware } from '../module/auth/middlewares/validationError.middleware';
 const id='a130702e-eb6b-4d73-a403-134f7c67d023',key='7056b178-3d6e-4658-8f86-410e3b813ca7';
 const body={quantity:'0.5',preview_hash:'a'.repeat(64),reason:'Demande urgente du client'};
-function app(){
+function app(role='Stock'){
   const server=express();server.use(express.json());server.use((req,_res,next)=>{
-    if(req.get('x-recipe-user'))req.user={id:8,role:'Stock'} as Express.User;next();
+    if(req.get('x-recipe-user'))req.user={id:8,role} as Express.User;next();
   });
   server.get('/allocations/:allocationId/preview',previewDeliveryUrgency);
   server.get('/allocations/:allocationId/requests',listDeliveryUrgencyRequests);
@@ -26,6 +26,14 @@ function app(){
 beforeEach(()=>{vi.clearAllMocks();mocks.preview.mockResolvedValue({can_withdraw:false});mocks.list.mockResolvedValue([]);
   mocks.create.mockResolvedValue({request:{id,can_withdraw:false},replayed:false});mocks.cancel.mockResolvedValue({request:{id,status:'CANCELLED'}});});
 describe('urgency HTTP input boundaries',()=>{
+  it.each([['Stock',true],['Operateur',false]] as const)('exposes the actual allocation capability for %s',async(role,allowed)=>{
+    mocks.withdrawalPreview.mockResolvedValue({can_withdraw:false});
+    const server=app(role);
+    const preview=await request(server).get('/allocations/1/preview?quantity=20').set('x-recipe-user','present');
+    const withdrawal=await request(server).get(`/requests/${id}/withdrawal-preview`).set('x-recipe-user','present');
+    expect(preview.status).toBe(200);expect(preview.body.can_request).toBe(allowed);
+    expect(withdrawal.status).toBe(200);expect(withdrawal.body.can_allocate).toBe(allowed);
+  });
   it('requires an authenticated user for every handler',async()=>{
     const server=app();
     expect((await request(server).get('/allocations/1/preview')).status).toBe(401);

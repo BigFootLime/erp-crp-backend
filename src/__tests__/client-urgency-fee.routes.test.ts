@@ -17,6 +17,13 @@ const app=express();app.use(express.json());app.use('/clients',router);
 app.use(((error,_req,res,_next)=>res.status(error.name==='ZodError'?400:error.status??500).json({code:error.code})) as ErrorRequestHandler);
 beforeEach(()=>{vi.clearAllMocks();mocks.read.mockResolvedValue({version:0,amount_ht:null});mocks.save.mockResolvedValue({version:1,amount_ht:'35.50'});});
 describe('client urgency tariff HTTP boundary',()=>{
+  it('reports editing capability from the real client roles and active state',async()=>{
+    mocks.read.mockResolvedValue({version:0,amount_ht:null,client_active:true});
+    expect((await request(app).get('/clients/195/urgency-fee').set('x-fixture-role','Commercial')).body.can_write).toBe(true);
+    expect((await request(app).get('/clients/195/urgency-fee').set('x-fixture-role','Operateur')).body.can_write).toBe(false);
+    mocks.read.mockResolvedValue({version:0,amount_ht:null,client_active:false});
+    expect((await request(app).get('/clients/195/urgency-fee').set('x-fixture-role','Commercial')).body.can_write).toBe(false);
+  });
   it('requires authentication for reads and updates',async()=>{
     expect((await request(app).get('/clients/195/urgency-fee')).status).toBe(401);
     expect((await request(app).put('/clients/195/urgency-fee').send({})).status).toBe(401);

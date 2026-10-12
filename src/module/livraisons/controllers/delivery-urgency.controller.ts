@@ -4,6 +4,10 @@ import { deliveryStockRecoveryParams } from '../validators/delivery-stock-recove
 import { deliveryUrgencyQuery, deliveryUrgencyBody, deliveryUrgencyRequestParams, deliveryUrgencyCancelBody, deliveryUrgencyKey, deliveryUrgencyWithdrawalBody } from '../validators/delivery-urgency.validators';
 import { svcPreviewDeliveryUrgency, svcCreateDeliveryUrgencyRequest, svcListDeliveryUrgencyRequests, svcCancelDeliveryUrgencyRequest, svcPreviewUrgencyWithdrawal, svcWithdrawDeliveryUrgency } from '../services/delivery-urgency.service';
 import type { AuditContext } from '../../production/repository/production.repository';
+import { requestHasGrantedAccountModuleAccess } from '../../access-control/context/account-module-access.context';
+import { roleHasLivraisonCapability } from '../domain/livraisons-rbac';
+
+const canAllocate = (req: Request) => requestHasGrantedAccountModuleAccess(req) || roleHasLivraisonCapability(req.user?.role, 'allocate');
 
 function audit(req: Request): AuditContext {
   if (!req.user) throw new HttpError(401, 'UNAUTHORIZED', 'Authentication required');
@@ -19,7 +23,7 @@ export const previewDeliveryUrgency: RequestHandler = async (req, res, next) => 
     const { quantity } = deliveryUrgencyQuery.parse(req.query);
     const result = await svcPreviewDeliveryUrgency(allocationId, quantity);
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-    res.json(result);
+    res.json({ ...result, can_request: canAllocate(req) });
   } catch (error) { next(error); }
 };
 
@@ -57,7 +61,7 @@ export const previewUrgencyWithdrawal: RequestHandler = async (req,res,next) => 
     audit(req);
     const { requestId } = deliveryUrgencyRequestParams.parse(req.params);
     res.setHeader('Cache-Control','private, no-store, max-age=0');
-    res.json(await svcPreviewUrgencyWithdrawal(requestId));
+    res.json({ ...await svcPreviewUrgencyWithdrawal(requestId), can_allocate: canAllocate(req) });
   } catch (error) { next(error); }
 };
 
