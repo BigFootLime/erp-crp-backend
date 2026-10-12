@@ -2,7 +2,7 @@
 
 Status: domain, additive schema, inventory API, canonical reservation creation /
 release, OF proposals, planning/start coverage, measured debit and correction are
-implemented. Receipt, grouping and general stock movement integration are still
+implemented, along with normal grouping and its exact dissolution. Receipt and general stock movement integration are still
 pending. Do not merge/deploy this branch yet: the deferred checks require
 atomic updates from all participating stock commands once an inventory is confirmed.
 
@@ -134,6 +134,34 @@ The repository exercises are `scripts/tests/material-bars-1246.repository.cjs`
 and `scripts/tests/material-bar-debit-1246.repository.cjs`. Both refuse any database
 except the isolated `material_bars_1246` fixture and read its connection on stdin.
 
+## Grouping and exact restitution
+
+Normal grouping combines all source OF reservations before calculating surplus.
+Its shared per-bar budget prevents two material needs from proposing the same
+free length. Canonical surplus reservations receive the selected bar IDs/lengths;
+their versions are reread between needs under the existing stock locks.
+
+Ownership transfer records immutable TRANSFER events, zeroes the original holds
+and adds their exact bar lengths to the producer hold. Physical quantities and
+stock movement counters do not change. Dissolution reads these proofs before any
+canonical mutation, restores the original bar/source pairs and releases only
+surplus. It refuses changed producer allocations even if their aggregate quantity
+is unchanged. An unrelated OF can change its own holds without being overwritten
+or unnecessarily preventing restitution. RESTORE events retain the inverse proof.
+
+49 targeted tests pass for the branch's grouping, physical surplus and coverage.
+Eight additional PostgreSQL checks exercise the real physical ownership repository:
+rollback, same-bar aggregation, recovery extension, altered allocation rejection,
+exact restitution after unrelated changes, replay refusal, regrouping restored
+sources and surplus-only holds. Canonical ownership is simulated with minimal SQL
+in `scripts/tests/material-bar-transfer-1246.repository.cjs`; this remains distinct
+from the full ERP grouping transaction and its live business acceptance.
+
+The separate unreleased recovery candidate has also been wired to these helpers
+in the combined stage. Its 63 targeted tests pass, including the existing rule
+that finished cutting forbids adding recovery work. Those candidate files are
+not imported into this branch; their integration/publication remains explicit.
+
 ## Reproduce
 
 Run `npm run test:run -- src/module/stock/domain/material-bars.test.ts`.
@@ -157,11 +185,12 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
    finish the remaining stock command integrations listed below.
 2. Receipt/inventory: propose known article/supplier purchase lengths (e.g. 3 m),
    confirm actual physical bars and reconcile pre-existing allocations explicitly.
-3. OF preparation and planning now use physical yield; grouping still needs exact
-   per-bar hold transfers and restoration under the existing origin/quality rules.
-4. Debit and its correction are connected. Consolidation, recovery and general
-   movements still need atomic canonical stock / bar hold updates and immutable
-   history, with idempotency and concurrency coverage. No bypass via legacy routes.
+3. OF preparation, planning and normal grouping use physical yield and exact
+   ownership transfers. Integrate the separate recovery candidate with these
+   helpers and validate the full grouping transaction on the ERP schema.
+4. Debit, correction and dissolution are connected. General movements still
+   need atomic canonical stock / bar hold updates and immutable history,
+   with idempotency and concurrency coverage. No bypass via legacy routes.
 5. Web/tablet UI: scan or select the bar, prefill known values and display remaining
    length with CERP components. No machine selection for the dedicated cutting app.
 6. Replay the real recipe on Test; integrate dev then main and deploy Test/Prod

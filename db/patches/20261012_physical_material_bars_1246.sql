@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.stock_material_bar_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   bar_id uuid NOT NULL REFERENCES public.stock_material_bars(id) ON DELETE RESTRICT,
   command_key uuid NOT NULL,
-  action text NOT NULL CHECK (action IN ('INITIALIZE','RECONCILE','RESERVE','RELEASE','CUT','COMPENSATE','MOVE')),
+  action text NOT NULL CHECK (action IN ('INITIALIZE','RECONCILE','RESERVE','RELEASE','CUT','COMPENSATE','MOVE','TRANSFER','RESTORE')),
   stock_movement_id uuid REFERENCES public.stock_movements(id) ON DELETE RESTRICT,
   before_state jsonb,
   after_state jsonb NOT NULL,
@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS public.stock_material_bar_events (
   CHECK (action NOT IN ('CUT','COMPENSATE','MOVE') OR stock_movement_id IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS stock_material_bar_event_command_1246_idx ON public.stock_material_bar_events(command_key,action);
+-- Replaying an earlier draft of this unreleased patch retains its immutable history.
+ALTER TABLE public.stock_material_bar_events DROP CONSTRAINT IF EXISTS stock_material_bar_events_action_check;
+ALTER TABLE public.stock_material_bar_events ADD CONSTRAINT stock_material_bar_events_action_check
+  CHECK (action IN ('INITIALIZE','RECONCILE','RESERVE','RELEASE','CUT','COMPENSATE','MOVE','TRANSFER','RESTORE'));
+CREATE INDEX IF NOT EXISTS stock_material_bar_event_context_1246_idx
+  ON public.stock_material_bar_events ((after_state->>'contextId')) WHERE action='TRANSFER';
 CREATE OR REPLACE FUNCTION public.protect_material_bar_event_1246() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   RAISE EXCEPTION 'Physical bar events are immutable; record a linked correction' USING ERRCODE='23514';
