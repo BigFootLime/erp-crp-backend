@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import pool from '../../../config/database';
 import { HttpError } from '../../../utils/httpError';
+import { readUrgencyRestitutionTx } from './urgency-restitution-preview.repository';
 
 type Db = Pick<PoolClient, 'query'>;
 export type CancellationOf = {
@@ -48,11 +49,13 @@ export async function readUrgencyCancellationTx(tx: Db, requestId: string) {
     message: 'Les pièces ont déjà été prélevées. Réconciliez leur retour ou leur livraison avant d’annuler ; la récupération reste due au donneur.' });
   if (!['WAITING_PLANNER', 'APPROVED', 'WITHDRAWN'].includes(request.status))
     issues.push({ code: 'URGENCY_REQUEST_CLOSED', message: 'Cette demande est déjà annulée.' });
+  const restitution = request.status === 'WITHDRAWN' ? await readUrgencyRestitutionTx(tx, requestId) : null;
   const engaged = tree.some(cancellationOfEngaged);
-  const preview_hash = createHash('sha256').update(JSON.stringify({ request, roots, tree })).digest('hex');
+  const preview_hash = createHash('sha256').update(JSON.stringify({ request, roots, tree,
+    ...(restitution ? { restitution: restitution.evidence } : {}) })).digest('hex');
   return { request, roots, tree, response: { request_id: request.id, request_version: request.version, status: request.status,
     preview_hash, can_cancel: !issues.length, requires_planner: engaged || request.status === 'APPROVED',
-    production_retained: engaged, issues,
+    production_retained: engaged, issues, restitution: restitution?.response ?? null,
     recoveries: tree.map(of => ({ of_id: of.id, of_numero: of.numero, of_status: of.statut,
       engaged: cancellationOfEngaged(of), grouped: of.groupings.length > 0 })),
   } };
