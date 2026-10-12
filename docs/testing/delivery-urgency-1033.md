@@ -4,7 +4,7 @@ Parent : frontend #1252. Project Office : FLUX-20261009-06, recette WP285/S06. L
 
 ## État du chantier
 
-Le contrôle des donneurs, la demande persistante, la génération des récupérations en brouillon, leur approbation par le planificateur, le transfert atomique des réservations, le forfait unique par commande et l’annulation des brouillons inutilisés sont implémentés côté serveur. **La réconciliation après engagement, l’ajout au regroupement et l’interface restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Les routes de prélèvement sont présentes dans la branche de développement ; le lot n’est pas déployé.
+Le contrôle des donneurs, les OF brouillons, l’approbation du planificateur, le transfert atomique, le forfait unique par commande et le retour des réceptions conformes à l’affaire donneuse sont implémentés côté serveur. L’interface guidée est disponible dans la PR frontend #1478. **L’annulation après engagement, l’ajout à un regroupement en cours et la recette authentifiée restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Le lot n’est pas déployé.
 
 `GET /livraisons/affaires/allocations/:allocationId/urgency-preview?quantity=…` exige une session et la capacité livraison `read`. Le calcul lit un instantané PostgreSQL repeatable-read en lecture seule. Il réutilise le contrôle canonique du stock libre, puis recherche uniquement les réservations d’un même client et article sur la piste physique DELIVERY. Il exclut la piste assemblage, les affaires annulées, les réservations expirées, les incompatibilités techniques et les quantités déjà préparées pour un BL. Les lots NEW passent le contrôle Qualité existant pour la totalité des engagements actuels, sans ajouter une seconde fois la réservation donneuse. OLD conserve l’exigence de ses références documentaires.
 
@@ -12,12 +12,9 @@ Les capacités physiques des lots et emplacements sont partagées entre candidat
 
 ## Suite obligatoire
 
-1. Exposer le paramétrage du forfait client et le montant accepté dans l’interface CERP, puis valider le parcours réel jusqu’à la facture et l’avoir. Le serveur et la facturation canonique sont raccordés.
-2. Interface planificateur : exposer le contrôle serveur des opérations et capacités engagées, des approvisionnements confirmés et de la fin réalisable avant l’échéance protégée.
-3. Raccorder l’interface au prélèvement transactionnel désormais disponible : aperçu actualisé puis confirmation de sa version, sans saisie manuelle des lots ou de la quantité déjà approuvée.
-4. Annulation après engagement/prélèvement, conservation des preuves et remboursement du donneur par la production effective. L’annulation des arbres encore inutilisés est déjà disponible.
-5. #1034 : ajout au producteur seulement avant découpe terminée, définition exacte, limites lots matière, recalcul explicite sans déplacement silencieux d’autres clients.
-6. Interface guidée CERP, recette normale Test, forfait unique en BL partiels et facturation, preuves et déploiement.
+1. Annulation après engagement/prélèvement, avec réconciliation des engagements et conservation des preuves. L’annulation des arbres encore inutilisés est disponible.
+2. #1034 : ajout au producteur seulement avant découpe terminée, définition exacte, limites lots matière, recalcul explicite sans déplacement silencieux d’autres clients.
+3. Recette normale Test du parcours guidé, des réceptions partielles après qualité et du forfait unique en BL partiels, facture et avoir ; preuves puis déploiement.
 
 ## Demandes et OF brouillons
 
@@ -83,4 +80,18 @@ Vérification de cette étape : 412 tests ciblés Urgence/Finance/démarrage API
 
 Anomalie détectée et corrigée pendant ces contrôles : PostgreSQL exige un droit UPDATE de colonne pour `FOR UPDATE`. Le rôle applicatif reçoit ce droit uniquement sur l’identifiant de la charge ; le trigger immuable interdit toute véritable modification. Les montants restent non modifiables. Le précontrôle de migration refuse toute ancienne demande active sans prix accepté, afin d’éviter un tarif inventé. Les scripts verify/rollback sont fournis ; le rollback refuse de supprimer des paramètres ou preuves déjà utilisés.
 
-Le lot reste en brouillon, sans migration ni déploiement applicatif. Prochaines étapes : interface guidée, réconciliation de récupération, regroupement avant fin de découpe et recette S06 complète.
+Le lot reste en brouillon, sans migration ni déploiement applicatif. L’interface du forfait, de la demande, de l’approbation et du prélèvement est développée dans la PR frontend #1478, vérifiée avec des données synthétiques en clair/sombre et formats ordinateur/tablette/mobile. La recette S06 authentifiée reste distincte.
+
+## Retour des pièces de récupération — réception et qualité
+
+La réception de l’OF de récupération réutilise les réservations canoniques de livraison et la répartition physique existante des pistes. Elle vise la ligne et l’affaire donneuses conservées dans la demande. Une modification de la commande, de l’affaire ou de la définition de cet OF provoque un conflit explicite, sans redirection silencieuse des pièces.
+
+Seules les quantités conformes réellement réservées après prélèvement sont comptées comme réaffectées. Le journal `delivery_urgency_replenishments` relie chaque quantité à la récupération, à sa réception, au lot et à la réservation. Il conserve aussi le lien d’origine lorsque la réservation est déplacée physiquement vers la piste livraison. Il ne crée aucune seconde entrée physique. Les retours partiels s’additionnent exactement et le surplus reste libre. Si l’affaire a déjà été couverte autrement, la réception n’invente pas une réservation supplémentaire ni un remboursement ; ce cas devra être soldé explicitement dans la réconciliation d’annulation.
+
+Pour un OF regroupé, seule la part attribuée à l’OF source de récupération est éligible. Une libération Qualité répétée ne peut pas réutiliser la même attribution. Les contrôles différés PostgreSQL imposent une réception POSTED du même lot, le bon producteur ou sa part regroupée, une attribution DELIVERY et le respect du total emprunté. Un mouvement en quarantaine, une part libre ou la production d’un autre OF ne comptent pas. La preuve est conservée si la qualité est remise en cause ensuite : elle décrit le mouvement réalisé ; le contrôle Qualité courant reste obligatoire avant livraison.
+
+La production terminée avant le prélèvement reste du stock libre puisque le donneur détient encore ses pièces ; elle n’est pas comptée comme une restitution fictive. L’aperçu d’urgence exige toujours l’utilisation du stock libre avant tout prélèvement.
+
+`GET .../urgency-requests` expose `replenished_quantity` et `remaining_recovery_quantity` par récupération. Le dialogue frontend affiche « réaffectées au donneur » et remplace l’action Planifier par un statut quand la quantité empruntée est entièrement réaffectée. Aucun état d’approbation ni AR initial n’est modifié par une réception. Le patch additif `20261012_delivery_urgency_replenishments_1033.sql` comporte verify et rollback ; le rollback refuse toute suppression de preuve utilisée.
+
+Les preuves de cette étape sont `urgency1033-replenishment-validation.json`, `urgency1033-replenishment-sql-proof.json` et `urgency1033-replenishment-constraints-proof.json` dans le dossier d’audit. Les contrôles SQL sont exécutés sur Test puis annulés : 17 requêtes compilées, lecture de verrouillage exercée sous `cerp_app` et 13 groupes de contraintes dans un schéma synthétique. Aucune donnée métier ni base Prod modifiée. Ces tests ne remplacent pas la recette S06 sur une session normale.

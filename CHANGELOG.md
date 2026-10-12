@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12 — Réceptions des récupérations urgentes (#1033, en préparation)
+
+- Réserver les pièces conformes à l’affaire donneuse d’origine, dans la limite du prélèvement urgent ; conserver le surplus libre.
+- Conserver une preuve immuable par réception, lot et réservation, y compris après libération qualité partielle et depuis un OF regroupé.
+- Exposer les quantités réaffectées et restantes ; protéger contre les doubles attributions, les changements d’identité de l’OF et le dépassement de sa part de production.
+- Migration additive avec verify et rollback protégé. Lot #1033/#1034 toujours en brouillon, sans déploiement.
+
 - #1209 — Sous-traitance : clôture après réception complète, sans autoriser de nouveaux mouvements.
 
 ## 2026-10-11 — Client dans le snapshot de planning (#1206)

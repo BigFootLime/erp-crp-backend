@@ -26,6 +26,7 @@ type RecoveryRow = {
   id: string; request_id: string; donor_allocation_id: number; recovery_of_id: number;
   quantity: string; protected_due_date: string; initial_ar_due_date: string;
   of_numero: string; of_status: string; commande_id: number; livraison_affaire_id: number;
+  replenished_quantity: string; remaining_recovery_quantity: string;
 };
 
 export async function readUrgencyRequests(tx: Db, allocationId: number) {
@@ -36,8 +37,12 @@ export async function readUrgencyRequests(tx: Db, allocationId: number) {
   const recoveries = requests.length ? (await tx.query<RecoveryRow>(`SELECT recovery.id::text,recovery.request_id::text,
     recovery.donor_allocation_id::int,recovery.recovery_of_id::int,recovery.quantity::text,
     recovery.protected_due_date::text,recovery.initial_ar_due_date::text,
-    producer.numero AS of_numero,producer.statut::text AS of_status,producer.commande_id::int,producer.affaire_id::int AS livraison_affaire_id
+    producer.numero AS of_numero,producer.statut::text AS of_status,producer.commande_id::int,producer.affaire_id::int AS livraison_affaire_id,
+    COALESCE(restored.quantity,0)::text AS replenished_quantity,
+    GREATEST(0,recovery.quantity-COALESCE(restored.quantity,0))::text AS remaining_recovery_quantity
     FROM public.delivery_urgency_recoveries recovery JOIN public.ordres_fabrication producer ON producer.id=recovery.recovery_of_id
+    LEFT JOIN LATERAL (SELECT sum(quantity) AS quantity FROM public.delivery_urgency_replenishments
+      WHERE recovery_id=recovery.id) restored ON true
     WHERE recovery.request_id=ANY($1::uuid[]) ORDER BY recovery.donor_allocation_id,recovery.id`, [requests.map(r => r.id)])).rows : [];
   return requests.map(request => ({ ...request, can_withdraw: false as const,
     recoveries: recoveries.filter(recovery => recovery.request_id === request.id) }));
