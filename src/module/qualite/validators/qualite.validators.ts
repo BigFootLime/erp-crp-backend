@@ -252,6 +252,7 @@ export type UpdateNonConformityStatusBodyDTO = z.infer<typeof updateNonConformit
 export const createNonConformityDispositionSchema = z.object({
   body: z
     .object({
+      idempotency_key: z.string().uuid().optional(),
       note: z.string().trim().min(1).max(2000).optional().nullable(),
       disposition_type: nonConformityDispositionTypeSchema,
       material_bars: materialBarMovementCommandSchema.optional(),

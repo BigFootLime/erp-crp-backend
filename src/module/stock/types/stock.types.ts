@@ -426,6 +426,8 @@ export type StockLotGenealogy = {
 
 // This endpoint now reflects stock_levels (via v_stock_current).
 export type StockBalanceRow = {
+  stock_batch_id: string | null;
+  material_bars_required?: boolean;
   article_id: string;
   article_code: string;
   article_designation: string;

@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { processingEvent } from "./receipt-processing.repository";
 import type { AuditContext } from "./receptions.repository";
+import {PRE_STOCK_RECEIPT_PREDICATE} from './receipt-disposition-context.repository';
 
 /** Rejected received pieces have no stock to remove. Keep the authoritative NC
  * disposition, bound to its physical receipt, without inventing an IN then OUT. */
@@ -19,7 +20,7 @@ export async function recordPreStockReceiptDisposition(
 ) {
   if (!args.lotId || !["SCRAP", "RETURN_SUPPLIER"].includes(args.type))
     return false;
-  const line = (
+  const matchingLines = (
     await tx.query<{
       id: string;
       qty: number;
@@ -28,13 +29,13 @@ export async function recordPreStockReceiptDisposition(
     }>(
       `SELECT r.id::text,(r.qty_received*COALESCE(r.stock_conversion_coef,1))::float8 AS qty,r.stock_unit AS unit,r.processing_reconciliation_required AS reconcile
     FROM public.reception_fournisseur_lignes r JOIN public.non_conformity nc ON nc.id=$2::uuid
-    WHERE r.lot_id=$1::uuid AND r.processing_policy='PIECES_CONTROLE_EMBALLAGE'
-      AND (nc.reception_ligne_id=r.id OR nc.control_id IN(SELECT id FROM public.quality_control WHERE reception_ligne_id=r.id))
-      AND NOT EXISTS(SELECT 1 FROM public.stock_movement_lines ml JOIN public.stock_movements m ON m.id=ml.movement_id WHERE ml.lot_id=r.lot_id AND m.status='POSTED')
+    WHERE ${PRE_STOCK_RECEIPT_PREDICATE}
     FOR UPDATE OF r`,
       [args.lotId, args.ncId],
     )
-  ).rows[0];
+  ).rows;
+  if(matchingLines.length>1)throw new HttpError(409,'RECEIPT_DISPOSITION_AMBIGUOUS','La non-conformité est liée à plusieurs lignes de réception. Précisez son origine.');
+  const line=matchingLines[0];
   if (!line) return false;
   if (line.reconcile)
     throw new HttpError(

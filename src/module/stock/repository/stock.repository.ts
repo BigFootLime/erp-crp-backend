@@ -6229,6 +6229,7 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   const dataSql = `
     SELECT
       b.id::text AS id,
+      b.stock_batch_id::text AS stock_batch_id,
       b.article_id::text AS article_id,
       a.code AS article_code,
       a.designation AS article_designation,
@@ -6323,7 +6324,9 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   `;
 
   const rows = await db.query<StockBalanceRow>(dataSql, [...values, pageSize, offset]);
-  return { items: rows.rows, total };
+  const materialRequirements = await readMaterialBarCountRequirementsTx(db, rows.rows);
+  return { items: rows.rows.map(row => ({...row, material_bars_required:
+    materialRequirements.get(`${row.article_id}:${row.stock_batch_id ?? ''}`)?.material_bar_count_required ?? false})), total };
 }
 
 export async function repoGetStockAnalytics(filters: ListAnalyticsQueryDTO): Promise<StockAnalytics> {

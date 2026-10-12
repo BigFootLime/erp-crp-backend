@@ -1,3 +1,4 @@
+import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from '../../stock/repository/material-bar-posting.repository';
@@ -2361,6 +2362,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
   const documents = await selectDocuments(pool, "NON_CONFORMITY", id);
   const events = await selectEvents(pool, "NON_CONFORMITY", id);
   const dispositions = await selectNcDispositions(pool, id);
+  const receiptDispositionContext = await readReceiptDispositionContext(pool, id, r.lot_id);
 
   const actions: QualityActionListItem[] = actionsRes.rows.map((a) => ({
     id: a.id,
@@ -2379,6 +2381,7 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
   }));
 
   return {
+    receipt_disposition_context: receiptDispositionContext,
     id: r.id,
     reference: r.reference,
     description: r.description,
@@ -3021,6 +3024,16 @@ export async function repoCreateNonConformityDisposition(params: {
   const { id, body, audit } = params;
   const client = await pool.connect();
   const dispositionId = await withRealtimeOutboxTransaction(client, async (tx) => {
+    const receipt = body.idempotency_key
+      ? await acquireIdempotency({
+          client: tx,
+          actor: audit,
+          idempotencyKeyRaw: body.idempotency_key,
+          commandType: "quality.nc.disposition",
+          requestPayload: { id, ...body },
+        })
+      : null;
+    if (receipt?.replay) return String(receipt.replay.dispositionId);
     await lockStockLaneTopology(tx);
     const nc = await tx.query<{ id: string; reference: string; lot_id: string | null }>(
       `SELECT id::text AS id, reference, lot_id::text AS lot_id FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE`,
@@ -3095,10 +3108,8 @@ export async function repoCreateNonConformityDisposition(params: {
         [dispositionId, movement.movement_id, audit.user_id]
       );
 
-      await tx.query(
-        `UPDATE public.lots SET lot_status = 'BLOQUE', lot_status_note = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
-        [lotId, `NC ${row.reference} : ${body.disposition_type}`, audit.user_id]
-      );
+      // A quantified scrap/return affects that quantity, not the accepted remainder.
+      // Preserve the current lot verdict: only HOLD/RELEASE may change it here.
     } else if (lotId) {
       if (body.disposition_type === "HOLD") {
         await tx.query(
@@ -3135,6 +3146,20 @@ export async function repoCreateNonConformityDisposition(params: {
       details: { nc_id: id, disposition_type: body.disposition_type, note: body.note ?? null },
     });
 
+    if (receipt) {
+      await saveReceipt({
+        client: tx,
+        actor: audit,
+        idempotencyKey: receipt.idempotencyKey,
+        requestHash: receipt.requestHash,
+        commandType: "quality.nc.disposition",
+        aggregateType: "DISPOSITION",
+        aggregateId: dispositionId,
+        requestPayload: { id, ...body },
+        resultPayload: { dispositionId },
+        correlationId: crypto.randomUUID(),
+      });
+    }
     return dispositionId;
   });
   const created = (await selectNcDispositions(pool, id)).find((d) => d.id === dispositionId) ?? null;
@@ -3575,3 +3600,4 @@ export async function repoPatchAction(params: { id: string; body: PatchActionBod
   return updated ? repoGetAction(id) : null;
 }
 import {recordPreStockReceiptDisposition} from "../../receptions/repository/receipt-disposition.repository";
+import {readReceiptDispositionContext} from "../../receptions/repository/receipt-disposition-context.repository";
