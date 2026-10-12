@@ -3,7 +3,7 @@ import { externalCompletion, promiseEnd } from "./external-schedule";
 import { expandCalendar } from "./central-calendar";
 import { schedule } from "./central-scheduler";
 import type { CentralTask, Resource } from "../types/planning-central.types";
-import type { SubcontractFlow } from "../../subcontract/subcontract-flow.types";
+import type { ExternalServicePreparation, SubcontractFlow } from "../../subcontract/subcontract-flow.types";
 const from = "2026-09-14T06:00:00.000Z",
   to = "2026-10-10T20:00:00.000Z";
 const supplier: Resource = {
@@ -206,5 +206,53 @@ describe("retours externes et effets sur la suite", () => {
     });
     expect(result.feasible).toBe(true);
     expect(result.forecasts.external).toEqual(result.forecasts.other);
+  });
+});
+
+describe('saved purchasing forecasts before physical subcontracting',()=>{
+  const preparation=(patch:Partial<ExternalServicePreparation>={}):ExternalServicePreparation=>({id:'prep',operationId:'external',
+    purchaseId:'service',label:'Anodisation',supplierId:'s',supplierName:'Traitement',quantity:100,due:null,leadDays:3,orderLineIds:[],version:'1',...patch});
+  it('uses the chosen working-day delay without inventing any shipped or received piece',()=>{
+    const saved=preparation(),before=structuredClone(saved);
+    expect(externalCompletion([],100,from,[supplier],from,[saved])).toEqual({fullReadyAt:'2026-09-18T14:00:00.000Z',issues:[]});
+    expect(saved).toEqual(before);
+  });
+  it('places the operation and its successor before a supplier work package exists',()=>{
+    const ext=external();ext.external={packages:[],preparations:[preparation()],issues:[],fullReadyAt:null,firstBatchReadyAt:null};
+    const result=schedule({tasks:[ext,task('next')],resources:[supplier,machine],from,
+      dependencies:[{predecessorId:'external',successorId:'next',lagMinutes:0,releasedQuantity:0,transferQuantity:null}],
+      requested:[{taskId:'external',earliestStart:from}]});
+    expect(result.feasible).toBe(true);expect(result.forecasts.next.start).toBe('2026-09-21T06:00:00.000Z');
+    expect(ext.good).toBe(0);expect(ext.external.packages).toEqual([]);
+  });
+  it('counts only the unissued balance as a forecast and keeps quality blockers',()=>{
+    const saved=preparation({quantity:120,orderLineIds:['line'],due:'2026-09-25'});
+    expect(externalCompletion([flow],120,from,[supplier],from,[saved]).fullReadyAt).toBe('2026-09-25T22:00:00.000Z');
+    expect(externalCompletion([{...flow,released:0}],120,from,[supplier],from,[saved]).fullReadyAt).toBeNull();
+  });
+  it('does not let one prestation or one supplier line cover a different required service',()=>{
+    const one=preparation({orderLineIds:['line']});
+    const two=preparation({id:'prep2',purchaseId:'second',due:'2026-09-28'});
+    expect(externalCompletion([flow],100,from,[supplier],from,[one,two]).fullReadyAt).toBe('2026-09-28T22:00:00.000Z');
+    expect(externalCompletion([flow],100,from,[supplier],from,[one,{...two,orderLineIds:['line']}]).issues).toContain('Une ligne fournisseur ne peut pas couvrir deux prestations.');
+    expect(externalCompletion([flow],100,from,[supplier],from,[two]).fullReadyAt).toBeNull();
+  });
+  it('keeps the supplier actual return when all planned pieces are released, without consulting an expired estimate',()=>{
+    const done={...flow,returned:100,released:100,lastReturnAt:'2026-09-15T10:00:00.000Z'};
+    expect(externalCompletion([done],100,from,[],from,[preparation({orderLineIds:['line'],due:'2026-09-01'})]).fullReadyAt).toBe(done.lastReturnAt);
+  });
+  it('refuses invalid or unavailable forecasts instead of guessing five days',()=>{
+    expect(externalCompletion([],100,from,[supplier],from,[preparation({leadDays:null})]).fullReadyAt).toBeNull();
+    expect(externalCompletion([],100,from,[],from,[preparation()]).fullReadyAt).toBeNull();
+    expect(externalCompletion([],100,from,[supplier],from,[preparation({due:'2026-09-10'})]).fullReadyAt).toBeNull();
+    expect(externalCompletion([],100,'invalid',[supplier],from,[preparation()]).fullReadyAt).toBeNull();
+    expect(externalCompletion([],100,from,[supplier],from,[preparation({quantity:99})]).fullReadyAt).toBeNull();
+    expect(externalCompletion([],100,from,[supplier],from,[preparation()],['Choisir une prestation.']).fullReadyAt).toBeNull();
+  });
+  it('starts the additional forecast after the newly calculated predecessor, not the first historical shipment',()=>{
+    const after='2026-09-24T06:00:00.000Z';
+    expect(externalCompletion([flow],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBeNull();
+    const old={...flow,returned:100,released:100,lastReturnAt:'2026-09-23T10:00:00.000Z'};
+    expect(externalCompletion([old],120,after,[supplier],from,[preparation({quantity:120,orderLineIds:['line'],leadDays:3})]).fullReadyAt).toBe('2026-09-29T14:00:00.000Z');
   });
 });

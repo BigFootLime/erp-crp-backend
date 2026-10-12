@@ -149,3 +149,15 @@ Cette fonction reste privée : le futur appelant doit verrouiller la révision d
 Preuves : 20 nouveaux tests du transfert et de la restitution ; compilation des 13 requêtes réelles sur le schéma Test sous cerp_app, exécution des mutations réelles et de la requête de restitution sur données synthétiques, vérification des contraintes immédiates/différées et du rollback. Les transactions sont entièrement annulées ; aucune donnée métier ni Prod modifiée. Les résultats sont conservés dans urgency1034-material-validation.json et urgency1034-material-sql-proof.json du dossier d’audit. Ces contrôles ne remplacent pas la recette S06 authentifiée.
 
 Le transfert matière accepte aussi une obligation de récupération dont le prélèvement est déjà enregistré (WITHDRAWN), conformément à l’aperçu : cela ne crée pas de nouveau prélèvement et ne modifie pas la quantité due. Le futur appelant doit toujours vérifier que l’OF reste brouillon, que la découpe permet encore l’ajout et que tous les délais restent protégés. Le contexte SQL réel et la contrainte d’identité sont testés pour ce cas. Une demande annulée reste refusée.
+
+## État courant — prévisions fournisseur du 12 octobre
+
+L’ajout transactionnel interne décrit dans les sections précédentes est désormais codé dans cette PR brouillon. Les sections historiques « futur appelant » décrivent les étapes de construction, pas l’état actuel. La récupération reste non déployée.
+
+Le planning lit les préparations d’achat enregistrées de la bonne version technique et de la bonne révision d’OF. Le fournisseur choisi, son délai ouvré et son calendrier permettent de prévoir le retour avant l’existence d’un envoi. Le solde après les lots déjà pris en charge reste une prévision ; aucune commande, expédition, réception ni origine matière n’est inventée. Chaque prestation doit être couverte séparément ; une même ligne ne couvre pas deux prestations.
+
+Les préparations périmées, quantités incohérentes, conditions inactives, retours impossibles et blocages Qualité interdisent une date fictive. Le changement des conditions invalide la version du planning. Une prestation complètement reçue et libérée conserve sa date réelle même si l’ancien catalogue est expiré.
+
+Preuves : 25 tests ciblés prévision/lecture des préparations, 94 tests de non-régression du moteur, de l’approbation et du regroupement ; compilation backend réussie. Deux requêtes réelles compilées sous cerp_app sur Test avec rollback, aucune donnée métier modifiée (urgency1034-external-sql-compile.json).
+
+Reste pour #1034 : appliquer et persister les compléments fournisseur lors de l’ajout au producteur, prendre en charge les phases clôturées hors découpe, puis l’annulation/réconciliation et la recette S06 authentifiée. Le garde-fou GROUPING_EXTERNAL_CAPACITY reste donc actif. Ces prévisions seules n’autorisent aucun regroupement externe ni prélèvement.

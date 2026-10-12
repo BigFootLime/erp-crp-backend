@@ -37,3 +37,18 @@ export type SubcontractFlow = {
   version: string;
   returns: SubcontractReturn[];
 };
+
+/** A saved purchasing preparation is a forecast, never a physical work package. */
+export type ExternalServicePreparation = {
+  id: string;
+  operationId: string;
+  purchaseId: string;
+  label: string;
+  supplierId: string;
+  supplierName: string;
+  quantity: number;
+  due: string | null;
+  leadDays: number | null;
+  orderLineIds: string[];
+  version: string;
+};

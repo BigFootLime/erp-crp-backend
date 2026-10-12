@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-12 — Prévisions fournisseur (#1034, en préparation)
+
+- Prévoir le retour des prestations avec les préparations fournisseur enregistrées, sans inventer d’envoi ni contourner la qualité.
+- Lot Urgences encore en brouillon ; ajout externe transactionnel et recette globale à terminer.
+
+
 ## 2026-10-12 — Application transactionnelle des récupérations regroupées (#1034, en préparation)
 
 - Ajouter la découverte des producteurs compatibles et la confirmation atomique : allocation, quantité, matière, composants, créneaux et dossier actualisé.

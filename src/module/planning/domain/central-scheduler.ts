@@ -104,7 +104,8 @@ export function schedule(input: {
     if (!parent) return null;
     if (parent.external) {
       if (affected.has(parent.id)) return result.forecasts[parent.id];
-      const projected=externalCompletion(parent.external.packages,parent.quantity,parent.actual?.start??parent.committed?.start??input.from,input.resources,input.from);
+      const projected=externalCompletion(parent.external.packages,parent.quantity,parent.committed?.start??input.from,input.resources,input.from,
+        parent.external.preparations,parent.external.preparationIssues);
       return projected.fullReadyAt ? {start:parent.actual?.start??parent.committed?.start??input.from,end:projected.fullReadyAt} : null;
     }
     return parent.commitment==='DONE'&&parent.actual?.end ? {start:parent.actual.end,end:parent.actual.end} : result.forecasts[parent.id]??parent.forecast??parent.committed;
@@ -138,7 +139,7 @@ export function schedule(input: {
         }
         if(unavailable)continue;
         const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt?[p.departedAt]:[]).sort()[0];
-        const projection=externalCompletion(t.external.packages,t.quantity,actual??iso(earliest),input.resources,input.from);
+        const projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
         if(!projection.fullReadyAt){for(const issue of projection.issues)conflict(t.id,'EXTERNAL_RETURN_UNAVAILABLE',issue);continue;}
         if(requested?.resourceIds && requested.resourceIds.join('|')!==t.resourceIds.join('|')){conflict(t.id,'EXTERNAL_SUPPLIER_FIXED','Le fournisseur est celui de la commande liée.');continue;}
         const slot={start:actual??iso(earliest),end:projection.fullReadyAt};
