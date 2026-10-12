@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12 — Aperçu d’ajout avant fin de découpe (#1034, en préparation)
+
+- Calculer la charge supplémentaire d’un OF de récupération sur un regroupement compatible, sans modifier les quantités pointées, les réservations ni les créneaux.
+- Contrôler les matières et sous-pièces physiques, les origines matière, les calendriers et capacités partagées, l’AR initial et les délais courants de chaque affaire.
+- Refuser une découpe clôturée, une autre PT, un autre client ou une fin trop tardive ; proposer de garder l’OF séparé. Lecture réservée au planificateur, sans cache ni action d’application à ce stade.
+- Lot toujours en brouillon : aucun déploiement ni validation de recette complète.
+
 ## 2026-10-12 — Récupérations dans les producteurs regroupés (#1033/#1034, en préparation)
 
 - Maintenir le blocage de démarrage des récupérations en attente ou annulées à travers les regroupements actifs et leurs sous-pièces.

@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "342b873c62a8520a81a0f546f660ab8aa895ae30d57925c870a662e3470c7526";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "9657bdd4eb8cfc6019bfaee495925e777954db0c010e3351ac52dcb74c9ef016";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -12744,7 +12744,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/master-plan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:9",
+    "source": "src/module/planning/routes/planning-central.routes.ts:10",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12764,7 +12764,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/operations/{operationId}/observations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:13",
+    "source": "src/module/planning/routes/planning-central.routes.ts:14",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12784,7 +12784,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:15",
+    "source": "src/module/planning/routes/planning-central.routes.ts:16",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12804,7 +12804,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:14",
+    "source": "src/module/planning/routes/planning-central.routes.ts:15",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12824,7 +12824,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/simulations/{id}",
-    "source": "src/module/planning/routes/planning-central.routes.ts:16",
+    "source": "src/module/planning/routes/planning-central.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12844,7 +12844,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations/{id}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:17",
+    "source": "src/module/planning/routes/planning-central.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12864,7 +12864,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/snapshot",
-    "source": "src/module/planning/routes/planning-central.routes.ts:12",
+    "source": "src/module/planning/routes/planning-central.routes.ts:13",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12884,7 +12884,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/status",
-    "source": "src/module/planning/routes/planning-central.routes.ts:8",
+    "source": "src/module/planning/routes/planning-central.routes.ts:9",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12904,7 +12904,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/unplan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:18",
+    "source": "src/module/planning/routes/planning-central.routes.ts:19",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12923,8 +12923,28 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/preview",
+    "source": "src/module/planning/routes/planning-central.routes.ts:22",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "previewRecoveryGrouping"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/planning/v2/urgency-requests/{requestId}/approval-preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:19",
+    "source": "src/module/planning/routes/planning-central.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12944,7 +12964,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/approve",
-    "source": "src/module/planning/routes/planning-central.routes.ts:20",
+    "source": "src/module/planning/routes/planning-central.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12964,7 +12984,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:10",
+    "source": "src/module/planning/routes/planning-central.routes.ts:11",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12984,7 +13004,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:11",
+    "source": "src/module/planning/routes/planning-central.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
