@@ -10,6 +10,8 @@ import {
 } from "../../stock/repository/stock.repository";
 import { issueLabel, resolveIdentification, printLabel } from '../../identification/identification.service';
 import { readMaterialBarInventoryTx } from '../../stock/repository/material-bar-inventory.repository';
+import { prepareGroupedReceipt,confirmGroupedReceipt } from './grouped-receipts.repository';
+import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { createEmplacementSchema } from "../../stock/validators/stock.validators";
 const createdFiles: string[] = [];
 import { createHash, randomUUID } from "node:crypto";
@@ -379,6 +381,37 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   afterAll(async () => {
     await pool.end();
     await Promise.all(createdFiles.map((file) => fs.unlink(file)));
+  });
+  it('receives grouped physical bars per supplier lot and replays without duplicate stock',async()=>{
+    const f=await fixture(0,'CONSUMABLE'),orderId=randomUUID(),orderLineId=randomUUID();
+    const supplierId=(await pool.query('SELECT fournisseur_id::text AS id FROM public.receptions_fournisseurs WHERE id=$1',[f.receipt])).rows[0].id;
+    await pool.query("UPDATE public.articles SET unite='mm',article_category='matiere',receipt_quality_required=false WHERE id=$1",[f.id]);
+    await pool.query(`INSERT INTO public.articles_matiere(article_id,family_code,barre_a_decouper,longueur_barre_source_mm)
+      SELECT $1,code,true,3000 FROM public.articles_matiere_families ORDER BY code LIMIT 1`,[f.id]);
+    await pool.query(`INSERT INTO public.commande_fournisseur(id,code,fournisseur_id,statut) VALUES($1,$2,$3,'ENVOYEE')`,[orderId,`BCF-GROUPED-${orderId}`,supplierId]);
+    await pool.query(`INSERT INTO public.commande_fournisseur_ligne(id,commande_id,type,designation,quantite,article_id,unite,unite_stock,coef_conversion,receipt_stock_managed,receipt_quality_required,receipt_processing_policy)
+      VALUES($1,$2,'MATIERE','Rond fixture 1250',4,$3,'barre','mm',3000,true,false,'STANDARD')`,[orderLineId,orderId,f.id]);
+    const draft=await prepareGroupedReceipt({idempotencyKey:randomUUID(),supplierId,reference:'BL-GROUPED-1250',date:'2026-10-13'},audit());
+    const sourceDocument=(await pool.query('SELECT storage_path FROM public.reception_fournisseur_documents WHERE reception_id=$1',[f.receipt])).rows[0];
+    const documentName=`fixture-grouped1250-${draft.id}.txt`,documentPath=path.join(getDocumentStoragePath('receptions'),documentName);
+    await fs.writeFile(documentPath,await fs.readFile(sourceDocument.storage_path),{flag:'wx'});createdFiles.push(documentPath);
+    await pool.query(`INSERT INTO public.reception_fournisseur_documents(reception_id,document_type,original_name,stored_name,storage_path,mime_type,size_bytes,sha256,created_by)
+      SELECT $1,document_type,$3,$3,$4,mime_type,size_bytes,sha256,created_by FROM public.reception_fournisseur_documents WHERE reception_id=$2`,[draft.id,f.receipt,documentName,documentPath]);
+    const expected=(await readExpectedReceiptLinesTx(pool,{page:1,pageSize:100},[orderLineId])).items[0];
+    expect(expected.materialBarProposal).toMatchObject({required:true,groups:[{lengthMm:3000,count:4}]});
+    const choice={lineId:orderLineId,expectedVersion:expected.version,quantity:2,destination:{magasinId:warehouse,emplacementId:place},supplierLotCode:null,packs:[],overReceiptReason:null};
+    await expect(confirmGroupedReceipt(draft.id,{idempotencyKey:randomUUID(),lines:[choice]},audit())).rejects.toMatchObject({code:'MATERIAL_BAR_RECEIPT_REQUIRED'});
+    expect((await pool.query('SELECT count(*)::int AS count FROM public.reception_fournisseur_lignes WHERE reception_id=$1',[draft.id])).rows[0].count).toBe(0);
+    const request={idempotencyKey:randomUUID(),lines:[{...choice,packs:[{quantity:1,supplierLotCode:'SUP-A',materialBars:[{lengthMm:3000,count:1}]},{quantity:1,supplierLotCode:'SUP-B',materialBars:[{lengthMm:1500,count:2}]}]}]};
+    const result=await confirmGroupedReceipt(draft.id,request,audit());
+    expect(result.state).toBe('CONFIRMED');expect(result.lines).toHaveLength(2);
+    expect(await confirmGroupedReceipt(draft.id,request,audit())).toEqual(result);
+    const bars=(await pool.query(`SELECT l.supplier_lot_code AS supplier,b.remaining_length_mm::float8 AS length,b.public_number::text AS code
+      FROM public.stock_material_bars b JOIN public.stock_batches batch ON batch.id=b.stock_batch_id JOIN public.lots l ON l.id=batch.lot_id
+      WHERE l.id=ANY($1::uuid[]) ORDER BY l.supplier_lot_code,b.public_number`,[result.lines.map(line=>line.lotId)])).rows;
+    expect(bars.map(bar=>[bar.supplier,bar.length])).toEqual([['SUP-A',3000],['SUP-B',1500],['SUP-B',1500]]);
+    expect(new Set(bars.map(bar=>bar.code)).size).toBe(3);
+    expect((await readExpectedReceiptLinesTx(pool,{page:1,pageSize:100},[orderLineId])).items[0].remaining).toBe(2);
   });
   it('identifies two physical bars with stable codes and resolves the exact bar label',async()=>{
     const articleId=randomUUID(),lotId=randomUUID(),actor={user_id:user,role:'Directeur',request_id:null,correlation_id:null};
