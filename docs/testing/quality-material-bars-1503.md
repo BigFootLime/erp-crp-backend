@@ -12,4 +12,8 @@ Un SCRAP ou RETURN_SUPPLIER de quantité définie ajuste cette quantité sans re
 
 Tests ciblés : commande rejouée, conflit de clé, validation UUID, contexte réception ambigu, quantité partielle conservant le reste libéré, maintien d'un blocage existant et quarantaine explicite. Les adaptateurs de mouvement matière et les routes Qualité restent couverts par leurs tests existants.
 
-Aucune migration additionnelle dans ce lot. Les migrations physiques de #1246 restent nécessaires et ne sont pas déclarées déployées. Avant intégration : vérifier le parcours PostgreSQL complet avec une réception partiellement stockée, puis la recette via HTTP sur Base Test. La garde pré-stock partagée reprend encore la détection historique des mouvements de lignes ; ne pas assimiler sa couverture unitaire à une validation de tous les cas mixtes.
+Aucune migration additionnelle dans ce lot. Les migrations physiques de #1246 restent nécessaires et ne sont pas déclarées déployées.
+
+Le 12 octobre 2026, le test PostgreSQL `closes a partial receipt only after its rejected quantity has a closed disposition` passe sur le schéma complet migré dans un conteneur éphémère sans accès réseau extérieur. Il vérifie 100 pièces reçues, 60 acceptées et mises en stock, puis 40 retournées au fournisseur : le stock accepté reste identique, le reliquat qualité passe de 40 à 0, et le rejeu de la même commande rend la même décision sans double effet. Un retour supplémentaire et une libération excessive sont refusés ; la réception ne se clôture qu'après clôture de sa NC. Un test exécuté, dix-sept autres volontairement exclus de cette exécution ciblée.
+
+Cette preuve concerne le service métier avec PostgreSQL réel. Le parcours HTTP/interface sur Base Test, les étiquettes et les autres variantes restent à qualifier. Les bases Test/Prod n'ont pas été modifiées par cette vérification.

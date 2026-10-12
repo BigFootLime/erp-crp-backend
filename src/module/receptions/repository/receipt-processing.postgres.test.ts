@@ -38,6 +38,7 @@ import {
   unplanCentral,
 } from "../../planning/services/planning-central.service";
 import { repoCreateNonConformityDisposition } from "../../qualite/repository/qualite.repository";
+import { readReceiptDispositionContext } from "./receipt-disposition-context.repository";
 import {
   lockReceiptReleaseScope,
   assertReceiptReleaseAvailable,
@@ -1231,17 +1232,35 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
       "INSERT INTO public.non_conformity(id,description,control_id,lot_id,reception_ligne_id,qty,unite,detected_by,created_by,updated_by) SELECT $1::uuid,'Refus partiel fixture',id,lot_id,reception_ligne_id,40,'u',$3,$3,$3 FROM public.quality_control WHERE reception_ligne_id=$2::uuid",
       [ncId, f.line, user],
     );
-    const disposition = await repoCreateNonConformityDisposition({
+    expect(await readReceiptDispositionContext(pool, ncId, f.lot)).toMatchObject({
+      receiptLineId: f.line, remainingQty: 40, unit: "u", reconciliationRequired: false,
+    });
+    const readAcceptedStock = () => pool.query(
+      `SELECT m.stock_batch_id::text,b.qty_total::float8,b.qty_reserved::float8,b.qty_depreciated::float8
+       FROM public.reception_fournisseur_stock_receipts r
+       JOIN public.stock_movements m ON m.id=r.stock_movement_id
+       JOIN public.stock_batches b ON b.id=m.stock_batch_id
+       WHERE r.reception_line_id=$1::uuid ORDER BY b.id`, [f.line],
+    );
+    const acceptedStockBefore = (await readAcceptedStock()).rows;
+    expect(acceptedStockBefore).toHaveLength(1);
+    expect(acceptedStockBefore[0].qty_total).toBe(60);
+    const decision = {
       id: ncId,
       body: {
-        disposition_type: "RETURN_SUPPLIER",
+        idempotency_key: randomUUID(),
+        disposition_type: "RETURN_SUPPLIER" as const,
         qty: 40,
         unite: "u",
         comment: "Retour fournisseur des 40 refusées",
       },
       audit: audit(),
-    });
+    };
+    const disposition = await repoCreateNonConformityDisposition(decision);
     expect(disposition.stock_movement_id).toBeNull();
+    expect((await repoCreateNonConformityDisposition(decision)).id).toBe(disposition.id);
+    expect((await readAcceptedStock()).rows).toEqual(acceptedStockBefore);
+    expect(await readReceiptDispositionContext(pool, ncId, f.lot)).toMatchObject({ remainingQty: 0, unit: "u" });
     const releaseTx = await pool.connect();
     try {
       await releaseTx.query("BEGIN");
