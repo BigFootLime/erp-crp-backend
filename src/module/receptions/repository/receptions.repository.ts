@@ -47,6 +47,8 @@ import type {
 } from "../types/receptions.types"
 import { enqueueReceptionChanged, receptionRealtimeActionFromAudit } from "./receptions-realtime.repository"
 import { postPieceReceiptStockTx } from './receipt-processing-stock.repository'
+import { lockMaterialBarReceiptLotTx, prepareMaterialBarReceiptTx, applyMaterialBarReceiptTx } from '../../stock/repository/material-bar-receipt.repository'
+import { receivedMaterialBarLengths } from '../../stock/domain/material-bar-receipt'
 import {readProcessingLine} from './receipt-processing.repository'
 import { assertReceiptProcessingClosed } from './receipt-processing-guard'
 
@@ -1750,7 +1752,10 @@ export async function repoCreateStockReceiptLocked(
     return {stock_movement_id:posted.movement.id,movement_no:posted.movement.movement_no,posted}
   }
   const processing = (await tx.query<{ processing_policy: string }>('SELECT processing_policy FROM public.reception_fournisseur_lignes WHERE id=$1::uuid AND reception_id=$2::uuid', [lineId, receptionId])).rows[0];
-  if (processing?.processing_policy === 'PIECES_CONTROLE_EMBALLAGE') return postPieceReceiptStockTx(tx, receptionId, lineId, body, audit, idempotencyKey);
+  if (processing?.processing_policy === 'PIECES_CONTROLE_EMBALLAGE') {
+    if (body.material_bars) throw new HttpError(422, 'MATERIAL_BAR_RECEIPT_UNSUPPORTED', 'Les barres se renseignent sur une réception de matière, pas sur des pièces emballées.');
+    return postPieceReceiptStockTx(tx, receptionId, lineId, body, audit, idempotencyKey);
+  }
   const lineRes = await tx.query<{
     id: string
     qty_received: number
@@ -1765,6 +1770,7 @@ export async function repoCreateStockReceiptLocked(
     article_unit:string|null
     stock_managed:boolean
     processing_version:number
+    bar_to_cut:boolean|null
   }>(
     `
       SELECT
@@ -1774,7 +1780,8 @@ export async function repoCreateStockReceiptLocked(
         l.unite,
         l.lot_id::text AS lot_id,
         lot.lot_status,
-        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit,l.stock_managed,l.processing_version
+        r.reception_no, r.status AS reception_status,l.stock_unit,l.stock_conversion_coef::float8,article.unite AS article_unit,l.stock_managed,l.processing_version,
+        (SELECT am.barre_a_decouper FROM public.articles_matiere am WHERE am.article_id=article.id) AS bar_to_cut
       FROM public.reception_fournisseur_lignes l
       JOIN public.receptions_fournisseurs r ON r.id = l.reception_id
       LEFT JOIN public.lots lot ON lot.id = l.lot_id
@@ -1798,6 +1805,10 @@ export async function repoCreateStockReceiptLocked(
     :receiptUnitConversion({receiptUnit:line.unite,articleUnit:line.article_unit})
   if(!sameUnit(conversion.stockUnit,line.article_unit))throw new HttpError(409,"RECEPTION_STOCK_UNIT_CHANGED","L’unité de l’article a changé depuis la réception. Faites vérifier la conversion enregistrée.")
   const stockQty=convertedStockQuantity(body.qty,conversion.coefficient)
+  const millimetres=sameUnit(conversion.stockUnit,'mm')
+  if(body.material_bars&&!millimetres)throw new HttpError(422,'MATERIAL_BAR_UNIT_REQUIRED','Les barres doivent être gérées en millimètres dans le stock.')
+  if(body.material_bars)receivedMaterialBarLengths(body.material_bars,stockQty)
+  if(millimetres&&line.bar_to_cut&&!body.material_bars)throw new HttpError(422,'MATERIAL_BAR_RECEIPT_REQUIRED','Confirmez le nombre et les longueurs des barres reçues.')
 
   const stockCommandKey = hashStockCommand("RECEPTION_STOCK_KEY", {
     actor_user_id: audit.user_id,
@@ -1882,7 +1893,9 @@ export async function repoCreateStockReceiptLocked(
 
   await assertReceiptLotQualityEligibility({client:tx,lotId:line.lot_id,receiptLineId:lineId,qty:convertedStockQuantity(already+body.qty,conversion.coefficient),unit:conversion.stockUnit})
 
+  if(millimetres)await lockMaterialBarReceiptLotTx(tx,line.lot_id)
   const created = await repoCreateMovement(movementBody, audit, { trusted_source_flow: true,client:tx })
+  const barReceipt=millimetres?await prepareMaterialBarReceiptTx(tx,{movementId:created.movement.id,required:line.bar_to_cut===true,groups:body.material_bars}):null
 
   const posted = await repoPostMovement(
     created.movement.id,
@@ -1892,6 +1905,7 @@ export async function repoCreateStockReceiptLocked(
     tx
   )
   if (!posted) throw new Error("Failed to post stock movement")
+  if(barReceipt)await applyMaterialBarReceiptTx(tx,barReceipt,audit.user_id)
 
   const receiptInsert=await tx.query<{id:string}>(
     `

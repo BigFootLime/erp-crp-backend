@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 const mm = z.number().finite().nonnegative().max(1e9).multipleOf(.001);
+export const receivedMaterialBarsSchema = z.array(z.object({ lengthMm: mm.positive(), count: z.number().int().positive().max(1000) }).strict())
+  .min(1).max(1000).refine(groups => groups.reduce((n, group) => n + group.count, 0) <= 1000, '1 000 barres maximum par entrée.');
 export const materialBarBatchParams = z.object({ batchId: z.string().uuid() }).strict();
 export const materialBarInventoryCommand = z.object({
   expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),

@@ -162,6 +162,40 @@ in the combined stage. Its 63 targeted tests pass, including the existing rule
 that finished cutting forbids adding recovery work. Those candidate files are
 not imported into this branch; their integration/publication remains explicit.
 
+## Received bars and purchase-length proposals
+
+Standard supplier and customer material receipts accept `material_bars` groups
+(`lengthMm`, `count`); the reception tablet command accepts the same groups as
+`materialBars`. The sum must equal the existing, quality-checked purchase-to-stock
+conversion. Bar-to-cut articles in mm require actual geometry. Packaged piece
+receipts reject this input rather than silently discard it.
+
+The receipt locks the lot and its reservations before movement creation, appends
+new bar identities after canonical IN posting, and only then allocates material
+to the OF. These steps share the existing transaction and idempotency receipt.
+Existing bars, remnants, versions and holds are preserved. A second application
+of the same plan cannot duplicate bars. Existing unconfirmed or inconsistent
+stock requires a count or another location; a new receipt never certifies unknown
+old stock. Recording physical delivery and subsequent quality control remain
+separate from this put-away operation.
+
+Processing details expose `materialBarProposal`: the snapshotted purchase length
+takes precedence for purchases by bar; the known article source length is used
+for other units converted to mm. For example two purchased 3 m bars propose two
+3,000 mm bars even if the article default has since changed. No fractional bar,
+arbitrary last remnant or historical geometry is inferred. The receiver must
+confirm the suggestion. UI confirmation and scan integration are still pending.
+
+42 targeted tests cover receipt units, strict geometry, defaults, transaction
+ordering/rollback and customer ownership. Ten isolated PostgreSQL checks execute
+the actual receipt/inventory/reservation repositories: rollback, distinct bars,
+immutable IN proofs, replay rejection, immediate reservation, partial receipts,
+conversion mismatch, unknown old stock, tracked geometry requirements and stale
+stock. The canonical IN posting is simulated by minimal SQL, not the full ERP
+quality/receipt schema. Use `material-bar-receipt-1246.fixture.sql` after the base
+fixture and migration, then `material-bar-receipt-1246.repository.cjs` with the
+temporary connection on stdin. The fixture database/login are removed afterward.
+
 ## Reproduce
 
 Run `npm run test:run -- src/module/stock/domain/material-bars.test.ts`.
@@ -183,8 +217,8 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
 
 1. Inventory repository and canonical reservation creation/release are connected;
    finish the remaining stock command integrations listed below.
-2. Receipt/inventory: propose known article/supplier purchase lengths (e.g. 3 m),
-   confirm actual physical bars and reconcile pre-existing allocations explicitly.
+2. Receipt geometry and purchase-length proposals are connected on the server;
+   finish their web/tablet confirmation screen and full ERP acceptance.
 3. OF preparation, planning and normal grouping use physical yield and exact
    ownership transfers. Integrate the separate recovery candidate with these
    helpers and validate the full grouping transaction on the ERP schema.
