@@ -23,6 +23,7 @@ export type UrgencyRecoveryScope = {
   recovery_of_id: number;
   request_id: string;
   status: string;
+  cancellation_retains_production: boolean | null;
   client_id: string;
 };
 
@@ -34,7 +35,7 @@ export async function readUrgencyRecoveryScopesTx(
   if (!ofIds.length) return [];
   return (await tx.query<UrgencyRecoveryScope>(`${RECOVERY_PRODUCTION_SCOPE_SQL}
     SELECT scope.selected_of_id::int,recovery.recovery_of_id::int,request.id::text AS request_id,
-      request.status,source.client_id::text
+      request.status,request.cancellation_retains_production,source.client_id::text
     FROM production_scope scope
     JOIN public.delivery_urgency_recoveries recovery ON recovery.recovery_of_id=scope.source_of_id
     JOIN public.delivery_urgency_requests request ON request.id=recovery.request_id

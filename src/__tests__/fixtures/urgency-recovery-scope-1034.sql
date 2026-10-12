@@ -3,13 +3,13 @@ CREATE SCHEMA urgency_scope_1034_fixture;
 CREATE TABLE urgency_scope_1034_fixture.ordres_fabrication(id bigint PRIMARY KEY,root_of_id bigint,client_id text);
 CREATE TABLE urgency_scope_1034_fixture.production_consolidations(id bigint PRIMARY KEY,producer_of_id bigint,state text);
 CREATE TABLE urgency_scope_1034_fixture.production_consolidation_allocations(id bigint PRIMARY KEY,consolidation_id bigint,source_of_id bigint,state text);
-CREATE TABLE urgency_scope_1034_fixture.delivery_urgency_requests(id uuid PRIMARY KEY,status text);
+CREATE TABLE urgency_scope_1034_fixture.delivery_urgency_requests(id uuid PRIMARY KEY,status text,cancellation_retains_production boolean);
 CREATE TABLE urgency_scope_1034_fixture.delivery_urgency_recoveries(id uuid PRIMARY KEY,request_id uuid,recovery_of_id bigint);
 INSERT INTO urgency_scope_1034_fixture.ordres_fabrication VALUES
  (1,1,'A'),(2,1,'A'),(3,3,'A'),(4,4,'B'),(10,10,'A'),(11,10,'A'),
  (20,20,'A'),(21,20,'A'),(30,30,'A'),(40,40,'A'),(50,NULL,'B'),(51,50,'B'),
  (60,60,'A'),(61,60,'A'),(70,71,'A'),(71,70,'A'),(80,80,'A'),(90,90,'A'),(100,100,'A');
-INSERT INTO urgency_scope_1034_fixture.delivery_urgency_requests VALUES
+INSERT INTO urgency_scope_1034_fixture.delivery_urgency_requests(id,status) VALUES
  ('00000000-0000-4000-8000-000000000001','WAITING_PLANNER'),
  ('00000000-0000-4000-8000-000000000002','APPROVED'),
  ('00000000-0000-4000-8000-000000000003','WITHDRAWN'),

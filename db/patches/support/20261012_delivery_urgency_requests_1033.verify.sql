@@ -37,5 +37,10 @@ DO $$ DECLARE relation text; BEGIN
       OR withdrawal.quantity IS DISTINCT FROM (SELECT COALESCE(sum(quantity),0) FROM public.delivery_urgency_transfers WHERE withdrawal_id=withdrawal.id)) THEN
     RAISE EXCEPTION 'Urgency withdrawal is not atomically completed';
   END IF;
+  IF EXISTS(SELECT 1 FROM public.delivery_urgency_requests request WHERE status='CANCELLED'
+    AND (cancellation_retains_production IS NULL OR cancellation_evidence IS NULL OR withdrawn_id IS NOT NULL
+      OR (approved_id IS NOT NULL AND NOT cancellation_retains_production))) THEN
+    RAISE EXCEPTION 'Cancellation decision is incomplete or loses engaged production';
+  END IF;
 END $$;
 ROLLBACK;

@@ -6,6 +6,8 @@ import { svcPreviewDeliveryUrgency, svcCreateDeliveryUrgencyRequest, svcListDeli
 import type { AuditContext } from '../../production/repository/production.repository';
 import { requestHasGrantedAccountModuleAccess } from '../../access-control/context/account-module-access.context';
 import { roleHasLivraisonCapability } from '../domain/livraisons-rbac';
+import { deliveryUrgencyRetainBody } from '../validators/delivery-urgency.validators';
+import { svcPreviewUrgencyCancellation } from '../services/delivery-urgency.service';
 
 const canAllocate = (req: Request) => requestHasGrantedAccountModuleAccess(req) || roleHasLivraisonCapability(req.user?.role, 'allocate');
 
@@ -54,6 +56,25 @@ export const cancelDeliveryUrgencyRequest: RequestHandler = async (req, res, nex
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');
     res.json(await svcCancelDeliveryUrgencyRequest({ requestId, body, audit: context }));
   } catch (error) { next(error); }
+};
+
+export const previewDeliveryUrgencyCancellation: RequestHandler = async (req,res,next) => {
+  try {
+    audit(req);
+    const { requestId }=deliveryUrgencyRequestParams.parse(req.params);
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.json({...await svcPreviewUrgencyCancellation(requestId),can_allocate:canAllocate(req)});
+  } catch(error) { next(error); }
+};
+
+/** Mounted only under planning's module scope and manage_schedule capability. */
+export const cancelDeliveryUrgencyRetainingProduction: RequestHandler = async (req,res,next) => {
+  try {
+    const context=audit(req),{requestId}=deliveryUrgencyRequestParams.parse(req.params);
+    const body=deliveryUrgencyRetainBody.parse(req.body);
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.json(await svcCancelDeliveryUrgencyRequest({requestId,body,audit:context,retainProduction:true}));
+  } catch(error) { next(error); }
 };
 
 export const previewUrgencyWithdrawal: RequestHandler = async (req,res,next) => {

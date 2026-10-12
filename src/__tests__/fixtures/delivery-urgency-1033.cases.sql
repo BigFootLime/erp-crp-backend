@@ -60,7 +60,9 @@ BEGIN
   EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
   IF NOT blocked THEN RAISE EXCEPTION 'Request evidence was mutable'; END IF;
   UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='CANCELLED',version=2,
-    cancelled_by=1,cancelled_at=now(),cancellation_reason='Fixture annulation contrôlée' WHERE id=request_uuid;
+    cancelled_by=1,cancelled_at=now(),cancellation_reason='Fixture annulation contrôlée',cancellation_retains_production=false,
+    cancellation_evidence=jsonb_build_object('request',jsonb_build_object('id',request_uuid,'version',1,'status','WAITING_PLANNER'),'tree','[]'::jsonb)
+    WHERE id=request_uuid;
   blocked:=false;
   BEGIN UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='WAITING_PLANNER',version=3,
     cancelled_by=NULL,cancelled_at=NULL,cancellation_reason=NULL WHERE id=request_uuid;
@@ -119,6 +121,41 @@ BEGIN
   UPDATE urgency_1033_fixture.delivery_urgency_requests SET version=3,approved_id=approval_uuid WHERE id=request_uuid;
   IF (SELECT count(*) FROM urgency_1033_fixture.delivery_urgency_approvals WHERE request_id=request_uuid)<>2
     THEN RAISE EXCEPTION 'Previous approval lost during renewal'; END IF;
+  blocked:=false;
+  BEGIN
+    UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='CANCELLED',version=4,
+      cancelled_by=1,cancelled_at=now(),cancellation_reason='Annulation avec preuve absente',cancellation_retains_production=true,
+      cancellation_evidence='{}' WHERE id=request_uuid;
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Cancellation without review accepted'; END IF;
+  blocked:=false;
+  BEGIN
+    UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='CANCELLED',version=4,
+      cancelled_by=1,cancelled_at=now(),cancellation_reason='Annulation sans conservation',cancellation_retains_production=false,
+      cancellation_evidence=jsonb_build_object('request',jsonb_build_object('id',request_uuid,'version',3,'status','APPROVED'),'tree','[]'::jsonb)
+      WHERE id=request_uuid;
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Approved recovery silently abandoned'; END IF;
+  blocked:=false;
+  BEGIN
+    UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='CANCELLED',version=4,approved_id=NULL,
+      cancelled_by=1,cancelled_at=now(),cancellation_reason='Annulation qui perd approbation',cancellation_retains_production=true,
+      cancellation_evidence=jsonb_build_object('request',jsonb_build_object('id',request_uuid,'version',3,'status','APPROVED'),'tree','[]'::jsonb)
+      WHERE id=request_uuid;
+  EXCEPTION WHEN object_not_in_prerequisite_state THEN blocked:=true; END;
+  IF NOT blocked THEN RAISE EXCEPTION 'Approval identity erased during cancellation'; END IF;
+  BEGIN
+    UPDATE urgency_1033_fixture.delivery_urgency_requests SET status='CANCELLED',version=4,
+      cancelled_by=1,cancelled_at=now(),cancellation_reason='Conserver fabrication validée',cancellation_retains_production=true,
+      cancellation_evidence=jsonb_build_object('request',jsonb_build_object('id',request_uuid,'version',3,'status','APPROVED'),'tree','[]'::jsonb)
+      WHERE id=request_uuid;
+    IF NOT EXISTS(SELECT 1 FROM urgency_1033_fixture.delivery_urgency_requests WHERE id=request_uuid AND status='CANCELLED'
+      AND cancellation_retains_production AND approved_id=approval_uuid AND withdrawn_id IS NULL) THEN
+      RAISE EXCEPTION 'Reviewed cancellation lost history';
+    END IF;
+    RAISE EXCEPTION 'Rollback this successful cancellation to continue the withdrawal fixture' USING ERRCODE='P0002';
+  EXCEPTION WHEN no_data_found THEN NULL; END;
+  RAISE NOTICE 'URGENCY_RETAINED_CANCELLATION_FIXTURE_PASS';
   IF (SELECT qty_reserved FROM urgency_1033_fixture.stock_reservations WHERE id='dddddddd-0000-4000-8000-000000000001')<>4
     THEN RAISE EXCEPTION 'Approval withdrew donor stock'; END IF;
   RAISE NOTICE 'URGENCY_APPROVAL_FIXTURE_PASS';

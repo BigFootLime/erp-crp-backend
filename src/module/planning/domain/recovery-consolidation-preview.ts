@@ -23,8 +23,8 @@ const instant = (value: string | null | undefined) => value ? Date.parse(value) 
 const validInterval = (task: CentralTask) => !!task.committed && Number.isFinite(instant(task.committed.start))
   && instant(task.committed.end) > instant(task.committed.start);
 
-/** Additional pieces consume additional productive time, never a second setup
- * or a reset of the existing progress/learning evidence. */
+/** An ongoing cycle adds productive time; resuming a closed cycle also adds setup.
+ * Existing progress and learning evidence remain historical facts. */
 function extendEstimate(estimate: Estimate | null, additional: number, resume = false): Estimate | null {
   if (!estimate || !Number.isFinite(estimate.unitMinutes) || estimate.unitMinutes <= 0
     || !Number.isFinite(estimate.remainingMinutes) || estimate.remainingMinutes < 0) return null;
@@ -33,8 +33,8 @@ function extendEstimate(estimate: Estimate | null, additional: number, resume = 
   return Number.isFinite(remainingMinutes) ? { ...estimate, remainingMinutes } : null;
 }
 
-/** Read-only preview. Application must reread every source and keep the actual
- * operation IDs, starts, counters, reservations and client promises unchanged. */
+/** Read-only preview. Application rereads every source and retains operation IDs,
+ * execution evidence and client promises. A resumed cycle archives its old timing. */
 export function previewRecoveryConsolidation(input: {
   snapshot: CentralSnapshot; evidence: RecoveryGroupingEvidence; now: string;
   externalPreparations?: RecoveryExternalPreparations;

@@ -1,13 +1,15 @@
 import express, { type ErrorRequestHandler } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn(),withdrawalPreview:vi.fn(),withdraw:vi.fn()}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn(),cancelPreview:vi.fn(),withdrawalPreview:vi.fn(),withdraw:vi.fn()}));
 vi.mock('../module/livraisons/services/delivery-urgency.service',()=>({svcPreviewDeliveryUrgency:mocks.preview,
   svcCreateDeliveryUrgencyRequest:mocks.create,svcListDeliveryUrgencyRequests:mocks.list,svcCancelDeliveryUrgencyRequest:mocks.cancel,
-  svcPreviewUrgencyWithdrawal:mocks.withdrawalPreview,svcWithdrawDeliveryUrgency:mocks.withdraw}));
-import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgencyRequests,cancelDeliveryUrgencyRequest,previewUrgencyWithdrawal,withdrawDeliveryUrgency }
+  svcPreviewUrgencyCancellation:mocks.cancelPreview,svcPreviewUrgencyWithdrawal:mocks.withdrawalPreview,svcWithdrawDeliveryUrgency:mocks.withdraw}));
+import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgencyRequests,cancelDeliveryUrgencyRequest,previewUrgencyWithdrawal,withdrawDeliveryUrgency,
+  previewDeliveryUrgencyCancellation,cancelDeliveryUrgencyRetainingProduction }
   from '../module/livraisons/controllers/delivery-urgency.controller';
 import { validationErrorMiddleware } from '../module/auth/middlewares/validationError.middleware';
+import { requirePlanningCapability } from '../module/planning/middlewares/planning-authorization.middleware';
 const id='a130702e-eb6b-4d73-a403-134f7c67d023',key='7056b178-3d6e-4658-8f86-410e3b813ca7';
 const body={quantity:'0.5',preview_hash:'a'.repeat(64),reason:'Demande urgente du client'};
 function app(role='Stock'){
@@ -18,6 +20,8 @@ function app(role='Stock'){
   server.get('/allocations/:allocationId/requests',listDeliveryUrgencyRequests);
   server.post('/allocations/:allocationId/requests',createDeliveryUrgencyRequest);
   server.post('/requests/:requestId/cancel',cancelDeliveryUrgencyRequest);
+  server.get('/requests/:requestId/cancellation-preview',previewDeliveryUrgencyCancellation);
+  server.post('/planning/:requestId/cancel-retaining-production',requirePlanningCapability('manage_schedule'),cancelDeliveryUrgencyRetainingProduction);
   server.get('/requests/:requestId/withdrawal-preview',previewUrgencyWithdrawal);
   server.post('/requests/:requestId/withdraw',withdrawDeliveryUrgency);
   server.use(validationErrorMiddleware);server.use(((error,_req,res,_next)=>res.status(error.status??500).json({code:error.code})) as ErrorRequestHandler);
@@ -66,6 +70,32 @@ describe('urgency HTTP input boundaries',()=>{
   it('requires an explicit version and reason for cancellation',async()=>{
     const response=await request(app()).post(`/requests/${id}/cancel`).set('x-recipe-user','present').send({reason:body.reason});
     expect(response.status).toBe(400);expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it('does not let logistics retain production commitments without planning permission',async()=>{
+    const response=await request(app('Stock')).post(`/planning/${id}/cancel-retaining-production`).set('x-recipe-user','present')
+      .send({expected_version:1,reason:body.reason,preview_hash:body.preview_hash});
+    expect(response.status).toBe(403);expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it('requires reviewed commitments on the planner route',async()=>{
+    const response=await request(app('Planning')).post(`/planning/${id}/cancel-retaining-production`).set('x-recipe-user','present')
+      .send({expected_version:1,reason:body.reason});
+    expect(response.status).toBe(400);expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it('records the explicit planner decision separately from ordinary cancellation',async()=>{
+    const response=await request(app('Planning')).post(`/planning/${id}/cancel-retaining-production`).set('x-recipe-user','present')
+      .send({expected_version:1,reason:body.reason,preview_hash:body.preview_hash});
+    expect(response.status).toBe(200);expect(mocks.cancel).toHaveBeenCalledWith(expect.objectContaining({retainProduction:true}));
+  });
+  it('rejects a forged retention flag on the logistics route',async()=>{
+    const response=await request(app()).post(`/requests/${id}/cancel`).set('x-recipe-user','present')
+      .send({expected_version:1,reason:body.reason,retainProduction:true});
+    expect(response.status).toBe(400);expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it('shows cancellation review even when supply approval cannot be calculated',async()=>{
+    mocks.cancelPreview.mockResolvedValue({can_cancel:true,requires_planner:true});
+    const response=await request(app()).get(`/requests/${id}/cancellation-preview`).set('x-recipe-user','present');
+    expect(response.status).toBe(200);expect(response.headers['cache-control']).toContain('no-store');
+    expect(mocks.withdrawalPreview).not.toHaveBeenCalled();
   });
   it.each([
     {}, {expected_version:0,preview_hash:body.preview_hash}, {expected_version:2,preview_hash:'bad'},

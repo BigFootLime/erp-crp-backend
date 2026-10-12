@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from "express"
 import { listDeliveryAffairs } from "../controllers/delivery-affairs.controller"
 import { previewDeliveryStockRecovery, reserveDeliveryStockRecovery } from "../controllers/delivery-stock-recovery.controller"
-import { previewDeliveryUrgency, createDeliveryUrgencyRequest, listDeliveryUrgencyRequests, cancelDeliveryUrgencyRequest, previewUrgencyWithdrawal, withdrawDeliveryUrgency } from "../controllers/delivery-urgency.controller"
+import { previewDeliveryUrgency, createDeliveryUrgencyRequest, listDeliveryUrgencyRequests, cancelDeliveryUrgencyRequest, previewDeliveryUrgencyCancellation, previewUrgencyWithdrawal, withdrawDeliveryUrgency } from "../controllers/delivery-urgency.controller"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
@@ -107,6 +107,7 @@ router.get("/affaires/allocations/:allocationId/urgency-preview", requireLivrais
 router.get("/affaires/allocations/:allocationId/urgency-requests", requireLivraisonCapability("read"), listDeliveryUrgencyRequests)
 router.post("/affaires/allocations/:allocationId/urgency-requests", requireLivraisonCapability("allocate"), createDeliveryUrgencyRequest)
 router.post("/urgency-requests/:requestId/cancel", requireLivraisonCapability("allocate"), cancelDeliveryUrgencyRequest)
+router.get("/urgency-requests/:requestId/cancellation-preview", requireLivraisonCapability("read"), previewDeliveryUrgencyCancellation)
 router.get("/urgency-requests/:requestId/withdrawal-preview", requireLivraisonCapability("read"), previewUrgencyWithdrawal)
 router.post("/urgency-requests/:requestId/withdraw", requireLivraisonCapability("allocate"), withdrawDeliveryUrgency)
 router.post("/affaires/allocations/:allocationId/reserve-stock", requireLivraisonCapability("allocate"), reserveDeliveryStockRecovery)

@@ -19,6 +19,7 @@ type RequestRow = {
   id: string; beneficiary_allocation_id: number; status: 'WAITING_PLANNER' | 'APPROVED' | 'WITHDRAWN' | 'CANCELLED';
   version: number; quantity: string; reason: string; created_at: string;
   cancelled_at: string | null; cancellation_reason: string | null;
+  cancellation_retains_production: boolean | null;
   approved_id: string | null; withdrawn_id: string | null;
   urgency_fee: UrgencyOrderFee | null;
 };
@@ -31,7 +32,7 @@ type RecoveryRow = {
 
 export async function readUrgencyRequests(tx: Db, allocationId: number) {
   const requests = (await tx.query<RequestRow>(`SELECT id::text,beneficiary_allocation_id::int,status,version,
-    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,approved_id::text,withdrawn_id::text,
+    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,cancellation_retains_production,approved_id::text,withdrawn_id::text,
     snapshot->'preview'->'urgency_fee' AS urgency_fee
     FROM public.delivery_urgency_requests WHERE beneficiary_allocation_id=$1 ORDER BY created_at DESC,id`, [allocationId])).rows;
   const recoveries = requests.length ? (await tx.query<RecoveryRow>(`SELECT recovery.id::text,recovery.request_id::text,

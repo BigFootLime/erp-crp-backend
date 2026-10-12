@@ -17,13 +17,18 @@ CREATE TABLE public.delivery_urgency_requests (
   cancelled_by integer REFERENCES public.users(id) ON DELETE RESTRICT,
   cancelled_at timestamptz,
   cancellation_reason text,
+  cancellation_retains_production boolean,
+  cancellation_evidence jsonb,
   approved_id uuid,
   withdrawn_id uuid,
   UNIQUE(created_by,request_key),
-  CHECK((status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL)
+  CHECK((status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL
+      AND cancellation_retains_production IS NULL AND cancellation_evidence IS NULL)
     OR (status='CANCELLED' AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL
-      AND length(btrim(cancellation_reason)) BETWEEN 10 AND 1000)),
-  CHECK((status IN ('APPROVED','WITHDRAWN'))=(approved_id IS NOT NULL)),
+      AND length(btrim(cancellation_reason)) BETWEEN 10 AND 1000 AND cancellation_retains_production IS NOT NULL
+      AND cancellation_evidence IS NOT NULL AND jsonb_typeof(cancellation_evidence)='object')),
+  CHECK((status IN ('APPROVED','WITHDRAWN') AND approved_id IS NOT NULL)
+    OR (status='WAITING_PLANNER' AND approved_id IS NULL) OR status='CANCELLED'),
   CHECK((status='WITHDRAWN')=(withdrawn_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX delivery_urgency_active_beneficiary_idx
@@ -101,7 +106,13 @@ BEGIN
     OR NEW.version<>OLD.version+1 THEN
     RAISE EXCEPTION 'Retain urgency identity, version and evidence' USING ERRCODE='55000';
   END IF;
-  IF OLD.status='WAITING_PLANNER' AND NEW.status='CANCELLED' AND NEW.approved_id IS NULL THEN RETURN NEW; END IF;
+  IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='CANCELLED'
+    AND NEW.approved_id IS NOT DISTINCT FROM OLD.approved_id AND NEW.withdrawn_id IS NULL
+    AND NEW.cancellation_evidence->'request'->>'id'=OLD.id::text
+    AND NEW.cancellation_evidence->'request'->>'version'=OLD.version::text
+    AND NEW.cancellation_evidence->'request'->>'status'=OLD.status
+    AND jsonb_typeof(NEW.cancellation_evidence->'tree')='array'
+    AND (OLD.status<>'APPROVED' OR NEW.cancellation_retains_production) THEN RETURN NEW; END IF;
   IF OLD.status='APPROVED' AND NEW.status='WITHDRAWN' AND NEW.approved_id=OLD.approved_id
     AND EXISTS(SELECT 1 FROM public.delivery_urgency_withdrawals withdrawal WHERE withdrawal.id=NEW.withdrawn_id
       AND withdrawal.request_id=OLD.id AND withdrawal.request_version=OLD.version AND withdrawal.approval_id=OLD.approved_id)

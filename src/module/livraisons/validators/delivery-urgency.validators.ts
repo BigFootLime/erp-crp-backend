@@ -12,6 +12,10 @@ export const deliveryUrgencyKey = z.string().uuid('Une clé de requête UUID est
 export const deliveryUrgencyCancelBody = z.object({
   expected_version: z.number().int().positive(),
   reason: z.string().trim().min(10).max(1000),
+  preview_hash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+}).strict();
+export const deliveryUrgencyRetainBody = deliveryUrgencyCancelBody.extend({
+  preview_hash: z.string().regex(/^[0-9a-f]{64}$/),
 }).strict();
 export type DeliveryUrgencyBody = z.infer<typeof deliveryUrgencyBody>;
 export const deliveryUrgencyWithdrawalBody = z.object({

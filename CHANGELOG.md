@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12 — Annulation revue avant prélèvement (#1033, en préparation)
+
+- Présenter les engagements avant annulation et permettre au planificateur de conserver la fabrication pour le stock libre.
+- Garder les réservations donneuses, décisions antérieures et historiques ; réconcilier les conflits et reprises réseau.
+- Lot Urgences toujours non déployé ; retour après prélèvement à terminer.
+
+
 ## 2026-10-12 — Reprise après ajout de récupération (#1034, en préparation)
 
 - Prévoir explicitement le réglage et la reprise des phases clôturées hors découpe, en conservant leur historique.
