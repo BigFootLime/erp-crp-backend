@@ -2,6 +2,7 @@ import { repoPreviewDeliveryUrgency } from '../repository/delivery-urgency.repos
 import { repoCreateDeliveryUrgencyRequest, repoListDeliveryUrgencyRequests } from '../repository/delivery-urgency-request.repository';
 import { repoCancelDeliveryUrgencyRequest } from '../repository/delivery-urgency-cancel.repository';
 import { previewUrgencyCancellation } from '../repository/delivery-urgency-cancellation-preview.repository';
+export { repoRestoreDeliveryUrgency as svcRestoreDeliveryUrgency } from '../repository/delivery-urgency-restitution.repository';
 import { repoPreviewUrgencyWithdrawal } from '../repository/delivery-urgency-withdrawal-preview.repository';
 import { repoWithdrawDeliveryUrgency } from '../repository/delivery-urgency-withdrawal.repository';
 export const svcPreviewDeliveryUrgency = repoPreviewDeliveryUrgency;

@@ -7528,6 +7528,7 @@ export async function repoCreateMovement(
     const protectedSourceTypes = new Set([
       "OF",
       "PRODUCTION_RECEIPT",
+      "URGENCY_RESTITUTION",
       "SUPPLIER_RECEIPT",
       "RECEPTION_FOURNISSEUR",
       "BON_LIVRAISON",

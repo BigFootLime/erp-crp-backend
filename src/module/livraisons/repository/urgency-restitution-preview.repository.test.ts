@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const ports = vi.hoisted(() => ({ quality: vi.fn() }));
+const ports = vi.hoisted(() => ({ quality: vi.fn(), routing:vi.fn() }));
 vi.mock('../../qualite/repository/quality-operational-gate.repository', () => ({ readOperationalLotQualityEligibility: ports.quality }));
+vi.mock('../../stock/repository/stock-lane-routing.repository',()=>({readStockLaneRoutingTx:ports.routing}));
 import { readUrgencyRestitutionTx } from './urgency-restitution-preview.repository';
 
 function fixture() {
@@ -18,7 +19,7 @@ function fixture() {
 }
 
 describe('urgency restitution review', () => {
-  beforeEach(() => { vi.resetAllMocks(); ports.quality.mockResolvedValue({ eligibility: { allowed: true, blocks: [] } }); });
+  beforeEach(() => { vi.resetAllMocks(); ports.routing.mockResolvedValue({routing_active:true,destinations:[]}); ports.quality.mockResolvedValue({ eligibility: { allowed: true, blocks: [] } }); });
   it('reads physical stock and retained financial evidence without any write', async () => {
     const { db, fee } = fixture(); const result = await readUrgencyRestitutionTx(db, 'request');
     expect(result.response).toMatchObject({ can_restore: true, donor_quantity: '6', free_quantity: '4', fee });

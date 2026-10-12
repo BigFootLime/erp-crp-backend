@@ -45,16 +45,15 @@ export async function readUrgencyCancellationTx(tx: Db, requestId: string) {
   const issues: Array<{ code: string; message: string }> = [];
   if (!roots.length || roots.some(id => !tree.some(of => of.id === id)))
     issues.push({ code: 'URGENCY_RECOVERY_MISSING', message: 'Un OF de récupération manque. Faites vérifier le dossier.' });
-  if (request.withdrawn_id || request.status === 'WITHDRAWN') issues.push({ code: 'URGENCY_ALREADY_WITHDRAWN',
-    message: 'Les pièces ont déjà été prélevées. Réconciliez leur retour ou leur livraison avant d’annuler ; la récupération reste due au donneur.' });
   if (!['WAITING_PLANNER', 'APPROVED', 'WITHDRAWN'].includes(request.status))
     issues.push({ code: 'URGENCY_REQUEST_CLOSED', message: 'Cette demande est déjà annulée.' });
   const restitution = request.status === 'WITHDRAWN' ? await readUrgencyRestitutionTx(tx, requestId) : null;
+  if (restitution) issues.push(...restitution.response.issues);
   const engaged = tree.some(cancellationOfEngaged);
   const preview_hash = createHash('sha256').update(JSON.stringify({ request, roots, tree,
     ...(restitution ? { restitution: restitution.evidence } : {}) })).digest('hex');
-  return { request, roots, tree, response: { request_id: request.id, request_version: request.version, status: request.status,
-    preview_hash, can_cancel: !issues.length, requires_planner: engaged || request.status === 'APPROVED',
+  return { request, roots, tree, restitution, response: { request_id: request.id, request_version: request.version, status: request.status,
+    preview_hash, can_cancel: !issues.length, requires_planner: engaged || ['APPROVED','WITHDRAWN'].includes(request.status),
     production_retained: engaged, issues, restitution: restitution?.response ?? null,
     recoveries: tree.map(of => ({ of_id: of.id, of_numero: of.numero, of_status: of.statut,
       engaged: cancellationOfEngaged(of), grouped: of.groupings.length > 0 })),

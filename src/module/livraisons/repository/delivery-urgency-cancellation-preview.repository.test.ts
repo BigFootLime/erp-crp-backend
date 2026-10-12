@@ -1,5 +1,5 @@
 import { describe,expect,it,vi } from 'vitest';
-const restitution = vi.hoisted(() => ({ read: vi.fn(async () => ({ evidence: { quantity: '10' }, response: { can_restore: true } })) }));
+const restitution = vi.hoisted(() => ({ read: vi.fn(async () => ({ evidence: { quantity: '10' }, response: { can_restore: true, issues: [] } })) }));
 vi.mock('./urgency-restitution-preview.repository', () => ({ readUrgencyRestitutionTx: restitution.read }));
 import { readUrgencyCancellationTx,type CancellationOf } from './delivery-urgency-cancellation-preview.repository';
 const draft=():CancellationOf=>({id:10,numero:'OF-10',statut:'BROUILLON',technical_snapshot_sha256:null,updated_at:'2026-10-12',
@@ -18,9 +18,9 @@ describe('cancellation review independent of supply approval',()=>{
   it('requires the planner after approval, even if drafts are unchanged',async()=>{
     expect((await readUrgencyCancellationTx(tx([draft()],'APPROVED'),'r1')).response.requires_planner).toBe(true);
   });
-  it('keeps the recovery debt open after withdrawal',async()=>{
+  it('requires a planner-reviewed restitution after withdrawal',async()=>{
     const result=await readUrgencyCancellationTx(tx([draft()],'WITHDRAWN'),'r1');
-    expect(result.response.can_cancel).toBe(false);expect(result.response.issues[0].code).toBe('URGENCY_ALREADY_WITHDRAWN');
+    expect(result.response.can_cancel).toBe(true);expect(result.response.requires_planner).toBe(true);
     expect(result.response.restitution).toMatchObject({can_restore:true});
   });
   it('reports missing recovery roots instead of silently cancelling',async()=>{

@@ -6,8 +6,8 @@ import { svcPreviewDeliveryUrgency, svcCreateDeliveryUrgencyRequest, svcListDeli
 import type { AuditContext } from '../../production/repository/production.repository';
 import { requestHasGrantedAccountModuleAccess } from '../../access-control/context/account-module-access.context';
 import { roleHasLivraisonCapability } from '../domain/livraisons-rbac';
-import { deliveryUrgencyRetainBody } from '../validators/delivery-urgency.validators';
-import { svcPreviewUrgencyCancellation } from '../services/delivery-urgency.service';
+import { deliveryUrgencyRetainBody, deliveryUrgencyRestitutionBody } from '../validators/delivery-urgency.validators';
+import { svcPreviewUrgencyCancellation, svcRestoreDeliveryUrgency } from '../services/delivery-urgency.service';
 
 const canAllocate = (req: Request) => requestHasGrantedAccountModuleAccess(req) || roleHasLivraisonCapability(req.user?.role, 'allocate');
 
@@ -75,6 +75,17 @@ export const cancelDeliveryUrgencyRetainingProduction: RequestHandler = async (r
     res.setHeader('Cache-Control','private, no-store, max-age=0');
     res.json(await svcCancelDeliveryUrgencyRequest({requestId,body,audit:context,retainProduction:true}));
   } catch(error) { next(error); }
+};
+
+export const restoreDeliveryUrgency: RequestHandler = async (req,res,next) => {
+  try {
+    const context=audit(req), {requestId}=deliveryUrgencyRequestParams.parse(req.params);
+    const body=deliveryUrgencyRestitutionBody.parse(req.body);
+    const idempotencyKey=deliveryUrgencyKey.parse(req.get('Idempotency-Key'));
+    const result=await svcRestoreDeliveryUrgency({requestId,body,idempotencyKey,audit:context});
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.status(result.replayed?200:201).json(result);
+  } catch(error) {next(error);}
 };
 
 export const previewUrgencyWithdrawal: RequestHandler = async (req,res,next) => {

@@ -21,6 +21,7 @@ CREATE TABLE public.delivery_urgency_requests (
   cancellation_evidence jsonb,
   approved_id uuid,
   withdrawn_id uuid,
+  restitution_id uuid,
   UNIQUE(created_by,request_key),
   CHECK((status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL
       AND cancellation_retains_production IS NULL AND cancellation_evidence IS NULL)
@@ -29,7 +30,10 @@ CREATE TABLE public.delivery_urgency_requests (
       AND cancellation_evidence IS NOT NULL AND jsonb_typeof(cancellation_evidence)='object')),
   CHECK((status IN ('APPROVED','WITHDRAWN') AND approved_id IS NOT NULL)
     OR (status='WAITING_PLANNER' AND approved_id IS NULL) OR status='CANCELLED'),
-  CHECK((status='WITHDRAWN')=(withdrawn_id IS NOT NULL))
+  CHECK((status='WITHDRAWN' AND withdrawn_id IS NOT NULL AND restitution_id IS NULL)
+    OR (status='CANCELLED' AND ((withdrawn_id IS NULL AND restitution_id IS NULL)
+      OR (withdrawn_id IS NOT NULL AND restitution_id IS NOT NULL AND approved_id IS NOT NULL AND cancellation_retains_production)))
+    OR (status IN ('WAITING_PLANNER','APPROVED') AND withdrawn_id IS NULL AND restitution_id IS NULL))
 );
 CREATE UNIQUE INDEX delivery_urgency_active_beneficiary_idx
   ON public.delivery_urgency_requests(beneficiary_allocation_id) WHERE status IN ('WAITING_PLANNER','APPROVED');
@@ -107,17 +111,17 @@ BEGIN
     RAISE EXCEPTION 'Retain urgency identity, version and evidence' USING ERRCODE='55000';
   END IF;
   IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='CANCELLED'
-    AND NEW.approved_id IS NOT DISTINCT FROM OLD.approved_id AND NEW.withdrawn_id IS NULL
+    AND NEW.approved_id IS NOT DISTINCT FROM OLD.approved_id AND NEW.withdrawn_id IS NULL AND NEW.restitution_id IS NULL
     AND NEW.cancellation_evidence->'request'->>'id'=OLD.id::text
     AND NEW.cancellation_evidence->'request'->>'version'=OLD.version::text
     AND NEW.cancellation_evidence->'request'->>'status'=OLD.status
     AND jsonb_typeof(NEW.cancellation_evidence->'tree')='array'
     AND (OLD.status<>'APPROVED' OR NEW.cancellation_retains_production) THEN RETURN NEW; END IF;
-  IF OLD.status='APPROVED' AND NEW.status='WITHDRAWN' AND NEW.approved_id=OLD.approved_id
+  IF OLD.status='APPROVED' AND NEW.status='WITHDRAWN' AND NEW.approved_id=OLD.approved_id AND NEW.restitution_id IS NULL
     AND EXISTS(SELECT 1 FROM public.delivery_urgency_withdrawals withdrawal WHERE withdrawal.id=NEW.withdrawn_id
       AND withdrawal.request_id=OLD.id AND withdrawal.request_version=OLD.version AND withdrawal.approval_id=OLD.approved_id)
     THEN RETURN NEW; END IF;
-  IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='APPROVED'
+  IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='APPROVED' AND NEW.restitution_id IS NULL
     AND EXISTS(SELECT 1 FROM public.delivery_urgency_approvals approval WHERE approval.id=NEW.approved_id
       AND approval.request_id=OLD.id AND approval.request_version=OLD.version) THEN RETURN NEW; END IF;
   RAISE EXCEPTION 'Explicit approval or draft cancellation required' USING ERRCODE='55000';

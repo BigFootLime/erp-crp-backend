@@ -17,6 +17,8 @@ export const deliveryUrgencyCancelBody = z.object({
 export const deliveryUrgencyRetainBody = deliveryUrgencyCancelBody.extend({
   preview_hash: z.string().regex(/^[0-9a-f]{64}$/),
 }).strict();
+export const deliveryUrgencyRestitutionBody = deliveryUrgencyRetainBody.extend({ fee_decision: z.literal('KEEP') }).strict();
+export type DeliveryUrgencyRestitutionBody = z.infer<typeof deliveryUrgencyRestitutionBody>;
 export type DeliveryUrgencyBody = z.infer<typeof deliveryUrgencyBody>;
 export const deliveryUrgencyWithdrawalBody = z.object({
   expected_version: z.number().int().positive(),

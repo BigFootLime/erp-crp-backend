@@ -1,12 +1,12 @@
 import express, { type ErrorRequestHandler } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn(),cancelPreview:vi.fn(),withdrawalPreview:vi.fn(),withdraw:vi.fn()}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn(),cancelPreview:vi.fn(),withdrawalPreview:vi.fn(),withdraw:vi.fn(),restore:vi.fn()}));
 vi.mock('../module/livraisons/services/delivery-urgency.service',()=>({svcPreviewDeliveryUrgency:mocks.preview,
   svcCreateDeliveryUrgencyRequest:mocks.create,svcListDeliveryUrgencyRequests:mocks.list,svcCancelDeliveryUrgencyRequest:mocks.cancel,
-  svcPreviewUrgencyCancellation:mocks.cancelPreview,svcPreviewUrgencyWithdrawal:mocks.withdrawalPreview,svcWithdrawDeliveryUrgency:mocks.withdraw}));
+  svcPreviewUrgencyCancellation:mocks.cancelPreview,svcPreviewUrgencyWithdrawal:mocks.withdrawalPreview,svcWithdrawDeliveryUrgency:mocks.withdraw,svcRestoreDeliveryUrgency:mocks.restore}));
 import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgencyRequests,cancelDeliveryUrgencyRequest,previewUrgencyWithdrawal,withdrawDeliveryUrgency,
-  previewDeliveryUrgencyCancellation,cancelDeliveryUrgencyRetainingProduction }
+  previewDeliveryUrgencyCancellation,cancelDeliveryUrgencyRetainingProduction,restoreDeliveryUrgency }
   from '../module/livraisons/controllers/delivery-urgency.controller';
 import { validationErrorMiddleware } from '../module/auth/middlewares/validationError.middleware';
 import { requirePlanningCapability } from '../module/planning/middlewares/planning-authorization.middleware';
@@ -22,6 +22,7 @@ function app(role='Stock'){
   server.post('/requests/:requestId/cancel',cancelDeliveryUrgencyRequest);
   server.get('/requests/:requestId/cancellation-preview',previewDeliveryUrgencyCancellation);
   server.post('/planning/:requestId/cancel-retaining-production',requirePlanningCapability('manage_schedule'),cancelDeliveryUrgencyRetainingProduction);
+  server.post('/planning/:requestId/restitute',requirePlanningCapability('manage_schedule'),restoreDeliveryUrgency);
   server.get('/requests/:requestId/withdrawal-preview',previewUrgencyWithdrawal);
   server.post('/requests/:requestId/withdraw',withdrawDeliveryUrgency);
   server.use(validationErrorMiddleware);server.use(((error,_req,res,_next)=>res.status(error.status??500).json({code:error.code})) as ErrorRequestHandler);
@@ -96,6 +97,21 @@ describe('urgency HTTP input boundaries',()=>{
     const response=await request(app()).get(`/requests/${id}/cancellation-preview`).set('x-recipe-user','present');
     expect(response.status).toBe(200);expect(response.headers['cache-control']).toContain('no-store');
     expect(mocks.withdrawalPreview).not.toHaveBeenCalled();
+  });
+  it('requires planner permission and explicit retained fee for restitution',async()=>{
+    const payload={expected_version:3,reason:body.reason,preview_hash:body.preview_hash,fee_decision:'KEEP'};
+    expect((await request(app()).post(`/planning/${id}/restitute`).send(payload)).status).toBe(401);
+    expect((await request(app('Stock')).post(`/planning/${id}/restitute`).set('x-recipe-user','present').set('Idempotency-Key',key).send(payload)).status).toBe(403);
+    expect((await request(app('Planning')).post(`/planning/${id}/restitute`).set('x-recipe-user','present').set('Idempotency-Key',key).send({...payload,fee_decision:undefined})).status).toBe(400);
+    expect((await request(app('Planning')).post(`/planning/${id}/restitute`).set('x-recipe-user','present').send(payload)).status).toBe(400);
+    expect(mocks.restore).not.toHaveBeenCalled();
+  });
+  it.each([false,true])('returns the committed restitution, replay=%s',async replayed=>{
+    mocks.restore.mockResolvedValue({request:{id,status:'CANCELLED'},replayed});
+    const payload={expected_version:3,reason:body.reason,preview_hash:body.preview_hash,fee_decision:'KEEP'};
+    const response=await request(app('Planning')).post(`/planning/${id}/restitute`).set('x-recipe-user','present').set('Idempotency-Key',key).send(payload);
+    expect(response.status).toBe(replayed?200:201);expect(response.headers['cache-control']).toContain('no-store');
+    expect(mocks.restore).toHaveBeenCalledWith(expect.objectContaining({requestId:id,body:payload,idempotencyKey:key}));
   });
   it.each([
     {}, {expected_version:0,preview_hash:body.preview_hash}, {expected_version:2,preview_hash:'bad'},

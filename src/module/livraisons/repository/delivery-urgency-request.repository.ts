@@ -21,6 +21,8 @@ type RequestRow = {
   cancelled_at: string | null; cancellation_reason: string | null;
   cancellation_retains_production: boolean | null;
   approved_id: string | null; withdrawn_id: string | null;
+  restitution_id: string | null;
+  restitution: { donor_quantity: string; free_quantity: string; fee_decision: 'KEEP' } | null;
   urgency_fee: UrgencyOrderFee | null;
 };
 type RecoveryRow = {
@@ -33,6 +35,8 @@ type RecoveryRow = {
 export async function readUrgencyRequests(tx: Db, allocationId: number) {
   const requests = (await tx.query<RequestRow>(`SELECT id::text,beneficiary_allocation_id::int,status,version,
     quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,cancellation_retains_production,approved_id::text,withdrawn_id::text,
+    restitution_id::text,(SELECT response FROM public.delivery_urgency_restitutions restitution
+      WHERE restitution.id=delivery_urgency_requests.restitution_id) AS restitution,
     snapshot->'preview'->'urgency_fee' AS urgency_fee
     FROM public.delivery_urgency_requests WHERE beneficiary_allocation_id=$1 ORDER BY created_at DESC,id`, [allocationId])).rows;
   const recoveries = requests.length ? (await tx.query<RecoveryRow>(`SELECT recovery.id::text,recovery.request_id::text,
@@ -40,7 +44,8 @@ export async function readUrgencyRequests(tx: Db, allocationId: number) {
     recovery.protected_due_date::text,recovery.initial_ar_due_date::text,
     producer.numero AS of_numero,producer.statut::text AS of_status,producer.commande_id::int,producer.affaire_id::int AS livraison_affaire_id,
     COALESCE(restored.quantity,0)::text AS replenished_quantity,
-    GREATEST(0,recovery.quantity-COALESCE(restored.quantity,0))::text AS remaining_recovery_quantity
+    CASE WHEN EXISTS(SELECT 1 FROM public.delivery_urgency_restitutions restitution WHERE restitution.request_id=recovery.request_id)
+      THEN '0' ELSE GREATEST(0,recovery.quantity-COALESCE(restored.quantity,0))::text END AS remaining_recovery_quantity
     FROM public.delivery_urgency_recoveries recovery JOIN public.ordres_fabrication producer ON producer.id=recovery.recovery_of_id
     LEFT JOIN LATERAL (SELECT sum(quantity) AS quantity FROM public.delivery_urgency_replenishments
       WHERE recovery_id=recovery.id) restored ON true

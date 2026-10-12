@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "78ccd6cfa3be7815515224876938e8e97a76bd8faeb6c69b660c9acfa3195182";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "f5b67f89c6cddd80559d5e19f79e4e4fcf2bd967b68e245b198373be225e46c9";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -12942,7 +12942,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidation-candidates",
-    "source": "src/module/planning/routes/planning-central.routes.ts:25",
+    "source": "src/module/planning/routes/planning-central.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12962,7 +12962,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:26",
+    "source": "src/module/planning/routes/planning-central.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -12982,7 +12982,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:24",
+    "source": "src/module/planning/routes/planning-central.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13051,6 +13051,26 @@ export const GENERATED_ROUTE_INVENTORY = [
       "requireProductionOrAdmin",
       "requirePlanningCapability(manage_schedule)",
       "cancelDeliveryUrgencyRetainingProduction"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/urgency-requests/{requestId}/restitute",
+    "source": "src/module/planning/routes/planning-central.routes.ts:24",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "restoreDeliveryUrgency"
     ],
     "authenticated": true,
     "rbac": [
