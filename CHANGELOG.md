@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12 — Reprise après ajout de récupération (#1034, en préparation)
+
+- Prévoir explicitement le réglage et la reprise des phases clôturées hors découpe, en conservant leur historique.
+- Conserver le refus définitif après découpe et les engagements clients.
+- PR Urgences en cours, non déployée.
+
+
 ## 2026-10-12 — Compléments de récupération (#1034, en préparation)
 
 - Enregistrer les compléments fournisseur et créneaux du regroupement dans la même transaction ; corriger le comptage par prestation.

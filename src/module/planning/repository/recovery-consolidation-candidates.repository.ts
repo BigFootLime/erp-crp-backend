@@ -67,8 +67,7 @@ export async function readRecoveryGroupingCandidatesTx(
           AND existing.client_id IS DISTINCT FROM source.client_id)
     ORDER BY producer.id LIMIT $4`, [recoveryId, query.cursor ?? 0, pattern, query.limit + 1])).rows;
   const items = rows.slice(0, query.limit).map(row => ({ ...row, blocker: row.cutting_finished
-    ? 'Découpe terminée : gardez un OF séparé.' : row.operation_finished
-      ? 'Une opération est clôturée : gardez un OF séparé.' : row.cutting_missing
+    ? 'Découpe terminée : gardez un OF séparé.' : row.cutting_missing
         ? 'Découpe non identifiée sur ce regroupement engagé.' : null }));
   return { items, next_cursor: rows.length > query.limit ? items.at(-1)!.producer_of_id : null, available: true, reason: null };
 }

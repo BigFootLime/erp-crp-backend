@@ -14,6 +14,8 @@ CREATE TABLE recovery_addition_1034_fixture.of_revisions(id uuid PRIMARY KEY,sta
 CREATE TABLE recovery_addition_1034_fixture.of_operations(id uuid PRIMARY KEY,of_id bigint,phase integer,revision_id uuid,status text,started_at timestamptz,ended_at timestamptz);
 CREATE TABLE recovery_addition_1034_fixture.planning_events(id uuid PRIMARY KEY,of_id bigint,of_operation_id uuid,archived_at timestamptz,status text,start_ts timestamptz,end_ts timestamptz,machine_id uuid,poste_id uuid);
 CREATE TABLE recovery_addition_1034_fixture.planning_tasks(id text PRIMARY KEY,operation_id uuid,committed_start timestamptz,committed_end timestamptz);
+CREATE TABLE recovery_addition_1034_fixture.production_pointages(id uuid PRIMARY KEY,operation_id uuid,status text);
+CREATE TABLE recovery_addition_1034_fixture.of_time_logs(id uuid PRIMARY KEY,of_operation_id uuid,ended_at timestamptz);
 CREATE TABLE recovery_addition_1034_fixture.production_purchase_preparations(id uuid PRIMARY KEY,of_id bigint,kind text,status text,source_ref text,
  supplier_id uuid,technical_hash text,technical_version_id uuid,of_revision_id uuid,snapshot jsonb);
 CREATE FUNCTION recovery_addition_1034_fixture.prevent_material_debit_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Immutable evidence' USING ERRCODE='55000'; END $$;

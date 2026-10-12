@@ -64,6 +64,25 @@ describe('recovery grouping before cutting closes',()=>{
   it.each(['DONE','end'] as const)('refuses completed cutting (%s)',mode=>{
     expect(codes(f=>{if(mode==='DONE')f.snapshot.tasks[0].commitment='DONE';else f.snapshot.tasks[0].actual={end:at(7)};})).toContain('GROUPING_CUTTING_FINISHED');
   });
+  it('replans a completed non-cutting phase for the added pieces and a fresh setup, preserving its history',()=>{
+    const f=fixture(),mill=f.snapshot.tasks[1];
+    Object.assign(mill,{good:100,released:100,commitment:'DONE',actual:{start:at(6),end:at(7)},committed:{start:at(6),end:at(7)}});
+    mill.estimate={...mill.estimate!,remainingMinutes:0};
+    f.snapshot.dependencies[0]={...f.snapshot.dependencies[0],releasedQuantity:100,transferQuantity:10};
+    const before=structuredClone(f),result=previewRecoveryConsolidation(f);
+    expect(result).toMatchObject({feasible:true,additional_minutes:40,proposed_finish:'2026-10-12T10:40:00.000Z'});
+    expect(result.operations[1]).toMatchObject({before_minutes:0,after_minutes:30,good:100,resumes_completed_operation:true,setup_minutes:20});
+    expect(result.changes.find(c=>c.taskId===mill.id)?.after.start).toBe('2026-10-12T10:10:00.000Z');
+    expect(f).toEqual(before);
+  });
+  it('rejects incomplete prior quantities and ambiguous closed phases before resumption',()=>{
+    expect(codes(f=>{Object.assign(f.snapshot.tasks[1],{commitment:'DONE',good:99,actual:{end:at(7)}});})).toContain('GROUPING_COMPLETED_QUANTITY');
+    expect(codes(f=>{Object.assign(f.snapshot.tasks[1],{commitment:'DONE',good:100});})).toContain('GROUPING_COMPLETION_INCONSISTENT');
+  });
+  it('protects delivery commitments when a repeated setup exceeds the available time',()=>{
+    expect(codes(f=>{const mill=f.snapshot.tasks[1];Object.assign(mill,{commitment:'DONE',good:100,actual:{end:at(7)}});
+      mill.estimate={...mill.estimate!,setupMinutes:600,remainingMinutes:0};})).toContain('GROUPING_DELIVERY_TOO_LATE');
+  });
   it('protects other source deadlines, including equality',()=>{
     expect(codes(f=>{f.evidence.deadlines[1].before='2026-10-12T12:20:00.000Z';})).toContain('GROUPING_DELIVERY_TOO_LATE');
   });
@@ -152,5 +171,18 @@ describe('external recovery supplements',()=>{
     expect(previewRecoveryConsolidation(f).issues.map(i=>i.code)).toContain('GROUPING_DELIVERY_TOO_LATE');
     f.externalPreparations.get('mill')!.preparations[0].catalogueId=null;
     expect(previewRecoveryConsolidation(f).issues.map(i=>i.code)).toContain('GROUPING_EXTERNAL_CAPACITY');
+  });
+  it('starts a completed external service again for the supplement without treating its old shipment as current work',()=>{
+    const f=externalFixture(),task=f.snapshot.tasks[1];
+    task.commitment='DONE';task.actual={start:at(6),end:at(7)};task.committed={start:at(6),end:at(7)};
+    task.external!.fullReadyAt=at(7);
+    task.external!.packages=[{packageId:'old',operationId:'mill',ofId:1,supplierId:'s',supplierName:'Traitement',orderId:'order',orderCode:'CF-1',orderLineId:'line',
+      unit:'U',planned:100,issued:100,returned:100,custody:0,released:100,transferred:0,promisedDate:null,promiseSource:'ESTIMATE',
+      departedAt:at(6),lastReturnAt:at(7),status:'CLOSED',version:'1',returns:[]}];
+    f.externalPreparations.get('mill')!.preparations[0].orderLineIds=['line'];
+    const before=structuredClone(f),result=previewRecoveryConsolidation(f);
+    expect(result.feasible).toBe(true);expect(result.operations[1].resumes_completed_operation).toBe(true);
+    expect(result.changes.find(c=>c.taskId===task.id)?.after).toEqual({start:'2026-10-12T10:10:00.000Z',end:at(15)});
+    expect(f).toEqual(before);
   });
 });

@@ -132,7 +132,7 @@ export async function hydrateExternalPlanning(
     task.good = packages.reduce((n, p) => n + p.released, 0);
     task.released = ready;
     const departed = packages
-      .flatMap((p) => (p.departedAt ? [p.departedAt] : []))
+      .flatMap((p) => (p.departedAt && (!task.cycleStartedAt || Date.parse(p.departedAt)>=Date.parse(task.cycleStartedAt)) ? [p.departedAt] : []))
       .sort()[0];
     if (departed) {
       task.actual = { ...task.actual, start: departed };

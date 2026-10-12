@@ -138,7 +138,7 @@ export function schedule(input: {
           earliest=Math.max(earliest,ms(date.end)+d.lagMinutes*60000);
         }
         if(unavailable)continue;
-        const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt?[p.departedAt]:[]).sort()[0];
+        const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt&&(!t.cycleStartedAt||ms(p.departedAt)>=ms(t.cycleStartedAt))?[p.departedAt]:[]).sort()[0];
         const projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
         if(!projection.fullReadyAt){for(const issue of projection.issues)conflict(t.id,'EXTERNAL_RETURN_UNAVAILABLE',issue);continue;}
         if(requested?.resourceIds && requested.resourceIds.join('|')!==t.resourceIds.join('|')){conflict(t.id,'EXTERNAL_SUPPLIER_FIXED','Le fournisseur est celui de la commande liée.');continue;}

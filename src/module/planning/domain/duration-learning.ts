@@ -20,6 +20,7 @@ export type LearningSource = {
   operationId: string; status: string; cancelled: boolean; completedAt: string | null;
   context: DurationContext | null; segments: LearningSegment[]; quantities: LearningQuantity[];
   legacyUnmapped: boolean;
+  cycleStartedAt?: string | null;
 };
 export type LearningObservation = {
   operationId: string; contextKey: string; context: DurationContext | null;
@@ -44,6 +45,18 @@ export function unionMinutes(segments: Pick<LearningSegment, "start" | "end">[])
 }
 
 export function buildDurationObservation(source: LearningSource): LearningObservation {
+  if (source.cycleStartedAt) {
+    // Preserve the complete audit sample, but do not teach two production
+    // cycles as a single setup. Only the current cycle consumes its new setup.
+    const {cycleStartedAt,...history}=source, boundary=Date.parse(cycleStartedAt);
+    const complete=buildDurationObservation(history);
+    const cycle=buildDurationObservation({...history,
+      segments:history.segments.filter(s=>Date.parse(s.start)>=boundary),
+      quantities:history.quantities.filter(q=>Date.parse(q.declaredAt)>=boundary)});
+    return {...complete,validated:false,excludedReason:'MULTIPLE_PRODUCTION_CYCLES',
+      sourceRevision:createHash('sha256').update(complete.sourceRevision+'|'+cycleStartedAt).digest('hex'),
+      current:cycle.current,setupCompletedMinutes:cycle.setupCompletedMinutes};
+  }
   const active = source.segments.filter(s => !s.replaced && s.status !== "CANCELLED" && s.status !== "CORRECTED");
   const relevant = active.filter(s => s.bucket !== "EXCLUDED");
   const production = relevant.filter(s => s.bucket === "PRODUCTION");

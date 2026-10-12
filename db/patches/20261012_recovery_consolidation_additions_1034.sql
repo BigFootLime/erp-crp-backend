@@ -33,7 +33,7 @@ CREATE TRIGGER production_recovery_consolidation_additions_immutable BEFORE UPDA
   ON public.production_recovery_consolidation_additions FOR EACH ROW EXECUTE FUNCTION public.prevent_material_debit_rewrite();
 
 CREATE FUNCTION public.fn_recovery_consolidation_addition_1034() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE recovery record; producer record; source record; grouping record;
+DECLARE recovery record; producer record; source record; grouping record; resumed jsonb; prior jsonb; saved_events jsonb; saved_task jsonb; closed_count integer;
 BEGIN
   SELECT g.* INTO grouping FROM public.production_consolidations g WHERE g.id=NEW.consolidation_id FOR UPDATE;
   SELECT r.*,request.status AS request_status INTO recovery FROM public.delivery_urgency_recoveries r
@@ -61,11 +61,35 @@ BEGIN
   END IF;
   IF EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id IN(NEW.producer_of_id,NEW.recovery_of_id)
     AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions v WHERE v.id=op.revision_id AND v.statut='ACTIVE'))
-    AND (op.status::text='DONE' OR op.ended_at IS NOT NULL
-      OR (op.of_id=NEW.recovery_of_id AND (op.status::text NOT IN('TODO','READY') OR op.started_at IS NOT NULL))))
+    AND ((op.of_id=NEW.recovery_of_id AND (op.status::text NOT IN('TODO','READY') OR op.started_at IS NOT NULL OR op.ended_at IS NOT NULL))
+      OR (op.of_id=NEW.producer_of_id AND (op.status::text='DONE' OR op.ended_at IS NOT NULL)
+        AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(producer.technical_snapshot->'operations','[]'::jsonb)) frozen
+          WHERE frozen->>'phase'=op.phase::text AND frozen->>'type_operation'='DECOUPE'))))
     OR EXISTS(SELECT 1 FROM public.planning_events WHERE of_id=NEW.recovery_of_id AND archived_at IS NULL AND status<>'CANCELLED') THEN
-    RAISE EXCEPTION 'Recovery is engaged or a producer operation has already finished' USING ERRCODE='23514';
+    RAISE EXCEPTION 'Recovery is engaged or producer cutting has already finished' USING ERRCODE='23514';
   END IF;
+  SELECT count(*) INTO closed_count FROM public.of_operations op WHERE op.of_id=NEW.producer_of_id
+    AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions v WHERE v.id=op.revision_id AND v.statut='ACTIVE'))
+    AND (op.status::text='DONE' OR op.ended_at IS NOT NULL);
+  IF jsonb_typeof(COALESCE(NEW.evidence->'resumptions','[]'))<>'array'
+    OR closed_count<>jsonb_array_length(COALESCE(NEW.evidence->'resumptions','[]'))
+    OR closed_count<>(SELECT count(DISTINCT r->>'operation_id') FROM jsonb_array_elements(COALESCE(NEW.evidence->'resumptions','[]')) r) THEN
+    RAISE EXCEPTION 'Every completed operation requires exactly one preserved cycle before resumption' USING ERRCODE='23514';
+  END IF;
+  FOR resumed IN SELECT * FROM jsonb_array_elements(COALESCE(NEW.evidence->'resumptions','[]')) LOOP
+    SELECT to_jsonb(op) INTO prior FROM public.of_operations op WHERE op.id=(resumed->>'operation_id')::uuid
+      AND op.of_id=NEW.producer_of_id AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions v WHERE v.id=op.revision_id AND v.statut='ACTIVE')) FOR UPDATE;
+    SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY e.id),'[]') INTO saved_events FROM public.planning_events e
+      WHERE e.of_operation_id=(resumed->>'operation_id')::uuid AND e.archived_at IS NULL AND e.status<>'CANCELLED';
+    SELECT to_jsonb(t) INTO saved_task FROM public.planning_tasks t WHERE t.id=resumed->>'task_id' AND t.operation_id=(resumed->>'operation_id')::uuid;
+    IF prior IS NULL OR prior IS DISTINCT FROM resumed->'before' OR prior->>'status' IS DISTINCT FROM 'DONE'
+      OR prior->>'ended_at' IS NULL OR (prior->>'ended_at')::timestamptz>clock_timestamp()
+      OR saved_events IS DISTINCT FROM resumed->'planning_events' OR COALESCE(saved_task,'null'::jsonb) IS DISTINCT FROM resumed->'planning_task'
+      OR EXISTS(SELECT 1 FROM public.production_pointages p WHERE p.operation_id=(resumed->>'operation_id')::uuid AND p.status='RUNNING')
+      OR EXISTS(SELECT 1 FROM public.of_time_logs l WHERE l.of_operation_id=(resumed->>'operation_id')::uuid AND l.ended_at IS NULL) THEN
+      RAISE EXCEPTION 'Completed operation history changed or an operator is still clocked in' USING ERRCODE='23514';
+    END IF;
+  END LOOP;
   IF EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id=NEW.producer_of_id
       AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions v WHERE v.id=op.revision_id AND v.statut='ACTIVE'))
       AND (op.status::text='RUNNING' OR op.started_at IS NOT NULL))
@@ -95,6 +119,7 @@ END $$;
 
 CREATE FUNCTION public.fn_recovery_consolidation_addition_complete_1034() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE producer record; source record; allocation record; validation record; operation jsonb; preparation jsonb; slot record; actual_count integer;
+  resumed jsonb; current_operation jsonb; old_event jsonb; current_event jsonb;
 BEGIN
   SELECT * INTO producer FROM public.ordres_fabrication WHERE id=NEW.producer_of_id;
   SELECT * INTO source FROM public.ordres_fabrication WHERE id=NEW.recovery_of_id;
@@ -119,6 +144,24 @@ BEGIN
   IF NEW.proposed_finish IS DISTINCT FROM (SELECT max((value->>'end')::timestamptz) FROM jsonb_array_elements(NEW.evidence->'operations')) THEN
     RAISE EXCEPTION 'Recovery finish must match its last reviewed operation' USING ERRCODE='23514';
   END IF;
+  FOR resumed IN SELECT * FROM jsonb_array_elements(COALESCE(NEW.evidence->'resumptions','[]')) LOOP
+    SELECT to_jsonb(op) INTO current_operation FROM public.of_operations op WHERE op.id=(resumed->>'operation_id')::uuid;
+    IF current_operation->>'status' IS DISTINCT FROM 'READY' OR current_operation->>'started_at' IS NOT NULL OR current_operation->>'ended_at' IS NOT NULL
+      OR (current_operation-ARRAY['status','started_at','ended_at','updated_at','machine_id','poste_id'])
+        IS DISTINCT FROM ((resumed->'before')-ARRAY['status','started_at','ended_at','updated_at','machine_id','poste_id'])
+      OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(NEW.evidence->'operations') proposed
+        WHERE proposed->>'operation_id'=resumed->>'operation_id' AND (proposed->>'start')::timestamptz>=NEW.created_at) THEN
+      RAISE EXCEPTION 'Resumption must preserve the operation and counters with a new future commitment' USING ERRCODE='23514';
+    END IF;
+    FOR old_event IN SELECT * FROM jsonb_array_elements(resumed->'planning_events') LOOP
+      SELECT to_jsonb(e) INTO current_event FROM public.planning_events e WHERE e.id=(old_event->>'id')::uuid;
+      IF current_event IS NULL OR current_event->>'archived_at' IS NULL
+        OR current_event-ARRAY['archived_at','archived_by','updated_at','updated_by']
+          IS DISTINCT FROM old_event-ARRAY['archived_at','archived_by','updated_at','updated_by'] THEN
+        RAISE EXCEPTION 'The completed planning slot must be archived without rewriting its history' USING ERRCODE='23514';
+      END IF;
+    END LOOP;
+  END LOOP;
   FOR operation IN SELECT * FROM jsonb_array_elements(NEW.evidence->'operations') LOOP
     IF (operation->>'end')::timestamptz>=NEW.finish_before OR (operation->>'end')::timestamptz<=(operation->>'start')::timestamptz THEN
       RAISE EXCEPTION 'Every reviewed operation must finish before the protected deadline' USING ERRCODE='23514';

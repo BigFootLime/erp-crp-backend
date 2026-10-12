@@ -25,10 +25,11 @@ const validInterval = (task: CentralTask) => !!task.committed && Number.isFinite
 
 /** Additional pieces consume additional productive time, never a second setup
  * or a reset of the existing progress/learning evidence. */
-function extendEstimate(estimate: Estimate | null, additional: number): Estimate | null {
+function extendEstimate(estimate: Estimate | null, additional: number, resume = false): Estimate | null {
   if (!estimate || !Number.isFinite(estimate.unitMinutes) || estimate.unitMinutes <= 0
     || !Number.isFinite(estimate.remainingMinutes) || estimate.remainingMinutes < 0) return null;
-  const remainingMinutes = estimate.remainingMinutes + additional * estimate.unitMinutes;
+  if (resume && (!Number.isFinite(estimate.setupMinutes) || estimate.setupMinutes < 0)) return null;
+  const remainingMinutes = (resume ? estimate.setupMinutes : estimate.remainingMinutes) + additional * estimate.unitMinutes;
   return Number.isFinite(remainingMinutes) ? { ...estimate, remainingMinutes } : null;
 }
 
@@ -69,7 +70,15 @@ export function previewRecoveryConsolidation(input: {
   if (!cuts.length && selected.some(t=>t.actual||t.commitment==='STARTED'||t.commitment==='DONE'))
     issue('GROUPING_NO_CUTTING_GATE','Ce regroupement engagé n’a pas de découpe identifiable. Gardez un OF séparé.');
   if (cuts.some(t=>t.commitment==='DONE'||t.actual?.end)) issue('GROUPING_CUTTING_FINISHED','La découpe est terminée : préparez un OF séparé.');
-  if (selected.some(t=>t.commitment==='DONE'||t.actual?.end)) issue('GROUPING_OPERATION_FINISHED','Une opération est déjà clôturée. Son historique doit être conservé dans cet OF.');
+  const resumed = new Set(selected.filter(t=>t.operationType!=='DECOUPE'&&(t.commitment==='DONE'||t.actual?.end)).map(t=>t.id));
+  for (const task of selected.filter(t=>resumed.has(t.id))) {
+    if (task.commitment!=='DONE'||!Number.isFinite(instant(task.actual?.end))||instant(task.actual?.end)>instant(now))
+      issue('GROUPING_COMPLETION_INCONSISTENT','Vérifiez la clôture de cette opération avant sa reprise.',task.id);
+    if (!task.external && task.good!==producer.quantity)
+      issue('GROUPING_COMPLETED_QUANTITY','Rapprochez les quantités de l’opération clôturée avant d’ajouter des pièces.',task.id);
+    if (task.external && (!Number.isFinite(instant(task.external.fullReadyAt))||instant(task.external.fullReadyAt)>instant(now)||task.external.issues.length))
+      issue('GROUPING_COMPLETED_EXTERNAL','Terminez le rapprochement de la prestation avant de préparer sa reprise.',task.id);
+  }
   if (selected.some(t=>t.scrap>0||t.rework>0))
     issue('GROUPING_YIELD_UNSECURED','Traitez les rebuts ou reprises du regroupement avant d’y engager cette récupération.');
   if (!evidence.deadlines.length || evidence.deadlines.some(d=>!Number.isFinite(instant(d.before))))
@@ -87,7 +96,7 @@ export function previewRecoveryConsolidation(input: {
     })),
   };
   const blocked = () => ({ ...base, feasible: false, issues, changes: [] as ScheduleChange[], proposed_finish: null as string|null,
-    additional_minutes: 0, operations: [] as Array<{task_id:string;phase:number|null;before_minutes:number;after_minutes:number;good:number;scrap:number}> });
+    additional_minutes: 0, operations: [] as Array<{task_id:string;phase:number|null;before_minutes:number;after_minutes:number;good:number;scrap:number;resumes_completed_operation:boolean;setup_minutes:number}> });
   const byPhase = new Map(selected.map(t=>[t.phase,t]));
   if (source.length!==selected.length || new Set(source.map(t=>t.phase)).size!==source.length || byPhase.size!==selected.length
     || selected.some(t=>t.phase==null) || source.some(t=>!byPhase.has(t.phase)||byPhase.get(t.phase)?.operationType!==t.operationType))
@@ -96,8 +105,9 @@ export function previewRecoveryConsolidation(input: {
   const sourceMapping = new Map(source.map(t=>[t.id,byPhase.get(t.phase)!.id]));
   const targets = new Set(selected.map(t=>t.id));
   const assignedEstimate = (t: CentralTask) => t.resourceIds.length===1 ? t.resourceEstimates?.[t.resourceIds[0]]??t.estimate : t.estimate;
-  const operations = selected.map(t=>({task_id:t.id,phase:t.phase??null,before_minutes:t.external?0:assignedEstimate(t)?.remainingMinutes??0,
-    after_minutes:t.external?0:extendEstimate(assignedEstimate(t),recovery.quantity)?.remainingMinutes??0,good:t.good,scrap:t.scrap}));
+  const operations = selected.map(t=>({task_id:t.id,phase:t.phase??null,before_minutes:t.external||resumed.has(t.id)?0:assignedEstimate(t)?.remainingMinutes??0,
+    after_minutes:t.external?0:extendEstimate(assignedEstimate(t),recovery.quantity,resumed.has(t.id))?.remainingMinutes??0,good:t.good,scrap:t.scrap,
+    resumes_completed_operation:resumed.has(t.id),setup_minutes:resumed.has(t.id)&&!t.external?assignedEstimate(t)?.setupMinutes??0:0}));
   const tasks = snapshot.tasks.filter(t=>!sourceMapping.has(t.id)).map(task => {
     if (!targets.has(task.id)) return { ...task, locked:true };
     if (task.readiness!=='READY' || task.locked) issue('GROUPING_OPERATION_LOCKED','Une opération du regroupement est verrouillée ou incomplète.',task.id);
@@ -110,18 +120,18 @@ export function previewRecoveryConsolidation(input: {
         ...(prepared?.preparations??[]).map(p=>'supplier:'+p.supplierId)])];
       return {...task,quantity:base.proposed_quantity,resourceIds,eligibleResourceIds:resourceIds,
         external:{...task.external,preparations:prepared?.preparations,preparationIssues:prepared?.issues},
-        commitment:'COMMITTED' as const,actual:null,locked:false};
+        commitment:'COMMITTED' as const,actual:null,locked:false,cycleStartedAt:resumed.has(task.id)?now:task.cycleStartedAt};
     }
-    const estimate = extendEstimate(task.estimate,recovery.quantity);
-    if (!estimate || !extendEstimate(assignedEstimate(task),recovery.quantity))
+    const estimate = extendEstimate(task.estimate,recovery.quantity,resumed.has(task.id));
+    if (!estimate || !extendEstimate(assignedEstimate(task),recovery.quantity,resumed.has(task.id)))
       issue('GROUPING_DURATION_MISSING','Définissez le temps par pièce pour calculer la charge supplémentaire.',task.id);
     if (task.resourceIds.some(id=>snapshot.resources.find(r=>r.id===id)?.capacityEnabled===false))
       issue('GROUPING_RESOURCE_UNAVAILABLE','La ressource affectée est indisponible.',task.id);
-    const started = task.commitment==='STARTED'||!!task.actual?.start;
+    const started = !resumed.has(task.id)&&(task.commitment==='STARTED'||!!task.actual?.start);
     if (started && (!task.actual?.start||!validInterval(task)||instant(task.committed!.end)<=instant(now)))
       issue('GROUPING_RUNNING_SLOT_INVALID','Actualisez le créneau de l’opération en cours avant cet ajout.',task.id);
     return { ...task, quantity:quantity(task.quantity+recovery.quantity), estimate,
-      resourceEstimates:task.resourceEstimates?Object.fromEntries(Object.entries(task.resourceEstimates).map(([id,e])=>[id,extendEstimate(e,recovery.quantity)??e])):undefined,
+      resourceEstimates:task.resourceEstimates?Object.fromEntries(Object.entries(task.resourceEstimates).map(([id,e])=>[id,extendEstimate(e,recovery.quantity,resumed.has(task.id))??e])):undefined,
       commitment:'COMMITTED' as const, actual:null, locked:false,
     };
   });
@@ -129,7 +139,8 @@ export function previewRecoveryConsolidation(input: {
   const mappedDependencies = snapshot.dependencies.map(d=>({ ...d,
     predecessorId:sourceMapping.get(d.predecessorId)??d.predecessorId,
     successorId:sourceMapping.get(d.successorId)??d.successorId,
-  })).filter(d=>d.predecessorId!==d.successorId);
+  })).filter(d=>d.predecessorId!==d.successorId).map(d=>targets.has(d.predecessorId)&&resumed.has(d.successorId)
+    ? {...d,transferQuantity:null,releasedQuantity:0} : d);
   // Remove exact duplicates only. Different transfer/lag constraints remain
   // independent and must all hold, especially for an already running batch.
   const uniqueDependencies = [...new Map(mappedDependencies.map(d=>[JSON.stringify(d),d])).values()];
@@ -155,7 +166,7 @@ export function previewRecoveryConsolidation(input: {
   for (const task of selected) {
     const proposed=result.forecasts[task.id];
     if (!proposed) issue('GROUPING_OPERATION_UNSCHEDULED','Une opération ne dispose pas de créneau réalisable.',task.id);
-    if (!task.external&&(task.commitment==='STARTED'||task.actual?.start)&&proposed&&instant(proposed.start)!==instant(now))
+    if (!resumed.has(task.id)&&!task.external&&(task.commitment==='STARTED'||task.actual?.start)&&proposed&&instant(proposed.start)!==instant(now))
       issue('GROUPING_RUNNING_INTERRUPTION','La charge supplémentaire obligerait à interrompre l’opération en cours.',task.id);
   }
   if (result.changes.some(c=>!targets.has(c.taskId))) issue('GROUPING_OTHER_COMMITMENT','La proposition modifierait un autre OF. Gardez un OF séparé.');
@@ -171,7 +182,7 @@ export function previewRecoveryConsolidation(input: {
   }));
   const changes = [...result.changes,...externalChanges].filter(c=>targets.has(c.taskId)).map(change=>{
     const original=selected.find(t=>t.id===change.taskId)!;
-    const after = (original.commitment==='STARTED'||original.actual?.start)&&original.committed
+    const after = !resumed.has(original.id)&&(original.commitment==='STARTED'||original.actual?.start)&&original.committed
       ? {...change.after,start:original.committed.start} : change.after;
     return {...change,before:original.committed,after};
   }).filter(c=>!c.before||c.before.start!==c.after.start||c.before.end!==c.after.end

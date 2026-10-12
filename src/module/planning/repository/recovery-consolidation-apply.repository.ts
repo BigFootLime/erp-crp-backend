@@ -14,6 +14,7 @@ import {preparationAudit} from '../../production/repository/production-preparati
 import type {AuditContext} from '../../production/repository/production.repository';
 import type {RecoveryConsolidationApplyInput} from '../validators/recovery-consolidation.validators';
 import {extendRecoverySupplierPreparationsTx} from '../../subcontract/recovery-supplier-preparations.repository';
+import {readRecoveryOperationResumptionsTx,resumeRecoveryOperationsTx} from './recovery-operation-resumption.repository';
 
 export async function applyRecoveryGrouping(recoveryId:string,consolidationId:string,input:RecoveryConsolidationApplyInput,audit:AuditContext) {
   try {return await withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
@@ -55,6 +56,7 @@ export async function applyRecoveryGrouping(recoveryId:string,consolidationId:st
         ...(task.external?{external:true,resource_ids:change?.resourceIds??task.resourceIds,
           preparations:control.externalPreparations.get(task.operationId)?.preparations??[]}:{}),};
     });
+    const resumptions=await readRecoveryOperationResumptionsTx(tx,context.producer.id,snapshot);
     const response={id:additionId,recovery_id:recoveryId,request_id:context.context.request_id,consolidation_id:consolidationId,
       producer_of_id:context.producer.id,recovery_of_id:context.recovery.id,quantity:preview.proposed_quantity,
       added_quantity:preview.additional_quantity,planned_finish:preview.proposed_finish,
@@ -68,7 +70,7 @@ export async function applyRecoveryGrouping(recoveryId:string,consolidationId:st
       VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10::uuid,$11,$12,$13,$14::uuid,$15,$16,$17::bigint,$18::jsonb,$19::jsonb,$20)`,
     [additionId,recoveryId,consolidationId,context.producer.id,context.recovery.id,preview.previous_quantity,preview.additional_quantity,preview.proposed_quantity,
       allocationId,validationId,preview.finish_before,preview.proposed_finish,context.producer.technicalHash,input.idempotency_key,requestHash,input.preview_hash,
-      settings.revision,JSON.stringify({operations,preview,source:context.recovery,donor:context.context.donor_snapshot}),JSON.stringify(response),audit.user_id]);
+      settings.revision,JSON.stringify({operations,resumptions,preview,source:context.recovery,donor:context.context.donor_snapshot}),JSON.stringify(response),audit.user_id]);
     const transfers=await appendRecoveryConsolidationHoldsTx(tx,{consolidationId,recoveryId,producerId:context.producer.id,
       recoveryOfId:context.recovery.id,materialVersion:material.version},audit);
     // The material helper also locks physical holds used for assembly; recheck
@@ -91,10 +93,11 @@ export async function applyRecoveryGrouping(recoveryId:string,consolidationId:st
     await tx.query(`UPDATE public.ordres_fabrication SET quantite_lancee=$2,updated_at=clock_timestamp(),updated_by=$3 WHERE id=$1`,
       [context.producer.id,preview.proposed_quantity,audit.user_id]);
     const supplierPreparations=await extendRecoverySupplierPreparationsTx(tx,context.producer.id,control.externalPreparations,audit);
-    await applyRecoveryCommitmentsTx(tx,context.producer.id,snapshot,preview.changes,audit);
+    const resumedSnapshot=await resumeRecoveryOperationsTx(tx,snapshot,resumptions,audit);
+    await applyRecoveryCommitmentsTx(tx,context.producer.id,resumedSnapshot,preview.changes,audit);
     await validateRecoveryProducerDossierTx(tx,context.producer.id,additionId,validationId,audit);
     for(const ofId of ofIds)await preparationAudit(tx,audit,ofId,'production.consolidation.recovery-addition',{
-      ...response,material_transfers:transfers,supplier_preparations:supplierPreparations,dossier_validation_id:validationId,operations});
+      ...response,material_transfers:transfers,supplier_preparations:supplierPreparations,dossier_validation_id:validationId,operations,resumed_operations:resumptions.map(p=>p.operation_id)});
     await repoInsertAuditLog({...audit,tx,body:{event_type:'ACTION',action:'RECOVERY_CONSOLIDATION_ADDED',entity_type:'production_consolidation',
       entity_id:consolidationId,page_key:audit.page_key,path:audit.path,client_session_id:audit.client_session_id,details:response}});
     await enqueueEntityChanged(tx,{entityType:'COMMANDE_CLIENT',entityId:String(context.recovery.commande_id),module:'commandes-clients',
