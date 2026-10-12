@@ -35,7 +35,7 @@ BEGIN
     WHERE consolidation_id=NEW.consolidation_id AND reservation_id=NEW.reservation_id;
   SELECT * INTO hold FROM public.production_consolidation_material_holds
     WHERE consolidation_id=NEW.consolidation_id AND producer_reservation_id=NEW.producer_reservation_id;
-  IF grouping.state IS DISTINCT FROM 'ACTIVE' OR recovery.request_status IS NULL OR recovery.request_status NOT IN ('WAITING_PLANNER','APPROVED')
+  IF grouping.state IS DISTINCT FROM 'ACTIVE' OR recovery.request_status IS NULL OR recovery.request_status NOT IN ('WAITING_PLANNER','APPROVED','WITHDRAWN')
     OR source.of_id IS DISTINCT FROM recovery.recovery_of_id OR target.of_id IS DISTINCT FROM grouping.producer_of_id
     OR source.of_id IS NOT DISTINCT FROM target.of_id
     OR source.source_type IS DISTINCT FROM 'OF' OR source.source_id IS DISTINCT FROM source.of_id::text

@@ -20,7 +20,7 @@ export type RecoveryHoldInput = {
  * Deferred SQL constraints refuse a transfer without its recovery allocation. */
 export async function appendRecoveryConsolidationHoldsTx(tx:PoolClient,input:RecoveryHoldInput,audit:AuditContext) {
   const context=(await tx.query<{valid:boolean}>(`SELECT (g.state='ACTIVE' AND g.producer_of_id=$3::bigint
-    AND r.recovery_of_id=$4::bigint AND request.status IN ('WAITING_PLANNER','APPROVED')) AS valid
+    AND r.recovery_of_id=$4::bigint AND request.status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN')) AS valid
     FROM public.production_consolidations g CROSS JOIN public.delivery_urgency_recoveries r
     JOIN public.delivery_urgency_requests request ON request.id=r.request_id
     WHERE g.id=$1::uuid AND r.id=$2::uuid FOR UPDATE OF g,request`,
