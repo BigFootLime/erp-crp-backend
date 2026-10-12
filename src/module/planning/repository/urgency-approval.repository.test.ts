@@ -10,7 +10,7 @@ vi.mock('../../livraisons/repository/delivery-urgency.repository', () => ({ read
 vi.mock('../../production/repository/production-preparation.repository', () => ({ preparationAudit: mocks.ofAudit }));
 vi.mock('../../audit-logs/repository/audit-logs.repository', () => ({ repoInsertAuditLog: mocks.audit }));
 vi.mock('../../../shared/realtime/realtime-outbox.service', () => ({ enqueueEntityChanged: mocks.enqueue }));
-import { previewUrgencyApproval, approveUrgencyRecovery } from './urgency-approval.repository';
+import { previewUrgencyApproval, approveUrgencyRecovery, readUrgencyApprovalTx } from './urgency-approval.repository';
 import type { AuditContext } from '../../production/repository/production.repository';
 
 const id = '27c49f48-1c5f-4c33-a748-49c1b3e3fa2c';
@@ -39,7 +39,7 @@ beforeEach(() => {
   vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(at(6)));
   version = 1; status = 'WAITING_PLANNER'; approval = undefined; mocks.query.mockImplementation(defaultQuery);
   mocks.dependencies.mockResolvedValue([]); mocks.coverage.mockResolvedValue({ sources: [], demands: [], allocations: [], coverageAvailable: true });
-  mocks.dossier.mockResolvedValue({ version: 'dossier1', status: 'COMPLETE', operations: [{ id: 'cut' }] });
+  mocks.dossier.mockResolvedValue({ version: 'dossier1', sourceHash: 'definition1', status: 'COMPLETE', operations: [{ id: 'cut' }] });
   mocks.donors.mockImplementation(async () => ({ context: { commande_id: 10, client_id: '195', article_id: 'article1' },
     donors: [{ allocation_id: 2, technical_version_id: 'version1', protected_due_date: '2026-10-14' }],
     response: { free_quantity: '0', preview_hash: 'donor1', donors: [{ reservation_id: 'reservation1', proposed_quantity: '10' }] } }));
@@ -103,5 +103,19 @@ describe('planner recovery approval persistence', () => {
   });
   it('does not reopen a cancelled request', async () => {
     status = 'CANCELLED'; await expect(previewUrgencyApproval(id)).rejects.toMatchObject({ code: 'URGENCY_REQUEST_CLOSED' });
+  });
+  it('does not expire an approval merely because production counters or unrelated planning revisions evolve', async () => {
+    const first = await readUrgencyApprovalTx({ query: mocks.query }, id);
+    const snapshot = await mocks.snapshot();
+    snapshot.revision = '8'; snapshot.tasks[0].version = '2'; snapshot.tasks[0].actual = { start: at(8), end: null };
+    mocks.snapshot.mockResolvedValue(snapshot);
+    const next = await readUrgencyApprovalTx({ query: mocks.query }, id);
+    expect(next.basis).toBe(first.basis); expect(next.response.preview_hash).not.toBe(first.response.preview_hash);
+  });
+  it.each(['definition', 'slot'])('invalidates the approval basis when the approved %s changes', async changed => {
+    const first = await readUrgencyApprovalTx({ query: mocks.query }, id);
+    if (changed === 'definition') mocks.dossier.mockResolvedValue({ version: 'dossier2', sourceHash: 'definition2', status: 'COMPLETE', operations: [{ id: 'cut' }] });
+    else { const snapshot = await mocks.snapshot(); snapshot.tasks[0].committed = { start: at(9), end: at(10) }; mocks.snapshot.mockResolvedValue(snapshot); }
+    expect((await readUrgencyApprovalTx({ query: mocks.query }, id)).basis).not.toBe(first.basis);
   });
 });

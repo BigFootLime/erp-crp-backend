@@ -15,9 +15,10 @@ import { readDeliveryUrgencyPlan } from './delivery-urgency.repository';
 
 type Db = Pick<PoolClient, 'query'>;
 type RequestRow = {
-  id: string; beneficiary_allocation_id: number; status: 'WAITING_PLANNER' | 'APPROVED' | 'CANCELLED';
+  id: string; beneficiary_allocation_id: number; status: 'WAITING_PLANNER' | 'APPROVED' | 'WITHDRAWN' | 'CANCELLED';
   version: number; quantity: string; reason: string; created_at: string;
   cancelled_at: string | null; cancellation_reason: string | null;
+  approved_id: string | null; withdrawn_id: string | null;
 };
 type RecoveryRow = {
   id: string; request_id: string; donor_allocation_id: number; recovery_of_id: number;
@@ -27,7 +28,7 @@ type RecoveryRow = {
 
 export async function readUrgencyRequests(tx: Db, allocationId: number) {
   const requests = (await tx.query<RequestRow>(`SELECT id::text,beneficiary_allocation_id::int,status,version,
-    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason
+    quantity::text,reason,created_at::text,cancelled_at::text,cancellation_reason,approved_id::text,withdrawn_id::text
     FROM public.delivery_urgency_requests WHERE beneficiary_allocation_id=$1 ORDER BY created_at DESC,id`, [allocationId])).rows;
   const recoveries = requests.length ? (await tx.query<RecoveryRow>(`SELECT recovery.id::text,recovery.request_id::text,
     recovery.donor_allocation_id::int,recovery.recovery_of_id::int,recovery.quantity::text,

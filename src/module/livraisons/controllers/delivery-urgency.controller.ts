@@ -1,8 +1,8 @@
 import type { Request, RequestHandler } from 'express';
 import { HttpError } from '../../../utils/httpError';
 import { deliveryStockRecoveryParams } from '../validators/delivery-stock-recovery.validators';
-import { deliveryUrgencyQuery, deliveryUrgencyBody, deliveryUrgencyRequestParams, deliveryUrgencyCancelBody, deliveryUrgencyKey } from '../validators/delivery-urgency.validators';
-import { svcPreviewDeliveryUrgency, svcCreateDeliveryUrgencyRequest, svcListDeliveryUrgencyRequests, svcCancelDeliveryUrgencyRequest } from '../services/delivery-urgency.service';
+import { deliveryUrgencyQuery, deliveryUrgencyBody, deliveryUrgencyRequestParams, deliveryUrgencyCancelBody, deliveryUrgencyKey, deliveryUrgencyWithdrawalBody } from '../validators/delivery-urgency.validators';
+import { svcPreviewDeliveryUrgency, svcCreateDeliveryUrgencyRequest, svcListDeliveryUrgencyRequests, svcCancelDeliveryUrgencyRequest, svcPreviewUrgencyWithdrawal, svcWithdrawDeliveryUrgency } from '../services/delivery-urgency.service';
 import type { AuditContext } from '../../production/repository/production.repository';
 
 function audit(req: Request): AuditContext {
@@ -49,5 +49,26 @@ export const cancelDeliveryUrgencyRequest: RequestHandler = async (req, res, nex
     const body = deliveryUrgencyCancelBody.parse(req.body);
     res.setHeader('Cache-Control', 'private, no-store, max-age=0');
     res.json(await svcCancelDeliveryUrgencyRequest({ requestId, body, audit: context }));
+  } catch (error) { next(error); }
+};
+
+export const previewUrgencyWithdrawal: RequestHandler = async (req,res,next) => {
+  try {
+    audit(req);
+    const { requestId } = deliveryUrgencyRequestParams.parse(req.params);
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.json(await svcPreviewUrgencyWithdrawal(requestId));
+  } catch (error) { next(error); }
+};
+
+export const withdrawDeliveryUrgency: RequestHandler = async (req,res,next) => {
+  try {
+    const context = audit(req), { requestId } = deliveryUrgencyRequestParams.parse(req.params);
+    const body = deliveryUrgencyWithdrawalBody.parse(req.body);
+    const idempotencyKey = deliveryUrgencyKey.parse(req.get('Idempotency-Key'));
+    const result = await svcWithdrawDeliveryUrgency({ requestId,expectedVersion:body.expected_version,
+      previewHash:body.preview_hash,idempotencyKey,audit:context });
+    res.setHeader('Cache-Control','private, no-store, max-age=0');
+    res.status(result.replayed ? 200 : 201).json(result);
   } catch (error) { next(error); }
 };

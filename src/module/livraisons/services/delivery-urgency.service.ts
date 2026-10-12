@@ -1,7 +1,11 @@
 import { repoPreviewDeliveryUrgency } from '../repository/delivery-urgency.repository';
 import { repoCreateDeliveryUrgencyRequest, repoListDeliveryUrgencyRequests } from '../repository/delivery-urgency-request.repository';
 import { repoCancelDeliveryUrgencyRequest } from '../repository/delivery-urgency-cancel.repository';
+import { repoPreviewUrgencyWithdrawal } from '../repository/delivery-urgency-withdrawal-preview.repository';
+import { repoWithdrawDeliveryUrgency } from '../repository/delivery-urgency-withdrawal.repository';
 export const svcPreviewDeliveryUrgency = repoPreviewDeliveryUrgency;
 export const svcCreateDeliveryUrgencyRequest = repoCreateDeliveryUrgencyRequest;
 export const svcListDeliveryUrgencyRequests = repoListDeliveryUrgencyRequests;
 export const svcCancelDeliveryUrgencyRequest = repoCancelDeliveryUrgencyRequest;
+export const svcPreviewUrgencyWithdrawal = repoPreviewUrgencyWithdrawal;
+export const svcWithdrawDeliveryUrgency = repoWithdrawDeliveryUrgency;

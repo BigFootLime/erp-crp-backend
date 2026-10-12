@@ -4,7 +4,7 @@ Parent : frontend #1252. Project Office : FLUX-20261009-06, recette WP285/S06. L
 
 ## État du chantier
 
-Le contrôle des donneurs, la demande persistante, la génération des récupérations en brouillon, leur approbation par le planificateur et l’annulation des brouillons inutilisés sont implémentés côté serveur. **Le prélèvement, le forfait et l’ajout au regroupement restent à implémenter.** Cette étape ne termine ni #1033, ni #1034, ni S06. Aucune action de prélèvement n’est exposée. Ce lot est en développement et n’est pas déployé.
+Le contrôle des donneurs, la demande persistante, la génération des récupérations en brouillon, leur approbation par le planificateur, le transfert atomique des réservations et l’annulation des brouillons inutilisés sont implémentés côté serveur. **Le forfait, la réconciliation après engagement, l’ajout au regroupement et l’interface restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Les routes de prélèvement sont présentes dans la branche de développement ; le lot n’est pas déployé.
 
 `GET /livraisons/affaires/allocations/:allocationId/urgency-preview?quantity=…` exige une session et la capacité livraison `read`. Le calcul lit un instantané PostgreSQL repeatable-read en lecture seule. Il réutilise le contrôle canonique du stock libre, puis recherche uniquement les réservations d’un même client et article sur la piste physique DELIVERY. Il exclut la piste assemblage, les affaires annulées, les réservations expirées, les incompatibilités techniques et les quantités déjà préparées pour un BL. Les lots NEW passent le contrôle Qualité existant pour la totalité des engagements actuels, sans ajouter une seconde fois la réservation donneuse. OLD conserve l’exigence de ses références documentaires.
 
@@ -14,7 +14,7 @@ Les capacités physiques des lots et emplacements sont partagées entre candidat
 
 1. Raccorder le forfait figé une fois par commande, son paramétrage client et sa facturation unique, y compris BL partiels.
 2. Interface planificateur : exposer le contrôle serveur des opérations et capacités engagées, des approvisionnements confirmés et de la fin réalisable avant l’échéance protégée.
-3. Prélèvement transactionnel après relecture de la qualité, disponibilité, versions de réservation/affaire/engagement/planning ; transfert de l’affectation sans créer du stock et sans double couverture.
+3. Raccorder l’interface au prélèvement transactionnel désormais disponible : aperçu actualisé puis confirmation de sa version, sans saisie manuelle des lots ou de la quantité déjà approuvée.
 4. Annulation après engagement/prélèvement, conservation des preuves et remboursement du donneur par la production effective. L’annulation des arbres encore inutilisés est déjà disponible.
 5. #1034 : ajout au producteur seulement avant découpe terminée, définition exacte, limites lots matière, recalcul explicite sans déplacement silencieux d’autres clients.
 6. Interface guidée CERP, recette normale Test, forfait unique en BL partiels et facturation, preuves et déploiement.
@@ -33,13 +33,13 @@ L’annulation concerne l’arbre entier d’OF encore en brouillon sans dossier
 
 ## Vérifications effectuées pour cette étape
 
-106 tests dédiés : propositions, quantités exactes, demandes, rejeu, écrans périmés, génération atomique, annulation, droits et validation HTTP, blocage du démarrage, faisabilité des récupérations et approbation. La vérification inclut les créneaux et leurs marges, alias machine/poste, maintenance, dossiers incomplets, délais avancés, approvisionnements tardifs/bloqués, composants de montage et protection des autres clients. Les tests des droits utilisent le routeur et le middleware de capacité Planning réels, avec une identité de session et un service métier simulés.
+141 tests dédiés : propositions, quantités exactes, demandes, rejeu, écrans périmés, génération atomique, annulation, droits et validation HTTP, blocage du démarrage, faisabilité des récupérations, approbation et prélèvement. La vérification inclut les créneaux et leurs marges, alias machine/poste, maintenance, dossiers incomplets, délais avancés, approvisionnements tardifs/bloqués, composants de montage et protection des autres clients. Les tests des droits utilisent le routeur et le middleware de capacité Planning réels, avec une identité de session et un service métier simulés. Les tests de transaction du prélèvement utilisent le gestionnaire de transaction réel avec un accès SQL simulé ; ils vérifient le rollback après échec d’un transfert ou de l’outbox, sans prétendre exécuter le stock PostgreSQL dans Vitest.
 
-58 tests existants du moteur de planning et de disponibilité des opérations ont également passé : 164 tests sur cette étape. TypeScript, frontière des données de production et inventaire OpenAPI (1 466 opérations) : PASS.
+58 tests existants du moteur de planning et de disponibilité des opérations avaient également passé lors de l’étape d’approbation. Sur l’étape prélèvement : build TypeScript, frontière des données de production et inventaire OpenAPI (1 468 opérations) : PASS.
 
-Le patch est créé puis intégralement annulé dans une transaction sur `cerp_test` ; 40 requêtes serveur compilent sous le rôle `cerp_app` avec les vraies tables. Vingt-trois contrôles PostgreSQL sont exercés dans un schéma isolé avec dépendances synthétiques (`src/__tests__/fixtures/delivery-urgency-1033.*.sql`), puis annulés : les contraintes précédentes, la version et la preuve d’approbation, la conservation des décisions antérieures, et l’exception de planification limitée aux arbres de récupération actifs. Ces fixtures ne constituent pas une recette métier réelle. Les données ERP existantes et la production ne sont pas modifiées.
+Le patch est créé puis intégralement annulé dans une transaction sur `cerp_test` ; 62 requêtes serveur compilent sous le rôle `cerp_app` avec les vraies tables. Trente-trois contrôles PostgreSQL sont exercés dans un schéma isolé avec dépendances synthétiques, puis annulés : identité, quantités, approbations, transferts, interdiction d’un prélèvement incomplet et conservation des preuves. Six autres cas exécutent la requête réelle de diminution de réservation : fraction, version périmée, protection du BL préparé et des consommations, conservation des historiques en retrait partiel ou total. Ces fixtures ne constituent pas une recette métier réelle. Les données ERP existantes et la production ne sont pas modifiées.
 
-Avant toute publication du lot complet : finaliser les étapes restantes, préparer l’interface CERP, effectuer les scénarios S06 sur une session Test normale, puis déployer les migrations/backend/frontend ensemble. Les preuves SQL locales sont `urgency1033-draft-sql-proof.json` et `urgency1033-constraints-proof.json` dans le dossier d’audit.
+Avant toute publication du lot complet : finaliser les étapes restantes, préparer l’interface CERP, effectuer les scénarios S06 sur une session Test normale, puis déployer les migrations/backend/frontend ensemble. Les preuves SQL locales sont `urgency1033-draft-sql-proof.json`, `urgency1033-constraints-proof.json` et `urgency1033-stock-proof.json` dans le dossier d’audit.
 
 ## Approbation du planificateur
 
@@ -50,8 +50,19 @@ Le contrôle relit les donneurs exacts de la demande, sans soustraire sa propre 
 
 La fin doit précéder minuit à Paris au début de la date de livraison protégée. Si l’engagement courant a été avancé, le plus proche des deux délais s’applique ; le repousser ne relâche pas la protection initiale. Les arrivages futurs fermes, affectés et utilisables avant leur opération peuvent couvrir le planning ; le démarrage de production conserve le contrôle canonique de toute la matière physique. Pour un montage, les sous-pièces doivent être réservées utilisables ou rattachées à une fabrication de cet arbre, de quantité suffisante, engagée avant le montage. Une même quantité de sous-pièces n’est pas comptée deux fois.
 
-Une transaction sérialisable enregistre l’approbation, sa preuve et ses audits. Un changement concurrent renvoie un conflit explicite ; le rejeu restitue la décision existante. L’état APPROVED conserve la protection des quantités proposées. Le contrôle retourne encore `can_withdraw=false` : la mutation de prélèvement et sa revalidation restent à raccorder. Les décisions antérieures sont immuables et un renouvellement exige la version courante.
+Une transaction sérialisable enregistre l’approbation, sa preuve et ses audits. Un changement concurrent renvoie un conflit explicite ; le rejeu restitue la décision existante. L’état APPROVED conserve la protection des quantités proposées. L’aperçu d’approbation retourne `can_withdraw=false` : seul l’aperçu de prélèvement ci-dessous peut autoriser cette action après son propre contrôle. Les décisions antérieures sont immuables et un renouvellement exige la version courante.
 
 Une exception ciblée permet de placer les nouvelles opérations de récupération malgré l’AR déjà envoyé sur la commande donneuse. Elle concerne uniquement l’OF de récupération et ses descendants actifs ; les autres OF de la commande conservent les contrôles existants. Aucun AR ni délai client n’est modifié.
 
 La sélection d’une récupération active dans une simulation applique automatiquement le périmètre de son client. Les tâches d’autres clients et les producteurs regroupés partagés restent verrouillés, sans dépendre d’un indicateur envoyé par l’interface. Le résultat est revérifié avant application ; une demande qui mélange des récupérations de plusieurs clients est refusée.
+
+## Transfert après approbation
+
+- `GET /livraisons/urgency-requests/:requestId/withdrawal-preview` : capacité livraison `read`, sans cache.
+- `POST /livraisons/urgency-requests/:requestId/withdraw` : capacité `allocate`, `expected_version`, `preview_hash` et en-tête UUID `Idempotency-Key`. Quantité, lots, affaires et approbation sont relus côté serveur ; le corps ne peut pas les substituer.
+
+L’approbation lie les définitions techniques, opérations, ressources et créneaux engagés. Un déplacement ou un changement du dossier exige une nouvelle approbation. Le simple avancement des compteurs d’atelier ou d’un planning étranger ne l’expire pas ; qualité, donneurs et faisabilité sont néanmoins recontrôlés à chaque prélèvement.
+
+La mutation verrouille les affaires, réservations, lots, niveaux et emplacements, puis relit le contrôle avant transfert. Le stock physique reste identique. Seule la part non consommée et non préparée au BL quitte la réservation donneuse ; la réservation bénéficiaire passe par l’allocateur canonique et conserve le même article, lot, emplacement, base OLD/NEW et quantité exacte. La couverture du donneur est actualisée même après libération totale de sa réservation. Aucun AR ni indicateur OTD n’est réécrit.
+
+Le journal conserve chaque source et les réservations avant/après. PostgreSQL impose que toutes les sources soient transférées et la demande marquée WITHDRAWN dans la même transaction. L’audit et les notifications des deux commandes font partie de cette transaction. Toute erreur annule l’ensemble ; le rejeu d’une requête déjà enregistrée restitue son résultat sans second prélèvement. Les tableaux d’historique exposent aussi les identifiants d’approbation et de prélèvement.

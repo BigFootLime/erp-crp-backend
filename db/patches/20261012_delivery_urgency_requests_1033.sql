@@ -4,7 +4,7 @@ SET LOCAL lock_timeout='5s';
 CREATE TABLE public.delivery_urgency_requests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   beneficiary_allocation_id bigint NOT NULL REFERENCES public.commande_ligne_affaire_allocation(id) ON DELETE RESTRICT,
-  status text NOT NULL DEFAULT 'WAITING_PLANNER' CHECK(status IN ('WAITING_PLANNER','APPROVED','CANCELLED')),
+  status text NOT NULL DEFAULT 'WAITING_PLANNER' CHECK(status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN','CANCELLED')),
   version integer NOT NULL DEFAULT 1 CHECK(version>0),
   quantity numeric(18,3) NOT NULL CHECK(quantity>0 AND quantity<1000000000),
   reason text NOT NULL CHECK(length(btrim(reason)) BETWEEN 10 AND 1000),
@@ -18,11 +18,13 @@ CREATE TABLE public.delivery_urgency_requests (
   cancelled_at timestamptz,
   cancellation_reason text,
   approved_id uuid,
+  withdrawn_id uuid,
   UNIQUE(created_by,request_key),
-  CHECK((status IN ('WAITING_PLANNER','APPROVED') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL)
+  CHECK((status IN ('WAITING_PLANNER','APPROVED','WITHDRAWN') AND cancelled_by IS NULL AND cancelled_at IS NULL AND cancellation_reason IS NULL)
     OR (status='CANCELLED' AND cancelled_by IS NOT NULL AND cancelled_at IS NOT NULL
       AND length(btrim(cancellation_reason)) BETWEEN 10 AND 1000)),
-  CHECK((status='APPROVED')=(approved_id IS NOT NULL))
+  CHECK((status IN ('APPROVED','WITHDRAWN'))=(approved_id IS NOT NULL)),
+  CHECK((status='WITHDRAWN')=(withdrawn_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX delivery_urgency_active_beneficiary_idx
   ON public.delivery_urgency_requests(beneficiary_allocation_id) WHERE status IN ('WAITING_PLANNER','APPROVED');
@@ -62,6 +64,34 @@ CREATE TABLE public.delivery_urgency_sources (
   UNIQUE(recovery_id,donor_reservation_id)
 );
 CREATE INDEX delivery_urgency_sources_reservation_idx ON public.delivery_urgency_sources(donor_reservation_id);
+CREATE TABLE public.delivery_urgency_withdrawals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id uuid NOT NULL UNIQUE REFERENCES public.delivery_urgency_requests(id) ON DELETE RESTRICT,
+  approval_id uuid NOT NULL,
+  request_version integer NOT NULL CHECK(request_version>0),
+  quantity numeric(18,3) NOT NULL CHECK(quantity>0 AND quantity<1000000000),
+  preview_hash text NOT NULL CHECK(preview_hash ~ '^[0-9a-f]{64}$'),
+  evidence jsonb NOT NULL CHECK(jsonb_typeof(evidence)='object'),
+  response jsonb NOT NULL CHECK(jsonb_typeof(response)='object'),
+  request_key uuid NOT NULL,
+  request_hash text NOT NULL CHECK(request_hash ~ '^[0-9a-f]{64}$'),
+  created_by integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(id,request_id), UNIQUE(created_by,request_key),
+  FOREIGN KEY(approval_id,request_id) REFERENCES public.delivery_urgency_approvals(id,request_id) ON DELETE RESTRICT
+);
+ALTER TABLE public.delivery_urgency_requests ADD CONSTRAINT delivery_urgency_withdrawal_owner
+  FOREIGN KEY(withdrawn_id,id) REFERENCES public.delivery_urgency_withdrawals(id,request_id) ON DELETE RESTRICT;
+CREATE TABLE public.delivery_urgency_transfers (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  withdrawal_id uuid NOT NULL REFERENCES public.delivery_urgency_withdrawals(id) ON DELETE RESTRICT,
+  source_id uuid NOT NULL UNIQUE REFERENCES public.delivery_urgency_sources(id) ON DELETE RESTRICT,
+  donor_reservation_id uuid NOT NULL REFERENCES public.stock_reservations(id) ON DELETE RESTRICT,
+  beneficiary_reservation_id uuid NOT NULL REFERENCES public.stock_reservations(id) ON DELETE RESTRICT,
+  quantity numeric(18,3) NOT NULL CHECK(quantity>0 AND quantity<1000000000),
+  reservation_evidence jsonb NOT NULL CHECK(jsonb_typeof(reservation_evidence)='object'),
+  CHECK(donor_reservation_id<>beneficiary_reservation_id)
+);
 CREATE FUNCTION public.fn_delivery_urgency_request_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP='DELETE' OR (NEW.id,NEW.beneficiary_allocation_id,NEW.quantity,NEW.reason,NEW.preview_hash,NEW.snapshot,
@@ -72,6 +102,10 @@ BEGIN
     RAISE EXCEPTION 'Retain urgency identity, version and evidence' USING ERRCODE='55000';
   END IF;
   IF OLD.status='WAITING_PLANNER' AND NEW.status='CANCELLED' AND NEW.approved_id IS NULL THEN RETURN NEW; END IF;
+  IF OLD.status='APPROVED' AND NEW.status='WITHDRAWN' AND NEW.approved_id=OLD.approved_id
+    AND EXISTS(SELECT 1 FROM public.delivery_urgency_withdrawals withdrawal WHERE withdrawal.id=NEW.withdrawn_id
+      AND withdrawal.request_id=OLD.id AND withdrawal.request_version=OLD.version AND withdrawal.approval_id=OLD.approved_id)
+    THEN RETURN NEW; END IF;
   IF OLD.status IN ('WAITING_PLANNER','APPROVED') AND NEW.status='APPROVED'
     AND EXISTS(SELECT 1 FROM public.delivery_urgency_approvals approval WHERE approval.id=NEW.approved_id
       AND approval.request_id=OLD.id AND approval.request_version=OLD.version) THEN RETURN NEW; END IF;
@@ -86,6 +120,61 @@ CREATE TRIGGER delivery_urgency_sources_immutable BEFORE UPDATE OR DELETE ON pub
   FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
 CREATE TRIGGER delivery_urgency_approvals_immutable BEFORE UPDATE OR DELETE ON public.delivery_urgency_approvals
   FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
+CREATE TRIGGER delivery_urgency_withdrawals_immutable BEFORE UPDATE OR DELETE ON public.delivery_urgency_withdrawals
+  FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
+CREATE TRIGGER delivery_urgency_transfers_immutable BEFORE UPDATE OR DELETE ON public.delivery_urgency_transfers
+  FOR EACH ROW EXECUTE FUNCTION public.fn_protect_stock_immutable_evidence();
+CREATE FUNCTION public.fn_delivery_urgency_withdrawal_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE request record;
+BEGIN
+  SELECT * INTO request FROM public.delivery_urgency_requests WHERE id=NEW.request_id FOR UPDATE;
+  IF request.status IS DISTINCT FROM 'APPROVED' OR request.version IS DISTINCT FROM NEW.request_version
+    OR request.approved_id IS DISTINCT FROM NEW.approval_id OR request.quantity IS DISTINCT FROM NEW.quantity THEN
+    RAISE EXCEPTION 'Withdrawal requires the current approval and exact request quantity' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER delivery_urgency_withdrawal_identity BEFORE INSERT ON public.delivery_urgency_withdrawals
+  FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_withdrawal_identity_1033();
+CREATE FUNCTION public.fn_delivery_urgency_transfer_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE source record; withdrawal record; donor record; beneficiary record;
+BEGIN
+  SELECT s.*,r.request_id,r.donor_allocation_id INTO source FROM public.delivery_urgency_sources s
+    JOIN public.delivery_urgency_recoveries r ON r.id=s.recovery_id WHERE s.id=NEW.source_id;
+  SELECT w.*,r.beneficiary_allocation_id INTO withdrawal FROM public.delivery_urgency_withdrawals w
+    JOIN public.delivery_urgency_requests r ON r.id=w.request_id WHERE w.id=NEW.withdrawal_id;
+  SELECT * INTO donor FROM public.stock_reservations WHERE id=NEW.donor_reservation_id;
+  SELECT * INTO beneficiary FROM public.stock_reservations WHERE id=NEW.beneficiary_reservation_id;
+  IF source.request_id IS DISTINCT FROM withdrawal.request_id OR source.quantity IS DISTINCT FROM NEW.quantity
+    OR source.donor_reservation_id IS DISTINCT FROM NEW.donor_reservation_id
+    OR donor.commande_ligne_affaire_allocation_id IS DISTINCT FROM source.donor_allocation_id
+    OR beneficiary.commande_ligne_affaire_allocation_id IS DISTINCT FROM withdrawal.beneficiary_allocation_id
+    OR beneficiary.status IS DISTINCT FROM 'ACTIVE'
+    OR beneficiary.qty_reserved-beneficiary.qty_consumed<NEW.quantity
+    OR (donor.article_id,donor.location_id,donor.lot_id,donor.stock_level_id,donor.stock_batch_id,donor.source_scope)
+      IS DISTINCT FROM (beneficiary.article_id,beneficiary.location_id,beneficiary.lot_id,beneficiary.stock_level_id,beneficiary.stock_batch_id,beneficiary.source_scope) THEN
+    RAISE EXCEPTION 'Urgency transfer must preserve its source, stock identity and target affair' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER delivery_urgency_transfer_identity BEFORE INSERT ON public.delivery_urgency_transfers
+  FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_transfer_identity_1033();
+CREATE FUNCTION public.fn_delivery_urgency_withdrawal_balance_1033() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE withdrawal_uuid uuid; expected numeric; transferred numeric; committed boolean;
+BEGIN
+  IF TG_TABLE_NAME='delivery_urgency_withdrawals' THEN withdrawal_uuid:=NEW.id; ELSE withdrawal_uuid:=NEW.withdrawal_id; END IF;
+  SELECT w.quantity,(r.status='WITHDRAWN' AND r.withdrawn_id=w.id) INTO expected,committed
+    FROM public.delivery_urgency_withdrawals w JOIN public.delivery_urgency_requests r ON r.id=w.request_id WHERE w.id=withdrawal_uuid;
+  SELECT COALESCE(sum(quantity),0) INTO transferred FROM public.delivery_urgency_transfers WHERE withdrawal_id=withdrawal_uuid;
+  IF expected IS DISTINCT FROM transferred OR committed IS DISTINCT FROM true THEN
+    RAISE EXCEPTION 'Withdrawal must atomically transfer every source and close the request' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER delivery_urgency_withdrawal_balance AFTER INSERT ON public.delivery_urgency_withdrawals
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_withdrawal_balance_1033();
+CREATE CONSTRAINT TRIGGER delivery_urgency_transfer_balance AFTER INSERT ON public.delivery_urgency_transfers
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_withdrawal_balance_1033();
 CREATE FUNCTION public.fn_delivery_urgency_approval_identity_1033() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE request record;
 BEGIN
@@ -165,9 +254,15 @@ CREATE CONSTRAINT TRIGGER delivery_urgency_recovery_quantities AFTER INSERT ON p
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_quantities_1033();
 CREATE CONSTRAINT TRIGGER delivery_urgency_source_quantities AFTER INSERT ON public.delivery_urgency_sources
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_delivery_urgency_quantities_1033();
-REVOKE ALL ON public.delivery_urgency_requests,public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals FROM PUBLIC,cerp_app;
+REVOKE ALL ON public.delivery_urgency_requests,public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals,
+  public.delivery_urgency_withdrawals,public.delivery_urgency_transfers FROM PUBLIC,cerp_app;
 GRANT SELECT,INSERT,UPDATE ON public.delivery_urgency_requests TO cerp_app;
-GRANT SELECT,INSERT ON public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals TO cerp_app;
+GRANT SELECT,INSERT ON public.delivery_urgency_recoveries,public.delivery_urgency_sources,public.delivery_urgency_approvals,
+  public.delivery_urgency_withdrawals,public.delivery_urgency_transfers TO cerp_app;
+REVOKE ALL ON FUNCTION public.fn_delivery_urgency_withdrawal_identity_1033(),public.fn_delivery_urgency_transfer_identity_1033(),
+  public.fn_delivery_urgency_withdrawal_balance_1033() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.fn_delivery_urgency_withdrawal_identity_1033(),public.fn_delivery_urgency_transfer_identity_1033(),
+  public.fn_delivery_urgency_withdrawal_balance_1033() TO cerp_app;
 REVOKE ALL ON FUNCTION public.fn_delivery_urgency_request_identity_1033(),public.fn_delivery_urgency_recovery_identity_1033(),
   public.fn_delivery_urgency_source_identity_1033(),public.fn_delivery_urgency_quantities_1033(),public.fn_delivery_urgency_approval_identity_1033() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.fn_delivery_urgency_request_identity_1033(),public.fn_delivery_urgency_recovery_identity_1033(),

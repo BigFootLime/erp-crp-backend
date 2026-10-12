@@ -51,6 +51,7 @@ type RecoveryRow = {
     of_quantity: string;
 };
 type SourceRow = {
+    id: string;
     recovery_id: string;
     donor_reservation_id: string;
     quantity: string;
@@ -71,7 +72,7 @@ export async function readUrgencyApprovalTx(tx: Db, requestId: string) {
     COALESCE(producer.root_of_id,producer.id)::int AS root_of_id,producer.quantite_lancee::text AS of_quantity
     FROM public.delivery_urgency_recoveries recovery JOIN public.ordres_fabrication producer ON producer.id=recovery.recovery_of_id
     WHERE recovery.request_id=$1::uuid ORDER BY recovery.donor_allocation_id,recovery.id`, [requestId])).rows;
-    const sources = (await tx.query<SourceRow>(`SELECT source.recovery_id::text,source.donor_reservation_id::text,source.quantity::text
+    const sources = (await tx.query<SourceRow>(`SELECT source.id::text,source.recovery_id::text,source.donor_reservation_id::text,source.quantity::text
     FROM public.delivery_urgency_sources source JOIN public.delivery_urgency_recoveries recovery ON recovery.id=source.recovery_id
     WHERE recovery.request_id=$1::uuid ORDER BY source.donor_reservation_id`, [requestId])).rows;
     if (!recoveries.length || !sources.length)
@@ -138,7 +139,7 @@ export async function readUrgencyApprovalTx(tx: Db, requestId: string) {
     const components = [];
     for (const ofId of assemblyOfIds)
         components.push(await readOfComponentCoverageTx(tx, ofId, true));
-    const evaluation = evaluateUrgencyRecoveryApproval({ recoveries: evidence, snapshot, now });
+    const evaluation = evaluateUrgencyRecoveryApproval({ recoveries: evidence, snapshot, now, allowExecution: request.status === 'APPROVED' });
     if (selected.nextCursor)
         donorIssues.push({ code: 'URGENCY_PLANNING_TRUNCATED', message: 'La chaîne de récupération dépasse la fenêtre de contrôle.' });
     const issues = [...donorIssues, ...evaluation.issues, ...evaluateRecoveryComponents(components, tree, snapshot)];
@@ -155,8 +156,16 @@ export async function readUrgencyApprovalTx(tx: Db, requestId: string) {
         planning_revision: snapshot.revision, tasks: snapshot.tasks.map(t => [t.id, t.version, t.committed, t.resourceIds, t.actual]),
         resources: snapshot.resources.map(r => [r.id, r.version]), material, components: components.map(c => [c.ofId, c.version])
     })).digest('hex');
+    // Approval binds the production definition and committed slots, not a global revision
+    // or production counters that naturally evolve while the approved work is carried out.
+    const basis = createHash('sha256').update(JSON.stringify({
+        recoveries: evidence.map(r => [r.recovery_id,r.of_id,r.of_ids,r.quantity,r.protected_before,r.operation_ids]),
+        dossiers: dossiers.map(d => [d.of.id,d.dossier.sourceHash]),
+        commitments: snapshot.tasks.filter(t => targets.has(t.ofId ?? -1))
+            .map(t => [t.id,t.committed,t.resourceIds]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))),
+    })).digest('hex');
     return {
-        request, recoveries, sources, donorPlan, snapshot, evidence, response: {
+        request, recoveries, sources, donorPlan, snapshot, evidence, basis, response: {
             request_id: request.id, request_version: request.version,
             status: request.status, preview_hash: fingerprint, planning_revision: snapshot.revision, can_approve: issues.length === 0,
             can_withdraw: false as const, issues, recoveries: evaluation.recoveries, checked_at: now
@@ -217,7 +226,7 @@ export async function approveUrgencyRecovery(args: {
             };
             await tx.query(`INSERT INTO public.delivery_urgency_approvals(id,request_id,request_version,preview_hash,planning_revision,
       evidence,response,request_key,request_hash,created_by) VALUES($1::uuid,$2::uuid,$3,$4,$5::bigint,$6::jsonb,$7::jsonb,$8::uuid,$9,$10)`, [approvalId, args.requestId, args.expectedVersion, args.previewHash, current.snapshot.revision,
-                JSON.stringify({ control: current.response, recoveries: current.evidence, donor_preview: current.donorPlan.response }), JSON.stringify(response),
+                JSON.stringify({ control: current.response, recoveries: current.evidence, donor_preview: current.donorPlan.response, planning_basis: current.basis }), JSON.stringify(response),
                 args.idempotencyKey, payloadHash, args.audit.user_id]);
             await tx.query(`UPDATE public.delivery_urgency_requests SET status='APPROVED',approved_id=$2::uuid,version=version+1 WHERE id=$1::uuid`, [args.requestId, approvalId]);
             for (const recovery of current.recoveries)

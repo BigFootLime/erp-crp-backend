@@ -1,10 +1,11 @@
 import express, { type ErrorRequestHandler } from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn()}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),create:vi.fn(),list:vi.fn(),cancel:vi.fn(),withdrawalPreview:vi.fn(),withdraw:vi.fn()}));
 vi.mock('../module/livraisons/services/delivery-urgency.service',()=>({svcPreviewDeliveryUrgency:mocks.preview,
-  svcCreateDeliveryUrgencyRequest:mocks.create,svcListDeliveryUrgencyRequests:mocks.list,svcCancelDeliveryUrgencyRequest:mocks.cancel}));
-import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgencyRequests,cancelDeliveryUrgencyRequest }
+  svcCreateDeliveryUrgencyRequest:mocks.create,svcListDeliveryUrgencyRequests:mocks.list,svcCancelDeliveryUrgencyRequest:mocks.cancel,
+  svcPreviewUrgencyWithdrawal:mocks.withdrawalPreview,svcWithdrawDeliveryUrgency:mocks.withdraw}));
+import { previewDeliveryUrgency,createDeliveryUrgencyRequest,listDeliveryUrgencyRequests,cancelDeliveryUrgencyRequest,previewUrgencyWithdrawal,withdrawDeliveryUrgency }
   from '../module/livraisons/controllers/delivery-urgency.controller';
 import { validationErrorMiddleware } from '../module/auth/middlewares/validationError.middleware';
 const id='a130702e-eb6b-4d73-a403-134f7c67d023',key='7056b178-3d6e-4658-8f86-410e3b813ca7';
@@ -17,6 +18,8 @@ function app(){
   server.get('/allocations/:allocationId/requests',listDeliveryUrgencyRequests);
   server.post('/allocations/:allocationId/requests',createDeliveryUrgencyRequest);
   server.post('/requests/:requestId/cancel',cancelDeliveryUrgencyRequest);
+  server.get('/requests/:requestId/withdrawal-preview',previewUrgencyWithdrawal);
+  server.post('/requests/:requestId/withdraw',withdrawDeliveryUrgency);
   server.use(validationErrorMiddleware);server.use(((error,_req,res,_next)=>res.status(error.status??500).json({code:error.code})) as ErrorRequestHandler);
   return server;
 }
@@ -29,6 +32,8 @@ describe('urgency HTTP input boundaries',()=>{
     expect((await request(server).get('/allocations/1/requests')).status).toBe(401);
     expect((await request(server).post('/allocations/1/requests').send(body)).status).toBe(401);
     expect((await request(server).post(`/requests/${id}/cancel`).send({expected_version:1,reason:body.reason})).status).toBe(401);
+    expect((await request(server).get(`/requests/${id}/withdrawal-preview`)).status).toBe(401);
+    expect((await request(server).post(`/requests/${id}/withdraw`).send({expected_version:2,preview_hash:body.preview_hash})).status).toBe(401);
     expect(mocks.create).not.toHaveBeenCalled();expect(mocks.cancel).not.toHaveBeenCalled();
   });
   it.each([undefined,'not-an-uuid'])('rejects an absent or invalid request key before database access: %s',async value=>{
@@ -53,5 +58,24 @@ describe('urgency HTTP input boundaries',()=>{
   it('requires an explicit version and reason for cancellation',async()=>{
     const response=await request(app()).post(`/requests/${id}/cancel`).set('x-recipe-user','present').send({reason:body.reason});
     expect(response.status).toBe(400);expect(mocks.cancel).not.toHaveBeenCalled();
+  });
+  it.each([
+    {}, {expected_version:0,preview_hash:body.preview_hash}, {expected_version:2,preview_hash:'bad'},
+    {expected_version:2,preview_hash:body.preview_hash,quantity:'999'},
+  ])('rejects invalid withdrawal data before accessing stock: %j',async payload=>{
+    expect((await request(app()).post(`/requests/${id}/withdraw`).set('x-recipe-user','present').set('Idempotency-Key',key).send(payload)).status).toBe(400);
+    expect(mocks.withdraw).not.toHaveBeenCalled();
+  });
+  it('requires a withdrawal replay key',async()=>{
+    expect((await request(app()).post(`/requests/${id}/withdraw`).set('x-recipe-user','present')
+      .send({expected_version:2,preview_hash:body.preview_hash})).status).toBe(400);
+    expect(mocks.withdraw).not.toHaveBeenCalled();
+  });
+  it.each([false,true])('returns the saved withdrawal with private caching, replay=%s',async replayed=>{
+    mocks.withdraw.mockResolvedValue({withdrawal:{id,status:'WITHDRAWN'},replayed});
+    const response=await request(app()).post(`/requests/${id}/withdraw`).set('x-recipe-user','present').set('Idempotency-Key',key)
+      .send({expected_version:2,preview_hash:body.preview_hash});
+    expect(response.status).toBe(replayed?200:201);expect(response.headers['cache-control']).toContain('no-store');
+    expect(mocks.withdraw).toHaveBeenCalledWith(expect.objectContaining({requestId:id,expectedVersion:2,previewHash:body.preview_hash,idempotencyKey:key,audit:expect.objectContaining({user_id:8})}));
   });
 });

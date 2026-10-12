@@ -14,4 +14,8 @@ export const deliveryUrgencyCancelBody = z.object({
   reason: z.string().trim().min(10).max(1000),
 }).strict();
 export type DeliveryUrgencyBody = z.infer<typeof deliveryUrgencyBody>;
+export const deliveryUrgencyWithdrawalBody = z.object({
+  expected_version: z.number().int().positive(),
+  preview_hash: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
 export type DeliveryUrgencyCancelBody = z.infer<typeof deliveryUrgencyCancelBody>;

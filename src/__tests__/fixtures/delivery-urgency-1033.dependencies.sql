@@ -25,6 +25,15 @@ INSERT INTO urgency_1033_fixture.stock_lane_locations VALUES('cccccccc-0000-4000
 INSERT INTO urgency_1033_fixture.stock_reservations VALUES
   ('dddddddd-0000-4000-8000-000000000001',2,'cccccccc-0000-4000-8000-000000000001','ACTIVE',4,0,0),
   ('dddddddd-0000-4000-8000-000000000002',2,'cccccccc-0000-4000-8000-000000000002','ACTIVE',4,0,0);
+ALTER TABLE urgency_1033_fixture.stock_reservations
+  ADD COLUMN article_id uuid DEFAULT 'aaaaaaaa-0000-4000-8000-000000000001',
+  ADD COLUMN lot_id uuid DEFAULT 'eeeeeeee-0000-4000-8000-000000000001',
+  ADD COLUMN stock_level_id uuid DEFAULT 'eeeeeeee-0000-4000-8000-000000000002',
+  ADD COLUMN stock_batch_id uuid DEFAULT 'eeeeeeee-0000-4000-8000-000000000003',
+  ADD COLUMN version integer DEFAULT 1,
+  ADD COLUMN source_scope text DEFAULT 'NEW',
+  ADD COLUMN released_at timestamptz, ADD COLUMN released_by integer, ADD COLUMN release_reason text,
+  ADD COLUMN updated_at timestamptz, ADD COLUMN updated_by integer;
 INSERT INTO urgency_1033_fixture.ordres_fabrication VALUES
   (101,2,2,20,'aaaaaaaa-0000-4000-8000-000000000001','client1','BROUILLON',2,NULL,
     '{"selected_version_id":"bbbbbbbb-0000-4000-8000-000000000001"}'),
@@ -36,4 +45,4 @@ INSERT INTO urgency_1033_fixture.ordres_fabrication(id,root_of_id,statut) VALUES
 GRANT USAGE ON SCHEMA urgency_1033_fixture TO cerp_app;
 GRANT SELECT ON ALL TABLES IN SCHEMA urgency_1033_fixture TO cerp_app;
 -- The source identity trigger acquires a row lock as the application does.
-GRANT UPDATE ON urgency_1033_fixture.stock_reservations TO cerp_app;
+GRANT UPDATE,INSERT ON urgency_1033_fixture.stock_reservations TO cerp_app;
