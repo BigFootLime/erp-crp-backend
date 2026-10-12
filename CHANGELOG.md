@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-12 — Réservations matière des ajouts de récupération (#1034, en préparation)
+
+- Ajouter un transfert transactionnel interne vers un regroupement ayant déjà consommé de la matière : conserver les consommations, les quantités préparées, les lots et les compteurs de stock.
+- Conserver le journal initial du regroupement et enregistrer les compléments dans un journal immuable. Restituer les quantités exactes lors d'une dissolution encore autorisée, sans doubler les nouveaux lots.
+- Recontrôler les exigences, la qualité et les origines après verrouillage ; refuser un transfert sans allocation exacte de récupération dans la même transaction.
+- Fonction interne seulement : le raccordement à la validation du planning reste à terminer. Aucun nouveau bouton, activation ou déploiement.
+
 ## 2026-10-12 — Aperçu d’ajout avant fin de découpe (#1034, en préparation)
 
 - Calculer la charge supplémentaire d’un OF de récupération sur un regroupement compatible, sans modifier les quantités pointées, les réservations ni les créneaux.
