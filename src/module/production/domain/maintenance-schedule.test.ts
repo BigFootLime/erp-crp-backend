@@ -6,6 +6,12 @@ const slot = (patch: Partial<MaintenanceSlot> = {}): MaintenanceSlot => ({ sched
 const existing = (s: MaintenanceSlot, patch: Partial<MaintenanceOccurrence> = {}): MaintenanceOccurrence => ({ ...s, id: 'old', unavailability_id: 'u', planning_event_id: 'e', status: 'PLANNED', archived: false, snapshot: {}, ...patch });
 const annual = () => slot({ schedule_id: 'annual', kind: 'LEVEL_2_ANNUAL', start_ts: '2027-01-04T08:00:00Z', end_ts: '2027-01-11T08:00:00Z' });
 describe('maintenance calendar reconciliation', () => {
+    it('covers the weekly hour inside one annual day but retains the following Thursday', () => {
+        const day = annual(); day.start_ts = '2027-01-07T08:00:00Z'; day.end_ts = '2027-01-08T08:00:00Z';
+        const nextWeek = slot({ start_ts: '2027-01-14T09:00:00Z', end_ts: '2027-01-14T10:00:00Z' });
+        const result = reconcileMaintenanceSlots([slot(), day, nextWeek], [], now);
+        expect(result.create).toEqual([day, nextWeek]); expect(result.covered).toEqual([slot()]); expect(result.conflicts).toEqual([]);
+    });
     it('reserves only the annual week when it contains the weekly slot', () => { const result = reconcileMaintenanceSlots([slot(), annual()], [], now); expect(result.create).toEqual([annual()]); expect(result.covered).toEqual([slot()]); });
     it('restores the weekly hour when a future annual week is removed', () => { const result = reconcileMaintenanceSlots([slot()], [existing(annual())], now); expect(result.create).toEqual([slot()]); expect(result.cancel).toHaveLength(1); expect(result.covered).toEqual([]); });
     it('preserves started annual maintenance and its weekly coverage', () => { const result = reconcileMaintenanceSlots([slot()], [existing(annual(), { status: 'IN_PROGRESS' })], now); expect(result.create).toEqual([]); expect(result.cancel).toEqual([]); expect(result.preserved).toHaveLength(1); });

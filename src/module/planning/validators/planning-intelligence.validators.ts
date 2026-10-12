@@ -1,3 +1,4 @@
+import { isReservedPlanningClientColor } from "../domain/planning-client-color-policy";
 import { z } from "zod";
 
 import { isValidPlanningDateTime } from "./planning.validators";
@@ -54,7 +55,10 @@ export const planningPreferencesBodySchema = z
         show_weekends: z.boolean(),
         machine_ids: z.array(uuid).max(100),
         status_colors: colorMap,
-        client_color_overrides: colorMap,
+        client_color_overrides: colorMap.superRefine((colors, ctx) => {
+          for (const [key, color] of Object.entries(colors)) if (isReservedPlanningClientColor(color))
+            ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "Le rouge est réservé aux problèmes du planning." });
+        }),
         expected_updated_at: dateTime.optional().nullable(),
       })
       .strict(),

@@ -3,7 +3,7 @@ import { centralCanonicalJson } from '../../planning/domain/central-canonical-js
 import type { MaintenanceSlot, MaintenanceOccurrence, MaintenanceConflict } from '../types/maintenance-schedule.types';
 export const maintenanceSlotKey = (s: MaintenanceSlot) => [s.schedule_id, s.schedule_version, s.machine_id, s.start_ts, s.end_ts].join(':');
 export const maintenanceOverlaps = (a: MaintenanceSlot, b: Pick<MaintenanceSlot, 'machine_id' | 'start_ts' | 'end_ts'>) => a.machine_id === b.machine_id && Date.parse(a.start_ts) < Date.parse(b.end_ts) && Date.parse(a.end_ts) > Date.parse(b.start_ts);
-/** Preserve actual history, and represent a weekly hour covered by an annual week only once. */
+/** Preserve actual history, and represent a weekly hour covered by an annual maintenance only once. */
 export function reconcileMaintenanceSlots(desired: MaintenanceSlot[], existing: MaintenanceOccurrence[], now: string) {
     const future = desired.filter(s => Date.parse(s.start_ts) > Date.parse(now));
     const active = existing.filter(s => !s.archived && s.status !== 'CANCELLED');

@@ -38,7 +38,7 @@ function proposedRules(rules: MaintenanceSchedule[], proposal: MaintenanceSchedu
         if (annual.kind !== 'LEVEL_2_ANNUAL') continue;
         for (const entry of annual.entries) {
             const key = `${annual.year}:${entry.machine_id}`;
-            if (annualMachines.has(key)) throw new HttpError(422, 'MAINTENANCE_ANNUAL_DUPLICATE', 'Une machine dispose déjà d’une semaine annuelle pour cette année. Modifiez la règle existante.', { machine_id: entry.machine_id, year: annual.year });
+            if (annualMachines.has(key)) throw new HttpError(422, 'MAINTENANCE_ANNUAL_DUPLICATE', 'Une machine dispose déjà d’une maintenance annuelle pour cette année. Modifiez la règle existante.', { machine_id: entry.machine_id, year: annual.year });
             annualMachines.add(key);
         }
     }
@@ -107,7 +107,7 @@ async function buildPreviewTx(tx: PoolClient, proposal: MaintenanceSchedulePropo
     }
     const warnings: string[] = [];
     if (covered.length)
-        warnings.push(`${covered.length} créneau(x) hebdomadaire(s) sont couverts par une semaine annuelle : ils ne seront pas réservés une seconde fois.`);
+        warnings.push(`${covered.length} créneau(x) hebdomadaire(s) sont couverts par une maintenance annuelle : ils ne seront pas réservés une seconde fois.`);
     if (preserved.length)
         warnings.push(`${preserved.length} créneau(x) commencé(s) ou terminé(s) encore lié(s) au planning restent conservés. Tout l’historique passé reste conservé.`);
     if (create.some(s => !s.maintenance_plan_id))
