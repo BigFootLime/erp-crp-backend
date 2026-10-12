@@ -15,4 +15,5 @@ DROP FUNCTION public.check_material_bar_hold_1246();
 DROP FUNCTION public.check_material_bar_reservation_1246();
 DROP FUNCTION public.protect_material_bar_event_1246();
 DROP FUNCTION public.protect_material_bar_identity_1246();
+DROP INDEX public.stock_material_bar_movements_1246_idx;
 COMMIT;

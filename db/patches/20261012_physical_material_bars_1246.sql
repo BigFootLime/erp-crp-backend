@@ -1,6 +1,8 @@
 -- #1246. Physical geometry supplements the canonical stock ledger. No backfill:
 -- aggregate millimetres cannot prove how many real bars or remnants exist.
 BEGIN;
+CREATE INDEX IF NOT EXISTS stock_material_bar_movements_1246_idx
+  ON public.stock_movements(stock_batch_id) WHERE status='POSTED';
 CREATE TABLE IF NOT EXISTS public.stock_material_bar_inventories (
   stock_batch_id uuid PRIMARY KEY REFERENCES public.stock_batches(id) ON DELETE RESTRICT,
   movement_count bigint NOT NULL CHECK (movement_count >= 0),

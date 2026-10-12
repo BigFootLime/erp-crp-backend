@@ -6,7 +6,7 @@ SET ROLE cerp_app;
 BEGIN;
 INSERT INTO public.users VALUES (1246);
 INSERT INTO public.stock_batches VALUES (fixture_id_1246('batch-a'),NULL,NULL,3000,300),(fixture_id_1246('batch-b'),NULL,NULL,1000,50);
-INSERT INTO public.stock_reservations VALUES
+INSERT INTO public.stock_reservations(id,stock_batch_id,qty_reserved,qty_consumed,status,expires_at) VALUES
   (fixture_id_1246('reservation-a'),fixture_id_1246('batch-a'),200,0,'ACTIVE',NULL),
   (fixture_id_1246('reservation-b'),fixture_id_1246('batch-a'),100,0,'ACTIVE',NULL),
   (fixture_id_1246('reservation-c'),fixture_id_1246('batch-b'),50,0,'ACTIVE',NULL);
