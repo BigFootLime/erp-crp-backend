@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-12 — Application transactionnelle des récupérations regroupées (#1034, en préparation)
+
+- Ajouter la découverte des producteurs compatibles et la confirmation atomique : allocation, quantité, matière, composants, créneaux et dossier actualisé.
+- Préserver les temps et quantités déjà pointés, protéger les affaires donneuses et retrouver le producteur lors de l’approbation.
+- Refuser les propositions périmées ; conserver le rejeu exact et les preuves immuables. Aucun prélèvement autorisé par cet ajout seul.
+- Lot toujours en brouillon : prestations externes, phases clôturées, réconciliation après engagement et recette S06 restent à terminer avant déploiement.
+
+
 ## 2026-10-12 — Réservations matière des ajouts de récupération (#1034, en préparation)
 
 - Ajouter un transfert transactionnel interne vers un regroupement ayant déjà consommé de la matière : conserver les consommations, les quantités préparées, les lots et les compteurs de stock.

@@ -26,8 +26,9 @@ export async function appendRecoveryConsolidationHoldsTx(tx:PoolClient,input:Rec
     WHERE g.id=$1::uuid AND r.id=$2::uuid FOR UPDATE OF g,request`,
   [input.consolidationId,input.recoveryId,input.producerId,input.recoveryOfId])).rows[0];
   if(!context?.valid||input.producerId===input.recoveryOfId)changed();
-  const replay=await tx.query(`SELECT reservation_id FROM public.production_recovery_material_extensions
-    WHERE recovery_id=$1::uuid LIMIT 1`,[input.recoveryId]);
+  const replay=await tx.query(`SELECT e.reservation_id FROM public.production_recovery_material_extensions e
+    JOIN public.production_consolidations g ON g.id=e.consolidation_id
+    WHERE recovery_id=$1::uuid AND g.state='ACTIVE' LIMIT 1`,[input.recoveryId]);
   if(replay.rows.length)changed(); // Request-level replay is handled before any mutation.
   const initial=await readRecoveryConsolidationMaterialTx(tx,input.producerId,input.recoveryOfId);
   if(!initial.ready||initial.version!==input.materialVersion)changed();

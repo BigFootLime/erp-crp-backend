@@ -44,11 +44,14 @@ describe('recovery grouping before cutting closes',()=>{
   });
   it('preserves running start, actual progress and consumed setup',()=>{
     const f=fixture(),cut=f.snapshot.tasks[0];
-    Object.assign(cut,{good:20,scrap:5,commitment:'STARTED',actual:{start:at(7)},committed:{start:at(7),end:at(10)}});
-    cut.estimate=estimateDuration({contextKey:'cut',routingSetupMinutes:20,routingUnitMinutes:1,quantity:100,good:20,scrap:5,rework:0,setupCompletedMinutes:20,observations:[]});
+    Object.assign(cut,{good:20,scrap:0,commitment:'STARTED',actual:{start:at(7)},committed:{start:at(7),end:at(10)}});
+    cut.estimate=estimateDuration({contextKey:'cut',routingSetupMinutes:20,routingUnitMinutes:1,quantity:100,good:20,scrap:0,rework:0,setupCompletedMinutes:20,observations:[]});
     const before=structuredClone(f),result=previewRecoveryConsolidation(f);
-    expect(result.feasible).toBe(true);expect(result.operations[0]).toMatchObject({before_minutes:75,after_minutes:85,good:20,scrap:5});
+    expect(result.feasible).toBe(true);expect(result.operations[0]).toMatchObject({before_minutes:80,after_minutes:90,good:20,scrap:0});
     expect(result.changes[0].after.start).toBe(at(7));expect(f).toEqual(before);
+  });
+  it.each(['scrap','rework'] as const)('shows unsecured %s before adding a recovery that approval would refuse',counter=>{
+    expect(codes(f=>{f.snapshot.tasks[0][counter]=1;})).toContain('GROUPING_YIELD_UNSECURED');
   });
   it('uses the assigned machine estimate rather than the general routing average',()=>{
     const result=evaluate(f=>{const cut=f.snapshot.tasks[0];cut.resourceEstimates={'machine:1':{...cut.estimate!,unitMinutes:2,remainingMinutes:220}};});

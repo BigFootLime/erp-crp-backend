@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "9657bdd4eb8cfc6019bfaee495925e777954db0c010e3351ac52dcb74c9ef016";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "8da706319767006a163f07ee2ac89075295e55989dafad2512c12b7bfd664f0f";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -12913,6 +12913,46 @@ export const GENERATED_ROUTE_INVENTORY = [
       "requireProductionOrAdmin",
       "requirePlanningCapability(manage_schedule)",
       "centralUnplan"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidation-candidates",
+    "source": "src/module/planning/routes/planning-central.routes.ts:23",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "listRecoveryGroupingCandidates"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/apply",
+    "source": "src/module/planning/routes/planning-central.routes.ts:24",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "applyRecoveryGrouping"
     ],
     "authenticated": true,
     "rbac": [

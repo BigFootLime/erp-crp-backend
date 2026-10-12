@@ -3,7 +3,7 @@ import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, c
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
 import { masterPlan } from '../controllers/planning-master-plan.controller';
 import { approveRecovery, previewRecoveryApproval } from '../controllers/urgency-approval.controller';
-import { previewRecoveryGrouping } from '../controllers/recovery-consolidation.controller';
+import { previewRecoveryGrouping,applyRecoveryGrouping,listRecoveryGroupingCandidates } from '../controllers/recovery-consolidation.controller';
 const router=Router();
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
@@ -20,4 +20,6 @@ router.post("/unplan",requirePlanningCapability("manage_schedule"),centralUnplan
 router.get('/urgency-requests/:requestId/approval-preview',requirePlanningCapability('manage_schedule'),previewRecoveryApproval);
 router.post('/urgency-requests/:requestId/approve',requirePlanningCapability('manage_schedule'),approveRecovery);
 router.get('/urgency-recoveries/:recoveryId/consolidations/:consolidationId/preview',requirePlanningCapability('manage_schedule'),previewRecoveryGrouping);
+router.get('/urgency-recoveries/:recoveryId/consolidation-candidates',requirePlanningCapability('manage_schedule'),listRecoveryGroupingCandidates);
+router.post('/urgency-recoveries/:recoveryId/consolidations/:consolidationId/apply',requirePlanningCapability('manage_schedule'),applyRecoveryGrouping);
 export default router;

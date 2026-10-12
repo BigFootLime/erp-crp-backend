@@ -4,7 +4,22 @@ Parent : frontend #1252. Project Office : FLUX-20261009-06, recette WP285/S06. L
 
 ## État du chantier
 
-Le contrôle des donneurs, les OF brouillons, l’approbation du planificateur, le transfert atomique, le forfait unique par commande et le retour des réceptions conformes à l’affaire donneuse sont implémentés côté serveur. L’interface guidée est disponible dans la PR frontend #1478. **L’annulation après engagement, l’ajout à un regroupement en cours et la recette authentifiée restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Le lot n’est pas déployé.
+Le contrôle des donneurs, les OF brouillons, l’approbation du planificateur, le transfert atomique, le forfait unique par commande et le retour des réceptions conformes à l’affaire donneuse sont implémentés côté serveur. L’ajout transactionnel au regroupement et son interface sont maintenant développés pour les gammes internes encore ouvertes. L’interface guidée est disponible dans la PR frontend #1478. **Les prestations externes supplémentaires, les phases déjà clôturées autres que la découpe, l’annulation après engagement et la recette authentifiée restent à terminer.** Cette étape ne termine ni #1033, ni #1034, ni S06. Le lot n’est pas déployé.
+
+### Application du regroupement — état courant
+
+Project Office : lot #1034 / FLUX-20261009-07, lié à l’urgence FLUX-20261009-06 et à S06. Le suivi serveur reste à synchroniser quand la session est authentifiée. Les sections suivantes conservent l’historique des étapes antérieures.
+
+- `GET /planning/v2/urgency-recoveries/:recoveryId/consolidation-candidates` : découverte paginée, définition technique exacte et même client, avec motif visible si la découpe est terminée.
+- `POST /planning/v2/urgency-recoveries/:recoveryId/consolidations/:consolidationId/apply` : capacité `manage_schedule`, version attendue, empreintes de proposition, borne de calcul et clé UUID. Ces preuves techniques ne sont pas affichées à l’utilisateur.
+
+La transaction sérialisable relit le stock, les composants et les créneaux. Elle enregistre ensemble la décision immuable, l’allocation commerciale, le transfert des réservations, la nouvelle quantité du producteur, les seuls créneaux approuvés et un nouveau dossier avec sa fiche d’autocontrôle. Les anciennes preuves et les quantités déjà produites restent inchangées. Les contraintes PostgreSQL interdisent une modification isolée de la quantité ou un ajout incomplet. Tout échec annule l’ensemble, y compris les notifications. L’ajout ne donne aucun droit de prélever à lui seul.
+
+L’approbation retrouve les opérations et approvisionnements du producteur tout en conservant la commande et l’affaire sur l’OF source. Un regroupement partagé avec un autre client reste refusé. Le rejeu exact retrouve le résultat même après expiration de la proposition ; une même clé portant un autre contenu est refusée. Le frontend conserve cette tentative incertaine lors d’une fermeture/réouverture, dans le contexte de l’utilisateur et de la base.
+
+Vérification : 157 tests ciblés de regroupement/HTTP/migrations/démarrage et 45 tests d’approbation/prélèvement/démarrage ; build, contrat OpenAPI et frontières de données passent. L’approbation contrôle aussi les dates réelles et la quantité conforme d’une opération terminée, sans réécrire son historique. Les 21 requêtes SQL réelles sont compilées sous `cerp_app` sur Test dans une transaction annulée ; les 23 groupes de contraintes PostgreSQL utilisent un schéma synthétique annulé. Aucune donnée métier ni Prod modifiée. Les preuves locales portent le préfixe `urgency1034-apply`.
+
+La suite doit couvrir les commandes fournisseur du complément sans réécrire une prestation déjà envoyée, préserver une phase clôturée en représentant explicitement son supplément, puis réconcilier une annulation déjà engagée. Ces cas restent des travaux ouverts. Le déploiement reste groupé avec les migrations, le backend et le frontend après finalisation du lot.
 
 `GET /livraisons/affaires/allocations/:allocationId/urgency-preview?quantity=…` exige une session et la capacité livraison `read`. Le calcul lit un instantané PostgreSQL repeatable-read en lecture seule. Il réutilise le contrôle canonique du stock libre, puis recherche uniquement les réservations d’un même client et article sur la piste physique DELIVERY. Il exclut la piste assemblage, les affaires annulées, les réservations expirées, les incompatibilités techniques et les quantités déjà préparées pour un BL. Les lots NEW passent le contrôle Qualité existant pour la totalité des engagements actuels, sans ajouter une seconde fois la réservation donneuse. OLD conserve l’exigence de ses références documentaires.
 

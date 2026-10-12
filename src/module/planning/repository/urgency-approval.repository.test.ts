@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn(), snapshot: vi.fn(), dependencies: vi.fn(), coverage: vi.fn(),
-  dossier: vi.fn(), donors: vi.fn(), audit: vi.fn(), ofAudit: vi.fn(), enqueue: vi.fn() }));
+  dossier: vi.fn(), donors: vi.fn(), audit: vi.fn(), ofAudit: vi.fn(), enqueue: vi.fn(), producers: vi.fn() }));
+vi.mock('./urgency-recovery-producer.repository',()=>({readUrgencyRecoveryProducersTx:mocks.producers}));
 vi.mock('../../../config/database', () => ({ default: { connect: vi.fn(async () => ({ query: mocks.query, release: mocks.release })) } }));
 vi.mock('./planning-central.repository', () => ({ readCentralSnapshot: mocks.snapshot, readCentralDependencies: mocks.dependencies }));
 vi.mock('./planning-coverage.repository', () => ({ readPlanningCoverageTx: mocks.coverage }));
@@ -38,6 +39,7 @@ function defaultQuery(sql: string, values: unknown[] = []) {
 beforeEach(() => {
   vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(at(6)));
   version = 1; status = 'WAITING_PLANNER'; approval = undefined; mocks.query.mockImplementation(defaultQuery);
+  mocks.producers.mockResolvedValue([{recovery_id:'recovery1',source_of_id:101,producer_of_id:101,grouped:false,valid:true,addition_id:null}]);
   mocks.dependencies.mockResolvedValue([]); mocks.coverage.mockResolvedValue({ sources: [], demands: [], allocations: [], coverageAvailable: true });
   mocks.dossier.mockResolvedValue({ version: 'dossier1', sourceHash: 'definition1', status: 'COMPLETE', operations: [{ id: 'cut' }] });
   mocks.donors.mockImplementation(async () => ({ context: { commande_id: 10, client_id: '195', article_id: 'article1' },

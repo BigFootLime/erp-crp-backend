@@ -1,8 +1,8 @@
 import express,{type ErrorRequestHandler} from 'express';
 import request from 'supertest';
 import { beforeEach,describe,expect,it,vi } from 'vitest';
-const mocks=vi.hoisted(()=>({preview:vi.fn()}));
-vi.mock('../module/planning/services/recovery-consolidation.service',()=>({svcPreviewRecoveryGrouping:mocks.preview}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),apply:vi.fn(),candidates:vi.fn()}));
+vi.mock('../module/planning/services/recovery-consolidation.service',()=>({svcPreviewRecoveryGrouping:mocks.preview,svcApplyRecoveryGrouping:mocks.apply,svcListRecoveryGroupingCandidates:mocks.candidates}));
 vi.mock('../module/planning/controllers/planning-central.controller',()=>Object.fromEntries([
   'centralApply','centralGetSimulation','centralSimulate','centralSnapshot','centralStatus','centralUnplan','centralObservations',
   'centralPreview','centralWorkshopCalendar','centralSetWorkshopCalendar'].map(name=>[name,vi.fn()])));
@@ -33,8 +33,43 @@ describe('planner-only recovery grouping preview',()=>{
     expect((await request(app()).get(url.replace(invalid,'invalid')).set('x-test-role','Planification')).status).toBe(400);
     expect(mocks.preview).not.toHaveBeenCalled();
   });
-  it('does not expose a write action for this unfinished workflow',async()=>{
+  it('keeps preview read-only',async()=>{
     expect((await request(app()).post(url).set('x-test-role','Planification').send({quantity:100})).status).toBe(404);
     expect(mocks.preview).not.toHaveBeenCalled();
+  });
+});
+describe('planner-only recovery grouping application',()=>{
+  const endpoint=url.replace('/preview','/apply');
+  const body={expected_request_version:1,preview_hash:'a'.repeat(64),proposal_hash:'b'.repeat(64),planning_reference_at:'2026-10-12T08:00:00.000Z',idempotency_key:'6df7ac32-1008-4a2a-9dcc-904465950293'};
+  it.each([[undefined,401],['Stock',403],['Operateur atelier',403]] as const)('rejects %s',async(role,expected)=>{
+    let call=request(app()).post(endpoint).send(body);if(role)call=call.set('x-test-role',role);
+    expect((await call).status).toBe(expected);expect(mocks.apply).not.toHaveBeenCalled();
+  });
+  it('binds the reviewed proposal and current actor without accepting arbitrary quantities',async()=>{
+    mocks.apply.mockResolvedValue({replayed:false,addition:{can_withdraw:false}});
+    const response=await request(app()).post(endpoint).set('x-test-role','Planification').send(body);
+    expect(response.status).toBe(200);expect(response.headers['cache-control']).toBe('private, no-store');
+    expect(mocks.apply).toHaveBeenCalledWith(id,group,body,{user_id:8,role:'Planification'});
+  });
+  it.each([{quantity:20},{producer_id:10},{expected_request_version:0},{preview_hash:'bad'},{planning_reference_at:'12/10/2026'}])('rejects invalid payload %j',async patch=>{
+    expect((await request(app()).post(endpoint).set('x-test-role','Planification').send({...body,...patch})).status).toBe(400);
+    expect(mocks.apply).not.toHaveBeenCalled();
+  });
+});
+describe('planner-only grouping discovery',()=>{
+  const endpoint=`/planning/v2/urgency-recoveries/${id}/consolidation-candidates`;
+  it.each([[undefined,401],['Stock',403],['Operateur atelier',403]] as const)('rejects %s',async(role,status)=>{
+    let call=request(app()).get(endpoint);if(role)call=call.set('x-test-role',role);
+    expect((await call).status).toBe(status);expect(mocks.candidates).not.toHaveBeenCalled();
+  });
+  it('parses a bounded page without exposing raw client or technical filters',async()=>{
+    mocks.candidates.mockResolvedValue({items:[],next_cursor:null,available:true,reason:null});
+    const response=await request(app()).get(endpoint+'?limit=5&cursor=42&q=%20OF-12%20').set('x-test-role','Planification');
+    expect(response.status).toBe(200);expect(response.headers['cache-control']).toBe('private, no-store');
+    expect(mocks.candidates).toHaveBeenCalledWith(id,{limit:5,cursor:42,q:'OF-12'});
+  });
+  it.each(['limit=101','limit=0','cursor=-1','client_id=other','q='+('a'.repeat(81))])('rejects %s',async query=>{
+    expect((await request(app()).get(endpoint+'?'+query).set('x-test-role','Planification')).status).toBe(400);
+    expect(mocks.candidates).not.toHaveBeenCalled();
   });
 });

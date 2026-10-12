@@ -17,6 +17,8 @@ export type UrgencyRecoveryEvidence = {
     dossier_complete: boolean;
     identity_matches: boolean;
     operation_ids: string[];
+    allow_execution?: boolean;
+    grouping_addition_id?: string|null;
 };
 const time = (value: string) => Date.parse(value);
 const validInterval = (task: CentralTask) => !!task.committed && Number.isFinite(time(task.committed.start))
@@ -58,9 +60,11 @@ export function evaluateUrgencyRecoveryApproval(input: {
     recoveries: UrgencyRecoveryEvidence[];
     snapshot: CentralSnapshot;
     now: string;
+    allowExecution?: boolean;
 }) {
     const issues: UrgencyApprovalIssue[] = [], { snapshot, recoveries } = input;
     const ofIds = new Set(recoveries.flatMap(r => r.of_ids));
+    const executingOfIds = new Set(recoveries.filter(r=>input.allowExecution||r.allow_execution).flatMap(r=>r.of_ids));
     const selected = snapshot.tasks.filter(task => task.ofId !== null && ofIds.has(task.ofId));
     const byId = new Map(snapshot.tasks.map(task => [task.id, task]));
     const issue = (code: string, message: string, of_id?: number, task_id?: string) => issues.push({ code, message, of_id, task_id });
@@ -71,6 +75,7 @@ export function evaluateUrgencyRecoveryApproval(input: {
     if (!['COMMIT', 'EXECUTE', 'LEARN'].includes(snapshot.activation))
         issue('PLANNING_NOT_COMMITTABLE', 'Activez la validation du planning avant d’approuver une récupération.');
     for (const recovery of recoveries) {
+        const allowExecution=!!input.allowExecution||!!recovery.allow_execution;
         if (!recovery.identity_matches)
             issue('RECOVERY_DEFINITION_CHANGED', 'La commande, la pièce ou la quantité de récupération a changé.', recovery.of_id);
         if (!recovery.dossier_complete)
@@ -86,10 +91,23 @@ export function evaluateUrgencyRecoveryApproval(input: {
                 continue;
             if (task.readiness !== 'READY' || task.source !== 'OPERATION')
                 issue('RECOVERY_NOT_READY', 'Validez la définition technique de cette opération.', task.ofId ?? undefined, task.id);
-            if (!validInterval(task) || task.commitment !== 'COMMITTED' || task.actual)
+            const completed = allowExecution && task.commitment === 'DONE' && !!task.actual?.end;
+            const running = allowExecution && task.commitment === 'STARTED' && !!task.actual?.start;
+            if ((running && (!Number.isFinite(time(task.actual!.start!)) || time(task.actual!.start!) > time(input.now)))
+                || (completed && (!Number.isFinite(time(task.actual!.end!)) || time(task.actual!.end!) > time(input.now))))
+                issue('RECOVERY_ACTUAL_DATE_INVALID', 'Vérifiez la date réelle de cette opération avant de confirmer la récupération.', task.ofId ?? undefined, task.id);
+            if (allowExecution && (task.scrap > 0 || task.rework > 0))
+                issue('RECOVERY_YIELD_UNSECURED', 'Rattachez une récupération du manque avant de prélever les pièces donneuses.', task.ofId ?? undefined, task.id);
+            if (completed) {
+                if (!Number.isFinite(task.good) || task.good < task.quantity)
+                    issue('RECOVERY_QUANTITY_UNSECURED', 'La quantité conforme de l’opération terminée ne couvre pas toute la fabrication.', task.ofId ?? undefined, task.id);
+                if (!Number.isFinite(time(task.actual!.end!)) || !Number.isFinite(deadline) || time(task.actual!.end!) >= deadline)
+                    issue('RECOVERY_TOO_LATE', 'La récupération terminée ne respecte pas le délai donneur.', task.ofId ?? undefined, task.id);
+            }
+            else if (!validInterval(task) || (!running && (task.commitment !== 'COMMITTED' || task.actual)))
                 issue('RECOVERY_NOT_PLANNED', 'Engagez les créneaux de toutes les opérations de récupération avant l’approbation.', task.ofId ?? undefined, task.id);
             else {
-                if (time(task.committed!.start) < time(input.now))
+                if ((!running && time(task.committed!.start) < time(input.now)) || (running && time(task.committed!.end) <= time(input.now)))
                     issue('RECOVERY_PLAN_OVERDUE', 'Un créneau prévu est déjà passé : actualisez le planning.', task.ofId ?? undefined, task.id);
                 if (!Number.isFinite(deadline) || time(task.committed!.end) >= deadline)
                     issue('RECOVERY_TOO_LATE', 'La récupération doit finir avant le jour de livraison de l’affaire donneuse.', task.ofId ?? undefined, task.id);
@@ -101,8 +119,10 @@ export function evaluateUrgencyRecoveryApproval(input: {
     for (const demand of snapshot.demands.filter(d => d.coverage && ofIds.has(d.coverage.ofId))) {
         const coverage = demand.coverage!;
         const operation = selected.find(t => t.operationId === coverage.operationId);
+        if (executingOfIds.has(coverage.ofId) && coverage.consumed >= demand.quantity && coverage.unsecured === 0) continue;
+        const consumeAt = executingOfIds.has(coverage.ofId) && operation?.commitment === 'STARTED' ? input.now : operation?.committed?.start;
         if (!operation?.committed || coverage.unsecured > 0 || coverage.reservedBlocked > 0 || coverage.receivedBlocked > 0 || coverage.issues.length
-            || !coverage.availableAt || time(coverage.availableAt) > time(operation.committed.start))
+            || !coverage.availableAt || !consumeAt || time(coverage.availableAt) > time(consumeAt))
             issue('RECOVERY_SUPPLY_UNSECURED', `${coverage.label} : confirmez une couverture utilisable avant l’opération.`, coverage.ofId, operation?.id);
     }
     // Dependencies outside the recovery remain fixed, with their real commitments/actual completion.
@@ -117,24 +137,32 @@ export function evaluateUrgencyRecoveryApproval(input: {
         if (!ofIds.has(task.ofId ?? -1) && !(task.commitment === 'DONE' && task.actual?.end) && !task.committed)
             issue('RECOVERY_DEPENDENCY_UNCOMMITTED', 'Un prérequis de programmation ou de production attend encore sa planification.', task.ofId ?? undefined, id);
     }
-    for (const id of overlappingCommitments(snapshot, new Set(selected.map(t => t.id))))
+    const projectedTasks = snapshot.tasks.map(task => {
+        if (!executingOfIds.has(task.ofId ?? -1)) return task;
+        if (task.commitment === 'DONE' && task.actual?.end) return { ...task, committed: null };
+        if (task.commitment === 'STARTED' && task.actual?.start && validInterval(task))
+            return { ...task, commitment: 'COMMITTED' as const, actual: null, committed: { start: input.now, end: task.committed!.end } };
+        return task;
+    });
+    for (const id of overlappingCommitments({ ...snapshot, tasks: projectedTasks }, new Set(selected.map(t => t.id))))
         issue('RECOVERY_CAPACITY_OVERLAP', 'Un créneau de récupération chevauche une autre réservation de capacité.', byId.get(id)?.ofId ?? undefined, id);
     const resourcesById = new Map(snapshot.resources.map(resource => [resource.id, resource]));
     for (const task of selected)
-        if (!task.external && task.resourceIds.some(id => resourcesById.get(id)?.capacityEnabled === false))
+        if (task.commitment !== 'DONE' && !task.external && task.resourceIds.some(id => resourcesById.get(id)?.capacityEnabled === false))
             issue('RECOVERY_RESOURCE_UNAVAILABLE', 'Une ressource est indisponible pour cette récupération.', task.ofId ?? undefined, task.id);
-    const requests = selected.filter(t => t.source === 'OPERATION' && validInterval(t) && t.commitment === 'COMMITTED' && !t.actual)
+    const requests = projectedTasks.filter(t => ofIds.has(t.ofId ?? -1) && t.source === 'OPERATION' && validInterval(t) && t.commitment === 'COMMITTED' && !t.actual)
         .map(task => ({ taskId: task.id, earliestStart: task.committed!.start, resourceIds: task.resourceIds }));
     if (requests.length) {
         const requested = new Set(requests.map(r => r.taskId));
-        const tasks: CentralTask[] = snapshot.tasks.map(task => ({ ...task, locked: requested.has(task.id) ? false : true }));
+        const tasks: CentralTask[] = projectedTasks.map(task => ({ ...task, locked: requested.has(task.id) ? false : true }));
         const result = schedule({ tasks, resources: snapshot.resources, dependencies: snapshot.dependencies, from: input.now, requested: requests });
         for (const conflict of result.conflicts)
             if (conflict.blocking !== false)
                 issue('RECOVERY_PLANNING_CONFLICT', conflict.message, byId.get(conflict.taskId)?.ofId ?? undefined, conflict.taskId);
         for (const request of requests) {
             const task = byId.get(request.taskId)!, calculated = result.forecasts[task.id];
-            if (!calculated || time(calculated.start) !== time(task.committed!.start) || time(calculated.end) > time(task.committed!.end))
+            const continuing = executingOfIds.has(task.ofId ?? -1) && task.commitment === 'STARTED';
+            if (!calculated || (!continuing && time(calculated.start) !== time(task.committed!.start)) || time(calculated.end) > time(task.committed!.end))
                 issue('RECOVERY_REPLAN_REQUIRED', 'Le créneau engagé ne couvre plus la charge réalisable. Replanifiez cette opération.', task.ofId ?? undefined, task.id);
         }
         for (const change of result.changes)
@@ -146,8 +174,9 @@ export function evaluateUrgencyRecoveryApproval(input: {
             recovery_id: recovery.recovery_id, of_id: recovery.of_id, quantity: recovery.quantity,
             finish_before: Number.isFinite(Math.min(time(recovery.protected_before), time(recovery.current_protected_before ?? recovery.protected_before)))
                 ? new Date(Math.min(time(recovery.protected_before), time(recovery.current_protected_before ?? recovery.protected_before))).toISOString() : null,
-            planned_finish: snapshot.tasks.filter(t => t.ofId !== null && recovery.of_ids.includes(t.ofId) && t.committed)
-                .map(t => t.committed!.end).sort((a, b) => time(a) - time(b)).at(-1) ?? null,
+            planned_finish: snapshot.tasks.filter(t => t.ofId !== null && recovery.of_ids.includes(t.ofId))
+                .flatMap(t => t.commitment === 'DONE' && t.actual?.end ? [t.actual.end] : t.committed ? [t.committed.end] : [])
+                .sort((a, b) => time(a) - time(b)).at(-1) ?? null,
         }))
     };
 }

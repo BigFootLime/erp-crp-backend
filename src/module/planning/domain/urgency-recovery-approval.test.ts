@@ -101,6 +101,42 @@ describe('recovery approval on existing canonical commitments', () => {
   });
 });
 
+describe('approval after a reviewed grouping addition', () => {
+  const running = () => snapshot([task('cut', { commitment: 'STARTED', actual: { start: at(5) }, committed: { start: at(5), end: at(8) } })]);
+  const evidence = () => ({ ...recovery(), allow_execution: true, grouping_addition_id: 'addition' });
+  it('checks the remaining load of a running group without rewriting its original start', () => {
+    const state = running(), before = structuredClone(state);
+    expect(evaluate(state,evidence()).can_approve).toBe(true);
+    expect(state).toEqual(before);
+    expect(evaluate(state).can_approve).toBe(false);
+    expect(evaluateUrgencyRecoveryApproval({snapshot:state,recoveries:[recovery()],now,allowExecution:true}).can_approve).toBe(true);
+  });
+  it('still blocks lost yield, unavailable capacity and stale running slots', () => {
+    const state = running(); state.tasks[0].scrap = 1;
+    expect(codes(state,evidence())).toContain('RECOVERY_YIELD_UNSECURED');
+    state.tasks[0].scrap = 0; state.resources[0].capacityEnabled = false;
+    expect(codes(state,evidence())).toContain('RECOVERY_RESOURCE_UNAVAILABLE');
+    state.resources[0].capacityEnabled = true; state.tasks[0].committed!.end = now;
+    expect(codes(state,evidence())).toContain('RECOVERY_PLAN_OVERDUE');
+  });
+  it('requires actual completion and full good quantity before relying on a completed operation', () => {
+    const state=snapshot([task('cut',{commitment:'DONE',actual:{start:at(4),end:at(5)},good:10})]);
+    expect(evaluate(state,evidence())).toMatchObject({can_approve:true,recoveries:[{planned_finish:at(5)}]});
+    state.tasks[0].good=9;
+    expect(codes(state,evidence())).toContain('RECOVERY_QUANTITY_UNSECURED');
+    state.tasks[0].good=10;
+    expect(codes(state,{...evidence(),protected_before:at(5)})).toContain('RECOVERY_TOO_LATE');
+  });
+  it('does not treat a future or invalid actual timestamp as work already done', () => {
+    const state=running();state.tasks[0].actual={start:at(7)};
+    expect(codes(state,evidence())).toContain('RECOVERY_ACTUAL_DATE_INVALID');
+    state.tasks[0]={...state.tasks[0],commitment:'DONE',actual:{end:at(7)},good:10};
+    expect(codes(state,evidence())).toContain('RECOVERY_ACTUAL_DATE_INVALID');
+    state.tasks[0].actual={end:'invalid'};
+    expect(codes(state,evidence())).toContain('RECOVERY_ACTUAL_DATE_INVALID');
+  });
+});
+
 describe('assembly recovery component commitments', () => {
   const state = () => {
     const value = snapshot([task('cut',{ ofId: 102 }), task('assembly',{ ofId: 101, operationType: 'ASSEMBLAGE', committed: { start: at(10), end: at(11) } })]);

@@ -9,6 +9,7 @@ import { readPlanningCoverageTx } from './planning-coverage.repository';
 import { dependencyClosure } from '../domain/central-dependencies';
 import { evaluateUrgencyRecoveryApproval, type UrgencyRecoveryEvidence } from '../domain/urgency-recovery-approval';
 import { readOfDossierTx } from '../../production/repository/of-dossier.repository';
+import { readUrgencyRecoveryProducersTx } from './urgency-recovery-producer.repository';
 import { readOfComponentCoverageTx } from '../../production/repository/of-component-coverage.repository';
 import { evaluateRecoveryComponents } from '../domain/urgency-recovery-components';
 import { readDeliveryUrgencyPlan } from '../../livraisons/repository/delivery-urgency.repository';
@@ -87,27 +88,31 @@ export async function readUrgencyApprovalTx(tx: Db, requestId: string) {
         donorIssues.push({ code: 'URGENCY_FREE_STOCK_AVAILABLE', message: 'Du stock libre est maintenant disponible. Réservez-le avant de prélever sur une autre affaire.' });
     if (sources.some(source => parseCumpDecimal(proposed.get(source.donor_reservation_id) ?? '0') < parseCumpDecimal(source.quantity)))
         donorIssues.push({ code: 'URGENCY_DONOR_CHANGED', message: 'Une quantité donneuse n’est plus utilisable ou disponible. Reprenez la proposition.' });
-    const roots = recoveries.map(r => r.recovery_of_id);
+    const producers=await readUrgencyRecoveryProducersTx(tx,recoveries.map(r=>r.id));
+    const roots = recoveries.filter(r=>!producers.find(p=>p.recovery_id===r.id)?.grouped).map(r => r.recovery_of_id);
+    const physicalRoots=[...new Set(producers.filter(p=>p.grouped).map(p=>p.producer_of_id))];
     const tree = (await tx.query<{
         id: number;
         root_of_id: number;
         quantity: number;
     }>(`SELECT id::int,COALESCE(root_of_id,id)::int AS root_of_id,quantite_lancee::float8 AS quantity
-    FROM public.ordres_fabrication WHERE (id=ANY($1::bigint[]) OR root_of_id=ANY($1::bigint[])) AND statut<>'ANNULE' ORDER BY id`, [roots])).rows;
+    FROM public.ordres_fabrication WHERE (id=ANY($1::bigint[]) OR root_of_id=ANY($1::bigint[]) OR id=ANY($2::bigint[])) AND statut<>'ANNULE' ORDER BY id`, [roots,physicalRoots])).rows;
     const dossiers = await Promise.all(tree.map(async (of) => ({ of, dossier: await readOfDossierTx(tx, of.id) })));
     const evidence: UrgencyRecoveryEvidence[] = [];
     for (const recovery of recoveries) {
         const source = donorPlan.donors.find(d => d.allocation_id === recovery.donor_allocation_id);
-        const matching = dossiers.filter(d => d.of.root_of_id === recovery.recovery_of_id);
+        const physical=producers.find(p=>p.recovery_id===recovery.id);
+        const matching = dossiers.filter(d => physical?.grouped ? d.of.id===physical.producer_of_id : d.of.root_of_id === recovery.recovery_of_id);
         const currentBoundary = source?.protected_due_date ? (await tx.query<{
             boundary: string;
         }>("SELECT ($1::date::timestamp AT TIME ZONE 'Europe/Paris')::text AS boundary", [source.protected_due_date])).rows[0].boundary : null;
         const original = recovery.donor_snapshot;
         evidence.push({
             recovery_id: recovery.id, of_id: recovery.recovery_of_id, of_ids: matching.map(d => d.of.id), quantity: recovery.quantity,
+            allow_execution:!!physical?.addition_id,grouping_addition_id:physical?.addition_id??null,
             protected_before: recovery.protected_before, current_protected_before: currentBoundary,
             dossier_complete: matching.length > 0 && matching.every(d => d.dossier.status === 'COMPLETE'),
-            identity_matches: !!source && recovery.root_of_id === recovery.recovery_of_id && recovery.client_id === donorPlan.context.client_id
+            identity_matches: !!physical?.valid && !!source && recovery.root_of_id === recovery.recovery_of_id && recovery.client_id === donorPlan.context.client_id
                 && recovery.article_id === donorPlan.context.article_id && recovery.commande_id === original.commande_id
                 && recovery.commande_ligne_id === original.commande_ligne_id && recovery.affaire_id === original.livraison_affaire_id
                 && recovery.piece_technique_id === original.piece_technique_id && recovery.technical_version_id === original.technical_version_id
@@ -159,7 +164,7 @@ export async function readUrgencyApprovalTx(tx: Db, requestId: string) {
     // Approval binds the production definition and committed slots, not a global revision
     // or production counters that naturally evolve while the approved work is carried out.
     const basis = createHash('sha256').update(JSON.stringify({
-        recoveries: evidence.map(r => [r.recovery_id,r.of_id,r.of_ids,r.quantity,r.protected_before,r.operation_ids]),
+        recoveries: evidence.map(r => [r.recovery_id,r.of_id,r.of_ids,r.quantity,r.protected_before,r.operation_ids,r.grouping_addition_id]),
         dossiers: dossiers.map(d => [d.of.id,d.dossier.sourceHash]),
         commitments: snapshot.tasks.filter(t => targets.has(t.ofId ?? -1))
             .map(t => [t.id,t.committed,t.resourceIds]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))),

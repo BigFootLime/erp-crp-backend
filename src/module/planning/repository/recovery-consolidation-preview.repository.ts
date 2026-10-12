@@ -12,8 +12,8 @@ import { previewRecoveryConsolidation, type RecoveryGroupingIssue } from '../dom
 
 /** The same transaction sees the promises, material, calendars and operations.
  * This endpoint never changes quantities, commitments, reservations or approval. */
-export async function readRecoveryConsolidationPreviewTx(
-  tx: Pick<PoolClient,'query'>, recoveryId: string, groupingId: string, now = new Date().toISOString(),
+export async function readRecoveryConsolidationControlTx(
+  tx: Pick<PoolClient,'query'>, recoveryId: string, groupingId: string, now = new Date().toISOString(), planningAt = now,
 ) {
   const context = await readRecoveryConsolidationContextTx(tx,recoveryId,groupingId);
   const { recovery, producer } = context;
@@ -54,27 +54,38 @@ export async function readRecoveryConsolidationPreviewTx(
     recoveryAlreadyCovered:recovery.covered,originalIdentityMatches:context.originalIdentityMatches,
     sameClientSources:context.sameClientSources,deadlines:context.deadlines,issues,
   };
-  const preview = previewRecoveryConsolidation({snapshot,evidence,now});
+  const preview = previewRecoveryConsolidation({snapshot,evidence,now:planningAt});
   const previewHash = createHash('sha256').update(JSON.stringify({context,material:material.version,
     components:components.map(c=>[c.ofId,c.version]),revision:snapshot.revision,
     tasks:snapshot.tasks.map(t=>[t.id,t.version,t.committed,t.actual,t.resourceIds]),
     resources:snapshot.resources.map(r=>[r.id,r.version]),dependencies:snapshot.dependencies,
   })).digest('hex');
-  return {...preview,request_id:context.context.request_id,request_version:context.context.request_version,
+  const proposalHash=createHash('sha256').update(JSON.stringify([previewHash,planningAt,preview.changes,preview.proposed_finish,preview.proposed_quantity])).digest('hex');
+  const response={...preview,request_id:context.context.request_id,request_version:context.context.request_version,
     recovery_id:recoveryId,consolidation_id:groupingId,recovery_number:recovery.number,producer_number:producer.number,
-    planning_revision:snapshot.revision,preview_hash:previewHash,checked_at:now,
+    planning_revision:snapshot.revision,preview_hash:previewHash,checked_at:now,planning_reference_at:planningAt,proposal_hash:proposalHash,
     deadlines:context.deadlines,
     material:{ready:material.ready,origins:material.policy.usedOrigins.length,maximum_origins:material.policy.maximumLots,
       needs:material.groups.map(({recovery_reservation_ids,...need})=>need)},
     components:components.map(c=>({of_id:c.ofId,ready:c.ready,missing:c.items.reduce((sum,i)=>sum+i.missing,0)})),
   };
+  return {context,material,components,snapshot,evidence,response};
+}
+export async function readRecoveryConsolidationPreviewTx(
+  tx:Pick<PoolClient,'query'>, recoveryId:string, groupingId:string, now=new Date().toISOString(),
+) {
+  return (await readRecoveryConsolidationControlTx(tx,recoveryId,groupingId,now)).response;
 }
 
 export async function previewRecoveryGrouping(recoveryId:string,groupingId:string) {
   const tx=await pool.connect();
   try {
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const result=await readRecoveryConsolidationPreviewTx(tx,recoveryId,groupingId);
+    const now=new Date().toISOString();
+    // A short, stable future boundary gives the planner time to confirm exactly
+    // the reviewed slots. Running operations retain their original start.
+    const reference=new Date(Math.ceil(Date.parse(now)/60000)*60000+60000).toISOString();
+    const result=(await readRecoveryConsolidationControlTx(tx,recoveryId,groupingId,now,reference)).response;
     await tx.query('COMMIT');return result;
   } catch(error) { await tx.query('ROLLBACK');throw error; }
   finally {tx.release();}

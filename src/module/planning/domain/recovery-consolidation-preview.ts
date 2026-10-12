@@ -66,6 +66,8 @@ export function previewRecoveryConsolidation(input: {
     issue('GROUPING_NO_CUTTING_GATE','Ce regroupement engagé n’a pas de découpe identifiable. Gardez un OF séparé.');
   if (cuts.some(t=>t.commitment==='DONE'||t.actual?.end)) issue('GROUPING_CUTTING_FINISHED','La découpe est terminée : préparez un OF séparé.');
   if (selected.some(t=>t.commitment==='DONE'||t.actual?.end)) issue('GROUPING_OPERATION_FINISHED','Une opération est déjà clôturée. Son historique doit être conservé dans cet OF.');
+  if (selected.some(t=>t.scrap>0||t.rework>0))
+    issue('GROUPING_YIELD_UNSECURED','Traitez les rebuts ou reprises du regroupement avant d’y engager cette récupération.');
   if (!evidence.deadlines.length || evidence.deadlines.some(d=>!Number.isFinite(instant(d.before))))
     issue('GROUPING_PROMISE_MISSING','Un délai de livraison à protéger manque. Complétez l’engagement client.');
   const earliestDeadline = Math.min(...evidence.deadlines.map(d=>instant(d.before)));

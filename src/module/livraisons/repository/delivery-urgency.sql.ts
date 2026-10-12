@@ -1,6 +1,7 @@
 /** Same-client delivery reservations only; free stock is calculated by the canonical recovery preview. */
 export const DELIVERY_URGENCY_DONORS_SQL = `
 SELECT reservation.id::text AS reservation_id, reservation.version AS reservation_version,
+  reservation.location_id::text AS location_id,
   allocation.id::int AS allocation_id, allocation.allocation_version,
   allocation.commande_id::int, allocation.commande_ligne_id::int, allocation.livraison_affaire_id::int,
   command.client_id::text, command.numero AS commande_numero, command.code_client AS customer_order_reference,
