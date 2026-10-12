@@ -4,6 +4,7 @@ export const IDENTIFICATION_CONTRACT_VERSION = 1 as const;
 export const IDENTIFICATION_ENTITY_TYPES = [
   "STOCK_ARTICLE",
   "STOCK_LOT",
+  "STOCK_MATERIAL_BAR",
   "STOCK_LOCATION",
   "WORK_ORDER",
   "PURCHASE_ORDER",
@@ -40,9 +41,9 @@ export const FLOW_ENTITY_TYPES: Readonly<Record<IdentificationFlow, readonly Ide
   RECEIVE: ["PURCHASE_ORDER", "RECEPTION", "STOCK_ARTICLE", "STOCK_LOT"],
   PUTAWAY: ["STOCK_ARTICLE", "STOCK_LOT", "STOCK_LOCATION", "RECEPTION"],
   TRANSFER: ["STOCK_ARTICLE", "STOCK_LOT", "STOCK_LOCATION"],
-  CONSUME: ["STOCK_ARTICLE", "STOCK_LOT", "WORK_ORDER"],
+  CONSUME: ["STOCK_ARTICLE", "STOCK_LOT", "STOCK_MATERIAL_BAR", "WORK_ORDER"],
   START_WORK_ORDER: ["WORK_ORDER"],
-  QUALITY_CONTROL: ["QUALITY_CONTROL", "STOCK_LOT", "WORK_ORDER", "RECEPTION"],
+  QUALITY_CONTROL: ["QUALITY_CONTROL", "STOCK_LOT", "STOCK_MATERIAL_BAR", "WORK_ORDER", "RECEPTION"],
   TOOL_ISSUE: ["TOOL", "WORK_ORDER"],
   TOOL_RETURN: ["TOOL", "WORK_ORDER"],
   SHIP: ["DELIVERY", "STOCK_LOT"],
@@ -52,6 +53,7 @@ export const FLOW_ENTITY_TYPES: Readonly<Record<IdentificationFlow, readonly Ide
 const ENTITY_MODULE: Readonly<Record<IdentificationEntityType, string>> = {
   STOCK_ARTICLE: "stock",
   STOCK_LOT: "stock",
+  STOCK_MATERIAL_BAR: "stock",
   STOCK_LOCATION: "stock",
   WORK_ORDER: "production",
   PURCHASE_ORDER: "commandes-fournisseurs",
@@ -64,6 +66,7 @@ const ENTITY_MODULE: Readonly<Record<IdentificationEntityType, string>> = {
 const ENTITY_PREFIX: Readonly<Record<IdentificationEntityType, string>> = {
   STOCK_ARTICLE: "ART",
   STOCK_LOT: "LOT",
+  STOCK_MATERIAL_BAR: "BAR",
   STOCK_LOCATION: "LOC",
   WORK_ORDER: "OF",
   PURCHASE_ORDER: "BCF",
@@ -76,6 +79,7 @@ const ENTITY_PREFIX: Readonly<Record<IdentificationEntityType, string>> = {
 const READ_ROLE_NEEDLES: Readonly<Record<IdentificationEntityType, readonly string[]>> = {
   STOCK_ARTICLE: ["admin", "directeur", "stock", "logisti", "magasin", "production", "atelier", "program", "planif", "qualit", "method", "achat", "appro"],
   STOCK_LOT: ["admin", "directeur", "stock", "logisti", "magasin", "production", "atelier", "program", "planif", "qualit", "method", "achat", "appro"],
+  STOCK_MATERIAL_BAR: ["admin", "directeur", "stock", "logisti", "magasin", "production", "atelier", "program", "planif", "qualit", "method", "achat", "appro"],
   STOCK_LOCATION: ["admin", "directeur", "stock", "logisti", "magasin", "production", "atelier", "program", "planif", "qualit", "method", "achat", "appro"],
   WORK_ORDER: ["admin", "directeur", "production", "atelier", "method", "planif", "program", "qualit", "logisti"],
   PURCHASE_ORDER: ["admin", "directeur", "secr", "achat", "logisti", "magasin", "compt", "qualit", "program", "planif", "commercial"],
@@ -88,6 +92,7 @@ const READ_ROLE_NEEDLES: Readonly<Record<IdentificationEntityType, readonly stri
 const MANAGE_ROLE_NEEDLES: Readonly<Record<IdentificationEntityType, readonly string[]>> = {
   STOCK_ARTICLE: ["admin", "directeur", "stock", "logisti", "magasin", "program", "method", "achat", "appro"],
   STOCK_LOT: ["admin", "directeur", "stock", "logisti", "magasin", "qualit"],
+  STOCK_MATERIAL_BAR: ["admin", "directeur", "stock", "logisti", "magasin", "qualit"],
   STOCK_LOCATION: ["admin", "directeur", "stock", "logisti", "magasin"],
   WORK_ORDER: ["admin", "directeur", "production", "method", "program"],
   PURCHASE_ORDER: ["admin", "directeur", "secr", "achat", "program", "logisti"],
@@ -147,7 +152,8 @@ export function targetRoute(entityType: IdentificationEntityType, entityId: stri
   const id = encodeURIComponent(entityId);
   switch (entityType) {
     case "STOCK_ARTICLE": return `/stock/articles/${id}`;
-    case "STOCK_LOT": return `/stock/lots?lot=${id}`;
+    case "STOCK_LOT": return `/stock/lots/${id}`;
+    case "STOCK_MATERIAL_BAR": return "/stock/lots";
     case "STOCK_LOCATION": return `/stock/magasins?emplacement=${id}`;
     case "WORK_ORDER": return `/production/of/${id}`;
     case "PURCHASE_ORDER": return `/commandes-fournisseurs/${id}`;
@@ -162,6 +168,7 @@ export function forbiddenStatusReason(entityType: IdentificationEntityType, stat
   const normalized = fold(status ?? "").replace(/\s+/g, "_").toUpperCase();
   if (["ANNULE", "ANNULEE", "CANCELLED", "ARCHIVED", "ARCHIVE", "INACTIVE"].includes(normalized)) return `Statut ${status ?? "inconnu"}`;
   if (entityType === "STOCK_LOT" && ["CONSUME", "SHIP"].includes(flow) && ["BLOQUE", "QUARANTAINE", "EN_ATTENTE"].includes(normalized)) return `Lot ${status}`;
+  if (entityType === "STOCK_MATERIAL_BAR" && flow !== "TRACEABILITY" && ["SOLDE", "BLOQUE", "QUARANTAINE", "EN_ATTENTE"].includes(normalized)) return `Barre ${status}`;
   if (entityType === "WORK_ORDER" && flow === "START_WORK_ORDER" && ["CLOTURE", "TERMINE", "ANNULE"].includes(normalized)) return `OF ${status}`;
   if (entityType === "DELIVERY" && flow === "SHIP" && normalized !== "READY") return `Livraison ${status ?? "sans statut"}`;
   return null;

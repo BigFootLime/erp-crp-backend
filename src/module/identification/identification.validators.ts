@@ -36,7 +36,7 @@ export const resolveIdentificationSchema = z.object({
   code: z.string().trim().min(1).max(256),
   source: z.enum(["KEYBOARD", "CAMERA", "MANUAL", "OFFLINE"]),
   flow: identificationFlowSchema,
-  expected_entity_types: z.array(identificationEntityTypeSchema).max(9).optional().default([]),
+  expected_entity_types: z.array(identificationEntityTypeSchema).max(IDENTIFICATION_ENTITY_TYPES.length).optional().default([]),
   client_scanned_at: z.string().datetime({ offset: true }),
   device_id: z.string().trim().min(1).max(120).optional(),
 }).strict();

@@ -17,7 +17,7 @@ export async function readMaterialBarCoverageTx(tx: Pick<PoolClient, 'query'>, b
       (SELECT count(*)::text FROM public.stock_movements m WHERE m.stock_batch_id=b.id AND m.status='POSTED') AS "currentMovements"
     FROM public.stock_batches b JOIN public.stock_levels s ON s.id=b.stock_level_id JOIN public.articles a ON a.id=s.article_id
     LEFT JOIN public.stock_material_bar_inventories i ON i.stock_batch_id=b.id WHERE b.id=ANY($1::uuid[]) ORDER BY b.id`, [batchIds])).rows;
-  const bars = (await tx.query<MaterialBar>(`SELECT id::text,stock_batch_id::text AS "batchId",remaining_length_mm::float8 AS "lengthMm",depreciated_length_mm::float8 AS "depreciatedMm",row_version AS version
+  const bars = (await tx.query<MaterialBar>(`SELECT id::text,('BAR-'||lpad(public_number::text,greatest(6,length(public_number::text)),'0')) AS code,stock_batch_id::text AS "batchId",remaining_length_mm::float8 AS "lengthMm",depreciated_length_mm::float8 AS "depreciatedMm",row_version AS version
     FROM public.stock_material_bars WHERE stock_batch_id=ANY($1::uuid[]) AND retired_at IS NULL ORDER BY created_at,id`, [batchIds])).rows;
   const reservations = (await tx.query<{ id: string; batchId: string; remainingMm: number; version: number }>(`SELECT id::text,stock_batch_id::text AS "batchId",
       greatest(0,qty_reserved-qty_consumed)::float8 AS "remainingMm",row_version AS version

@@ -2,6 +2,7 @@ import { HttpError } from '../../../utils/httpError';
 
 export type MaterialBar = {
   id: string;
+  code?: string;
   batchId: string;
   lengthMm: number;
   depreciatedMm?: number;
