@@ -8,7 +8,7 @@ export function materialSourceYields(input: {
   good: number;
   scrap: number;
   varianceReason?: string | null;
-  sources: Array<{ id: string; quantity: number; yield?: { good: number; scrap: number } }>;
+  sources: Array<{ id: string; quantity: number; groupKey?: string; yield?: { good: number; scrap: number } }>;
 }) {
   const count = (value: number) => Number.isSafeInteger(value) && value >= 0 && value <= 1e9;
   if (!count(input.good) || !count(input.scrap) || !input.sources.length ||
@@ -21,13 +21,20 @@ export function materialSourceYields(input: {
       throw new HttpError(422, 'MATERIAL_SOURCE_YIELD_REQUIRED', 'Indiquez les bruts bons et rebutés obtenus sur chaque lot matière.');
     if (!count(observed.good) || !count(observed.scrap) || !Number.isFinite(source.quantity) || source.quantity <= 0)
       throw new HttpError(422, 'MATERIAL_SOURCE_YIELD_INVALID', 'Chaque quantité de bruts par lot doit être entière, positive ou nulle.');
-    return { id: source.id, good: observed.good, scrap: observed.scrap, quantity: source.quantity };
+    return { id: source.id, groupKey:source.groupKey??source.id, good: observed.good, scrap: observed.scrap, quantity: source.quantity };
   });
   if (yields.reduce((sum, s) => sum + s.good, 0) !== input.good ||
       yields.reduce((sum, s) => sum + s.scrap, 0) !== input.scrap)
     throw new HttpError(422, 'MATERIAL_SOURCE_YIELD_TOTAL_MISMATCH', 'Les bruts bons et rebutés de chaque besoin matière doivent correspondre aux totaux du débit.');
 
-  for (const source of yields) {
+  // The repository supplies this identity from the locked stock batch, never
+  // from a client field. Multiple holds on that source may fund a single blank.
+  const groups=new Map<string,{good:number;scrap:number;quantity:number}>();
+  for(const source of yields){
+    const group=groups.get(source.groupKey)??{good:0,scrap:0,quantity:0};
+    groups.set(source.groupKey,{good:group.good+source.good,scrap:group.scrap+source.scrap,quantity:quantity(group.quantity+source.quantity)});
+  }
+  for (const source of groups.values()) {
     const expected = quantity((source.good + source.scrap) * (input.rule.unitsPerBlank + input.rule.kerfPerBlank));
     if (quantity(source.quantity) === expected) continue;
     if (input.rule.form === 'UNIT')

@@ -28,6 +28,24 @@ beforeEach(()=>{
     sql.startsWith('SELECT q.qty_good')?[{good:18,released:0,edge_released:0}]:sql.includes('INSERT INTO public.production_transfer_batches')?[{id:'transfer'}]:[]}));
 });
 describe('débit matière, déclaration et transfert',()=>{
+  it('debits the receipt and top-up holds of one batch with one two-blank declaration',async()=>{
+    const need=current.needs[0];
+    need.unit='mm';need.debitRule={form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true};
+    need.candidates[0].lot={...need.candidates[0].lot,unit:'mm'};
+    need.reservations.push({id:'topup',stock_batch_id:'batch'});
+    m.readiness.mockResolvedValue({operations:[{id:'cut',status:'RUNNING',canStart:true,availableQuantity:20,remainingQuantity:20}]});
+    m.consume.mockImplementation(async(_tx,source)=>({reservationId:source.reservationId,stockMovementId:`movement-${source.reservationId}`,quantity:source.quantity,remaining:0,status:'CONSUMED'}));
+    await debitOfMaterial(19,{...body,good:2,scrap:0,scrapReason:null,successorOperationId:null,sources:[
+      {reservationId:'reservation',quantity:210,expectedVersion:4,yield:{good:2,scrap:0}},
+      {reservationId:'topup',quantity:11,expectedVersion:1,yield:{good:0,scrap:0}},
+    ]},audit);
+    expect(m.consume).toHaveBeenCalledTimes(2);
+    expect(m.declare).toHaveBeenCalledTimes(1);
+    expect(m.declare).toHaveBeenCalledWith(expect.objectContaining({body:expect.objectContaining({qty_good:2,qty_scrap:0})}));
+    const sources=tx.query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO public.production_material_debit_sources'));
+    expect(sources.map(([,params])=>({actual:params[5],good:params[10]}))).toEqual([{actual:210,good:2},{actual:11,good:0}]);
+    expect(tx.query).toHaveBeenCalledWith('COMMIT');
+  });
   it('consomme 20, déclare 18 bons et 2 rebuts, transfère 18 dans la même transaction',async()=>{
     const result=await debitOfMaterial(19,body,audit);
     expect(result).toMatchObject({declarationId:'declaration',consumed:[{quantity:20,remaining:40}]});

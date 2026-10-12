@@ -34,3 +34,16 @@ it('treats a disappeared stock batch as unavailable',async()=>{
   const m=fixture();m.needs[0].candidates=[];
   expect((await readMaterialReservationAvailabilityTx(tx,m)).get('n')!.usable).toBe(0);
 });
+
+it('blocks the 20-piece gate for 2000 + 210 mm, but keeps raw holds available to measured debit',async()=>{
+  const m=fixture(),need=m.needs[0];
+  need.debitRule={form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true};
+  need.reservations=[{...need.reservations[0],qty_reserved:2000,qty_consumed:0},
+    {...need.reservations[0],id:'r2',stock_batch_id:'b2',qty_reserved:210,qty_consumed:0}];
+  need.candidates.push({...need.candidates[0],lot:{...need.candidates[0].lot,batchId:'b2'}});
+  const result=(await readMaterialReservationAvailabilityTx(tx,m)).get('n')!;
+  expect(result.usable).toBe(2099.5);
+  expect(result.reservations.get('r2')).toBe(210);
+  need.reservations.push({...need.reservations[1],id:'topup',qty_reserved:11});
+  expect((await readMaterialReservationAvailabilityTx(tx,m)).get('n')!.usable).toBe(2210);
+});

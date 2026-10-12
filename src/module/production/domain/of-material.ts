@@ -19,7 +19,42 @@ export type MaterialLot={
 export type MaterialNeed={
   key:string; articleId:string|null; unit:string|null; required:number; requirements:MaterialRequirements;
   reserved:number; consumed:number; expected:number; receivedBlocked:number;
+  debitRule?:DebitRule|null;
+  reservations?:ReadonlyArray<{id:string;stock_batch_id:string|null;status:string;unexpired:boolean;qty_reserved:number;qty_consumed:number}>;
 };
+export function barBlankStep(need:Pick<MaterialNeed,'debitRule'>){
+  const rule=need.debitRule;
+  return rule?.form==='BAR'&&rule.unitsPerBlank>0&&rule.kerfPerBlank>=0
+    ?milli(rule.unitsPerBlank+rule.kerfPerBlank):0;
+}
+/** Reservations are accounting holds, not physical bar boundaries. Holds may
+ * combine only within the same batch; lengths from different batches never do. */
+export function materialReservedByBatch(need:Pick<MaterialNeed,'reservations'>){
+  const held=new Map<string,number>();
+  for(const r of need.reservations??[]){
+    if(r.status!=='ACTIVE'||!r.unexpired)continue;
+    const key=r.stock_batch_id??`reservation:${r.id}`;
+    held.set(key,(held.get(key)??0)+milli(Math.max(0,Number(r.qty_reserved)-Number(r.qty_consumed))));
+  }
+  return held;
+}
+export function materialReservedCapacity(need:Pick<MaterialNeed,'debitRule'|'reservations'|'reserved'>){
+  const step=barBlankStep(need);
+  if(!step||!need.reservations)return quantity(need.reserved);
+  return [...materialReservedByBatch(need).values()].reduce((sum,q)=>sum+Math.floor(q/step)*step,0)/1000;
+}
+/** A small top-up can complete a blank using the remainder already held on the
+ * same source (210 + 11 = 2 x 110.5). It must not buy that remainder again. */
+export function materialSelectionCoverage(need:MaterialNeed,selections:ReadonlyArray<{batchId:string;quantity:number}>){
+  const step=barBlankStep(need);
+  if(!step)return quantity(selections.reduce((sum,s)=>sum+s.quantity,0));
+  const held=materialReservedByBatch(need),added=new Map<string,number>();
+  for(const s of selections)added.set(s.batchId,(added.get(s.batchId)??0)+milli(s.quantity));
+  return [...added].reduce((sum,[batch,q])=>{
+    const before=held.get(batch)??0;
+    return sum+(Math.floor((before+q)/step)-Math.floor(before/step))*step;
+  },0)/1000;
+}
 const normalized=(value:string|null)=>value?.trim().normalize("NFKC").toLocaleUpperCase("fr-FR")??null;
 export function lotCompatibility(need:MaterialNeed,lot:MaterialLot):string[]{
   const reasons:string[]=[];
@@ -38,8 +73,10 @@ export function lotCompatibility(need:MaterialNeed,lot:MaterialLot):string[]{
 }
 export function materialBalance(need:MaterialNeed){
   for(const n of [need.required,need.reserved,need.consumed,need.expected,need.receivedBlocked])if(!Number.isFinite(n)||n<0)throw new Error("Invalid material balance quantity");
-  const protectedQty=milli(need.reserved)+milli(need.consumed)+milli(need.expected)+milli(need.receivedBlocked);
+  const usableReserved=materialReservedCapacity(need);
+  const protectedQty=milli(usableReserved)+milli(need.consumed)+milli(need.expected)+milli(need.receivedBlocked);
   return {required:quantity(need.required),reserved:quantity(need.reserved),consumed:quantity(need.consumed),
+    usableReserved,
     expected:quantity(need.expected),receivedBlocked:quantity(need.receivedBlocked),
     missing:Math.max(0,milli(need.required)-protectedQty)/1000,
     surplus:Math.max(0,protectedQty-milli(need.required))/1000};
@@ -55,12 +92,15 @@ export function proposeMaterialCoverage<T extends MaterialLot>(needs:MaterialNee
   return needs.map(need=>{
     const balance=materialBalance(need),selections:Array<{batchId:string;lotId:string;quantity:number}>=[];
     let missing=milli(balance.missing);
+    const step=barBlankStep(need),held=materialReservedByBatch(need);
     const candidates=ordered.filter(l=>l.articleId===need.articleId).map(lot=>{
       const reasons=lotCompatibility(need,lot),free=Math.min(available.get(lot.batchId)??0,lot.stockLevelId?levels.get(lot.stockLevelId)??Infinity:Infinity,released.get(lot.id)??Infinity);
       const roots=originPolicy?.originsByLot[lot.id]??[lot.id];
       const originAllowed=!originPolicy||(roots.length>0&&new Set([...originPolicy.usedOrigins,...roots]).size<=originPolicy.maximumLots);
-      const take=reasons.length||!originAllowed?0:Math.min(missing,free);
-      if(take>0){roots.forEach(root=>originPolicy?.usedOrigins.add(root));selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);if(released.has(lot.id))released.set(lot.id,released.get(lot.id)!-take);missing-=take;}
+      const remainder=step?(held.get(lot.batchId)??0)%step:0;
+      const blanks=step?Math.min(Math.ceil(missing/step),Math.floor((free+remainder)/step)):0;
+      const take=reasons.length||!originAllowed?0:step?(blanks>0?blanks*step-remainder:0):Math.min(missing,free);
+      if(take>0){roots.forEach(root=>originPolicy?.usedOrigins.add(root));selections.push({batchId:lot.batchId,lotId:lot.id,quantity:take/1000});available.set(lot.batchId,(available.get(lot.batchId)??0)-take);if(lot.stockLevelId&&levels.has(lot.stockLevelId))levels.set(lot.stockLevelId,levels.get(lot.stockLevelId)!-take);if(released.has(lot.id))released.set(lot.id,released.get(lot.id)!-take);missing=Math.max(0,missing-(step?blanks*step:take));}
       return {lot,reasons,available:free/1000,proposed:take/1000};
     });
     return {...balance,key:need.key,candidates,selections,purchaseMissing:missing/1000};
