@@ -47,12 +47,34 @@ L'incohérence finale provoque l'annulation de la transaction et une réponse 40
 422 `MATERIAL_BAR_MOVEMENT_REQUIRED` ; un instantané périmé renvoie 409
 `MATERIAL_BAR_MOVEMENT_CHANGED`.
 
+## Compensation des mouvements généraux
+
+L'aperçu de compensation vérifie les barres d'origine avant de proposer le
+brouillon inverse. Lors de sa comptabilisation, ne pas envoyer `material_bars` :
+l'ERP reprend les identités et longueurs depuis les événements immuables du
+mouvement initial. Les vérifications sont répétées sous verrou.
+
+- Annulation d'une sortie ou d'un ajustement négatif : restauration de la même
+  barre, même si sa longueur restante était nulle ; réservations conservées.
+- Annulation d'une entrée ou d'un ajustement positif : retrait des barres
+  reçues encore inutilisées, avec conservation de leur identité et historique.
+- Annulation d'un transfert : retour des mêmes barres à leur emplacement
+  initial, avec les deux écritures canoniques et leurs preuves de déplacement.
+
+Une utilisation, un déplacement ou un recomptage ultérieur impose de corriger
+d'abord ces opérations. Une barre réservée ne peut pas être retirée ni déplacée.
+La correction doit couvrir exactement la quantité d'origine, sans doublon.
+L'API refuse un remplacement manuel des barres par 422
+`MATERIAL_BAR_COMPENSATION_AUTOMATIC`, et un historique incompatible par 409
+`MATERIAL_BAR_COMPENSATION_CHANGED`. Elle ne compense pas génériquement une
+compensation antérieure. Réceptions métier et débits OF gardent leurs parcours
+de correction propres ; aucun contournement par la compensation générale.
+
 ## Limites de livraison de cette branche
 
 Les écrans doivent encore proposer ces commandes et préparer l'emplacement de
-destination avant un transfert. Les compensations génériques d'une sortie et
-les sessions de comptage doivent être raccordées à leurs preuves et mesures
-physiques, au lieu de produire un simple total. `SCRAP` et `DEPRECIATE` conservent
+destination avant un transfert. Les sessions de comptage doivent être raccordées
+à leurs mesures physiques, au lieu de produire un simple total. `SCRAP` et `DEPRECIATE` conservent
 la quantité physique dans le ledger : ils ne sont pas acceptés comme `ISSUE`.
 Leur affectation qualité par barre reste à raccorder. Les anciennes routes sont
 protégées au commit mais ne constituent pas encore un parcours métier complet.

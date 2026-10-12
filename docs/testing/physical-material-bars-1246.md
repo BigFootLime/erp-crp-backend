@@ -309,3 +309,25 @@ integration, not silently approximated by a bar-length subtraction.
 API contract and remaining stocktaking/compensation/quality gaps:
 `docs/http/physical-material-movements-1246.md`. Do not merge/deploy the branch
 until those workflows, UI and the real Test recipe are ready.
+
+## Generic compensation — 12 October 2026
+
+The read-only compensation preview checks immutable physical history before an
+inverse draft is proposed. Posting derives its plan from the original movement,
+under the same lot/reservation/stock locks, with no caller-supplied replacement
+bars. OUT/negative adjustments restore the original bar; IN/positive adjustments
+retire unused bar identities; transfer inverses retain barcodes and return them
+to the original batch. Versions advance and original events remain immutable.
+Subsequent physical use, an incomplete proof, duplicate reversal, altered inverse
+quantity or held incoming/transferred bar prevents posting. Restoring a free
+tail keeps existing OF reservations. A compensation cannot itself be reversed
+through this generic path; managed receipt/debit corrections remain separate.
+
+182 targeted tests pass. The PostgreSQL fixture adds 14 compensation checks to
+the existing 25 movement and 9 debit/correction checks, including read-only
+preview, complete consumption, retirement, transfer return, fractional amounts,
+reservations, replay, cross-client misuse and transaction rollback. No new
+migration is required by this increment; the fixture adds reversal_of_id already
+present in the real ERP schema. These still exercise physical repositories with
+simulated canonical ledger writes, not complete ERP HTTP acceptance. Stocktaking,
+per-bar quality allocation, UI and full-schema business acceptance remain open.

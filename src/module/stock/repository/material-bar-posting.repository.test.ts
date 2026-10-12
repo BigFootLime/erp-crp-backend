@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks=vi.hoisted(()=>({lock:vi.fn(),prepare:vi.fn()}));
+const mocks=vi.hoisted(()=>({lock:vi.fn(),prepare:vi.fn(),compensate:vi.fn(),apply:vi.fn(),applyCompensation:vi.fn()}));
 vi.mock('./material-bar-receipt.repository',()=>({lockMaterialBarReceiptLotTx:mocks.lock}));
-vi.mock('./material-bar-movement.repository',()=>({prepareMaterialBarMovementTx:mocks.prepare}));
-import { lockMaterialBarPostingScopeTx,prepareMaterialBarPostingTx } from './material-bar-posting.repository';
+vi.mock('./material-bar-movement.repository',()=>({prepareMaterialBarMovementTx:mocks.prepare,applyMaterialBarMovementTx:mocks.apply}));
+vi.mock('./material-bar-compensation.repository',()=>({prepareMaterialBarCompensationTx:mocks.compensate,applyMaterialBarCompensationTx:mocks.applyCompensation}));
+import { lockMaterialBarPostingScopeTx,prepareMaterialBarPostingTx,applyMaterialBarPostingTx } from './material-bar-posting.repository';
 import { createMaterialBarPostingOwner } from './material-bar-posting-owner';
 import { postMovementSchema } from '../validators/stock.validators';
 
@@ -12,6 +13,15 @@ const command={kind:'RECEIVE' as const,expectedVersion:'a'.repeat(64),bars:[{len
 const base={scope:{enabled:true,required:true},movement,externalTransaction:false};
 beforeEach(()=>{vi.resetAllMocks();tx.query.mockResolvedValue({rows:[{tracked:false}]});mocks.prepare.mockResolvedValue({prepared:true});});
 describe('canonical stock posting physical boundary',()=>{
+  it('derives inverse geometry from server history, never from a new bar entry',async()=>{
+    const token={kind:'COMPENSATION' as const};mocks.compensate.mockResolvedValue(token);
+    const inverse={...base,movement:{...movement,reversalOf:'original'}};
+    expect(await prepareMaterialBarPostingTx(tx,inverse)).toBe(token);
+    expect(mocks.compensate).toHaveBeenCalledWith(tx,{movementId:'move',destinationBatchId:undefined});
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    await applyMaterialBarPostingTx(tx,token,1);expect(mocks.applyCompensation).toHaveBeenCalledWith(tx,token,1);
+    await expect(prepareMaterialBarPostingTx(tx,{...inverse,command})).rejects.toMatchObject({code:'MATERIAL_BAR_COMPENSATION_AUTOMATIC'});
+  });
   it('preserves non-bar stock and rejects explicit bars on incompatible units',async()=>{
     tx.query.mockResolvedValue({rows:[{millimetres:false,required:false}]});
     expect(await lockMaterialBarPostingScopeTx(tx,{articleId:'article',lotIds:[],explicit:false})).toEqual({enabled:false,required:false});

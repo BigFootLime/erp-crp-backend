@@ -2,7 +2,8 @@ import type { PoolClient } from 'pg';
 import { HttpError } from '../../../utils/httpError';
 import type { MaterialBarMovementCommand } from '../domain/material-bar-movement';
 import { lockMaterialBarReceiptLotTx } from './material-bar-receipt.repository';
-import { prepareMaterialBarMovementTx } from './material-bar-movement.repository';
+import { prepareMaterialBarMovementTx, applyMaterialBarMovementTx } from './material-bar-movement.repository';
+import { prepareMaterialBarCompensationTx, applyMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import { consumeMaterialBarPostingOwner, type MaterialBarPostingOwner } from './material-bar-posting-owner';
 
 type Db = Pick<PoolClient, 'query'>;
@@ -52,7 +53,16 @@ export async function prepareMaterialBarPostingTx(tx: Db, input: {
   if (!scope.required && !tracked && !command) return null;
   if (!movement.batchId || (movement.type === 'TRANSFER' && !input.destinationBatchId))
     throw new HttpError(422, 'MATERIAL_BAR_BATCH_REQUIRED', 'Sélectionnez le lot et son emplacement avant de confirmer les barres.');
+  if (movement.reversalOf) {
+    if (command) throw new HttpError(422, 'MATERIAL_BAR_COMPENSATION_AUTOMATIC', 'Les barres à restituer sont reprises automatiquement du mouvement d’origine.');
+    return prepareMaterialBarCompensationTx(tx, { movementId: movement.id, destinationBatchId: input.destinationBatchId ?? undefined });
+  }
   if (!command) throw new HttpError(422, 'MATERIAL_BAR_MOVEMENT_REQUIRED', 'Sélectionnez les barres et leurs longueurs avant de comptabiliser ce mouvement.');
   return prepareMaterialBarMovementTx(tx, { movementId: movement.id, sourceBatchId: movement.batchId,
     destinationBatchId: input.destinationBatchId ?? undefined, command });
+}
+
+export async function applyMaterialBarPostingTx(tx: Db, prepared: NonNullable<Awaited<ReturnType<typeof prepareMaterialBarPostingTx>>>, actor: number) {
+  if ('plan' in prepared) return applyMaterialBarMovementTx(tx, prepared, actor);
+  return applyMaterialBarCompensationTx(tx, prepared, actor);
 }

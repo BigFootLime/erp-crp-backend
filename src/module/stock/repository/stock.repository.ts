@@ -7,8 +7,8 @@ import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-arti
 import { syncArticleCommercialTx } from './article-commercial.repository';
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
-import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx } from './material-bar-posting.repository';
-import { applyMaterialBarMovementTx } from './material-bar-movement.repository';
+import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from './material-bar-posting.repository';
+import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
@@ -7280,6 +7280,21 @@ export async function repoPreviewMovementCompensation(
   const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
     UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
   if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
+  if (!built.blockers.length) {
+    const physicalPreview = await db.connect();
+    try {
+      await physicalPreview.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const eligible = await previewMaterialBarCompensationTx(physicalPreview, id);
+      await physicalPreview.query('COMMIT');
+      if (eligible) built.prerequisites.push({ code:'MATERIAL_BAR_COMPENSATION_READY',label:'Barres d’origine disponibles',
+        satisfied:true,message:'Les barres seront reprises automatiquement depuis le mouvement d’origine.' });
+    } catch (error) {
+      await physicalPreview.query('ROLLBACK');
+      if (!(error instanceof HttpError)) throw error;
+      built.blockers.push({ code:error.code,message:error.message });
+      built.prerequisites.push({ code:error.code,label:'Barres d’origine disponibles',satisfied:false,message:error.message });
+    } finally { physicalPreview.release(); }
+  }
   const existingCompensation = existing.rows[0] ?? null;
   const noExistingCompensation = !existingCompensation;
   const existingMessage = existingCompensation
@@ -8248,7 +8263,7 @@ export async function repoPostMovement(
         [id, audit.user_id, command.correlation_id]
       );
 
-      if (barMovement) await applyMaterialBarMovementTx(client, barMovement, audit.user_id);
+      if (barMovement) await applyMaterialBarPostingTx(client, barMovement, audit.user_id);
 
       await insertMovementEvent(client, {
         movement_id: id,
@@ -8335,7 +8350,7 @@ export async function repoPostMovement(
       [id, audit.user_id, command.correlation_id]
     );
 
-    if (barMovement) await applyMaterialBarMovementTx(client, barMovement, audit.user_id);
+    if (barMovement) await applyMaterialBarPostingTx(client, barMovement, audit.user_id);
 
     await insertMovementEvent(client, {
       movement_id: id,
