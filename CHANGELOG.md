@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-12 — Récupérations dans les producteurs regroupés (#1033/#1034, en préparation)
+
+- Maintenir le blocage de démarrage des récupérations en attente ou annulées à travers les regroupements actifs et leurs sous-pièces.
+- Protéger le planning des autres clients après le prélèvement également ; retrouver le client des OF sources et protéger les enfants d'un producteur partagé.
+- Contrôler les chemins multiples, les groupes dissous et les cycles de généalogie avec le SQL réel sous le rôle applicatif, sans modification des données métier. Aucun changement de schéma ni activation du parcours d'ajout avant découpe.
+
 ## 2026-10-12 — Réceptions des récupérations urgentes (#1033, en préparation)
 
 - Réserver les pièces conformes à l’affaire donneuse d’origine, dans la limite du prélèvement urgent ; conserver le surplus libre.

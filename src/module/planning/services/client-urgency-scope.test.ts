@@ -46,4 +46,19 @@ describe('recovery urgency cannot reschedule other clients', () => {
     const result = { changes: [{ taskId: 'op:other' }], affected: ['op:other'], forecasts: {} } as ScheduleResult;
     expect(() => assertUrgencyResult(result,state,input())).toThrow('capacité protégée');
   });
+  it('continues protecting other clients after the donor pieces have been withdrawn', async () => {
+    const tx = db();
+    const state = await scopeClientUrgency(snapshot(),input(),tx);
+    expect(tx.query).toHaveBeenNthCalledWith(1,expect.any(String),[[101],['WAITING_PLANNER','APPROVED','WITHDRAWN']]);
+    expect(state.tasks.find(task=>task.id==='op:other')?.locked).toBe(true);
+  });
+  it('protects the child of a mixed-client producer, even when its displayed client matches', async () => {
+    const state = snapshot();
+    state.tasks.push({...state.tasks[0],id:'op:child',ofId:301});
+    const result = await scopeClientUrgency(state,input(),db(['client1'],[300,301]));
+    expect(result.tasks.find(task=>task.id==='op:child')?.locked).toBe(true);
+    const request = input(); request.changes.push({...request.changes[0],taskId:'op:child'});
+    await expect(scopeClientUrgency(state,request,db(['client1'],[300,301])))
+      .rejects.toMatchObject({code:'PLANNING_OTHER_CLIENT_PROTECTED'});
+  });
 });
