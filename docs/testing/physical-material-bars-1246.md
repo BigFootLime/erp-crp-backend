@@ -2,8 +2,10 @@
 
 Status: domain, additive schema, inventory API, canonical reservation creation /
 release, OF proposals, planning/start coverage, measured debit and correction are
-implemented, along with normal grouping and its exact dissolution. Receipt and general stock movement integration are still
-pending. Do not merge/deploy this branch yet: the deferred checks require
+implemented, along with normal grouping and its exact dissolution and standard
+material receipts. The general movement domain and transactional adapter are
+tested; wiring every stock command and the web/tablet screens is still pending.
+Do not merge/deploy this branch yet: the deferred checks require
 atomic updates from all participating stock commands once an inventory is confirmed.
 
 ## Observed problem and scope
@@ -22,7 +24,8 @@ lengths, or modify material-origin rules (two origins normally, one for critical
 pieces). The inventory movement counter detects untracked stock movements, even
 an OUT/IN pair whose net quantity is unchanged. Explicit remeasurement reconciles
 it. Debit and correction now maintain geometry and this counter in their stock
-transaction; receipt and general stock movements still need the same integration.
+transaction; standard receipts append actual bars in that transaction too.
+General stock commands still need to invoke the movement adapter below.
 
 The domain proposes the missing length on the correct physical bar, preserves
 other OF reservations, keeps FIFO between untouched bars, and refuses fictitious
@@ -222,10 +225,53 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
 3. OF preparation, planning and normal grouping use physical yield and exact
    ownership transfers. Integrate the separate recovery candidate with these
    helpers and validate the full grouping transaction on the ERP schema.
-4. Debit, correction and dissolution are connected. General movements still
-   need atomic canonical stock / bar hold updates and immutable history,
-   with idempotency and concurrency coverage. No bypass via legacy routes.
+4. Debit, correction and dissolution are connected. General movements have a
+   domain planner and transactional adapter, but `repoPostMovement` and its
+   managed receipt/debit/correction callers still need to invoke them once,
+   in their shared transaction. The strict command schema is not accepted by
+   HTTP yet: never expose a request field that the route would ignore.
 5. Web/tablet UI: scan or select the bar, prefill known values and display remaining
    length with CERP components. No machine selection for the dedicated cutting app.
 6. Replay the real recipe on Test; integrate dev then main and deploy Test/Prod
    only after that proof. Native APK/Electron qualification remains separate.
+
+## General movement adapter — 12 October 2026
+
+`material-bar-movement.ts` and its strict validator cover actual receipts,
+unreserved issues and whole-bar transfers. No guessed 3 m default becomes an
+actual bar without confirmation. Three decimal places are retained. Transfer
+keeps article, lot, barcode identity, original length and audit history; moving
+a reserved bar is refused, while another free bar of the same batch may move.
+An issue may consume the free tail without reducing an OF's held length.
+
+`prepareMaterialBarMovementTx` locks the source and destination snapshots;
+`applyMaterialBarMovementTx` requires the posted canonical ledger in that same
+transaction client. It checks quantities, versions, held stock, movement counts,
+and both transfer legs before writing geometry. An OUT+IN pair with zero net
+quantity cannot hide behind an unchanged balance. A completed prepared object
+cannot replay. The stock command remains responsible for durable idempotency,
+quality/RBAC checks, audit context, rollback and commit.
+
+The additive `20261012_physical_material_bar_movements_1246.sql` patch narrowly
+allows relocation when immutable MOVE events match the exact original/new bar
+versions and both posted canonical legs. All selected lengths must equal the
+transfer quantity. It preserves the original identity/initial-length and hold
+guards. Its rollback reinstates the old relocation prohibition, without moving
+stock back or deleting proof. Apply it after the base physical-bar migration;
+run its preflight and verification scripts. Replaying the base patch afterward
+restores the stricter old guard, so reapply this patch last.
+
+Verification: 72 targeted domain/receipt/inventory tests and the backend stage
+build pass. **19 PostgreSQL checks** execute the real adapter on the isolated
+`material_bars_1246` fixture: receipt, positive/negative adjustment, exact 0.001
+mm decrement, free-tail issue, reserved-bar rejection, identity-preserving and
+multi-bar transfer, rollback, stale state, missing/extra ledger changes, proof
+rejection, cross-client refusal and concurrent lock contention. Migration,
+verification, rollback and reapplication pass. Temporary database/login removed.
+
+Reproduce with the base fixture/migration, receipt fixture, then
+`material-bar-movement-1246.fixture.sql`, new movement patch and
+`material-bar-movement-1246.repository.cjs`; credentials go through stdin. These
+tests write canonical quantities explicitly on a minimal schema. They **do not
+validate `repoPostMovement`, the HTTP path, full ERP ledger triggers or the real
+business recipe**. No Test/Prod data or schema was changed by these tests.
