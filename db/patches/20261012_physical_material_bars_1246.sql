@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS public.stock_material_bar_events (
   UNIQUE (bar_id, command_key, action),
   CHECK (action NOT IN ('CUT','COMPENSATE','MOVE') OR stock_movement_id IS NOT NULL)
 );
+CREATE INDEX IF NOT EXISTS stock_material_bar_event_command_1246_idx ON public.stock_material_bar_events(command_key,action);
 CREATE OR REPLACE FUNCTION public.protect_material_bar_event_1246() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   RAISE EXCEPTION 'Physical bar events are immutable; record a linked correction' USING ERRCODE='23514';

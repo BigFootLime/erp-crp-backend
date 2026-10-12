@@ -4,8 +4,10 @@ import {partialReservationConsumption} from '../domain/partial-reservation-consu
 import {assertOperationalLotQualityEligibility} from '../../qualite/repository/quality-operational-gate.repository';
 import {assertStockConsumptionAllowed,beginStockCommand,completeStockCommand,lockStockStates,stockTargetKey,repoCreateMovement,repoPostMovement,type AuditContext} from './stock.repository';
 import { RESERVATION_CONSUMPTION_SOURCE_SQL, ASSEMBLY_CONSUMPTION_PROOF_SQL } from './reserved-consumption-source.sql';
+import {reservationHasPhysicalBarsTx} from './material-bar-holds.repository';
+import {materialBarConsumptionExtra,type MaterialBarConsumption} from './material-bar-debit.repository';
 
-type Input={reservationId:string;ofId:number;operationId:string|null;kind?:'MATIERE'|'CONSOMMABLE';quantity:number;expectedVersion:number;idempotencyKey:string;reason:string;barDiscardAllowance?:number};
+type Input={reservationId:string;ofId:number;operationId:string|null;kind?:'MATIERE'|'CONSOMMABLE';quantity:number;expectedVersion:number;idempotencyKey:string;reason:string;barDiscardAllowance?:number;physicalBarDebit?:MaterialBarConsumption};
 type Result={reservationId:string;stockMovementId:string;quantity:number;remaining:number;status:'ACTIVE'|'CONSUMED';extendedQuantity?:number};
 type ComponentInput = Omit<Input, 'kind' | 'barDiscardAllowance'> & { requirementId: string };
 type ReservedInput = Omit<Input, 'kind'> & { kind?: 'MATIERE' | 'CONSOMMABLE' | 'COMPONENT'; componentRequirementId?: string };
@@ -42,7 +44,13 @@ async function consumeReservationTx(tx: PoolClient, input: ReservedInput, audit:
   const target={stock_level_id:row.stock_level_id,stock_batch_id:row.stock_batch_id};
   const state=(await lockStockStates(tx,[target])).get(stockTargetKey(target));
   if(!state)throw new HttpError(409,'STOCK_LEVEL_MISSING','Le stock du lot ne peut pas être vérifié.');
-  const extra=Math.max(0,input.quantity-(row.qty_reserved-row.qty_consumed));
+  const tracked=await reservationHasPhysicalBarsTx(tx,input.reservationId);
+  if(tracked&&!input.physicalBarDebit)throw new HttpError(409,'MATERIAL_BAR_DEBIT_REQUIRED','Sélectionnez les barres dans le parcours de découpe.');
+  if(input.physicalBarDebit&&(!tracked||input.kind&&input.kind!=='MATIERE'))throw new HttpError(409,'MATERIAL_BAR_DEBIT_REQUIRED','Cette réservation ne correspond pas aux barres préparées.');
+  // Free discarded length belongs to the selected bar. An unused hold on a
+  // different bar must not silently fund it or disappear from that other bar.
+  const extra=input.physicalBarDebit?materialBarConsumptionExtra(input.physicalBarDebit,input.reservationId,input.quantity)
+    :Math.max(0,input.quantity-(row.qty_reserved-row.qty_consumed));
   if(extra>0){
     // Only the explicitly measured discarded end of a bar may extend this
     // reservation. Free stock and quality release are rechecked under locks.

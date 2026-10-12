@@ -1,8 +1,9 @@
 # Physical material bars — #1246
 
 Status: domain, additive schema, inventory API, canonical reservation creation /
-release, OF proposals and planning/start coverage are implemented. Receipt, debit, compensation and grouping integration are
-still pending. Do not merge/deploy this branch yet: the deferred checks require
+release, OF proposals, planning/start coverage, measured debit and correction are
+implemented. Receipt, grouping and general stock movement integration are still
+pending. Do not merge/deploy this branch yet: the deferred checks require
 atomic updates from all participating stock commands once an inventory is confirmed.
 
 ## Observed problem and scope
@@ -20,8 +21,8 @@ replace the stock ledger, create a second stock quantity, infer historical bar
 lengths, or modify material-origin rules (two origins normally, one for critical
 pieces). The inventory movement counter detects untracked stock movements, even
 an OUT/IN pair whose net quantity is unchanged. Explicit remeasurement reconciles
-it. Receipt/debit integration still has to maintain geometry and this counter
-automatically in the same transaction as the physical stock movement.
+it. Debit and correction now maintain geometry and this counter in their stock
+transaction; receipt and general stock movements still need the same integration.
 
 The domain proposes the missing length on the correct physical bar, preserves
 other OF reservations, keeps FIFO between untouched bars, and refuses fictitious
@@ -68,7 +69,7 @@ strict input rejection before mutation, authenticated actor and replay status.
   physical yield proposal; generic length allocation alone does not prove yield.
 - Canonical release removes holds on those same bars, leaving physical lengths
   and other reservations intact. Generic consumption of tracked bars requires
-  the cutting path; that path is not connected yet on this branch.
+  the cutting path, which records canonical stock and physical geometry atomically.
 
 ## OF coverage integration
 
@@ -97,6 +98,42 @@ checks: the added checks verify bulk reads, an actual 31.5 mm top-up across two
 bars, and movement invalidation of both preview and readiness. These remain
 isolated minimal-schema tests, not the full ERP recipe.
 
+## Measured debit and correction
+
+A BAR debit identifies the physical bars, their expected versions and the cut
+length on each reservation. Several accounting holds on the same physical bar
+can fund one blank; separate physical bars cannot be joined by summing lengths.
+Observed good/scrap yield is entered per bar when several bars are selected and
+must reconcile with the operation totals. Stock quantities remain in millimetres;
+produced blanks remain in units. Legacy unit and sheet debit contracts stay valid.
+
+The production owner locks all source lots, prepares the physical cuts, posts the
+canonical stock consumptions, then updates lengths, holds, versions and immutable
+CUT proofs before declaring WIP. Any downstream failure rolls the transaction
+back. Closing a bar records the exact discarded remainder, with acknowledgement
+above 150 mm. Its temporary reservation extension can use only the free length
+of that bar, preserving the same OF's unused holds on other bars.
+
+A correction first proves that the cut is still the latest bar version and that
+its holds and movement proofs still match. It then restores canonical stock and
+the exact former holds/length, increments the bar version and appends COMPENSATE
+history. It refuses restoration after later use, reservation or remeasurement;
+no historical proof is overwritten. Debit history exposes these bar events.
+
+94 targeted Vitest tests pass for debit, request validation, observed yields,
+canonical consumption, correction, coverage and quality. The backend stage build
+passes. PostgreSQL 17 replays the existing 18 repository checks plus 9 new checks
+using the real physical debit/correction repositories. These cover shared holds,
+rollback, later-bar-change rejection, exact correction, double compensation and
+closure preserving another bar's hold. The fixture simulates canonical postings
+with minimal real SQL: it does not execute the full ERP stock, quality or WIP
+commands. Unit tests cover that production orchestration separately. Temporary
+database and generated login are removed afterward; no ERP stock is changed.
+
+The repository exercises are `scripts/tests/material-bars-1246.repository.cjs`
+and `scripts/tests/material-bar-debit-1246.repository.cjs`. Both refuse any database
+except the isolated `material_bars_1246` fixture and read its connection on stdin.
+
 ## Reproduce
 
 Run `npm run test:run -- src/module/stock/domain/material-bars.test.ts`.
@@ -122,9 +159,9 @@ migration owner, use `psql -X -v ON_ERROR_STOP=1` for each file, in this order:
    confirm actual physical bars and reconcile pre-existing allocations explicitly.
 3. OF preparation and planning now use physical yield; grouping still needs exact
    per-bar hold transfers and restoration under the existing origin/quality rules.
-4. Debit, partial changes, compensation, consolidation and movement: update canonical
-   stock, bar holds, remainder/version and immutable event in the same transaction,
-   with command idempotency and concurrency coverage. No bypass via legacy routes.
+4. Debit and its correction are connected. Consolidation, recovery and general
+   movements still need atomic canonical stock / bar hold updates and immutable
+   history, with idempotency and concurrency coverage. No bypass via legacy routes.
 5. Web/tablet UI: scan or select the bar, prefill known values and display remaining
    length with CERP components. No machine selection for the dedicated cutting app.
 6. Replay the real recipe on Test; integrate dev then main and deploy Test/Prod

@@ -8,8 +8,25 @@ export function materialSourceYields(input: {
   good: number;
   scrap: number;
   varianceReason?: string | null;
-  sources: Array<{ id: string; quantity: number; groupKey?: string; yield?: { good: number; scrap: number } }>;
-}) {
+  sources: Array<{ id: string; quantity: number; groupKey?: string; yield?: { good: number; scrap: number };
+    bars?:Array<{barId:string;quantity:number;yield?:{good:number;scrap:number}}> }>;
+}):Array<{id:string;good:number;scrap:number}> {
+  if(input.sources.some(s=>s.bars)){
+    if(input.rule.form!=='BAR'||input.sources.some(s=>!s.bars?.length))
+      throw new HttpError(422,'MATERIAL_BAR_YIELD_REQUIRED','Chaque réservation doit identifier ses barres coupées.');
+    const flattened=input.sources.flatMap(source=>source.bars!.map(bar=>({id:`${source.id}:${bar.barId}`,groupKey:`bar:${bar.barId}`,
+      quantity:bar.quantity,yield:bar.yield??(source.bars!.length===1?source.yield:undefined)})));
+    const yields=materialSourceYields({...input,sources:flattened});
+    return input.sources.map(source=>{
+      if(quantity(source.bars!.reduce((sum,b)=>sum+b.quantity,0))!==quantity(source.quantity))
+        throw new HttpError(422,'MATERIAL_BAR_YIELD_REQUIRED','Les longueurs par barre doivent correspondre au prélèvement.');
+      const own=yields.filter(y=>source.bars!.some(b=>y.id===`${source.id}:${b.barId}`));
+      const observed={id:source.id,good:own.reduce((sum,y)=>sum+y.good,0),scrap:own.reduce((sum,y)=>sum+y.scrap,0)};
+      if(source.yield&&(source.yield.good!==observed.good||source.yield.scrap!==observed.scrap))
+        throw new HttpError(422,'MATERIAL_SOURCE_YIELD_TOTAL_MISMATCH','Les bruts par barre doivent correspondre au total de la réservation.');
+      return observed;
+    });
+  }
   const count = (value: number) => Number.isSafeInteger(value) && value >= 0 && value <= 1e9;
   if (!count(input.good) || !count(input.scrap) || !input.sources.length ||
       new Set(input.sources.map(s => s.id)).size !== input.sources.length)

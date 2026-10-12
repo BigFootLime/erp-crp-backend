@@ -25,6 +25,12 @@ export const materialLotVerificationSchema=materialCommandSchema.extend({
   evidence:z.string().trim().min(10).max(4000),manualRequirementsChecked:z.boolean(),
 }).strict();
 export type MaterialLotVerification=z.infer<typeof materialLotVerificationSchema>;
+const materialBarClosure=z.object({discardedQuantity:z.number().finite().nonnegative().max(1e9).multipleOf(.001),acknowledgedLargeRemainder:z.boolean()}).strict();
+const materialBarCut=z.object({barId:z.string().uuid(),expectedVersion:z.number().int().positive(),
+  quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
+  yield:z.object({good:z.number().int().nonnegative().max(1e9),scrap:z.number().int().nonnegative().max(1e9)}).strict().optional(),
+  barClosure:materialBarClosure.optional(),
+}).strict();
 export const materialDebitSchema=materialCommandSchema.extend({
   operationId:z.string().uuid(),
   good:z.number().int().nonnegative().max(1e9),
@@ -36,7 +42,8 @@ export const materialDebitSchema=materialCommandSchema.extend({
     dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9))}).strict()).max(100).default([]),
   sources:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive(),
     yield:z.object({good:z.number().int().nonnegative().max(1e9),scrap:z.number().int().nonnegative().max(1e9)}).strict().optional(),
-    barClosure:z.object({discardedQuantity:z.number().finite().nonnegative().max(1e9).multipleOf(.001),acknowledgedLargeRemainder:z.boolean()}).strict().optional(),
+    barClosure:materialBarClosure.optional(),
+    bars:z.array(materialBarCut).min(1).max(100).optional(),
   }).strict()).min(1).max(100),
   successorOperationId:z.string().uuid().nullable(),
 }).strict().superRefine((v,ctx)=>{
@@ -45,6 +52,11 @@ export const materialDebitSchema=materialCommandSchema.extend({
   if(new Set(v.sources.map(s=>s.reservationId)).size!==v.sources.length)ctx.addIssue({code:'custom',path:['sources'],message:'Une réservation ne peut figurer deux fois.'});
   if(new Set(v.remnants.map(s=>s.reservationId)).size!==v.remnants.length||v.remnants.some(r=>!v.sources.some(s=>s.reservationId===r.reservationId)))ctx.addIssue({code:'custom',path:['remnants'],message:'Chaque chute doit correspondre à un lot prélevé unique.'});
   if(v.sources.some(s=>s.barClosure&&v.remnants.some(r=>r.reservationId===s.reservationId)))ctx.addIssue({code:'custom',path:['remnants'],message:'Une barre soldée avec reliquat écarté ne peut pas aussi créer une chute réutilisable.'});
+  for(const [i,source] of v.sources.entries())if(source.bars){
+    if(source.barClosure||v.remnants.some(r=>r.reservationId===source.reservationId))ctx.addIssue({code:'custom',path:['sources',i,'bars'],message:'Le solde se renseigne sur la barre ; son reliquat conservé reste dans le stock existant.'});
+    if(new Set(source.bars.map(b=>b.barId)).size!==source.bars.length)ctx.addIssue({code:'custom',path:['sources',i,'bars'],message:'Une barre ne peut figurer deux fois dans la même réservation.'});
+    if(source.bars.reduce((sum,b)=>sum+Math.round(b.quantity*1000),0)!==Math.round(source.quantity*1000))ctx.addIssue({code:'custom',path:['sources',i,'quantity'],message:'La longueur totale doit correspondre aux longueurs coupées sur les barres.'});
+  }
 });
 export type MaterialDebit=z.infer<typeof materialDebitSchema>;
 export const materialDebitCorrectionSchema=materialCommandSchema.extend({debitId:z.string().uuid(),reason:z.string().trim().min(10).max(2000)}).strict();
