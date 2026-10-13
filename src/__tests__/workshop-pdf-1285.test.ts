@@ -22,6 +22,36 @@ function content(bytes: Buffer): string {
 }
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps the saved 1.5 rendering unchanged", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.5" }));
+    const result = await renderOfDocument(payload);
+    expect(result.sha256).toBe("82940ca701317f2ffb5809ca1dde34901d8c43f34fd90888448cd23afa029fef");
+  });
+  it("shows the original internal deadline instead of an inapplicable client AR", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+      commercialScope: "INTERNAL", commandeNumero: null, affaires: [], internalDueDate: "2026-09-30", quantiteLancee: 20 }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text).toContain("Délaiinterne");
+    expect(text).toContain("30/09/2026");
+    expect(text).not.toContain("Délaiclient");
+    expect(text).not.toContain("Nonapplicable");
+  });
+  it("keeps the client AR first and removes redundant header fields", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+      internalDueDate: "2026-06-20", technicalEvidence: {
+        source: { kind: "REVISION_SNAPSHOT", hash: "fixture", technicalVersionId: null },
+        materialNotRequired: false, correctionCount: 0, nomenclature: [], documents: [], purchases: [], debits: [],
+        materials: [{ needId: null, form: null, reference: "MP-6061", designation: "Aluminium", grade: "6061", condition: "T651",
+          dimensions: { longueur_mm: 57 }, requiredQuantity: 2280, debitPerBlank: 57, unit: "mm", phase: 20,
+          confirmed: true, certificates: [], manualChecks: [] }],
+      } }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text).toContain("01/07/2026");
+    expect(text.split("Nomenclature")[0]).not.toContain("20/06/2026");
+    expect(text).not.toContain("Opérationconsommatrice");
+    expect(text.split("Nomenclature")[0]).not.toContain("Gammeapplicable");
+    expect(text).toContain("Gammeapplicable-opérations");
+  });
   it("keeps a saved 1.4 PDF byte-identical to the deployed renderer", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.4" }));
     const result = await renderOfDocument(payload);

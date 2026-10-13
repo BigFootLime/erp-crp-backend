@@ -66,7 +66,8 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     if (row.length) rows.push(row)
     return { box, rows, fieldWidths, title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - PAD * 2, true, 10) }
   })
-  const headingHeight = Math.max(...measured.map(item => item.title.length * 12)) + PAD * 2
+  const headingPad = 6
+  const headingHeight = Math.max(...measured.map(item => item.title.length * 12)) + headingPad * 2
   const rowHeight = (fields: typeof measured[number]["rows"][number]) => Math.max(...fields.map(field => field.label.length * 11)) + 3
     + Math.max(...fields.map(field => field.value.length * (field.prominent ? 17 : LEADING))) + 12
   const heights = measured.map(item => {
@@ -90,7 +91,7 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     const x = X + index * (width + gap)
     ctx.doc.save().rect(x, top, width, headingHeight).fill(C.graphite).restore()
     ctx.doc.font("Helvetica-Bold").fontSize(10).fillColor(C.paper)
-    item.title.forEach((line, i) => ctx.text(line, x + PAD, top + PAD + i * 12, { width: width - PAD * 2 }))
+    item.title.forEach((line, i) => ctx.text(line, x + PAD, top + headingPad + i * 12, { width: width - PAD * 2 }))
     ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite).rect(x, top, width, height).stroke().restore()
     let y = top + headingHeight + PAD
     const columns = item.box.columns ?? 1
@@ -139,6 +140,10 @@ export function renderWorkshopTable(ctx: CerpDocumentContext, table: {
   const titleReserve = table.title ? sectionHeight(ctx.doc, table.title, CONTENT_WIDTH, toPdfSafeText) + 10 : 0
   const firstMustSplit = firstHeight > freshCapacity - titleReserve - 10
   const firstReserve = firstMustSplit ? PAD * 2 + LEADING * 3 : firstHeight
+  const compactHeight = headHeight + cells.reduce((sum, row) => sum + Math.max(...row.map(lines => lines.length)) * LEADING + PAD * 2, 0)
+  // Keep short summaries together rather than stranding their last total on a new page.
+  if (rows.length <= 8 && compactHeight <= 320 && compactHeight + titleReserve < freshCapacity)
+    ctx.ensureSpace(compactHeight + titleReserve + 10)
   if (table.title) ctx.section(table.title, { cohesion: headHeight + firstReserve + 10 })
   if (!rows.length) { ctx.notes(table.emptyLabel ?? "Aucune donnée enregistrée."); return }
 
