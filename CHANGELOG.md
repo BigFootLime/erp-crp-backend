@@ -1,5 +1,10 @@
 # Changelog
 
+## En développement — Proformas et sociétés facturées (#1268)
+
+- Règles exactes de couverture des affaires, répartition de quantité entre sociétés, paiements partiels/annulés, libérations et avoirs d'acompte. Prix/remises/TVA lus dans la commande ; aucun champ « payé » ne fait autorité.
+- Modèle SQL additif et garde-fous de preuves/budgets préparés, non appliqués. Raccordement API, écrans, BL, acomptes et factures finales encore en cours ; aucun déploiement ni parcours métier complet revendiqué pour ce lot.
+
 ## 2026-10-13 — Reprise stock et annulation explicite de brouillon (#1305)
 
 - La reprise stock seul vérifie tous les OF actifs, y compris hors génération. Aucun planning ou démarrage n'est simulé.
