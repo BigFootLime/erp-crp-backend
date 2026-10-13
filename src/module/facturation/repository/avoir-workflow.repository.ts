@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { todayInParis } from "../domain/reporting-policy";
 import { HttpError } from "../../../utils/httpError";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { parseInvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
@@ -807,7 +808,7 @@ export async function repoIssueAvoir(params: {
     if (!activePolicy) {
       throw new HttpError(503, "BILLING_POLICY_NOT_ACTIVE", "Politique Finance absente.");
     }
-    const issueDate = new Date().toISOString().slice(0, 10);
+    const issueDate = todayInParis();
     // An avoir is itself a fiscal document. Resolve and validate its own legal version before
     // consuming a legal sequence value; inheriting the corrected invoice's older mentions
     // would rewrite the issue-date truth.
