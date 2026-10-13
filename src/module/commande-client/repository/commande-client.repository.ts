@@ -3443,6 +3443,8 @@ export async function repairCustomerOrderV2StockOnlyPlanning(params: {
                   AND metadata @> '{"flow_version":2,"commercial_validation":true}'::jsonb)
        AND EXISTS (SELECT 1 FROM public.commande_client_workflow_checkpoint
                     WHERE commande_id = $1 AND checkpoint_code = 'technical_analysis' AND status = 'done')
+       AND NOT EXISTS (SELECT 1 FROM public.ordres_fabrication
+                        WHERE commande_id = $1 AND statut::text <> 'ANNULE')
        AND NOT EXISTS (SELECT 1 FROM public.bon_livraison delivery
                         LEFT JOIN public.bon_livraison_ligne delivery_line ON delivery_line.bon_livraison_id = delivery.id
                         LEFT JOIN public.commande_ligne line ON line.id = delivery_line.commande_ligne_id

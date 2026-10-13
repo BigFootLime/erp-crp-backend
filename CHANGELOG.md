@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — Reprise stock et annulation explicite de brouillon (#1305)
+
+- La reprise stock seul vérifie tous les OF actifs, y compris hors génération. Aucun planning ou démarrage n'est simulé.
+- Une annulation avant fabrication refuse les pointages, débits, réservations physiques, créneaux, regroupements et sous-OF actifs à traiter. Les affectations d'achat non engagées sont annulées avec audit et notification fournisseur ; achat, réception, prix, quantités, lots et documents restent inchangés. Un brouillon incomplet peut être annulé sous ces contrôles.
+
 ## 2026-10-13 — OF atelier au-dessus du pli A4 (#1300)
 
 - Cartouches essentiels resserrés, délai et quantités accentués ; libellés Dimensions mini et Débit par brut. Repère de pli imprimé en pointillés gris fins, détails en dessous. Nomenclature et gamme complètes avec leur typographie inchangée.
