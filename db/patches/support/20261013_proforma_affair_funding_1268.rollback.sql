@@ -26,6 +26,12 @@ ALTER TABLE public.finance_event_log DROP CONSTRAINT IF EXISTS finance_event_log
 ALTER TABLE public.finance_event_log ADD CONSTRAINT finance_event_log_aggregate_type_check CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT'));
 -- The additive order currency column is retained; old code ignores it and no
 -- commercial currency evidence is destroyed during an application rollback.
+DROP TRIGGER IF EXISTS trg_require_deposit_binding_1268 ON public.facture_source_allocations;
+DROP TRIGGER IF EXISTS trg_validate_facture_source_allocation_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_validate_facture_source_allocation_227 BEFORE INSERT ON public.facture_source_allocations
+  FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();
+DROP FUNCTION IF EXISTS public.fn_require_deposit_binding_1268();
+DROP FUNCTION IF EXISTS public.fn_validate_invoice_source_1268();
 DROP TABLE IF EXISTS public.proforma_receipt_releases;
 DROP TABLE IF EXISTS public.proforma_receipt_assignments;
 DROP TABLE IF EXISTS public.proforma_deposit_sources;

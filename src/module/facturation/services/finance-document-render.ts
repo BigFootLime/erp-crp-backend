@@ -58,6 +58,7 @@ export type FinanceDocumentTotals = {
 
 export type FinanceDocumentInput = {
   kind: "FACTURE" | "AVOIR";
+  invoiceTypeCode?:380|386;
   /** Numero legal, ou reference de brouillon si le document n'est pas encore emis. */
   number: string;
   /** `true` tant que le document n'est pas emis : il doit alors le dire. */
@@ -329,7 +330,7 @@ function traceabilityNote(input: FinanceDocumentInput): string | null {
 
 export async function renderFinanceDocument(input: FinanceDocumentInput): Promise<Buffer> {
   const isAvoir = input.kind === "AVOIR";
-  const documentType = isAvoir ? "Avoir" : "Facture";
+  const documentType = isAvoir ? "Avoir" : input.invoiceTypeCode===386 ? "Facture d’acompte" : "Facture";
   const clientName = pick(input.client, "company_name", "name", "raison_sociale") ?? "Client";
   const taxes = taxBreakdown(input.lines);
 

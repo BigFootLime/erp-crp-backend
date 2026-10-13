@@ -19,6 +19,19 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.proforma_receipt_assignments assignment
     WHERE assignment.amount_ttc<COALESCE((SELECT sum(amount_ttc) FROM public.proforma_receipt_releases
       WHERE assignment_id=assignment.id),0)) THEN RAISE EXCEPTION 'proforma #1268 release exceeds receipt'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger trigger JOIN pg_proc function ON function.oid=trigger.tgfoid
+    WHERE trigger.tgrelid='public.facture_source_allocations'::regclass AND trigger.tgname='trg_validate_facture_source_allocation_227'
+      AND NOT trigger.tgisinternal AND trigger.tgenabled<>'D' AND function.proname='fn_validate_invoice_source_1268') THEN
+    RAISE EXCEPTION 'proforma #1268 invoice source guard is missing or misbound';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.facture_source_allocations'::regclass
+    AND tgname='trg_require_deposit_binding_1268' AND NOT tgisinternal AND tgenabled<>'D' AND tgdeferrable AND tginitdeferred) THEN
+    RAISE EXCEPTION 'proforma #1268 deferred fiscal lineage guard is missing';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.facture_source_allocations source WHERE source.source_type='DEPOSIT'
+    AND source.allocation_status IN ('DRAFT','CONSUMED') AND NOT EXISTS (
+      SELECT 1 FROM public.proforma_deposit_sources binding WHERE binding.facture_source_allocation_id=source.id
+    )) THEN RAISE EXCEPTION 'proforma #1268 deposit source has no retained fiscal lineage'; END IF;
 END;
 $$;
 SELECT current_database() AS database_name,now() AS verified_at,

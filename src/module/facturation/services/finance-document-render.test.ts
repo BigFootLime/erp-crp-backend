@@ -278,6 +278,10 @@ describe("identite des parties", () => {
 });
 
 describe("facture — rendu reel", () => {
+  it("identifie clairement l'acompte sur le PDF réellement rendu",async()=>{
+    const bytes=await renderFinanceDocument({...FACTURE,invoiceTypeCode:386});
+    expect(drawnPages(bytes).join('\n')).toMatch(/FACTURE D.ACOMPTE/i);
+  });
   it("scenario 1 (facture emise, 2 taux) : une page, mentions portees", async () => {
     const bytes = await renderFinanceDocument(FACTURE);
     keep("60-facture-emise", bytes);

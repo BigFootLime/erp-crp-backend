@@ -22,6 +22,11 @@ export const proformaSchemas: Record<string, Schema> = {
   ProformaConfirmation: object({ expected_version:integer,preview_hash:hash,confirm:{type:"boolean",enum:[true]} }),
   ProformaRefresh: object({ ...selection,expected_version:integer,preview_hash:hash,confirm:{type:"boolean",enum:[true]} },["client_id","affairs","expected_version","preview_hash","confirm"]),
   ProformaCancellation: object({ expected_version:integer,reason:{...text,minLength:3,maxLength:1000},confirm:{type:"boolean",enum:[true]} }),
+  ProformaReceiptAssignment: object({ payment_allocation_id:uuid,assignments:array(object({proforma_billing_part_id:uuid,deposit_source_id:uuid,amount:money}),{minItems:1,maxItems:200}) }),
+  ProformaReceiptRelease: object({ amount:money,reason:{...text,minLength:3,maxLength:1000},confirm:{type:"boolean",enum:[true]} }),
+  ProformaReceiptAssignmentResult: object({ id:uuid,reference:text,status,row_version:integer,payment_allocation_id:uuid,
+    assignments:array(object({id:uuid,deposit_source_id:uuid,amount:money})),correlation_id:uuid,idempotent_replay:{type:"boolean"} }),
+  ProformaReceiptReleaseResult: object({ id:uuid,reference:text,status,row_version:integer,release_id:uuid,assignment_id:uuid,released_amount:money,correlation_id:uuid,idempotent_replay:{type:"boolean"} }),
   ProformaPreview: object({ version:{type:"integer",enum:[1]},client_id:text,client_snapshot:snapshot,currency:text,
     affairs:array(object({allocation_id:integer,source_revision:hash,source_snapshot:snapshot,billing_parts:array(object({
       billed_client_id:text,quantity,billed_client_snapshot:snapshot,unit_price_ex_tax:{...text,pattern:"^(?:0|[1-9]\\d*)(?:\\.\\d{1,4})?$"},
@@ -47,12 +52,15 @@ export function proformaOperation(key: string, original: Schema): Schema {
     'post /proformas/{id}/refresh':{summary:'Enregistrer les modifications confirmées du brouillon',request:'ProformaRefresh',response:'ProformaCommandResult',write:true},
     'post /proformas/{id}/issue':{summary:'Émettre la proforma commerciale sans facture fiscale',request:'ProformaConfirmation',response:'ProformaCommandResult',write:true},
     'post /proformas/{id}/cancel':{summary:'Annuler la proforma après régularisation des acomptes et règlements',request:'ProformaCancellation',response:'ProformaCommandResult',write:true},
+    'post /proformas/{id}/receipts':{summary:'Ventiler un règlement existant entre les affaires',request:'ProformaReceiptAssignment',response:'ProformaReceiptAssignmentResult',write:true},
+    'post /proformas/{id}/receipts/{assignmentId}/release':{summary:'Libérer une ventilation sans annuler le paiement',request:'ProformaReceiptRelease',response:'ProformaReceiptReleaseResult',write:true},
     'post /proformas/affaires/{allocationId}/terms':{summary:'Confirmer les conditions de paiement d’une affaire',request:'ProformaTermsDecision',response:'ProformaTermsResult',write:true},
   };
   const entry=definitions[key]; if(!entry)return original;
   const parameters: Schema[]=[];
   if(key.includes('{id}'))parameters.push({name:'id',in:'path',required:true,schema:uuid});
   if(key.includes('{allocationId}'))parameters.push({name:'allocationId',in:'path',required:true,schema:integer});
+  if(key.includes('{assignmentId}'))parameters.push({name:'assignmentId',in:'path',required:true,schema:uuid});
   if(entry.write)parameters.push({name:'Idempotency-Key',in:'header',required:true,schema:{...text,minLength:8,maxLength:200}});
   if(key==='get /proformas') for(const [name,schema] of Object.entries({q:{...text,maxLength:160},client_id:text,status,page:integer,pageSize:{type:'integer',minimum:1,maximum:100}}))parameters.push({name,in:'query',schema});
   const success={description:'Server-derived commercial result. No bank transfer or fiscal invoice is executed by this operation.',content:{'application/json':{schema:ref(entry.response)}}};

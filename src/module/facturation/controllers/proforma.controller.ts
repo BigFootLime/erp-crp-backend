@@ -3,10 +3,11 @@ import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
 import { deliveryPrepaymentTermsBodySchema, proformaAllocationParamsSchema, proformaCreateBodySchema,
   proformaDraftBodySchema, proformaIdParamsSchema, proformaIssueBodySchema, proformaListQuerySchema,
-  proformaRefreshBodySchema, proformaCancelBodySchema } from "../validators/proforma.validators";
+  proformaRefreshBodySchema, proformaCancelBodySchema, proformaReceiptAssignmentBodySchema,
+  proformaReceiptReleaseBodySchema, proformaReceiptReleaseParamsSchema } from "../validators/proforma.validators";
 import { svcCreateProforma, svcDecideDeliveryPrepaymentTerms, svcGetProforma, svcIssueProforma,
   svcListProformas, svcPreviewExistingProforma, svcPreviewProforma,
-  svcPreviewProformaChanges, svcRefreshProforma, svcCancelProforma } from "../services/proforma.service";
+  svcPreviewProformaChanges, svcRefreshProforma, svcCancelProforma, svcAssignProformaReceipts, svcReleaseProformaReceipt } from "../services/proforma.service";
 
 function context(req: Request): { actor: FinanceActorContext; idempotencyKey: string | undefined } {
   const userId = req.user?.id;
@@ -34,6 +35,13 @@ export const refreshProforma = handle(async (req,res) => {
 });
 export const cancelProforma = handle(async (req,res) => {
   res.json(await svcCancelProforma({ ...context(req), id: proformaIdParamsSchema.parse(req.params).id, input: proformaCancelBodySchema.parse(req.body) }));
+});
+export const assignProformaReceipts = handle(async (req,res) => {
+  res.json(await svcAssignProformaReceipts({ ...context(req), id: proformaIdParamsSchema.parse(req.params).id, input: proformaReceiptAssignmentBodySchema.parse(req.body) }));
+});
+export const releaseProformaReceipt = handle(async (req,res) => {
+  const params = proformaReceiptReleaseParamsSchema.parse(req.params);
+  res.json(await svcReleaseProformaReceipt({ ...context(req), id: params.id, assignmentId: params.assignmentId, input: proformaReceiptReleaseBodySchema.parse(req.body) }));
 });
 export const decideDeliveryPrepaymentTerms = handle(async (req,res) => {
   res.json(await svcDecideDeliveryPrepaymentTerms({ ...context(req), allocationId: proformaAllocationParamsSchema.parse(req.params).allocationId,

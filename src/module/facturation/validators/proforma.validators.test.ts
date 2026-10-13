@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deliveryPrepaymentTermsBodySchema, proformaDraftBodySchema, proformaIssueBodySchema, proformaReceiptAssignmentBodySchema,
-  proformaCancelBodySchema, proformaRefreshBodySchema } from "./proforma.validators";
+  proformaCancelBodySchema, proformaRefreshBodySchema, proformaReceiptReleaseBodySchema } from "./proforma.validators";
 
 const draft = { client_id: "CUSTOMER-A", affairs: [{ allocation_id: 12, billing_parts: [{ billed_client_id: "COMPANY-A", quantity: "100" }] }] };
 const assignment = { payment_allocation_id: "10000000-0000-4000-8000-000000000001", assignments: [{
@@ -47,6 +47,12 @@ describe("proforma API input boundaries", () => {
   it("rejects duplicated receipt targets and excess cent precision", () => {
     expect(proformaReceiptAssignmentBodySchema.safeParse({ ...assignment, assignments: [assignment.assignments[0], assignment.assignments[0]] }).success).toBe(false);
     expect(proformaReceiptAssignmentBodySchema.safeParse({ ...assignment, assignments: [{ ...assignment.assignments[0], amount: "100.001" }] }).success).toBe(false);
+  });
+  it("requires positive exact cents and an explicit release reason", () => {
+    expect(proformaReceiptReleaseBodySchema.safeParse({amount:"1.00",reason:"Réaffectation vérifiée",confirm:true}).success).toBe(true);
+    expect(proformaReceiptReleaseBodySchema.safeParse({amount:"0",reason:"Réaffectation vérifiée",confirm:true}).success).toBe(false);
+    expect(proformaReceiptReleaseBodySchema.safeParse({amount:"1.00",reason:"",confirm:true}).success).toBe(false);
+    expect(proformaReceiptReleaseBodySchema.safeParse({amount:"1.00",reason:"Réaffectation vérifiée",confirm:true,cash_reversed:true}).success).toBe(false);
   });
   it("historical terms require an explicit, reasoned decision", () => {
     expect(deliveryPrepaymentTermsBodySchema.safeParse({ expected_version: 1, requirement: "NOT_REQUIRED", reason: "Conditions client vérifiées", confirm: true }).success).toBe(true);

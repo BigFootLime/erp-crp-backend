@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { bindInvoiceUrgencyChargeTx, readInvoiceUrgencyChargesTx } from './facture-urgency-charges.repository';
+import { bindProformaDepositInvoiceSourceTx,buildProformaDepositInvoiceLine,readProformaDepositInvoiceSources } from './proforma-deposit-invoice.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
 import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
@@ -144,6 +145,7 @@ type DeliverySourceRow = {
 
 export type FinanceDocumentSnapshot = {
   document_type: "FACTURE";
+  invoice_type_code?: "380" | "386";
   uuid: string;
   draft_reference: string;
   legal_number: string;
@@ -424,8 +426,9 @@ async function buildFacturePreview(
   input: FacturePreviewBodyDTO,
   lock: boolean,
   invoiceId?: number
-): Promise<{ preview: FacturePreview; policy: BillingPolicyRow | null; sources: DeliverySourceRow[] }> {
-  const unsupported = input.sources.filter((source) => source.source_type !== "DELIVERY_LINE");
+): Promise<{ preview: FacturePreview; policy: BillingPolicyRow | null; sources: Array<{commande_id:string|null;affaire_id:string|null}> }> {
+  const unsupported = input.sources.filter((source) => source.source_type === "MILESTONE");
+  const depositSelections=input.sources.filter(source=>source.source_type==='DEPOSIT');
   const sourceLineIds = input.sources
     .filter((source) => source.source_type === "DELIVERY_LINE")
     .map((source) => source.source_line_id);
@@ -441,6 +444,9 @@ async function buildFacturePreview(
     source_line_id: source.source_line_id,
   }));
   const lines: FacturePreviewLine[] = [];
+  if(depositSelections.length && input.sources.some(source=>source.source_type!=='DEPOSIT'))blockers.push({code:'PROFORMA_DEPOSIT_MIXED_SOURCE',message:"Préparez une facture d'acompte distincte de la facture des pièces livrées."});
+  if(depositSelections.length && parseDecimal(input.global_discount_percent,4,'Remise globale')!==0n)blockers.push({code:'PROFORMA_DEPOSIT_DISCOUNT_ALREADY_APPLIED',message:"Les remises de la commande sont déjà comprises dans la proforma."});
+  if(new Set(depositSelections.map(source=>source.source_line_id)).size!==depositSelections.length)throw new HttpError(422,'DUPLICATE_SOURCE_LINE',"Une ligne d'acompte ne peut apparaître qu'une fois.");
 
   for (const selection of input.sources) {
     if (selection.source_type !== "DELIVERY_LINE") continue;
@@ -504,6 +510,13 @@ async function buildFacturePreview(
       .map(row => row.commande_id).filter((id): id is string => id !== null),
     clientId: input.client_id, currency: input.currency, lock, invoiceId,
   }));
+  const depositSources=await readProformaDepositInvoiceSources(queryer,depositSelections.map(source=>source.source_line_id),lock,invoiceId);
+  for(const selection of depositSelections) {
+    const source=depositSources.find(source=>source.source_line_id===selection.source_line_id);
+    if(!source){blockers.push({code:'PROFORMA_DEPOSIT_SOURCE_NOT_FOUND',message:"La ligne de proforma sélectionnée n'existe plus.",source_line_id:selection.source_line_id});continue;}
+    try {lines.push(buildProformaDepositInvoiceLine(source,selection,input.client_id,input.currency));}
+    catch(error){if(!(error instanceof HttpError)||error.status>=500)throw error;blockers.push({code:error.code,message:error.message,source_line_id:selection.source_line_id});}
+  }
   const totals = computeExactDocumentTotals(
     lines.map((line) => ({
       quantity: line.quantity,
@@ -575,7 +588,7 @@ async function buildFacturePreview(
       blockers: preview.blockers,
     });
   }
-  return { preview, policy, sources: rows };
+  return { preview, policy, sources: [...rows,...depositSources] };
 }
 
 export async function repoPreviewFacture(input: FacturePreviewBodyDTO): Promise<FacturePreview> {
@@ -741,6 +754,8 @@ export async function repoCreateFactureDraft(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
     const { preview_hash: expectedPreviewHash, ...previewInput } = params.input;
     const { preview, policy, sources } = await buildFacturePreview(client, previewInput, true);
     ensurePreviewUsable(preview, expectedPreviewHash);
@@ -759,6 +774,7 @@ export async function repoCreateFactureDraft(params: {
     if (!uuid) throw new Error("Failed to allocate facture uuid");
     const year = new Date().getUTCFullYear();
     const draftReference = `DFT-${year}-${String(factureId).padStart(6, "0")}`;
+    const correlationId = newCorrelationId();
     const clientData = await clientSnapshot(client, params.input.client_id);
     // Brouillon : les mentions du jour. Elles seront **re-resolues a l'emission**, seul
     // moment ou la loi les fige (cf. svcIssueFacture).
@@ -852,14 +868,14 @@ export async function repoCreateFactureDraft(params: {
           lineId: factureLineId, actor: params.actor.userId });
         continue;
       }
-      await client.query(
+      const sourceInsert=await client.query<{id:string}>(
         `
           INSERT INTO public.facture_source_allocations (
             facture_id, facture_ligne_id, source_type, source_id, source_line_id,
             quantity_selected, quantity_consumed, amount_ex_tax, amount_incl_tax,
             allocation_status, source_snapshot, rule_code, created_by
           )
-          VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,'DRAFT',$9::jsonb,$10,$11)
+          VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,'DRAFT',$9::jsonb,$10,$11) RETURNING id::text
         `,
         [
           factureId,
@@ -875,6 +891,11 @@ export async function repoCreateFactureDraft(params: {
           params.actor.userId,
         ]
       );
+      if(line.source_type==='DEPOSIT') {
+        const sourceAllocationId=sourceInsert.rows[0]?.id;
+        if(!sourceAllocationId)throw new Error('Failed to save deposit invoice source');
+        await bindProformaDepositInvoiceSourceTx(client,{sourceAllocationId,partId:line.source_line_id,actorId:params.actor.userId,correlationId});
+      }
     }
     for (const due of preview.due_dates) {
       await client.query(
@@ -887,7 +908,6 @@ export async function repoCreateFactureDraft(params: {
         [factureId, due.due_date, due.label, due.amount, params.actor.userId]
       );
     }
-    const correlationId = newCorrelationId();
     const result: FinanceCommandResult = {
       id: factureId,
       uuid,
@@ -1021,9 +1041,10 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     source_id: string;
     source_line_id: string;
     quantity: string;
+    advance_amount_ex_tax:string;
   }>(
     `
-      SELECT source_type, source_id, source_line_id, quantity_selected::text AS quantity
+      SELECT source_type, source_id, source_line_id, quantity_selected::text AS quantity,amount_ex_tax::numeric(18,2)::text AS advance_amount_ex_tax
       FROM public.facture_source_allocations
       WHERE facture_id = $1
       ORDER BY facture_ligne_id, id
@@ -1042,7 +1063,7 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
   return {
     client_id: row.client_id,
     currency: row.currency,
-    sources: sources.rows,
+    sources: sources.rows.map(source=>source.source_type==='DEPOSIT'?source:{source_type:source.source_type,source_id:source.source_id,source_line_id:source.source_line_id,quantity:source.quantity}),
     global_discount_percent: row.remise_globale,
     due_dates: dueDates.rows,
     internal_comment: row.commentaires,
@@ -1092,6 +1113,8 @@ async function transitionFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);
@@ -1223,6 +1246,8 @@ export async function repoValidateFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     if (facture.statut !== "PENDING_VALIDATION") {
@@ -1323,6 +1348,8 @@ export async function repoIssueFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);
@@ -1369,6 +1396,7 @@ export async function repoIssueFacture(params: {
     // entre-temps, la facture doit porter ce qui est en vigueur le jour ou elle est emise.
     const snapshot: FinanceDocumentSnapshot = {
       document_type: "FACTURE",
+      invoice_type_code:preview.lines.every(line=>line.source_type==='DEPOSIT')?'386':'380',
       uuid: facture.uuid,
       draft_reference: facture.draft_reference,
       legal_number: legal.legalNumber,

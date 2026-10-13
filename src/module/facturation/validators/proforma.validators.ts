@@ -91,6 +91,14 @@ export const proformaReceiptAssignmentBodySchema = z.object({
 
 export type ProformaReceiptAssignmentBodyDTO = z.infer<typeof proformaReceiptAssignmentBodySchema>;
 
+export const proformaReceiptReleaseParamsSchema = z.object({ id: z.string().uuid(), assignmentId: z.string().uuid() }).strict();
+export const proformaReceiptReleaseBodySchema = z.object({
+  amount: positiveMoney,
+  reason: z.string().trim().min(3).max(1000),
+  confirm: z.literal(true),
+}).strict();
+export type ProformaReceiptReleaseBodyDTO = z.infer<typeof proformaReceiptReleaseBodySchema>;
+
 export const deliveryPrepaymentTermsBodySchema = z.object({
   expected_version: z.number().int().nonnegative().safe(),
   requirement: z.enum(["NOT_REQUIRED", "PROFORMA"]),

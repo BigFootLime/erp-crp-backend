@@ -132,7 +132,7 @@ CREATE INDEX IF NOT EXISTS proforma_release_assignment_1268_idx ON public.profor
 CREATE OR REPLACE FUNCTION public.fn_proforma_receipt_budget_1268()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
-  payment_id uuid; source_id uuid; parent_amount numeric(18,2);
+  v_payment_allocation_id uuid; v_deposit_source_id uuid; parent_amount numeric(18,2);
   source_amount numeric(18,2); used_amount numeric(18,2); binding_valid boolean;
   assignment_amount numeric(18,2);
 BEGIN
@@ -143,12 +143,12 @@ BEGIN
   -- exclusive form before parent locks, including the repository command.
   PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
   IF TG_TABLE_NAME='proforma_receipt_releases' THEN
-    SELECT payment_allocation_id,deposit_source_id INTO payment_id,source_id
+    SELECT payment_allocation_id,deposit_source_id INTO v_payment_allocation_id,v_deposit_source_id
       FROM public.proforma_receipt_assignments WHERE id=NEW.assignment_id;
   ELSE
-    payment_id:=NEW.payment_allocation_id; source_id:=NEW.deposit_source_id;
+    v_payment_allocation_id:=NEW.payment_allocation_id; v_deposit_source_id:=NEW.deposit_source_id;
   END IF;
-  SELECT amount_ttc INTO parent_amount FROM public.paiement_allocations WHERE id=payment_id FOR UPDATE;
+  SELECT amount_ttc INTO parent_amount FROM public.paiement_allocations WHERE id=v_payment_allocation_id FOR UPDATE;
   SELECT source.amount_incl_tax, source.source_type='DEPOSIT'
     AND source.allocation_status='CONSUMED' AND invoice.document_status='ISSUED'
     AND invoice.client_id::text=part.billed_client_id AND invoice.currency=proforma.currency
@@ -164,12 +164,12 @@ BEGIN
     JOIN public.proforma_billing_parts part ON part.id=binding.proforma_billing_part_id
     JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
     JOIN public.proforma_client proforma ON proforma.id=line.proforma_id
-    JOIN public.paiement_allocations allocation ON allocation.id=payment_id
+    JOIN public.paiement_allocations allocation ON allocation.id=v_payment_allocation_id
     JOIN public.paiement payment ON payment.id=allocation.paiement_id
-    WHERE binding.facture_source_allocation_id=source_id FOR UPDATE OF part;
+    WHERE binding.facture_source_allocation_id=v_deposit_source_id FOR UPDATE OF part;
   IF TG_TABLE_NAME='proforma_receipt_releases' THEN
     SELECT amount_ttc INTO assignment_amount FROM public.proforma_receipt_assignments
-      WHERE id=NEW.assignment_id FOR UPDATE;
+      WHERE id=NEW.assignment_id;
     SELECT COALESCE(sum(amount_ttc),0) INTO used_amount FROM public.proforma_receipt_releases WHERE assignment_id=NEW.assignment_id;
     IF assignment_amount IS NULL OR used_amount+NEW.amount_ttc>assignment_amount THEN
       RAISE EXCEPTION 'proforma release exceeds assigned receipt' USING ERRCODE='23514';
@@ -182,14 +182,14 @@ BEGIN
   SELECT COALESCE(sum(a.amount_ttc-COALESCE(r.amount,0)),0) INTO used_amount
     FROM public.proforma_receipt_assignments a
     LEFT JOIN LATERAL (SELECT sum(amount_ttc) AS amount FROM public.proforma_receipt_releases WHERE assignment_id=a.id) r ON true
-    WHERE a.payment_allocation_id=payment_id;
+    WHERE a.payment_allocation_id=v_payment_allocation_id;
   IF used_amount+NEW.amount_ttc>parent_amount THEN
     RAISE EXCEPTION 'proforma assignments exceed allocated payment' USING ERRCODE='23514';
   END IF;
   SELECT COALESCE(sum(a.amount_ttc-COALESCE(r.amount,0)),0) INTO used_amount
     FROM public.proforma_receipt_assignments a
     LEFT JOIN LATERAL (SELECT sum(amount_ttc) AS amount FROM public.proforma_receipt_releases WHERE assignment_id=a.id) r ON true
-    WHERE a.deposit_source_id=source_id;
+    WHERE a.deposit_source_id=v_deposit_source_id;
   IF used_amount+NEW.amount_ttc>source_amount THEN
     RAISE EXCEPTION 'proforma assignments exceed deposit line' USING ERRCODE='23514';
   END IF;
@@ -428,6 +428,83 @@ $$;
 DROP TRIGGER IF EXISTS trg_proforma_share_identity_1268 ON public.delivery_affair_billing_shares;
 CREATE TRIGGER trg_proforma_share_identity_1268 BEFORE INSERT OR UPDATE OR DELETE ON public.delivery_affair_billing_shares
   FOR EACH ROW EXECUTE FUNCTION public.fn_proforma_share_identity_1268();
+
+-- Source-specific guard. The canonical #469 payment and credit guards keep
+-- their existing function and trigger bindings; only invoice source dispatch
+-- is replaced. DEPOSIT consumes a monetary advance, never physical pieces.
+CREATE OR REPLACE FUNCTION public.fn_validate_invoice_source_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE source_qty numeric(18,3); used_qty numeric(18,3); source_client text; target_client text;
+  source_valid boolean; part_ht numeric(18,2); part_ttc numeric(18,2); used_ht numeric(18,2); used_ttc numeric(18,2);
+BEGIN
+  IF NEW.source_type='DELIVERY_LINE' THEN
+    SELECT line.quantite::numeric(18,3),delivery.client_id,invoice.client_id INTO source_qty,source_client,target_client
+    FROM public.bon_livraison_ligne line JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
+    JOIN public.facture invoice ON invoice.id=NEW.facture_id
+    WHERE line.id::text=NEW.source_line_id FOR UPDATE OF line,delivery,invoice;
+    SELECT COALESCE(sum(quantity_selected),0)::numeric(18,3) INTO used_qty FROM public.facture_source_allocations
+      WHERE source_type='DELIVERY_LINE' AND source_line_id=NEW.source_line_id AND allocation_status IN ('DRAFT','CONSUMED');
+    IF source_qty IS NULL OR source_client IS DISTINCT FROM target_client OR used_qty+NEW.quantity_selected>source_qty THEN
+      RAISE EXCEPTION 'invoice source allocations have a client mismatch or exceed delivered quantity' USING ERRCODE='23514';
+    END IF;
+  ELSIF NEW.source_type='DEPOSIT' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+    SELECT proforma.status='ISSUED' AND invoice.document_status='DRAFT'
+      AND invoice.client_id::text=part.billed_client_id AND invoice.currency=proforma.currency
+      AND invoice_line.facture_id=invoice.id AND invoice_line.quantite=1
+      AND invoice.remise_globale=0 AND invoice_line.remise_ligne=0 AND invoice_line.taux_tva=part.tax_rate_percent
+      AND invoice_line.prix_unitaire_ht=NEW.amount_ex_tax
+      AND invoice_line.total_ht=NEW.amount_ex_tax AND invoice_line.total_ttc=NEW.amount_incl_tax,
+      part.total_ex_tax,part.total_incl_tax INTO source_valid,part_ht,part_ttc
+    FROM public.proforma_billing_parts part JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
+    JOIN public.proforma_client proforma ON proforma.id=line.proforma_id
+    JOIN public.facture invoice ON invoice.id=NEW.facture_id
+    JOIN public.facture_ligne invoice_line ON invoice_line.id=NEW.facture_ligne_id
+    WHERE part.id::text=NEW.source_line_id AND line.proforma_id::text=NEW.source_id FOR UPDATE OF part,invoice;
+    IF NOT COALESCE(source_valid,false) OR NEW.allocation_status<>'DRAFT' OR NEW.quantity_selected<>1
+      OR NEW.amount_ex_tax<=0 OR NEW.amount_incl_tax<NEW.amount_ex_tax THEN
+      RAISE EXCEPTION 'deposit source requires an issued proforma, matching draft invoice and billed part' USING ERRCODE='23514';
+    END IF;
+    SELECT COALESCE(sum(amount_ex_tax),0),COALESCE(sum(amount_incl_tax),0) INTO used_ht,used_ttc
+      FROM public.facture_source_allocations WHERE source_type='DEPOSIT' AND source_line_id=NEW.source_line_id
+        AND allocation_status IN ('DRAFT','CONSUMED');
+    IF used_ht+NEW.amount_ex_tax>part_ht OR used_ttc+NEW.amount_incl_tax>part_ttc THEN
+      RAISE EXCEPTION 'deposit sources exceed proforma billed part' USING ERRCODE='23514';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'invoice source has no qualified contractual rule' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_validate_facture_source_allocation_227 ON public.facture_source_allocations;
+CREATE TRIGGER trg_validate_facture_source_allocation_227 BEFORE INSERT ON public.facture_source_allocations
+  FOR EACH ROW EXECUTE FUNCTION public.fn_validate_invoice_source_1268();
+
+CREATE OR REPLACE FUNCTION public.fn_require_deposit_binding_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  -- Deferred events must check the current row, not an earlier INSERT image
+  -- if the draft was explicitly reversed later in the same transaction.
+  IF EXISTS(SELECT 1 FROM public.facture_source_allocations source WHERE source.id=NEW.id
+      AND source.source_type='DEPOSIT' AND source.allocation_status IN ('DRAFT','CONSUMED')) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM public.proforma_deposit_sources binding JOIN public.proforma_billing_parts part ON part.id=binding.proforma_billing_part_id
+      JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
+      JOIN public.proforma_client proforma ON proforma.id=line.proforma_id
+      JOIN public.facture_source_allocations current_source ON current_source.id=binding.facture_source_allocation_id
+      JOIN public.facture invoice ON invoice.id=current_source.facture_id
+      WHERE binding.facture_source_allocation_id=NEW.id AND part.id::text=current_source.source_line_id
+        AND line.proforma_id::text=current_source.source_id AND proforma.status='ISSUED'
+        AND invoice.client_id::text=part.billed_client_id AND invoice.currency=proforma.currency
+    ) THEN RAISE EXCEPTION 'deposit source requires retained proforma fiscal lineage' USING ERRCODE='23514'; END IF;
+  END IF;
+  RETURN NULL;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_require_deposit_binding_1268 ON public.facture_source_allocations;
+CREATE CONSTRAINT TRIGGER trg_require_deposit_binding_1268 AFTER INSERT OR UPDATE ON public.facture_source_allocations
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_require_deposit_binding_1268();
 
 -- Schema runners may operate as postgres, whereas API transactions use cerp_app.
 -- Evidence is retained; only draft children can be removed under their guards.

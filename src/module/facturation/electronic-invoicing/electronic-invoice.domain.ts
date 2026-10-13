@@ -291,6 +291,7 @@ export type ElectronicInvoiceSourceDocument = {
   invoiceId: number | null;
   creditNoteId: number | null;
   documentType: ElectronicInvoiceDocumentType;
+  invoiceTypeCode?:380|386;
   precedingInvoice: Readonly<{
     legalNumber: string;
     issueDate: string;

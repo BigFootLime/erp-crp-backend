@@ -8,6 +8,8 @@ const {buildProformaPreview}=require('../../../dist/module/facturation/repositor
 const {repoCreateProforma,repoIssueProforma}=require('../../../dist/module/facturation/repository/proforma-command.repository');
 const {repoRefreshProforma,repoCancelProforma}=require('../../../dist/module/facturation/repository/proforma-lifecycle.repository');
 const {repoGetProforma,repoListProformas}=require('../../../dist/module/facturation/repository/proforma-read.repository');
+const {repoAssignProformaReceipts,repoReleaseProformaReceipt}=require('../../../dist/module/facturation/repository/proforma-receipts.repository');
+const {readProformaDepositInvoiceSources,buildProformaDepositInvoiceLine}=require('../../../dist/module/facturation/repository/proforma-deposit-invoice.repository');
 
 pool.on('connect',client=>client.query('SET ROLE cerp_app'));
 async function main(){
@@ -62,5 +64,40 @@ async function main(){
   assert.equal(evidence.receipts,5);assert.equal(evidence.events,5);assert.ok(evidence.outbox>=10);
   assert.equal(evidence.fiscal_invoices,0);assert.equal(evidence.cancelled_documents,2);
   console.log(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_PASS',evidence,scope:'isolated actual repositories, PostgreSQL, audit, idempotency and outbox; no UI or payment recipe'}));
+  // Fiscal rows below are explicit storage fixtures, not issued by Finance.
+  // They qualify actual receipt repositories without claiming legal issuance.
+  const fundingPreview=await buildProformaPreview(pool,selection,false);
+  const funding=await repoCreateProforma({actor,idempotencyKey:'qualification-funding-create',input:{...selection,preview_hash:fundingPreview.preview_hash}});
+  const target=(await pool.query(`SELECT part.id FROM public.proforma_billing_parts part JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
+    WHERE line.proforma_id=$1 AND part.billed_client_id=$2`,[funding.id,clientId('Qualification société A')])).rows[0].id;
+  const seed=await pool.connect();
+  try{
+    await seed.query('BEGIN');
+    await seed.query(`UPDATE public.proforma_client SET status='ISSUED',row_version=2,issued_at=now(),issued_by=7,
+      issued_snapshot='{"synthetic_fiscal_storage_fixture":true}' WHERE id=$1`,[funding.id]);
+    await seed.query("INSERT INTO public.facture(id,numero,client_id,statut,total_ht,total_tax,total_ttc,currency) VALUES(1268201,'QUAL-SYNTHETIC-ADVANCE', $1,'DRAFT',100,20,120,'EUR')",[clientId('Qualification société A')]);
+    await seed.query("INSERT INTO public.facture_ligne(id,facture_id,designation,quantite,prix_unitaire_ht,taux_tva,total_ht,tax_amount,total_ttc) VALUES(1268201,1268201,'Acompte synthétique isolé',1,100,20,100,20,120)");
+    await seed.query(`INSERT INTO public.facture_source_allocations(id,facture_id,facture_ligne_id,source_type,source_id,source_line_id,quantity_selected,amount_ex_tax,amount_incl_tax,source_snapshot,rule_code,created_by)
+      VALUES('12682000-0000-4000-8000-000000000001',1268201,1268201,'DEPOSIT',$1,$2,1,100,120,'{"synthetic_fiscal_storage_fixture":true}','PROFORMA_DEPOSIT_V1',7)`,[funding.id,target]);
+    await seed.query("INSERT INTO public.proforma_deposit_sources(facture_source_allocation_id,proforma_billing_part_id,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000001',$1,7,'12682000-0000-4000-8000-000000000099')",[target]);
+    await seed.query("UPDATE public.facture_source_allocations SET allocation_status='CONSUMED',quantity_consumed=1 WHERE facture_id=1268201");
+    await seed.query(`UPDATE public.facture SET statut='ISSUED',document_status='ISSUED',legal_number='QUAL-SYNTHETIC-NO-LEGAL-SEQUENCE',issued_at=now(),issued_by=7,
+      immutable_snapshot='{"synthetic_fiscal_storage_fixture":true}',document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268201`);
+    await seed.query("INSERT INTO public.paiement(id,uuid,client_id,montant,status,workflow_status,currency) VALUES(1268201,'12682000-0000-4000-8000-000000000002',$1,120,'ALLOCATED','ALLOCATED','EUR')",[clientId('Qualification société A')]);
+    await seed.query("INSERT INTO public.paiement_allocations(id,paiement_id,facture_id,amount_ttc,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000003',1268201,1268201,120,7,'12682000-0000-4000-8000-000000000099')");
+    await seed.query('COMMIT');
+  }catch(error){await seed.query('ROLLBACK');throw error;}finally{seed.release();}
+  const depositSources=await readProformaDepositInvoiceSources(pool,[target],false);
+  assert.equal(depositSources.length,1);
+  assert.equal(buildProformaDepositInvoiceLine(depositSources[0],{source_type:'DEPOSIT',source_id:funding.id,source_line_id:target,quantity:'1.000',advance_amount_ex_tax:'200.00'},clientId('Qualification société A'),'EUR').total_incl_tax,'240.00');
+  const assignmentInput={payment_allocation_id:'12682000-0000-4000-8000-000000000003',assignments:[{proforma_billing_part_id:target,deposit_source_id:'12682000-0000-4000-8000-000000000001',amount:'100.00'}]};
+  const assigned=await repoAssignProformaReceipts({actor,id:funding.id,idempotencyKey:'qualification-receipt-assignment',input:assignmentInput});
+  assert.equal(assigned.assignments.length,1);
+  const assignedReplay=await repoAssignProformaReceipts({actor,id:funding.id,idempotencyKey:'qualification-receipt-assignment',input:assignmentInput});assert.equal(assignedReplay.idempotent_replay,true);
+  const released=await repoReleaseProformaReceipt({actor,id:funding.id,assignmentId:assigned.assignments[0].id,idempotencyKey:'qualification-receipt-release',input:{amount:'20.00',reason:'Qualification libération partielle',confirm:true}});
+  assert.equal(released.released_amount,'20.00');
+  const covered=(await repoGetProforma(funding.id)).funding.find(part=>part.id===target);assert.equal(covered.paidAmount,'80.00');assert.equal(covered.status,'PARTIALLY_PAID');
+  await assert.rejects(()=>repoAssignProformaReceipts({actor,id:funding.id,idempotencyKey:'qualification-receipt-overflow',input:{...assignmentInput,assignments:[{...assignmentInput.assignments[0],amount:'40.01'}]}}),error=>error.code==='PROFORMA_RECEIPT_BUDGET_EXCEEDED');
+  console.log(JSON.stringify({marker:'PROFORMA1268_RECEIPT_REPOSITORIES_PASS',paidAmount:'80.00',fiscalRows:'synthetic storage fixtures only; no legal sequence, Finance issuance or external payment',businessRecipePassed:false}));
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

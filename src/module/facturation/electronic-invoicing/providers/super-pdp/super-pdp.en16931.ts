@@ -48,6 +48,7 @@ const UNIT_CODES: Readonly<Record<string, string>> = {
   millimetres: "MMT",
   lot: "SET",
   lots: "SET",
+  acompte: "C62",
 };
 
 function normalizedLookupKey(value: string): string {
@@ -272,7 +273,7 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
   return {
     number: source.legalNumber,
     issue_date: source.issueDate,
-    type_code: source.documentType === "CREDIT_NOTE" ? 381 : 380,
+    type_code: source.documentType === "CREDIT_NOTE" ? 381 : source.invoiceTypeCode??380,
     ...(source.precedingInvoice ? {
       preceding_invoice_references: [{
         reference: source.precedingInvoice.legalNumber,

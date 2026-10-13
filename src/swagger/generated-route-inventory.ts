@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "4091ebd51df25642121f440cd956b48aaaa2db67076e133d641e2be8497e7458";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "9025ebf7b1439ba3879a2589c2cac9381078f5f5df5f7a8315ea8e554aad2673";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -17229,6 +17229,40 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireFinanceCapability(draft_write)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/{id}/receipts",
+    "source": "src/module/facturation/routes/proforma.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)",
+      "assignProformaReceipts"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/{id}/receipts/{assignmentId}/release",
+    "source": "src/module/facturation/routes/proforma.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)",
+      "releaseProformaReceipt"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)"
     ]
   },
   {

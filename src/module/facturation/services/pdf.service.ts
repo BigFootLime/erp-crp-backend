@@ -108,8 +108,11 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
   const f = detail.facture;
+  const advance=(await pool.query<{advance:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=$1 AND source_type='DEPOSIT')
+    AND NOT EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=$1 AND source_type<>'DEPOSIT') AS advance`,[f.id])).rows[0]?.advance??false;
   const pdf = await renderFinanceDocument({
     kind: "FACTURE",
+    invoiceTypeCode:advance?386:380,
     number: f.numero,
     draft: true,
     issueDate: f.date_emission,

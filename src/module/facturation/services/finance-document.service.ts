@@ -9,6 +9,7 @@ import type {
 } from "../repository/facture-workflow.repository";
 
 import { renderFinanceDocument } from "./finance-document-render";
+import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 
 /**
  * Exemplaire legal immuable de la facture.
@@ -30,6 +31,7 @@ export async function writeImmutableFactureDocument(
 
   const pdf = await renderFinanceDocument({
     kind: "FACTURE",
+    invoiceTypeCode:invoiceTypeCodeFromSnapshot(snapshot),
     number: snapshot.legal_number,
     draft: false,
     issueDate: snapshot.issue_date,

@@ -1,12 +1,13 @@
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), preview: vi.fn(), currentPreview: vi.fn(), create: vi.fn(), issue: vi.fn(), terms: vi.fn(), changes: vi.fn(), refresh: vi.fn(), cancel: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), preview: vi.fn(), currentPreview: vi.fn(), create: vi.fn(), issue: vi.fn(), terms: vi.fn(), changes: vi.fn(), refresh: vi.fn(), cancel: vi.fn(), assign: vi.fn(), release: vi.fn() }));
 vi.mock("../module/facturation/services/proforma.service", () => ({
   svcListProformas: mocks.list, svcGetProforma: mocks.detail, svcPreviewProforma: mocks.preview,
   svcPreviewExistingProforma: mocks.currentPreview, svcCreateProforma: mocks.create, svcIssueProforma: mocks.issue,
   svcDecideDeliveryPrepaymentTerms: mocks.terms,
   svcPreviewProformaChanges: mocks.changes, svcRefreshProforma: mocks.refresh, svcCancelProforma: mocks.cancel,
+  svcAssignProformaReceipts: mocks.assign, svcReleaseProformaReceipt: mocks.release,
 }));
 import router from "../module/facturation/routes/proforma.routes";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
@@ -91,5 +92,25 @@ describe("proforma HTTP workflow permissions and typed boundaries", () => {
     mocks.cancel.mockResolvedValue({ id, status: "CANCELLED", row_version: 3 });
     expect((await request(app()).post(`/proformas/${id}/cancel`).set("Idempotency-Key","qualification-cancel").send(input)).status).toBe(200);
     expect(mocks.cancel).toHaveBeenCalledWith(expect.objectContaining({ id, idempotencyKey: "qualification-cancel", input }));
+  });
+  it("keeps receipt assignments on existing payment-allocation rights", async () => {
+    const input = { payment_allocation_id:id,assignments:[{proforma_billing_part_id:id,deposit_source_id:id,amount:"10.00"}] };
+    expect((await request(app("Secretaire")).post(`/proformas/${id}/receipts`).send(input)).status).toBe(403);
+    mocks.assign.mockResolvedValue({id,status:"ISSUED",assignments:[]});
+    expect((await request(app()).post(`/proformas/${id}/receipts`).set("Idempotency-Key","qualification-assign").send(input)).status).toBe(200);
+    expect(mocks.assign).toHaveBeenCalledWith(expect.objectContaining({id,input,idempotencyKey:"qualification-assign"}));
+  });
+  it("never accepts a paid flag or altered cent precision during receipt assignment", async () => {
+    const input = { payment_allocation_id:id,assignments:[{proforma_billing_part_id:id,deposit_source_id:id,amount:"10.00"}] };
+    expect((await request(app()).post(`/proformas/${id}/receipts`).send({...input,paid:true})).status).toBe(400);
+    expect((await request(app()).post(`/proformas/${id}/receipts`).send({...input,assignments:[{...input.assignments[0],amount:"10.001"}]})).status).toBe(400);
+    expect(mocks.assign).not.toHaveBeenCalled();
+  });
+  it("requires the selected assignment and explicit reason before release", async () => {
+    const input = {amount:"10.00",reason:"Réaffectation vérifiée",confirm:true};
+    expect((await request(app()).post(`/proformas/${id}/receipts/unknown/release`).send(input)).status).toBe(400);
+    mocks.release.mockResolvedValue({id,released_amount:"10.00"});
+    expect((await request(app()).post(`/proformas/${id}/receipts/${id}/release`).set("Idempotency-Key","qualification-release").send(input)).status).toBe(200);
+    expect(mocks.release).toHaveBeenCalledWith(expect.objectContaining({id,assignmentId:id,input,idempotencyKey:"qualification-release"}));
   });
 });

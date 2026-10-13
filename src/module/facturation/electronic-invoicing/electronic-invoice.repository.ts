@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 import {
   canonicalJson,
   financeRequestHash,
@@ -377,6 +378,7 @@ export async function repoLoadElectronicInvoiceSource(
     total_tax: string;
     total_ttc: string;
     document_status: string;
+    immutable_snapshot:Record<string,unknown>|null;
     lines: Array<Record<string, unknown>>;
   }>(
     `
@@ -393,6 +395,7 @@ export async function repoLoadElectronicInvoiceSource(
         f.total_tax::text,
         f.total_ttc::text,
         f.document_status,
+        f.immutable_snapshot,
         COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'id', fl.id,
@@ -429,6 +432,7 @@ export async function repoLoadElectronicInvoiceSource(
     invoiceId: row.id,
     creditNoteId: null,
     documentType: "INVOICE",
+    invoiceTypeCode:invoiceTypeCodeFromSnapshot(row.immutable_snapshot),
     precedingInvoice: null,
     legalNumber: row.numero,
     issueDate: row.date_emission,
@@ -469,10 +473,11 @@ export async function repoLoadElectronicCreditNoteSource(
     statut: string;
     facture_numero: string;
     facture_date_emission: string;
+    facture_immutable_snapshot:Record<string,unknown>|null;
   }>(
     `SELECT a.id::int,a.numero,a.date_emission::text,upper(a.currency) AS currency,
             a.issuer_snapshot,a.client_snapshot,a.regulatory_snapshot,a.immutable_snapshot,a.statut,
-            f.numero AS facture_numero,f.date_emission::text AS facture_date_emission
+            f.numero AS facture_numero,f.date_emission::text AS facture_date_emission,f.immutable_snapshot AS facture_immutable_snapshot
        FROM public.avoir a
        JOIN public.facture f ON f.id=a.facture_id
       WHERE a.id=$1
@@ -514,7 +519,7 @@ export async function repoLoadElectronicCreditNoteSource(
     precedingInvoice: {
       legalNumber: row.facture_numero,
       issueDate: row.facture_date_emission,
-      typeCode: 380,
+      typeCode: invoiceTypeCodeFromSnapshot(row.facture_immutable_snapshot),
     },
     legalNumber: row.numero,
     issueDate: row.date_emission,

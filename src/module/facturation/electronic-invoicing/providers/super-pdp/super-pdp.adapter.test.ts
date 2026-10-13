@@ -125,6 +125,10 @@ describe("SUPER PDP adapter", () => {
     })).toThrowError(/catégorie et le motif de TVA/i);
   });
 
+  it("distinguishes the issued advance invoice from a standard invoice",()=>{
+    expect(buildSuperPdpEn16931Invoice({...source,invoiceTypeCode:386,lines:source.lines.map(line=>({...line,unit:'acompte'}))})).toMatchObject({type_code:386});
+  });
+
   it("builds an EN16931 credit note with the immutable corrected-invoice reference", () => {
     const result = buildSuperPdpEn16931Invoice(creditSource);
     expect(result).toMatchObject({

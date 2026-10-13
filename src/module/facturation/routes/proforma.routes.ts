@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { createProforma, decideDeliveryPrepaymentTerms, getProforma, issueProforma,
   listProformas, previewExistingProforma, previewProforma,
-  previewProformaChanges, refreshProforma, cancelProforma } from "../controllers/proforma.controller";
+  previewProformaChanges, refreshProforma, cancelProforma, assignProformaReceipts, releaseProformaReceipt } from "../controllers/proforma.controller";
 import { requireFinanceCapability } from "../middlewares/finance-authorization.middleware";
 
 const router = Router();
@@ -15,4 +15,6 @@ router.post("/:id/preview", requireFinanceCapability("draft_write"), previewProf
 router.post("/:id/refresh", requireFinanceCapability("draft_write"), refreshProforma);
 router.post("/:id/issue", requireFinanceCapability("issue"), issueProforma);
 router.post("/:id/cancel", requireFinanceCapability("issue"), cancelProforma);
+router.post("/:id/receipts", requireFinanceCapability("payment_allocate"), assignProformaReceipts);
+router.post("/:id/receipts/:assignmentId/release", requireFinanceCapability("payment_allocate"), releaseProformaReceipt);
 export default router;

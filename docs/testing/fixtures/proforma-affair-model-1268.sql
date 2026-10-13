@@ -90,6 +90,59 @@ END $$;
 SELECT 'PROFORMA1268_MODEL_BEHAVIOR_PASS' AS marker,
   (SELECT sum(quantity) FROM public.proforma_billing_parts) AS billed_quantity,
   (SELECT sum(total_incl_tax) FROM public.proforma_billing_parts) AS billed_total_ttc;
+-- Synthetic fiscal rows qualify storage guards only; no fiscal sequence,
+-- official PDF, external payment, UI recipe or live database is involved.
+\set ON_ERROR_STOP on
+SAVEPOINT synthetic_finance;
+SET CONSTRAINTS ALL DEFERRED;
+INSERT INTO public.facture(id,numero,client_id,statut,total_ht,total_tax,total_ttc,currency)
+  VALUES(1268101,'QUAL-ADVANCE-A',:'billed_a_id','DRAFT',100,20,120,'EUR');
+INSERT INTO public.facture_ligne(id,facture_id,designation,quantite,prix_unitaire_ht,taux_tva,total_ht,tax_amount,total_ttc)
+  VALUES(1268101,1268101,'Acompte synthétique qualification',1,100,20,100,20,120);
+INSERT INTO public.facture_source_allocations(id,facture_id,facture_ligne_id,source_type,source_id,source_line_id,quantity_selected,amount_ex_tax,amount_incl_tax,source_snapshot,rule_code,created_by)
+  VALUES('12681000-0000-4000-8000-000000000001',1268101,1268101,'DEPOSIT','12680000-0000-4000-8000-000000000001','12680000-0000-4000-8000-000000000005',1,100,120,'{"synthetic_isolated_fiscal_fixture":true}','PROFORMA_DEPOSIT_V1',7);
+INSERT INTO public.proforma_deposit_sources(facture_source_allocation_id,proforma_billing_part_id,created_by,correlation_id)
+  VALUES('12681000-0000-4000-8000-000000000001','12680000-0000-4000-8000-000000000005',7,'12680000-0000-4000-8000-000000000099');
+SET CONSTRAINTS ALL IMMEDIATE;
+UPDATE public.facture_source_allocations SET allocation_status='CONSUMED',quantity_consumed=1 WHERE id='12681000-0000-4000-8000-000000000001';
+UPDATE public.facture SET statut='ISSUED',document_status='ISSUED',legal_number='QUAL-SYNTHETIC-ADVANCE-A',issued_at=now(),issued_by=7,
+  immutable_snapshot='{"synthetic_isolated_fiscal_fixture":true}',document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268101;
+INSERT INTO public.paiement(id,uuid,client_id,montant,status,workflow_status,currency)
+  VALUES(1268101,'12681000-0000-4000-8000-000000000002',:'billed_a_id',120,'ALLOCATED','ALLOCATED','EUR');
+INSERT INTO public.paiement_allocations(id,paiement_id,facture_id,amount_ttc,created_by,correlation_id)
+  VALUES('12681000-0000-4000-8000-000000000003',1268101,1268101,120,7,'12680000-0000-4000-8000-000000000099');
+INSERT INTO public.proforma_receipt_assignments(id,payment_allocation_id,deposit_source_id,amount_ttc,created_by,correlation_id)
+  VALUES('12681000-0000-4000-8000-000000000004','12681000-0000-4000-8000-000000000003','12681000-0000-4000-8000-000000000001',60,7,'12680000-0000-4000-8000-000000000099'),
+        ('12681000-0000-4000-8000-000000000005','12681000-0000-4000-8000-000000000003','12681000-0000-4000-8000-000000000001',60,7,'12680000-0000-4000-8000-000000000099');
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.proforma_receipt_assignments(payment_allocation_id,deposit_source_id,amount_ttc,created_by,correlation_id)
+      VALUES('12681000-0000-4000-8000-000000000003','12681000-0000-4000-8000-000000000001',0.01,7,'12680000-0000-4000-8000-000000000099');
+    RAISE EXCEPTION 'qualification failed: parent receipt was double spent';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+INSERT INTO public.proforma_receipt_releases(assignment_id,amount_ttc,reason,created_by,correlation_id)
+  VALUES('12681000-0000-4000-8000-000000000004',10,'Qualification libération partielle',7,'12680000-0000-4000-8000-000000000099');
+INSERT INTO public.proforma_receipt_assignments(payment_allocation_id,deposit_source_id,amount_ttc,created_by,correlation_id)
+  VALUES('12681000-0000-4000-8000-000000000003','12681000-0000-4000-8000-000000000001',10,7,'12680000-0000-4000-8000-000000000099');
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.proforma_receipt_releases(assignment_id,amount_ttc,reason,created_by,correlation_id)
+      VALUES('12681000-0000-4000-8000-000000000004',50.01,'Qualification excès libération',7,'12680000-0000-4000-8000-000000000099');
+    RAISE EXCEPTION 'qualification failed: receipt release exceeded linked amount';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+UPDATE public.paiement SET status='REVERSED',workflow_status='REVERSED',row_version=2 WHERE id=1268101;
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.proforma_receipt_assignments(payment_allocation_id,deposit_source_id,amount_ttc,created_by,correlation_id)
+      VALUES('12681000-0000-4000-8000-000000000003','12681000-0000-4000-8000-000000000001',0.01,7,'12680000-0000-4000-8000-000000000099');
+    RAISE EXCEPTION 'qualification failed: reversed receipt was used again';
+  EXCEPTION WHEN check_violation THEN NULL; END;
+END $$;
+SELECT 'PROFORMA1268_SYNTHETIC_FINANCE_GUARDS_PASS' AS marker;
+ROLLBACK TO SAVEPOINT synthetic_finance;
+
 -- An unpaid cancellation retains the issued history and permits a new,
 -- balanced distribution version without rewriting either issued billed part.
 UPDATE public.proforma_client SET status='CANCELLED',row_version=3,cancelled_at=now(),cancelled_by=7,cancellation_reason='Qualification annulation sans encaissement'
