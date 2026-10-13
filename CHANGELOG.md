@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-14 — Stock déjà réservé à la commande
+
+- L'aperçu de relance reconnaît la couverture physique propre des lignes.12 déjà réservées et8 libres ne produisent plus une fausse proposition de fabrication de4 pièces. Aucune réservation supplémentaire ni planning fictif ; provenance OLD/NEW et contrôles physiques conservés.
+- Lecteur réel vérifié en lecture seule sur Base Test, suite complète7641 tests/687 fichiers et build strict passent. Les commandes de reprise, qualité et expédition gardent leurs garde-fous et leur audit.
+
 ## 2026-10-13 — Reprise stock et annulation explicite de brouillon (#1305)
 
 - La reprise stock seul vérifie tous les OF actifs, y compris hors génération. Aucun planning ou démarrage n'est simulé.

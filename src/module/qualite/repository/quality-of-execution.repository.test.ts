@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ query: vi.fn(), resolve: vi.fn(), frozen: vi.fn(), connect: vi.fn(), receipt: null as null | Record<string, unknown>, execution: null as null | Record<string, unknown>, pending: false }));
+const mocks = vi.hoisted(() => ({ audit: vi.fn(), query: vi.fn(), resolve: vi.fn(), frozen: vi.fn(), connect: vi.fn(), receipt: null as null | Record<string, unknown>, execution: null as null | Record<string, unknown>, pending: false }));
 vi.mock("../../../config/database", () => ({ default: { query: mocks.query, connect: mocks.connect } }));
 vi.mock("../../../shared/realtime/realtime-outbox-transaction", () => ({ withRealtimeOutboxTransaction: async (client: unknown, run: (tx: unknown) => unknown) => run(client) }));
 vi.mock("../../../shared/realtime/realtime-outbox.service", () => ({ enqueueEntityChanged: vi.fn() }));
 vi.mock("../../../shared/codes/code-generator.service", () => ({ generateTransactionalBusinessCode: async () => "CQ-FICTIF" }));
-vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: vi.fn() }));
+vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: mocks.audit }));
 vi.mock("../../stock/repository/stock-lane-routing.repository", () => ({ lockStockLaneTopology: vi.fn() }));
 vi.mock("./quality-of-context", () => ({
   isOfQualitySource: (b: { source_type: string }) => b.source_type === "OF_OPERATION" || b.source_type === "OF",
@@ -18,6 +18,7 @@ const planRow = { id: plan, code: "PC-FROZEN-V1", version: 1, label: "Contrôle 
 const characteristic = { characteristic_key: "PLAT-LONGUEUR", position: 1, label: "Longueur", characteristic_type: "DIMENSIONAL", value_kind: "NUMERIC", unit: "mm", nominal: "50", tolerance_min: "-0.1", tolerance_max: "0.1", precision_digits: 2, expected_boolean: null, allowed_values: null, criticality: "MAJOR", mandatory: true, requires_instrument: true, instrument_category: "PIED_A_COULISSE", method: null, acceptance_rule: null, sampling_rule: "PERCENT", sampling_value: "100", sampling_justification: null, trigger_type: "FINAL" };
 beforeEach(() => {
   mocks.receipt = null; mocks.execution = null; mocks.pending = false;
+  mocks.audit.mockReset().mockResolvedValue({ id: "audit-fictif" });
   mocks.resolve.mockReset().mockImplementation(async (_q, b) => ({ ...b, operation_id: op, article_id: op, piece_technique_id: op, piece_version_id: op, operation_code: "30" }));
   mocks.frozen.mockReset().mockResolvedValue(plan);
   mocks.connect.mockReset().mockResolvedValue({ query: mocks.query });
@@ -54,6 +55,15 @@ describe("Canonical OF control preview and creation", () => {
     const inserts = mocks.query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.quality_control ("));
     expect(inserts).toHaveLength(1); expect(inserts[0]![0]).toContain("$23::uuid"); expect(inserts[0]![1][22]).toBe(op);
     expect(mocks.resolve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ source_id: op }), true);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ tx: expect.anything(),
+      body: expect.objectContaining({ entity_id: control }) }));
+  });
+  it("refuses to publish a successful receipt when the mandatory audit insertion is missing", async () => {
+    mocks.audit.mockResolvedValueOnce(null);
+    const preview = await repoPreviewExecution(body);
+    await expect(repoCreateExecution({ body: { ...body, preview_sha256: preview.snapshot_sha256 }, actor,
+      idempotencyKey: "quality-of-103-audit-missing" })).rejects.toThrow("QUALITY_AUDIT_INSERT_FAILED");
+    expect(mocks.receipt).toBeNull();
   });
   it("refuses a stale preview before any control is inserted", async () => {
     await expect(repoCreateExecution({ body: { ...body, preview_sha256: "a".repeat(64) }, actor, idempotencyKey: "quality-of-103-stale" })).rejects.toMatchObject({ status: 409 });
