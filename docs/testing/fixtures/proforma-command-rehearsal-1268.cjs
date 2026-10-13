@@ -3,6 +3,8 @@ const database=process.argv[2];
 if(!/^cerp_qualify_1268_\d{14}$/.test(database||''))throw Error('Dedicated isolated database required');
 const target=new URL(process.env.DATABASE_URL||'http://invalid');
 if(target.pathname!=='/'+database||target.searchParams.get('host')!=='/var/run/postgresql')throw Error('Isolated local PostgreSQL socket required');
+target.searchParams.set('options','-c role=cerp_app');
+process.env.DATABASE_URL=target.toString();
 const pool=require('../../../dist/config/database').default;
 const {buildProformaPreview}=require('../../../dist/module/facturation/repository/proforma-preview.repository');
 const {repoCreateProforma,repoIssueProforma}=require('../../../dist/module/facturation/repository/proforma-command.repository');
@@ -11,9 +13,9 @@ const {repoGetProforma,repoListProformas}=require('../../../dist/module/facturat
 const {repoAssignProformaReceipts,repoReleaseProformaReceipt}=require('../../../dist/module/facturation/repository/proforma-receipts.repository');
 const {readProformaDepositInvoiceSources,buildProformaDepositInvoiceLine}=require('../../../dist/module/facturation/repository/proforma-deposit-invoice.repository');
 
-pool.on('connect',client=>client.query('SET ROLE cerp_app'));
 async function main(){
   assert.equal((await pool.query('SELECT current_database() AS name')).rows[0].name,database);
+  assert.equal((await pool.query('SELECT current_user AS role')).rows[0].role,'cerp_app');
   const clients=(await pool.query("SELECT client_id,company_name FROM public.clients ORDER BY company_name")).rows;
   const clientId=name=>clients.find(c=>c.company_name===name).client_id;
   const selection={client_id:clientId('Qualification client'),currency:'EUR',affairs:[{allocation_id:1268001,billing_parts:[
@@ -99,5 +101,7 @@ async function main(){
   const covered=(await repoGetProforma(funding.id)).funding.find(part=>part.id===target);assert.equal(covered.paidAmount,'80.00');assert.equal(covered.status,'PARTIALLY_PAID');
   await assert.rejects(()=>repoAssignProformaReceipts({actor,id:funding.id,idempotencyKey:'qualification-receipt-overflow',input:{...assignmentInput,assignments:[{...assignmentInput.assignments[0],amount:'40.01'}]}}),error=>error.code==='PROFORMA_RECEIPT_BUDGET_EXCEEDED');
   console.log(JSON.stringify({marker:'PROFORMA1268_RECEIPT_REPOSITORIES_PASS',paidAmount:'80.00',fiscalRows:'synthetic storage fixtures only; no legal sequence, Finance issuance or external payment',businessRecipePassed:false}));
+  await require('./prepayment-snapshot-concurrency-1268.cjs')(pool,database);
+  await require('./delivery-prepayment-sql-rehearsal-1268.cjs')(pool,database,selection.client_id);
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

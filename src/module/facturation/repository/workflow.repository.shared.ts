@@ -56,6 +56,11 @@ export async function acquireFinanceIdempotency(params: {
       "Cette Idempotency-Key a déjà été utilisée avec un autre contenu."
     );
   }
+  if (decision !== "REPLAY") {
+    // Match BL read guards before locking an invoice, credit note or payment.
+    // The SQL epoch also protects stale SERIALIZABLE shipment snapshots.
+    await params.client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
+  }
   return {
     idempotencyKey,
     requestHash,

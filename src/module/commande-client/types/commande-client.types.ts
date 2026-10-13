@@ -16,6 +16,7 @@ export type CommandeReconciliationSource = "ORDER" | "QUOTE" | "CERP";
 export type CadreReleaseStatus = "PLANNED" | "SENT" | "CONFIRMED" | "DELIVERED" | "CANCELLED";
 
 export type CommandeClient = {
+  delivery_prepayment_requirement?: "NOT_REQUIRED" | "PROFORMA" | null;
   id: number;
   numero: string;
   client_id: string | null;
@@ -250,6 +251,7 @@ export type CommandeEcheanceInput = {
 };
 
 export type CreateCommandeInput = {
+  delivery_prepayment_requirement?: "NOT_REQUIRED" | "PROFORMA";
   client_contract_call?: {contract_id:string;expected_version:number;idempotency_key:string} | null;
   numero?: string;
   client_id?: string | null;

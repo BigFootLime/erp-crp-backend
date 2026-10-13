@@ -22,7 +22,7 @@ export async function runProformaCommand<T extends Record<string, unknown>>(args
     if (receipt.replay) return { ...receipt.replay, idempotent_replay: true } as T & { correlation_id: string; idempotent_replay: boolean };
     // The command source reader locks orders before the contract binding lock,
     // matching the explicit legacy association writer's ordering.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const correlationId = newCorrelationId();
     const evidence = await args.work(client, correlationId);
     const result = { ...evidence.result, correlation_id: correlationId, idempotent_replay: false };

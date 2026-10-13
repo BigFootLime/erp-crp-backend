@@ -755,7 +755,7 @@ export async function repoCreateFactureDraft(params: {
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const { preview_hash: expectedPreviewHash, ...previewInput } = params.input;
     const { preview, policy, sources } = await buildFacturePreview(client, previewInput, true);
     ensurePreviewUsable(preview, expectedPreviewHash);
@@ -1114,7 +1114,7 @@ async function transitionFacture(params: {
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);
@@ -1247,7 +1247,7 @@ export async function repoValidateFacture(params: {
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     if (facture.statut !== "PENDING_VALIDATION") {
@@ -1349,7 +1349,7 @@ export async function repoIssueFacture(params: {
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);

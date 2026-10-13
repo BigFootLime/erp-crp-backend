@@ -47,3 +47,12 @@ DROP FUNCTION IF EXISTS public.fn_proforma_quantity_balance_1268();
 DROP FUNCTION IF EXISTS public.fn_proforma_source_binding_1268();
 DROP FUNCTION IF EXISTS public.fn_proforma_terms_binding_1268();
 DROP FUNCTION IF EXISTS public.fn_proforma_share_identity_1268();
+DO $$ DECLARE guarded_table text; BEGIN
+  FOREACH guarded_table IN ARRAY ARRAY['paiement','paiement_allocations','facture','facture_source_allocations','avoir','avoir_source_allocations'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_delivery_prepayment_epoch_1268 ON public.%I',guarded_table);
+  END LOOP;
+END $$;
+DROP FUNCTION IF EXISTS public.fn_touch_delivery_prepayment_1268();
+DROP FUNCTION IF EXISTS public.fn_lock_delivery_prepayment_read_1268();
+DROP FUNCTION IF EXISTS public.fn_lock_delivery_prepayment_write_1268();
+DROP TABLE IF EXISTS public.delivery_prepayment_epoch_1268;

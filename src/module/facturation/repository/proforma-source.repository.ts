@@ -8,7 +8,7 @@ export type ProformaOrderSource = {
   commande_id: string;
   commande_ligne_id: string;
   livraison_affaire_id: string;
-  client_id: string;
+  client_id: string | null;
   currency: string;
   client_blocked: boolean;
   order_type: string;
@@ -33,6 +33,8 @@ export type ProformaOrderSource = {
   terms_version?: number;
   bound_proforma_id?: string | null;
   bound_proforma_status?: string | null;
+  bound_proforma_reference?: string | null;
+  bound_proforma_source_revision?: string | null;
   has_active_delivery?: boolean;
 };
 
@@ -64,20 +66,21 @@ export async function readProformaOrderSources(tx: Pick<PoolClient, "query">, al
       line.taux_tva::numeric(8,4)::text AS tax_rate_percent,
       command.numero AS order_reference,command.code_client AS customer_order_reference,
       affaire.reference AS affaire_reference,
-      COALESCE(terms.requirement,'UNCONFIRMED') AS prepayment_requirement,
+      COALESCE(terms.requirement,command.delivery_prepayment_requirement,'UNCONFIRMED') AS prepayment_requirement,
       COALESCE(terms.row_version,0) AS terms_version,
       bound.id::text AS bound_proforma_id,bound.status AS bound_proforma_status,
+      bound.reference AS bound_proforma_reference,bound_line.source_revision AS bound_proforma_source_revision,
       EXISTS(SELECT 1 FROM public.bon_livraison_ligne_allocations delivery_allocation
         JOIN public.bon_livraison_ligne delivery_line ON delivery_line.id=delivery_allocation.bon_livraison_ligne_id
         JOIN public.bon_livraison delivery ON delivery.id=delivery_line.bon_livraison_id
         WHERE delivery_allocation.commande_ligne_affaire_allocation_id=allocation.id
-          AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')) AS has_active_delivery,
+          AND delivery.statut IN ('READY','SHIPPED','DELIVERED')) AS has_active_delivery,
       COALESCE(shares.items,'[]'::jsonb) AS billing_shares
     FROM public.commande_ligne_affaire_allocation allocation
     JOIN public.commande_client command ON command.id=allocation.commande_id
     JOIN public.commande_ligne line ON line.id=allocation.commande_ligne_id AND line.commande_id=command.id
     JOIN public.affaire affaire ON affaire.id=allocation.livraison_affaire_id
-    JOIN public.clients customer ON customer.client_id=command.client_id
+    LEFT JOIN public.clients customer ON customer.client_id=command.client_id
     LEFT JOIN public.client_contract_calls call ON call.commande_id=command.id
     LEFT JOIN public.client_contract_legacy_orders legacy ON legacy.commande_id=command.id
     LEFT JOIN public.delivery_affair_prepayment_terms terms ON terms.allocation_id=allocation.id
@@ -123,7 +126,7 @@ export function proformaOrderSourceRevision(source: ProformaOrderSource, currenc
     globalDiscount: source.global_discount_percent ?? "0.0000", taxRate: source.tax_rate_percent,
     addressId: source.delivery_address_id, contractId: source.contract_id,
     billingShares: (source.billing_shares.length ? source.billing_shares
-      : [{ billed_client_id: source.client_id, quantity: source.quantity }])
+      : source.client_id ? [{ billed_client_id: source.client_id, quantity: source.quantity }] : [])
       .map(share => ({ billedClientId: share.billed_client_id, quantity: share.quantity }))
       .sort((a, b) => a.billedClientId.localeCompare(b.billedClientId)),
   });

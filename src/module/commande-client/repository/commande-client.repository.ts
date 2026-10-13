@@ -2855,6 +2855,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
       cc.mode_port_id::text AS mode_port_id,
       cc.mode_reglement_id::text AS mode_reglement_id,
       cc.conditions_paiement_id,
+      cc.delivery_prepayment_requirement,
       cc.biller_id::text AS biller_id,
       cc.compte_vente_id::text AS compte_vente_id,
       cc.commentaire,
@@ -2899,6 +2900,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
     mode_port_id: string | null;
     mode_reglement_id: string | null;
     conditions_paiement_id: number | null;
+    delivery_prepayment_requirement: "NOT_REQUIRED" | "PROFORMA" | null;
     biller_id: string | null;
     compte_vente_id: string | null;
     commentaire: string | null;
@@ -4148,9 +4150,10 @@ export async function repoCreateCommande(
         total_ttc,
         devis_id,
         source_devis_version_id,
-        creation_flow_version
+        creation_flow_version,
+        delivery_prepayment_requirement
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
       )
       RETURNING id::text AS id
     `;
@@ -4185,6 +4188,7 @@ export async function repoCreateCommande(
       input.devis_id ?? null,
       input.source_devis_version_id ?? input.devis_id ?? null,
       input.creation_flow_version ?? 1,
+      orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
@@ -4428,7 +4432,12 @@ export async function repoUpdateCommande(
       context: "commande-client.update",
       work: async () => {
 
+    if (input.delivery_prepayment_requirement !== undefined) {
+      await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
+    }
+
     const existingRes = await client.query<{
+      delivery_prepayment_requirement: "NOT_REQUIRED" | "PROFORMA" | null;
       numero: string;
       client_id: string | null;
       devis_id: string | null;
@@ -4453,7 +4462,8 @@ export async function repoUpdateCommande(
         dest_stock_magasin_id::text AS dest_stock_magasin_id,
         dest_stock_emplacement_id::text AS dest_stock_emplacement_id,
         ar_sent_at::text AS ar_sent_at,
-        creation_flow_version
+        creation_flow_version,
+        delivery_prepayment_requirement
       FROM commande_client
       WHERE id = $1::bigint
       FOR UPDATE
@@ -4493,6 +4503,12 @@ export async function repoUpdateCommande(
 
     const numero = existing.numero;
     const orderType = existingOrderType;
+    if (input.delivery_prepayment_requirement !== undefined && input.delivery_prepayment_requirement !== existing.delivery_prepayment_requirement) {
+      const allocated = (await client.query<{exists:boolean}>(
+        "SELECT EXISTS(SELECT 1 FROM public.commande_ligne_affaire_allocation WHERE commande_id=$1::bigint) AS exists", [id])).rows[0]?.exists;
+      if (allocated) throw new HttpError(409,"COMMANDE_PREPAYMENT_AFFAIR_DECISION_REQUIRED",
+        "Les affaires sont déjà créées : modifiez leurs conditions de paiement dans la préparation des livraisons.");
+    }
 
     const clientIdForUpdate = hasOwn(input as object, "client_id") ? (input.client_id ?? null) : existing.client_id;
     const devisIdForUpdate = hasOwn(input as object, "devis_id") ? (input.devis_id ?? null) : toNullableInt(existing.devis_id, "devis_id");
@@ -4545,6 +4561,7 @@ export async function repoUpdateCommande(
         total_ttc = $27,
         devis_id = $28,
         source_devis_version_id = $29,
+        delivery_prepayment_requirement = COALESCE($30::text,delivery_prepayment_requirement),
         updated_at = now()
       WHERE id = $1
       RETURNING id::text AS id
@@ -4579,6 +4596,7 @@ export async function repoUpdateCommande(
       input.total_ttc ?? 0,
       devisIdForUpdate,
       input.source_devis_version_id ?? devisIdForUpdate,
+      input.delivery_prepayment_requirement ?? null,
     ];
 
     const updated = await client.query<{ id: string }>(updateSql, updateParams);

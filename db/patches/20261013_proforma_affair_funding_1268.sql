@@ -2,11 +2,62 @@
 -- No existing affair is implicitly migrated to "not prepaid".
 CREATE SEQUENCE IF NOT EXISTS public.proforma_client_reference_seq;
 
+-- Advisory locks alone do not refresh a SERIALIZABLE snapshot after waiting.
+-- A locked epoch row makes an old BL snapshot fail with 40001, rather than
+-- shipping against cash evidence reversed while it was waiting for Finance.
+CREATE TABLE IF NOT EXISTS public.delivery_prepayment_epoch_1268 (
+  singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+  version bigint NOT NULL DEFAULT 0 CHECK (version>=0),
+  writer_transaction bigint NOT NULL DEFAULT 0
+);
+INSERT INTO public.delivery_prepayment_epoch_1268(singleton) VALUES(true) ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION public.fn_lock_delivery_prepayment_write_1268()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+  UPDATE public.delivery_prepayment_epoch_1268 SET version=version+1,writer_transaction=txid_current()
+    WHERE singleton AND writer_transaction<>txid_current();
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.fn_lock_delivery_prepayment_read_1268()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock_shared(hashtextextended('delivery-prepayment-binding',0));
+  PERFORM version FROM public.delivery_prepayment_epoch_1268 WHERE singleton FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'prepayment epoch missing' USING ERRCODE='55000'; END IF;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.fn_touch_delivery_prepayment_1268()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
+  RETURN NULL;
+END;
+$$;
+-- Statement triggers run before any modified row. All retained fiscal and cash
+-- writers participate, including legacy payment reversal/credit-note paths.
+DO $$ DECLARE guarded_table text; BEGIN
+  FOREACH guarded_table IN ARRAY ARRAY['paiement','paiement_allocations','facture','facture_source_allocations','avoir','avoir_source_allocations'] LOOP
+    EXECUTE format('DROP TRIGGER IF EXISTS trg_delivery_prepayment_epoch_1268 ON public.%I',guarded_table);
+    EXECUTE format('CREATE TRIGGER trg_delivery_prepayment_epoch_1268 BEFORE INSERT OR UPDATE OR DELETE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.fn_touch_delivery_prepayment_1268()',guarded_table);
+  END LOOP;
+END $$;
+REVOKE ALL ON public.delivery_prepayment_epoch_1268 FROM PUBLIC,cerp_app;
+GRANT SELECT ON public.delivery_prepayment_epoch_1268 TO cerp_app;
+REVOKE ALL ON FUNCTION public.fn_lock_delivery_prepayment_write_1268(),public.fn_lock_delivery_prepayment_read_1268(),public.fn_touch_delivery_prepayment_1268() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.fn_lock_delivery_prepayment_write_1268(),public.fn_lock_delivery_prepayment_read_1268() TO cerp_app;
+
 -- Existing commercial prices have the same EUR basis as Finance #227.
 ALTER TABLE public.commande_client ADD COLUMN IF NOT EXISTS currency text NOT NULL DEFAULT 'EUR';
+-- Null is deliberately retained on historical orders. Only a new order or an
+-- explicit reviewed affair decision establishes its prepayment requirement.
+ALTER TABLE public.commande_client ADD COLUMN IF NOT EXISTS delivery_prepayment_requirement text NULL;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.commande_client'::regclass AND conname='commande_currency_1268_ck') THEN
     ALTER TABLE public.commande_client ADD CONSTRAINT commande_currency_1268_ck CHECK (currency ~ '^[A-Z]{3}$');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.commande_client'::regclass AND conname='commande_prepayment_requirement_1268_ck') THEN
+    ALTER TABLE public.commande_client ADD CONSTRAINT commande_prepayment_requirement_1268_ck CHECK (delivery_prepayment_requirement IN ('NOT_REQUIRED','PROFORMA'));
   END IF;
 END $$;
 
@@ -141,7 +192,7 @@ BEGIN
   END IF;
   -- BL mutations retain the shared lock. Binding/receipt changes use its
   -- exclusive form before parent locks, including the repository command.
-  PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
   IF TG_TABLE_NAME='proforma_receipt_releases' THEN
     SELECT payment_allocation_id,deposit_source_id INTO v_payment_allocation_id,v_deposit_source_id
       FROM public.proforma_receipt_assignments WHERE id=NEW.assignment_id;
@@ -213,7 +264,7 @@ DECLARE parent_id uuid; parent_status text;
 BEGIN
   IF TG_TABLE_NAME='proforma_client' THEN
     IF TG_OP='DELETE' THEN RAISE EXCEPTION 'proforma history cannot be deleted' USING ERRCODE='55000'; END IF;
-    PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+    PERFORM public.fn_lock_delivery_prepayment_write_1268();
     IF NEW.row_version<>OLD.row_version+1 THEN
       RAISE EXCEPTION 'proforma update requires next version' USING ERRCODE='23514';
     END IF;
@@ -234,7 +285,7 @@ BEGIN
       JOIN public.bon_livraison_ligne_allocations allocation ON allocation.commande_ligne_affaire_allocation_id=source.allocation_id
       JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
       JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
-      WHERE source.proforma_id=OLD.id AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')
+      WHERE source.proforma_id=OLD.id AND delivery.statut IN ('READY','SHIPPED','DELIVERED')
     ) THEN RAISE EXCEPTION 'proforma delivery must be reconciled before cancellation' USING ERRCODE='23514'; END IF;
     IF NEW.status='CANCELLED' AND EXISTS (
       SELECT 1 FROM public.proforma_affair_lines line
@@ -334,7 +385,7 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE source_valid boolean; previous_amount numeric(18,2); requested_amount numeric(18,2); part_amount numeric(18,2);
 BEGIN
   IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'proforma deposit binding is immutable' USING ERRCODE='55000'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
   SELECT source.source_type='DEPOSIT' AND source.source_id=line.proforma_id::text
     AND source.source_line_id=part.id::text AND invoice.client_id::text=part.billed_client_id
     AND invoice.currency=proforma.currency AND proforma.status='ISSUED'
@@ -369,7 +420,7 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE source_id bigint;
 BEGIN
   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'prepayment decision history cannot be deleted' USING ERRCODE='55000'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
   source_id:=NEW.allocation_id;
   PERFORM 1 FROM public.commande_ligne_affaire_allocation WHERE id=source_id FOR UPDATE;
   IF TG_OP='UPDATE' AND (NEW.allocation_id<>OLD.allocation_id OR NEW.row_version<>OLD.row_version+1) THEN
@@ -384,7 +435,7 @@ BEGIN
       JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
       JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
       WHERE allocation.commande_ligne_affaire_allocation_id=source_id
-        AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')) THEN
+        AND delivery.statut IN ('READY','SHIPPED','DELIVERED')) THEN
     RAISE EXCEPTION 'delivery already uses these prepayment terms' USING ERRCODE='23514';
   END IF;
   RETURN NEW;
@@ -397,7 +448,7 @@ CREATE TRIGGER trg_proforma_terms_binding_1268 BEFORE INSERT OR UPDATE OR DELETE
 CREATE OR REPLACE FUNCTION public.fn_proforma_share_identity_1268()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
   IF TG_OP='INSERT' THEN RETURN NEW; END IF;
   IF TG_OP='UPDATE' AND (NEW.allocation_id<>OLD.allocation_id OR NEW.row_version<>OLD.row_version+1) THEN
     RAISE EXCEPTION 'billing share requires stable source and next version' USING ERRCODE='23514';
@@ -418,7 +469,7 @@ BEGIN
     JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
     JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
     WHERE allocation.commande_ligne_affaire_allocation_id=OLD.allocation_id
-      AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')) THEN
+      AND delivery.statut IN ('READY','SHIPPED','DELIVERED')) THEN
     RAISE EXCEPTION 'delivery already uses this billing distribution' USING ERRCODE='23514';
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -448,7 +499,7 @@ BEGIN
       RAISE EXCEPTION 'invoice source allocations have a client mismatch or exceed delivered quantity' USING ERRCODE='23514';
     END IF;
   ELSIF NEW.source_type='DEPOSIT' THEN
-    PERFORM pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0));
+    PERFORM public.fn_lock_delivery_prepayment_write_1268();
     SELECT proforma.status='ISSUED' AND invoice.document_status='DRAFT'
       AND invoice.client_id::text=part.billed_client_id AND invoice.currency=proforma.currency
       AND invoice_line.facture_id=invoice.id AND invoice_line.quantite=1

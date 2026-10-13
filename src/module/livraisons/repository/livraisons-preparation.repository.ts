@@ -8,6 +8,8 @@ import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import { assertDeliveryContractBoundary, readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import { assertDeliveryPrepaymentBoundary, lockDeliveryPrepaymentRead, lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary } from "./delivery-prepayment-boundary.repository"
+import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
 import {
   deriveLivraisonPreparationState,
   matchesLivraisonPickScanCode,
@@ -96,6 +98,7 @@ export async function repoGetLivraisonPreparation(
   bonLivraisonId: string,
   queryable: Queryable = pool
 ): Promise<BonLivraisonPreparation | null> {
+  if (queryable === pool) return withDeliveryReadSnapshot(tx => repoGetLivraisonPreparation(bonLivraisonId, tx))
   const headerResult = await queryable.query<PreparationHeaderRow>(
     `
       SELECT
@@ -241,7 +244,10 @@ export async function repoGetLivraisonPreparation(
     confirmed,
   })
   const contractBoundary = await readDeliveryContractBoundary(queryable, bonLivraisonId)
-  const state = (hasBlockedTask || contractBoundary.blocker) && header.statut === "READY" ? "BLOCKED" : derivedState
+  const prepayment = await readDeliveryPrepaymentBoundary(queryable, bonLivraisonId)
+  const blocked = Boolean(contractBoundary.blocker || prepayment.blockers.length)
+  const state = (hasBlockedTask || blocked) && header.statut === "READY" ? "BLOCKED" : derivedState
+  if (blocked) for (const task of tasks) task.can_confirm = false
 
   return {
     bon_livraison_id: header.id,
@@ -249,7 +255,9 @@ export async function repoGetLivraisonPreparation(
     status: header.statut,
     row_version: header.row_version,
     state,
-    can_ship: !contractBoundary.blocker && header.statut === "READY" && tasks.length > 0 && confirmed === tasks.length,
+    can_ship: !blocked && header.statut === "READY" && tasks.length > 0 && confirmed === tasks.length,
+    prepayment,
+    blockers: [...(contractBoundary.blocker ? [contractBoundary.blocker] : []), ...prepayment.blockers],
     progress: {
       total: tasks.length,
       confirmed,
@@ -341,6 +349,9 @@ async function mutatePreparation(args: {
     }
     if (receipt) return
 
+    if (args.mode === "CONFIRM") await lockDeliveryPrepaymentSources(tx, args.bonLivraisonId)
+    else await lockDeliveryPrepaymentRead(tx)
+
     const headerResult = await tx.query<PreparationHeaderRow>(
       `
         SELECT id::text AS id, numero, statut, row_version::int AS row_version
@@ -359,6 +370,7 @@ async function mutatePreparation(args: {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le bon de livraison a changé. Rafraîchissez la préparation.")
     }
     if (args.mode === "CONFIRM") await assertDeliveryContractBoundary(tx, args.bonLivraisonId)
+    if (args.mode === "CONFIRM") await assertDeliveryPrepaymentBoundary(tx, args.bonLivraisonId)
 
     const allocationResult = await tx.query<{
       lot_code: string | null

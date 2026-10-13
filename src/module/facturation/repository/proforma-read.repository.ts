@@ -1,4 +1,5 @@
 import pool from "../../../config/database";
+import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { proformaLineFunding, type ProformaReceiptEvidence } from "../domain/proforma-funding";
 import type { ProformaPreview } from "../types/proforma.types";
@@ -19,17 +20,12 @@ export async function repoListProformas(query: ProformaListQueryDTO) {
   return { ...result.rows[0], page: query.page, pageSize: query.pageSize };
 }
 
-export async function repoGetProforma(id: string) {
-  const tx = await pool.connect();
-  try {
-    await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    const header = (await tx.query<{ id: string; reference: string; status: string; row_version: number;
-      preview_payload: ProformaPreview; issued_snapshot: Record<string, unknown> | null; created_at: string; issued_at: string | null }>(
-      "SELECT id::text,reference,status,row_version,preview_payload,issued_snapshot,created_at::text,issued_at::text FROM public.proforma_client WHERE id=$1::uuid", [id])).rows[0];
-    if (!header) throw new HttpError(404, "PROFORMA_NOT_FOUND", "Proforma introuvable.");
-    const parts = await tx.query<{ id: string; allocation_id: string; billed_client_id: string; company_name: string;
+/** Reuse the caller's transaction for BL guards; never read cash through a second pool. */
+export async function readProformaFunding(tx: Pick<PoolClient, "query">, proformaIds: readonly string[]) {
+    if (!proformaIds.length) return [];
+    const parts = await tx.query<{ id: string; proforma_id: string; allocation_id: string; billed_client_id: string; company_name: string;
       currency: string; required_amount: string; credits_amount: string; receipts: ProformaReceiptEvidence[] }>(`
-      SELECT part.id::text,line.allocation_id::text,part.billed_client_id,part.billed_client_snapshot->>'company_name' AS company_name,
+      SELECT part.id::text,line.proforma_id::text,line.allocation_id::text,part.billed_client_id,part.billed_client_snapshot->>'company_name' AS company_name,
         proforma.currency,part.total_incl_tax::text AS required_amount,
         COALESCE(credits.amount,0)::numeric(18,2)::text AS credits_amount,COALESCE(receipts.items,'[]'::jsonb) AS receipts
       FROM public.proforma_billing_parts part JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
@@ -55,12 +51,23 @@ export async function repoGetProforma(id: string) {
         JOIN public.avoir note ON note.id=credit.avoir_id AND note.statut='ISSUED'
         WHERE binding.proforma_billing_part_id=part.id
       ) credits ON true
-      WHERE line.proforma_id=$1::uuid ORDER BY line.allocation_id,part.billed_client_id
-    `, [id]);
-    const funding = parts.rows.map(part => ({ id: part.id, allocation_id: Number(part.allocation_id),
+      WHERE line.proforma_id=ANY($1::uuid[]) ORDER BY line.proforma_id,line.allocation_id,part.billed_client_id
+    `, [[...new Set(proformaIds)].sort()]);
+    return parts.rows.map(part => ({ id: part.id, proforma_id: part.proforma_id, allocation_id: Number(part.allocation_id),
       billed_client_id: part.billed_client_id, company_name: part.company_name,
       ...proformaLineFunding({ billedClientId: part.billed_client_id, currency: part.currency, requiredAmount: part.required_amount,
         issuedCreditsAmount: part.credits_amount, receipts: part.receipts }) }));
+}
+
+export async function repoGetProforma(id: string) {
+  const tx = await pool.connect();
+  try {
+    await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const header = (await tx.query<{ id: string; reference: string; status: string; row_version: number;
+      preview_payload: ProformaPreview; issued_snapshot: Record<string, unknown> | null; created_at: string; issued_at: string | null }>(
+      "SELECT id::text,reference,status,row_version,preview_payload,issued_snapshot,created_at::text,issued_at::text FROM public.proforma_client WHERE id=$1::uuid", [id])).rows[0];
+    if (!header) throw new HttpError(404, "PROFORMA_NOT_FOUND", "Proforma introuvable.");
+    const funding = await readProformaFunding(tx, [id]);
     await tx.query("COMMIT");
     return { ...header, funding };
   } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }

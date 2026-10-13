@@ -352,7 +352,7 @@ export async function repoRegisterPayment(params: {
       return { ...(receipt.replay as unknown as PaymentCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const amountCents = moneyToCents(params.input.amount, "Montant du paiement");
     if (amountCents <= 0n) {
       throw new HttpError(422, "PAYMENT_AMOUNT_INVALID", "Le montant doit être positif.");
@@ -541,7 +541,7 @@ export async function repoAllocatePayment(params: {
       return { ...(receipt.replay as unknown as PaymentCommandResult), idempotent_replay: true };
     }
     // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('delivery-prepayment-binding',0))");
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const payment = await lockPayment(client, params.paymentId);
     if (!payment) throw new HttpError(404, "PAYMENT_NOT_FOUND", "Paiement introuvable.");
     if (["REJECTED", "REVERSED"].includes(payment.status)) {

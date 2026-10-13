@@ -27,6 +27,10 @@ import {
 import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import { deliveryContractBoundary, deliveryContractGroupKey } from "../domain/delivery-contract-boundary"
 import { assertDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import { readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import { assertDeliveryPrepaymentBoundary, lockDeliveryPrepaymentRead, lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary, type DeliveryPrepaymentControl } from "./delivery-prepayment-boundary.repository"
+import { readProformaOrderSources } from "../../facturation/repository/proforma-source.repository"
+import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
 import { deliveryRemainderQuantitySql, remainingReservedQuantitySql } from "./delivery-quantity-projections.sql"
 import {
   assertStockConsumptionAllowed,
@@ -2651,6 +2655,8 @@ export async function repoUpdateLivraisonStatus(
 
   const db = await pool.connect()
   return withRealtimeOutboxTransaction(db, async (db) => {
+    if (statut === "READY") await lockDeliveryPrepaymentSources(db, bonLivraisonId)
+    else await lockDeliveryPrepaymentRead(db)
     const current = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!current) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     const cancellationReason = statut === "CANCELLED" ? meta?.commentaire?.trim() ?? "" : ""
@@ -3547,7 +3553,7 @@ function normalizeScope(value: string | null | undefined): "OLD" | "NEW" {
   return value === "OLD" ? "OLD" : "NEW"
 }
 
-function preparationPreviewHash(params: { shipping_version: number; allocations: unknown[] }): string {
+function preparationPreviewHash(params: { shipping_version: number; allocations: unknown[]; prepayment?: DeliveryPrepaymentControl }): string {
   return crypto.createHash("sha256").update(JSON.stringify(params)).digest("hex")
 }
 
@@ -5060,6 +5066,14 @@ export async function repoCreateLivraisonFromReservations(params: {
       }
     }
     const ids = [...duplicateIds].sort()
+    await lockDeliveryPrepaymentRead(db)
+    const selectedSources = await db.query<{ allocation_id: string }>(`
+      SELECT DISTINCT commande_ligne_affaire_allocation_id::text AS allocation_id
+      FROM public.stock_reservations WHERE id=ANY($1::uuid[]) AND commande_ligne_affaire_allocation_id IS NOT NULL
+      ORDER BY allocation_id
+    `, [ids])
+    const selectedAllocationIds = selectedSources.rows.map(row => Number(row.allocation_id))
+    if (selectedAllocationIds.length) await readProformaOrderSources(db, selectedAllocationIds, true)
     const locked = await db.query<LockedReservationForDelivery>(
       `
         SELECT
@@ -5118,6 +5132,9 @@ export async function repoCreateLivraisonFromReservations(params: {
     )
     if (locked.rows.length !== ids.length) {
       throw new HttpError(409, "RESERVATION_NOT_AVAILABLE", "One or more reservations are no longer active")
+    }
+    if (locked.rows.some(row => !selectedAllocationIds.includes(Number(row.allocation_id)))) {
+      throw new HttpError(409, "DELIVERY_PREPAYMENT_SOURCE_CHANGED", "Une réservation a changé d'affaire : actualisez le panier.")
     }
     const requestedById = new Map(body.items.map((item) => [item.reservation_id, item.qty] as const))
     const first = locked.rows[0]
@@ -5284,7 +5301,8 @@ export async function repoCreateLivraisonFromReservations(params: {
       stock_batch_id: row.stock_batch_id,
       verification: row.verification_snapshot,
     }))
-    const previewHash = preparationPreviewHash({ shipping_version: 1, allocations: previewInput })
+    const prepayment = await assertDeliveryPrepaymentBoundary(db, bonLivraisonId)
+    const previewHash = preparationPreviewHash({ shipping_version: 1, allocations: previewInput, prepayment })
     await db.query(
       `UPDATE public.bon_livraison SET shipping_preview_hash = $2, updated_at = now(), updated_by = $3 WHERE id = $1::uuid`,
       [bonLivraisonId, previewHash, userId]
@@ -5324,6 +5342,9 @@ export async function repoCreateLivraisonFromReservations(params: {
 }
 
 type LivraisonPreparationPreview = {
+  can_ship: boolean
+  blockers: Array<{code:string;message:string;allocationId?:number}>
+  prepayment: DeliveryPrepaymentControl
   bon_livraison_id: string
   shipping_version: number
   preview_hash: string
@@ -5338,15 +5359,18 @@ type LivraisonPreparationPreview = {
   }>
 }
 
-export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string): Promise<LivraisonPreparationPreview | null> {
-  const header = await pool.query<{ id: string; shipping_version: number }>(
+export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string, queryable: Queryable = pool): Promise<LivraisonPreparationPreview | null> {
+  if (queryable === pool) return withDeliveryReadSnapshot(tx => repoGetLivraisonPreparationPreview(bonLivraisonId, tx))
+  const header = await queryable.query<{ id: string; shipping_version: number }>(
     `SELECT id::text AS id, shipping_version FROM public.bon_livraison WHERE id = $1::uuid`,
     [bonLivraisonId]
   )
   const current = header.rows[0] ?? null
   if (!current) return null
-  await assertDeliveryContractBoundary(pool, bonLivraisonId)
-  const rows = await pool.query<{
+  const contract = await readDeliveryContractBoundary(queryable, bonLivraisonId)
+  const prepayment = await readDeliveryPrepaymentBoundary(queryable, bonLivraisonId)
+  const blockers = [...(contract.blocker ? [contract.blocker] : []), ...prepayment.blockers]
+  const rows = await queryable.query<{
     allocation_id: string
     reservation_id: string | null
     qty: number
@@ -5384,8 +5408,11 @@ export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string)
     stock_batch_id: row.stock_batch_id,
     verification: row.verification_snapshot,
   }))
-  const previewHash = preparationPreviewHash({ shipping_version: Number(current.shipping_version), allocations: hashInput })
+  const previewHash = preparationPreviewHash({ shipping_version: Number(current.shipping_version), allocations: hashInput, prepayment })
   return {
+    can_ship: blockers.length === 0 && rows.rows.length > 0,
+    blockers,
+    prepayment,
     bon_livraison_id: current.id,
     shipping_version: Number(current.shipping_version),
     preview_hash: previewHash,
@@ -5478,6 +5505,7 @@ export async function repoShipLivraison(params: {
       }
     }
 
+    await lockDeliveryPrepaymentSources(db, params.bon_livraison_id)
     const header = await db.query<{
       id: string
       numero: string
@@ -5496,6 +5524,7 @@ export async function repoShipLivraison(params: {
     if (!bl) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (bl.statut !== "READY") throw new HttpError(409, "INVALID_STATUS", "Only a READY BL can be shipped")
     await assertDeliveryContractBoundary(db, params.bon_livraison_id)
+    const prepayment = await assertDeliveryPrepaymentBoundary(db, params.bon_livraison_id)
     if (Number(bl.shipping_version) !== params.body.expected_shipping_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "The BL version changed since the preview")
     }
@@ -5579,7 +5608,7 @@ export async function repoShipLivraison(params: {
       stock_batch_id: row.stock_batch_id,
       verification: row.verification_snapshot,
     }))
-    const actualPreviewHash = preparationPreviewHash({ shipping_version: Number(bl.shipping_version), allocations: previewAllocations })
+    const actualPreviewHash = preparationPreviewHash({ shipping_version: Number(bl.shipping_version), allocations: previewAllocations, prepayment })
     if (actualPreviewHash !== params.body.preview_hash) {
       throw new HttpError(409, "PREVIEW_STALE", "The delivery preparation changed since the preview")
     }
