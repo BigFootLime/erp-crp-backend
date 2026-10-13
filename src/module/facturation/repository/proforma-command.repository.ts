@@ -1,0 +1,111 @@
+import crypto from "node:crypto";
+import type { PoolClient } from "pg";
+import { HttpError } from "../../../utils/httpError";
+import { financePreviewHash } from "../domain/finance-policy";
+import type { ProformaCommandResult, ProformaPreview, ProformaPreviewAffair } from "../types/proforma.types";
+import type { ProformaCreateBodyDTO, ProformaIssueBodyDTO, DeliveryPrepaymentTermsBodyDTO } from "../validators/proforma.validators";
+import type { FinanceActorContext } from "./workflow.repository.shared";
+import { issuerSnapshotAt } from "./workflow.repository.shared";
+import { buildProformaPreview } from "./proforma-preview.repository";
+import { readProformaOrderSources } from "./proforma-source.repository";
+import { runProformaCommand } from "./proforma-transaction.repository";
+
+type CommandContext = { actor: FinanceActorContext; idempotencyKey: string | undefined };
+type LockedProforma = { id: string; reference: string; status: "DRAFT" | "ISSUED" | "CANCELLED";
+  row_version: number; preview_hash: string; preview_payload: ProformaPreview; client_id: string; currency: string };
+export async function lockProforma(tx: PoolClient, id: string, expectedVersion: number): Promise<LockedProforma> {
+  const row = (await tx.query<LockedProforma>("SELECT id::text,reference,status,row_version,preview_hash,preview_payload,client_id,currency FROM public.proforma_client WHERE id=$1::uuid FOR UPDATE", [id])).rows[0];
+  if (!row) throw new HttpError(404, "PROFORMA_NOT_FOUND", "Proforma introuvable.");
+  if (row.row_version !== expectedVersion) throw new HttpError(409, "PROFORMA_VERSION_CHANGED", "La proforma a changé : actualisez son aperçu.");
+  return row;
+}
+
+async function persistBillingShares(tx: PoolClient, affair: ProformaPreviewAffair, actorId: number, correlationId: string): Promise<Map<string, string>> {
+  const current = (await tx.query<{ id: string; billed_client_id: string; quantity: string; plan_version: number }>(
+    "SELECT id::text,billed_client_id,quantity::numeric(18,3)::text,plan_version FROM public.delivery_affair_billing_shares WHERE allocation_id=$1 AND active ORDER BY billed_client_id FOR UPDATE", [affair.allocation_id])).rows;
+  const same = current.length === affair.billing_parts.length && affair.billing_parts.every(part =>
+    current.some(share => share.billed_client_id === part.billed_client_id && share.quantity === part.quantity));
+  if (same) return new Map(current.map(share => [share.billed_client_id, share.id]));
+  await tx.query("UPDATE public.delivery_affair_billing_shares SET active=false,row_version=row_version+1 WHERE allocation_id=$1 AND active", [affair.allocation_id]);
+  const version = (await tx.query<{ version: number }>("SELECT COALESCE(max(plan_version),0)+1 AS version FROM public.delivery_affair_billing_shares WHERE allocation_id=$1", [affair.allocation_id])).rows[0]!.version;
+  const ids = new Map<string, string>();
+  for (const part of affair.billing_parts) {
+    const id = crypto.randomUUID();
+    await tx.query(`INSERT INTO public.delivery_affair_billing_shares(id,allocation_id,billed_client_id,quantity,plan_version,created_by,correlation_id)
+      VALUES($1::uuid,$2,$3,$4::numeric,$5,$6,$7::uuid)`, [id, affair.allocation_id, part.billed_client_id, part.quantity, version, actorId, correlationId]);
+    ids.set(part.billed_client_id, id);
+  }
+  return ids;
+}
+
+export async function repoCreateProforma(args: CommandContext & { input: ProformaCreateBodyDTO }): Promise<ProformaCommandResult> {
+  return runProformaCommand({ ...args, commandType: "PROFORMA_DRAFT_CREATE", payload: args.input, work: async (tx, correlationId) => {
+    const preview = await buildProformaPreview(tx, args.input, true);
+    if (preview.preview_hash !== args.input.preview_hash) throw new HttpError(409, "PROFORMA_PREVIEW_CHANGED", "Les données de commande ont changé : actualisez l'aperçu.", { preview });
+    const id = crypto.randomUUID();
+    const seq = (await tx.query<{ value: string; year: string }>("SELECT nextval('public.proforma_client_reference_seq')::text AS value,to_char(CURRENT_DATE,'YYYY') AS year")).rows[0]!;
+    const reference = `PF-${seq.year}-${seq.value.padStart(6, "0")}`;
+    await tx.query(`INSERT INTO public.proforma_client(id,reference,client_id,currency,preview_hash,preview_payload,created_by,correlation_id)
+      VALUES($1::uuid,$2,$3,$4,$5,$6::jsonb,$7,$8::uuid)`, [id, reference, preview.client_id, preview.currency, preview.preview_hash, JSON.stringify(preview), args.actor.userId, correlationId]);
+    for (const affair of preview.affairs) {
+      const shares = await persistBillingShares(tx, affair, args.actor.userId, correlationId);
+      const lineId = crypto.randomUUID();
+      await tx.query(`INSERT INTO public.proforma_affair_lines(id,proforma_id,allocation_id,quantity,source_revision,source_snapshot)
+        VALUES($1::uuid,$2::uuid,$3,$4::numeric,$5,$6::jsonb)`, [lineId, id, affair.allocation_id, affair.source_snapshot.quantity, affair.source_revision, JSON.stringify(affair.source_snapshot)]);
+      for (const part of affair.billing_parts) await tx.query(`INSERT INTO public.proforma_billing_parts
+        (proforma_line_id,billing_share_id,billed_client_id,quantity,unit_price_ex_tax,discount_percent,global_discount_percent,tax_rate_percent,total_ex_tax,tax_amount,total_incl_tax,billed_client_snapshot)
+        VALUES($1::uuid,$2::uuid,$3,$4::numeric,$5::numeric,$6::numeric,$7::numeric,$8::numeric,$9::numeric,$10::numeric,$11::numeric,$12::jsonb)`,
+        [lineId, shares.get(part.billed_client_id), part.billed_client_id, part.quantity, part.unit_price_ex_tax, part.discount_percent, part.global_discount_percent,
+          part.tax_rate_percent, part.total_ex_tax, part.tax_amount, part.total_incl_tax, JSON.stringify(part.billed_client_snapshot)]);
+      await tx.query(`INSERT INTO public.delivery_affair_prepayment_terms(allocation_id,requirement,proforma_line_id,decision_reason,updated_by,correlation_id)
+        VALUES($1,'PROFORMA',$2::uuid,$3,$4,$5::uuid) ON CONFLICT(allocation_id) DO UPDATE SET requirement='PROFORMA',proforma_line_id=EXCLUDED.proforma_line_id,
+          row_version=delivery_affair_prepayment_terms.row_version+1,decision_reason=EXCLUDED.decision_reason,updated_at=now(),updated_by=EXCLUDED.updated_by,correlation_id=EXCLUDED.correlation_id`,
+        [affair.allocation_id, lineId, `Préparation ${reference}`, args.actor.userId, correlationId]);
+    }
+    return { aggregateId: id, deliveryAllocationIds: preview.affairs.map(affair=>affair.allocation_id), result: { id, reference, status: "DRAFT" as const, row_version: 1 } };
+  } });
+}
+
+export async function repoIssueProforma(args: CommandContext & { id: string; input: ProformaIssueBodyDTO }): Promise<ProformaCommandResult> {
+  return runProformaCommand({ ...args, commandType: "PROFORMA_ISSUE", payload: { id: args.id, ...args.input }, work: async (tx) => {
+    const document = await lockProforma(tx, args.id, args.input.expected_version);
+    if (document.status !== "DRAFT") throw new HttpError(409, "PROFORMA_NOT_DRAFT", "Cette proforma n'est plus un brouillon.");
+    const current = await buildProformaPreview(tx, { client_id: document.client_id, currency: document.currency,
+      affairs: document.preview_payload.affairs.map(affair => ({ allocation_id: affair.allocation_id,
+        billing_parts: affair.billing_parts.map(part => ({ billed_client_id: part.billed_client_id, quantity: part.quantity })) })) }, true, document.id);
+    if (current.preview_hash !== document.preview_hash || current.preview_hash !== args.input.preview_hash) {
+      throw new HttpError(409, "PROFORMA_PREVIEW_CHANGED", "Les données commerciales ont changé : préparez une nouvelle version avant émission.", { preview: current });
+    }
+    const policy = (await tx.query<{ legal_entity_code: string }>(`SELECT legal_entity_code FROM public.finance_billing_policies WHERE active
+      AND effective_from<=CURRENT_DATE AND (effective_to IS NULL OR effective_to>=CURRENT_DATE) ORDER BY effective_from DESC,created_at DESC LIMIT 1`)).rows[0];
+    if (!policy) throw new HttpError(409, "PROFORMA_ISSUER_NOT_CONFIGURED", "Configurez l'émetteur commercial dans Finance.");
+    const issuedAt = new Date().toISOString();
+    const issuer = await issuerSnapshotAt(tx, policy.legal_entity_code, issuedAt.slice(0, 10));
+    if (!issuer?.company_name) throw new HttpError(409, "PROFORMA_ISSUER_NOT_CONFIGURED", "Complétez les coordonnées de l'émetteur commercial.");
+    const snapshot = { document_type: "PROFORMA", id: document.id, reference: document.reference, issued_at: issuedAt,
+      issuer_snapshot: issuer, preview: current, fiscal_invoice_created: false, template_version: "proforma/1.0" };
+    await tx.query(`UPDATE public.proforma_client SET status='ISSUED',issued_at=$2::timestamptz,issued_by=$3,
+      issued_snapshot=$4::jsonb,row_version=row_version+1 WHERE id=$1::uuid`, [document.id, issuedAt, args.actor.userId, JSON.stringify(snapshot)]);
+    return { aggregateId: document.id, deliveryAllocationIds: current.affairs.map(affair=>affair.allocation_id), oldValues: { status: document.status, row_version: document.row_version },
+      result: { id: document.id, reference: document.reference, status: "ISSUED" as const, row_version: document.row_version + 1 },
+      newValues: { status: "ISSUED", source_hash: financePreviewHash(snapshot), fiscal_invoice_created: false } };
+  } });
+}
+
+export async function repoDecideDeliveryPrepaymentTerms(args: CommandContext & { allocationId: number; input: DeliveryPrepaymentTermsBodyDTO }) {
+  return runProformaCommand({ ...args, commandType: "PROFORMA_AFFAIR_TERMS_DECIDED", payload: { allocation_id: args.allocationId, ...args.input }, work: async (tx, correlationId) => {
+    const [source] = await readProformaOrderSources(tx, [args.allocationId], true);
+    if (!source || source.order_type === "INTERNE") throw new HttpError(409, "PROFORMA_AFFAIR_NOT_ELIGIBLE", "Sélectionnez une affaire de livraison client.");
+    const version = source.terms_version ?? 0;
+    if (version !== args.input.expected_version) throw new HttpError(409, "PROFORMA_TERMS_VERSION_CHANGED", "Les conditions de paiement ont changé : actualisez l'affaire.");
+    if (source.bound_proforma_id && source.bound_proforma_status !== "CANCELLED") throw new HttpError(409, "PROFORMA_AFFAIR_ALREADY_BOUND", "Régularisez la proforma liée avant de changer les conditions de paiement.", { proforma_id: source.bound_proforma_id });
+    const result = (await tx.query<{ row_version: number }>(`INSERT INTO public.delivery_affair_prepayment_terms
+      (allocation_id,requirement,decision_reason,updated_by,correlation_id) VALUES($1,$2,$3,$4,$5::uuid)
+      ON CONFLICT(allocation_id) DO UPDATE SET requirement=EXCLUDED.requirement,proforma_line_id=NULL,
+        row_version=delivery_affair_prepayment_terms.row_version+1,decision_reason=EXCLUDED.decision_reason,
+        updated_at=now(),updated_by=EXCLUDED.updated_by,correlation_id=EXCLUDED.correlation_id RETURNING row_version`,
+      [args.allocationId, args.input.requirement, args.input.reason, args.actor.userId, correlationId])).rows[0]!;
+    return { aggregateId: `affair-${args.allocationId}`, deliveryAllocationIds: [args.allocationId], oldValues: { requirement: source.prepayment_requirement ?? "UNCONFIRMED", row_version: version },
+      result: { allocation_id: args.allocationId, requirement: args.input.requirement, row_version: result.row_version } };
+  } });
+}

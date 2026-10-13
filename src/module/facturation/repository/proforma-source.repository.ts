@@ -9,6 +9,7 @@ export type ProformaOrderSource = {
   commande_ligne_id: string;
   livraison_affaire_id: string;
   client_id: string;
+  currency: string;
   client_blocked: boolean;
   order_type: string;
   affaire_status: string;
@@ -25,6 +26,14 @@ export type ProformaOrderSource = {
   global_discount_percent: string | null;
   tax_rate_percent: string | null;
   billing_shares: Array<{ id: string; billed_client_id: string; quantity: string }>;
+  order_reference?: string;
+  customer_order_reference?: string | null;
+  affaire_reference?: string;
+  prepayment_requirement?: "NOT_REQUIRED" | "PROFORMA" | "UNCONFIRMED";
+  terms_version?: number;
+  bound_proforma_id?: string | null;
+  bound_proforma_status?: string | null;
+  has_active_delivery?: boolean;
 };
 
 /** Server-selected order evidence, read in one snapshot; no UI price/paid field. */
@@ -33,10 +42,16 @@ export async function readProformaOrderSources(tx: Pick<PoolClient, "query">, al
     || new Set(allocationIds).size !== allocationIds.length) {
     throw new HttpError(422, "PROFORMA_AFFAIRS_INVALID", "Sélectionnez des affaires distinctes.");
   }
+  if (lock) {
+    await tx.query(`SELECT command.id FROM public.commande_client command
+      WHERE command.id IN (SELECT commande_id FROM public.commande_ligne_affaire_allocation WHERE id=ANY($1::bigint[]))
+      ORDER BY command.id FOR UPDATE`, [[...allocationIds].sort((a,b)=>a-b)]);
+    await tx.query("SELECT pg_advisory_xact_lock_shared(hashtextextended('delivery-contract-binding',0))");
+  }
   const result = await tx.query<Omit<ProformaOrderSource, "allocation_id"> & { allocation_id: string }>(`
     SELECT allocation.id::text AS allocation_id, allocation.commande_id::text,
       allocation.commande_ligne_id::text, allocation.livraison_affaire_id::text,
-      command.client_id::text, COALESCE(customer.blocked,false) AS client_blocked,
+      command.client_id::text,command.currency, COALESCE(customer.blocked,false) AS client_blocked,
       command.order_type, affaire.statut::text AS affaire_status,
       COALESCE(command.destinataire_id,customer.delivery_address_id)::text AS delivery_address_id,
       COALESCE(call.contract_id,legacy.contract_id)::text AS contract_id,
@@ -47,6 +62,16 @@ export async function readProformaOrderSources(tx: Pick<PoolClient, "query">, al
       line.remise_ligne::numeric(8,4)::text AS discount_percent,
       command.remise_globale::numeric(8,4)::text AS global_discount_percent,
       line.taux_tva::numeric(8,4)::text AS tax_rate_percent,
+      command.numero AS order_reference,command.code_client AS customer_order_reference,
+      affaire.reference AS affaire_reference,
+      COALESCE(terms.requirement,'UNCONFIRMED') AS prepayment_requirement,
+      COALESCE(terms.row_version,0) AS terms_version,
+      bound.id::text AS bound_proforma_id,bound.status AS bound_proforma_status,
+      EXISTS(SELECT 1 FROM public.bon_livraison_ligne_allocations delivery_allocation
+        JOIN public.bon_livraison_ligne delivery_line ON delivery_line.id=delivery_allocation.bon_livraison_ligne_id
+        JOIN public.bon_livraison delivery ON delivery.id=delivery_line.bon_livraison_id
+        WHERE delivery_allocation.commande_ligne_affaire_allocation_id=allocation.id
+          AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')) AS has_active_delivery,
       COALESCE(shares.items,'[]'::jsonb) AS billing_shares
     FROM public.commande_ligne_affaire_allocation allocation
     JOIN public.commande_client command ON command.id=allocation.commande_id
@@ -55,10 +80,13 @@ export async function readProformaOrderSources(tx: Pick<PoolClient, "query">, al
     JOIN public.clients customer ON customer.client_id=command.client_id
     LEFT JOIN public.client_contract_calls call ON call.commande_id=command.id
     LEFT JOIN public.client_contract_legacy_orders legacy ON legacy.commande_id=command.id
+    LEFT JOIN public.delivery_affair_prepayment_terms terms ON terms.allocation_id=allocation.id
+    LEFT JOIN public.proforma_affair_lines bound_line ON bound_line.id=terms.proforma_line_id
+    LEFT JOIN public.proforma_client bound ON bound.id=bound_line.proforma_id
     LEFT JOIN LATERAL (
       SELECT jsonb_agg(jsonb_build_object('id',share.id::text,'billed_client_id',share.billed_client_id,
         'quantity',share.quantity::numeric(18,3)::text) ORDER BY share.billed_client_id,share.id) AS items
-      FROM public.delivery_affair_billing_shares share WHERE share.allocation_id=allocation.id
+      FROM public.delivery_affair_billing_shares share WHERE share.allocation_id=allocation.id AND share.active
     ) shares ON true
     WHERE allocation.id=ANY($1::bigint[]) ORDER BY allocation.id
     ${lock ? "FOR UPDATE OF allocation,command,line,affaire" : ""}
@@ -71,9 +99,10 @@ export async function readProformaOrderSources(tx: Pick<PoolClient, "query">, al
   });
 }
 
-export function assertProformaOrderSource(source: ProformaOrderSource, clientId: string): void {
+export function assertProformaOrderSource(source: ProformaOrderSource, clientId: string, currency = source.currency): void {
   if (source.client_id !== clientId) throw new HttpError(422, "PROFORMA_CUSTOMER_MISMATCH", "Toutes les affaires doivent appartenir au client sélectionné.");
   if (source.client_blocked) throw new HttpError(409, "PROFORMA_CUSTOMER_BLOCKED", "Le client sélectionné est bloqué.");
+  if (source.currency !== currency) throw new HttpError(422, "PROFORMA_ORDER_CURRENCY_MISMATCH", "La proforma doit utiliser la devise de la commande source.");
   if (source.order_type === "INTERNE" || ["ANNULE", "ANNULEE", "CANCELLED"].includes(source.affaire_status)) {
     throw new HttpError(409, "PROFORMA_AFFAIR_NOT_ELIGIBLE", "Cette affaire ne peut pas recevoir une proforma client.");
   }

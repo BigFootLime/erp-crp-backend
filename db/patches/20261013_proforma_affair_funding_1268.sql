@@ -2,6 +2,21 @@
 -- No existing affair is implicitly migrated to "not prepaid".
 CREATE SEQUENCE IF NOT EXISTS public.proforma_client_reference_seq;
 
+-- Existing commercial prices have the same EUR basis as Finance #227.
+ALTER TABLE public.commande_client ADD COLUMN IF NOT EXISTS currency text NOT NULL DEFAULT 'EUR';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.commande_client'::regclass AND conname='commande_currency_1268_ck') THEN
+    ALTER TABLE public.commande_client ADD CONSTRAINT commande_currency_1268_ck CHECK (currency ~ '^[A-Z]{3}$');
+  END IF;
+END $$;
+
+ALTER TABLE public.finance_command_receipts DROP CONSTRAINT IF EXISTS finance_command_receipts_aggregate_type_check;
+ALTER TABLE public.finance_command_receipts ADD CONSTRAINT finance_command_receipts_aggregate_type_check
+  CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT','PROFORMA'));
+ALTER TABLE public.finance_event_log DROP CONSTRAINT IF EXISTS finance_event_log_aggregate_type_check;
+ALTER TABLE public.finance_event_log ADD CONSTRAINT finance_event_log_aggregate_type_check
+  CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT','PROFORMA'));
+
 CREATE TABLE IF NOT EXISTS public.proforma_client (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   reference text NOT NULL UNIQUE,
@@ -10,6 +25,7 @@ CREATE TABLE IF NOT EXISTS public.proforma_client (
   status text NOT NULL DEFAULT 'DRAFT' CHECK (status IN ('DRAFT','ISSUED','CANCELLED')),
   row_version integer NOT NULL DEFAULT 1 CHECK (row_version > 0),
   preview_hash text NULL CHECK (preview_hash IS NULL OR preview_hash ~ '^[a-f0-9]{64}$'),
+  preview_payload jsonb NOT NULL CHECK (jsonb_typeof(preview_payload)='object'),
   issued_snapshot jsonb NULL,
   issued_at timestamptz NULL,
   issued_by integer NULL REFERENCES public.users(id) ON DELETE RESTRICT,
@@ -31,12 +47,15 @@ CREATE TABLE IF NOT EXISTS public.delivery_affair_billing_shares (
   allocation_id bigint NOT NULL REFERENCES public.commande_ligne_affaire_allocation(id) ON DELETE RESTRICT,
   billed_client_id text NOT NULL REFERENCES public.clients(client_id) ON DELETE RESTRICT,
   quantity numeric(18,3) NOT NULL CHECK (quantity > 0),
+  plan_version integer NOT NULL DEFAULT 1 CHECK (plan_version > 0),
+  active boolean NOT NULL DEFAULT true,
   row_version integer NOT NULL DEFAULT 1 CHECK (row_version > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   created_by integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
   correlation_id uuid NOT NULL,
-  UNIQUE (allocation_id,billed_client_id)
+  UNIQUE (allocation_id,plan_version,billed_client_id)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS billing_share_current_1268_uq ON public.delivery_affair_billing_shares(allocation_id,billed_client_id) WHERE active;
 
 CREATE TABLE IF NOT EXISTS public.proforma_affair_lines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -270,8 +289,8 @@ BEGIN
   IF TG_TABLE_NAME='delivery_affair_billing_shares' THEN
     source_id:=CASE WHEN TG_OP='DELETE' THEN OLD.allocation_id ELSE NEW.allocation_id END;
     SELECT qty_ordered INTO required_qty FROM public.commande_ligne_affaire_allocation WHERE id=source_id FOR UPDATE;
-    SELECT COALESCE(sum(quantity),0) INTO allocated_qty FROM public.delivery_affair_billing_shares WHERE allocation_id=source_id;
-    IF allocated_qty<>required_qty THEN
+    SELECT COALESCE(sum(quantity),0) INTO allocated_qty FROM public.delivery_affair_billing_shares WHERE allocation_id=source_id AND active;
+    IF allocated_qty<>required_qty OR (SELECT count(DISTINCT plan_version) FROM public.delivery_affair_billing_shares WHERE allocation_id=source_id AND active)>1 THEN
       RAISE EXCEPTION 'billing shares must cover exactly the affair quantity' USING ERRCODE='23514';
     END IF;
   ELSE
@@ -369,7 +388,20 @@ BEGIN
     JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
     JOIN public.proforma_client proforma ON proforma.id=line.proforma_id
     WHERE part.billing_share_id=OLD.id AND proforma.status<>'DRAFT') THEN
-    RAISE EXCEPTION 'issued billing distribution is immutable' USING ERRCODE='55000';
+    IF TG_OP<>'UPDATE' OR NEW.active OR NOT OLD.active OR
+      (to_jsonb(NEW)-ARRAY['active','row_version']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['active','row_version']) OR EXISTS (
+        SELECT 1 FROM public.proforma_billing_parts part JOIN public.proforma_affair_lines line ON line.id=part.proforma_line_id
+        JOIN public.proforma_client proforma ON proforma.id=line.proforma_id
+        WHERE part.billing_share_id=OLD.id AND proforma.status='ISSUED') THEN
+      RAISE EXCEPTION 'issued billing distribution is immutable' USING ERRCODE='55000';
+    END IF;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.bon_livraison_ligne_allocations allocation
+    JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
+    JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
+    WHERE allocation.commande_ligne_affaire_allocation_id=OLD.allocation_id
+      AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')) THEN
+    RAISE EXCEPTION 'delivery already uses this billing distribution' USING ERRCODE='23514';
   END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;

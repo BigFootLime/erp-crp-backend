@@ -2,7 +2,7 @@
 
 ## État réel
 
-Développement en cours, WP285 / S07. Les règles de domaine, les DTO, la lecture des commandes et un premier modèle SQL sont écrits. Aucune route ou interface nouvelle n'est exposée. Le patch SQL n'a pas été appliqué et reste à qualifier sur PostgreSQL. La réussite des tests locaux ne valide ni un paiement réel ni un parcours métier Test. Les 12 scénarios globaux restent ouverts.
+Développement en cours, WP285 / S07. Les règles de domaine, les DTO, la lecture des commandes et le modèle SQL sont écrits, ainsi que sept opérations HTTP : liste, détail, aperçu, création, aperçu courant, émission commerciale et décision sur les conditions historiques. Les mutations reprennent les capacités Finance, l'idempotence, l'audit et le propriétaire de transaction temps réel avec rapprochement d'un commit incertain. Ces nouvelles routes ne sont pas publiées dans le runtime déployé. Le patch SQL n'a pas été appliqué et reste à qualifier sur PostgreSQL. La réussite des tests locaux ne valide ni un paiement réel ni un parcours métier Test. Les 12 scénarios globaux restent ouverts.
 
 ## Règles conservées
 
@@ -23,7 +23,7 @@ La ventilation des paiements s'appuie sur les documents fiscaux de Finance et do
 ## Travail de raccordement obligatoire avant livraison du lot
 
 1. Finir et éprouver le patch SQL : cohérence des instantanés, budgets fiscaux, échelonnement des acomptes, avoirs, transferts au solde, préflight/verify/rollback et concurrence.
-2. Brancher les commandes transactionnelles de création/émission/reprise des proformas avec références serveur, RBAC, version, idempotence, audit et outbox.
+2. Qualifier les commandes transactionnelles de création/émission et finir les commandes de reprise/annulation des proformas. Les références serveur, RBAC, version, idempotence, audit et outbox de création/émission sont écrits.
 3. Activer les sources `DEPOSIT` dans Finance en conservant la validation/émission explicite d'une vraie facture d'acompte. Le trigger Finance actuel les refuse encore : aucune facture fictive ne doit contourner ce blocage.
 4. Brancher les ventilations de règlements sur les factures d'acompte émises ; intégrer crédits et annulations du règlement aux lectures et garde-fous serveur.
 5. Présenter couverture, solde et action manquante dès la liste des affaires. Ajouter le contrôle aux aperçus puis aux transactions BL ; conserver les preuves de termes dans le document expédié.
@@ -33,6 +33,8 @@ La ventilation des paiements s'appuie sur les documents fiscaux de Finance et do
 
 ## Vérifications locales acquises le 13 octobre
 
-73 tests ciblés passent dans cinq fichiers : règles de financement, répartition entre sociétés, frontière BL/proforma, validation des requêtes et source de commande. TypeScript strict passe. Ces tests n'exécutent pas le patch sur PostgreSQL et ne constituent pas une recette UI. La vérification de schéma en lecture seule confirme les prérequis `clients.client_id` varchar et les identifiants commande/facture bigint.
+115 tests ciblés passent dans onze fichiers : règles de financement, répartition entre sociétés, frontière BL/proforma, validation des requêtes, source de commande, aperçu, transaction/retry/commit incertain, validation réelle du contrat des événements, HTTP et compatibilité Finance. TypeScript strict et build complet passent ;1486 opérations OpenAPI sont inventoriées et le contrat est valide. Ces tests n'exécutent pas le patch sur PostgreSQL et ne constituent pas une recette UI. La vérification de schéma en lecture seule confirme les prérequis `clients.client_id` varchar, les identifiants commande/facture bigint et les contraintes actuelles du journal Finance.
 
-L'interface de recette reste bloquée par l'ancienne confirmation native d'annulation. Aucun contournement de mutation métier n'a été effectué.
+Le modèle conserve les versions précédentes de répartition lorsqu'une proforma annulée est remplacée. La devise de commande est explicite, avec la base EUR déjà utilisée par Finance pour les données existantes ; le rollback ne supprime pas cette preuve commerciale additive. Les mutations prennent le verrou de commande avant le verrou de contrat, conformément au rattachement historique explicite.
+
+L'interface de recette reste bloquée par l'ancienne confirmation native d'annulation. Une session alternative Chrome sur Base Test a été tentée, mais l'authentification du compte existant est refusée. Aucun contournement de mutation métier ou changement d'authentification n'a été effectué.

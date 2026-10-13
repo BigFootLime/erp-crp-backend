@@ -21,17 +21,38 @@ const proformaAffairSelectionSchema = z.object({
 });
 
 // Prices, tax, status and source snapshots are resolved server-side from the order.
-export const proformaDraftBodySchema = z.object({
+const selectionBodySchema = z.object({
   client_id: selectedClient,
   currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/).default("EUR"),
   affairs: z.array(proformaAffairSelectionSchema).min(1).max(200),
-}).strict().superRefine((value, ctx) => {
+}).strict();
+function validateAffairSelection(value: z.infer<typeof selectionBodySchema>, ctx: z.RefinementCtx) {
   const ids = value.affairs.map(affair => affair.allocation_id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: z.ZodIssueCode.custom,
     path: ["affairs"], message: "Une affaire ne peut être sélectionnée qu'une fois." });
-});
+  if (value.affairs.reduce((sum, affair) => sum + affair.billing_parts.length, 0) > 200) ctx.addIssue({
+    code: z.ZodIssueCode.custom, path: ["affairs"], message: "Une proforma peut contenir au maximum 200 répartitions d'articles." });
+}
+export const proformaDraftBodySchema = selectionBodySchema.superRefine(validateAffairSelection);
 
 export type ProformaDraftBodyDTO = z.infer<typeof proformaDraftBodySchema>;
+
+export const proformaCreateBodySchema = selectionBodySchema.extend({
+  preview_hash: z.string().regex(/^[a-f0-9]{64}$/i),
+}).superRefine(validateAffairSelection);
+export type ProformaCreateBodyDTO = z.infer<typeof proformaCreateBodySchema>;
+
+export const proformaListQuerySchema = z.object({
+  q: z.string().trim().max(160).optional().default(""),
+  client_id: selectedClient.optional(),
+  status: z.enum(["DRAFT", "ISSUED", "CANCELLED"]).optional(),
+  page: z.coerce.number().int().positive().optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+}).strict();
+export type ProformaListQueryDTO = z.infer<typeof proformaListQuerySchema>;
+
+export const proformaIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
+export const proformaAllocationParamsSchema = z.object({ allocationId: z.coerce.number().int().positive().safe() }).strict();
 
 export const proformaIssueBodySchema = z.object({
   expected_version: z.number().int().positive().safe(),
@@ -57,7 +78,7 @@ export const proformaReceiptAssignmentBodySchema = z.object({
 export type ProformaReceiptAssignmentBodyDTO = z.infer<typeof proformaReceiptAssignmentBodySchema>;
 
 export const deliveryPrepaymentTermsBodySchema = z.object({
-  expected_version: z.number().int().positive().safe(),
+  expected_version: z.number().int().nonnegative().safe(),
   requirement: z.enum(["NOT_REQUIRED", "PROFORMA"]),
   reason: z.string().trim().min(3).max(1000),
   confirm: z.literal(true),

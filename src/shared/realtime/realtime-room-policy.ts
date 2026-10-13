@@ -24,6 +24,9 @@ const MODULE_ALIASES: Readonly<Record<string, string>> = {
 };
 
 const ENTITY_MODULES: Readonly<Record<string, string>> = {
+  PROFORMA: "facturation",
+  PROFORMA_AFFAIR: "facturation",
+  DELIVERY_PREPAYMENT: "livraisons",
   CLIENT: "clients",
   BON_LIVRAISON: "livraisons",
   CAPA: "qualite",

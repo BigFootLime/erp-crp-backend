@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { assertProformaOrderSource, proformaOrderSourceRevision, readProformaOrderSources, type ProformaOrderSource } from "./proforma-source.repository";
 
 const source: ProformaOrderSource = { allocation_id: 12, commande_id: "10", commande_ligne_id: "20", livraison_affaire_id: "30",
-  client_id: "CUSTOMER-A", client_blocked: false, order_type: "FERME", affaire_status: "OUVERTE", delivery_address_id: "ADDRESS-A", contract_id: null,
+  client_id: "CUSTOMER-A", currency: "EUR", client_blocked: false, order_type: "FERME", affaire_status: "OUVERTE", delivery_address_id: "ADDRESS-A", contract_id: null,
   article_id: "ARTICLE-A", piece_technique_version_id: "VERSION-A", code_piece: "PART-A", designation: "Pièce recette", quantity: "100.000", unit: "u",
   unit_price_ex_tax: "10.0000", discount_percent: "0.0000", global_discount_percent: "0.0000", tax_rate_percent: "20.0000", billing_shares: [] };
 
@@ -12,12 +12,14 @@ describe("proforma source of truth", () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ ...source, allocation_id: "12" }] });
     const tx = { query } as unknown as Pick<PoolClient, "query">;
     expect(await readProformaOrderSources(tx, [12], true)).toEqual([source]);
-    expect(query.mock.calls[0][0]).toContain("line.prix_unitaire_ht");
-    expect(query.mock.calls[0][0]).toContain("command.remise_globale");
-    expect(query.mock.calls[0][0]).toContain("FOR UPDATE OF allocation,command,line,affaire");
+    expect(query.mock.calls[0][0]).toContain("ORDER BY command.id FOR UPDATE");
+    expect(query.mock.calls[1][0]).toContain("delivery-contract-binding");
+    expect(query.mock.calls[2][0]).toContain("line.prix_unitaire_ht");
+    expect(query.mock.calls[2][0]).toContain("command.remise_globale");
+    expect(query.mock.calls[2][0]).toContain("FOR UPDATE OF allocation,command,line,affaire");
     expect(query.mock.calls[0][1]).toEqual([[12]]);
     await readProformaOrderSources(tx, [12], false);
-    expect(query.mock.calls[1][0]).not.toContain("FOR UPDATE");
+    expect(query.mock.calls[3][0]).not.toContain("FOR UPDATE");
   });
   it("rejects invalid or duplicated source IDs before SQL", async () => {
     const query = vi.fn(); const tx = { query } as unknown as Pick<PoolClient, "query">;

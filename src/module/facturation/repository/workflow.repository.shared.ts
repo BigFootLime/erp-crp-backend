@@ -16,6 +16,7 @@ export type FinanceActorContext = {
 };
 
 export type DbQueryer = Pick<PoolClient, "query">;
+export type FinanceAggregateType = "FACTURE" | "AVOIR" | "PAIEMENT" | "PROFORMA";
 
 export async function acquireFinanceIdempotency(params: {
   client: PoolClient;
@@ -68,7 +69,7 @@ export async function saveFinanceReceipt(params: {
   idempotencyKey: string;
   requestHash: string;
   commandType: string;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   requestPayload: unknown;
   resultPayload: unknown;
@@ -105,7 +106,7 @@ export async function saveFinanceReceipt(params: {
 
 export async function insertFinanceEvent(params: {
   client: PoolClient;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   eventType: string;
   oldValues?: unknown;
@@ -152,7 +153,7 @@ export async function insertFinanceEvent(params: {
 export async function insertFinanceOutbox(params: {
   client: PoolClient;
   eventKey: string;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   eventType: string;
   payload: unknown;

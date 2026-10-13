@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "64b1e24ad5abf79052037bd8bdea9d6e0041be12bd512661ccd987fb4fff8b1b";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "e98dcb9485e42125a470cb4a0bc0b126c48be84732e74c255c73a10b614fe2f0";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -17110,6 +17110,125 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireOfCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/proformas",
+    "source": "src/module/facturation/routes/proforma.routes.ts:7",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "listProformas"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas",
+    "source": "src/module/facturation/routes/proforma.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)",
+      "createProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/proformas/{id}",
+    "source": "src/module/facturation/routes/proforma.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "getProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/{id}/issue",
+    "source": "src/module/facturation/routes/proforma.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(issue)",
+      "issueProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(issue)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/proformas/{id}/preview",
+    "source": "src/module/facturation/routes/proforma.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "previewExistingProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/affaires/{allocationId}/terms",
+    "source": "src/module/facturation/routes/proforma.routes.ts:10",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)",
+      "decideDeliveryPrepaymentTerms"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/preview",
+    "source": "src/module/facturation/routes/proforma.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)",
+      "previewProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)"
     ]
   },
   {

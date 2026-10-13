@@ -14,8 +14,18 @@ BEGIN
       IF has_evidence THEN RAISE EXCEPTION 'proforma rollback refused: % contains saved evidence',model_table; END IF;
     END IF;
   END LOOP;
+  IF EXISTS(SELECT 1 FROM public.finance_command_receipts WHERE aggregate_type='PROFORMA')
+    OR EXISTS(SELECT 1 FROM public.finance_event_log WHERE aggregate_type='PROFORMA') THEN
+    RAISE EXCEPTION 'proforma rollback refused: Finance contains saved proforma commands/events';
+  END IF;
 END;
 $$;
+ALTER TABLE public.finance_command_receipts DROP CONSTRAINT IF EXISTS finance_command_receipts_aggregate_type_check;
+ALTER TABLE public.finance_command_receipts ADD CONSTRAINT finance_command_receipts_aggregate_type_check CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT'));
+ALTER TABLE public.finance_event_log DROP CONSTRAINT IF EXISTS finance_event_log_aggregate_type_check;
+ALTER TABLE public.finance_event_log ADD CONSTRAINT finance_event_log_aggregate_type_check CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT'));
+-- The additive order currency column is retained; old code ignores it and no
+-- commercial currency evidence is destroyed during an application rollback.
 DROP TABLE IF EXISTS public.proforma_receipt_releases;
 DROP TABLE IF EXISTS public.proforma_receipt_assignments;
 DROP TABLE IF EXISTS public.proforma_deposit_sources;
