@@ -29,6 +29,7 @@ function wrappedLines(doc: PDFKit.PDFDocument, text: string, width: number, bold
 
 export type WorkshopFieldBox = {
   title: string
+  columns?: 1 | 2
   fields: ReadonlyArray<{ label: string; value: string | null; prominent?: boolean }>
 }
 
@@ -42,13 +43,18 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - PAD * 2, true, 10),
     fields: box.fields.map(field => ({
       ...field,
-      label: wrappedLines(ctx.doc, field.label, width - PAD * 2, false, 8.5),
-      value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", width - PAD * 2, true, field.prominent ? 14 : BODY),
+      label: wrappedLines(ctx.doc, field.label, (width - PAD * 2 - (box.columns === 2 ? gap : 0)) / (box.columns ?? 1), false, 8.5),
+      value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", (width - PAD * 2 - (box.columns === 2 ? gap : 0)) / (box.columns ?? 1), true, field.prominent ? 14 : BODY),
     })),
   }))
   const headingHeight = Math.max(...measured.map(item => item.title.length * 12)) + PAD * 2
-  const heights = measured.map(item => headingHeight + PAD + item.fields.reduce((sum, field) =>
-    sum + field.label.length * 11 + 3 + field.value.length * (field.prominent ? 17 : LEADING) + 12, 0))
+  const rowHeight = (fields: typeof measured[number]["fields"]) => Math.max(...fields.map(field => field.label.length * 11)) + 3
+    + Math.max(...fields.map(field => field.value.length * (field.prominent ? 17 : LEADING))) + 12
+  const heights = measured.map(item => {
+    let height = headingHeight + PAD
+    for (let i = 0; i < item.fields.length; i += item.box.columns ?? 1) height += rowHeight(item.fields.slice(i, i + (item.box.columns ?? 1)))
+    return height
+  })
   const height = Math.max(...heights)
   if (height > ctx.contentBottom - ctx.pageContentTop - 50) {
     // An unusually long field is not shrunk or truncated to squeeze into a box.
@@ -68,13 +74,20 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     item.title.forEach((line, i) => ctx.text(line, x + PAD, top + PAD + i * 12, { width: width - PAD * 2 }))
     ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite).rect(x, top, width, height).stroke().restore()
     let y = top + headingHeight + PAD
-    for (const field of item.fields) {
+    const columns = item.box.columns ?? 1
+    const fieldWidth = (width - PAD * 2 - (columns - 1) * gap) / columns
+    if (columns === 2) ctx.doc.save().lineWidth(0.5).strokeColor(C.hairline).moveTo(x + width / 2, y).lineTo(x + width / 2, top + height - PAD).stroke().restore()
+    for (let start = 0; start < item.fields.length; start += columns) {
+    const row = item.fields.slice(start, start + columns)
+    row.forEach((field, column) => {
+      const fieldX = x + PAD + column * (fieldWidth + gap)
       ctx.doc.font("Helvetica").fontSize(8.5).fillColor(C.graphite)
-      field.label.forEach((line, i) => ctx.text(line, x + PAD, y + i * 11, { width: width - PAD * 2 }))
-      y += field.label.length * 11 + 3
+      field.label.forEach((line, i) => ctx.text(line, fieldX, y + i * 11, { width: fieldWidth }))
+      const valueY = y + Math.max(...row.map(item => item.label.length * 11)) + 3
       ctx.doc.font("Helvetica-Bold").fontSize(field.prominent ? 14 : BODY).fillColor(C.ink)
-      field.value.forEach((line, i) => ctx.text(line, x + PAD, y + i * (field.prominent ? 17 : LEADING), { width: width - PAD * 2 }))
-      y += field.value.length * (field.prominent ? 17 : LEADING) + 12
+      field.value.forEach((line, i) => ctx.text(line, fieldX, valueY + i * (field.prominent ? 17 : LEADING), { width: fieldWidth }))
+    })
+    y += rowHeight(row)
     }
   })
   ctx.y = top + height + 12

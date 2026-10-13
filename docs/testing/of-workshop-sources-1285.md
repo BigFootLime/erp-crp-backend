@@ -2,6 +2,8 @@
 
 La nouvelle édition place les composants, matières, traitements, sous-traitances et achats avant la gamme. Le titre et le numéro d’OF sont centrés. Les zones sont opaques et les tableaux poursuivent leurs lignes sur autant de pages que nécessaire. Les temps sont exprimés en minutes ou heures/minutes, avec des fractions de minute pour les temps unitaires très courts. La fiche technique contenant la gamme présente uniquement le code client, sans son nom ni son logo.
 
+La première ligne oppose Commande (référence et AR, puis quantités demandée/lancée côte à côte) à Matière et débit. La matière essentielle apparaît dans la moitié supérieure de la première page. La deuxième ligne oppose Client/affaires et documents à Pièce. Les cadences détaillées restent intégrales pour les commandes comportant plusieurs AR ; l’en-tête met en évidence le plus proche. Les longues références sont conservées et les données matière ne sont pas répétées dans un deuxième grand panneau.
+
 ## Sources
 
 - Une révision complète utilise son propre dossier figé. Une ancienne révision initiale ne peut emprunter le dossier courant que si elle est encore active. Les révisions obsolètes restent indépendantes.
