@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — OF atelier compact et échéance interne (#1297)
+
+- Bandeaux de zones moins hauts, retrait des deux informations redondantes du cartouche matière/pièce, tableaux de synthèse courts conservés sur une page.
+- Échéance AR ou cible interne originale visible dans l'en-tête ; les anciens PDF1.4/1.5 conservent leurs rendus.113 tests ciblés, compilation stricte et toutes les pages des trois exemples vérifiées. Aucune migration ; recette globale toujours en cours.
+
 ## 2026-10-13 — Stocks de versions mineures interchangeables (#1294)
 
 - Autoriser les deux sens d’une chaîne approuvée de révisions mineures sans impact d’interchangeabilité, à PT/indice identiques. Les limites majeures et les versions non approuvées restent exclues ; le lot conserve sa version réelle et tous les contrôles qualité/réservation.
