@@ -37,7 +37,7 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  */
 export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.3" as const;
 /** Opt-in while the modern commercial/material read models are being corrected. */
-export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.6" as const;
+export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.7" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage
@@ -491,7 +491,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
   const operations = [...input.operations].sort((a, b) => a.phase - b.phase);
   const familles = input.familles;
   const avertissements: OfDocumentWarning[] = [];
-  const workshop = input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.5" || input.templateVersion === "of-ordre-fabrication/1.4";
+  const workshop = input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.6" || input.templateVersion === "of-ordre-fabrication/1.5" || input.templateVersion === "of-ordre-fabrication/1.4";
 
   const phases = operations.map<OfDocumentPhase>((operation) => {
     const { fabricationHours: fabrication, finalHours: final } = documentOperationLoad(operation, workshop ? input.quantiteLancee : undefined);
@@ -659,7 +659,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     ...(workshop && input.commercialScope ? { commercialScope: input.commercialScope } : {}),
     ...(workshop && input.commandes ? { commandes: structuredClone(input.commandes) } : {}),
     ...(workshop && input.sourceOrders ? { sourceOrders: structuredClone(input.sourceOrders) } : {}),
-    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? { internalDueDate: input.internalDueDate ?? null } : {}),
+    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.6" ? { internalDueDate: input.internalDueDate ?? null } : {}),
     cadenceProduction: [...input.cadenceProduction].sort((a, b) => a.date.localeCompare(b.date)),
     derniereFabrication: input.derniereFabrication,
 
