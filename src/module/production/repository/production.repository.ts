@@ -11,6 +11,7 @@ import { withUploadTransaction, type UploadCommitReconciliation } from "../../..
 import { queueRootOfCreationPdf } from "../domain/of-creation-pdf";
 import { ensureImagesSubdir, normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -76,6 +77,7 @@ import { findAssetIdsByStorageKeys } from "../../operational-media/repository/op
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
 import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules } from './production-preparation.repository';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx} from './operation-readiness.repository';
+import { releasePrelaunchPurchaseAllocationsTx } from "./of-prelaunch-cancellation.repository";
 import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
 
 export type AuditContext = {
@@ -439,6 +441,7 @@ async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
       occurredAt: inserted.created_at,
     });
   }
+  return inserted;
 }
 
 function isPgUniqueViolation(err: unknown): boolean {
@@ -3786,7 +3789,7 @@ export async function repoUpdateOrdreFabrication(params: {
         { from: currentStatut, to: requestedStatut, allowed: OF_STATUT_TRANSITIONS[currentStatut] }
       );
     }
-    if (statutChanges && currentStatut === "BROUILLON" && requestedStatut !== "BROUILLON" && ofRow.technical_readiness !== "VALIDATED") {
+    if (statutChanges && currentStatut === "BROUILLON" && requestedStatut !== "BROUILLON" && requestedStatut !== "ANNULE" && ofRow.technical_readiness !== "VALIDATED") {
       throw new HttpError(
         409,
         "OF_TECHNICAL_PREPARATION_REQUIRED",
@@ -3929,6 +3932,8 @@ export async function repoUpdateOrdreFabrication(params: {
       }
     }
 
+    const cancelledPurchaseAllocations = statutChanges && requestedStatut === "ANNULE" && isOfPrelaunch(currentStatut)
+      ? await releasePrelaunchPurchaseAllocationsTx(client, params.id) : [];
     const sets: string[] = [];
     const values: unknown[] = [];
     const push = (v: unknown) => {
@@ -3975,8 +3980,20 @@ export async function repoUpdateOrdreFabrication(params: {
       entity_id: String(params.id),
       details: {
         patch: params.patch,
+        ...(cancelledPurchaseAllocations.length ? { cancelled_purchase_allocations: cancelledPurchaseAllocations, physical_stock_unchanged: true } : {}),
       },
     });
+
+    for (const purchaseId of [...new Set(cancelledPurchaseAllocations.map(allocation => allocation.purchase_order_id))].sort()) {
+      const change = await insertAuditLog(client, params.audit, {
+        action: "production.of.purchase_assignments_cancelled", entity_type: "commande_fournisseur", entity_id: purchaseId,
+        details: { of_id: params.id, cancelled_assignments: cancelledPurchaseAllocations.filter(allocation => allocation.purchase_order_id === purchaseId), physical_stock_unchanged: true },
+      });
+      if (!change) throw new Error("PURCHASE_ASSIGNMENT_CANCELLATION_AUDIT_REQUIRED");
+      await enqueueEntityChanged(client, { module: "commandes-fournisseurs", entityType: "commande_fournisseur", entityId: purchaseId,
+        action: "updated", at: change.created_at, invalidateKeys: ["commandes-fournisseurs", "production"] },
+      { deduplicationKey: `of-purchase-assignment-cancellation:${change.id}` });
+    }
 
     return true;
   });
