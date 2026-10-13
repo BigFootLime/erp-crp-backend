@@ -38,7 +38,7 @@ export type EligibleDeliverySource = {
 };
 
 export type FacturePreviewLine = {
-  source_type: "DELIVERY_LINE" | "MILESTONE" | "DEPOSIT";
+  source_type: "DELIVERY_LINE" | "MILESTONE" | "DEPOSIT" | "ORDER_CHARGE";
   source_id: string;
   source_line_id: string;
   designation: string;

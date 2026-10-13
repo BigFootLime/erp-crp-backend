@@ -5,7 +5,7 @@ import type { AuditContext } from './production.repository';
 import { HttpError } from '../../../utils/httpError';
 import { quantity } from '../domain/of-material';
 import { assertStockConsumptionAllowed, lockStockStates, stockTargetKey } from '../../stock/repository/stock.repository';
-type HoldRow = {
+export type HoldRow = {
     id: string;
     article_id: string;
     location_id: string;
@@ -22,7 +22,7 @@ type HoldRow = {
     status: string;
     unexpired: boolean;
 };
-const HOLD_SELECT = `SELECT r.id::text,r.article_id::text,r.location_id::text,r.lot_id::text,r.stock_batch_id::text,
+export const HOLD_SELECT = `SELECT r.id::text,r.article_id::text,r.location_id::text,r.lot_id::text,r.stock_batch_id::text,
   s.id::text AS stock_level_id,r.qty_reserved::float8,r.qty_consumed::float8,r.qty_prepared::float8,
   r.of_id::bigint::int,r.source_type,r.source_id,r.material_need_id::text,r.status,(r.expires_at IS NULL OR r.expires_at>now()) AS unexpired
   FROM public.stock_reservations r JOIN public.stock_levels s ON s.article_id=r.article_id AND s.location_id=r.location_id`;
@@ -136,8 +136,11 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
         producer_need_id: string;
         transferred_qty: string;
         surplus_qty: string;
-    }>(`SELECT producer_reservation_id::text,producer_need_id::text,transferred_qty::text,surplus_qty::text
-      FROM public.production_consolidation_material_holds WHERE consolidation_id=$1::uuid ORDER BY producer_reservation_id`, [consolidationId])).rows;
+    }>(`SELECT h.producer_reservation_id::text,h.producer_need_id::text,
+      (h.transferred_qty+COALESCE((SELECT sum(e.quantity) FROM public.production_recovery_material_extensions e
+        WHERE e.consolidation_id=h.consolidation_id AND e.producer_reservation_id=h.producer_reservation_id
+          AND NOT e.included_in_base),0))::text AS transferred_qty,h.surplus_qty::text
+      FROM public.production_consolidation_material_holds h WHERE h.consolidation_id=$1::uuid ORDER BY h.producer_reservation_id`, [consolidationId])).rows;
     if (!holds.length)
         return; // Legacy transfers are restored by their existing path.
     const sourceTransfers = (await tx.query<{

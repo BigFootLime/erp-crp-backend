@@ -12,6 +12,9 @@ export async function readLearningSources(tx: Query, operationIds: string[]): Pr
       'cancelled',o.statut::text='ANNULE' OR op.status::text='CANCELLED'
         OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut<>'ACTIVE'),
       'completedAt',op.ended_at,
+      'cycleStartedAt',(SELECT max(addition.created_at) FROM public.production_recovery_consolidation_additions addition
+        WHERE addition.producer_of_id=op.of_id AND addition.evidence->'resumptions'
+          @> jsonb_build_array(jsonb_build_object('operation_id',op.id::text))),
       'context',COALESCE(public.planning_duration_context(op.id,op.machine_id,op.poste_id),
         CASE WHEN o.piece_technique_version_id IS NOT NULL AND o.technical_snapshot_sha256 IS NOT NULL THEN
           jsonb_build_object('pieceId',o.piece_technique_id::text,'revision',o.piece_technique_version_id::text,

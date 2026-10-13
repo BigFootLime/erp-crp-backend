@@ -28,7 +28,10 @@ export type Estimate = {
   excluded: Array<{ id: string; reason: string }>;
 };
 export type CentralTask = {
-  external?: { packages: import('../../subcontract/subcontract-flow.types').SubcontractFlow[]; fullReadyAt:string|null; firstBatchReadyAt:string|null; issues:string[] };
+  external?: { packages: import('../../subcontract/subcontract-flow.types').SubcontractFlow[];
+    preparations?: import('../../subcontract/subcontract-flow.types').ExternalServicePreparation[];
+    preparationIssues?: string[];
+    fullReadyAt:string|null; firstBatchReadyAt:string|null; issues:string[] };
   resourceEstimates?: Record<string, Estimate>;
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";
   operationId: string | null; programmingId: string | null; ofId: number | null; orderId: number | null;
@@ -49,6 +52,8 @@ export type CentralTask = {
   forecastResourceIds?: string[] | null;
   committed: Interval | null; forecast: Interval | null; actual: Partial<Interval> | null;
   commitment: Commitment; locked: boolean; readiness: "READY" | "DRAFT" | "MISSING";
+  /** Latest immutable recovery resumption; older shipments belong to prior cycles. */
+  cycleStartedAt?: string | null;
   blockers: string[]; earliestStart: string | null; due: string | null;
   priority: number; createdAt: string; version: string; estimate: Estimate | null;
 };

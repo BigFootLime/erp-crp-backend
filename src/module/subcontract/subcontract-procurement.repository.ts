@@ -9,7 +9,7 @@ import type { AuditContext } from '../production/repository/production.repositor
 import { createMaterialDraftsTx } from '../commande-fournisseur/repository/commande-fournisseur.repository';
 import { readSubcontractPredecessorsTx } from '../commande-fournisseur/repository/subcontract-purchase.repository';
 import { subcontractSelection, type SubcontractProcurementCommand, type SubcontractDemandCommand, type SubcontractSelection } from './subcontract-procurement.validators';
-import { assertSubcontractPieceUnit } from './subcontract-procurement.domain';
+import { assertSubcontractPieceUnit, assertSubcontractSupplement } from './subcontract-procurement.domain';
 import { servicePurchasePreparations, type ServicePreparation } from './subcontract-preparation.domain';
 import { readPurchasePreparationsTx, savePurchasePreparationsTx } from '../production/repository/purchase-preparation.repository';
 type Db = Pick<PoolClient, 'query'>;
@@ -176,14 +176,9 @@ export async function prepareSubcontractProcurement(ofId: number, body: Subcontr
         const roots = body.rows.map(r => r.originId);
         if (new Set(roots).size !== roots.length || (current.origins.length ? roots.some(id => !id || !current.origins.some(o => o.id === id)) : roots.length !== 1 || roots[0] !== null))
             throw new HttpError(422, 'SUBCONTRACT_ORIGIN_INVALID', 'Choisissez une seule ligne pour chaque origine matière engagée dans cet OF.');
-        if (current.drafts.some(d => d.operationId === operation.id && roots.includes(d.originId)))
-            throw new HttpError(409, 'SUBCONTRACT_ORIGIN_ALREADY_PREPARED', 'Une ligne fournisseur couvre déjà cette origine et cette opération. Modifiez son brouillon.');
-        const total = body.rows.reduce((n, r) => n + r.quantity, 0) + current.drafts.filter(d => d.operationId === operation.id).reduce((n, d) => n + d.quantity, 0);
-        if (total > current.of.quantity)
-            throw new HttpError(422, 'SUBCONTRACT_QUANTITY_EXCEEDED', 'La préparation dépasse la quantité de l’OF.');
         const predecessors = current.predecessorState.find(state => state.operationId === operation.id)?.predecessors ?? [];
-        if (predecessors.length && predecessors.every(predecessor => predecessor.status === 'DONE') && predecessors.some(predecessor => total > predecessor.good))
-            throw new HttpError(422, 'SUBCONTRACT_REAL_QUANTITY_EXCEEDED', 'Ajustez le brouillon aux quantités réellement conformes après clôture de l’opération précédente.');
+        assertSubcontractSupplement({ purchaseId: purchase.id, operationId: operation.id, ofQuantity: current.of.quantity,
+            lines: current.drafts, rows: body.rows, predecessors });
         if (!body.due && offer.delay === null)
             throw new HttpError(422, 'SUBCONTRACT_DELAY_REQUIRED', 'Confirmez une date de retour ou un délai fournisseur avant de préparer les lignes.');
         const commands = await createMaterialDraftsTx(tx, body.rows.map(row => ({ type: 'SOUS_TRAITANCE' as const, needId: null, ofId, sourceRef: purchase.id, articleId: purchase.article_id!, designation: `${purchase.designation ?? purchase.nom ?? operation.label} · ${row.originId ? current.origins.find(o => o.id === row.originId)!.label : 'Sans MP directe'}`,

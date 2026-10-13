@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { bindInvoiceUrgencyChargeTx, readInvoiceUrgencyChargesTx } from './facture-urgency-charges.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
 import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
@@ -203,7 +204,7 @@ function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unk
     return `$${values.length}`;
   };
   if (filters.client_id) where.push(`bl.client_id = ${push(filters.client_id)}`);
-  if (filters.commande_id) where.push(`bl.commande_id = ${push(filters.commande_id)}::bigint`);
+  if (filters.commande_id) where.push(`COALESCE(cl.commande_id, bl.commande_id) = ${push(filters.commande_id)}::bigint`);
   if (filters.livraison_id) where.push(`bl.id = ${push(filters.livraison_id)}::uuid`);
   if (filters.affaire_id) where.push(`bl.affaire_id = ${push(filters.affaire_id)}::bigint`);
   if (filters.q) {
@@ -227,7 +228,7 @@ const DELIVERY_SOURCE_SELECT = `
     bl.client_id,
     c.company_name AS client_name,
     COALESCE(c.blocked, FALSE) AS client_blocked,
-    bl.commande_id::text AS commande_id,
+    COALESCE(cl.commande_id, bl.commande_id)::text AS commande_id,
     bl.affaire_id::text AS affaire_id,
     bll.commande_ligne_id::text AS commande_line_id,
     bll.designation,
@@ -251,8 +252,8 @@ const DELIVERY_SOURCE_SELECT = `
   FROM public.bon_livraison_ligne bll
   JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
   JOIN public.clients c ON c.client_id = bl.client_id
-  LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
   LEFT JOIN public.commande_ligne cl ON cl.id = bll.commande_ligne_id
+  LEFT JOIN public.commande_client cc ON cc.id = COALESCE(cl.commande_id, bl.commande_id)
   LEFT JOIN LATERAL (
     SELECT COALESCE(SUM(source.quantity_consumed), 0) AS quantity
     FROM public.facture_source_allocations source
@@ -360,7 +361,8 @@ export async function repoListEligibleFactureSources(
       FROM public.bon_livraison_ligne bll
       JOIN public.bon_livraison bl ON bl.id = bll.bon_livraison_id
       JOIN public.clients c ON c.client_id = bl.client_id
-      LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
+      LEFT JOIN public.commande_ligne cl ON cl.id = bll.commande_ligne_id
+      LEFT JOIN public.commande_client cc ON cc.id = COALESCE(cl.commande_id, bl.commande_id)
       ${sql}
     `,
     values
@@ -420,7 +422,8 @@ function assertDueDates(preview: FacturePreview): void {
 async function buildFacturePreview(
   queryer: DbQueryer,
   input: FacturePreviewBodyDTO,
-  lock: boolean
+  lock: boolean,
+  invoiceId?: number
 ): Promise<{ preview: FacturePreview; policy: BillingPolicyRow | null; sources: DeliverySourceRow[] }> {
   const unsupported = input.sources.filter((source) => source.source_type !== "DELIVERY_LINE");
   const sourceLineIds = input.sources
@@ -494,6 +497,13 @@ async function buildFacturePreview(
     });
   }
 
+  // Charges are generated from the selected orders, never supplied by the caller.
+  // Issuance reuses this invoice's bindings, so later urgencies cannot rewrite a draft.
+  lines.push(...await readInvoiceUrgencyChargesTx(queryer, {
+    orderIds: rows.filter(row => lines.some(line => line.source_line_id === row.source_line_id))
+      .map(row => row.commande_id).filter((id): id is string => id !== null),
+    clientId: input.client_id, currency: input.currency, lock, invoiceId,
+  }));
   const totals = computeExactDocumentTotals(
     lines.map((line) => ({
       quantity: line.quantity,
@@ -837,6 +847,11 @@ export async function repoCreateFactureDraft(params: {
       );
       const factureLineId = lineInsert.rows[0]?.id;
       if (!factureLineId) throw new Error("Failed to insert facture line");
+      if (line.source_type === 'ORDER_CHARGE') {
+        await bindInvoiceUrgencyChargeTx(client, { chargeId: line.source_line_id, invoiceId: factureId,
+          lineId: factureLineId, actor: params.actor.userId });
+        continue;
+      }
       await client.query(
         `
           INSERT INTO public.facture_source_allocations (
@@ -1318,7 +1333,7 @@ export async function repoIssueFacture(params: {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "La facture a changé.");
     }
     const previewInput = await savedPreviewInput(client, params.factureId);
-    const { preview, policy } = await buildFacturePreview(client, previewInput, true);
+    const { preview, policy } = await buildFacturePreview(client, previewInput, true, params.factureId);
     ensurePreviewUsable(preview, params.input.preview_hash);
     if (facture.preview_hash !== preview.preview_hash) {
       throw new HttpError(

@@ -2,6 +2,9 @@ import { Router } from "express";
 import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar } from "../controllers/planning-central.controller";
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
 import { masterPlan } from '../controllers/planning-master-plan.controller';
+import { approveRecovery, previewRecoveryApproval } from '../controllers/urgency-approval.controller';
+import { cancelDeliveryUrgencyRetainingProduction, restoreDeliveryUrgency } from '../../livraisons/controllers/delivery-urgency.controller';
+import { previewRecoveryGrouping,applyRecoveryGrouping,listRecoveryGroupingCandidates } from '../controllers/recovery-consolidation.controller';
 const router=Router();
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
@@ -15,4 +18,11 @@ router.post("/preview",requirePlanningCapability("manage_schedule"),centralPrevi
 router.get("/simulations/:id",requirePlanningCapability("manage_schedule"),centralGetSimulation);
 router.post("/simulations/:id/apply",requirePlanningCapability("manage_schedule"),centralApply);
 router.post("/unplan",requirePlanningCapability("manage_schedule"),centralUnplan);
+router.get('/urgency-requests/:requestId/approval-preview',requirePlanningCapability('manage_schedule'),previewRecoveryApproval);
+router.post('/urgency-requests/:requestId/approve',requirePlanningCapability('manage_schedule'),approveRecovery);
+router.post('/urgency-requests/:requestId/cancel-retaining-production',requirePlanningCapability('manage_schedule'),cancelDeliveryUrgencyRetainingProduction);
+router.post('/urgency-requests/:requestId/restitute',requirePlanningCapability('manage_schedule'),restoreDeliveryUrgency);
+router.get('/urgency-recoveries/:recoveryId/consolidations/:consolidationId/preview',requirePlanningCapability('manage_schedule'),previewRecoveryGrouping);
+router.get('/urgency-recoveries/:recoveryId/consolidation-candidates',requirePlanningCapability('manage_schedule'),listRecoveryGroupingCandidates);
+router.post('/urgency-recoveries/:recoveryId/consolidations/:consolidationId/apply',requirePlanningCapability('manage_schedule'),applyRecoveryGrouping);
 export default router;

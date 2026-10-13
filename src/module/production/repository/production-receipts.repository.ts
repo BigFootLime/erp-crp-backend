@@ -23,8 +23,10 @@ import type { ReceiptLaneDistribution } from "../domain/receipt-lane-distributio
 import { formatCumpDecimal, parseCumpDecimal } from "../../stock/domain/cump-decimal";
 import { lockStockLaneTopology } from "../../stock/repository/stock-lane-routing.repository";
 import { routeReceiptLaneDistributionTx } from "../../stock/repository/receipt-lane-transfer.repository";
+import { reserveUrgencyRecoveryReceiptTx } from "./urgency-recovery-receipt.repository";
 
 type ReleasedReceiptOutput = {
+  receipt_id: string;
   of_id: number; article_id: string; location_id: string; stock_level_id: string;
   stock_batch_id: string; lot_id: string; movement_id: string; qty_ok: number;
   actor_user_id: number; quality_gate_already_held: boolean;
@@ -35,6 +37,8 @@ type ReleasedReceiptOutput = {
 async function reserveReleasedReceiptOutput(tx: Pick<PoolClient, "query">, args: ReleasedReceiptOutput) {
   const grouped = await reserveConsolidatedReceipt(tx, args);
   if (grouped) return grouped;
+  const recovery = await reserveUrgencyRecoveryReceiptTx(tx, args);
+  if (recovery) return recovery;
   const component = await reserveProducedComponentForParentOf(tx, { ...args, component_of_id: args.of_id });
   if (component.matched) return component;
   if (args.order_type === "INTERNE")
@@ -121,6 +125,7 @@ export async function reconcileReleasedConsolidationLot(tx: Pick<PoolClient, "qu
 async function reserveConsolidatedReceipt(
   client: Pick<PoolClient, "query">,
   args: {
+    receipt_id: string;
     of_id: number;
     article_id: string;
     location_id: string;
@@ -174,7 +179,10 @@ async function reserveConsolidatedReceipt(
   const reservationIds: string[] = [];
   for (const allocated of distribution.allocations) {
     const source = rows.find((r) => r.id === allocated.allocation_id)!;
-    const component = await reserveProducedComponentForParentOf(client, {
+    const recovery = await reserveUrgencyRecoveryReceiptTx(client, {
+      ...args, of_id: source.source_of_id, qty_ok: allocated.quantity,
+    });
+    const component = recovery ?? await reserveProducedComponentForParentOf(client, {
       ...args,
       component_of_id: source.source_of_id,
       qty_ok: allocated.quantity,
@@ -226,6 +234,7 @@ async function reconcileLegacyReleasedConsolidationLot(
 ) {
   const receipts = (
     await tx.query<{
+      receipt_id: string;
       of_id: number;
       article_id: string;
       location_id: string;
@@ -234,7 +243,7 @@ async function reconcileLegacyReleasedConsolidationLot(
       movement_id: string;
       qty_ok: number;
     }>(
-      `SELECT r.of_id::bigint::int,m.article_id::text,sl.location_id::text,r.stock_level_id::text,r.stock_batch_id::text,r.stock_movement_id::text AS movement_id,r.qty_ok::float8
+      `SELECT r.id::text AS receipt_id,r.of_id::bigint::int,m.article_id::text,sl.location_id::text,r.stock_level_id::text,r.stock_batch_id::text,r.stock_movement_id::text AS movement_id,r.qty_ok::float8
     FROM public.of_receipts r JOIN public.stock_movements m ON m.id=r.stock_movement_id
     JOIN public.production_consolidations c ON c.producer_of_id=r.of_id AND c.state='ACTIVE'
     JOIN public.stock_batches sb ON sb.id=r.stock_batch_id JOIN public.stock_levels sl ON sl.id=r.stock_level_id
@@ -1671,16 +1680,16 @@ export async function repoCreateOfReceipt(params: {
       if (!nonConformityId) throw new Error("Failed to create production non-conformity");
     }
 
+    const receiptId = randomUUID();
     const reservationSnapshot = await snapshotReceiptReservations(client, stockBatchId);
     if (params.body.quality_status === "LIBERE") await reserveReleasedReceiptOutput(client, {
-          of_id: params.of_id, article_id: article.id, location_id: map.location_id,
+          receipt_id: receiptId, of_id: params.of_id, article_id: article.id, location_id: map.location_id,
           stock_level_id: stockLevelId, stock_batch_id: stockBatchId, lot_id: lotId,
           movement_id: movementId, qty_ok: params.body.qty_ok, actor_user_id: params.audit.user_id,
           quality_gate_already_held: qualityDecision !== null, order_type: ofRow.order_type,
           internal_order_purpose: ofRow.internal_order_purpose,
           commande_ligne_id: ofRow.commande_ligne_id, livraison_affaire_id: ofRow.affaire_id,
         });
-    const receiptId = randomUUID();
     const allocation = params.body.quality_status === "LIBERE"
       ? await calculateReceiptLaneAssignment(client, stockBatchId, String(params.body.qty_ok), reservationSnapshot) : null;
     const laneDistribution = allocation ? await routeReceiptLaneDistributionTx(client, { receipt_id: receiptId,

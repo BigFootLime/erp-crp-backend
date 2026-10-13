@@ -12,6 +12,7 @@ import type {
 } from "../types/planning-central.types";
 import { expandCalendar } from "../domain/central-calendar";
 import { externalCompletion } from "../domain/external-schedule";
+import { readExternalPreparationsTx } from '../../subcontract/subcontract-planning-preparation.repository';
 
 export async function hydrateExternalPlanning(
   tx: Pick<PoolClient, "query">,
@@ -34,7 +35,9 @@ export async function hydrateExternalPlanning(
     tx,
     external.map((t) => t.operationId!),
   );
-  const suppliers = [...new Set(flows.map((p) => p.supplierId))];
+  const prepared = await readExternalPreparationsTx(tx,external.map(t=>t.operationId!));
+  const suppliers = [...new Set([...flows.map((p) => p.supplierId),
+    ...[...prepared.values()].flatMap(state=>state.preparations.map(p=>p.supplierId))])];
   const calendars = (
     await tx.query(
       `SELECT f.id::text AS supplier_id,COALESCE(f.nom,f.raison_sociale) AS name,c.*,
@@ -96,8 +99,11 @@ export async function hydrateExternalPlanning(
   const transfers = await readExternalTransfers(tx, flows);
   for (const task of external) {
     const packages = flows.filter((p) => p.operationId === task.operationId);
+    const preparation = prepared.get(task.operationId!);
     task.resourceIds = [
-      ...new Set(packages.map((p) => "supplier:" + p.supplierId)),
+      ...new Set([...packages.map((p) => "supplier:" + p.supplierId),
+        ...(preparation?.preparations??[]).filter(p=>packages.filter(work=>p.orderLineIds.includes(work.orderLineId))
+          .reduce((sum,work)=>sum+work.planned,0)<task.quantity).map(p=>'supplier:'+p.supplierId)]),
     ];
     task.eligibleResourceIds = task.resourceIds;
     const projection = externalCompletion(
@@ -106,6 +112,8 @@ export async function hydrateExternalPlanning(
       task.committed?.start ?? from,
       resources,
       new Date().toISOString(),
+      preparation?.preparations,
+      preparation?.issues,
     );
     const ready = transfers
       .filter((b) => b.operation_id === task.operationId)
@@ -116,20 +124,22 @@ export async function hydrateExternalPlanning(
       .sort()[0];
     task.external = {
       packages,
+      preparations:preparation?.preparations,
+      preparationIssues:preparation?.issues,
       ...projection,
       firstBatchReadyAt: firstTransfer ?? null,
     };
     task.good = packages.reduce((n, p) => n + p.released, 0);
     task.released = ready;
     const departed = packages
-      .flatMap((p) => (p.departedAt ? [p.departedAt] : []))
+      .flatMap((p) => (p.departedAt && (!task.cycleStartedAt || Date.parse(p.departedAt)>=Date.parse(task.cycleStartedAt)) ? [p.departedAt] : []))
       .sort()[0];
     if (departed) {
       task.actual = { ...task.actual, start: departed };
       if (task.commitment !== "DONE") task.commitment = "STARTED";
     }
     task.version = createHash("sha256")
-      .update(task.version + JSON.stringify(packages))
+      .update(task.version + JSON.stringify([packages,preparation]))
       .digest("hex");
     for (const edge of dependencies.filter((d) => d.predecessorId === task.id))
       edge.releasedQuantity = transfers

@@ -33,6 +33,7 @@ import { listLegacyContractOrders, readLegacyContractPreview, postLegacyContract
 import { listClientContractForecasts, postClientContractForecastCommand } from "../controllers/client-contract-forecast.controller";
 import { readClientContractCoverage } from "../controllers/client-contract-coverage.controller";
 import { readClientContractReplenishment, postClientContractReplenishment } from "../controllers/client-contract-replenishment.controller";
+import { getClientUrgencyFee, putClientUrgencyFee } from "../controllers/client-urgency-fee.controller";
 // import { uploadClientLogoMulter } from "../upload/client-logo-upload";
 
 
@@ -49,6 +50,8 @@ router.get("/", listClients);
 router.get("/analytics", listClientsAnalytics);
 router.get("/crm/followups", readCrmFollowups);
 router.get("/:id/crm", readClientCrm);
+router.get("/:id/urgency-fee", getClientUrgencyFee);
+router.put("/:id/urgency-fee", requireClientWriteRole, putClientUrgencyFee);
 router.post("/:id/crm/commands", requireClientWriteRole, postCrmCommand);
 router.get("/:id/contracts", listContracts);
 router.get("/:id/contracts/articles", listContractArticles);
