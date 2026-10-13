@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — Identité et transferts des barres (#1256)
+
+- Migration additive conservant le numéro scanné immuable et les transferts physiques prouvés après identification.
+- Validation de la succession complète des migrations et des transferts, avec les contrôles de stock au commit.
+
 ## 2026-10-12 — Décisions qualité et barres (#1246)
 
 - Source physique et contexte réception pour les décisions guidées.
