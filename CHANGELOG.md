@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — PDF OF lisible en atelier (#1282)
+
+- Nouveau gabarit OF1.3 : zones opaques, opérations regroupant temps et visas, références répétées et durée par pièce précise.
+- Socle éditorial versionné et panneaux PNG/JPEG complets ; conservation des rendus classiques et des archives existantes.
+- La migration des autres exports et le gel des logos/plans/outils restent dans le chantier PDF.
+
 ## 2026-10-13 — Reprise qualité après annulation (#1279)
 
 - Exclure un contrôle annulé avant la sélection de la dernière décision qualité, sans cumuler les autorisations ni retirer les garde-fous.

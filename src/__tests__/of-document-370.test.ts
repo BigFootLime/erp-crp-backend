@@ -271,8 +271,7 @@ describe("#374 E — rendu serveur", () => {
       // de lancer une quantité, pour une commande, à une date. Il EMBARQUE la
       // gamme applicable, il ne s'y réduit pas.
       "ORDRE DE FABRICATION",
-      // Les titres de section sont rendus en capitales par le socle document.
-      "GAMME APPLICABLE",
+      "Gamme applicable",
       "71 h",
     ]) {
       expect(text).toContain(expected);
