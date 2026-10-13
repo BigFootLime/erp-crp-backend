@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — Complément d’une réservation matière (#1259)
+
+- Compléter atomiquement la réservation du même besoin/lot et son affectation sur la barre existante, avec identité, consommations et historique conservés.
+- Affecter le besoin dès la création ; conserver les contraintes d’unicité, contrôles de stock/qualité, expiration et rejouabilité.
+- Reproduction sur une copie isolée de Base Test avec les repositories et les contraintes PostgreSQL réels.
+
 ## 2026-10-13 — Identité et transferts des barres (#1256)
 
 - Migration additive conservant le numéro scanné immuable et les transferts physiques prouvés après identification.
