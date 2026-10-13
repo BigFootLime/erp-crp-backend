@@ -1,3 +1,4 @@
+import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
 import fs from "node:fs/promises"
 import path from "node:path"
 import crypto from "node:crypto"
@@ -1120,21 +1121,17 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
           (
             SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
             FROM (
-              SELECT DISTINCT reference.reference_value
-              FROM public.stock_lot_trace_references reference
-              WHERE reference.lot_id = a.lot_id
-                AND reference.reference_type = 'MP_LOT'
-                AND btrim(reference.reference_value) <> ''
+              SELECT DISTINCT reference_value
+              FROM (${stockLotTraceReferenceValuesSql("a.lot_id", "MP_LOT")}) recorded_origins
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
             ) distinct_mp(reference_value)
           ) AS mp_reference,
           (
             SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
             FROM (
-              SELECT DISTINCT reference.reference_value
-              FROM public.stock_lot_trace_references reference
-              WHERE reference.lot_id = a.lot_id
-                AND reference.reference_type = 'TRAITEMENT_LOT'
-                AND btrim(reference.reference_value) <> ''
+              SELECT DISTINCT reference_value
+              FROM (${stockLotTraceReferenceValuesSql("a.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
             ) distinct_tr(reference_value)
           ) AS tr_reference
       ) lot_trace ON a.lot_id IS NOT NULL
@@ -3745,19 +3742,17 @@ export async function repoListPreparationCart(filters: PreparationCartQueryDTO):
           (
             SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
             FROM (
-              SELECT DISTINCT reference.reference_value
-              FROM public.stock_lot_trace_references reference
-              WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'MP_LOT'
-                AND btrim(reference.reference_value) <> ''
+              SELECT DISTINCT reference_value
+              FROM (${stockLotTraceReferenceValuesSql("r.lot_id", "MP_LOT")}) recorded_origins
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
             ) distinct_mp(reference_value)
           ) AS mp_reference,
           (
             SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
             FROM (
-              SELECT DISTINCT reference.reference_value
-              FROM public.stock_lot_trace_references reference
-              WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
-                AND btrim(reference.reference_value) <> ''
+              SELECT DISTINCT reference_value
+              FROM (${stockLotTraceReferenceValuesSql("r.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+              WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
             ) distinct_tr(reference_value)
           ) AS tr_reference
       ) lot_trace ON r.lot_id IS NOT NULL
@@ -3919,19 +3914,17 @@ export async function repoVerifyPreparationLot(
             (
               SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
               FROM (
-                SELECT DISTINCT reference.reference_value
-                FROM public.stock_lot_trace_references reference
-                WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'MP_LOT'
-                  AND btrim(reference.reference_value) <> ''
+                SELECT DISTINCT reference_value
+                FROM (${stockLotTraceReferenceValuesSql("r.lot_id", "MP_LOT")}) recorded_origins
+                WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
               ) distinct_mp(reference_value)
             ) AS mp_reference,
             (
               SELECT string_agg(reference_value, ' · ' ORDER BY reference_value)
               FROM (
-                SELECT DISTINCT reference.reference_value
-                FROM public.stock_lot_trace_references reference
-                WHERE reference.lot_id = r.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
-                  AND btrim(reference.reference_value) <> ''
+                SELECT DISTINCT reference_value
+                FROM (${stockLotTraceReferenceValuesSql("r.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+                WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
               ) distinct_tr(reference_value)
             ) AS tr_reference
         ) lot_trace ON r.lot_id IS NOT NULL

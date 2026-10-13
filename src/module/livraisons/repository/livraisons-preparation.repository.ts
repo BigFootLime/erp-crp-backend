@@ -1,3 +1,4 @@
+import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
 import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
@@ -150,18 +151,16 @@ export async function repoGetLivraisonPreparation(
           ORDER BY ref_value
         ) AS affaire_refs,
         ARRAY(
-          SELECT DISTINCT trace.reference_value
-          FROM public.stock_lot_trace_references trace
-          WHERE trace.lot_id = allocation.lot_id
-            AND trace.reference_type = 'MP_LOT'
-          ORDER BY trace.reference_value
+          SELECT DISTINCT reference_value
+          FROM (${stockLotTraceReferenceValuesSql("allocation.lot_id", "MP_LOT")}) recorded_origins
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
         ) AS mp_lot_refs,
         ARRAY(
-          SELECT DISTINCT trace.reference_value
-          FROM public.stock_lot_trace_references trace
-          WHERE trace.lot_id = allocation.lot_id
-            AND trace.reference_type = 'TRAITEMENT_LOT'
-          ORDER BY trace.reference_value
+          SELECT DISTINCT reference_value
+          FROM (${stockLotTraceReferenceValuesSql("allocation.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
         ) AS traitement_lot_refs,
         latest_event.id::text AS latest_event_id,
         latest_event.event_type AS latest_event_type,

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-14 — Provenance des lots produits
+
+- Stock et BL affichent les lots matière débités et les lots revenus d'un traitement à partir des preuves de fabrication enregistrées. Projection commune à douze lectures, références historiques conservées, débits compensés exclus et traitement distingué d'une sous-traitance quelconque.
+- 7 651 tests / 688 fichiers, build strict et lecture réelle READ ONLY de LOT1310 passent. Aucune ressaisie de traçabilité ni nouvelle écriture de stock ; les validations qualité et d'expédition restent actives.
+
 ## 2026-10-14 — Stock déjà réservé à la commande
 
 - L'aperçu de relance reconnaît la couverture physique propre des lignes.12 déjà réservées et8 libres ne produisent plus une fausse proposition de fabrication de4 pièces. Aucune réservation supplémentaire ni planning fictif ; provenance OLD/NEW et contrôles physiques conservés.
