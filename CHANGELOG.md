@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — Dossiers de traitement par origine (#1269)
+
+- Autoriser plusieurs dossiers pour une même opération, avec un dossier immuable par ligne fournisseur et origine matière ; conserver les registres existants.
+- Rejouer la création sur une même ligne sans doublon ni erreur serveur ; refuser les paramètres incompatibles et les quantités annulées.
+- Contrôler les pièces expédiées cumulées sur l'opération, tout en conservant les limites par dossier, la qualité, les origines et les habilitations.
+
 ## 2026-10-13 — Minimum fournisseur et origines matière (#1265)
 
 - Contrôler le minimum sur la quantité de la référence dans la commande, sans regrouper les lignes de traçabilité par lot ni changer leur tarification.
