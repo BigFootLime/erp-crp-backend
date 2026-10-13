@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — Stocks de versions mineures interchangeables (#1294)
+
+- Autoriser les deux sens d’une chaîne approuvée de révisions mineures sans impact d’interchangeabilité, à PT/indice identiques. Les limites majeures et les versions non approuvées restent exclues ; le lot conserve sa version réelle et tous les contrôles qualité/réservation.
+- Migration de vue avec supports de préflight/vérification/reprise ; 20 assertions PostgreSQL sur la requête réelle et reproduction en lecture seule du lot de recette. Validation métier et déploiement suivis séparément.
+
 ## 2026-10-13 — OF atelier : nomenclature et sources (#1285)
 
 - Nomenclature avant gamme, titre et numéro centrés, durées en minutes/heures-minutes. Lecture cohérente des sources figées, sorties matière, compteurs nets, BL réellement expédiés et parts des regroupements. Réimpression et essais idempotents retournent l’édition enregistrée. La fiche de gamme affiche uniquement le code client.
