@@ -78,6 +78,22 @@ async function main(){
   const assigned=(await pool.query('SELECT sum(quantity)::float8 AS amount FROM public.production_receipt_lane_assignments WHERE receipt_id IN(SELECT id FROM public.of_receipts WHERE lot_id=$1)',[lot])).rows[0];
   assert.equal(assigned.amount,20);
  });
+ await check('cancelled recheck preserves the prior finite release entitlement',async()=>{
+  const article=(await pool.query('SELECT article_id::text FROM public.lots WHERE id=$1',[lot])).rows[0].article_id;
+  const context={source_type:'LOT',source_id:lot,trigger:'RECHECK',population:20,unite:'u',article_id:article,lot_id:lot};
+  const preview=await repo.repoPreviewExecution(context);
+  const empty=await repo.repoCreateExecution({body:{...context,preview_sha256:preview.snapshot_sha256,comments:'Isolated cancellation after previous release'},actor,idempotencyKey:'fixture1279-empty-recheck'});
+  await repo.repoCancelEmptyExecution({id:empty.id,body:{expected_updated_at:new Date(empty.updated_at).toISOString(),reason:'Isolated cancellation preserves previous validated control'},actor});
+  const {assertOperationalLotQualityEligibility}=require(path.join(root,'module/qualite/repository/quality-operational-gate.repository.js'));
+  const tx=await pool.connect();
+  try {
+   await tx.query('BEGIN');
+   const gate=await assertOperationalLotQualityEligibility({client:tx,lotId:lot,qty:20,unit:'u',purpose:'RESERVE'});
+   assert.deepEqual(gate.evidence.control_ids,[next.id]);assert.equal(gate.target.qty_released,20);
+   await assert.rejects(()=>assertOperationalLotQualityEligibility({client:tx,lotId:lot,qty:21,unit:'u',purpose:'RESERVE'}),e=>e.code==='QUALITY_NOT_ELIGIBLE');
+   await tx.query('ROLLBACK');
+  } finally {await tx.query('ROLLBACK');tx.release();}
+ });
  console.log(JSON.stringify({status:'PASSED',checks,database:'empty_quality_cancellation_1276',cancelledControl:id,liveDatabasesChanged:false,productionJwtTested:false}));
 }
 main().catch(e=>{console.error(e.stack||e.message);process.exitCode=1;}).finally(async()=>{if(server)await new Promise(r=>server.close(r));await pool.end();});
