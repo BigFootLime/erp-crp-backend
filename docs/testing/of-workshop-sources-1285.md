@@ -36,3 +36,11 @@ Aucune migration pour ce lot. Sauvegardes Test/Prod vérifiées sur le VPS avant
 La date de génération est conservée uniquement au pied. La police reste Helvetica/Helvetica-Bold comme le document de référence. Le code client et l’affaire de livraison sont deux champs distincts ; le nom client n’est pas imprimé. Références matière et documents utilisent la largeur complète de leur bloc. La commande réserve davantage de largeur à la référence, tout en maintenant l’AR à côté. La nomenclature matière, les sorties de barres et les prestations précèdent les opérations. Les minutes restent exactes pour les temps unitaires courts et la charge possède une colonne assez large pour « 1 h 20 min ».
 
 Les éditions 1.4 déjà enregistrées conservent leur renderer et leurs primitives figés : un cas de référence vérifie les octets à l’identique du commit déployé cb998c54. Cette conservation ne remet aucune ancienne quantité à jour. Validation : 107 tests ciblés, build strict, coordonnées et polices des deux OF de recette, inspection des six pages. Les PDF de démonstration sont des brouillons issus d’une lecture répétable de Base Test, sans émission officielle.
+
+## A4 fold clearance — follow-up #1300
+
+Template 1.7 uses compact spacing only for the four essential first-page cartouches. Helvetica values remain at 10 pt, deadlines and quantities at 13 pt; labels at 8 pt. Routing and nomenclature retain the existing full-size typography. Material need/debit calculations are unchanged; only labels are shortened.
+
+The full paper boîtier example (40 pieces, 6061/T651, 11 phases, treatment and four documents) ends the cartouches at 407.86 pt; the A4 fold is 420.945 pt, leaving 4.62 mm. Actual recipe PDF sources OF95/OF101 leave 24.72/30.55 mm. All 10 pages were rendered with Poppler and visually reviewed; rectangle geometry and retained text were checked with pdfplumber. No fold guide is printed in the actual PDF. Long content remains paginated without truncation.
+
+Archived renderers 1.4/1.5/1.6 are frozen. The saved 1.6 fixture remains SHA-256 `cf0e5a8ad3e9199d09d4799e6f28f37c1a0a308fd9733ceb748b9ec22a95f0e3`. This is layout qualification, not closure of the overall manufacturing recipe.

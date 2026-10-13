@@ -22,9 +22,9 @@ function materialHeader(payload: OfDocumentPayload): WorkshopFieldBox {
     return { title: "Matière et débit", columns: 2, fields: [
       { label: "Référence / désignation", span: 2, value: lines(material => [material.reference, material.designation].filter(Boolean).join("\n")) },
       { label: "Nuance / état", value: lines(material => [material.grade, material.condition].filter(Boolean).join(" / ") || null) },
-      { label: "Dimensions minimales du brut", value: lines(material => Object.entries(material.dimensions).map(([key, value]) => `${dimensionNames[key] ?? key} ${number(value)} mm`).join("\n") || null) },
+      { label: "Dimensions mini", value: lines(material => Object.entries(material.dimensions).map(([key, value]) => `${dimensionNames[key] ?? key} ${number(value)} mm`).join("\n") || null) },
       { label: "Besoin total de cet OF", value: lines(material => material.requiredQuantity === null ? null : `${number(material.requiredQuantity)} ${material.unit ?? ""}`), prominent: true },
-      { label: "Débit par brut, pertes incluses", value: lines(material => material.debitPerBlank === null ? null : `${number(material.debitPerBlank)} ${material.unit ?? ""}`) },
+      { label: "Débit par brut", value: lines(material => material.debitPerBlank === null ? null : `${number(material.debitPerBlank)} ${material.unit ?? ""}`) },
     ] };
   }
   return { title: "Matière et débit", columns: 2, fields: [
@@ -68,11 +68,11 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
         { label: arDates.length ? arDates.length > 1 ? "AR le plus proche" : "Délai client — AR" : "Délai interne", value: arDates.length
           ? `${formatDateFr(arDates[0])}${arDates.length > 1 ? "\nVoir cadence détaillée" : ""}` : payload.internalDueDate ? formatDateFr(payload.internalDueDate) : "À définir", prominent: true },
         { label: "Quantité demandée", value: commercial ? `${number(q.quantiteDemandee)} pièces` : "Sans commande ferme", prominent: commercial },
-        { label: "Quantité lancée dans cet OF", value: payload.quantiteLancee === undefined ? null : `${number(payload.quantiteLancee)} pièces`, prominent: true },
+        { label: "Quantité lancée", value: payload.quantiteLancee === undefined ? null : `${number(payload.quantiteLancee)} pièces`, prominent: true },
       ],
     },
     materialHeader(payload),
-  ]);
+  ], { compact: true });
   renderWorkshopBoxes(ctx, [
     { title: "Client et documents", columns: 2, fields: [
       { label: "Code client", value: payload.clientCode },
@@ -83,7 +83,7 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
       { label: "Référence / indice", value: [payload.pieceReference, payload.pieceIndice ? `Indice ${payload.pieceIndice}` : null].filter(Boolean).join(" / ") || null, prominent: true },
       { label: "Désignation", value: payload.pieceDesignation },
     ] },
-  ]);
+  ], { compact: true });
   if ((payload.commandes?.length ?? 0) > 1) renderWorkshopTable(ctx, {
     title: "Commandes regroupées",
     columns: [{ key: "command", label: "Commande ERP", flex: 2 }, { key: "reference", label: "Référence client", flex: 3 }],

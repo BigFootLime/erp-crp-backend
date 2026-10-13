@@ -22,6 +22,10 @@ function content(bytes: Buffer): string {
 }
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps the saved 1.6 rendering unchanged", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.6" }));
+    expect((await renderOfDocument(payload)).sha256).toBe("cf0e5a8ad3e9199d09d4799e6f28f37c1a0a308fd9733ceb748b9ec22a95f0e3");
+  });
   it("keeps the saved 1.5 rendering unchanged", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.5" }));
     const result = await renderOfDocument(payload);
@@ -49,6 +53,9 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text).toContain("01/07/2026");
     expect(text.split("Nomenclature")[0]).not.toContain("20/06/2026");
     expect(text).not.toContain("Opérationconsommatrice");
+    expect(text).toContain("Dimensionsmini");
+    expect(text).not.toContain("Dimensionsminimales");
+    expect(text).not.toContain("pertesincluses");
     expect(text.split("Nomenclature")[0]).not.toContain("Gammeapplicable");
     expect(text).toContain("Gammeapplicable-opérations");
   });
