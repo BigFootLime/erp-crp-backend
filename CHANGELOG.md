@@ -3,7 +3,7 @@
 ## En développement — Proformas et sociétés facturées (#1268)
 
 - Règles exactes de couverture des affaires, répartition de quantité entre sociétés, paiements partiels/annulés, libérations et avoirs d'acompte. Prix/remises/TVA lus dans la commande ; aucun champ « payé » ne fait autorité.
-- Modèle SQL additif et garde-fous de preuves/budgets préparés, non appliqués. Sept opérations API écrites avec Finance/RBAC, référence automatique, version, audit, notifications et replay atomique ;115 tests ciblés et build vert. Écrans, BL, acomptes, factures finales et qualification PostgreSQL encore en cours ; aucun déploiement ni parcours métier complet revendiqué pour ce lot.
+- Modèle SQL additif éprouvé sur PostgreSQL 17 dans une base isolée, avec permissions applicatives, émission figée, annulation sans encaissement et historique de répartition entre sociétés. Aucun changement de schéma Test/Prod. Sept opérations API écrites avec Finance/RBAC, référence automatique, version, audit, notifications et replay atomique ;115 tests ciblés et build vert. Écrans, BL, acomptes, factures finales et budgets financiers/concurrence encore en cours ; aucun déploiement ni parcours métier complet revendiqué pour ce lot.
 
 ## 2026-10-13 — Reprise stock et annulation explicite de brouillon (#1305)
 

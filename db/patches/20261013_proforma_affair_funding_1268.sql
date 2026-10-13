@@ -262,12 +262,16 @@ BEGIN
   IF parent_status IS DISTINCT FROM 'DRAFT' THEN
     RAISE EXCEPTION 'issued proforma child is immutable' USING ERRCODE='55000';
   END IF;
-  IF TG_TABLE_NAME='proforma_billing_parts' AND TG_OP<>'DELETE' AND NOT EXISTS (
-    SELECT 1 FROM public.delivery_affair_billing_shares share
-    JOIN public.proforma_affair_lines line ON line.allocation_id=share.allocation_id
-    WHERE share.id=NEW.billing_share_id AND line.id=NEW.proforma_line_id
-      AND share.billed_client_id=NEW.billed_client_id AND share.quantity=NEW.quantity
-  ) THEN RAISE EXCEPTION 'proforma billing part differs from affair billing share' USING ERRCODE='23514'; END IF;
+  -- NEW has the shape of the triggering table. A combined boolean expression
+  -- can still resolve another table's fields before its table-name predicate.
+  IF TG_TABLE_NAME='proforma_billing_parts' THEN
+    IF TG_OP<>'DELETE' AND NOT EXISTS (
+      SELECT 1 FROM public.delivery_affair_billing_shares share
+      JOIN public.proforma_affair_lines line ON line.allocation_id=share.allocation_id
+      WHERE share.id=NEW.billing_share_id AND line.id=NEW.proforma_line_id
+        AND share.active AND share.billed_client_id=NEW.billed_client_id AND share.quantity=NEW.quantity
+    ) THEN RAISE EXCEPTION 'proforma billing part differs from affair billing share' USING ERRCODE='23514'; END IF;
+  END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;
 END;
@@ -410,3 +414,15 @@ $$;
 DROP TRIGGER IF EXISTS trg_proforma_share_identity_1268 ON public.delivery_affair_billing_shares;
 CREATE TRIGGER trg_proforma_share_identity_1268 BEFORE INSERT OR UPDATE OR DELETE ON public.delivery_affair_billing_shares
   FOR EACH ROW EXECUTE FUNCTION public.fn_proforma_share_identity_1268();
+
+-- Schema runners may operate as postgres, whereas API transactions use cerp_app.
+-- Evidence is retained; only draft children can be removed under their guards.
+GRANT SELECT,INSERT,UPDATE ON public.proforma_client,public.delivery_affair_billing_shares,
+  public.delivery_affair_prepayment_terms TO cerp_app;
+REVOKE DELETE,TRUNCATE ON public.proforma_client,public.delivery_affair_billing_shares,
+  public.delivery_affair_prepayment_terms FROM cerp_app;
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.proforma_affair_lines,public.proforma_billing_parts TO cerp_app;
+REVOKE TRUNCATE ON public.proforma_affair_lines,public.proforma_billing_parts FROM cerp_app;
+GRANT SELECT,INSERT ON public.proforma_deposit_sources,public.proforma_receipt_assignments,public.proforma_receipt_releases TO cerp_app;
+REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_deposit_sources,public.proforma_receipt_assignments,public.proforma_receipt_releases FROM cerp_app;
+GRANT USAGE,SELECT ON SEQUENCE public.proforma_client_reference_seq TO cerp_app;
