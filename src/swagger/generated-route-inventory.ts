@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "e98dcb9485e42125a470cb4a0bc0b126c48be84732e74c255c73a10b614fe2f0";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "4091ebd51df25642121f440cd956b48aaaa2db67076e133d641e2be8497e7458";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -17115,7 +17115,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/proformas",
-    "source": "src/module/facturation/routes/proforma.routes.ts:7",
+    "source": "src/module/facturation/routes/proforma.routes.ts:8",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17132,7 +17132,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas",
-    "source": "src/module/facturation/routes/proforma.routes.ts:9",
+    "source": "src/module/facturation/routes/proforma.routes.ts:10",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17149,7 +17149,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/proformas/{id}",
-    "source": "src/module/facturation/routes/proforma.routes.ts:11",
+    "source": "src/module/facturation/routes/proforma.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17165,8 +17165,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/proformas/{id}/cancel",
+    "source": "src/module/facturation/routes/proforma.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(issue)",
+      "cancelProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(issue)"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/proformas/{id}/issue",
-    "source": "src/module/facturation/routes/proforma.routes.ts:13",
+    "source": "src/module/facturation/routes/proforma.routes.ts:16",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17183,7 +17200,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/proformas/{id}/preview",
-    "source": "src/module/facturation/routes/proforma.routes.ts:12",
+    "source": "src/module/facturation/routes/proforma.routes.ts:13",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17199,8 +17216,42 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/proformas/{id}/preview",
+    "source": "src/module/facturation/routes/proforma.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)",
+      "previewProformaChanges"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/{id}/refresh",
+    "source": "src/module/facturation/routes/proforma.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)",
+      "refreshProforma"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(draft_write)"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/proformas/affaires/{allocationId}/terms",
-    "source": "src/module/facturation/routes/proforma.routes.ts:10",
+    "source": "src/module/facturation/routes/proforma.routes.ts:11",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17217,7 +17268,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/preview",
-    "source": "src/module/facturation/routes/proforma.routes.ts:8",
+    "source": "src/module/facturation/routes/proforma.routes.ts:9",
     "middleware": [
       "anonymous",
       "authenticateToken",

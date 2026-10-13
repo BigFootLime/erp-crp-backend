@@ -28,6 +28,11 @@ INSERT INTO public.commande_ligne(id,commande_id,designation,prix_unitaire_ht,re
 INSERT INTO public.affaire(id,reference) VALUES(1268001,'QUAL1268-AFFAIRE');
 INSERT INTO public.commande_ligne_affaire_allocation(id,commande_id,commande_ligne_id,livraison_affaire_id,qty_ordered)
   VALUES(1268001,1268001,1268001,1268001,100);
+INSERT INTO public.commande_ligne(id,commande_id,designation,prix_unitaire_ht,remise_ligne,taux_tva)
+  VALUES(1268002,1268001,'Second article fictif qualification',5,0,20);
+INSERT INTO public.affaire(id,reference) VALUES(1268002,'QUAL1268-AFFAIRE-2');
+INSERT INTO public.commande_ligne_affaire_allocation(id,commande_id,commande_ligne_id,livraison_affaire_id,qty_ordered)
+  VALUES(1268002,1268001,1268002,1268002,10);
 SET LOCAL ROLE cerp_app;
 INSERT INTO public.proforma_client(id,reference,client_id,currency,preview_hash,preview_payload,created_by,correlation_id)
   VALUES('12680000-0000-4000-8000-000000000001','PF-QUAL1268',:'customer_id','EUR',repeat('a',64),'{}',7,'12680000-0000-4000-8000-000000000099');

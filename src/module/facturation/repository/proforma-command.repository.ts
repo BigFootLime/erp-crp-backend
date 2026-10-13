@@ -2,12 +2,13 @@ import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { financePreviewHash } from "../domain/finance-policy";
-import type { ProformaCommandResult, ProformaPreview, ProformaPreviewAffair } from "../types/proforma.types";
+import type { ProformaCommandResult, ProformaPreview } from "../types/proforma.types";
 import type { ProformaCreateBodyDTO, ProformaIssueBodyDTO, DeliveryPrepaymentTermsBodyDTO } from "../validators/proforma.validators";
 import type { FinanceActorContext } from "./workflow.repository.shared";
 import { issuerSnapshotAt } from "./workflow.repository.shared";
 import { buildProformaPreview } from "./proforma-preview.repository";
 import { readProformaOrderSources } from "./proforma-source.repository";
+import { persistProformaDraftContentTx } from "./proforma-draft-content.repository";
 import { runProformaCommand } from "./proforma-transaction.repository";
 
 type CommandContext = { actor: FinanceActorContext; idempotencyKey: string | undefined };
@@ -20,24 +21,6 @@ export async function lockProforma(tx: PoolClient, id: string, expectedVersion: 
   return row;
 }
 
-async function persistBillingShares(tx: PoolClient, affair: ProformaPreviewAffair, actorId: number, correlationId: string): Promise<Map<string, string>> {
-  const current = (await tx.query<{ id: string; billed_client_id: string; quantity: string; plan_version: number }>(
-    "SELECT id::text,billed_client_id,quantity::numeric(18,3)::text,plan_version FROM public.delivery_affair_billing_shares WHERE allocation_id=$1 AND active ORDER BY billed_client_id FOR UPDATE", [affair.allocation_id])).rows;
-  const same = current.length === affair.billing_parts.length && affair.billing_parts.every(part =>
-    current.some(share => share.billed_client_id === part.billed_client_id && share.quantity === part.quantity));
-  if (same) return new Map(current.map(share => [share.billed_client_id, share.id]));
-  await tx.query("UPDATE public.delivery_affair_billing_shares SET active=false,row_version=row_version+1 WHERE allocation_id=$1 AND active", [affair.allocation_id]);
-  const version = (await tx.query<{ version: number }>("SELECT COALESCE(max(plan_version),0)+1 AS version FROM public.delivery_affair_billing_shares WHERE allocation_id=$1", [affair.allocation_id])).rows[0]!.version;
-  const ids = new Map<string, string>();
-  for (const part of affair.billing_parts) {
-    const id = crypto.randomUUID();
-    await tx.query(`INSERT INTO public.delivery_affair_billing_shares(id,allocation_id,billed_client_id,quantity,plan_version,created_by,correlation_id)
-      VALUES($1::uuid,$2,$3,$4::numeric,$5,$6,$7::uuid)`, [id, affair.allocation_id, part.billed_client_id, part.quantity, version, actorId, correlationId]);
-    ids.set(part.billed_client_id, id);
-  }
-  return ids;
-}
-
 export async function repoCreateProforma(args: CommandContext & { input: ProformaCreateBodyDTO }): Promise<ProformaCommandResult> {
   return runProformaCommand({ ...args, commandType: "PROFORMA_DRAFT_CREATE", payload: args.input, work: async (tx, correlationId) => {
     const preview = await buildProformaPreview(tx, args.input, true);
@@ -47,21 +30,7 @@ export async function repoCreateProforma(args: CommandContext & { input: Proform
     const reference = `PF-${seq.year}-${seq.value.padStart(6, "0")}`;
     await tx.query(`INSERT INTO public.proforma_client(id,reference,client_id,currency,preview_hash,preview_payload,created_by,correlation_id)
       VALUES($1::uuid,$2,$3,$4,$5,$6::jsonb,$7,$8::uuid)`, [id, reference, preview.client_id, preview.currency, preview.preview_hash, JSON.stringify(preview), args.actor.userId, correlationId]);
-    for (const affair of preview.affairs) {
-      const shares = await persistBillingShares(tx, affair, args.actor.userId, correlationId);
-      const lineId = crypto.randomUUID();
-      await tx.query(`INSERT INTO public.proforma_affair_lines(id,proforma_id,allocation_id,quantity,source_revision,source_snapshot)
-        VALUES($1::uuid,$2::uuid,$3,$4::numeric,$5,$6::jsonb)`, [lineId, id, affair.allocation_id, affair.source_snapshot.quantity, affair.source_revision, JSON.stringify(affair.source_snapshot)]);
-      for (const part of affair.billing_parts) await tx.query(`INSERT INTO public.proforma_billing_parts
-        (proforma_line_id,billing_share_id,billed_client_id,quantity,unit_price_ex_tax,discount_percent,global_discount_percent,tax_rate_percent,total_ex_tax,tax_amount,total_incl_tax,billed_client_snapshot)
-        VALUES($1::uuid,$2::uuid,$3,$4::numeric,$5::numeric,$6::numeric,$7::numeric,$8::numeric,$9::numeric,$10::numeric,$11::numeric,$12::jsonb)`,
-        [lineId, shares.get(part.billed_client_id), part.billed_client_id, part.quantity, part.unit_price_ex_tax, part.discount_percent, part.global_discount_percent,
-          part.tax_rate_percent, part.total_ex_tax, part.tax_amount, part.total_incl_tax, JSON.stringify(part.billed_client_snapshot)]);
-      await tx.query(`INSERT INTO public.delivery_affair_prepayment_terms(allocation_id,requirement,proforma_line_id,decision_reason,updated_by,correlation_id)
-        VALUES($1,'PROFORMA',$2::uuid,$3,$4,$5::uuid) ON CONFLICT(allocation_id) DO UPDATE SET requirement='PROFORMA',proforma_line_id=EXCLUDED.proforma_line_id,
-          row_version=delivery_affair_prepayment_terms.row_version+1,decision_reason=EXCLUDED.decision_reason,updated_at=now(),updated_by=EXCLUDED.updated_by,correlation_id=EXCLUDED.correlation_id`,
-        [affair.allocation_id, lineId, `Préparation ${reference}`, args.actor.userId, correlationId]);
-    }
+    await persistProformaDraftContentTx(tx, { id, reference, preview, actorId: args.actor.userId, correlationId });
     return { aggregateId: id, deliveryAllocationIds: preview.affairs.map(affair=>affair.allocation_id), result: { id, reference, status: "DRAFT" as const, row_version: 1 } };
   } });
 }

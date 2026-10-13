@@ -230,6 +230,20 @@ BEGIN
       RAISE EXCEPTION 'proforma requires billed affairs before issuance' USING ERRCODE='23514';
     END IF;
     IF NEW.status='CANCELLED' AND EXISTS (
+      SELECT 1 FROM public.proforma_affair_lines source
+      JOIN public.bon_livraison_ligne_allocations allocation ON allocation.commande_ligne_affaire_allocation_id=source.allocation_id
+      JOIN public.bon_livraison_ligne line ON line.id=allocation.bon_livraison_ligne_id
+      JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
+      WHERE source.proforma_id=OLD.id AND delivery.statut IN ('DRAFT','READY','SHIPPED','DELIVERED')
+    ) THEN RAISE EXCEPTION 'proforma delivery must be reconciled before cancellation' USING ERRCODE='23514'; END IF;
+    IF NEW.status='CANCELLED' AND EXISTS (
+      SELECT 1 FROM public.proforma_affair_lines line
+      JOIN public.proforma_billing_parts part ON part.proforma_line_id=line.id
+      JOIN public.proforma_deposit_sources binding ON binding.proforma_billing_part_id=part.id
+      JOIN public.facture_source_allocations source ON source.id=binding.facture_source_allocation_id
+      WHERE line.proforma_id=OLD.id AND source.allocation_status IN ('DRAFT','CONSUMED')
+    ) THEN RAISE EXCEPTION 'proforma deposits must be reconciled before cancellation' USING ERRCODE='23514'; END IF;
+    IF NEW.status='CANCELLED' AND EXISTS (
       SELECT 1 FROM public.proforma_affair_lines line
       JOIN public.proforma_billing_parts part ON part.proforma_line_id=line.id
       JOIN public.proforma_deposit_sources deposit ON deposit.proforma_billing_part_id=part.id

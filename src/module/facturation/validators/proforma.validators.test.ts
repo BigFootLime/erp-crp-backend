@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deliveryPrepaymentTermsBodySchema, proformaDraftBodySchema, proformaIssueBodySchema, proformaReceiptAssignmentBodySchema } from "./proforma.validators";
+import { deliveryPrepaymentTermsBodySchema, proformaDraftBodySchema, proformaIssueBodySchema, proformaReceiptAssignmentBodySchema,
+  proformaCancelBodySchema, proformaRefreshBodySchema } from "./proforma.validators";
 
 const draft = { client_id: "CUSTOMER-A", affairs: [{ allocation_id: 12, billing_parts: [{ billed_client_id: "COMPANY-A", quantity: "100" }] }] };
 const assignment = { payment_allocation_id: "10000000-0000-4000-8000-000000000001", assignments: [{
@@ -26,6 +27,18 @@ describe("proforma API input boundaries", () => {
   it("requires explicit confirmed issuance and source version", () => {
     expect(proformaIssueBodySchema.safeParse({ expected_version: 1, preview_hash: "a".repeat(64), confirm: true }).success).toBe(true);
     expect(proformaIssueBodySchema.safeParse({ expected_version: 1, preview_hash: "a".repeat(64) }).success).toBe(false);
+  });
+  it("requires a confirmed refresh against the current version and preview", () => {
+    const refresh = { ...draft, expected_version: 1, preview_hash: "a".repeat(64), confirm: true };
+    expect(proformaRefreshBodySchema.safeParse(refresh).success).toBe(true);
+    expect(proformaRefreshBodySchema.safeParse({ ...refresh, expected_version: 0 }).success).toBe(false);
+    expect(proformaRefreshBodySchema.safeParse({ ...refresh, confirm: false }).success).toBe(false);
+    expect(proformaRefreshBodySchema.safeParse({ ...refresh, paid: true }).success).toBe(false);
+  });
+  it("requires a reasoned cancellation, without caller-provided reconciliation flags", () => {
+    expect(proformaCancelBodySchema.parse({ expected_version: 2, reason: "  Commande annulée  ", confirm: true })).toMatchObject({ reason: "Commande annulée" });
+    expect(proformaCancelBodySchema.safeParse({ expected_version: 2, reason: "x", confirm: true }).success).toBe(false);
+    expect(proformaCancelBodySchema.safeParse({ expected_version: 2, reason: "Commande annulée", confirm: true, reconciled: true }).success).toBe(false);
   });
   it("requires an existing payment allocation rather than an invented paid flag", () => {
     expect(proformaReceiptAssignmentBodySchema.parse(assignment)).toEqual(assignment);

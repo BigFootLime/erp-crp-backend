@@ -20,6 +20,8 @@ export const proformaSchemas: Record<string, Schema> = {
   ProformaSelection: object(selection,["client_id","affairs"]),
   ProformaCreate: object({ ...selection,preview_hash:hash },["client_id","affairs","preview_hash"]),
   ProformaConfirmation: object({ expected_version:integer,preview_hash:hash,confirm:{type:"boolean",enum:[true]} }),
+  ProformaRefresh: object({ ...selection,expected_version:integer,preview_hash:hash,confirm:{type:"boolean",enum:[true]} },["client_id","affairs","expected_version","preview_hash","confirm"]),
+  ProformaCancellation: object({ expected_version:integer,reason:{...text,minLength:3,maxLength:1000},confirm:{type:"boolean",enum:[true]} }),
   ProformaPreview: object({ version:{type:"integer",enum:[1]},client_id:text,client_snapshot:snapshot,currency:text,
     affairs:array(object({allocation_id:integer,source_revision:hash,source_snapshot:snapshot,billing_parts:array(object({
       billed_client_id:text,quantity,billed_client_snapshot:snapshot,unit_price_ex_tax:{...text,pattern:"^(?:0|[1-9]\\d*)(?:\\.\\d{1,4})?$"},
@@ -41,7 +43,10 @@ export function proformaOperation(key: string, original: Schema): Schema {
     'post /proformas':{summary:'Préparer une proforma et ses affaires',request:'ProformaCreate',response:'ProformaCommandResult',write:true,create:true},
     'get /proformas/{id}':{summary:'Lire la proforma figée et sa couverture de règlements',response:'ProformaDetail'},
     'get /proformas/{id}/preview':{summary:'Actualiser l’aperçu commercial du brouillon',response:'ProformaPreview'},
+    'post /proformas/{id}/preview':{summary:'Préparer les modifications du brouillon',request:'ProformaSelection',response:'ProformaPreview'},
+    'post /proformas/{id}/refresh':{summary:'Enregistrer les modifications confirmées du brouillon',request:'ProformaRefresh',response:'ProformaCommandResult',write:true},
     'post /proformas/{id}/issue':{summary:'Émettre la proforma commerciale sans facture fiscale',request:'ProformaConfirmation',response:'ProformaCommandResult',write:true},
+    'post /proformas/{id}/cancel':{summary:'Annuler la proforma après régularisation des acomptes et règlements',request:'ProformaCancellation',response:'ProformaCommandResult',write:true},
     'post /proformas/affaires/{allocationId}/terms':{summary:'Confirmer les conditions de paiement d’une affaire',request:'ProformaTermsDecision',response:'ProformaTermsResult',write:true},
   };
   const entry=definitions[key]; if(!entry)return original;

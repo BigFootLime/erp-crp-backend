@@ -62,6 +62,20 @@ export const proformaIssueBodySchema = z.object({
 
 export type ProformaIssueBodyDTO = z.infer<typeof proformaIssueBodySchema>;
 
+export const proformaRefreshBodySchema = selectionBodySchema.extend({
+  expected_version: z.number().int().positive().safe(),
+  preview_hash: z.string().regex(/^[a-f0-9]{64}$/i),
+  confirm: z.literal(true),
+}).superRefine(validateAffairSelection);
+export type ProformaRefreshBodyDTO = z.infer<typeof proformaRefreshBodySchema>;
+
+export const proformaCancelBodySchema = z.object({
+  expected_version: z.number().int().positive().safe(),
+  reason: z.string().trim().min(3).max(1000),
+  confirm: z.literal(true),
+}).strict();
+export type ProformaCancelBodyDTO = z.infer<typeof proformaCancelBodySchema>;
+
 export const proformaReceiptAssignmentBodySchema = z.object({
   payment_allocation_id: z.string().uuid(),
   assignments: z.array(z.object({

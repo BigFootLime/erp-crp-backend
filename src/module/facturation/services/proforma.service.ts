@@ -3,6 +3,7 @@ import type { ProformaDraftBodyDTO, ProformaListQueryDTO } from "../validators/p
 import { buildProformaPreview } from "../repository/proforma-preview.repository";
 import { repoCreateProforma, repoDecideDeliveryPrepaymentTerms, repoIssueProforma } from "../repository/proforma-command.repository";
 import { repoGetProforma, repoListProformas, repoPreviewExistingProforma } from "../repository/proforma-read.repository";
+import { repoCancelProforma, repoPreviewProformaChanges, repoRefreshProforma } from "../repository/proforma-lifecycle.repository";
 
 export const svcPreviewProforma = (input: ProformaDraftBodyDTO) => buildProformaPreview(pool, input, false);
 export const svcCreateProforma = (args: Parameters<typeof repoCreateProforma>[0]) => repoCreateProforma(args);
@@ -11,3 +12,6 @@ export const svcDecideDeliveryPrepaymentTerms = (args: Parameters<typeof repoDec
 export const svcListProformas = (query: ProformaListQueryDTO) => repoListProformas(query);
 export const svcGetProforma = (id: string) => repoGetProforma(id);
 export const svcPreviewExistingProforma = (id: string) => repoPreviewExistingProforma(id);
+export const svcPreviewProformaChanges = (id: string, input: ProformaDraftBodyDTO) => repoPreviewProformaChanges(id, input);
+export const svcRefreshProforma = (args: Parameters<typeof repoRefreshProforma>[0]) => repoRefreshProforma(args);
+export const svcCancelProforma = (args: Parameters<typeof repoCancelProforma>[0]) => repoCancelProforma(args);
