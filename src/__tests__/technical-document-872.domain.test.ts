@@ -32,8 +32,18 @@ test("technical sheet records the selected version and distinct setup/piece time
   assert.ok(!json.includes("pu_achat") && !json.includes("cout_mo"));
   const operation = sheet.sections.find((s) => s.title.startsWith("Gamme"))!
     .table!.rows[0];
-  assert.equal(operation.tr, "2");
-  assert.equal(operation.tp, "0.1");
+  assert.equal(operation.tr, "2 h");
+  assert.equal(operation.tp, "6 min");
+});
+test("technical routing shows only the client code and preserves short per-piece durations", () => {
+  const sheet = buildTechnicalSheet({ ...definition,
+    piece: { ...definition.piece, client_code: "CLI-007", client_name: "Nom confidentiel client" },
+    operations: [{ ...definition.operations[0], reglage_h: 1.5, piece_h: 0.008 }] });
+  assert.equal(sheet.summary.find(row => row.label === "Code client")?.value, "CLI-007");
+  assert.ok(!JSON.stringify(sheet).includes("Nom confidentiel client"));
+  const operation = sheet.sections.find(section => section.title === "Gamme de fabrication")!.table!.rows[0];
+  assert.equal(operation.tr, "1 h 30 min");
+  assert.equal(operation.tp, "0,48 min");
 });
 test("editing a child operation changes the PDF source hash even if the parent timestamp is unchanged", () => {
   const before = currentDocumentSource(buildTechnicalSheet(definition));

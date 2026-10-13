@@ -10,6 +10,11 @@
 //   3. Une réimpression ne crée ni révision, ni document, ni version GED.
 
 import { HttpError } from "../../../utils/httpError";
+import { readOfDocumentTechnical } from "../repository/of-document-technical.repository";
+import { readOfDocumentCommercial } from "../repository/of-document-commercial.repository";
+import { ofDocumentModernDebit, ofDocumentTechnicalIdentity } from "../domain/of-document-technical-source";
+import { ofDocumentSourceFingerprint } from "../domain/of-document-source-fingerprint";
+import { readOfDocumentStoredPdf } from "./of-document-stored-pdf";
 import { NOTIFICATION_TOPICS } from "../../../shared/notifications/routing";
 import { notifyVersioningTopic } from "../repository/of-versioning-notifications.repository";
 import {
@@ -52,6 +57,7 @@ import {
 } from "../domain/ar-recalage";
 import {
   buildOfDocumentPayload,
+  OF_WORKSHOP_TEMPLATE_VERSION,
   hashDocumentPayload,
   watermarkFor,
   type OfDocumentPayload,
@@ -980,10 +986,18 @@ export async function buildDocumentPayload(
   ofId: number,
   args: { revisionId?: string | null; documentStatut: string; generatedAt: string; auteur: string | null }
 ): Promise<{ payload: OfDocumentPayload; revisionId: string }> {
-  const header = await repo.readOfHeader(ofId);
+  return repo.withOfDocumentReadTransaction(tx => buildDocumentPayloadTx(ofId, args, tx));
+}
+
+async function buildDocumentPayloadTx(
+  ofId: number,
+  args: { revisionId?: string | null; documentStatut: string; generatedAt: string; auteur: string | null },
+  tx: repo.DbQueryer,
+): Promise<{ payload: OfDocumentPayload; revisionId: string }> {
+  const header = await repo.readOfHeader(ofId, tx);
   const revision = args.revisionId
-    ? await repo.getRevision(ofId, args.revisionId)
-    : await repo.getActiveRevision(ofId);
+    ? await repo.getRevision(ofId, args.revisionId, tx)
+    : await repo.getActiveRevision(ofId, tx);
 
   if (!revision) {
     throw new HttpError(
@@ -995,12 +1009,13 @@ export async function buildDocumentPayload(
     );
   }
 
-  const [operations, visaRows, familles, commercial, decoupeNotRequired] = await Promise.all([
-    repo.listOperations(ofId, revision.id),
-    repo.listVisas(ofId, revision.id),
-    repo.readMachineFamilies(),
-    repo.readCommercialContext(header),
-    repo.readDocumentMaterialExemption(ofId),
+  const [operations, visaRows, familles, commercial, technical, lastManufacture] = await Promise.all([
+    repo.listOperations(ofId, revision.id, tx),
+    repo.listVisas(ofId, revision.id, tx),
+    repo.readMachineFamilies(tx),
+    readOfDocumentCommercial(tx, ofId),
+    readOfDocumentTechnical(tx, ofId, revision),
+    repo.readLastFabrication(header, tx),
   ]);
 
   const visas: Record<number, Record<string, unknown>> = {};
@@ -1020,6 +1035,9 @@ export async function buildDocumentPayload(
 
   const snapshot = revision.snapshot as { matiere?: Record<string, unknown> | null } | null;
   const matiere = snapshot?.matiere ?? null;
+  const identity = ofDocumentTechnicalIdentity(technical.source);
+  const historical = revision.statut !== "ACTIVE";
+  const primaryMaterial = technical.evidence.materials[0];
 
   const payload = buildOfDocumentPayload({
     ofUuid: header.of_uuid,
@@ -1027,6 +1045,7 @@ export async function buildDocumentPayload(
     revisionCode: revision.revision_code,
     revisionStatut: revision.statut,
     ofStatut: header.statut,
+    templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
     documentStatut: args.documentStatut,
     snapshotId: revision.id,
     snapshotSha256: revision.snapshot_sha256,
@@ -1037,25 +1056,32 @@ export async function buildDocumentPayload(
       documentStatut: args.documentStatut,
     }),
 
-    commandeNumero: header.commande_numero,
-    clientCode: header.client_id,
+    commandeNumero: commercial.commands.length === 1 ? commercial.commands[0].numero : commercial.commands.length > 1 ? "Regroupement de commandes" : header.commande_numero,
+    clientCode: header.client_code ?? null,
     clientNom: header.client_nom,
-    affaires: commercial.affaires,
-    cadenceLivraison: commercial.cadenceLivraison,
-    quantites: commercial.quantites,
+    affaires: commercial.affairs,
+    cadenceLivraison: commercial.affairs.flatMap(affaire => affaire.delaiClient && affaire.quantite !== null
+      ? [{ date: affaire.delaiClient, quantite: affaire.quantite, affaireNumero: affaire.numero }] : []),
+    quantites: commercial.quantity,
+    commercialScope: commercial.scope,
+    commandes: commercial.commands.map(command => ({ numero: command.numero, referenceClient: command.customer_reference })),
+    sourceOrders: commercial.sourceOrders.map(source => ({ number: source.number, launched: source.launched, remaining: source.remaining })),
+    quantiteLancee: Number(header.quantite_lancee),
+    executions: technical.executions,
+    technicalEvidence: technical.evidence,
     cadenceProduction: [],
-    derniereFabrication: commercial.derniereFabrication,
+    derniereFabrication: lastManufacture,
 
-    pieceReference: header.piece_reference,
-    pieceDesignation: header.piece_designation,
-    pieceIndice: header.piece_indice,
-    gammeCode: header.gamme_code,
-    gammeVersion: header.gamme_version,
-    documentsAFournir: [],
+    pieceReference: identity.pieceReference ?? (historical ? null : header.piece_reference),
+    pieceDesignation: identity.pieceDesignation ?? (historical ? null : header.piece_designation),
+    pieceIndice: identity.pieceIndice ?? (historical ? null : header.piece_indice),
+    gammeCode: identity.gammeCode ?? (historical ? null : header.gamme_code),
+    gammeVersion: identity.gammeVersion ?? (historical ? null : header.gamme_version),
+    documentsAFournir: technical.evidence.documents,
     matiere: {
-      reference: (matiere?.reference as string | null) ?? null,
-      designation: (matiere?.designation as string | null) ?? null,
-      nuance: (matiere?.nuance as string | null) ?? null,
+      reference: primaryMaterial?.reference ?? (matiere?.reference as string | null) ?? null,
+      designation: primaryMaterial?.designation ?? (matiere?.designation as string | null) ?? null,
+      nuance: primaryMaterial?.grade ?? (matiere?.nuance as string | null) ?? null,
     },
     decoupe: {
       dimensions: (matiere?.dimensions as string | null) ?? null,
@@ -1068,14 +1094,16 @@ export async function buildDocumentPayload(
       masseTotaleKg: (matiere?.masseTotaleKg as number | null) ?? null,
       unite: (matiere?.unite as string | null) ?? null,
       methodeCalcul: null,
+      ...ofDocumentModernDebit(technical.evidence.materials),
     },
 
-    decoupeNotRequired,
+    decoupeNotRequired: technical.decoupeNotRequired,
     operations,
     visas,
     familles,
   });
 
+  payload.sourceFingerprint = ofDocumentSourceFingerprint(payload);
   return { payload, revisionId: revision.id };
 }
 
@@ -1106,12 +1134,28 @@ export async function previewDocument(
  */
 export async function emitDocument(
   ofId: number,
-  input: { revisionId: string | null; expectedSnapshotSha256: string | null },
+  input: { revisionId: string | null; expectedSnapshotSha256: string | null; expectedSourceFingerprint?: string | null },
   actor: OfActor,
   audit: AuditContext,
   idempotencyKey: string | null,
   generatedAt: string
 ) {
+  const assertReplayScope = (existing: repo.OfDocumentRow) => {
+    const saved = existing.payload as OfDocumentPayload;
+    if (Number(existing.of_id) !== ofId || (input.revisionId && existing.revision_id !== input.revisionId)
+      || (input.expectedSnapshotSha256 && saved.snapshotSha256 !== input.expectedSnapshotSha256)
+      || (input.expectedSourceFingerprint && saved.sourceFingerprint !== input.expectedSourceFingerprint)) {
+      throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette action a déjà été utilisée pour un autre document.");
+    }
+  };
+  if (idempotencyKey) {
+    const existing = await repo.withOfDocumentReadTransaction(tx => repo.findDocumentByIdempotencyKey(tx, idempotencyKey));
+    if (existing) {
+      assertReplayScope(existing);
+      const { pdf } = await readOfDocumentStoredPdf(existing);
+      return { document: existing, replayed: true as const, pdf };
+    }
+  }
   const { payload, revisionId } = await buildDocumentPayload(ofId, {
     revisionId: input.revisionId,
     documentStatut: "OFFICIEL",
@@ -1128,6 +1172,9 @@ export async function emitDocument(
       "OF_DOCUMENT_SNAPSHOT_CHANGED",
       "L'ordre de fabrication a changé depuis l'aperçu : réactualiser avant d'émettre."
     );
+  }
+  if (input.expectedSourceFingerprint && input.expectedSourceFingerprint !== payload.sourceFingerprint) {
+    throw new HttpError(409, "OF_DOCUMENT_SOURCE_CHANGED", "Les données de l'OF ont changé depuis l'aperçu. Actualisez avant d'émettre.");
   }
 
   const rendered = await renderOfDocument(payload);
@@ -1152,6 +1199,7 @@ export async function emitDocument(
       if (idempotencyKey) {
         const existing = await repo.findDocumentByIdempotencyKey(tx, idempotencyKey);
         if (existing) {
+          assertReplayScope(existing);
           if (!existing.pdf_sha256 || existing.pdf_byte_size === null) {
             throw new HttpError(
               409,
@@ -1159,10 +1207,11 @@ export async function emitDocument(
               "Le document idempotent n'a pas d'empreinte PDF exploitable."
             );
           }
+          const { pdf } = await readOfDocumentStoredPdf(existing);
           const publicResult: PublicResult = {
             document: existing,
             replayed: true,
-            pdf: rendered.buffer,
+            pdf,
           };
           return {
             publicResult,
@@ -1189,6 +1238,12 @@ export async function emitDocument(
       }
 
       await repo.lockOf(tx, ofId);
+      const current = await buildDocumentPayloadTx(ofId, {
+        revisionId: input.revisionId, documentStatut: "OFFICIEL", generatedAt, auteur: actor.username,
+      }, tx);
+      if (current.payload.sourceFingerprint !== payload.sourceFingerprint || current.revisionId !== revisionId) {
+        throw new HttpError(409, "OF_DOCUMENT_SOURCE_CHANGED", "Les données de l'OF ont changé pendant l'émission. Actualisez l'aperçu.");
+      }
 
       // Double émission : une révision ne porte qu'UN document officiel. L'index
       // unique partiel le garantit, ce contrôle le dit clairement.
@@ -1302,25 +1357,7 @@ export async function reprintDocument(
   if (!document) {
     throw new HttpError(404, "OF_DOCUMENT_NOT_FOUND", "Document introuvable sur cet ordre de fabrication.");
   }
-  if (!document.pdf_sha256) {
-    throw new HttpError(409, "OF_DOCUMENT_NO_PDF", "Ce document n'a pas d'empreinte PDF enregistrée.");
-  }
-
-  let pdf = await readArchivedOfDocument(document.pdf_sha256);
-  let source: "GED" | "PAYLOAD" = "GED";
-
-  if (!pdf) {
-    source = "PAYLOAD";
-    const rendered = await renderOfDocument(document.payload as OfDocumentPayload);
-    if (rendered.sha256 !== document.pdf_sha256) {
-      throw new HttpError(
-        500,
-        "OF_DOCUMENT_REPRINT_MISMATCH",
-        `La réimpression ne reproduit pas le document émis (attendu ${document.pdf_sha256}, obtenu ${rendered.sha256}).`
-      );
-    }
-    pdf = rendered.buffer;
-  }
+  const { pdf, source } = await readOfDocumentStoredPdf(document);
 
   await repo.withOfTransaction(async (tx) => {
     await repo.bumpReprintCount(tx, { ofId, documentId });

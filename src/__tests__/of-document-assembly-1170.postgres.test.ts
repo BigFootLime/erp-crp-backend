@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readCommercialContext, readDocumentMaterialExemption, type OfHeaderRow } from '../module/production/repository/of-versioning.repository';
 import { buildOfDocumentPayload } from '../module/production/domain/of-document';
 import { buildFixtureInput } from '../../test-support/production/of-document.fixture';
+import { readOfDocumentShippedQuantity } from '../module/production/repository/of-document-shipped.repository';
 
 const url = process.env.CERP_OF_DOCUMENT_PG_URL;
 if (url && (process.env.CERP_E2E_ISOLATED !== '1' || new URL(url).pathname !== '/of_document_assembly_1170')) {
@@ -19,19 +20,25 @@ describe.skipIf(!url)('OF document assembly coverage — real isolated PostgreSQ
     gamme_id: null, gamme_code: null, gamme_version: null, commande_numero: null, production_group_id: null, date_fin_prevue: null,
   });
   async function order(id: number, piece = 1, qty = 4, parent: number | null = null, version = piece + 10, status = 'BROUILLON', bom: number | null = null, client = 'TEST-CLIENT') {
-    await db.query(`INSERT INTO public.ordres_fabrication(id,numero,commande_ligne_id,client_id,piece_technique_id,piece_technique_version_id,parent_of_id,source_bom_line_id,quantite_lancee,statut)
-      VALUES($1,$2,118,$3,$4,$5,$6,$7,$8,$9)`, [id, `OF-${id}`, client, uuid(piece), uuid(version), parent, bom === null ? null : uuid(bom), qty, status]);
+    await db.query(`INSERT INTO public.ordres_fabrication(id,numero,commande_ligne_id,client_id,piece_technique_id,piece_technique_version_id,parent_of_id,source_bom_line_id,quantite_lancee,statut,article_id)
+      VALUES($1,$2,118,$3,$4,$5,$6,$7,$8,$9,$10)`, [id, `OF-${id}`, client, uuid(piece), uuid(version), parent, bom === null ? null : uuid(bom), qty, status, uuid(piece)]);
   }
   async function coverage(h = header()) { return (await readCommercialContext(h, db)).quantites; }
   beforeAll(async () => {
     expect((await db.query('SELECT current_database() AS name')).rows[0].name).toBe('of_document_assembly_1170');
     await db.query('BEGIN');
     await db.query(`
-      CREATE TABLE public.ordres_fabrication(id bigint PRIMARY KEY,numero text,commande_ligne_id bigint,client_id text,piece_technique_id uuid,piece_technique_version_id uuid,parent_of_id bigint,source_bom_line_id uuid,quantite_lancee numeric,quantite_bonne numeric DEFAULT 0,statut text,date_fin_reelle timestamptz,date_fin_prevue timestamptz,technical_snapshot_sha256 text,technical_snapshot jsonb);
-      CREATE TABLE public.commande_ligne_affaire_allocation(commande_ligne_id bigint,livraison_affaire_id bigint,qty_ordered numeric,qty_from_stock numeric,qty_reserved numeric,qty_to_produce numeric);
+      CREATE TABLE public.ordres_fabrication(id bigint PRIMARY KEY,numero text,commande_ligne_id bigint,client_id text,piece_technique_id uuid,piece_technique_version_id uuid,parent_of_id bigint,source_bom_line_id uuid,quantite_lancee numeric,quantite_bonne numeric DEFAULT 0,statut text,date_fin_reelle timestamptz,date_fin_prevue timestamptz,technical_snapshot_sha256 text,technical_snapshot jsonb,article_id uuid);
+      CREATE TABLE public.commande_ligne_affaire_allocation(commande_ligne_id bigint,livraison_affaire_id bigint,qty_ordered numeric,qty_from_stock numeric,qty_reserved numeric,qty_to_produce numeric,id uuid,commande_id bigint,article_ref_id uuid);
       CREATE TABLE public.affaire(id bigint PRIMARY KEY,reference text);
-      CREATE TABLE public.commande_ligne(id bigint PRIMARY KEY,delai_client date);
-      INSERT INTO public.commande_ligne_affaire_allocation VALUES(118,NULL,4,0,0,4);
+      CREATE TABLE public.commande_ligne(id bigint PRIMARY KEY,delai_client date,commande_id bigint,article_id uuid);
+      CREATE TABLE public.commande_client(id bigint PRIMARY KEY,client_id text);
+      CREATE TABLE public.bon_livraison(id uuid PRIMARY KEY,statut text);
+      CREATE TABLE public.bon_livraison_ligne(id uuid PRIMARY KEY,bon_livraison_id uuid);
+      CREATE TABLE public.bon_livraison_ligne_allocations(bon_livraison_ligne_id uuid,commande_ligne_affaire_allocation_id uuid,quantite numeric);
+      INSERT INTO public.commande_client VALUES(78,'TEST-CLIENT');
+      INSERT INTO public.commande_ligne VALUES(118,NULL,78,'${uuid(1)}');
+      INSERT INTO public.commande_ligne_affaire_allocation VALUES(118,NULL,4,0,0,4,'${uuid(1000)}',78,'${uuid(1)}');
     `);
     await db.query('SAVEPOINT empty_orders');
   });
@@ -68,6 +75,21 @@ describe.skipIf(!url)('OF document assembly coverage — real isolated PostgreSQ
     const before = (await db.query('SELECT row_to_json(o) AS row FROM public.ordres_fabrication o ORDER BY id')).rows;
     expect(await coverage()).toMatchObject({stockReserve: 3, couvertAutresOf: 0});
     expect((await db.query('SELECT row_to_json(o) AS row FROM public.ordres_fabrication o ORDER BY id')).rows).toEqual(before);
+  });
+  it('does not call manufactured or stocked goods a delivery and counts only actually dispatched BLs', async () => {
+    await order(101); await order(102, 2, 4, 101);
+    await db.query('UPDATE public.ordres_fabrication SET quantite_bonne=4');
+    expect((await coverage()).quantiteLivree).toBe(0);
+    for (const [i, status, quantity] of [[1,'DRAFT',1],[2,'READY',1],[3,'ANNULE',1],[4,'SHIPPED',2],[5,'DELIVERED',1]] as const) {
+      await db.query('INSERT INTO public.bon_livraison VALUES($1,$2)', [uuid(2000+i),status]);
+      await db.query('INSERT INTO public.bon_livraison_ligne VALUES($1,$2)', [uuid(2100+i),uuid(2000+i)]);
+      await db.query('INSERT INTO public.bon_livraison_ligne_allocations VALUES($1,$2,$3)', [uuid(2100+i),uuid(1000),quantity]);
+    }
+    expect(await readOfDocumentShippedQuantity(101, db)).toBe(3);
+    expect(await readOfDocumentShippedQuantity(102, db)).toBe(0);
+    expect((await coverage()).quantiteLivree).toBe(3);
+    await db.query("UPDATE public.ordres_fabrication SET client_id='OTHER-CLIENT' WHERE id=101");
+    expect(await readOfDocumentShippedQuantity(101, db)).toBe(0);
   });
   it('accepts only a justified frozen assembly material exemption and rejects missing or malformed evidence', async () => {
     await order(101);
