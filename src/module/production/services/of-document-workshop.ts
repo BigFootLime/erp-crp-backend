@@ -1,5 +1,5 @@
 import type { CerpDocumentContext } from "../../../shared/pdf/cerp-document";
-import { renderWorkshopBoxes, renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
+import { renderWorkshopBoxes, renderWorkshopTable, type WorkshopFieldBox } from "../../../shared/pdf/workshop-document-blocks";
 import { formatDateFr, formatNumberFr, formatQuantity, type OfDocumentPayload } from "../domain/of-document";
 import type { WorkshopDocumentTechnicalEvidence } from "../domain/of-document-technical-source";
 import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
@@ -8,6 +8,35 @@ const number = (value: number | null | undefined) => formatQuantity(value);
 const componentQuantity = (value: number | null, unit: string | null) => `${number(value)} ${unit === "pièce" && value !== 1 ? "pièces" : unit ?? ""}`;
 const mm = (value: number | null) => value === null ? "Non renseigné" : `${number(value)} mm`;
 const executionStates: Record<string, string> = { DONE: "Terminée", RUNNING: "En cours", IN_PROGRESS: "En cours", TODO: "À réaliser", READY: "Prête", BLOCKED: "Bloquée", CANCELLED: "Annulée" };
+
+function materialHeader(payload: OfDocumentPayload): WorkshopFieldBox {
+  const evidence = payload.technicalEvidence;
+  if (evidence?.materialNotRequired) return { title: "Matière et débit", fields: [
+    { label: "Matière première directe", value: "Non applicable — montage" },
+    { label: "Composants", value: evidence.nomenclature?.map(item => `${item.reference ?? item.repere ?? "À compléter"} : ${componentQuantity(item.requiredQuantity, item.unit)}`).join("\n") || "Voir nomenclature" },
+  ] };
+  if (evidence?.materials.length) {
+    const materials = evidence.materials;
+    const dimensionNames: Record<string, string> = { diametre_mm: "Ø", longueur_mm: "Lg", largeur_mm: "Largeur", epaisseur_mm: "Ép." };
+    const lines = (read: (material: typeof materials[number]) => string | null) => materials.map(material => read(material) ?? "À compléter").join("\n");
+    return { title: "Matière et débit", columns: 2, fields: [
+      { label: "Référence / désignation", value: lines(material => [material.reference, material.designation].filter(Boolean).join("\n")) },
+      { label: "Nuance / état", value: lines(material => [material.grade, material.condition].filter(Boolean).join(" / ") || null) },
+      { label: "Dimensions minimales du brut", value: lines(material => Object.entries(material.dimensions).map(([key, value]) => `${dimensionNames[key] ?? key} ${number(value)} mm`).join("\n") || null) },
+      { label: "Besoin total de cet OF", value: lines(material => material.requiredQuantity === null ? null : `${number(material.requiredQuantity)} ${material.unit ?? ""}`), prominent: true },
+      { label: "Débit par brut, pertes incluses", value: lines(material => material.debitPerBlank === null ? null : `${number(material.debitPerBlank)} ${material.unit ?? ""}`) },
+      { label: "Opération consommatrice", value: lines(material => material.phase === null ? null : `Phase ${material.phase}`) },
+    ] };
+  }
+  return { title: "Matière et débit", columns: 2, fields: [
+    { label: "Référence / désignation", value: [payload.matiere.reference, payload.matiere.designation].filter(Boolean).join("\n") || null },
+    { label: "Nuance", value: payload.matiere.nuance },
+    { label: "Section du brut", value: payload.decoupe.dimensions },
+    { label: "Longueur du brut", value: mm(payload.decoupe.longueurBrutMm) },
+    { label: "Bruts / pièces par brut", value: `${number(payload.decoupe.nombreBruts)} / ${number(payload.decoupe.piecesParBrut)}` },
+    { label: "Besoin total", value: `${mm(payload.decoupe.longueurTotaleMm)} / ${payload.decoupe.unite ?? "Non renseignée"}` },
+  ] };
+}
 
 function visaText(phase: OfDocumentPayload["phases"][number]): string {
   const visa = phase.visa;
@@ -28,24 +57,33 @@ function visaText(phase: OfDocumentPayload["phases"][number]): string {
 export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDocumentPayload): void {
   const commercial = payload.commercialScope ? payload.commercialScope === "CUSTOMER" : Boolean(payload.commandeNumero || payload.affaires.length);
   const q = payload.quantites;
+  const arDates = [...new Set(payload.affaires.flatMap(affaire => affaire.delaiClient ? [affaire.delaiClient] : []))].sort();
   renderWorkshopBoxes(ctx, [
     {
       title: commercial ? "Commande" : "Fabrication",
+      columns: 2,
       fields: [
-        { label: "Référence commande", value: payload.commandeNumero ?? (commercial ? null : "Sans commande ferme rattachée") },
-        ...(payload.commandes?.length === 1 && payload.commandes[0].referenceClient ? [{ label: "Référence du client", value: payload.commandes[0].referenceClient }] : []),
-        ...(commercial ? [{ label: "Quantité demandée", value: `${number(q.quantiteDemandee)} pièces`, prominent: true }] : []),
+        { label: "Référence commande", value: [payload.commandes?.length === 1 ? payload.commandes[0].referenceClient : null,
+          payload.commandeNumero ?? (commercial ? null : "Sans commande ferme")].filter(Boolean).join("\n") || null },
+        { label: arDates.length > 1 ? "AR le plus proche" : "Délai client — AR", value: arDates.length
+          ? `${formatDateFr(arDates[0])}${arDates.length > 1 ? "\nVoir cadence détaillée" : ""}` : commercial ? null : "Non applicable", prominent: true },
+        { label: "Quantité demandée", value: commercial ? `${number(q.quantiteDemandee)} pièces` : "Sans commande ferme", prominent: commercial },
         { label: "Quantité lancée dans cet OF", value: payload.quantiteLancee === undefined ? null : `${number(payload.quantiteLancee)} pièces`, prominent: true },
       ],
     },
-    {
-      title: "Affaires et documents",
-      fields: [...(payload.affaires.length ? payload.affaires.slice(0, 2).map(affaire => ({
-        label: affaire.numero ?? `Affaire #${affaire.affaireId}`,
-        value: `${number(affaire.quantite)} pièces - AR ${formatDateFr(affaire.delaiClient)}`,
-      })) : [{ label: "Affectation", value: "Aucune affaire de livraison rattachée" }]),
-      ...(payload.documentsAFournir.length ? [{ label: "Documents à fournir", value: payload.documentsAFournir.map(document => `- ${document}`).join("\n") }] : [])],
-    },
+    materialHeader(payload),
+  ]);
+  renderWorkshopBoxes(ctx, [
+    { title: "Client et documents", columns: 2, fields: [
+      { label: "Client / affaires", value: [payload.clientCode, payload.clientNom,
+        ...payload.affaires.map(affaire => affaire.numero ?? `Affaire #${affaire.affaireId}`)].filter(Boolean).join("\n") || null },
+      { label: "Documents à fournir", value: payload.documentsAFournir.map(document => `- ${document}`).join("\n") || "Aucun document requis" },
+    ] },
+    { title: "Pièce", fields: [
+      { label: "Référence / indice", value: [payload.pieceReference, payload.pieceIndice ? `Indice ${payload.pieceIndice}` : null].filter(Boolean).join(" / ") || null, prominent: true },
+      { label: "Désignation", value: payload.pieceDesignation },
+      { label: "Gamme applicable", value: [payload.gammeCode, payload.gammeVersion ? `v${payload.gammeVersion}` : null].filter(Boolean).join(" / ") || null },
+    ] },
   ]);
   if ((payload.commandes?.length ?? 0) > 1) renderWorkshopTable(ctx, {
     title: "Commandes regroupées",
@@ -57,17 +95,6 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
     columns: [{ key: "of", label: "OF source", flex: 3 }, { key: "launched", label: "Quantité", flex: 1 }, { key: "remaining", label: "Production restant à affecter", flex: 2 }],
     rows: payload.sourceOrders!.map(source => ({ cells: { of: source.number, launched: number(source.launched), remaining: number(source.remaining) } })),
   });
-  renderWorkshopBoxes(ctx, [
-    { title: "Client", fields: [
-      { label: "Code client", value: payload.clientCode },
-      { label: "Nom", value: payload.clientNom },
-    ] },
-    { title: "Pièce", fields: [
-      { label: "Référence / indice", value: [payload.pieceReference, payload.pieceIndice ? `Indice ${payload.pieceIndice}` : null].filter(Boolean).join(" / ") || null, prominent: true },
-      { label: "Désignation", value: payload.pieceDesignation },
-      { label: "Gamme applicable", value: [payload.gammeCode, payload.gammeVersion ? `v${payload.gammeVersion}` : null].filter(Boolean).join(" / ") || null },
-    ] },
-  ]);
   if (payload.affaires.length > 2) renderWorkshopTable(ctx, {
     title: "Toutes les affaires rattachées",
     columns: [{ key: "ref", label: "Affaire", flex: 2 }, { key: "ar", label: "Délai AR", flex: 1.2 }, { key: "qty", label: "Pièces", flex: 0.8 }],
@@ -85,23 +112,9 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
       total: componentQuantity(component.requiredQuantity, component.unit),
     } })),
   });
-  if (payload.technicalEvidence?.materialNotRequired) {
-    ctx.notesSection("Matière première", "Non applicable - montage sans matière première directe, validé dans le dossier.");
-  } else if (payload.technicalEvidence?.materials.length) {
+  if (payload.technicalEvidence?.materials.length) {
     renderDocumentMaterialEvidence(ctx, payload.technicalEvidence);
-  } else {
-  renderWorkshopBoxes(ctx, [
-    { title: "Matière première", fields: [
-      { label: "Référence", value: payload.matiere.reference },
-      { label: "Désignation / nuance", value: [payload.matiere.designation, payload.matiere.nuance].filter(Boolean).join(" / ") || null },
-      { label: "Section du brut", value: payload.decoupe.dimensions },
-    ] },
-    { title: "Débit", fields: [
-      { label: "Longueur du brut", value: mm(payload.decoupe.longueurBrutMm) },
-      { label: "Bruts / pièces par brut", value: `${number(payload.decoupe.nombreBruts)} / ${number(payload.decoupe.piecesParBrut)}` },
-      { label: "Longueur totale / unité", value: `${mm(payload.decoupe.longueurTotaleMm)} / ${payload.decoupe.unite ?? "Non renseignée"}` },
-    ] },
-  ]);
+  } else if (!payload.technicalEvidence?.materialNotRequired) {
   const details = [
     payload.decoupe.longueurUtileMm !== null ? `Longueur utile : ${mm(payload.decoupe.longueurUtileMm)}` : null,
     payload.decoupe.traitDeScieMm !== null ? `Trait de scie : ${mm(payload.decoupe.traitDeScieMm)}` : null,
@@ -179,21 +192,7 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
 }
 
 function renderDocumentMaterialEvidence(ctx: CerpDocumentContext, evidence: WorkshopDocumentTechnicalEvidence): void {
-  const dimensionLabels: Record<string, string> = { diametre_mm: "Diamètre", longueur_mm: "Longueur", largeur_mm: "Largeur", epaisseur_mm: "Épaisseur" };
   for (const material of evidence.materials) {
-    renderWorkshopBoxes(ctx, [
-      { title: "Matière première", fields: [
-        { label: "Référence / désignation", value: [material.reference, material.designation].filter(Boolean).join("\n") },
-        { label: "Nuance / état exigés", value: [material.grade, material.condition].filter(Boolean).join(" / ") || null },
-        ...(Object.keys(material.dimensions).length ? [{ label: "Dimensions minimales", value: Object.entries(material.dimensions)
-          .map(([dimension, value]) => `${dimensionLabels[dimension] ?? dimension} : ${number(value)} mm`).join("\n") }] : []),
-      ] },
-      { title: material.confirmed ? "Débit validé" : "Débit à préparer", fields: [
-        { label: "Opération consommatrice", value: material.phase === null ? null : `Phase ${material.phase}` },
-        { label: "Besoin total de cet OF", value: material.requiredQuantity === null ? null : `${number(material.requiredQuantity)} ${material.unit ?? "unité non renseignée"}`, prominent: true },
-        ...(material.debitPerBlank === null ? [] : [{ label: "Quantité de stock par brut (pertes de débit incluses)", value: `${number(material.debitPerBlank)} ${material.unit ?? "unité non renseignée"}` }]),
-      ] },
-    ]);
     if (material.certificates.length || material.manualChecks.length) ctx.notes([
       material.certificates.length ? `Certificats requis : ${material.certificates.join(", ")}` : null,
       ...material.manualChecks,
