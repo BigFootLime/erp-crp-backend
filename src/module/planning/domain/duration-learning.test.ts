@@ -8,6 +8,15 @@ const source=(patch:Partial<LearningSource>={}):LearningSource=>({operationId:'o
   completedAt:'2026-09-01T09:00:00Z',context,legacyUnmapped:false,segments:[segment()],
   quantities:[{id:'q1',pointageId:'p1',good:8,scrap:2,rework:0,pending:0,declaredAt:'2026-09-01T09:00:00Z'}],...patch});
 describe('observations from manufacturing measurements',()=>{
+  it('does not consume a new setup with historical time or learn multiple cycles as one setup',()=>{
+    const input=source({status:'READY',cycleStartedAt:'2026-09-02T07:00:00Z',segments:[segment(),
+      segment({id:'old-setup',bucket:'SETUP',start:'2026-09-01T07:30:00Z',end:'2026-09-01T08:00:00Z'})]});
+    const waiting=buildDurationObservation(input);
+    expect(waiting).toMatchObject({validated:false,excludedReason:'MULTIPLE_PRODUCTION_CYCLES',setupCompletedMinutes:0,current:null});
+    expect(waiting.pointageIds).toContain('old-setup');
+    input.segments.push(segment({id:'new-setup',bucket:'SETUP',start:'2026-09-02T07:30:00Z',end:'2026-09-02T07:40:00Z'}));
+    expect(buildDurationObservation(input).setupCompletedMinutes).toBe(10);
+  });
   it('groups a manufacturing run, separates setup and does not multiply overlapping operator time',()=>{
     const observed=buildDurationObservation(source({segments:[segment(),segment({id:'p2'}),
       segment({id:'setup',bucket:'SETUP',start:'2026-09-01T07:30:00Z',end:'2026-09-01T08:00:00Z'}),

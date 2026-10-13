@@ -13,7 +13,7 @@ export type ServicePreparationSource = {
     operations: Array<{ id: string; sourceId: string | null; label: string; returnDue: string | null }>;
     origins: Array<{ id: string; label: string }>;
     offers: Array<{ id: string; articleId: string; supplierId: string; price: number | null; unit: string; delay: number | null }>;
-    drafts: Array<{ operationId: string; quantity: number; orderId: string; code: string }>;
+    drafts: Array<{ purchaseId: string | null; operationId: string; quantity: number; orderId: string; code: string }>;
     predecessorState: Array<{ operationId: string; predecessors: Array<{ status: string; good: number }> }>;
 };
 
@@ -29,10 +29,12 @@ export function servicePurchasePreparations(source: ServicePreparationSource, se
         const predecessors = source.predecessorState.find(state => state.operationId === operation?.id)?.predecessors ?? [];
         const realQuantity = predecessors.length && predecessors.every(predecessor => predecessor.status === 'DONE')
             ? Math.max(0, Math.min(source.of.quantity, ...predecessors.map(predecessor => predecessor.good))) : null;
-        const existing = operation ? source.drafts.filter(draft => draft.operationId === operation.id) : [];
+        const unassigned = operation && source.drafts.some(draft => draft.operationId === operation.id && !draft.purchaseId);
+        const existing = operation ? source.drafts.filter(draft => draft.operationId === operation.id && draft.purchaseId === purchase.id) : [];
         const existingQuantity = existing.reduce((total, draft) => total + draft.quantity, 0);
-        const missing = realQuantity === null ? null : Math.max(0, realQuantity - existingQuantity);
+        const missing = realQuantity === null || unassigned ? null : Math.max(0, realQuantity - existingQuantity);
         const actions: string[] = [];
+        if (unassigned) actions.push('Rapprocher les lignes historiques de leur prestation avant de préparer un complément.');
         if (!source.of.hash) actions.push('Valider le dossier technique avant de créer les lignes fournisseur.');
         if (!purchase.article_id) actions.push('Relier cette prestation à son article fournisseur.');
         if (!operation) actions.push('Choisir ou relier la phase de sous-traitance de cette prestation.');

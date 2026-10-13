@@ -11,6 +11,70 @@
 - Les lignes d’inventaire indiquent leur unité et l’obligation de compter les barres, sans divulguer les longueurs théoriques en mode aveugle.
 
 
+## 2026-10-12 — Annulation revue avant prélèvement (#1033, en préparation)
+
+- Présenter les engagements avant annulation et permettre au planificateur de conserver la fabrication pour le stock libre.
+- Garder les réservations donneuses, décisions antérieures et historiques ; réconcilier les conflits et reprises réseau.
+- Lot Urgences toujours non déployé ; retour après prélèvement à terminer.
+
+
+## 2026-10-12 — Reprise après ajout de récupération (#1034, en préparation)
+
+- Prévoir explicitement le réglage et la reprise des phases clôturées hors découpe, en conservant leur historique.
+- Conserver le refus définitif après découpe et les engagements clients.
+- PR Urgences en cours, non déployée.
+
+
+## 2026-10-12 — Compléments de récupération (#1034, en préparation)
+
+- Enregistrer les compléments fournisseur et créneaux du regroupement dans la même transaction ; corriger le comptage par prestation.
+- Branche Urgences non déployée ; recette globale et annulation en cours.
+
+
+## 2026-10-12 — Prévisions fournisseur (#1034, en préparation)
+
+- Prévoir le retour des prestations avec les préparations fournisseur enregistrées, sans inventer d’envoi ni contourner la qualité.
+- Lot Urgences encore en brouillon ; ajout externe transactionnel et recette globale à terminer.
+
+
+## 2026-10-12 — Application transactionnelle des récupérations regroupées (#1034, en préparation)
+
+- Ajouter la découverte des producteurs compatibles et la confirmation atomique : allocation, quantité, matière, composants, créneaux et dossier actualisé.
+- Préserver les temps et quantités déjà pointés, protéger les affaires donneuses et retrouver le producteur lors de l’approbation.
+- Refuser les propositions périmées ; conserver le rejeu exact et les preuves immuables. Aucun prélèvement autorisé par cet ajout seul.
+- Lot toujours en brouillon : prestations externes, phases clôturées, réconciliation après engagement et recette S06 restent à terminer avant déploiement.
+
+
+## 2026-10-12 — Réservations matière des ajouts de récupération (#1034, en préparation)
+
+- Ajouter un transfert transactionnel interne vers un regroupement ayant déjà consommé de la matière : conserver les consommations, les quantités préparées, les lots et les compteurs de stock.
+- Conserver le journal initial du regroupement et enregistrer les compléments dans un journal immuable. Restituer les quantités exactes lors d'une dissolution encore autorisée, sans doubler les nouveaux lots.
+- Recontrôler les exigences, la qualité et les origines après verrouillage ; refuser un transfert sans allocation exacte de récupération dans la même transaction.
+- Fonction interne seulement : le raccordement à la validation du planning reste à terminer. Aucun nouveau bouton, activation ou déploiement.
+
+## 2026-10-12 — Aperçu d’ajout avant fin de découpe (#1034, en préparation)
+
+- Calculer la charge supplémentaire d’un OF de récupération sur un regroupement compatible, sans modifier les quantités pointées, les réservations ni les créneaux.
+- Contrôler les matières et sous-pièces physiques, les origines matière, les calendriers et capacités partagées, l’AR initial et les délais courants de chaque affaire.
+- Refuser une découpe clôturée, une autre PT, un autre client ou une fin trop tardive ; proposer de garder l’OF séparé. Lecture réservée au planificateur, sans cache ni action d’application à ce stade.
+- Lot toujours en brouillon : aucun déploiement ni validation de recette complète.
+
+## 2026-10-12 — Récupérations dans les producteurs regroupés (#1033/#1034, en préparation)
+
+- Maintenir le blocage de démarrage des récupérations en attente ou annulées à travers les regroupements actifs et leurs sous-pièces.
+- Protéger le planning des autres clients après le prélèvement également ; retrouver le client des OF sources et protéger les enfants d'un producteur partagé.
+- Contrôler les chemins multiples, les groupes dissous et les cycles de généalogie avec le SQL réel sous le rôle applicatif, sans modification des données métier. Aucun changement de schéma ni activation du parcours d'ajout avant découpe.
+
+## 2026-10-12 — Réceptions des récupérations urgentes (#1033, en préparation)
+
+- Réserver les pièces conformes à l’affaire donneuse d’origine, dans la limite du prélèvement urgent ; conserver le surplus libre.
+- Conserver une preuve immuable par réception, lot et réservation, y compris après libération qualité partielle et depuis un OF regroupé.
+- Exposer les quantités réaffectées et restantes ; protéger contre les doubles attributions, les changements d’identité de l’OF et le dépassement de sa part de production.
+- Migration additive avec verify et rollback protégé. Lot #1033/#1034 toujours en brouillon, sans déploiement.
+
+- #1209 — Sous-traitance : clôture après réception complète, sans autoriser de nouveaux mouvements.
+
+
 ## 2026-10-12 — Couleurs clients et maintenance annuelle (#1169 / #888)
 
 - Palette client commune sans rouge ; rouge réservé aux problèmes.

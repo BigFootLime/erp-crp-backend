@@ -15,6 +15,10 @@ export const CLIENT_WRITE_ROLES = [
   "Commercial",
 ] as const;
 
+export function canWriteClient(role: string | undefined | null): boolean {
+  return hasGrantedAccountModuleAccess() || effectiveRoleHasAny(role, CLIENT_WRITE_ROLES);
+}
+
 /**
  * Matrice données sensibles (docs frontend erp-core-completion-and-sensitive-data) :
  * IBAN/BIC = critique, masqué par défaut, complet uniquement pour compta/admin.
