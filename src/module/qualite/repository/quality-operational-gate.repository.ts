@@ -94,8 +94,9 @@ async function inspectOperationalLotQualityEligibility(params: {
         qc.unite,qc.trigger_type,qc.reception_ligne_id::text,
         (qc.validation_date IS NULL OR COALESCE(qc.verdict, 'EN_ATTENTE') = 'EN_ATTENTE') AS pending
       FROM public.quality_control qc
-      WHERE qc.lot_id = $1::uuid
-         OR (qc.source_type = 'LOT' AND qc.source_id = $1::text)
+      WHERE (qc.lot_id = $1::uuid
+         OR (qc.source_type = 'LOT' AND qc.source_id = $1::text))
+        AND qc.status::text <> 'CANCELLED'
       ORDER BY qc.control_date DESC, qc.id DESC
       LIMIT 1
       ${params.lockRows ? "FOR UPDATE" : ""}
