@@ -9,6 +9,8 @@ import { ZodError, type ZodTypeAny, type z } from "zod";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
+import { requestHasElevatedAccountModuleAccess } from '../../access-control/context/account-module-access.context';
+import { roleHasQualityCapability } from '../domain/quality-policy';
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 
@@ -270,7 +272,11 @@ export const getExecution: RequestHandler = asyncHandler(async (req, res) => {
   const { params } = parseOrThrow(idParamSchema, { params: req.params });
   const out = await svcGetExecution(params.id);
   if (!out) notFound("Contrôle");
-  res.json(out);
+  const canCancel = out && ['PLANNED','IN_PROGRESS'].includes(out.status) && !out.validation_date
+    && out.measurements?.length === 0 && out.ledger
+    && Object.entries(out.ledger).filter(([key]) => key !== 'population').every(([,value]) => value === 0)
+    && (requestHasElevatedAccountModuleAccess(req) || roleHasQualityCapability(req.user?.role, 'release_decide'));
+  res.json({ ...out, can_cancel_empty: Boolean(canCancel) });
 });
 
 export const cancelEmptyExecution: RequestHandler = asyncHandler(async (req, res) => {
