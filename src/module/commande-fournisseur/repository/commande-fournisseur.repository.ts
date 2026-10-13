@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { applyAcknowledgementPricesTx } from "./supplier-acknowledgement.repository";
-import { readCatalogueLinePriceTx } from "./catalogue-line-pricing.repository";
+import { readCatalogueLinePriceTx,readCatalogueOrderQuantityTx,assertCatalogueMinimumsTx } from "./catalogue-line-pricing.repository";
+import { catalogueBatchQuantities,catalogueQuantityKey } from '../domain/catalogue-order-quantity';
 import { priceCatalogueLine, changesCataloguePricing, type CataloguePriceSnapshot } from "../domain/catalogue-line-pricing";
 import {findUntouchedMaterialDraftTx,recordMaterialDraftBaselineTx} from './material-draft-baseline.repository';
 import { assertSubcontractPurchaseReadyTx,assertSubcontractLineIdentityTx } from './subcontract-purchase.repository';
@@ -792,9 +793,10 @@ async function insertLigneTx(
   position: number,
   ligne: CreateCommandeBodyDTO["lignes"][number],
   userId: number,
-  materialCoverageConfirmed = false
+  materialCoverageConfirmed = false,
+  catalogueOrderQuantity?: number
 ): Promise<string> {
-  const cataloguePricing=ligne.apply_catalogue_pricing?await readCatalogueLinePriceTx(tx,commandeId,ligne):null;
+  const cataloguePricing=ligne.apply_catalogue_pricing?await readCatalogueLinePriceTx(tx,commandeId,ligne,{orderQuantity:catalogueOrderQuantity}):null;
   if(cataloguePricing)ligne={...ligne,...cataloguePricing.price};
   if(ligne.of_id&&!materialCoverageConfirmed&&(ligne.type==="MATIERE"||ligne.type==="ARTICLE"))await assertLegacyMaterialWrite(tx,ligne.of_id,ligne.article_id??null);
   const res = await tx.query<{ id: string }>(
@@ -951,8 +953,9 @@ export async function repoCreateCommandeFournisseur(
     const id = inserted.rows[0].id;
 
     let position = 1;
+    const catalogueQuantities=catalogueBatchQuantities(body.lignes);
     for (const ligne of body.lignes) {
-      await insertLigneTx(client, id, position, ligne, audit.user_id);
+      await insertLigneTx(client, id, position, ligne, audit.user_id,false,catalogueQuantities.get(catalogueQuantityKey(ligne)));
       position += 1;
     }
 
@@ -1159,12 +1162,13 @@ export async function repoUpdateLigne(
     const existing=exists.rows[0];
     let pricingSnapshot=existing.catalogue_pricing_snapshot;
     if(body.patch.apply_catalogue_pricing){
-      const quoted=await readCatalogueLinePriceTx(client,id,{...existing,...body.patch});
+      const quoted=await readCatalogueLinePriceTx(client,id,{...existing,...body.patch},{excludeLineId:ligneId});
       body.patch={...body.patch,...quoted.price};pricingSnapshot=quoted.snapshot;
     }else if(changesCataloguePricing(existing,body.patch)){
       pricingSnapshot=null;
     }else if(pricingSnapshot&&body.patch.quantite!==undefined){
-      body.patch={...body.patch,...priceCatalogueLine(pricingSnapshot,body.patch.quantite)};
+      const orderQuantity=await readCatalogueOrderQuantityTx(client,id,{...existing,...body.patch},ligneId);
+      body.patch={...body.patch,...priceCatalogueLine(pricingSnapshot,body.patch.quantite,orderQuantity)};
     }
 
     const sets: string[] = [];
@@ -1387,6 +1391,7 @@ export async function repoTransitionCommandeFournisseur(
     }
 
     // Préconditions métier par nature de transition.
+    if(["submit","approve","send"].includes(kind))await assertCatalogueMinimumsTx(client,id);
     const contractProof = ["submit","approve","send"].includes(kind) ? await readSupplierOpenContractProofTx(client,id,true) : null;
     const qualification = ["submit", "approve", "send"].includes(kind)
       ? await readPurchaseQualificationTx(client, id, true)
@@ -2321,6 +2326,7 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
       VALUES($1,$6,$2::uuid,$3,$4::uuid,'Approvisionnement préparé. Confirmer les quantités, prix et délais avant validation.', $5,$5) RETURNING id`,
       [code,first.supplierId,first.currency,first.destinationId,audit.user_id,group.some(l=>l.ofId)?'RUPTURE_OF':'MANUEL'])).rows[0].id;
     const position = reusable ? Number((await tx.query('SELECT COALESCE(max(position),0) AS position FROM public.commande_fournisseur_ligne WHERE commande_id=$1::uuid',[id])).rows[0].position) : 0;
+    const catalogueQuantities=catalogueBatchQuantities(group.map(line=>({catalogue_id:line.catalogueId,article_id:line.articleId,unite:line.unit,quantite:line.quantity})));
     for (const [index,line] of group.entries()) {
       const lineId = await insertLigneTx(tx,id,position+index+1,{
         type:line.type??"MATIERE",article_id:line.articleId,designation:line.designation,unite:line.unit,unite_stock:line.stockUnit??line.unit,coef_conversion:line.coefficient??1,
@@ -2329,7 +2335,7 @@ export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraf
         quantite:line.quantity,prix_unitaire_ht:line.price,remise_pct:0,tva_pct:20,frais_ht:0,date_besoin:line.due,delai_jours:line.delay,
         of_id:line.ofId,operation_libelle:line.operation,magasin_id:line.destinationId,
         exigences_qualite:line.requirements.map(valeur=>({type:"SPECIFICATION" as const,valeur,obligatoire:true})),documents_attendus:[],besoins:[],
-      },audit.user_id,true);
+      },audit.user_id,true,catalogueQuantities.get(catalogueQuantityKey({catalogue_id:line.catalogueId,article_id:line.articleId,unite:line.unit,quantite:line.quantity})));
       if(line.subcontract)await tx.query(`INSERT INTO public.subcontract_purchase_origins(line_id,of_id,operation_id,material_origin_id,preparation_snapshot,created_by)
         VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::jsonb,$6)`,[lineId,line.ofId,line.subcontract.operationId,line.subcontract.materialOriginId,JSON.stringify(line.subcontract.snapshot),audit.user_id]);
       const allocations=line.allocations??(line.needId&&line.ofId?[{needId:line.needId,sourceRef:line.sourceRef,ofId:line.ofId,assigned:line.assigned}]:[]);

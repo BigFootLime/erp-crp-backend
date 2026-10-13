@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — Minimum fournisseur et origines matière (#1265)
+
+- Contrôler le minimum sur la quantité de la référence dans la commande, sans regrouper les lignes de traçabilité par lot ni changer leur tarification.
+- Recontrôler après modification/annulation et avant soumission, approbation ou envoi ; isoler commande, article, catalogue et unité.
+- Recette PostgreSQL sur une copie isolée : origines 18+2 et 2+18, concurrence, replay, modification et refus du total insuffisant.
+
 ## 2026-10-13 — Échéances calendrier du poste opérateur (#1262)
 
 - Projeter explicitement les dates PostgreSQL en ISO et conserver le jour/année du pilote DATE, sans conversion UTC ou chaîne locale incomplète.
