@@ -14,6 +14,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 
 import type { QualityActor } from "../repository/quality-360.repository";
 import {
+  cancelEmptyExecutionSchema,
   consumeDerogationSchema,
   assignQualityCauseSchema,
   createQualityCostSchema,
@@ -45,6 +46,7 @@ import {
   upsertAnalysisSchema,
 } from "../validators/quality-360.validators";
 import {
+  svcCancelEmptyExecution,
   svcConsumeDerogation,
   svcAssignQualityCause,
   svcCreateQualityCost,
@@ -268,6 +270,13 @@ export const getExecution: RequestHandler = asyncHandler(async (req, res) => {
   const { params } = parseOrThrow(idParamSchema, { params: req.params });
   const out = await svcGetExecution(params.id);
   if (!out) notFound("Contrôle");
+  res.json(out);
+});
+
+export const cancelEmptyExecution: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(cancelEmptyExecutionSchema, { params: req.params, body: req.body });
+  const out = await svcCancelEmptyExecution({ id: parsed.params.id, body: parsed.body, actor: buildActor(req) });
+  if (!out) notFound('Contrôle');
   res.json(out);
 });
 

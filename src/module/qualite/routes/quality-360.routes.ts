@@ -3,6 +3,7 @@ import { Router, type RequestHandler } from "express";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireQualityCapability } from "../middlewares/quality-authorization.middleware";
 import {
+  cancelEmptyExecution,
   consumeDerogation,
   assignQualityCause,
   createQualityCost,
@@ -101,6 +102,7 @@ router.post(
 router.get("/executions/:id/verdict-preview", requireQualityCapability("read"), previewVerdict);
 // La décision de libération est séparée de la saisie de mesure.
 router.post("/executions/:id/decision", requireQualityCapability("release_decide"), decideExecution);
+router.post('/executions/:id/cancel-empty', requireQualityCapability('release_decide'), cancelEmptyExecution);
 
 // Dérogations / concessions.
 router.get("/derogations", requireQualityCapability("read"), listDerogations);
