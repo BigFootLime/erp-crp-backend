@@ -125,7 +125,7 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
   renderWorkshopTable(ctx, {
     title: "Gamme applicable - opérations",
     columns: [
-      { key: "phase", label: "Phase", flex: 0.85, bold: true },
+      { key: "phase", label: "Phase", flex: 1.1, bold: true },
       { key: "operation", label: "Opération / machine / programme", flex: 4.35, firstLineBold: true },
       { key: "unit", label: "T/P\npar pièce", flex: 1.3, align: "right" },
       { key: "setup", label: "Réglage", flex: 1.3, align: "right" },
@@ -146,7 +146,7 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
           phase.execution ? `Production : ${executionStates[phase.execution.statut] ?? phase.execution.statut}\n${number(phase.execution.bonnes)} bonnes / ${number(phase.execution.rebuts)} rebuts${phase.execution.attenteControle ? ` / ${number(phase.execution.attenteControle)} en contrôle` : ""}${phase.execution.reprises ? ` / ${number(phase.execution.reprises)} reprises` : ""}` : null,
         ].filter(Boolean).join("\n"),
         unit: formatWorkshopDuration(phase.tempsUnitaireH),
-        setup: formatWorkshopDuration(phase.preparationH),
+        setup: phase.preparationH > 0 && phase.preparationLabel === "0 min" ? formatWorkshopDuration(phase.preparationH) : phase.preparationLabel,
         load: phase.finalLabel,
         visa: visaText(phase),
       },
