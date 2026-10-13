@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — Échéances calendrier du poste opérateur (#1262)
+
+- Projeter explicitement les dates PostgreSQL en ISO et conserver le jour/année du pilote DATE, sans conversion UTC ou chaîne locale incomplète.
+- Éviter l’affichage erroné en 2001 dans Atelier/Découpe ; conserver intégralement les échéances métier et le tri.
+
 ## 2026-10-13 — Complément d’une réservation matière (#1259)
 
 - Compléter atomiquement la réservation du même besoin/lot et son affectation sur la barre existante, avec identité, consommations et historique conservés.

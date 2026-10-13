@@ -19,6 +19,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { frozenStationPlansSql } from "./station-plan.sql";
+import { stationCalendarDate } from "../domain/station-calendar-date";
 
 import {
   assertDeviceUsable,
@@ -1089,7 +1090,7 @@ export async function repoWorklist(params: {
       SELECT op.id AS operation_id, op.phase, op.designation, op.status::text AS operation_status,
              op.temps_total_planned, op.temps_total_real, op.machine_id,
              o.id AS of_id, o.numero AS of_numero, o.statut::text AS of_statut,
-             o.priority::text AS of_priority, o.date_fin_prevue,
+             o.priority::text AS of_priority, to_char(o.date_fin_prevue, 'YYYY-MM-DD') AS date_fin_prevue,
              o.quantite_lancee, o.quantite_bonne, o.quantite_rebut,
              o.piece_technique_id, o.affaire_id, o.parent_of_id,
              o.technical_snapshot, o.technical_snapshot_sha256, o.piece_technique_version_id
@@ -1195,7 +1196,7 @@ export async function repoWorklist(params: {
     of_numero: r.of_numero as string,
     of_statut: String(r.of_statut ?? ""),
     of_priority: String(r.of_priority ?? ""),
-    date_fin_prevue: r.date_fin_prevue ? String(r.date_fin_prevue).slice(0, 10) : null,
+    date_fin_prevue: stationCalendarDate(r.date_fin_prevue),
     quantite_lancee: num(r.quantite_lancee),
     quantite_bonne: num(r.quantite_bonne),
     quantite_rebut: num(r.quantite_rebut),
