@@ -1,5 +1,11 @@
 # OF atelier 1.4 — nomenclature et sources vérifiables
 
+## Édition atelier 1.6 — 13/10/2026
+
+Les bandeaux des zones passent de30 à24points sans réduire la police. Le cartouche matière ne répète plus l'opération consommatrice ; la pièce ne répète plus la gamme, qui conserve sa table complète. L'échéance connue figure au premier rang : AR client, sinon cible interne lue sur la même transaction (ligne ou réapprovisionnement contractuel). Une cible passée est conservée et une date inconnue reste À définir ; aucune fin prévisionnelle ne se transforme en promesse. Les fichiers1.4 et1.5 gardent leurs primitives et renderers figés, vérifiés par empreinte.
+
+Exemple demandé : les valeurs lisibles du boîtier45252966B des photos sont transcrites dans un PDF illustratif, sans insertion dans l'ERP ni validation électronique de ses signatures papier. Matière6061/T651, débit57mm,40bruts, documents, argenture et opérations20→120 sont conservés ; temps en minutes ou heures/minutes. Les noms d'opérateurs et les dates de visa non présents dans les photos ne sont pas inventés. Issue1297/WP289, recette globale ouverte.
+
 La nouvelle édition place les composants, matières, traitements, sous-traitances et achats avant la gamme. Le titre et le numéro d’OF sont centrés. Les zones sont opaques et les tableaux poursuivent leurs lignes sur autant de pages que nécessaire. Les temps sont exprimés en minutes ou heures/minutes, avec des fractions de minute pour les temps unitaires très courts. La fiche technique contenant la gamme présente uniquement le code client, sans son nom ni son logo.
 
 La première ligne oppose Commande (référence et AR, puis quantités demandée/lancée côte à côte) à Matière et débit. La matière essentielle apparaît dans la moitié supérieure de la première page. La deuxième ligne oppose Client/affaires et documents à Pièce. Les cadences détaillées restent intégrales pour les commandes comportant plusieurs AR ; l’en-tête met en évidence le plus proche. Les longues références sont conservées et les données matière ne sont pas répétées dans un deuxième grand panneau.

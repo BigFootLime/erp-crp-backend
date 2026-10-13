@@ -12,6 +12,7 @@
 import { HttpError } from "../../../utils/httpError";
 import { readOfDocumentTechnical } from "../repository/of-document-technical.repository";
 import { readOfDocumentCommercial } from "../repository/of-document-commercial.repository";
+import { readOfDocumentInternalDue } from "../repository/of-document-deadline.repository";
 import { ofDocumentModernDebit, ofDocumentTechnicalIdentity } from "../domain/of-document-technical-source";
 import { ofDocumentSourceFingerprint } from "../domain/of-document-source-fingerprint";
 import { readOfDocumentStoredPdf } from "./of-document-stored-pdf";
@@ -1038,6 +1039,7 @@ async function buildDocumentPayloadTx(
   const identity = ofDocumentTechnicalIdentity(technical.source);
   const historical = revision.statut !== "ACTIVE";
   const primaryMaterial = technical.evidence.materials[0];
+  const internalDueDate = await readOfDocumentInternalDue(tx, commercial.sourceOrders.length ? commercial.sourceOrders.map(source => source.id) : [ofId]);
 
   const payload = buildOfDocumentPayload({
     ofUuid: header.of_uuid,
@@ -1064,6 +1066,7 @@ async function buildDocumentPayloadTx(
       ? [{ date: affaire.delaiClient, quantite: affaire.quantite, affaireNumero: affaire.numero }] : []),
     quantites: commercial.quantity,
     commercialScope: commercial.scope,
+    internalDueDate,
     commandes: commercial.commands.map(command => ({ numero: command.numero, referenceClient: command.customer_reference })),
     sourceOrders: commercial.sourceOrders.map(source => ({ number: source.number, launched: source.launched, remaining: source.remaining })),
     quantiteLancee: Number(header.quantite_lancee),
