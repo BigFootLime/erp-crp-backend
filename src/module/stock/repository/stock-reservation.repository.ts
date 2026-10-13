@@ -336,7 +336,10 @@ export async function repoCreateStockReservation(
     }
 
     const source = sourceReference(body);
-    const inserted = await client.query<{ id: string }>(
+    // A material complement extends its existing canonical need/lot hold.
+    // The stock/quality locks above serialize the available increment; the
+    // unique index remains the final protection against duplicate holds.
+    const inserted = await client.query<{ id: string; qty_reserved: number }>(
       `
         INSERT INTO public.stock_reservations (
           article_id,
@@ -355,14 +358,27 @@ export async function repoCreateStockReservation(
           expires_at,
           correlation_id,
           created_by,
-          updated_by
+          updated_by,
+          material_need_id
         )
         VALUES (
           $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,
           $8::bigint,$9::bigint,$10::uuid,$11::bigint,
-          'ACTIVE',$12,$13::timestamptz,$14::uuid,$15,$15
+          'ACTIVE',$12,$13::timestamptz,$14::uuid,$15,$15,$16::uuid
         )
-        RETURNING id::text AS id
+        ON CONFLICT (material_need_id, article_id, location_id, lot_id)
+          WHERE status='ACTIVE' AND lot_id IS NOT NULL AND material_need_id IS NOT NULL
+        DO UPDATE SET
+          qty_reserved = stock_reservations.qty_reserved + EXCLUDED.qty_reserved,
+          reason = EXCLUDED.reason,
+          correlation_id = EXCLUDED.correlation_id,
+          updated_at = now(),
+          updated_by = EXCLUDED.updated_by
+        WHERE stock_reservations.source_type = EXCLUDED.source_type
+          AND stock_reservations.source_id = EXCLUDED.source_id
+          AND stock_reservations.stock_batch_id IS NOT DISTINCT FROM EXCLUDED.stock_batch_id
+          AND (stock_reservations.expires_at IS NULL OR stock_reservations.expires_at > now())
+        RETURNING id::text AS id, qty_reserved::float8 AS qty_reserved
       `,
       [
         body.article_id,
@@ -380,11 +396,12 @@ export async function repoCreateStockReservation(
         body.expires_at ?? null,
         command.correlation_id,
         audit.user_id,
+        materialNeedId ?? null,
       ]
     );
     const reservationId = inserted.rows[0]?.id;
-    if (!reservationId) throw new Error("Failed to create stock reservation");
-    if(materialNeedId)await client.query("UPDATE public.stock_reservations SET material_need_id=$2::uuid WHERE id=$1::uuid",[reservationId,materialNeedId]);
+    if (!reservationId) throw new HttpError(409, 'MATERIAL_RESERVATION_CHANGED',
+      'La réservation existante est expirée ou ne correspond plus à ce besoin. Relisez ses affectations avant de la compléter.');
     if (barInventory) await allocateMaterialBarReservationTx(client, barInventory, barPlan, {
       reservationId, actor:audit.user_id, commandKey:command.correlation_id, reason:body.reason,
     });
@@ -420,7 +437,8 @@ export async function repoCreateStockReservation(
       result_payload: {
         reservation_id: reservationId,
         status: "ACTIVE",
-        qty_reserved: body.qty,
+        qty_reserved: inserted.rows[0]!.qty_reserved,
+        qty_added: body.qty,
       },
     });
     if (!transaction) await client.query("COMMIT");

@@ -52,7 +52,7 @@ export function planMaterialBarReservation(current: MaterialBarInventory | null,
   return plan;
 }
 
-/** Joins the canonical creation transaction after the reservation row is inserted.
+/** Joins canonical creation or top-up after the reservation row is saved.
  * A failed geometry update rolls back stock counters and its reservation together. */
 export async function allocateMaterialBarReservationTx(tx: Db, current: MaterialBarInventory, plan: readonly BarAllocation[], input: { reservationId: string; actor: number; commandKey: string; reason: string }) {
   for (const item of plan) {
@@ -60,11 +60,16 @@ export async function allocateMaterialBarReservationTx(tx: Db, current: Material
       WHERE id=$1::uuid AND stock_batch_id=$4::uuid AND row_version=$2 AND retired_at IS NULL RETURNING id`, [item.barId,item.expectedVersion,input.actor,current.batch.id]);
     if (!changed.rows.length) throw new HttpError(409, 'MATERIAL_BAR_ALLOCATION_CHANGED', 'Une barre a changé avant sa réservation.');
     await tx.query(`INSERT INTO public.stock_material_bar_reservations(bar_id,reservation_id,remaining_length_mm,updated_by)
-      VALUES($1::uuid,$2::uuid,$3,$4)`, [item.barId,input.reservationId,item.quantityMm,input.actor]);
+      VALUES($1::uuid,$2::uuid,$3,$4)
+      ON CONFLICT (bar_id,reservation_id) DO UPDATE SET
+        remaining_length_mm=stock_material_bar_reservations.remaining_length_mm+EXCLUDED.remaining_length_mm,
+        updated_at=now(),updated_by=EXCLUDED.updated_by`, [item.barId,input.reservationId,item.quantityMm,input.actor]);
     await tx.query(`INSERT INTO public.stock_material_bar_events(bar_id,command_key,action,before_state,after_state,reason,created_by)
       VALUES($1::uuid,$2::uuid,'RESERVE',$3::jsonb,$4::jsonb,$5,$6)`, [item.barId,input.commandKey,
       JSON.stringify({ version:item.expectedVersion, holds:current.holds.filter(h=>h.barId===item.barId) }),
-      JSON.stringify({ version:item.expectedVersion+1, reservationId:input.reservationId, reservedMm:item.quantityMm }),input.reason,input.actor]);
+      JSON.stringify({ version:item.expectedVersion+1, reservationId:input.reservationId,
+        addedMm:item.quantityMm,
+        reservedMm:(current.holds.find(h=>h.barId===item.barId&&h.reservationId===input.reservationId)?.remainingMm??0)+item.quantityMm }),input.reason,input.actor]);
   }
   await tx.query('UPDATE public.stock_material_bar_inventories SET row_version=row_version+1 WHERE stock_batch_id=$1::uuid', [current.batch.id]);
   const result = await readMaterialBarInventoryTx(tx, current.batch.id);
