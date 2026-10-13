@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit"
 
 import { CERP_LOGO_PNG, CERP_LOGO_RATIO } from "./cerp-logo"
 import { trimEntityImageForRender } from "./trim-entity-image"
+import { drawWorkshopDocumentHeader } from "./workshop-document-header"
 import { DOCUMENT_DESIGNS, drawEditorialDocumentHeader, drawEditorialRunningHead, editorialPageTop, type CerpDocumentDesign } from "./editorial-document-header"
 import { drawOperationHeading, drawSectionBand, drawVisualPanel, operationHeadingHeight, readableRaster, sectionHeight, visualPanelHeight, type DocumentRaster } from "./editorial-document-blocks"
 
@@ -338,7 +339,7 @@ export class CerpDocumentContext {
     this.cursor = startY
     this.reserve = reserve
     this.design = DOCUMENT_DESIGNS[designVersion]
-    this.editorial = designVersion === "editorial-v2"
+    this.editorial = designVersion !== "classic-v1"
   }
 
   get y(): number {
@@ -349,6 +350,15 @@ export class CerpDocumentContext {
   set y(value: number) {
     this.cursor = value
   }
+
+  /** Explicit page boundaries let workshop tables repeat their headings without clipping rows. */
+  newPage(): void {
+    this.doc.addPage()
+    this.cursor = this.pageTop
+  }
+
+  get contentBottom(): number { return this.bottomLimit }
+  get pageContentTop(): number { return this.pageTop }
 
   private get bottomLimit(): number {
     return PAGE_HEIGHT - this.reserve
@@ -906,7 +916,7 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
 }
 
 function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): void {
-  if (header.designVersion === "editorial-v2") {
+  if (header.designVersion === "editorial-v2" || header.designVersion === "workshop-v3") {
     drawEditorialRunningHead(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
     return
   }
@@ -1065,11 +1075,13 @@ export async function renderCerpDocument(
   const chunks: Buffer[] = []
   doc.on("data", (chunk) => chunks.push(chunk as Buffer))
 
-  const afterIdentity = header.designVersion === "editorial-v2"
+  const afterIdentity = header.designVersion === "workshop-v3"
+    ? drawWorkshopDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH }, toPdfSafeText)
+    : header.designVersion === "editorial-v2"
     ? drawEditorialDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
     : drawIdentity(doc, header, drawMasthead(doc, header))
 
-  const pageTop = header.designVersion === "editorial-v2" ? editorialPageTop(doc, header, CONTENT_WIDTH, toPdfSafeText) : MARGIN_TOP
+  const pageTop = header.designVersion === "editorial-v2" || header.designVersion === "workshop-v3" ? editorialPageTop(doc, header, CONTENT_WIDTH, toPdfSafeText) : MARGIN_TOP
   render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve, header.designVersion, pageTop))
 
   const watermark = header.watermark && header.watermark.trim() ? header.watermark.trim() : null

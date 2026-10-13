@@ -329,6 +329,7 @@ export const emitDocument = asyncHandler(async (req: Request, res: Response) => 
     {
       revisionId: body.revisionId ?? null,
       expectedSnapshotSha256: body.expectedSnapshotSha256 ?? null,
+      expectedSourceFingerprint: body.expectedSourceFingerprint ?? null,
     },
     actorOf(req),
     buildAuditContext(req),

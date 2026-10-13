@@ -14,12 +14,13 @@
 import {
   familyLabel,
   hashSnapshot,
-  phaseFabricationTime,
-  phaseFinalTime,
   type MachineFamilyRef,
   type OfPhaseFamily,
   type OfRevisionOperation,
 } from "./of-revision";
+import { documentOperationLoad } from "./of-document-operation-load";
+import type { WorkshopDocumentTechnicalEvidence } from "./of-document-technical-source";
+import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
 
 export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
 
@@ -35,6 +36,8 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  * une gamme de fabrication. Le libellé du document a changé, donc le binaire aussi.
  */
 export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.3" as const;
+/** Opt-in while the modern commercial/material read models are being corrected. */
+export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.4" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage
@@ -294,6 +297,16 @@ export type OfDocumentPhase = {
   fabricationLabel: string;
   finalLabel: string;
   visa: OfDocumentVisa;
+  /** Canonical net operation counters, distinct from the recorded signature. */
+  execution?: OfDocumentOperationExecution;
+};
+
+export type OfDocumentOperationExecution = {
+  statut: string;
+  bonnes: number;
+  rebuts: number;
+  attenteControle: number;
+  reprises: number;
 };
 
 export type OfDocumentDecoupe = {
@@ -358,6 +371,8 @@ export type OfDocumentPayload = {
   templateVersion: string;
   snapshotId: string;
   snapshotSha256: string;
+  /** Technical, inventory and execution freshness; internal transport metadata, never printed. */
+  sourceFingerprint?: string;
   auteur: string | null;
   /** Horodatage figé, ISO. Entre dans les métadonnées du PDF. */
   generatedAt: string;
@@ -371,6 +386,12 @@ export type OfDocumentPayload = {
   affaires: OfDocumentAffaire[];
   cadenceLivraison: OfDocumentCadence[];
   quantites: OfQuantityCoverage;
+  /** Present only on modern payloads. Never substitute commercial coverage for launched quantity. */
+  quantiteLancee?: number;
+  technicalEvidence?: WorkshopDocumentTechnicalEvidence;
+  commercialScope?: "CUSTOMER" | "ASSEMBLY" | "INTERNAL";
+  commandes?: Array<{ numero: string; referenceClient: string | null }>;
+  sourceOrders?: Array<{ number: string; launched: number; remaining: number }>;
   cadenceProduction: OfDocumentCadence[];
   derniereFabrication: { numero: string | null; date: string | null } | null;
 
@@ -425,6 +446,12 @@ export type OfDocumentBuildInput = {
   affaires: OfDocumentAffaire[];
   cadenceLivraison: OfDocumentCadence[];
   quantites: OfQuantityInput;
+  quantiteLancee?: number;
+  executions?: Record<number, OfDocumentOperationExecution | undefined>;
+  technicalEvidence?: WorkshopDocumentTechnicalEvidence;
+  commercialScope?: "CUSTOMER" | "ASSEMBLY" | "INTERNAL";
+  commandes?: Array<{ numero: string; referenceClient: string | null }>;
+  sourceOrders?: Array<{ number: string; launched: number; remaining: number }>;
   cadenceProduction: OfDocumentCadence[];
   derniereFabrication: { numero: string | null; date: string | null } | null;
 
@@ -461,10 +488,10 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
   const operations = [...input.operations].sort((a, b) => a.phase - b.phase);
   const familles = input.familles;
   const avertissements: OfDocumentWarning[] = [];
+  const workshop = input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION;
 
   const phases = operations.map<OfDocumentPhase>((operation) => {
-    const fabrication = phaseFabricationTime(operation);
-    const final = phaseFinalTime(operation);
+    const { fabricationHours: fabrication, finalHours: final } = documentOperationLoad(operation, workshop ? input.quantiteLancee : undefined);
     const visa = input.visas[operation.phase] ?? {};
 
     // Le n° de programme n'est obligatoire que sur les familles qui l'exigent
@@ -508,7 +535,9 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
       finalH: round4(final),
       quantiteBase: operation.quantiteBase,
       coefficient: operation.coefficient,
-      tempsUnitaireLabel: formatDuration(operation.tempsUnitaire),
+      tempsUnitaireLabel: workshop
+        ? `${formatWorkshopDuration(operation.tempsUnitaire)} / pièce`
+        : formatDuration(operation.tempsUnitaire),
       preparationLabel: formatDuration(operation.preparation),
       fabricationLabel: formatDuration(fabrication),
       finalLabel: formatDuration(final),
@@ -523,6 +552,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
         visaControle: visa.visaControle ?? null,
         commentaire: visa.commentaire ?? null,
       },
+      ...(workshop && input.executions?.[operation.phase] ? { execution: { ...input.executions[operation.phase]! } } : {}),
     };
   });
 
@@ -545,7 +575,9 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
 
   const preparationH = round4(phases.reduce((sum, p) => sum + p.preparationH, 0));
   const fabricationH = round4(phases.reduce((sum, p) => sum + p.fabricationH, 0));
-  const finalH = round4(preparationH + fabricationH);
+  const finalH = round4(workshop && input.quantiteLancee !== undefined
+    ? phases.reduce((sum, phase) => sum + phase.finalH, 0)
+    : preparationH + fabricationH);
 
   const sequenceMachines = buildMachineSequence(operations);
 
@@ -569,7 +601,8 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
         ? `Longueur totale = longueur de brut (${formatNumberFr(input.decoupe.longueurBrutMm, 1)} mm) x nombre de bruts (${formatQuantity(input.decoupe.nombreBruts)}).`
         : null);
 
-  if (longueurTotaleMm === null && input.decoupeNotRequired !== true) {
+  const validatedDebit = workshop && input.technicalEvidence?.materials.some(material => material.confirmed && material.requiredQuantity !== null);
+  if (longueurTotaleMm === null && input.decoupeNotRequired !== true && !validatedDebit) {
     avertissements.push({
       code: "DECOUPE_INCOMPLETE",
       severite: "ATTENTION",
@@ -580,7 +613,8 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
 
   const quantites = computeQuantityCoverage(input.quantites);
 
-  if (quantites.surCouverture) {
+  const customerDemand = !workshop || !input.commercialScope || input.commercialScope === "CUSTOMER";
+  if (quantites.surCouverture && customerDemand) {
     avertissements.push({
       code: "SUR_COUVERTURE",
       severite: "ATTENTION",
@@ -588,7 +622,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     });
   }
 
-  if (quantites.resteNetACouvrir > 0) {
+  if (quantites.resteNetACouvrir > 0 && customerDemand) {
     avertissements.push({
       code: "RESTE_A_COUVRIR",
       severite: "INFO",
@@ -617,6 +651,11 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     affaires: [...input.affaires].sort((a, b) => a.affaireId - b.affaireId),
     cadenceLivraison: [...input.cadenceLivraison].sort((a, b) => a.date.localeCompare(b.date)),
     quantites,
+    ...(workshop && input.quantiteLancee !== undefined ? { quantiteLancee: input.quantiteLancee } : {}),
+    ...(workshop && input.technicalEvidence ? { technicalEvidence: structuredClone(input.technicalEvidence) } : {}),
+    ...(workshop && input.commercialScope ? { commercialScope: input.commercialScope } : {}),
+    ...(workshop && input.commandes ? { commandes: structuredClone(input.commandes) } : {}),
+    ...(workshop && input.sourceOrders ? { sourceOrders: structuredClone(input.sourceOrders) } : {}),
     cadenceProduction: [...input.cadenceProduction].sort((a, b) => a.date.localeCompare(b.date)),
     derniereFabrication: input.derniereFabrication,
 

@@ -179,6 +179,7 @@ export const emitDocumentSchema = z.object({
     .regex(/^[a-f0-9]{64}$/)
     .nullable()
     .optional(),
+  expectedSourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
 });
 
 export const previewDocumentQuery = z.object({
