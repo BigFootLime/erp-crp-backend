@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ofReceiptBodySchema } from "../module/production/validators/production.validators";
+import { stockLotTraceReferenceValuesSql } from "../shared/provenance/stock-lot-trace.sql";
 import {
   correctPreparationStockBodySchema,
   createLivraisonFromReservationsBodySchema,
@@ -141,8 +142,10 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).toMatch(/body\.of_number !== undefined && body\.of_number !== reservation\.of_numero/);
     expect(deliveryRepository).toMatch(/stock_lot_trace_references/);
     expect(deliveryRepository).toMatch(/reference_type = 'OF'/);
-    expect(deliveryRepository).toMatch(/reference_type = 'MP_LOT'/);
-    expect(deliveryRepository).toMatch(/reference_type = 'TRAITEMENT_LOT'/);
+    expect(deliveryRepository).toContain('stockLotTraceReferenceValuesSql("r.lot_id", "MP_LOT")');
+    expect(deliveryRepository).toContain('stockLotTraceReferenceValuesSql("r.lot_id", "TRAITEMENT_LOT")');
+    expect(stockLotTraceReferenceValuesSql("r.lot_id", "MP_LOT")).toContain("reference_type = 'MP_LOT'");
+    expect(stockLotTraceReferenceValuesSql("r.lot_id", "TRAITEMENT_LOT")).toContain("reference_type = 'TRAITEMENT_LOT'");
     expect(deliveryRepository).toMatch(/public\.of_output_lots/);
     expect(deliveryRepository).toMatch(/typeof snapshot\.of_number === "string"/);
     expect(deliveryRepository).toMatch(/requested_at = now\(\)/);
