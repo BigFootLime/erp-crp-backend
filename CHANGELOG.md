@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14 — Fiche papier d’autocontrôle
+
+- Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.
+- Code client, définition figée et affaires exactes capturés ; fabrication interne identifiée. Date Europe/Paris, pagination répétée et consignes longues conservées ; anciennes fiches stockées inchangées.
+- Six cas dédiés, build strict, suite complète et lecture des sources réelles sous cerp_app validés. Saisie tablette, dépôt du scan, fiche jaune et impression du dossier complet restent en cours.
+
 ## 2026-10-14 — Calendrier et nombres Finance
 
 - Factures et avoirs utilisent la date Europe/Paris lors de leur émission. Après minuit en France, la date UTC de la veille ne fuit plus dans le numéro et le document. Les exemplaires déjà émis restent immuables.

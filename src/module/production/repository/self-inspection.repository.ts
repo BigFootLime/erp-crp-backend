@@ -15,6 +15,22 @@ import {
   renderSelfInspectionPdf,
   type SelfInspectionSnapshot,
 } from "../services/self-inspection-pdf";
+import type { SelfInspectionIdentity } from "../services/self-inspection-workshop";
+import { readOfDocumentCommercial } from "./of-document-commercial.repository";
+
+/** Frozen part definition and exact commercial allocations, captured with the blank sheet. */
+export async function readSelfInspectionIdentity(tx: Pick<PoolClient, "query">, ofId: number): Promise<SelfInspectionIdentity> {
+  const row = (await tx.query<Omit<SelfInspectionIdentity, "affairs">>(`
+    SELECT COALESCE(c.client_code,p.code_client) AS client_code,
+      COALESCE(o.technical_snapshot->'piece'->>'code',p.code_piece) AS reference,
+      COALESCE(o.technical_snapshot->'piece'->>'designation',p.designation) AS designation
+    FROM public.ordres_fabrication o
+    LEFT JOIN public.pieces_techniques p ON p.id=o.piece_technique_id
+    LEFT JOIN public.clients c ON c.client_id=o.client_id WHERE o.id=$1`, [ofId])).rows[0];
+  if (!row) throw new HttpError(404, "OF_NOT_FOUND", "OF introuvable.");
+  const commercial = await readOfDocumentCommercial(tx, ofId);
+  return { ...row, scope: commercial.scope, affairs: [...new Set(commercial.affairs.map((a) => a.numero).filter((a): a is string => Boolean(a)))] };
+}
 
 async function attachReadyInspection(tx: Pick<PoolClient, 'query'>, ofId: number, audit: AuditContext, evaluation: Awaited<ReturnType<typeof evaluateOfPreparation>>) {
   await tx.query(`UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2,
@@ -57,6 +73,9 @@ export async function generateSelfInspectionTx(
     plan,
     characteristics: evaluation.sources.characteristics,
     source_hash: evaluation.sheet_hash,
+    identity: await readSelfInspectionIdentity(tx, ofId),
+    generated_at: new Date().toISOString(),
+    layout_version: "self-inspection/2.0",
   };
   await tx.query(
     `INSERT INTO public.of_self_inspection_sheets(of_id,piece_technique_version_id,quality_plan_id,source_hash,snapshot,state,created_by)
