@@ -8,6 +8,8 @@ import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing
 // d'idempotence. Aucun code métier n'est calculé côté client, aucun MAX()+1.
 
 import type { PoolClient } from "pg";
+import { assertEmptyExecutionCancellation } from '../domain/empty-execution-cancellation';
+import type { CancelEmptyExecutionBodyDTO } from '../validators/quality-360.validators';
 import {resolveStockLotContext} from "./quality-stock-lot-context";
 import { executionPreviewSchema } from "../validators/quality-360.validators";
 import { isOfQualitySource, readFrozenQualityPlanId, readQualityOfIdentity, qualityOfPopulationCeiling, resolveQualityOfContext } from "./quality-of-context";
@@ -113,7 +115,7 @@ async function insertAuditLog(
   actor: QualityActor,
   entry: { action: string; entity_type: string; entity_id: string; details?: Record<string, unknown> }
 ): Promise<void> {
-  await repoInsertAuditLog({
+  const audit = await repoInsertAuditLog({
     user_id: actor.user_id,
     body: {
       event_type: "ACTION",
@@ -132,6 +134,7 @@ async function insertAuditLog(
     browser: actor.browser,
     tx,
   });
+  if (!audit) throw new Error('QUALITY_AUDIT_INSERT_FAILED');
 }
 
 /**
@@ -1107,7 +1110,7 @@ export async function repoOfOperationExecutionContext(ofId: number, operationId:
   if (!plan || !['PUBLISHED', 'ARCHIVED'].includes(plan.status)) throw new HttpError(409, 'QUALITY_OF_PLAN_MISSING', "Aucun plan de contrôle figé. Préparez la fiche d'autocontrôle de cet OF.");
   const pending = (await pool.query<{ id: string; reference: string; population: number }>(`SELECT id::text,reference,qty_population::float8 AS population FROM public.quality_control
     WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2::text)
-      AND trigger_type=$3 AND plan_id=$4::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`,
+      AND trigger_type=$3 AND plan_id=$4::uuid AND validation_date IS NULL AND status::text<>'CANCELLED' ORDER BY control_date DESC,id DESC LIMIT 1`,
     [ofId, operationId, plan.trigger_type, plan.id])).rows[0] ?? null;
   const population = await qualityOfPopulationCeiling(pool, identity);
   if (population <= 0 && !pending) throw new HttpError(409, 'QUALITY_OF_POPULATION_UNAVAILABLE', "Aucune pièce disponible à contrôler. Vérifiez l'étape précédente.");
@@ -1139,6 +1142,9 @@ export type ExecutionDetail = {
   releasable_qty: number;
   control_date: string;
   validation_date: string | null;
+  execution_cancelled_at: string | null;
+  execution_cancelled_by: number | null;
+  execution_cancellation_reason: string | null;
   created_at: string;
   updated_at: string;
   controlled_by: number;
@@ -1189,6 +1195,9 @@ type ExecutionRow = {
   qty_consumed: string;
   control_date: string;
   validation_date: string | null;
+  execution_cancelled_at: string | null;
+  execution_cancelled_by: number | null;
+  execution_cancellation_reason: string | null;
   created_at: string;
   updated_at: string;
   controlled_by: number;
@@ -1206,7 +1215,8 @@ const EXECUTION_COLUMNS = `
   qc.source_type, qc.source_id, qc.plan_id, qc.plan_version, qc.plan_snapshot, qc.plan_snapshot_sha256,
   qc.unite, qc.qty_population, qc.qty_controlled, qc.qty_conforming, qc.qty_released, qc.qty_held,
   qc.qty_scrapped, qc.qty_reworked, qc.qty_sorted, qc.qty_returned, qc.qty_consumed,
-  qc.control_date, qc.validation_date, qc.created_at, qc.updated_at, qc.controlled_by,
+  qc.control_date, qc.validation_date, qc.execution_cancelled_at, qc.execution_cancelled_by,
+  qc.execution_cancellation_reason, qc.created_at, qc.updated_at, qc.controlled_by,
   qc.lot_id, qc.article_id, qc.reception_ligne_id,
   qc.bon_livraison_id, qc.delivery_allocation_id, qc.correlation_id,
   p.code AS plan_code
@@ -1302,6 +1312,9 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
       ? executionReleasableQty(ledger, row.verdict ?? legacyResultToVerdict(row.result)) : 0,
     control_date: row.control_date,
     validation_date: row.validation_date,
+    execution_cancelled_at: row.execution_cancelled_at,
+    execution_cancelled_by: row.execution_cancelled_by,
+    execution_cancellation_reason: row.execution_cancellation_reason,
     created_at: row.created_at,
     updated_at: row.updated_at,
     controlled_by: row.controlled_by,
@@ -1315,6 +1328,44 @@ export async function repoGetExecution(id: string): Promise<ExecutionDetail | nu
   const row = await selectExecutionRow(pool, id);
   if (!row) return null;
   return buildExecutionDetail(row, await selectMeasurements(pool, id));
+}
+
+export async function repoCancelEmptyExecution(params: {
+  id: string; body: CancelEmptyExecutionBodyDTO; actor: QualityActor;
+}): Promise<ExecutionDetail | null> {
+  return withTransaction(async client => {
+    // Same lock order as creation/release: lot first, then the execution.
+    const scope = await selectExecutionRow(client, params.id);
+    if (scope?.lot_id) await client.query('SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE', [scope.lot_id]);
+    const before = await selectExecutionRow(client, params.id, true);
+    if (!before) return null;
+    if (before.status === 'CANCELLED') {
+      if (before.execution_cancellation_reason !== params.body.reason) {
+        throw new HttpError(409, 'QUALITY_CANCELLATION_REPLAY_CONFLICT', 'Ce contrôle a déjà été annulé avec un autre motif.');
+      }
+      return buildExecutionDetail(before, []);
+    }
+    assertOptimisticVersion({ expectedUpdatedAt: params.body.expected_updated_at, currentUpdatedAt: before.updated_at });
+    const counts = (await client.query<{ measurements: number; revisions: number; decisions: number }>(`
+      SELECT (SELECT count(*)::int FROM public.quality_control_points WHERE quality_control_id=$1::uuid) AS measurements,
+        (SELECT count(*)::int FROM public.quality_measurement_revisions WHERE quality_control_id=$1::uuid) AS revisions,
+        (SELECT count(*)::int FROM public.quality_release_decision WHERE quality_control_id=$1::uuid) AS decisions`, [params.id])).rows[0];
+    assertEmptyExecutionCancellation({ status: before.status, validationDate: before.validation_date,
+      measurementCount: counts.measurements, measurementRevisionCount: counts.revisions, decisionCount: counts.decisions,
+      quantities: Object.entries(rowToLedger(before)).filter(([key]) => key !== 'population').map(([,value]) => value) });
+    await client.query(`UPDATE public.quality_control SET status='CANCELLED',execution_cancelled_at=now(),
+      execution_cancelled_by=$2,execution_cancellation_reason=$3,updated_by=$2 WHERE id=$1::uuid`,
+      [params.id, params.actor.user_id, params.body.reason]);
+    await insertQualityEvent(client, { entity_type: 'CONTROL', entity_id: params.id, event_type: 'EXECUTION_CANCELLED',
+      actor: params.actor, old_values: { status: before.status }, new_values: { status: 'CANCELLED', plan_id: before.plan_id,
+        plan_version: before.plan_version, source_type: before.source_type, source_id: before.source_id },
+      correlation_id: before.correlation_id, rule_code: 'EMPTY_EXECUTION_CANCELLATION', reason: params.body.reason });
+    await insertAuditLog(client, params.actor, { action: 'qualite.executions.cancel_empty', entity_type: 'quality_control',
+      entity_id: params.id, details: { reason: params.body.reason, prior_status: before.status,
+        preserved_snapshot_sha256: before.plan_snapshot_sha256, quantities_changed: false } });
+    const after = await selectExecutionRow(client, params.id);
+    return buildExecutionDetail(after!, []);
+  });
 }
 
 const EXECUTION_SORT_COLUMNS: Record<ListExecutionsQueryDTO["sortBy"], string> = {
@@ -1394,11 +1445,11 @@ export async function repoCreateExecution(params: {
     if(scopedBody.source_type === 'OF_OPERATION') {
       const pending = (await client.query<{id:string;reference:string}>(`SELECT id::text,reference FROM public.quality_control
         WHERE of_id=$1 AND (operation_id=$2::uuid OR source_type='OF_OPERATION' AND source_id=$2::text) AND trigger_type=$3
-          AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1`, [scopedBody.of_id,scopedBody.operation_id,scopedBody.trigger])).rows[0];
+          AND validation_date IS NULL AND status::text<>'CANCELLED' ORDER BY control_date DESC,id DESC LIMIT 1`, [scopedBody.of_id,scopedBody.operation_id,scopedBody.trigger])).rows[0];
       if (pending) throw new HttpError(409,'QUALITY_OF_CONTROL_PENDING',`Le contrôle ${pending.reference} est déjà ouvert pour cette opération.`, {control_id:pending.id});
     }
     if(scopedBody.source_type==="LOT"&&["RECHECK","RECEPTION"].includes(scopedBody.trigger)){
-      const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
+      const pending=(await client.query<{id:string;reference:string}>("SELECT id::text,reference FROM public.quality_control WHERE lot_id=$1::uuid AND validation_date IS NULL AND status::text<>'CANCELLED' ORDER BY control_date DESC,id DESC LIMIT 1",[scopedBody.lot_id])).rows[0];
       if(pending)throw new HttpError(409,"QUALITY_LOT_CONTROL_PENDING",`Le contrôle ${pending.reference} est déjà ouvert pour ce lot. Terminez-le avant d’en créer un autre.`,{control_id:pending.id});
     }
     const built = await buildExecutionSnapshot(client, scopedBody,params.ofSnapshotOnly);
@@ -1628,7 +1679,7 @@ export async function repoRecordMeasurements(params: {
       expectedUpdatedAt: params.body.expected_updated_at,
       currentUpdatedAt: before.updated_at,
     });
-    if (before.validation_date) {
+    if (before.validation_date || before.status === 'CANCELLED') {
       throw new HttpError(
         409,
         "QUALITY_EXECUTION_CLOSED",
@@ -1951,6 +2002,7 @@ export type VerdictPreview = {
 export async function repoPreviewVerdict(id: string): Promise<VerdictPreview | null> {
   const row = await selectExecutionRow(pool, id);
   if (!row) return null;
+  if (row.status === 'CANCELLED') throw new HttpError(409, 'QUALITY_EXECUTION_CANCELLED', 'Ce contrôle a été annulé.');
   if (!row.plan_snapshot_sha256) {
     throw new HttpError(409, "QUALITY_SNAPSHOT_MISSING", "Cette exécution n'a pas de plan figé.");
   }
@@ -2123,7 +2175,7 @@ export async function repoDecideExecution(params: {
       expectedUpdatedAt: params.body.expected_updated_at,
       currentUpdatedAt: before.updated_at,
     });
-    if (before.validation_date) {
+    if (before.validation_date || before.status === 'CANCELLED') {
       throw new HttpError(409, "ALREADY_VALIDATED", "Ce contrôle est déjà décidé.");
     }
     if (!before.plan_snapshot_sha256) {
@@ -3039,7 +3091,7 @@ export async function repoEvaluateEligibility(
       SELECT COALESCE(SUM(qty_released), 0)::text AS qty_released,
              COALESCE(SUM(qty_held), 0)::text AS qty_held,
              COALESCE(SUM(qty_consumed), 0)::text AS qty_consumed,
-             COUNT(*) FILTER (WHERE validation_date IS NULL)::int AS pending_controls
+             COUNT(*) FILTER (WHERE validation_date IS NULL AND status::text<>'CANCELLED')::int AS pending_controls
       FROM public.quality_control
       WHERE source_type = $1 AND source_id = $2
     `,
@@ -3114,7 +3166,7 @@ export async function repoQualityCenter(params: { horizonDays: number }): Promis
         (SELECT COUNT(*)::int FROM public.quality_control
           WHERE status IN ('PLANNED', 'IN_PROGRESS')) AS to_control,
         (SELECT COUNT(*)::int FROM public.quality_control
-          WHERE validation_date IS NULL AND verdict_computed IS NOT NULL AND verdict_computed <> 'EN_ATTENTE') AS awaiting_decision,
+          WHERE validation_date IS NULL AND status::text<>'CANCELLED' AND verdict_computed IS NOT NULL AND verdict_computed <> 'EN_ATTENTE') AS awaiting_decision,
         (SELECT COUNT(*)::int FROM public.lots
           WHERE lot_status IN ('QUARANTAINE', 'EN_ATTENTE', 'BLOQUE')) AS quarantine_lots,
         (SELECT COUNT(*)::int FROM public.non_conformity

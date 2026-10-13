@@ -1203,6 +1203,9 @@ export async function repoPatchControl(params: { id: string; body: PatchControlB
     if (before.control.validation_date) {
       throw new HttpError(400, "LOCKED", "Validated controls cannot be edited");
     }
+    if (before.control.status === 'CANCELLED') {
+      throw new HttpError(409, 'QUALITY_EXECUTION_CANCELLED', 'Ce contrôle a été annulé.');
+    }
 
     const patch = body.patch;
     const nextOfId = typeof patch.of_id === "number" ? patch.of_id : before.control.of_id;
@@ -1281,6 +1284,9 @@ export async function repoValidateControl(params: { id: string; body: ValidateCo
     if (!before) return false;
     if (before.control.validation_date) {
       throw new HttpError(400, "ALREADY_VALIDATED", "Control already validated");
+    }
+    if (before.control.status === 'CANCELLED') {
+      throw new HttpError(409, 'QUALITY_EXECUTION_CANCELLED', 'Ce contrôle a été annulé.');
     }
 
     const block = await repoGetMetrologieBlockState(tx);

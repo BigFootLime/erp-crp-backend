@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "1536e9400c058c4ba4092a650262d1f8a63e796cd19630cc42ac7e241ff79e30";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "64b1e24ad5abf79052037bd8bdea9d6e0041be12bd512661ccd987fb4fff8b1b";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -18990,7 +18990,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/center",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:67",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19008,7 +19008,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/delivery-release-policies",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:74",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19026,7 +19026,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/delivery-release-policies",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:76",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19044,7 +19044,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/delivery-release-policies/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:75",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19062,7 +19062,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/qualite/v2/delivery-release-policies/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:77",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19080,7 +19080,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/delivery-release-policies/{id}/revisions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:78",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19098,7 +19098,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/delivery-release-policies/{id}/transitions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:79",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19116,7 +19116,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/derogations",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:106",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:108",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19134,7 +19134,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/derogations",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:108",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:110",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19152,7 +19152,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/derogations/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:107",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:109",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19170,7 +19170,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/derogations/{id}/consumptions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:115",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:117",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19188,7 +19188,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/derogations/{id}/transitions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:110",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19206,7 +19206,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/eligibility",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:68",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:69",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19224,7 +19224,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/executions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:92",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19242,7 +19242,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/executions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:95",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:96",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19260,7 +19260,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/executions/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:93",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:94",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19277,8 +19277,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/qualite/v2/executions/{id}/cancel-empty",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:105",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireQualityCapability(release_decide)",
+      "cancelEmptyExecution"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireQualityCapability(release_decide)"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/qualite/v2/executions/{id}/decision",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:103",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:104",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19296,7 +19314,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/executions/{id}/measurements",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:96",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:97",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19314,7 +19332,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/executions/{id}/verdict-preview",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:101",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:102",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19332,7 +19350,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/executions/preview",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:94",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:95",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19350,7 +19368,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/intelligence",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:69",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19368,7 +19386,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/intelligence/costs",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:71",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19386,7 +19404,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/intelligence/investigation",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:70",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19404,7 +19422,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/non-conformities/{id}/analysis",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:122",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:124",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19422,7 +19440,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/qualite/v2/non-conformities/{id}/analysis",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:123",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:125",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19440,7 +19458,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/qualite/v2/non-conformities/{id}/cause",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:125",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:127",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19458,7 +19476,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/non-conformities/{id}/transitions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:124",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:126",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19476,7 +19494,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/of/{ofId}/operations/{operationId}/execution-context",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:52",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19494,7 +19512,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/plans",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:82",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:83",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19512,7 +19530,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/plans",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:85",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:86",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19530,7 +19548,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/plans/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:84",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:85",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19548,7 +19566,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/qualite/v2/plans/{id}",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:86",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19566,7 +19584,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/plans/{id}/revisions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:87",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:88",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19584,7 +19602,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/qualite/v2/plans/{id}/transitions",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:89",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:90",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -19602,7 +19620,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/qualite/v2/plans/applicability",
-    "source": "src/module/qualite/routes/quality-360.routes.ts:83",
+    "source": "src/module/qualite/routes/quality-360.routes.ts:84",
     "middleware": [
       "anonymous",
       "authenticateToken",
