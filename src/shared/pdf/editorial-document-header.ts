@@ -2,7 +2,7 @@ import type { CerpDocumentHeader } from "./cerp-document"
 import { CERP_LOGO_PNG, CERP_LOGO_RATIO } from "./cerp-logo"
 import { readableRaster } from "./editorial-document-blocks"
 
-export type CerpDocumentDesign = "classic-v1" | "editorial-v2" | "workshop-v3" | "workshop-v4"
+export type CerpDocumentDesign = "classic-v1" | "editorial-v2" | "workshop-v3" | "workshop-v4" | "structured-v5"
 
 /** Per-document metrics: concurrent renders never change global typography. */
 export const DOCUMENT_DESIGNS = {
@@ -10,6 +10,7 @@ export const DOCUMENT_DESIGNS = {
   "editorial-v2": { body: 10.2, tableHeading: 8, tableMeta: 8.4, tableHeadHeight: 23 },
   "workshop-v3": { body: 10.5, tableHeading: 8.5, tableMeta: 9, tableHeadHeight: 25 },
   "workshop-v4": { body: 10.5, tableHeading: 8.5, tableMeta: 9, tableHeadHeight: 25 },
+  "structured-v5": { body: 10.5, tableHeading: 8.5, tableMeta: 9, tableHeadHeight: 25 },
 } as const
 
 type HeaderGeometry = {

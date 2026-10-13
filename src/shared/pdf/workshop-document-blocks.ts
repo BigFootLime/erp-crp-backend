@@ -131,27 +131,43 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
 export type WorkshopTableColumn = { key: string; label: string; flex: number; bold?: boolean; firstLineBold?: boolean; align?: "left" | "right" }
 export type WorkshopTableRow = { cells: Record<string, string>; continuationLabel?: string }
 
+/** A titled handwriting area without a redundant empty table heading. */
+export function renderWorkshopWritingArea(ctx: CerpDocumentContext, title: string, height = 52): void {
+  ctx.section(title, { cohesion: height + 10 })
+  ctx.doc.save().lineWidth(0.65).strokeColor(C.graphite).rect(X, ctx.y, CONTENT_WIDTH, height).stroke().restore()
+  ctx.y += height + 12
+}
+
 /** Full grid, repeated headings and explicit continuation for a row longer than an entire page. */
 export function renderWorkshopTable(ctx: CerpDocumentContext, table: {
   title?: string
   columns: readonly WorkshopTableColumn[]
   rows: readonly WorkshopTableRow[]
   emptyLabel?: string
+  /** Paper forms need handwriting space; ordinary document tables retain their metrics. */
+  minimumRowHeight?: number
+  bodySize?: number
+  padding?: number
 }): void {
   const { columns, rows } = table
   if (!columns.length) return
+  const pad = table.padding ?? PAD
+  const body = table.bodySize ?? BODY
+  const leading = LEADING * body / BODY
+  const minimum = table.minimumRowHeight ?? 0
   const flex = columns.reduce((sum, column) => sum + column.flex, 0)
   const widths = columns.map(column => CONTENT_WIDTH * column.flex / flex)
   const positions = widths.map((_, i) => X + widths.slice(0, i).reduce((sum, width) => sum + width, 0))
-  const head = columns.map((column, i) => wrappedLines(ctx.doc, column.label, widths[i] - PAD * 2, true, 8.5))
-  const headHeight = Math.max(...head.map(lines => lines.length)) * 11 + PAD * 2
-  const cells = rows.map(row => columns.map((column, i) => wrappedLines(ctx.doc, row.cells[column.key] ?? "", widths[i] - PAD * 2, column.bold || column.firstLineBold)))
+  const head = columns.map((column, i) => wrappedLines(ctx.doc, column.label, widths[i] - pad * 2, true, 8.5))
+  const headHeight = Math.max(...head.map(lines => lines.length)) * 11 + pad * 2
+  const cells = rows.map(row => columns.map((column, i) => wrappedLines(ctx.doc, row.cells[column.key] ?? "", widths[i] - pad * 2, column.bold || column.firstLineBold, body)))
   const freshCapacity = ctx.contentBottom - ctx.pageContentTop - headHeight - 8
-  const firstHeight = cells[0] ? Math.max(...cells[0].map(lines => lines.length)) * LEADING + PAD * 2 : 30
+  const rowHeight = (lines: string[][]) => Math.max(minimum, Math.max(...lines.map(cell => cell.length)) * leading + pad * 2)
+  const firstHeight = cells[0] ? rowHeight(cells[0]) : 30
   const titleReserve = table.title ? sectionHeight(ctx.doc, table.title, CONTENT_WIDTH, toPdfSafeText) + 10 : 0
   const firstMustSplit = firstHeight > freshCapacity - titleReserve - 10
-  const firstReserve = firstMustSplit ? PAD * 2 + LEADING * 3 : firstHeight
-  const compactHeight = headHeight + cells.reduce((sum, row) => sum + Math.max(...row.map(lines => lines.length)) * LEADING + PAD * 2, 0)
+  const firstReserve = firstMustSplit ? pad * 2 + leading * 3 : firstHeight
+  const compactHeight = headHeight + cells.reduce((sum, row) => sum + rowHeight(row), 0)
   // Keep short summaries together rather than stranding their last total on a new page.
   if (rows.length <= 8 && compactHeight <= 320 && compactHeight + titleReserve < freshCapacity)
     ctx.ensureSpace(compactHeight + titleReserve + 10)
@@ -167,8 +183,8 @@ export function renderWorkshopTable(ctx: CerpDocumentContext, table: {
   const drawHead = () => {
     grid(ctx.y, headHeight, C.wash)
     ctx.doc.font("Helvetica-Bold").fontSize(8.5).fillColor(C.graphite)
-    head.forEach((lines, index) => lines.forEach((line, i) => ctx.text(line, positions[index] + PAD, ctx.y + PAD + i * 11,
-      { width: widths[index] - PAD * 2, align: columns[index].align ?? "left" })))
+    head.forEach((lines, index) => lines.forEach((line, i) => ctx.text(line, positions[index] + pad, ctx.y + pad + i * 11,
+      { width: widths[index] - pad * 2, align: columns[index].align ?? "left" })))
     ctx.y += headHeight
   }
   ctx.ensureSpace(headHeight + firstReserve + 10)
@@ -176,24 +192,24 @@ export function renderWorkshopTable(ctx: CerpDocumentContext, table: {
   rows.forEach((row, rowIndex) => {
     const lines = cells[rowIndex]
     const count = Math.max(...lines.map(cell => cell.length))
-    const fullHeight = count * LEADING + PAD * 2
+    const fullHeight = rowHeight(lines)
     if (!(rowIndex === 0 && firstMustSplit) && fullHeight <= freshCapacity && ctx.y + fullHeight + 8 > ctx.contentBottom) { ctx.newPage(); drawHead() }
     let offset = 0
     while (offset < count) {
-      if (ctx.y + PAD * 2 + LEADING + 8 > ctx.contentBottom) { ctx.newPage(); drawHead() }
+      if (ctx.y + pad * 2 + leading + 8 > ctx.contentBottom) { ctx.newPage(); drawHead() }
       if (offset > 0) {
         ctx.doc.font("Helvetica-Bold").fontSize(9).fillColor(C.graphite)
-        ctx.text(row.continuationLabel ?? "Suite de la ligne", X + PAD, ctx.y + 4, { width: CONTENT_WIDTH - PAD * 2 })
+        ctx.text(row.continuationLabel ?? "Suite de la ligne", X + pad, ctx.y + 4, { width: CONTENT_WIDTH - pad * 2 })
         ctx.y += 20
       }
-      const capacity = Math.max(1, Math.floor((ctx.contentBottom - ctx.y - PAD * 2 - 8) / LEADING))
+      const capacity = Math.max(1, Math.floor((ctx.contentBottom - ctx.y - pad * 2 - 8) / leading))
       const chunk = Math.min(count - offset, capacity)
-      const height = chunk * LEADING + PAD * 2
+      const height = Math.min(ctx.contentBottom - ctx.y - 8, Math.max(minimum, chunk * leading + pad * 2))
       grid(ctx.y, height)
       columns.forEach((column, index) => {
         lines[index].slice(offset, offset + chunk).forEach((line, i) => {
-          ctx.doc.font(column.bold || (column.firstLineBold && offset + i === 0) ? "Helvetica-Bold" : "Helvetica").fontSize(BODY).fillColor(C.ink)
-          ctx.text(line, positions[index] + PAD, ctx.y + PAD + i * LEADING, { width: widths[index] - PAD * 2, align: column.align ?? "left" })
+          ctx.doc.font(column.bold || (column.firstLineBold && offset + i === 0) ? "Helvetica-Bold" : "Helvetica").fontSize(body).fillColor(C.ink)
+          ctx.text(line, positions[index] + pad, ctx.y + pad + i * leading, { width: widths[index] - pad * 2, align: column.align ?? "left" })
         })
       })
       ctx.y += height
