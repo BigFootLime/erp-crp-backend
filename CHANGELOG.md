@@ -2,7 +2,7 @@
 
 ## 2026-10-13 — OF atelier au-dessus du pli A4 (#1300)
 
-- Cartouches essentiels resserrés, délai et quantités accentués ; libellés Dimensions mini et Débit par brut. Nomenclature et gamme complètes avec leur typographie inchangée.
+- Cartouches essentiels resserrés, délai et quantités accentués ; libellés Dimensions mini et Débit par brut. Repère de pli imprimé en pointillés gris fins, détails en dessous. Nomenclature et gamme complètes avec leur typographie inchangée.
 - Gabarit 1.7, réimpressions 1.4/1.5/1.6 conservées à l'identique. Vérification géométrique du pli à 148,5 mm sur le boîtier complet et les OF de recette ; aucun changement de données métier.
 
 ## 2026-10-13 — OF atelier compact et échéance interne (#1297)

@@ -1,4 +1,4 @@
-import type { CerpDocumentContext } from "../../../shared/pdf/cerp-document";
+import { CERP_DOC_COLORS, CONTENT_WIDTH, type CerpDocumentContext } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable, type WorkshopFieldBox } from "../../../shared/pdf/workshop-document-blocks";
 import { formatDateFr, formatNumberFr, formatQuantity, type OfDocumentPayload } from "../domain/of-document";
 import type { WorkshopDocumentTechnicalEvidence } from "../domain/of-document-technical-source";
@@ -84,6 +84,14 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
       { label: "Désignation", value: payload.pieceDesignation },
     ] },
   ], { compact: true });
+  // A discreet, printed fold guide separates the essential cartouches from the detail.
+  // Never draw through oversized cartouches, which retain their pagination fallback.
+  const fold = ctx.doc.page.height / 2;
+  if (ctx.doc.bufferedPageRange().count === 1 && ctx.y <= fold - 4) {
+    ctx.doc.save().lineWidth(0.5).strokeColor(CERP_DOC_COLORS.steel).dash(3, { space: 3 });
+    ctx.doc.moveTo(38, fold).lineTo(38 + CONTENT_WIDTH, fold).stroke().restore();
+    ctx.y = Math.max(ctx.y, fold + 12);
+  }
   if ((payload.commandes?.length ?? 0) > 1) renderWorkshopTable(ctx, {
     title: "Commandes regroupées",
     columns: [{ key: "command", label: "Commande ERP", flex: 2 }, { key: "reference", label: "Référence client", flex: 3 }],
