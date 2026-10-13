@@ -2,6 +2,7 @@
 // `domain/` et l'accès transactionnel dans `repository/`.
 
 import {
+  repoCancelEmptyExecution,
   repoConsumeDerogation,
   repoCreateDerogation,
   repoCreateExecution,
@@ -61,6 +62,7 @@ export const svcPlanApplicability = repoPlanApplicability;
 
 export const svcListExecutions = repoListExecutions;
 export const svcGetExecution = repoGetExecution;
+export const svcCancelEmptyExecution = repoCancelEmptyExecution;
 export const svcPreviewExecution = repoPreviewExecution;
 export const svcOfOperationExecutionContext = repoOfOperationExecutionContext;
 export const svcCreateExecution = repoCreateExecution;

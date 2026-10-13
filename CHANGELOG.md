@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-13 — Annulation d’un contrôle vide (#1276)
+
+- Annuler avec motif et audit un contrôle ouvert sans mesure ni décision ; conserver sa source, sa population et son plan figé.
+- Reprendre avec le plan applicable corrigé, sans libérer ni modifier le stock lors de l’annulation.
+- Protéger la concurrence et les preuves annulées dans PostgreSQL ; qualifier le parcours jusqu’à la libération normale du lot.
+
+
+## 2026-10-13 — PDF du bon fournisseur approuvé (#1270)
+
+- Archiver le PDF approuvé dans la même transaction que le gel commercial, avec reprises sans doublon et historique du brouillon conservé.
+- Réémettre depuis les données et CGA figées ; dater explicitement les régularisations anciennes et expliquer les compléments de prix.
+- Qualifier PostgreSQL, coffre GED, annulation transactionnelle et rendu PDF sur une copie isolée de Base Test.
+
+
+## 2026-10-13 — Clôture canonique d’un traitement complet (#1273)
+
+- Terminer la phase externe quand tous ses dossiers sont clos et que toute la population est retournée, libérée et transférée, avec preuve immuable par origine.
+- Fournir les quantités de l’opération au planning et à la disponibilité sans inventer de pointage interne, de stock ou d’OF de récupération.
+- Conserver les contrôles qualité actuels, refus de double comptage et revue explicite des anciens pointages ; réparation des dossiers déjà clos par le même service, avec simulation transactionnelle par défaut.
+
 ## 2026-10-13 — Dossiers de traitement par origine (#1269)
 
 - Autoriser plusieurs dossiers pour une même opération, avec un dossier immuable par ligne fournisseur et origine matière ; conserver les registres existants.

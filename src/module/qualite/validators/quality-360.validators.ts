@@ -39,6 +39,12 @@ const isoDateTime = z
 const shortText = (max: number) => z.string().trim().min(1).max(max);
 const longText = (max: number) => z.string().trim().max(max);
 
+export const cancelEmptyExecutionSchema = z.object({
+  params: z.object({ id: uuid }).strict(),
+  body: z.object({ expected_updated_at: isoDateTime, reason: shortText(1000).min(8) }).strict(),
+}).strict();
+export type CancelEmptyExecutionBodyDTO = z.infer<typeof cancelEmptyExecutionSchema>['body'];
+
 // Les quantités sont finies, positives ou nulles et bornées : un Infinity ou un
 // NaN ne franchit jamais la validation.
 const quantity = z
@@ -367,7 +373,7 @@ export type DecideExecutionBodyDTO = z.infer<typeof decideExecutionSchema>["body
 
 export const listExecutionsQuerySchema = paginationSchema.extend({
   q: z.string().trim().max(120).optional(),
-  status: z.enum(["PLANNED", "IN_PROGRESS", "VALIDATED", "REJECTED"]).optional(),
+  status: z.enum(["PLANNED", "IN_PROGRESS", "VALIDATED", "REJECTED", "CANCELLED"]).optional(),
   verdict: z.enum(QUALITY_VERDICTS).optional(),
   trigger: z.enum(QUALITY_TRIGGERS).optional(),
   source_type: z.enum(QUALITY_SOURCE_TYPES).optional(),

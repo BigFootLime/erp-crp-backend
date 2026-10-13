@@ -4,7 +4,7 @@ export type Paginated<T> = {
 };
 
 export type QualityControlType = "IN_PROCESS" | "FINAL" | "RECEPTION" | "PERIODIC";
-export type QualityControlStatus = "PLANNED" | "IN_PROGRESS" | "VALIDATED" | "REJECTED";
+export type QualityControlStatus = "PLANNED" | "IN_PROGRESS" | "VALIDATED" | "REJECTED" | "CANCELLED";
 export type QualityControlResult = "OK" | "NOK" | "PARTIAL";
 
 export type QualityPointResult = "OK" | "NOK";
