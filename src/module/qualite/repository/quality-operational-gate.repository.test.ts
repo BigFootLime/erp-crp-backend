@@ -83,6 +83,7 @@ describe("operational Quality 360 gate", () => {
     expect(sql.find((statement) => statement.includes("FROM public.lots"))).toContain("FOR UPDATE");
     const controlSql = sql.find((statement) => statement.includes("FROM public.quality_control qc"));
     expect(controlSql).toContain("LIMIT 1");
+    expect(controlSql).toContain("AND qc.status::text <> 'CANCELLED'");
     expect(controlSql).toContain("FOR UPDATE");
   });
 

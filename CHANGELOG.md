@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-13 — Reprise qualité après annulation (#1279)
+
+- Exclure un contrôle annulé avant la sélection de la dernière décision qualité, sans cumuler les autorisations ni retirer les garde-fous.
+
 ## 2026-10-13 — Annulation d’un contrôle vide (#1276)
 
 - Annuler avec motif et audit un contrôle ouvert sans mesure ni décision ; conserver sa source, sa population et son plan figé.
