@@ -1,0 +1,92 @@
+import { inflateSync } from "node:zlib";
+import { describe, expect, it } from "vitest";
+import { buildOfDocumentPayload, OF_DOCUMENT_TEMPLATE_VERSION, OF_WORKSHOP_TEMPLATE_VERSION } from "../module/production/domain/of-document";
+import { renderOfDocument } from "../module/production/services/of-document-render";
+import { buildFixtureInput, FIXTURE_OPERATIONS_TFT } from "../../test-support/production/of-document.fixture";
+import { renderCerpDocument } from "../shared/pdf/cerp-document";
+import { renderWorkshopTable } from "../shared/pdf/workshop-document-blocks";
+
+function content(bytes: Buffer): string {
+  let from = 0, result = "";
+  while ((from = bytes.indexOf("stream\n", from)) >= 0) {
+    from += 7;
+    const end = bytes.indexOf("endstream", from);
+    if (end < 0) break;
+    try {
+      const stream = inflateSync(bytes.subarray(from, end)).toString("latin1");
+      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(match => Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1")).join("");
+    } catch { /* Image streams have no document text. */ }
+    from = end + 9;
+  }
+  return result.replace(/\s/g, "");
+}
+
+describe("Workshop OF layout and source boundaries", () => {
+  it("uses the launched quantity and the same per-operation rounding as the planner", () => {
+    const input = buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 20,
+      operations: [{ ...FIXTURE_OPERATIONS_TFT[0], preparation: 1 / 3, tempsUnitaire: 0.05, quantiteBase: 1 }] });
+    const payload = buildOfDocumentPayload(input);
+    expect(payload.phases[0].fabricationH).toBe(1);
+    expect(payload.phases[0].finalH).toBeCloseTo(80 / 60, 4);
+    expect(payload.totaux.finalLabel).toBe("1 h 20 min");
+    expect(payload.quantiteLancee).toBe(20);
+  });
+  it("does not silently opt saved legacy payloads into modern loads or execution counters", () => {
+    for (const version of ["of-ordre-fabrication/1.2", OF_DOCUMENT_TEMPLATE_VERSION]) {
+      const input = buildFixtureInput({ templateVersion: version, quantiteLancee: 20, operations: [FIXTURE_OPERATIONS_TFT[0]],
+        executions: { 10: { statut: "DONE", bonnes: 20, rebuts: 0, attenteControle: 0, reprises: 0 } } });
+      const payload = buildOfDocumentPayload(input);
+      expect(payload.quantiteLancee).toBeUndefined();
+      expect(payload.phases[0].execution).toBeUndefined();
+      expect(payload.phases[0].fabricationH).toBe(1);
+    }
+    expect(buildOfDocumentPayload(buildFixtureInput()).templateVersion).toBe(OF_DOCUMENT_TEMPLATE_VERSION);
+  });
+  it("prints completed net production without inventing a phase visa or a customer delivery", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 20,
+      commandeNumero: null, affaires: [], cadenceLivraison: [], cadenceProduction: [], derniereFabrication: null,
+      operations: [{ ...FIXTURE_OPERATIONS_TFT[0], quantiteBase: 1 }], visas: {},
+      executions: { 10: { statut: "DONE", bonnes: 20, rebuts: 0, attenteControle: 0, reprises: 0 } } }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text).toContain("Production:Terminée");
+    expect(text).toContain("20bonnes");
+    expect(text).toContain("Visaop.:__________");
+    expect(text).not.toContain("ExpédiéeparBL");
+    expect(text).not.toContain("Visaop.:AG");
+    expect(text).not.toContain(payload.snapshotSha256);
+  });
+  it("retains every affair even when the overview contains only the first two", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 40,
+      affaires: Array.from({ length: 8 }, (_, i) => ({ affaireId: i + 1, numero: `AFF-1285-${i}`, delaiClient: `2026-10-${String(i + 20).padStart(2, "0")}`, quantite: 5 })) }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    for (let i = 0; i < 8; i++) expect(text).toContain(`AFF-1285-${i}`);
+  });
+  it("prints component and treatment nomenclature before the routing, with minutes rather than decimal hours", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 4,
+      operations: [{ ...FIXTURE_OPERATIONS_TFT[0], tempsUnitaire: 0.008, preparation: 0.5 }] }));
+    payload.technicalEvidence = { source: { kind: "REVISION_SNAPSHOT", hash: "frozen", technicalVersionId: null },
+      materials: [], debits: [], documents: [], correctionCount: 0, materialNotRequired: true,
+      nomenclature: [{ id: "line", repere: "AXE", reference: "COMP-AXE", indice: "B", designation: "Axe traité", quantityPerParent: 1, requiredQuantity: 4, unit: "pièce" }],
+      purchases: [{ type: "TRAITEMENT", designation: "Nitruration", phase: 30, quantityPerPiece: 1, unit: "PCE" }] };
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text.indexOf("Nomenclature")).toBeLessThan(text.indexOf("Gammeapplicable-opérations"));
+    expect(text.indexOf("COMP-AXE")).toBeLessThan(text.indexOf("Gammeapplicable-opérations"));
+    expect(text.indexOf("Nitruration")).toBeLessThan(text.indexOf("Gammeapplicable-opérations"));
+    expect(text).toContain("0,48min");
+    expect(text).toContain("30min");
+    expect(text).not.toContain("0,008");
+  });
+  it("paginates an operation longer than a page without dropping its last instruction", async () => {
+    const bytes = await renderCerpDocument({ designVersion: "workshop-v3", documentType: "Ordre de fabrication", name: "OF-FICTIF",
+      code: "R00", status: "BROUILLON", generatedAt: "13/10/2026", title: "Fixture", subject: "Fixture", creationDate: new Date("2026-10-13T10:00:00Z") }, ctx => {
+      renderWorkshopTable(ctx, { title: "Gamme applicable", columns: [{ key: "phase", label: "Phase", flex: 1 }, { key: "text", label: "Opération", flex: 5 }],
+        rows: [{ cells: { phase: "10", text: Array.from({ length: 180 }, (_, i) => `Instruction-${i}: conserver le lot et vérifier le plan.`).join("\n") }, continuationLabel: "Phase10-suite" }] });
+    });
+    const text = content(bytes);
+    for (let i = 0; i < 180; i++) expect(text).toContain(`Instruction-${i}:`);
+    expect(text).toContain("Phase10-suite");
+    const pages = (bytes.toString("latin1").match(/\/Type \/Page\b/g) || []).length;
+    expect(pages).toBeGreaterThan(3);
+    for (let page = 1; page <= pages; page++) expect(text).toContain(`Page${page}/${pages}`);
+  });
+});

@@ -18,8 +18,23 @@ import { HttpError } from "../../../utils/httpError";
 import type { MachineFamilyRef, OfRevisionOperation } from "../domain/of-revision";
 import type { OfPlanningPayload, OfPlanningStatut } from "../domain/of-planning-version";
 import type { NotificationRoutingRule } from "../../../shared/notifications/routing";
+import { readOfDocumentShippedQuantity } from "./of-document-shipped.repository";
 
 export type DbQueryer = Pick<PoolClient, "query">;
+
+/** Preview and emission collect their source facts on one coherent, read-only database snapshot. */
+export async function withOfDocumentReadTransaction<T>(read: (tx: PoolClient) => Promise<T>): Promise<T> {
+  const tx = await pool.connect();
+  try {
+    await tx.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const result = await read(tx);
+    await tx.query("COMMIT");
+    return result;
+  } catch (error) {
+    await tx.query("ROLLBACK");
+    throw error;
+  } finally { tx.release(); }
+}
 
 export class OfCommitUncertainError<T> extends HttpError {
   readonly transactionResult: T;
@@ -142,6 +157,7 @@ export type OfHeaderRow = {
   commande_id: number | null;
   commande_ligne_id: number | null;
   client_id: string | null;
+  client_code?: string | null;
   client_nom: string | null;
   piece_technique_id: string | null;
   piece_reference: string | null;
@@ -183,6 +199,7 @@ export async function readOfHeader(ofId: number, tx: DbQueryer = pool): Promise<
             o.commande_id::int               AS commande_id,
             o.commande_ligne_id::int         AS commande_ligne_id,
             o.client_id::text                AS client_id,
+            c.client_code                    AS client_code,
             c.company_name                   AS client_nom,
             o.piece_technique_id::text       AS piece_technique_id,
             COALESCE(ptv.plan_reference, pt.code_piece) AS piece_reference,
@@ -1466,12 +1483,9 @@ async function readCoverage(
     }
   }
 
-  // Quantité déjà reçue en bon sur cet OF : c'est la part produite et acceptée.
-  const recu = await tx.query(
-    `SELECT COALESCE(quantite_bonne, 0)::float8 AS bonne FROM public.ordres_fabrication WHERE id = $1`,
-    [header.of_id]
-  );
-  quantiteLivree = recu.rows[0] ? Number(recu.rows[0].bonne) : 0;
+  // Fabrication, entrée en stock et expédition sont trois événements distincts.
+  // Un sous-OF de montage ne livre pas l'article final de sa ligne de commande.
+  quantiteLivree = await readOfDocumentShippedQuantity(header.of_id, tx);
 
   // Une ligne de commande peut porter l'ensemble et tous ses sous-OF. Seule
   // la même pièce/version dans la même branche fournit la même sortie : les
@@ -1527,7 +1541,7 @@ export async function readDocumentMaterialExemption(ofId: number, tx: DbQueryer 
   return result.rows[0]?.not_required === true;
 }
 
-async function readLastFabrication(
+export async function readLastFabrication(
   header: OfHeaderRow,
   tx: DbQueryer
 ): Promise<{ numero: string | null; date: string | null } | null> {

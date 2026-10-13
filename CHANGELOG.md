@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-13 — OF atelier : nomenclature et sources (#1285)
+
+- Nomenclature avant gamme, titre et numéro centrés, durées en minutes/heures-minutes. Lecture cohérente des sources figées, sorties matière, compteurs nets, BL réellement expédiés et parts des regroupements. Réimpression et essais idempotents retournent l’édition enregistrée. La fiche de gamme affiche uniquement le code client.
+- 103 tests ciblés, 13 cas SQL PostgreSQL en lecture seule et producteur réel des PDF Test OF95/101. Build strict/contrat 1 479 opérations. Aucune migration ; recette globale et visuels automatiques du chantier parent restent ouverts.
+
 ## 2026-10-13 — PDF OF lisible en atelier (#1282)
 
 - Nouveau gabarit OF1.3 : zones opaques, opérations regroupant temps et visas, références répétées et durée par pièce précise.

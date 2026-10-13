@@ -1,5 +1,6 @@
 import { HttpError } from "../../../utils/httpError";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
+import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
 
 type Row = Record<string, unknown>;
 const row = (value: unknown): Row =>
@@ -62,7 +63,7 @@ export function buildTechnicalSheet(source: unknown) {
       { label: "Indice client", value: version.indice },
       { label: "Version interne", value: version.version_interne },
       { label: "Statut technique", value: version.statut },
-      { label: "Client", value: joined(piece.client_code, piece.client_name) },
+      { label: "Code client", value: piece.client_code },
       { label: "Pièce critique", value: piece.critical ? "Oui" : "Non" },
     ],
     sections: [
@@ -103,32 +104,6 @@ export function buildTechnicalSheet(source: unknown) {
           },
         ],
       },
-      {
-        title: "Gamme de fabrication — temps en heures décimales",
-        table: {
-          columns: [
-            { key: "phase", label: "Phase" },
-            { key: "op", label: "Opération" },
-            { key: "centre", label: "Centre" },
-            { key: "machine", label: "Machine / famille" },
-            { key: "programme", label: "Programme" },
-            { key: "tr", label: "TR (h)" },
-            { key: "tp", label: "T/P (h/pièce)" },
-            { key: "base", label: "Qté de base" },
-          ],
-          rows: operations.map((op) => ({
-            phase: op.phase,
-            op: joined(op.type, op.designation),
-            centre: op.centre,
-            machine: joined(op.machine, op.family),
-            programme: op.programme,
-            tr: op.reglage_h,
-            tp: op.piece_h,
-            base: op.base_qty,
-          })),
-        },
-      },
-      ...instructionSections,
       {
         title: "Nomenclature d’assemblage",
         table: {
@@ -175,6 +150,32 @@ export function buildTechnicalSheet(source: unknown) {
           })),
         },
       },
+      {
+        title: "Gamme de fabrication",
+        table: {
+          columns: [
+            { key: "phase", label: "Phase" },
+            { key: "op", label: "Opération" },
+            { key: "centre", label: "Centre" },
+            { key: "machine", label: "Machine / famille" },
+            { key: "programme", label: "Programme" },
+            { key: "tr", label: "Réglage" },
+            { key: "tp", label: "T/P par pièce" },
+            { key: "base", label: "Qté de base" },
+          ],
+          rows: operations.map((op) => ({
+            phase: op.phase,
+            op: joined(op.type, op.designation),
+            centre: op.centre,
+            machine: joined(op.machine, op.family),
+            programme: op.programme,
+            tr: formatWorkshopDuration(op.reglage_h),
+            tp: formatWorkshopDuration(op.piece_h),
+            base: op.base_qty,
+          })),
+        },
+      },
+      ...instructionSections,
       {
         title: "Exigences documentaires de cette version",
         table: {

@@ -495,9 +495,23 @@ export async function loadApplicableTechnicalSnapshot(
             'child_piece_technique_version_id', bom.child_piece_technique_version_id::text,
             'child_article_id', bom.child_article_id::text,
             'quantite', bom.quantite,
-            'repere', bom.repere
+            'repere', bom.repere,
+            'reference', COALESCE(child_version.plan_reference,child.code_piece,article.code),
+            'indice', child_version.indice,
+            'designation', COALESCE(child.designation,article.designation),
+            'unit', COALESCE(article.unite,CASE WHEN bom.child_piece_technique_id IS NOT NULL THEN 'pièce' END)
           ) ORDER BY bom.rang, bom.id)
           FROM public.pieces_techniques_nomenclature bom
+          LEFT JOIN public.pieces_techniques child ON child.id=bom.child_piece_technique_id
+          LEFT JOIN LATERAL (
+            SELECT candidate.plan_reference,candidate.indice FROM public.piece_technique_versions candidate
+            WHERE candidate.piece_technique_id=bom.child_piece_technique_id
+              AND ((bom.child_piece_technique_version_id IS NOT NULL AND candidate.id=bom.child_piece_technique_version_id)
+                OR (bom.child_piece_technique_version_id IS NULL AND candidate.statut='APPLICABLE'
+                  AND (candidate.date_effet IS NULL OR candidate.date_effet<=CURRENT_DATE)))
+            ORDER BY candidate.date_effet DESC NULLS LAST,candidate.version_interne DESC NULLS LAST,candidate.created_at DESC LIMIT 1
+          ) child_version ON true
+          LEFT JOIN public.articles article ON article.id=bom.child_article_id
           WHERE ${applicableBomScopeSql('bom', 'pt.id', 'v.id')}
         ), '[]'::jsonb),
         'achats', COALESCE((
