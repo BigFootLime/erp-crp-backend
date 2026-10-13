@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — Clôture canonique d’un traitement complet (#1273)
+
+- Terminer la phase externe quand tous ses dossiers sont clos et que toute la population est retournée, libérée et transférée, avec preuve immuable par origine.
+- Fournir les quantités de l’opération au planning et à la disponibilité sans inventer de pointage interne, de stock ou d’OF de récupération.
+- Conserver les contrôles qualité actuels, refus de double comptage et revue explicite des anciens pointages ; réparation des dossiers déjà clos par le même service, avec simulation transactionnelle par défaut.
+
 ## 2026-10-13 — Dossiers de traitement par origine (#1269)
 
 - Autoriser plusieurs dossiers pour une même opération, avec un dossier immuable par ligne fournisseur et origine matière ; conserver les registres existants.
