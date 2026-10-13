@@ -63,9 +63,19 @@ router.post("/", access(true), async (req: any, res, next) => { try {
   required(line && operation && evidence && packageUnit && Number.isFinite(planned) && planned > 0, "Ligne PO, opération OF, unité, quantité et preuve GED sont obligatoires.");
   const c = await pool.connect(); try { await c.query("BEGIN"); await lockRevision(c);
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1)),pg_advisory_xact_lock(hashtext($2))", [line, operation]);
+    // A retry returns the immutable dossier for this line. Distinct material
+    // origins have distinct lines and can share the same canonical operation.
+    const prior = (await c.query("SELECT * FROM public.subcontract_work_packages WHERE supplier_order_line_id=$1::uuid FOR UPDATE", [line])).rows[0];
+    if (prior) {
+      if (prior.of_operation_id !== operation || unit(prior.unit) !== packageUnit || Number(prior.qty_planned) !== planned || prior.ged_evidence_document_id !== evidence) {
+        throw new HttpError(409, "SUBCONTRACT_PACKAGE_ALREADY_EXISTS", "Cette ligne possède déjà un dossier avec d'autres paramètres. Ouvrez le dossier existant.");
+      }
+      await c.query("COMMIT");
+      return res.status(200).json(prior);
+    }
     const r = await c.query<any>(`INSERT INTO public.subcontract_work_packages(supplier_order_line_id,of_operation_id,status,unit,qty_planned,ged_evidence_document_id,created_by)
       SELECT l.id,o.id,'SENT',$3,$4,d.id,$6 FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur cf ON cf.id=l.commande_id JOIN public.of_operations o ON o.id=$2::uuid AND o.of_id=l.of_id JOIN public.pieces_techniques_operations source ON source.id=o.source_piece_operation_id AND source.type_operation='SOUS_TRAITANCE' JOIN public.ged_documents d ON d.id=$5::uuid AND d.archived_at IS NULL WHERE l.id=$1::uuid AND l.type='SOUS_TRAITANCE' AND l.statut_ligne='ACTIVE' AND cf.statut=ANY($7::text[])
-       AND $4<=l.quantite AND upper(trim(l.unite))=$3
+       AND $4<=l.quantite-l.qty_annulee AND upper(trim(l.unite))=$3
        AND EXISTS(SELECT 1 FROM public.subcontract_purchase_origins origin WHERE origin.line_id=l.id AND origin.operation_id=o.id)
        AND o.status::text<>'CANCELLED' AND(o.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions revision WHERE revision.id=o.revision_id AND revision.statut='ACTIVE')) RETURNING *`, [line, operation, packageUnit, planned, evidence, req.user?.id ?? null, activeOrderStates]);
     if (!r.rows[0]) throw new HttpError(409, "SUBCONTRACT_PACKAGE_PREREQUISITES", "La ligne sous-traitance active, l'opération OF canonique et la preuve GED active doivent correspondre.");
@@ -98,7 +108,12 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
       const op=(await c.query('SELECT of_id FROM public.of_operations WHERE id=$1',[p.of_operation_id])).rows[0];
       const readiness=flowInstalled?await assertMaterialOperationStartTx(c,Number(op.of_id),p.of_operation_id):null;
       const issued=await c.query("SELECT COALESCE(sum(qty),0)::float8 AS qty FROM public.subcontract_work_package_ledger WHERE package_id=$1 AND event_type='ISSUE'",[packageId]);
-      if(readiness&&issued.rows[0].qty+amount>readiness.operation.availableQuantity+readiness.operation.processedQuantity)throw new HttpError(409,'SUBCONTRACT_PREDECESSOR_QUANTITY','La quantité expédiée dépasse les pièces disponibles à cette étape.');
+      if(readiness){
+        const operationIssued=await c.query(`SELECT COALESCE(sum(e.qty),0)::float8 AS qty FROM public.subcontract_work_package_ledger e
+          JOIN public.subcontract_work_packages package ON package.id=e.package_id
+          WHERE package.of_operation_id=$1::uuid AND e.event_type='ISSUE'`,[p.of_operation_id]);
+        if(Number(operationIssued.rows[0].qty)+amount>readiness.operation.availableQuantity+readiness.operation.processedQuantity)throw new HttpError(409,'SUBCONTRACT_PREDECESSOR_QUANTITY','La quantité cumulée expédiée dépasse les pièces disponibles à cette étape.');
+      }
       if(issued.rows[0].qty+amount>Number(p.qty_planned))throw new HttpError(409,'SUBCONTRACT_OVER_ISSUE','La sortie dépasse la quantité prévue du dossier.');
     }
     const inserted=await c.query<any>(
