@@ -62,8 +62,7 @@ WITH operation_rows AS (
    WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
  LEFT JOIN LATERAL (SELECT * FROM public.planning_events WHERE of_operation_id=op.id AND archived_at IS NULL
    AND status<>'CANCELLED' ORDER BY start_ts,id LIMIT 1) e ON true
- LEFT JOIN LATERAL (SELECT sum(qty_good) AS good,sum(qty_scrap) AS scrap,sum(qty_rework) AS rework
-   FROM public.production_quantity_declarations WHERE operation_id=op.id) q ON true
+ LEFT JOIN public.production_operation_quantities q ON q.operation_id=op.id
  WHERE o.statut<>'ANNULE' AND op.status::text<>'CANCELLED'
    AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')

@@ -53,7 +53,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id LEFT JOIN public.machines m ON m.id=op.machine_id
      LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
      CROSS JOIN LATERAL(SELECT COALESCE(o.technical_preparation->'execution_programming',o.technical_snapshot->'preparation_decisions'->'programming') AS value) programming
-    LEFT JOIN LATERAL(SELECT sum(qty_good) AS good,sum(qty_scrap) AS scrap,sum(qty_pending_control) AS pending,sum(qty_rework) AS rework FROM public.production_quantity_declarations WHERE operation_id=op.id) q ON true
+    LEFT JOIN public.production_operation_quantities q ON q.operation_id=op.id
     WHERE op.id=ANY($1::uuid[]) ORDER BY op.phase,op.id`,[dossier.operations.map(o=>o.id)])).rows;
   const dependencies=(await tx.query<DependencyRow>(`
     WITH route AS(SELECT id,lag(id) OVER(ORDER BY phase,id) AS predecessor FROM public.of_operations WHERE id=ANY($1::uuid[])), edges AS(
@@ -62,7 +62,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       UNION ALL SELECT r.id,r.predecessor,NULL::numeric FROM route r WHERE r.predecessor IS NOT NULL AND NOT EXISTS(
         SELECT 1 FROM public.planning_operation_dependencies d WHERE d.successor_id='op:'||r.id::text AND d.predecessor_id LIKE 'op:%'))
     SELECT e.successor::text,e.predecessor::text,p.designation AS label,p.status::text,
-      COALESCE((SELECT sum(q.qty_good) FROM public.production_quantity_declarations q WHERE q.operation_id=p.id),0)::float8 AS good,
+      COALESCE((SELECT q.good FROM public.production_operation_quantities q WHERE q.operation_id=p.id),0)::float8 AS good,
       COALESCE((SELECT sum(b.released_quantity) FROM public.production_transfer_batches b WHERE b.operation_id=p.id AND b.successor_operation_id=e.successor),0)::float8 AS transferred,
       e.minimum::float8,(e.minimum IS NOT NULL OR EXISTS(SELECT 1 FROM public.of_material_needs n WHERE n.operation_id=p.id AND n.allow_partial AND n.superseded_at IS NULL)) AS partial
     FROM edges e JOIN public.of_operations p ON p.id=e.predecessor ORDER BY e.successor,p.phase,p.id`,[dossier.operations.map(o=>o.id)])).rows;

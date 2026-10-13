@@ -887,7 +887,7 @@ export async function repoOperatorBoard(params: {
         op.status::text                 AS status,
         (${PLANNED_OPERATION_DURATION_MINUTES_SQL})/60.0 AS temps_total_planned,
         op.temps_total_real::float8     AS temps_total_real,
-        GREATEST(0,o.quantite_lancee-COALESCE((SELECT sum(d.qty_good+d.qty_scrap+d.qty_pending_control+d.qty_rework) FROM public.production_quantity_declarations d WHERE d.operation_id=op.id),0))::float8 AS remaining_quantity,
+        GREATEST(0,o.quantite_lancee-COALESCE((SELECT q.good+q.scrap+q.pending+q.rework FROM public.production_operation_quantities q WHERE q.operation_id=op.id),0))::float8 AS remaining_quantity,
         o.id                            AS of_id,
         o.numero                        AS of_numero,
         o.statut::text                  AS of_statut,
