@@ -1,4 +1,6 @@
 import type { PoolClient } from 'pg';
+import { prepareMaterialBarTransferTx, applyMaterialBarTransferTx, prepareMaterialBarRestorationTx,
+    applyMaterialBarRestorationTx } from '../../stock/repository/material-bar-transfer.repository';
 import type { AuditContext } from './production.repository';
 import { HttpError } from '../../../utils/httpError';
 import { quantity } from '../domain/of-material';
@@ -87,6 +89,7 @@ export async function aggregateConsolidationHoldsTx(tx: PoolClient, input: {
             changed();
         const transferred = quantity(group.sources.reduce((n, r) => n + Number(r.qty_reserved), 0));
         const surplus = quantity(Number(group.extra?.qty_reserved ?? 0));
+        const barPlan = await prepareMaterialBarTransferTx(tx, first.stock_batch_id, group.sources.map(r => r.id), group.extra?.id);
         let producerReservationId = group.extra?.id;
         if (producerReservationId) {
             await tx.query(`UPDATE public.stock_reservations SET qty_reserved=qty_reserved+$2,updated_at=now(),updated_by=$3,
@@ -120,6 +123,9 @@ export async function aggregateConsolidationHoldsTx(tx: PoolClient, input: {
         await tx.query(`UPDATE public.stock_reservations SET status='RELEASED',released_at=now(),released_by=$2,
       reason='Réservation transférée au regroupement',correlation_id=$3::uuid,updated_at=now(),updated_by=$2
       WHERE id=ANY($1::uuid[])`, [group.sources.map(r => r.id), audit.user_id, input.consolidationId]);
+        await applyMaterialBarTransferTx(tx, barPlan, { targetReservationId: producerReservationId,
+            contextId: input.consolidationId, commandKey: producerReservationId, actor: audit.user_id,
+            reason: 'Affectations des barres transférées au regroupement' });
     }
 }
 /** New ledgers contain every producer hold, including surplus-only lots.
@@ -207,6 +213,11 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
         if (qty > 0)
             assertStockConsumptionAllowed(state, { movement_type: 'UNRESERVE', qty });
     }
+    const barPlans = await prepareMaterialBarRestorationTx(tx, consolidationId, holds.map(hold => ({
+        targetReservationId: hold.producer_reservation_id, batchId: byId.get(hold.producer_reservation_id)!.stock_batch_id,
+        sources: sourceTransfers.filter(t => t.producer_reservation_id === hold.producer_reservation_id)
+            .map(t => ({ reservationId: t.reservation_id, quantityMm: Number(t.source_reserved_qty) })),
+    })));
     for (const [levelId, qty] of surplusByLevel)
         if (qty > 0)
             await tx.query(`UPDATE public.stock_levels
@@ -219,4 +230,6 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
     reason='Dissolution du regroupement',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [holds.map(h => h.producer_reservation_id), audit.user_id, consolidationId]);
     await tx.query(`UPDATE public.stock_reservations SET status='ACTIVE',released_at=NULL,released_by=NULL,
     reason='Réservation source restituée après dissolution',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [sourceTransfers.map(t => t.reservation_id), audit.user_id, consolidationId]);
+    await applyMaterialBarRestorationTx(tx, barPlans, { contextId: consolidationId, commandKey: consolidationId,
+        actor: audit.user_id, reason: 'Affectations d’origine restituées après dissolution' });
 }

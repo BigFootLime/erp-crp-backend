@@ -1,7 +1,8 @@
 import {materialCommand,readMaterialTx,type Candidate} from './of-material.repository';
 import type {MaterialConfirmation} from '../validators/of-material.validators';
 import type {AuditContext} from './production.repository';
-import {quantity,materialBalance,lotCompatibility,purchaseQuantity} from '../domain/of-material';
+import {quantity,materialBalance,materialSelectionCoverage,barBlankStep,lotCompatibility,purchaseQuantity} from '../domain/of-material';
+import {physicalMaterialSelection} from '../domain/of-material-bars';
 import {HttpError} from '../../../utils/httpError';
 import {repoCreateStockReservation} from '../../stock/repository/stock-reservation.repository';
 import {createMaterialDraftsTx,type MaterialDraftLine} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
@@ -22,10 +23,20 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
     if(locked.version!==current.version)throw new HttpError(409,"MATERIAL_COVERAGE_CHANGED","Un lot ou un approvisionnement a changé. Actualisez la proposition.");
     const drafts:MaterialDraftLine[]=[],reservedIds:string[]=[],pending:Array<{needKey:string;message:string}>=[];
     const allocatedFuture=new Map<string,number>();
-    for(const need of current.needs){
-      const selections=body.selections.filter(s=>s.needKey===need.key),total=quantity(selections.reduce((sum,s)=>sum+s.quantity,0));
+    for(const initialNeed of current.needs){
+      // Earlier needs may have reserved the same physical bar. Re-read its
+      // canonical holds/version under the lot locks before planning another hold.
+      const need=reservedIds.length?(await readMaterialTx(tx,ofId)).needs.find(n=>n.key===initialNeed.key)!:initialNeed;
+      if(!need||need.blockers.length)throw new HttpError(409,'MATERIAL_COVERAGE_CHANGED','La préparation matière a changé. Actualisez la proposition.');
+      const selections=body.selections.filter(s=>s.needKey===need.key),total=materialSelectionCoverage(need,selections);
       const futureSelections=body.futureSelections.filter(s=>s.needKey===need.key),futureTotal=quantity(futureSelections.reduce((sum,s)=>sum+s.quantity,0));
-      if(quantity(total+futureTotal)>materialBalance(need).missing)throw new HttpError(409,"MATERIAL_OVER_COVERAGE","La sélection physique et attendue dépasse le manque restant.");
+      const missing=materialBalance(need).missing,step=barBlankStep(need)/1000;
+      const maximum=step?quantity(Math.ceil(missing/step)*step):missing;
+      if(quantity(total+futureTotal)>maximum)throw new HttpError(409,"MATERIAL_OVER_COVERAGE","La sélection physique et attendue dépasse le manque restant.");
+      if(step&&selections.some(s=>{
+        const gain=materialSelectionCoverage(need,[s]);
+        return gain<=0||materialSelectionCoverage(need,[{...s,quantity:quantity(Math.max(0,s.quantity-.001))}])===gain;
+      }))throw new HttpError(409,'MATERIAL_FRAGMENTED_SELECTION','Réservez les longueurs proposées pour obtenir des bruts entiers sur chaque lot.');
       for(const selection of futureSelections){
         const candidate=need.futureSupplies.find(s=>s.id===selection.lineId),already=allocatedFuture.get(selection.lineId)??0;
         if(!selection.requirementsReviewed||!candidate||candidate.reasons.length||quantity(already+selection.quantity)>candidate.available)
@@ -37,10 +48,14 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
         const candidate=need.candidates.find(c=>c.lot.batchId===selection.batchId);
         if(!candidate||lotCompatibility(need,candidate.lot).length||selection.quantity>candidate.available)throw new HttpError(409,"MATERIAL_LOT_CHANGED","Un lot sélectionné n’est plus compatible ou disponible.");
         const lot=candidate.lot as Candidate;
-        const result=await repoCreateStockReservation({article_id:need.articleId!,magasin_id:lot.magasinId,emplacement_id:lot.emplacementId,lot_id:lot.id,qty:selection.quantity,source:{source_type:"OF",of_id:ofId},reason:`Matière ${current.number} · ${need.operationLabel}`},audit,`${body.idempotencyKey}:${need.key}:${lot.batchId}`,tx,need.id!);
+        const physical=step&&need.barInventories?physicalMaterialSelection(need,lot.batchId,selection.quantity):undefined;
+        if(physical&&physical.quantity!==selection.quantity)throw new HttpError(409,'MATERIAL_FRAGMENTED_SELECTION','Actualisez les longueurs proposées sur les barres physiques.');
+        const result=await repoCreateStockReservation({article_id:need.articleId!,magasin_id:lot.magasinId,emplacement_id:lot.emplacementId,lot_id:lot.id,qty:selection.quantity,
+          ...(physical?{barAllocations:physical.allocations.map(({barId,quantityMm,expectedVersion})=>({barId,quantityMm,expectedVersion}))}:{}),
+          source:{source_type:"OF",of_id:ofId},reason:`Matière ${current.number} · ${need.operationLabel}`},audit,`${body.idempotencyKey}:${need.key}:${lot.batchId}`,tx,need.id!);
         reservedIds.push(result.reservation.id);
       }
-      const buy=purchaseQuantity(quantity(materialBalance(need).missing-total-futureTotal),need.catalog?.moq??null,need.catalog?.lot_achat??null);
+      const buy=purchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null);
       if(!buy.assigned)continue;
       if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
       if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-12 — Décisions qualité et barres (#1246)
+
+- Source physique et contexte réception pour les décisions guidées.
+- Réessai idempotent ; un rebut partiel conserve le verdict du reliquat du lot.
+
+
+## 2026-10-12 — Comptage matière guidé (#1246)
+
+- Les lignes d’inventaire indiquent leur unité et l’obligation de compter les barres, sans divulguer les longueurs théoriques en mode aveugle.
+
+
 ## 2026-10-12 — Annulation revue avant prélèvement (#1033, en préparation)
 
 - Présenter les engagements avant annulation et permettre au planificateur de conserver la fabrication pour le stock libre.
@@ -62,6 +73,7 @@
 - Migration additive avec verify et rollback protégé. Lot #1033/#1034 toujours en brouillon, sans déploiement.
 
 - #1209 — Sous-traitance : clôture après réception complète, sans autoriser de nouveaux mouvements.
+
 
 ## 2026-10-12 — Couleurs clients et maintenance annuelle (#1169 / #888)
 

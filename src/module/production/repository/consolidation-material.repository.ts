@@ -9,6 +9,7 @@ import { debitQuantity, materialPropertiesFingerprint, proposeMaterialCoverage, 
 import { repoCreateStockReservation } from '../../stock/repository/stock-reservation.repository';
 import { HttpError } from '../../../utils/httpError';
 import { aggregateConsolidationHoldsTx } from './consolidation-material-holds.repository';
+import { readTrackedMaterialBarInventoryTx } from '../../stock/repository/material-bar-holds.repository';
 
 /** Physical regrouping moves existing holds, never reserves their quantity a
  * second time. Source preparation is checked again inside the creation tx. */
@@ -39,6 +40,7 @@ export async function previewConsolidationMaterialTx(tx: DossierDb, sourceIds: n
   const remainingBatches = new Map(first.needs.flatMap(n => n.candidates.map(c => [c.lot.batchId, c.available] as const)));
   const remainingQuality = new Map(first.needs.flatMap(n => n.candidates.map(c => [c.lot.id, c.lot.qualityAvailable ?? 0] as const)));
   const remainingLevels = new Map(first.needs.flatMap(n => n.candidates.flatMap(c => c.lot.stockLevelId ? [[c.lot.stockLevelId, c.lot.levelAvailable ?? 0] as const] : [])));
+  const remainingBars = new Map<string, number>();
   const groups = first.needs.map(need => {
     const phase = first.operations.find(o => o.id === need.operationId)!.phase;
     const signature = (n: typeof need, phaseNumber: number) => materialPropertiesFingerprint({ articleId: n.articleId,
@@ -54,8 +56,13 @@ export async function previewConsolidationMaterialTx(tx: DossierDb, sourceIds: n
     const candidates = need.candidates.map(c => ({ ...c.lot, available: remainingBatches.get(c.lot.batchId) ?? 0,
       qualityAvailable: remainingQuality.get(c.lot.id) ?? 0,
       levelAvailable: c.lot.stockLevelId ? remainingLevels.get(c.lot.stockLevelId) : undefined }));
-    const proposal = proposeMaterialCoverage([{ ...need, required, reserved: held, consumed: 0, expected: 0, receivedBlocked: 0 }],
-      candidates, { maximumLots: policy.maximumLots, usedOrigins: proposedOrigins, originsByLot: policy.originsByLot })[0];
+    // All source reservations become one producer need. Counting only the first
+    // OF's bar holds would propose buying/reserving the other OFs' stock twice.
+    const combined = { ...need, required, reserved: held, consumed: 0, expected: 0, receivedBlocked: 0,
+      reservations: matching.flatMap(m => m.need.reservations),
+      ...(need.barInventories ? { barInventories: Object.assign({}, ...matching.map(m => m.need.barInventories)) } : {}) };
+    const proposal = proposeMaterialCoverage([combined], candidates,
+      { maximumLots: policy.maximumLots, usedOrigins: proposedOrigins, originsByLot: policy.originsByLot }, remainingBars)[0];
     if (proposal.purchaseMissing) throw new HttpError(409, 'CONSOLIDATION_MATERIAL_MISSING',
       'Le stock disponible dans les lots autorisés ne couvre pas toute la quantité regroupée.', { sourceRef: need.key, missing: proposal.purchaseMissing, unit: need.unit });
     for (const s of proposal.selections) {
@@ -93,8 +100,17 @@ export async function transferConsolidationMaterialTx(tx: PoolClient, consolidat
     // Aggregation then transfers their ownership without reserving them twice.
     const surplusReservationIds: string[]=[];
     for (const extra of group.extra) {
+      // Earlier needs may have touched this bar inside the same transaction.
+      // Preserve the proposed lengths/bar IDs and reread only their versions.
+      const inventory = extra.barAllocations ? await readTrackedMaterialBarInventoryTx(tx, extra.batchId) : null;
+      const barAllocations = extra.barAllocations?.map(a => {
+        const bar = inventory?.bars.find(b => b.id === a.barId);
+        if (!bar) throw new HttpError(409, 'CONSOLIDATION_MATERIAL_CHANGED', 'Actualisez les barres du regroupement.');
+        return { barId: a.barId, quantityMm: a.quantityMm, expectedVersion: bar.version };
+      });
       const hold=await repoCreateStockReservation({ article_id: group.articleId,
         magasin_id: extra.lot.magasinId, emplacement_id: extra.lot.emplacementId, lot_id: extra.lotId,
+        ...(barAllocations ? { barAllocations } : {}),
         qty: extra.quantity, source: { source_type: 'OF', of_id: producerId }, reason: 'Matière du surplus du regroupement physique' },
       audit, `consolidation-material:${consolidationId}:${inserted.id}:${extra.batchId}`, tx, inserted.id);
       surplusReservationIds.push(hold.reservation.id);

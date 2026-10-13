@@ -426,6 +426,8 @@ export type StockLotGenealogy = {
 
 // This endpoint now reflects stock_levels (via v_stock_current).
 export type StockBalanceRow = {
+  stock_batch_id: string | null;
+  material_bars_required?: boolean;
   article_id: string;
   article_code: string;
   article_designation: string;
@@ -746,6 +748,11 @@ export type StockInventorySessionListItem = {
 };
 
 export type StockInventorySessionLine = {
+  unit_code?: string;
+  material_bar_count_required?: boolean;
+  stock_batch_id: string | null;
+  count_event_id: string | null;
+  material_bars?: import('../validators/material-bars.validators').MaterialBarInventoryCommand | null;
   id: string;
   snapshot_line_id: string;
   session_id: string;

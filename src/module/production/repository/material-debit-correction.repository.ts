@@ -5,10 +5,11 @@ import type {MaterialDebitCorrection} from '../validators/of-material.validators
 import {materialCommand,readMaterialTx} from './of-material.repository';
 import {syncMaterialOfQuantitiesTx} from './operation-readiness.repository';
 import {compensateMaterialMovementTx,restoreMaterialReservationTx} from '../../stock/repository/material-compensation.repository';
+import {prepareMaterialBarCorrectionTx,applyMaterialBarCorrectionTx} from '../../stock/repository/material-bar-correction.repository';
 
 export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrection,audit:AuditContext){
   return materialCommand(ofId,'CORRECT_DEBIT',body,audit,async(tx,current)=>{
-    const debit=(await tx.query<{id:string;declaration_id:string;operation_id:string;technical_version_id:string;quantity_kind:string}>(`SELECT d.id::text,d.declaration_id::text,d.operation_id::text,d.technical_version_id::text,d.quantity_kind
+    const debit=(await tx.query<{id:string;command_key:string;declaration_id:string;operation_id:string;technical_version_id:string;quantity_kind:string}>(`SELECT d.id::text,d.command_key::text,d.declaration_id::text,d.operation_id::text,d.technical_version_id::text,d.quantity_kind
       FROM public.production_material_debits d JOIN public.of_operations o ON o.id=d.operation_id JOIN public.ordres_fabrication f ON f.id=d.of_id
       WHERE d.id=$1::uuid AND d.of_id=$2 AND d.compensates_id IS NULL AND o.status::text='RUNNING' AND f.statut::text IN('EN_COURS','EN_PAUSE')
         AND NOT EXISTS(SELECT 1 FROM public.production_material_debits c WHERE c.compensates_id=d.id)
@@ -26,15 +27,18 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
     const remnants=(await tx.query<{stock_movement_id:string;lot_id:string}>(`SELECT stock_movement_id::text,lot_id::text FROM public.production_material_remnants WHERE debit_id=$1::uuid ORDER BY lot_id`,[debit.id])).rows;
     for(const lotId of [...new Set([...sources,...remnants].map(s=>s.lot_id))].sort())await tx.query('SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE',[lotId]);
     if((await readMaterialTx(tx,ofId)).version!==current.version)throw new HttpError(409,'MATERIAL_COVERAGE_CHANGED','Le stock a changé pendant la préparation. Actualisez avant de corriger.');
+    const barProofs=await prepareMaterialBarCorrectionTx(tx,debit.command_key,sources.map(s=>({reservationId:s.reservation_id,movementId:s.stock_movement_id,quantity:s.actual,extended:s.extended})));
     for(const r of remnants)await compensateMaterialMovementTx(tx,{movementId:r.stock_movement_id,ofId,kind:'REMNANT',key:`${body.idempotencyKey}:remnant:${r.lot_id}`,reason:body.reason},audit);
     const inverses=[];
     for(const source of sources){
-      const inverse=await compensateMaterialMovementTx(tx,{movementId:source.stock_movement_id,ofId,kind:'SOURCE',key:`${body.idempotencyKey}:source:${source.reservation_id}`,reason:body.reason},audit);
+      const inverse=await compensateMaterialMovementTx(tx,{movementId:source.stock_movement_id,ofId,kind:'SOURCE',key:`${body.idempotencyKey}:source:${source.reservation_id}`,reason:body.reason,physicalBarCorrection:barProofs},audit);
       if(Math.abs(inverse.quantity-source.actual)>.000001)throw new HttpError(409,'MATERIAL_DEBIT_PROOF_MISMATCH','La quantité du mouvement ne correspond plus à la preuve de débit.');
       await restoreMaterialReservationTx(tx,{reservationId:source.reservation_id,quantity:inverse.quantity,reason:body.reason,releaseExtraQuantity:source.extended},audit);
       inverses.push({...source,movementId:inverse.movementId});
     }
     const correctionId=randomUUID();
+    await applyMaterialBarCorrectionTx(tx,barProofs,{commandKey:body.idempotencyKey,actor:audit.user_id,reason:body.reason,
+      inverses:inverses.map(s=>({reservationId:s.reservation_id,movementId:s.movementId}))});
     const declaration=(await tx.query<{id:string}>(`INSERT INTO public.production_quantity_declarations(of_id,operation_id,qty_good,qty_scrap,qty_rework,qty_pending_control,
       unite,note,compensates_id,compensation_reason,idempotency_key,declared_by)
       SELECT of_id,operation_id,-qty_good,-qty_scrap,-qty_rework,-qty_pending_control,unite,$2,id,$2,$3,$4

@@ -7,6 +7,12 @@ import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-arti
 import { syncArticleCommercialTx } from './article-commercial.repository';
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
+import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from './material-bar-posting.repository';
+import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
+import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';
+import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMaterialBarCountSessionTx,
+  applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
+import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -6223,6 +6229,7 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   const dataSql = `
     SELECT
       b.id::text AS id,
+      b.stock_batch_id::text AS stock_batch_id,
       b.article_id::text AS article_id,
       a.code AS article_code,
       a.designation AS article_designation,
@@ -6317,7 +6324,9 @@ export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<P
   `;
 
   const rows = await db.query<StockBalanceRow>(dataSql, [...values, pageSize, offset]);
-  return { items: rows.rows, total };
+  const materialRequirements = await readMaterialBarCountRequirementsTx(db, rows.rows);
+  return { items: rows.rows.map(row => ({...row, material_bars_required:
+    materialRequirements.get(`${row.article_id}:${row.stock_batch_id ?? ''}`)?.material_bar_count_required ?? false})), total };
 }
 
 export async function repoGetStockAnalytics(filters: ListAnalyticsQueryDTO): Promise<StockAnalytics> {
@@ -7277,6 +7286,21 @@ export async function repoPreviewMovementCompensation(
   const materialOwned=(await db.query(`SELECT 1 FROM public.production_material_debit_sources WHERE stock_movement_id=$1::uuid
     UNION ALL SELECT 1 FROM public.production_material_remnants WHERE stock_movement_id=$1::uuid LIMIT 1`,[id])).rows.length>0;
   if(materialOwned)built.blockers.push({code:'MATERIAL_DEBIT_CORRECTION_REQUIRED',message:'Corrigez ce mouvement depuis le débit matière de l’OF pour conserver ensemble stock, bruts et transferts.'});
+  if (!built.blockers.length && detail.movement.stock_batch_id && !existing.rows.length) {
+    const physicalPreview = await db.connect();
+    try {
+      await physicalPreview.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const eligible = await previewMaterialBarCompensationTx(physicalPreview, id);
+      await physicalPreview.query('COMMIT');
+      if (eligible) built.prerequisites.push({ code:'MATERIAL_BAR_COMPENSATION_READY',label:'Barres d’origine disponibles',
+        satisfied:true,message:'Les barres seront reprises automatiquement depuis le mouvement d’origine.' });
+    } catch (error) {
+      await physicalPreview.query('ROLLBACK');
+      if (!(error instanceof HttpError)) throw error;
+      built.blockers.push({ code:error.code,message:error.message });
+      built.prerequisites.push({ code:error.code,label:'Barres d’origine disponibles',satisfied:false,message:error.message });
+    } finally { physicalPreview.release(); }
+  }
   const existingCompensation = existing.rows[0] ?? null;
   const noExistingCompensation = !existingCompensation;
   const existingMessage = existingCompensation
@@ -7878,7 +7902,8 @@ export async function repoPostMovement(
   audit: AuditContext,
   idempotencyKey: string,
   externalClient?: PoolClient,
-  reservedConsumption?: {reservationId:string}
+  reservedConsumption?: {reservationId:string},
+  physicalBarOwner?: MaterialBarPostingOwner
 ): Promise<StockMovementDetail | null> {
   const client = externalClient ?? await db.connect();
   const ownsTransaction = !externalClient;
@@ -7908,6 +7933,7 @@ export async function repoPostMovement(
       stock_batch_id: string | null;
       qty: number;
       notes: string | null;
+      reversal_of_id: string | null;
     }>(
       `
         SELECT
@@ -7920,7 +7946,8 @@ export async function repoPostMovement(
           stock_level_id::text AS stock_level_id,
           stock_batch_id::text AS stock_batch_id,
           qty::float8 AS qty,
-          notes
+          notes,
+          reversal_of_id::text AS reversal_of_id
         FROM public.stock_movements
         WHERE id = $1::uuid
         FOR UPDATE
@@ -7973,6 +8000,11 @@ export async function repoPostMovement(
     );
     await ensureLotTrackingRespected(client, m.article_id, draftLines.rows);
     await assertPieceReceiptMovement(client, id, m.movement_type, draftLines.rows);
+    const barScope = await lockMaterialBarPostingScopeTx(client, { articleId: m.article_id,
+      lotIds: draftLines.rows.flatMap(line => line.lot_id ? [line.lot_id] : []), explicit: !!body.material_bars || !!physicalBarOwner });
+    if (physicalBarOwner?.kind === 'DEBIT' && !reservedConsumption)
+      throw new HttpError(409, 'MATERIAL_BAR_POST_OWNER_INVALID', 'Le débit des barres doit consommer la réservation de son OF.');
+    const physicalMovement = { id, batchId: m.stock_batch_id, type: m.movement_type, quantity: m.qty, reversalOf: m.reversal_of_id };
 
     // A direct material issue does not have to be created through a stock
     // reservation.  It is nevertheless an irreversible physical use of a
@@ -8042,6 +8074,9 @@ export async function repoPostMovement(
       const uniformLotId = assertSameLotIfSet(movementLines);
       const srcBatchId = uniformLotId ? await ensureStockBatchId(client, { stock_level_id: srcStockLevelId, lot_id: uniformLotId }) : null;
       const dstBatchId = uniformLotId ? await ensureStockBatchId(client, { stock_level_id: dstStockLevelId, lot_id: uniformLotId }) : null;
+
+      const barMovement = await prepareMaterialBarPostingTx(client, { scope: barScope, movement: physicalMovement,
+        destinationBatchId: dstBatchId, command: body.material_bars, owner: physicalBarOwner, externalTransaction: !!externalClient });
 
       const lockedStates = await lockStockStates(client, [
         { stock_level_id: srcStockLevelId, stock_batch_id: srcBatchId },
@@ -8235,6 +8270,8 @@ export async function repoPostMovement(
         [id, audit.user_id, command.correlation_id]
       );
 
+      if (barMovement) await applyMaterialBarPostingTx(client, barMovement, audit.user_id);
+
       await insertMovementEvent(client, {
         movement_id: id,
         event_type: "POSTED",
@@ -8283,6 +8320,8 @@ export async function repoPostMovement(
       return await repoGetMovement(id, externalClient);
     }
 
+    const barMovement = await prepareMaterialBarPostingTx(client, { scope: barScope, movement: physicalMovement,
+      command: body.material_bars, owner: physicalBarOwner, externalTransaction: !!externalClient });
     const lockedStates = await lockStockStates(client, [
       { stock_level_id: m.stock_level_id, stock_batch_id: m.stock_batch_id },
     ]);
@@ -8317,6 +8356,8 @@ export async function repoPostMovement(
       `,
       [id, audit.user_id, command.correlation_id]
     );
+
+    if (barMovement) await applyMaterialBarPostingTx(client, barMovement, audit.user_id);
 
     await insertMovementEvent(client, {
       movement_id: id,
@@ -9465,6 +9506,8 @@ async function queryInventorySessionLines(
         snapshot.id::text AS snapshot_line_id,
         snapshot.session_id::text AS session_id,
         snapshot.line_no::int AS line_no,
+        snapshot.stock_batch_id::text AS stock_batch_id,
+        latest_count.id::text AS count_event_id,
         snapshot.article_id::text AS article_id,
         article.code AS article_code,
         article.designation AS article_designation,
@@ -9551,6 +9594,7 @@ async function queryInventorySessionLines(
        AND materialized.lot_id IS NOT DISTINCT FROM snapshot.lot_id
       LEFT JOIN LATERAL (
         SELECT
+          event.id,
           event.count_round,
           event.counted_qty,
           event.reason_code,
@@ -9572,7 +9616,11 @@ async function queryInventorySessionLines(
     [sessionId, lineId]
   );
 
-  return res.rows;
+  const physicalCounts = await readMaterialBarCountsTx(db,res.rows.flatMap(row=>row.count_event_id?[row.count_event_id]:[]));
+  const barRequirements = await readMaterialBarCountRequirementsTx(db, res.rows);
+  return res.rows.map(row=>({...row,
+    ...barRequirements.get(`${row.article_id}:${row.stock_batch_id ?? ''}`),
+    material_bars:row.count_event_id ? physicalCounts.get(row.count_event_id) ?? null : null}));
 }
 
 async function repoGetInventoryLineById(lineId: string): Promise<StockInventorySessionLine | null> {
@@ -9916,6 +9964,10 @@ export async function repoUpsertInventoryLine(
       ["MP_LOT", body.mp_references] as const,
       ["TRAITEMENT_LOT", body.tr_references] as const,
     ].filter((entry): entry is readonly ["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]] => entry[1] !== undefined);
+    const physicalCount = await prepareMaterialBarCountEntryTx(client, { line: {
+      snapshotId:snapshotLine.id,batchId:snapshotLine.stock_batch_id,articleId:snapshotLine.article_id,
+      lotId:snapshotLine.lot_id,theoreticalQty:snapshotLine.theoretical_qty,countedQty:body.counted_qty,
+    },body:body.material_bars });
     if (traceUpdates.length > 0 && !body.lot_id) {
       throw new HttpError(
         422,
@@ -10014,6 +10066,7 @@ export async function repoUpsertInventoryLine(
     );
     const countEventId = countEvent.rows[0]?.id;
     if (!countEventId) throw new Error("Failed to append inventory count event");
+    if (physicalCount) await recordMaterialBarCountTx(client,countEventId,physicalCount);
 
     const existing = await client.query<{ id: string }>(
       `
@@ -10254,6 +10307,8 @@ export async function repoApproveInventorySession(
         `${counts.discrepancy_without_reason} discrepancies have no reason`
       );
     }
+
+    await prepareMaterialBarCountSessionTx(client,id,await loadMaterialBarCountLinesTx(client,id),row.requires_second_count);
 
     await client.query(
       `
@@ -10511,6 +10566,7 @@ export async function repoCloseInventorySession(
       );
     }
 
+    const physicalCounts = await prepareMaterialBarCountSessionTx(client,id,await loadMaterialBarCountLinesTx(client,id));
     const states = await lockStockStates(
       client,
       lines.rows.map((line) => ({
@@ -10548,6 +10604,7 @@ export async function repoCloseInventorySession(
       }))
       .filter((line) => Math.abs(line.delta_qty) > 1e-9);
     const postedAt = new Date().toISOString();
+    const physicalAdjustmentIds = new Map<string,string>();
     const drafts = await client.query<{
       id: string;
       snapshot_line_id: string;
@@ -10708,7 +10765,11 @@ export async function repoCloseInventorySession(
           [id, movementId, adj.snapshot_line_id]
         );
       }
+      physicalAdjustmentIds.set(adj.snapshot_line_id,movementId);
     }
+
+    for (const [snapshotId, physicalCount] of physicalCounts)
+      await applyMaterialBarCountTx(client,physicalCount,physicalAdjustmentIds.get(snapshotId) ?? null,audit.user_id);
 
     for (const draft of drafts.rows) {
       if (postedDraftIds.has(draft.id)) continue;

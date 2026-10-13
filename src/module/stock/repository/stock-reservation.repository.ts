@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { assertLegacyMaterialWrite } from "./of-material-write-guard";
 import { assertMaterialReservationOriginTx } from '../../production/repository/of-material-policy.repository';
 import { HttpError } from "../../../utils/httpError";
+import { readTrackedMaterialBarInventoryTx, planMaterialBarReservation, allocateMaterialBarReservationTx, releaseMaterialBarReservationTx, reservationHasPhysicalBarsTx } from './material-bar-holds.repository';
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import type {
@@ -310,6 +311,8 @@ export async function repoCreateStockReservation(
     );
     if (!state) throw new Error("Locked reservation stock state missing");
     assertStockConsumptionAllowed(state, { movement_type: "RESERVE", qty: body.qty });
+    const barInventory = await readTrackedMaterialBarInventoryTx(client, stockBatchId);
+    const barPlan = planMaterialBarReservation(barInventory, body.qty, body.barAllocations);
 
     await client.query(
       `
@@ -382,6 +385,9 @@ export async function repoCreateStockReservation(
     const reservationId = inserted.rows[0]?.id;
     if (!reservationId) throw new Error("Failed to create stock reservation");
     if(materialNeedId)await client.query("UPDATE public.stock_reservations SET material_need_id=$2::uuid WHERE id=$1::uuid",[reservationId,materialNeedId]);
+    if (barInventory) await allocateMaterialBarReservationTx(client, barInventory, barPlan, {
+      reservationId, actor:audit.user_id, commandKey:command.correlation_id, reason:body.reason,
+    });
 
     if (qualityDecision) {
       await repoInsertAuditLog({
@@ -478,6 +484,10 @@ async function transitionReservation(
       await client.query("ROLLBACK");
       return null;
     }
+    // Match inventory/grouping's lot-first order without requiring quality
+    // release: cancelling a reservation must remain possible on a blocked lot.
+    if (args.command_type === 'RESERVATION_RELEASE' && identity.lot_id)
+      await client.query('SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE', [identity.lot_id]);
     const qualityDecision = args.command_type === "RESERVATION_CONSUME" && identity.lot_id
       ? await assertOperationalLotQualityEligibility({
           client,
@@ -530,6 +540,8 @@ async function transitionReservation(
     }
     if(args.command_type==='RESERVATION_CONSUME'&&row.material_need_id)
       throw new HttpError(409,'MATERIAL_DEBIT_REQUIRED','Enregistrez cette consommation depuis le débit matière de l’opération OF.');
+    if (args.command_type === 'RESERVATION_CONSUME' && await reservationHasPhysicalBarsTx(client, id))
+      throw new HttpError(409, 'MATERIAL_BAR_DEBIT_REQUIRED', 'Sélectionnez la barre et sa longueur depuis le module découpe pour enregistrer sa sortie.');
     if(args.command_type==='RESERVATION_RELEASE'&&Number(row.qty_prepared??0)>0)
       throw new HttpError(409,'RESERVATION_ALREADY_PREPARED','Annulez d’abord la préparation de livraison qui utilise cette réservation.');
     const remainingReserved=Math.max(0,Number(row.qty_reserved)-Number(row.qty_consumed??0));
@@ -641,6 +653,9 @@ async function transitionReservation(
       ]
     );
 
+    if (args.command_type === 'RESERVATION_RELEASE') await releaseMaterialBarReservationTx(client, {
+      reservationId:id, actor:audit.user_id, commandKey:command.correlation_id, reason:args.body.reason,
+    });
     await completeStockCommand(client, {
       audit,
       command,

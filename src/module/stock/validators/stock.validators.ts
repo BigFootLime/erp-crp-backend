@@ -1,6 +1,8 @@
 import { subcontractDefinitionSchema } from "./subcontract-definition";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
+import { materialBarMovementCommandSchema } from './material-bar-movement.validators';
+import { materialBarInventoryCommand } from './material-bars.validators';
 
 export const articleSupplierConditionSchema = createCatalogueSchema.shape.body.omit({article_id:true,type:true,designation:true}).partial().extend({
   supplier_id: z.string().uuid(), catalogue_id: z.string().uuid().optional(), preferred: z.boolean().default(false),
@@ -982,6 +984,7 @@ export type CompensateMovementBodyDTO = z.infer<typeof compensateMovementSchema>
 export const postMovementSchema = z.object({
   body: z
     .object({
+      material_bars: materialBarMovementCommandSchema.optional(),
       negative_stock_override: z
         .object({
           maximum_negative_qty: z.coerce.number().positive().max(1_000_000),
@@ -1064,6 +1067,7 @@ export const upsertInventoryLineSchema = z.object({
       emplacement_id: z.coerce.number().int().positive(),
       lot_id: uuid.optional().nullable(),
       counted_qty: z.coerce.number().min(0),
+      material_bars: materialBarInventoryCommand.optional(),
       count_round: z.coerce.number().int().min(1).max(2).optional().default(1),
       reason_code: z.string().trim().min(2).max(80).optional().nullable(),
       expected_session_version: z.coerce.number().int().positive(),

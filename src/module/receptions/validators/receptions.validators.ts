@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { receivedMaterialBarsSchema } from '../../stock/validators/material-bars.validators';
 
 const uuid = z.string().uuid()
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)")
@@ -151,6 +152,7 @@ export const stockReceiptSchema = z.object({
   body: z
     .object({
       expected_processing_version: z.number().int().positive().optional(),
+      material_bars: receivedMaterialBarsSchema.optional(),
       qty: z.coerce.number().positive(),
       dst_magasin_id: uuid,
       dst_emplacement_id: z.coerce.number().int().positive(),

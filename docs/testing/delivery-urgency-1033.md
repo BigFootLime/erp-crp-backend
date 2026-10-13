@@ -1,5 +1,13 @@
 # Prélèvement d’urgence et récupération — #1033 / #1034
 
+## Intégration et compatibilité au 13 octobre 2026
+
+Le candidat est rapproché du dernier `dev` sans modifier le checkout principal. Les phases historiques ci-dessous conservent leurs preuves ; leurs mentions de développements futurs sont remplacées par les checkpoints ultérieurs. Le périmètre serveur comprend désormais l’ajout au regroupement avant fin de découpe, ses compléments externes, les reprises hors découpe, l’annulation avec conservation des engagements et la restitution complète non expédiée.
+
+Les 484 tests backend concernés, le typage, le contrat OpenAPI construit et la compilation passent ; le frontend associé passe 77 tests. Les sauvegardes Test et Prod sont restaurées dans PostgreSQL17 isolé sans réseau : cinq migrations sur Test, onze sur Prod, zéro au second passage, stocks canoniques et nombres de réservations/OF inchangés. La restauration des propriétaires et ACL n’est pas qualifiée par ce banc.
+
+Les vérifications GED en lecture seule passent pour les deux profils supportés, CLOSED_REGISTRY sur Test et LEGACY_SOL20 sur Prod. Le patch GED externe historique de Test n’est pas copié sur Prod ; aucune donnée métier Test n’est reprise sur Prod. La recette authentifiée S06, le déploiement couplé et la synchronisation HYPERBOX2 restent à réaliser.
+
 Parent : frontend #1252. Project Office : FLUX-20261009-06, recette WP285/S06. La session Project Office attend le MFA ; les preuves locales et GitHub restent à y rattacher.
 
 ## État du chantier
