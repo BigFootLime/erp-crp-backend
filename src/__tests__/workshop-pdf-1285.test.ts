@@ -61,6 +61,17 @@ describe("Workshop OF layout and source boundaries", () => {
     const text = content((await renderOfDocument(payload)).buffer);
     for (let i = 0; i < 8; i++) expect(text).toContain(`AFF-1285-${i}`);
   });
+  it("places raw material and the earliest client AR in the first row, ahead of the client/documents panel", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 20,
+      affaires: [{ affaireId: 1, numero: "AFF-A", delaiClient: "2026-10-30", quantite: 15 }, { affaireId: 2, numero: "AFF-B", delaiClient: "2026-10-16", quantite: 5 }],
+      matiere: { reference: "MP-FIRST-PAGE", designation: "Barre aluminium", nuance: "6061" } }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text.indexOf("16/10/2026")).toBeLessThan(text.indexOf("CLIENTETDOCUMENTS"));
+    expect(text.indexOf("MP-FIRST-PAGE")).toBeLessThan(text.indexOf("CLIENTETDOCUMENTS"));
+    expect(text).toContain("ARleplusproche");
+    expect(text).toContain("AFF-A");
+    expect(text).toContain("AFF-B");
+  });
   it("prints component and treatment nomenclature before the routing, with minutes rather than decimal hours", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 4,
       operations: [{ ...FIXTURE_OPERATIONS_TFT[0], tempsUnitaire: 0.008, preparation: 0.5 }] }));
