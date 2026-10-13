@@ -13,9 +13,10 @@ export function changesCataloguePricing(existing:Record<string,unknown>,patch:Re
 }
 
 /** Rule confirmed by the business: max(quantity × price + flat fee, minimum). */
-export function priceCatalogueLine(snapshot:CataloguePriceSnapshot,quantity:number) {
+export function priceCatalogueLine(snapshot:CataloguePriceSnapshot,quantity:number,orderQuantity=quantity) {
   if(!Number.isFinite(quantity)||quantity<=0)throw new HttpError(422,"INVALID_QUANTITY","La quantité doit être positive.");
-  if(snapshot.moq!=null&&quantity<snapshot.moq)throw new HttpError(422,"CATALOGUE_MINIMUM_QUANTITY",`Le minimum de commande est ${snapshot.moq} ${snapshot.unit}.`);
+  if(!Number.isFinite(orderQuantity)||orderQuantity<quantity)throw new HttpError(422,"INVALID_ORDER_QUANTITY","La quantité de la référence sur la commande est invalide.");
+  if(snapshot.moq!=null&&orderQuantity<snapshot.moq)throw new HttpError(422,"CATALOGUE_MINIMUM_QUANTITY",`Le minimum de commande est ${snapshot.moq} ${snapshot.unit}.`);
   const tier=supplierPriceTiersSchema.parse(snapshot.price_tiers).find(t=>quantity>=t.qty_min&&(t.qty_max===null||quantity<t.qty_max));
   const price=tier?.unit_price??snapshot.prix_unitaire;
   if(price===null||!Number.isFinite(price)||price<0)throw new HttpError(422,"CATALOGUE_PRICE_MISSING","Le prix n’est pas renseigné pour cette quantité.");
