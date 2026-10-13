@@ -34,7 +34,7 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  * Renommé et incrémenté le 2026-07-29 : la pièce est un ORDRE DE FABRICATION, pas
  * une gamme de fabrication. Le libellé du document a changé, donc le binaire aussi.
  */
-export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.2" as const;
+export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.3" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage
