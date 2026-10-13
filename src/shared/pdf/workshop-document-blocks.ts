@@ -35,25 +35,36 @@ export type WorkshopFieldBox = {
 }
 
 /** Bordered business zones: labels and their values stay together, with measured wrapping. */
-export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly WorkshopFieldBox[]): void {
+export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly WorkshopFieldBox[], options: { compact?: boolean } = {}): void {
   if (!boxes.length) return
-  const gap = 12
+  // The first-page cartouches must leave clearance around the horizontal A4 fold.
+  // Keep the full-size table typography for routing instructions on later pages.
+  const pad = options.compact ? 6 : PAD
+  const gap = options.compact ? 8 : 12
+  const body = options.compact ? 10 : BODY
+  const labelSize = options.compact ? 8 : 8.5
+  const labelLeading = options.compact ? 9.5 : 11
+  const valueLeading = options.compact ? 12 : LEADING
+  const prominentSize = options.compact ? 13 : 14
+  const prominentLeading = options.compact ? 15 : 17
+  const fieldGap = options.compact ? 2 : 3
+  const rowGap = options.compact ? 5 : 12
   const width = (CONTENT_WIDTH - gap * (boxes.length - 1)) / boxes.length
   const measured = boxes.map(box => {
     const columns = box.columns ?? 1
     const weights = columns === 2 ? box.columnWeights ?? [1, 1] : [1]
     const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
-    const fieldWidths = weights.map(weight => (width - PAD * 2 - (columns - 1) * gap) * weight / totalWeight)
+    const fieldWidths = weights.map(weight => (width - pad * 2 - (columns - 1) * gap) * weight / totalWeight)
     let occupiedColumn = 0
     const fields = box.fields.map(field => {
       const span = columns === 2 && field.span === 2 ? 2 : 1
       if (occupiedColumn + span > columns) occupiedColumn = 0
-      const textWidth = span === 2 ? width - PAD * 2 : fieldWidths[occupiedColumn]
+      const textWidth = span === 2 ? width - pad * 2 : fieldWidths[occupiedColumn]
       occupiedColumn = (occupiedColumn + span) % columns
       return {
         ...field, span, textWidth,
-        label: wrappedLines(ctx.doc, field.label, textWidth, false, 8.5),
-        value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", textWidth, true, field.prominent ? 14 : BODY),
+        label: wrappedLines(ctx.doc, field.label, textWidth, false, labelSize),
+        value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", textWidth, true, field.prominent ? prominentSize : body),
       }
     })
     const rows: Array<typeof fields> = []
@@ -64,14 +75,14 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
       if (occupied === columns) { rows.push(row); row = []; occupied = 0 }
     }
     if (row.length) rows.push(row)
-    return { box, rows, fieldWidths, title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - PAD * 2, true, 10) }
+    return { box, rows, fieldWidths, title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - pad * 2, true, 10) }
   })
-  const headingPad = 6
+  const headingPad = options.compact ? 5 : 6
   const headingHeight = Math.max(...measured.map(item => item.title.length * 12)) + headingPad * 2
-  const rowHeight = (fields: typeof measured[number]["rows"][number]) => Math.max(...fields.map(field => field.label.length * 11)) + 3
-    + Math.max(...fields.map(field => field.value.length * (field.prominent ? 17 : LEADING))) + 12
+  const rowHeight = (fields: typeof measured[number]["rows"][number]) => Math.max(...fields.map(field => field.label.length * labelLeading)) + fieldGap
+    + Math.max(...fields.map(field => field.value.length * (field.prominent ? prominentLeading : valueLeading))) + rowGap
   const heights = measured.map(item => {
-    let height = headingHeight + PAD
+    let height = headingHeight + pad
     for (const row of item.rows) height += rowHeight(row)
     return height
   })
@@ -91,30 +102,30 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     const x = X + index * (width + gap)
     ctx.doc.save().rect(x, top, width, headingHeight).fill(C.graphite).restore()
     ctx.doc.font("Helvetica-Bold").fontSize(10).fillColor(C.paper)
-    item.title.forEach((line, i) => ctx.text(line, x + PAD, top + headingPad + i * 12, { width: width - PAD * 2 }))
+    item.title.forEach((line, i) => ctx.text(line, x + pad, top + headingPad + i * 12, { width: width - pad * 2 }))
     ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite).rect(x, top, width, height).stroke().restore()
-    let y = top + headingHeight + PAD
+    let y = top + headingHeight + pad
     const columns = item.box.columns ?? 1
-    const dividerX = x + PAD + item.fieldWidths[0] + gap / 2
+    const dividerX = x + pad + item.fieldWidths[0] + gap / 2
     for (const row of item.rows) {
     // Full-width references and document lists have no divider running through their text.
     if (columns === 2 && row.every(field => field.span === 1)) {
-      ctx.doc.save().lineWidth(0.5).strokeColor(C.hairline).moveTo(dividerX, y).lineTo(dividerX, y + rowHeight(row) - 6).stroke().restore()
+      ctx.doc.save().lineWidth(0.5).strokeColor(C.hairline).moveTo(dividerX, y).lineTo(dividerX, y + rowHeight(row) - rowGap).stroke().restore()
     }
     let column = 0
     row.forEach(field => {
-      const fieldX = x + PAD + item.fieldWidths.slice(0, column).reduce((sum, size) => sum + size, 0) + column * gap
-      ctx.doc.font("Helvetica").fontSize(8.5).fillColor(C.graphite)
-      field.label.forEach((line, i) => ctx.text(line, fieldX, y + i * 11, { width: field.textWidth }))
-      const valueY = y + Math.max(...row.map(item => item.label.length * 11)) + 3
-      ctx.doc.font("Helvetica-Bold").fontSize(field.prominent ? 14 : BODY).fillColor(C.ink)
-      field.value.forEach((line, i) => ctx.text(line, fieldX, valueY + i * (field.prominent ? 17 : LEADING), { width: field.textWidth }))
+      const fieldX = x + pad + item.fieldWidths.slice(0, column).reduce((sum, size) => sum + size, 0) + column * gap
+      ctx.doc.font("Helvetica").fontSize(labelSize).fillColor(C.graphite)
+      field.label.forEach((line, i) => ctx.text(line, fieldX, y + i * labelLeading, { width: field.textWidth }))
+      const valueY = y + Math.max(...row.map(item => item.label.length * labelLeading)) + fieldGap
+      ctx.doc.font("Helvetica-Bold").fontSize(field.prominent ? prominentSize : body).fillColor(C.ink)
+      field.value.forEach((line, i) => ctx.text(line, fieldX, valueY + i * (field.prominent ? prominentLeading : valueLeading), { width: field.textWidth }))
       column += field.span
     })
     y += rowHeight(row)
     }
   })
-  ctx.y = top + height + 12
+  ctx.y = top + height + gap
 }
 
 export type WorkshopTableColumn = { key: string; label: string; flex: number; bold?: boolean; firstLineBold?: boolean; align?: "left" | "right" }
