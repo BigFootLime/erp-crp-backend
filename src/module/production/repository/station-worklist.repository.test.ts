@@ -47,4 +47,17 @@ describe("repoWorklist", () => {
     expect(sql.match(/mn\.technical_version_id=o\.piece_technique_version_id/g)).toHaveLength(2);
     expect(sql.match(/NOT \$4::boolean/g)).toHaveLength(2);
   });
+  it.each([
+    ['2026-10-16', '2026-10-16'],
+    [new Date(2026, 9, 16), '2026-10-16'],
+    [null, null],
+    [new Date(NaN), null],
+    ['Fri Oct 16', null],
+  ])('keeps the exact calendar deadline %s in the worklist', async (date, expected) => {
+    mocks.query.mockResolvedValue({ rows: [{ date_fin_prevue: date }] });
+    const rows = await repoWorklist({ machineId:null, workshopZone:null, q:null,
+      machineOnly:false, materialOnly:true, includeBlocked:true, limit:50 });
+    expect(rows[0].date_fin_prevue).toBe(expected);
+    expect(mocks.query.mock.calls[0][0]).toContain("to_char(o.date_fin_prevue, 'YYYY-MM-DD')");
+  });
 });
