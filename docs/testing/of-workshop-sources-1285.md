@@ -24,3 +24,9 @@ Tests ciblés : charges communes au planning, séparation des anciennes édition
 Le véritable producteur de payload et le moteur PDF sont aussi exécutés en lecture seule sur les OF fictifs 95 et 101 de Base Test. Ils montrent respectivement 0 et 4 pièces expédiées, deux barres pour l’axe et deux composants pour le montage. Ces preuves techniques ne clôturent pas la recette métier complète. Les logos, plans et esquisses d’outils automatiques, les autres familles PDF et l’impression physique restent dans le chantier parent.
 
 Aucune migration pour ce lot. Sauvegardes Test/Prod vérifiées sur le VPS avant déploiement. Le statut de publication et de déploiement est tenu séparément dans le journal de recette.
+
+## Édition atelier 1.5
+
+La date de génération est conservée uniquement au pied. La police reste Helvetica/Helvetica-Bold comme le document de référence. Le code client et l’affaire de livraison sont deux champs distincts ; le nom client n’est pas imprimé. Références matière et documents utilisent la largeur complète de leur bloc. La commande réserve davantage de largeur à la référence, tout en maintenant l’AR à côté. La nomenclature matière, les sorties de barres et les prestations précèdent les opérations. Les minutes restent exactes pour les temps unitaires courts et la charge possède une colonne assez large pour « 1 h 20 min ».
+
+Les éditions 1.4 déjà enregistrées conservent leur renderer et leurs primitives figés : un cas de référence vérifie les octets à l’identique du commit déployé cb998c54. Cette conservation ne remet aucune ancienne quantité à jour. Validation : 107 tests ciblés, build strict, coordonnées et polices des deux OF de recette, inspection des six pages. Les PDF de démonstration sont des brouillons issus d’une lecture répétable de Base Test, sans émission officielle.

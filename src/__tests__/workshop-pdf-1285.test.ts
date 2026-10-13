@@ -22,6 +22,19 @@ function content(bytes: Buffer): string {
 }
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps a saved 1.4 PDF byte-identical to the deployed renderer", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.4" }));
+    const result = await renderOfDocument(payload);
+    expect(result.sha256).toBe("c7df1ba82bd5dbefd2244280895d91a5b826ff2102184b318d63a9bf8676f8a6");
+    expect(result.byteSize).toBe(33610);
+    expect(content(result.buffer)).toContain("Éditéle");
+  });
+  it("prints the generation timestamp only in the footer for new documents", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text).not.toContain("Éditéle");
+    expect(text).toContain("Généré");
+  });
   it("uses the launched quantity and the same per-operation rounding as the planner", () => {
     const input = buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 20,
       operations: [{ ...FIXTURE_OPERATIONS_TFT[0], preparation: 1 / 3, tempsUnitaire: 0.05, quantiteBase: 1 }] });
@@ -71,6 +84,16 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text).toContain("ARleplusproche");
     expect(text).toContain("AFF-A");
     expect(text).toContain("AFF-B");
+  });
+  it("separates the client code from delivery affairs and excludes the client name", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, clientCode: "CLI-007",
+      clientNom: "CLIENT NAME MUST NOT BE PRINTED", affaires: [{ affaireId: 7, numero: "AFF-DELIVERY-007", delaiClient: "2026-10-16", quantite: 20 }] }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    expect(text).toContain("Codeclient");
+    expect(text).toContain("CLI-007");
+    expect(text).toContain("Affairedelivraison");
+    expect(text).toContain("AFF-DELIVERY-007");
+    expect(text).not.toContain("CLIENTNAMEMUSTNOTBEPRINTED");
   });
   it("prints component and treatment nomenclature before the routing, with minutes rather than decimal hours", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 4,
