@@ -5,7 +5,7 @@ import {
   type CerpDocumentContext,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
-import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
+import { formatDateFR, money, percent, quantity, rate } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, issuerPaymentDetails } from "../../../shared/pdf/legal-mentions";
 
 // Reexportes : la mise en forme francaise est desormais partagee avec le bon de livraison
@@ -241,7 +241,7 @@ function summaryBlock(
     taxY += 14;
   } else {
     for (const tax of rows) {
-      const cells = [percent(tax.ratePercent), money(tax.baseExTax, currency), money(tax.taxAmount, currency)];
+      const cells = [rate(tax.ratePercent) ?? "—", money(tax.baseExTax, currency), money(tax.taxAmount, currency)];
       colX = taxX;
       cells.forEach((cell, index) => {
         ctx.doc
@@ -300,7 +300,7 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
       clean(line.codePiece),
       clean(line.unit) ? `Unité : ${line.unit}` : null,
       clean(line.discountPercent) && Number.parseFloat(line.discountPercent) !== 0
-        ? `Remise ${percent(line.discountPercent)}`
+        ? `Remise ${rate(line.discountPercent)}`
         : null,
     ].filter(Boolean);
 
@@ -309,9 +309,9 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
       meta: details.length ? details.join(" · ") : null,
       cells: {
         designation: line.designation,
-        quantite: clean(line.quantity) ?? "—",
+        quantite: clean(line.quantity) ? quantity(line.quantity) : "—",
         pu: money(line.unitPriceExTax, input.currency),
-        tva: percent(line.taxRatePercent),
+        tva: rate(line.taxRatePercent) ?? "—",
         ht: money(line.totalExTax, input.currency),
       },
     };
@@ -422,7 +422,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
             ? [
                 { label: "Sous-total HT", value: money(input.totals.subtotalExTax, input.currency) },
                 {
-                  label: `Remise globale (${percent(input.totals.globalDiscountPercent)})`,
+                  label: `Remise globale (${rate(input.totals.globalDiscountPercent)})`,
                   value: `- ${money(input.totals.globalDiscountAmount, input.currency)}`,
                 },
               ]

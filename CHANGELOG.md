@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14 — Calendrier et nombres Finance
+
+- Factures et avoirs utilisent la date Europe/Paris lors de leur émission. Après minuit en France, la date UTC de la veille ne fuit plus dans le numéro et le document. Les exemplaires déjà émis restent immuables.
+- Les PDF financiers affichent les quantités et taux sans les zéros de stockage, en conservant chaque décimale significative. Aucun montant ni instantané recalculé.
+-136 tests ciblés,7653 tests/688 fichiers et build strict passent ; aperçu compilé inspecté.
+
 ## 2026-10-14 — Provenance des lots produits
 
 - Stock et BL affichent les lots matière débités et les lots revenus d'un traitement à partir des preuves de fabrication enregistrées. Projection commune à douze lectures, références historiques conservées, débits compensés exclus et traitement distingué d'une sous-traitance quelconque.
