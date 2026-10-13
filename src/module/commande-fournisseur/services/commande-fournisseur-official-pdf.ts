@@ -4,6 +4,7 @@ import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 import { generalTermsReference, type GeneralTermsSnapshot } from "../../../shared/commercial-terms/commercial-terms.domain";
 import type { PurchaseQualification } from "../../fournisseurs/domain/purchase-qualification";
+import { computeLigneTotaux, roundMoney } from '../domain/commande-fournisseur-totaux';
 
 export type SupplierPurchaseOrderSnapshot = {
   type: "SUPPLIER_PURCHASE_ORDER";
@@ -56,6 +57,17 @@ function archiveCreationDate(record: AuthoritativePdfArchiveRecord): Date {
   return value;
 }
 
+/** Explain the frozen net amount beyond quantity × price, without guessing
+ * whether an older source used a flat fee or a minimum billing rule. */
+export function supplierPoPriceSupplement(line: SupplierPurchaseOrderSnapshot['lines'][number]): number | null {
+  if (line.unit_price_ht == null || line.net_ht == null) return null;
+  const values=[Number(line.quantity),Number(line.unit_price_ht),Number(line.discount_pct??0),Number(line.net_ht)];
+  if(!values.every(Number.isFinite)) return null;
+  const base=computeLigneTotaux({quantite:values[0],prix_unitaire_ht:values[1],remise_pct:values[2],tva_pct:0,frais_ht:0}).net_ht;
+  const supplement=roundMoney(values[3]-base);
+  return supplement===0 ? null : supplement;
+}
+
 /** Renders only data frozen in the archive snapshot — never a live PO row. */
 export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: AuthoritativePdfArchiveRecord }): Promise<Buffer> {
   const source = snapshotOf(input.archive);
@@ -69,7 +81,9 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
       quantity: quantity(line.quantity), unit: line.unit ?? "—", price: line.unit_price_ht != null ? unitPrice(line.unit_price_ht, source.currency) : "—",
       vat: line.vat_pct ? percent(line.vat_pct) : "—", total: line.net_ht ? money(line.net_ht, source.currency) : "—",
     },
-    meta: [line.need_date ? `Besoin : ${formatDateFR(line.need_date)}` : null, line.discount_pct ? `Remise : ${percent(line.discount_pct)}` : null].filter(Boolean).join(" · ") || null,
+    meta: [line.need_date ? `Besoin : ${formatDateFR(line.need_date)}` : null,
+      line.discount_pct!=null && Number(line.discount_pct)>0 ? `Remise : ${percent(line.discount_pct)}` : null,
+      supplierPoPriceSupplement(line)!=null ? `Complément HT : ${money(supplierPoPriceSupplement(line)!,source.currency)}` : null].filter(Boolean).join("\n") || null,
     metaColumn: "designation",
   }));
   return renderCerpDocument({

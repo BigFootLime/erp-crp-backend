@@ -110,6 +110,23 @@ export async function queueCreationPdfArchive(
   return repoQueueAuthoritativePdf(tx, input, sha256Text(canonicalJson(input.sourceSnapshot)));
 }
 
+/** A persisted business freeze already contains its approved terms. Re-reading
+ * today's selection during archival would change the accepted document. This
+ * server-only path has no HTTP snapshot input and preserves the same queue,
+ * filename, immutable checksum and outbox guards as normal issuance. */
+export async function queueFrozenCommercialPdfArchive(
+  tx: Pick<PoolClient, "query">,
+  input: AuthoritativePdfCreationInput,
+): Promise<AuthoritativePdfArchiveRecord> {
+  assertCreationInput(input);
+  if (!commercialTermsScopeSchema.safeParse(input.entityType).success ||
+      !["CUSTOMER_QUOTE","CUSTOMER_ORDER_ACKNOWLEDGEMENT","SUPPLIER_PURCHASE_ORDER"].includes(input.documentKind) ||
+      !Object.prototype.hasOwnProperty.call(input.sourceSnapshot, "general_terms")) {
+    throw new Error("FROZEN_COMMERCIAL_PDF_SOURCE_INVALID");
+  }
+  return repoQueueAuthoritativePdf(tx,input,sha256Text(canonicalJson(input.sourceSnapshot)));
+}
+
 /** Registers a server-only renderer for one entity family and document kind. No HTTP route bypasses aggregate RBAC. */
 export class AuthoritativePdfProducerRegistry {
   private readonly producers = new Map<string, AuthoritativePdfProducer>();

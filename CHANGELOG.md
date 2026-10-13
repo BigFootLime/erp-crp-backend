@@ -6,6 +6,14 @@
 - Reprendre avec le plan applicable corrigé, sans libérer ni modifier le stock lors de l’annulation.
 - Protéger la concurrence et les preuves annulées dans PostgreSQL ; qualifier le parcours jusqu’à la libération normale du lot.
 
+
+## 2026-10-13 — PDF du bon fournisseur approuvé (#1270)
+
+- Archiver le PDF approuvé dans la même transaction que le gel commercial, avec reprises sans doublon et historique du brouillon conservé.
+- Réémettre depuis les données et CGA figées ; dater explicitement les régularisations anciennes et expliquer les compléments de prix.
+- Qualifier PostgreSQL, coffre GED, annulation transactionnelle et rendu PDF sur une copie isolée de Base Test.
+
+
 ## 2026-10-13 — Clôture canonique d’un traitement complet (#1273)
 
 - Terminer la phase externe quand tous ses dossiers sont clos et que toute la population est retournée, libérée et transférée, avec preuve immuable par origine.
