@@ -88,6 +88,29 @@ const transfer = (action: SubcontractTransferInput['action'] = 'RELEASE', quanti
   { user_id: 7, role: 'Production Achat', request_id: null, correlation_id: null }, 'transfer-recipe-1');
 
 describe('subcontract custody writes use the complete canonical audit', () => {
+  it('replays the immutable dossier of the same line without adding another dossier or audit event', async () => {
+    const original = f.query.getMockImplementation()!;
+    f.query.mockImplementation(async (sql: string, values: unknown[] = []) => sql.startsWith('SELECT * FROM public.subcontract_work_packages WHERE supplier_order_line_id')
+      ? { rows: [{ id:packageId,of_operation_id:operationId,unit:'U',qty_planned:'10.000',ged_evidence_document_id:evidenceId,status:'SENT' }] }
+      : original(sql,values));
+    const response=await create();
+    expect(response.status).toBe(200);
+    expect(response.body.id).toBe(packageId);
+    expect(statements().some(sql=>sql.startsWith('INSERT INTO public.subcontract_work_packages'))).toBe(false);
+    expect(auditValues()).toBeUndefined();
+    expect(statements().at(-1)).toBe('COMMIT');
+  });
+  it('returns a useful conflict rather than replacing the existing line dossier', async () => {
+    const original = f.query.getMockImplementation()!;
+    f.query.mockImplementation(async (sql: string, values: unknown[] = []) => sql.startsWith('SELECT * FROM public.subcontract_work_packages WHERE supplier_order_line_id')
+      ? { rows: [{ id:packageId,of_operation_id:operationId,unit:'U',qty_planned:'9.000',ged_evidence_document_id:evidenceId,status:'SENT' }] }
+      : original(sql,values));
+    const response=await create();
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe('SUBCONTRACT_PACKAGE_ALREADY_EXISTS');
+    expect(statements().at(-1)).toBe('ROLLBACK');
+    expect(auditValues()).toBeUndefined();
+  });
   it('retains the documentary evidence without adding another canonical GED parent', async () => {
     const response = await create();
     expect(response.status).toBe(201);
