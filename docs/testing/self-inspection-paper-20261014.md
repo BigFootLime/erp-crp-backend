@@ -1,0 +1,11 @@
+# Workshop self-inspection paper form — 14 October 2026
+
+The shared structured-v5 PDF design follows the approved workshop reference: full CRP logo, centered title and red OF identifier, Helvetica/Helvetica-Bold, compact dark grey cartouches, thin grids and repeated page identities. Existing classic/editorial/workshop versions are not modified.
+
+New blank self-inspection sheets use an MD07-inspired grid: expected requirements, first part, instrument number, prescribed surveillance, last part, observations, operation/machine, quantities, date and visa. The operation and measurement fields remain blank. Tolerances, significant decimal precision and sampling come from the applicable plan; no measurement, verdict, instrument assignment or signature is inferred. The technical source hash stays internal. Long rows continue explicitly; handwriting areas do not create redundant table headings.
+
+Generation captures the frozen part reference/designation, client code and exact linked delivery affairs in the existing snapshot. Anticipated manufacture is labelled internal rather than falsely missing an affair. The Europe/Paris generation date is captured with the document. Existing READY sheets return their stored bytes; they are not silently rerendered. No schema, route or permissions change.
+
+Source review: MD07-D paper/PDF and spreadsheet, MD38-D preparation and MD61-A improvement templates were read only on Z:/Qualité. Useful MD07 spreadsheet rows outside its print area remain an integration finding. This export does not yet implement paper-scan completion, embedded tablet readings, the MD38 trigger, MD61 export or automatic complete A4 printing after planning. Those remain separate open tasks; a signed scan is accepted by the user without mandatory numeric retyping and explicit quality release remains separate.
+
+Validation: six focused form cases; complete backend suite and strict build; previous OF1.4/1.5/1.6 binary compatibility checks; actual compiled identity and quality-plan readers under cerp_app in a repeatable-read, read-only cerp_test transaction for OF95. Ten rendered pages inspected across short,32-characteristic and exceptionally long instruction cases plus actual Test source data. Monetary values, physical stock and issued financial PDFs untouched. Physical printing and native applications remain unqualified by this change.

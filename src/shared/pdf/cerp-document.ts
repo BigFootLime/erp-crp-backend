@@ -916,7 +916,7 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
 }
 
 function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): void {
-  if (header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4")) {
+  if (header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")) {
     drawEditorialRunningHead(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
     return
   }
@@ -1075,13 +1075,13 @@ export async function renderCerpDocument(
   const chunks: Buffer[] = []
   doc.on("data", (chunk) => chunks.push(chunk as Buffer))
 
-  const afterIdentity = (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4")
+  const afterIdentity = (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")
     ? drawWorkshopDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH }, toPdfSafeText)
     : header.designVersion === "editorial-v2"
     ? drawEditorialDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
     : drawIdentity(doc, header, drawMasthead(doc, header))
 
-  const pageTop = header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4") ? editorialPageTop(doc, header, CONTENT_WIDTH, toPdfSafeText) : MARGIN_TOP
+  const pageTop = header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5") ? editorialPageTop(doc, header, CONTENT_WIDTH, toPdfSafeText) : MARGIN_TOP
   render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve, header.designVersion, pageTop))
 
   const watermark = header.watermark && header.watermark.trim() ? header.watermark.trim() : null
