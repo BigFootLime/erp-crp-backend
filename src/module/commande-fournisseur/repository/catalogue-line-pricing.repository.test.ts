@@ -24,6 +24,11 @@ describe('minimum catalogue de la commande',()=>{
     expect(await readCatalogueOrderQuantityTx({query},'order-A',line,'line-edited')).toBe(20);
     expect(query.mock.calls[0][1]).toEqual(['order-A','catalogue-A','treatment-A','u','line-edited']);
   });
+  it('déduit aussi la quantité annulée de la ligne en cours de modification',async()=>{
+    const query=vi.fn().mockResolvedValueOnce({rows:[offer]}).mockResolvedValueOnce({rows:[{quantity:2}]});
+    await expect(readCatalogueLinePriceTx({query},'order-A',{...line,qty_annulee:1},{excludeLineId:'line-edited'}))
+      .rejects.toMatchObject({code:'CATALOGUE_MINIMUM_QUANTITY'});
+  });
   it('tarife une petite origine dans un batch20 sans ajouter de quantité ni supprimer le minimum figé',async()=>{
     const query=vi.fn().mockResolvedValue({rows:[offer]});
     const result=await readCatalogueLinePriceTx({query},'order-A',line,{orderQuantity:20});

@@ -26,7 +26,7 @@ describe("tarification du flux fournisseur",()=>{
     const quotation={...offer,moq:4};
     expect(priceCatalogueLine(quotation,2,20)).toEqual(priceCatalogueLine({...quotation,moq:null},2));
     expect(()=>priceCatalogueLine(quotation,2,2)).toThrow('Le minimum de commande est 4 u.');
-    for(const total of [1,NaN,Infinity])expect(()=>priceCatalogueLine(quotation,2,total)).toThrow('La quantité de la référence sur la commande est invalide.');
+    for(const total of [-1,NaN,Infinity])expect(()=>priceCatalogueLine(quotation,2,total)).toThrow('La quantité de la référence sur la commande est invalide.');
   });
   it("accepte le prix zéro confirmé et arrondit au centime sans fausser le minimum",()=>{
     expect(priceCatalogueLine({...offer,prix_unitaire:0,forfait_ht:0,minimum_facturation_ht:0},2).net_ht).toBe(0);

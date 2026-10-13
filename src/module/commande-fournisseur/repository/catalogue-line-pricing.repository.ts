@@ -8,7 +8,7 @@ export async function readCatalogueOrderQuantityTx(tx:Pick<PoolClient,"query">,o
     FROM public.commande_fournisseur_ligne l WHERE l.commande_id=$1::uuid AND l.statut_ligne='ACTIVE'
       AND l.catalogue_id=$2::uuid AND l.article_id IS NOT DISTINCT FROM $3::uuid AND l.unite IS NOT DISTINCT FROM $4::text
       AND ($5::uuid IS NULL OR l.id<>$5::uuid)`,[orderId,line.catalogue_id,line.article_id??null,line.unite??null,excludeLineId])).rows[0];
-  return Number(row?.quantity??0)+line.quantite;
+  return Number(row?.quantity??0)+Math.max(0,line.quantite-(line.qty_annulee??0));
 }
 
 /** Recheck after draft edits/cancellations, under the existing order-header lock. */

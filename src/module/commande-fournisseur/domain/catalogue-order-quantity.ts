@@ -1,7 +1,7 @@
 import { HttpError } from '../../../utils/httpError';
 
 export type CatalogueQuantityLine = {
-  catalogue_id?: string | null; article_id?: string | null; unite?: string | null; quantite: number;
+  catalogue_id?: string | null; article_id?: string | null; unite?: string | null; quantite: number; qty_annulee?: number | null;
 };
 /** Caller supplies only lines from one supplier order, already isolated by its header. */
 export function catalogueQuantityKey(line: CatalogueQuantityLine): string {

@@ -4,7 +4,7 @@ const root=process.env.CATALOGUE_MINIMUM_COMPILED_ROOT;
 if(!root)throw new Error('Explicit isolated compiled fixture required');
 const pool=require(path.join(root,'config/database.js')).default;
 const {readSubcontractProcurement,prepareSubcontractProcurement}=require(path.join(root,'module/subcontract/subcontract-procurement.repository.js'));
-const {assertCatalogueMinimumsTx}=require(path.join(root,'module/commande-fournisseur/repository/catalogue-line-pricing.repository.js'));
+const {assertCatalogueMinimumsTx,readCatalogueOrderQuantityTx,readCatalogueLinePriceTx}=require(path.join(root,'module/commande-fournisseur/repository/catalogue-line-pricing.repository.js'));
 const {assertSubcontractPurchaseReadyTx}=require(path.join(root,'module/commande-fournisseur/repository/subcontract-purchase.repository.js'));
 const {repoUpdateLigne}=require(path.join(root,'module/commande-fournisseur/repository/commande-fournisseur.repository.js'));
 let passed=0;const pass=label=>{passed++;console.log('PASS: '+label);};
@@ -38,6 +38,15 @@ async function main(){
   const token=(await pool.query('SELECT updated_at::text AS token FROM public.commande_fournisseur WHERE id=$1::uuid',[orderId])).rows[0].token;
   await repoUpdateLigne(orderId,lines[1].id,{expected_updated_at:token,patch:{quantite:2}},audit);
   pass('resubmitting the two-piece origin preserves its price snapshot and validates the order total');
+  const edited=await pool.connect();try{
+    await edited.query('BEGIN');await edited.query('UPDATE public.commande_fournisseur_ligne SET qty_annulee=1 WHERE id=$1::uuid',[lines[1].id]);
+    await edited.query('UPDATE public.fournisseur_catalogue SET moq=20 WHERE id=$1::uuid',[offer.id]);
+    const small={catalogue_id:offer.id,article_id:purchase.article_id,unite:offer.unit,quantite:2,qty_annulee:1};
+    assert.equal(await readCatalogueOrderQuantityTx(edited,orderId,small,lines[1].id),19);
+    await assert.rejects(readCatalogueLinePriceTx(edited,orderId,small,{excludeLineId:lines[1].id}),error=>error.code==='CATALOGUE_MINIMUM_QUANTITY');
+    await edited.query('ROLLBACK');
+  }finally{edited.release();}
+  pass('the edited origin also excludes its own cancelled piece from the aggregate');
   for(const setup of [
     ['annulation',`UPDATE public.commande_fournisseur_ligne SET qty_annulee=18 WHERE id=$1::uuid`],
     ['autre article',`UPDATE public.commande_fournisseur_ligne SET article_id=(SELECT article_id FROM public.lots WHERE id=$2::uuid) WHERE id=$1::uuid`]
