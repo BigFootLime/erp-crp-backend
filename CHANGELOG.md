@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-13 — PDF du bon fournisseur approuvé (#1270)
+
+- Archiver le PDF approuvé dans la même transaction que le gel commercial, avec reprises sans doublon et historique du brouillon conservé.
+- Réémettre depuis les données et CGA figées ; dater explicitement les régularisations anciennes et expliquer les compléments de prix.
+- Qualifier PostgreSQL, coffre GED, annulation transactionnelle et rendu PDF sur une copie isolée de Base Test.
+
 ## 2026-10-13 — Dossiers de traitement par origine (#1269)
 
 - Autoriser plusieurs dossiers pour une même opération, avec un dossier immuable par ligne fournisseur et origine matière ; conserver les registres existants.

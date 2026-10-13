@@ -33,11 +33,14 @@ import {assertConsumableOrderReadyTx} from './consumable-order-validation.reposi
 import { repoRecordInitialPromiseEvent } from "../../procurement-reliability/repository/procurement-reliability.repository";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
-import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { queueCreationPdfArchive,queueFrozenCommercialPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { freezeGeneralTerms } from "../../../shared/commercial-terms/commercial-terms.repository";
 import { assertSupplierCallEditableTx, supplierOrderIsContractCallTx } from "../../../shared/commercial-terms/supplier-contract-terms.repository";
 import { readSupplierOpenContractProofTx } from "./supplier-open-contract-guard.repository";
 import { repoFindAuthoritativePdfByIdempotency } from "../../../shared/authoritative-documents/authoritative-document.repository";
+import {supplierDocumentFreezeRequestKey} from '../domain/supplier-po-document-freeze';
+import {queueFrozenSupplierDocumentTx} from './supplier-po-document-archive.repository';
+import {snapshotFromLegacySupplierFreeze} from '../domain/supplier-po-legacy-document';
 import type {
   AccuseBodyDTO,
   AddLigneBodyDTO,
@@ -85,7 +88,7 @@ type SupplierPoCreationSnapshot = Record<string, unknown>;
  * create transaction. Internal notes, actor context and procurement links are
  * deliberately absent: an official supplier PDF is an external document.
  */
-async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string, enforceQualification = false): Promise<SupplierPoCreationSnapshot> {
+async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string, enforceQualification = false, issuanceTime?:string): Promise<SupplierPoCreationSnapshot> {
   const header = await tx.query<Record<string, unknown>>(
     `SELECT cf.code, cf.statut, cf.created_at::text AS issued_at, cf.devise,
             cf.date_besoin::text AS need_date, cf.incoterm, cf.conditions_paiement AS payment_terms,
@@ -114,9 +117,10 @@ async function buildSupplierPoCreationSnapshot(tx: DbQueryer, commandeId: string
       ORDER BY position ASC`,
     [commandeId]
   );
-  const issuer = await readIssuerParty({ at: String(h.issued_at ?? "").slice(0, 10) });
+  const issuedAt=issuanceTime??String(h.issued_at);
+  const issuer = await readIssuerParty({ at: issuedAt.slice(0, 10) });
   return {
-    type: "SUPPLIER_PURCHASE_ORDER", code: String(h.code), status: String(h.statut), issued_at: String(h.issued_at),
+    type: "SUPPLIER_PURCHASE_ORDER", code: String(h.code), status: String(h.statut), issued_at: issuedAt,
     supplier: {
       code: h.supplier_code == null ? null : String(h.supplier_code),
       name: h.supplier_name == null ? null : String(h.supplier_name),
@@ -1621,6 +1625,19 @@ export async function repoGenerateDocumentVersion(
   try {
     await client.query("BEGIN");
     const header = await lockHeader(client, id);
+    const freezeRequestKey=supplierDocumentFreezeRequestKey(id,expectedUpdatedAt,motifRevision);
+    if(freezeRequestKey){
+      const replay=(await client.query(`SELECT id,version,titre,sha256,motif_revision,generated_by,
+        created_at::text,sent_at::text FROM public.commande_fournisseur_document
+        WHERE commande_id=$1::uuid AND payload->>'freeze_request_key'=$2 ORDER BY version DESC LIMIT 1`,
+        [id,freezeRequestKey])).rows[0];
+      if(replay){
+        await client.query("COMMIT");
+        return {id:replay.id,version:Number(replay.version),titre:replay.titre,sha256:replay.sha256,
+          motif_revision:replay.motif_revision,generated_by:replay.generated_by==null?null:Number(replay.generated_by),
+          created_at:replay.created_at,sent_at:replay.sent_at};
+      }
+    }
     assertOptimisticToken(expectedUpdatedAt, header.updated_at_token);
 
     if (header.statut !== "APPROUVEE") {
@@ -1637,9 +1654,19 @@ export async function repoGenerateDocumentVersion(
     const detail = await repoGetCommandeFournisseurTx(client, id);
     const qualification = await readPurchaseQualificationTx(client,id,true);
     const version = Number(header.version_document) + 1;
+    const sourceRevision=(await client.query<{revision:string}>(`UPDATE public.commande_fournisseur
+      SET version_document=$2,motif_revision=$3,updated_by=$4 WHERE id=$1::uuid
+      RETURNING updated_at::text AS revision`,[id,version,motifRevision??null,audit.user_id])).rows[0]?.revision;
+    const issuance=(await client.query<{at:string}>('SELECT statement_timestamp()::text AS at')).rows[0]?.at;
+    if(!sourceRevision||!issuance)throw new HttpError(409,'OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE','La source du document est indisponible.');
+    const terms=await freezeGeneralTerms(client,"commande-fournisseur",id,true);
+    const officialSnapshot=await buildSupplierPoCreationSnapshot(client,id,true,issuance);
     const payload = {
       type: "BON_DE_COMMANDE_FOURNISSEUR",
-      general_terms: await freezeGeneralTerms(client,"commande-fournisseur",id,true),
+      general_terms: terms,
+      freeze_request_key:freezeRequestKey,
+      official_source_revision:sourceRevision,
+      official_snapshot:{...officialSnapshot,general_terms:terms},
       supplier_qualification: qualification,
       supplier_qualification_revision: purchaseQualificationRevision(qualification),
       supplier_open_contract: await readSupplierOpenContractProofTx(client,id,true),
@@ -1689,15 +1716,12 @@ export async function repoGenerateDocumentVersion(
        RETURNING id, version, titre, sha256, motif_revision, generated_by, created_at::text, sent_at::text`,
       [id, version, `Bon de commande ${detail.code} — v${version}`, canonical, sha, motifRevision ?? null, audit.user_id]
     );
-    await client.query(
-      `UPDATE public.commande_fournisseur SET version_document = $2, motif_revision = $3, updated_by = $4 WHERE id = $1::uuid`,
-      [id, version, motifRevision ?? null, audit.user_id]
-    );
+    const archived=await queueFrozenSupplierDocumentTx(client,id,{id:inserted.rows[0].id,version,payload},audit.user_id);
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.document.generate",
       entity_type: "commande_fournisseur",
       entity_id: id,
-      details: { version, sha256: sha },
+      details: { version, sha256: sha,archive_id:archived.id,pdf_edition:archived.documentVersion },
     });
     await client.query("COMMIT");
     const d = inserted.rows[0];
@@ -1729,8 +1753,8 @@ export async function repoQueueSupplierPoOfficialDocument(
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const header = await client.query<{ code: string; source_revision: string | null }>(
-      `SELECT code, updated_at::text AS source_revision
+    const header = await client.query<{ code: string; fournisseur_id:string; source_revision: string | null }>(
+      `SELECT code,fournisseur_id::text,updated_at::text AS source_revision
          FROM public.commande_fournisseur WHERE id = $1::uuid FOR UPDATE`, [id]
     );
     const code = header.rows[0]?.code;
@@ -1755,8 +1779,8 @@ export async function repoQueueSupplierPoOfficialDocument(
       await client.query("COMMIT");
       return replay;
     }
-    const currentArchive = await client.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM public.authoritative_pdf_archives
+    const currentArchive = await client.query<{ n: string;edition:number }>(
+      `SELECT count(*)::text AS n,COALESCE(max(document_version),0)+1 AS edition FROM public.authoritative_pdf_archives
         WHERE entity_type = 'commande-fournisseur' AND entity_id = $1 AND document_kind = 'SUPPLIER_PURCHASE_ORDER'`,
       [id]
     );
@@ -1764,18 +1788,41 @@ export async function repoQueueSupplierPoOfficialDocument(
     if (existingCount > 0 && !input.reissue_reason?.trim()) {
       throw new HttpError(422, "OFFICIAL_DOCUMENT_REISSUE_REASON_REQUIRED", "Un motif de réémission est requis.");
     }
-    const sourceSnapshot = await buildSupplierPoCreationSnapshot(client, id, true);
     const currentSourceRevision = header.rows[0]?.source_revision?.trim();
     if (!currentSourceRevision) throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_UNAVAILABLE", "La révision source du document est indisponible.");
     if (currentSourceRevision !== input.source_revision) {
       throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La source du document a changé. Rechargez avant de réémettre.");
     }
-    const archive = await queueCreationPdfArchive(client, {
+    const frozen=(await client.query<{id:string;version:number;payload:Record<string,unknown>;sha256:string}>(
+      'SELECT id::text,version,payload,sha256 FROM public.commande_fournisseur_document WHERE commande_id=$1::uuid ORDER BY version DESC LIMIT 1',[id])).rows[0];
+    if(!frozen)throw new HttpError(422,'OFFICIAL_DOCUMENT_FREEZE_REQUIRED','Figez le bon de commande approuvé avant sa publication PDF.');
+    if(sha256Hex(stableStringify(frozen.payload))!==frozen.sha256)
+      throw new HttpError(409,'OFFICIAL_DOCUMENT_FROZEN_HASH_CONFLICT','Le document figé ne correspond plus à son empreinte enregistrée.');
+    let sourceSnapshot:Record<string,unknown>,sourceRevision:string;
+    if(frozen.payload.official_snapshot&&typeof frozen.payload.official_source_revision==='string'){
+      sourceSnapshot=frozen.payload.official_snapshot as Record<string,unknown>;
+      sourceRevision=frozen.payload.official_source_revision;
+    }else{
+      const issuance=(await client.query<{at:string}>('SELECT statement_timestamp()::text AS at')).rows[0]?.at;
+      const supplier=(await client.query(`SELECT adresse_ligne,house_no,postcode,city,country
+        FROM public.fournisseurs WHERE id=$1::uuid`,[header.rows[0].fournisseur_id])).rows[0];
+      const legacySupplier=frozen.payload.fournisseur as {id?:string}|undefined;
+      if(!issuance||!supplier||legacySupplier?.id!==header.rows[0].fournisseur_id)
+        throw new HttpError(409,'OFFICIAL_DOCUMENT_FROZEN_IDENTITY_CONFLICT','L’identité du document figé est incohérente.');
+      sourceSnapshot={...snapshotFromLegacySupplierFreeze(frozen.payload,{
+        issuedAt:issuance,issuer:await readIssuerParty({at:issuance.slice(0,10)}),
+        supplierAddress:{street:supplier.adresse_ligne,house_number:supplier.house_no,
+          postal_code:supplier.postcode,city:supplier.city,country:supplier.country}}),
+        corrective_issuance:{reason:input.reissue_reason?.trim()??null,identity_checked_at:issuance}};
+      sourceRevision='legacy-document:'+frozen.id+':'+frozen.sha256;
+    }
+    const edition=Number(currentArchive.rows[0]?.edition??1);
+    const archive = await queueFrozenCommercialPdfArchive(client, {
       entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER",
-      documentVersion: existingCount + 1, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
-      originalName: authoritativePdfFilename(["BCF", code, `v${existingCount + 1}`]),
-      sourceRevision: currentSourceRevision,
-      sourceSnapshot, actorUserId: audit.user_id, requireGeneralTerms: true,
+      documentVersion: edition, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
+      originalName: authoritativePdfFilename(["BCF", code, `v${edition}`]),
+      sourceRevision,
+      sourceSnapshot:{...sourceSnapshot,frozen_document:{id:frozen.id,version:Number(frozen.version)}},actorUserId:audit.user_id,
     });
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.official_document.queue", entity_type: "commande_fournisseur", entity_id: id,
