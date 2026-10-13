@@ -30,7 +30,8 @@ function wrappedLines(doc: PDFKit.PDFDocument, text: string, width: number, bold
 export type WorkshopFieldBox = {
   title: string
   columns?: 1 | 2
-  fields: ReadonlyArray<{ label: string; value: string | null; prominent?: boolean }>
+  columnWeights?: readonly [number, number]
+  fields: ReadonlyArray<{ label: string; value: string | null; prominent?: boolean; span?: 2 }>
 }
 
 /** Bordered business zones: labels and their values stay together, with measured wrapping. */
@@ -38,21 +39,39 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
   if (!boxes.length) return
   const gap = 12
   const width = (CONTENT_WIDTH - gap * (boxes.length - 1)) / boxes.length
-  const measured = boxes.map(box => ({
-    box,
-    title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - PAD * 2, true, 10),
-    fields: box.fields.map(field => ({
-      ...field,
-      label: wrappedLines(ctx.doc, field.label, (width - PAD * 2 - (box.columns === 2 ? gap : 0)) / (box.columns ?? 1), false, 8.5),
-      value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", (width - PAD * 2 - (box.columns === 2 ? gap : 0)) / (box.columns ?? 1), true, field.prominent ? 14 : BODY),
-    })),
-  }))
+  const measured = boxes.map(box => {
+    const columns = box.columns ?? 1
+    const weights = columns === 2 ? box.columnWeights ?? [1, 1] : [1]
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+    const fieldWidths = weights.map(weight => (width - PAD * 2 - (columns - 1) * gap) * weight / totalWeight)
+    let occupiedColumn = 0
+    const fields = box.fields.map(field => {
+      const span = columns === 2 && field.span === 2 ? 2 : 1
+      if (occupiedColumn + span > columns) occupiedColumn = 0
+      const textWidth = span === 2 ? width - PAD * 2 : fieldWidths[occupiedColumn]
+      occupiedColumn = (occupiedColumn + span) % columns
+      return {
+        ...field, span, textWidth,
+        label: wrappedLines(ctx.doc, field.label, textWidth, false, 8.5),
+        value: wrappedLines(ctx.doc, field.value?.trim() || "Non renseigné", textWidth, true, field.prominent ? 14 : BODY),
+      }
+    })
+    const rows: Array<typeof fields> = []
+    let row: typeof fields = [], occupied = 0
+    for (const field of fields) {
+      if (occupied + field.span > columns) { rows.push(row); row = []; occupied = 0 }
+      row.push(field); occupied += field.span
+      if (occupied === columns) { rows.push(row); row = []; occupied = 0 }
+    }
+    if (row.length) rows.push(row)
+    return { box, rows, fieldWidths, title: wrappedLines(ctx.doc, box.title.toUpperCase(), width - PAD * 2, true, 10) }
+  })
   const headingHeight = Math.max(...measured.map(item => item.title.length * 12)) + PAD * 2
-  const rowHeight = (fields: typeof measured[number]["fields"]) => Math.max(...fields.map(field => field.label.length * 11)) + 3
+  const rowHeight = (fields: typeof measured[number]["rows"][number]) => Math.max(...fields.map(field => field.label.length * 11)) + 3
     + Math.max(...fields.map(field => field.value.length * (field.prominent ? 17 : LEADING))) + 12
   const heights = measured.map(item => {
     let height = headingHeight + PAD
-    for (let i = 0; i < item.fields.length; i += item.box.columns ?? 1) height += rowHeight(item.fields.slice(i, i + (item.box.columns ?? 1)))
+    for (const row of item.rows) height += rowHeight(row)
     return height
   })
   const height = Math.max(...heights)
@@ -75,17 +94,21 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
     ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite).rect(x, top, width, height).stroke().restore()
     let y = top + headingHeight + PAD
     const columns = item.box.columns ?? 1
-    const fieldWidth = (width - PAD * 2 - (columns - 1) * gap) / columns
-    if (columns === 2) ctx.doc.save().lineWidth(0.5).strokeColor(C.hairline).moveTo(x + width / 2, y).lineTo(x + width / 2, top + height - PAD).stroke().restore()
-    for (let start = 0; start < item.fields.length; start += columns) {
-    const row = item.fields.slice(start, start + columns)
-    row.forEach((field, column) => {
-      const fieldX = x + PAD + column * (fieldWidth + gap)
+    const dividerX = x + PAD + item.fieldWidths[0] + gap / 2
+    for (const row of item.rows) {
+    // Full-width references and document lists have no divider running through their text.
+    if (columns === 2 && row.every(field => field.span === 1)) {
+      ctx.doc.save().lineWidth(0.5).strokeColor(C.hairline).moveTo(dividerX, y).lineTo(dividerX, y + rowHeight(row) - 6).stroke().restore()
+    }
+    let column = 0
+    row.forEach(field => {
+      const fieldX = x + PAD + item.fieldWidths.slice(0, column).reduce((sum, size) => sum + size, 0) + column * gap
       ctx.doc.font("Helvetica").fontSize(8.5).fillColor(C.graphite)
-      field.label.forEach((line, i) => ctx.text(line, fieldX, y + i * 11, { width: fieldWidth }))
+      field.label.forEach((line, i) => ctx.text(line, fieldX, y + i * 11, { width: field.textWidth }))
       const valueY = y + Math.max(...row.map(item => item.label.length * 11)) + 3
       ctx.doc.font("Helvetica-Bold").fontSize(field.prominent ? 14 : BODY).fillColor(C.ink)
-      field.value.forEach((line, i) => ctx.text(line, fieldX, valueY + i * (field.prominent ? 17 : LEADING), { width: fieldWidth }))
+      field.value.forEach((line, i) => ctx.text(line, fieldX, valueY + i * (field.prominent ? 17 : LEADING), { width: field.textWidth }))
+      column += field.span
     })
     y += rowHeight(row)
     }
