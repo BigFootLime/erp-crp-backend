@@ -71,7 +71,7 @@ export async function createDirectorySession(db:Queryable,site:string,canonicalT
 }
 export async function validateDirectorySession(db:Queryable,site:string,token:string):Promise<DirectorySession>{
  siteIdSchema.parse(site);if(!/^dir_[a-f0-9]{64}$/.test(token))throw new Error('DIRECTORY_SESSION_REJECTED');
- const row=(await db.query(`SELECT p.profile_id,u.id AS source_user_id,s.database_id AS database,u.username,u.name,u.surname,u.email,u.avatar_key,${avatarProjectionSql} AS avatar_asset_id,
+ const row=(await db.query(`SELECT p.profile_id,u.id AS source_user_id,s.database_id AS database,u.username,u.name,u.surname,u.email,u.tel_no,u.avatar_key,${avatarProjectionSql} AS avatar_asset_id,
   m.role_key AS role,CASE WHEN cardinality(m.roles)>0 THEN m.roles ELSE ARRAY[m.role_key] END AS roles,m.is_superadmin,u.status,p.job_title,p.employment_type,p.weekly_hours_target::float AS weekly_hours_target,p.work_profile_incomplete,u.mfa_reenrollment_required,s.global_session_epoch,m.version AS membership_version,
   s.mfa_factor_id,s.mfa_factor_version,s.mfa_verified_at,s.mfa_method
   FROM public.cerp_directory_sessions s JOIN public.cerp_directory_profiles p ON p.profile_id=s.profile_id JOIN public.users u ON u.id=p.user_id
