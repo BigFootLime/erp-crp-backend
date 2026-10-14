@@ -34,13 +34,20 @@ export async function installEmptyDirectory(client:Client,expectedDirectoryId:st
    await client.query('COMMIT');return {directory_id:directoryId,profile_id:replay.profile_id,replayed:true};
   }
   await assertBlankTemplate(client);
-  const role=(await client.query("SELECT rolsuper,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname='cerp_directory_app'")).rows[0];
-  if(!role||role.rolsuper||role.rolcreatedb||role.rolcreaterole)throw new Error('DIRECTORY_PRIVATE_DATABASE_ROLE_REQUIRED');
+  const role=(await client.query(`SELECT r.rolsuper,r.rolcreatedb,r.rolcreaterole,
+   pg_has_role(r.oid,'cerp_app','MEMBER') AS business_member,
+   EXISTS(SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) OR
+   EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relowner=r.oid) OR
+   EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proowner=r.oid) AS owns_authority_objects
+   FROM pg_roles r WHERE r.rolname='cerp_directory_app'`)).rows[0];
+  if(!role||role.rolsuper||role.rolcreatedb||role.rolcreaterole||role.business_member||role.owns_authority_objects)throw new Error('DIRECTORY_PRIVATE_DATABASE_ROLE_REQUIRED');
   if(!(await client.query("SELECT 1 FROM public.app_roles WHERE role_key='Administrateur Systeme et Reseau'")).rows.length)throw new Error('DIRECTORY_OWNER_ROLE_MISSING');
   await client.query(schema);
   // Business APIs use cerp_app; they must never connect to the credential DB.
   await client.query(`REVOKE ALL ON DATABASE "${expectedDatabase}" FROM PUBLIC,cerp_app; GRANT CONNECT ON DATABASE "${expectedDatabase}" TO cerp_directory_app`);
-  await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM cerp_app; REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM cerp_app');
+  // Keep canonical ACLs for FK checks/SECURITY DEFINER functions owned by
+  // cerp_app. Database CONNECT above is the business-role isolation boundary.
+  // New private authority tables retain the explicit revocations in schema.
   const privateTables=(await client.query<{tablename:string}>(`SELECT tablename FROM pg_tables WHERE schemaname='public' AND
    (tablename IN ('users','app_roles','app_modules','cerp_schema_migrations','user_role_assignments','user_role_assignment_events','auth_login_logs','auth_mfa_challenges','erp_audit_logs','erp_outbox_events','password_resets','password_reset_tokens','factureur','finance_legal_mentions','erp_settings','erp_setup_company_commands','test_account_registrations','user_avatar_commands','cerp_terminal_pins','operator_badge_credentials','operator_device_sessions','cerp_terminal_audit')
     OR tablename LIKE 'user_mfa_%' OR tablename LIKE 'auth_rate_limit_%' OR tablename LIKE 'admin_%' OR tablename LIKE 'hr_%' OR tablename LIKE 'realtime_%' OR tablename LIKE 'operational_media_%')`)).rows;
