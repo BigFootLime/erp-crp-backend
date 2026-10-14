@@ -721,7 +721,7 @@ export async function repoFindSessionByToken(token: string): Promise<
   { session: SessionRow; device: DeviceRow; user: { id: number; username: string; name: string | null; surname: string | null; role: string | null } } | null
 > {
   const { rows } = await pool.query(
-    `SELECT ${SESSION_COLUMNS},
+    `SELECT ${SESSION_COLUMNS},${(await import('../../../shared-directory/site-runtime')).sharedDirectoryClient()?'s.directory_global_epoch,s.directory_membership_version,':''}
             u.username,
             u.name,
             u.surname,
@@ -743,6 +743,12 @@ export async function repoFindSessionByToken(token: string): Promise<
   const row = rows[0];
   if (!row) return null;
 
+  if((await import('../../../shared-directory/site-runtime')).sharedDirectoryClient()){
+    const account=await (await import('../../auth/repository/auth.repository')).findAuthenticatedAccountState(Number(row.user_id));
+    if(!account||account.status!=='Active'||account.reenrollment_required||row.directory_global_epoch==null||row.directory_membership_version==null||Number(row.directory_global_epoch)!==account.directory_global_epoch||Number(row.directory_membership_version)!==account.directory_membership_version)return null;
+    const current=(await pool.query('SELECT coalesce(directory_username,username) AS username,name,surname,role FROM public.users WHERE id=$1',[row.user_id])).rows[0];
+    if(!current)return null;Object.assign(row,current);
+  }
   const device = await repoFindDeviceById(row.device_id as string);
   if (!device) return null;
 
@@ -790,6 +796,9 @@ export async function repoOpenSession(params: {
   request_id?: string | null;
   beforeCommit?: (client: PoolClient, session: SessionRow) => Promise<void>;
 }): Promise<{ session: SessionRow; token: string }> {
+  const directory=(await import('../../../shared-directory/site-runtime')).sharedDirectoryClient();
+  const sharedActor=directory?await (await import('../../auth/repository/auth.repository')).findAuthenticatedAccountState(params.user_id):null;
+  if(directory&&(!sharedActor||sharedActor.status!=='Active'||sharedActor.reenrollment_required))throw new HttpError(401,'STATION_ACCOUNT_REJECTED','Compte indisponible.');
   const token = generateSessionToken();
   const client = await pool.connect();
   try {
@@ -851,6 +860,7 @@ export async function repoOpenSession(params: {
     );
 
     const session = mapSession(rows[0]);
+    if(sharedActor)await client.query('UPDATE public.operator_device_sessions SET directory_global_epoch=$2,directory_membership_version=$3 WHERE id=$1::uuid',[session.id,sharedActor.directory_global_epoch,sharedActor.directory_membership_version]);
 
     await client.query(
       `UPDATE public.production_devices

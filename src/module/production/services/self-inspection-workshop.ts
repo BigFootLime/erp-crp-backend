@@ -105,6 +105,6 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
       rows: [{ cells: { operation: "", machine: "", good: "", scrap: "", date: "", visa: "" } }],
     });
     renderWorkshopWritingArea(ctx, "Observations / modification de programme");
-    ctx.notes("Un changement de programme impose un nouveau contrôle de première pièce. Le scan de cette fiche peut être conservé comme preuve ; la libération qualité reste distincte.");
+    ctx.notes("Un changement de programme impose un nouveau contrôle de première pièce. Mode papier : scan obligatoire de la fiche renseignée, rattaché à l’OF et à l’opération, sans ressaisie des mesures. La libération qualité reste distincte.");
   });
 }

@@ -22,6 +22,7 @@ import {
   repoPreviewVerdict,
   repoQualityCenter,
   repoRecordMeasurements,
+  repoRecordAutocontrolCapture,
   repoRevisePlan,
   repoTransitionDerogation,
   repoTransitionNc,
@@ -67,6 +68,7 @@ export const svcPreviewExecution = repoPreviewExecution;
 export const svcOfOperationExecutionContext = repoOfOperationExecutionContext;
 export const svcCreateExecution = repoCreateExecution;
 export const svcRecordMeasurements = repoRecordMeasurements;
+export const svcRecordAutocontrolCapture = repoRecordAutocontrolCapture;
 export const svcPreviewVerdict = repoPreviewVerdict;
 export const svcDecideExecution = repoDecideExecution;
 

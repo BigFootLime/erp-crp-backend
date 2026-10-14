@@ -101,6 +101,9 @@ import type {
   UpsertAnalysisBodyDTO,
 } from "../validators/quality-360.validators";
 import type { AuditContext } from "./qualite.repository";
+import { assertAutocontrolCapture, assertPaperAutocontrolScope, paperAutocontrolVerdict } from "../domain/autocontrol-capture";
+import { verifyAutocontrolScanFile, type AutocontrolScanFile } from "./autocontrol-scan";
+import type { AutocontrolCaptureBodyDTO } from "../validators/quality-360.validators";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
@@ -1124,6 +1127,10 @@ export async function repoOfOperationExecutionContext(ofId: number, operationId:
 }
 
 export type ExecutionDetail = {
+  of_id: number | null;
+  operation_id: string | null;
+  capture_mode: "PAPER" | "DIGITAL";
+  paper_capture: PaperCapture | null;
   characteristics: QualityCharacteristicSpec[];
   id: string;
   reference: string;
@@ -1166,7 +1173,16 @@ export type ExecutionDetail = {
   }>;
 };
 
+type PaperCapture = {
+  document_id: string; document_sha256: string; conforming_qty: number;
+  captured_by: number; captured_at: string;
+  instruments: Array<{ characteristic_key: string; instrument_id: string }>;
+};
+
 type ExecutionRow = {
+  of_id: number | null;
+  operation_id: string | null;
+  paper_capture: PaperCapture | null;
   id: string;
   reference: string;
   status: string;
@@ -1210,6 +1226,12 @@ type ExecutionRow = {
 };
 
 const EXECUTION_COLUMNS = `
+  qc.of_id::int AS of_id, qc.operation_id::text AS operation_id,
+  (SELECT jsonb_build_object('document_id',ac.document_id,'document_sha256',ac.document_sha256,
+    'conforming_qty',ac.conforming_qty,'captured_by',ac.captured_by,'captured_at',ac.captured_at,
+    'instruments',(SELECT COALESCE(jsonb_agg(jsonb_build_object('characteristic_key',item->>'characteristic_key',
+      'instrument_id',item->'snapshot'->>'instrument_id')),'[]'::jsonb) FROM jsonb_array_elements(ac.instrument_snapshots) item))
+    FROM public.quality_autocontrol_capture ac WHERE ac.control_id=qc.id) AS paper_capture,
   qc.id, qc.reference, qc.status::text AS status, qc.result::text AS result,
   qc.verdict, qc.verdict_computed, qc.control_type::text AS control_type, qc.trigger_type,
   qc.source_type, qc.source_id, qc.plan_id, qc.plan_version, qc.plan_snapshot, qc.plan_snapshot_sha256,
@@ -1293,6 +1315,10 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
     }
   }
   return {
+    of_id: row.of_id ?? null,
+    operation_id: row.operation_id ?? null,
+    capture_mode: row.paper_capture ? "PAPER" : "DIGITAL",
+    paper_capture: row.paper_capture ?? null,
     id: row.id,
     reference: row.reference,
     characteristics: integrity === "OK" ? characteristicsFromSnapshot(row.plan_snapshot) : [],
@@ -1328,6 +1354,100 @@ export async function repoGetExecution(id: string): Promise<ExecutionDetail | nu
   const row = await selectExecutionRow(pool, id);
   if (!row) return null;
   return buildExecutionDetail(row, await selectMeasurements(pool, id));
+}
+
+async function readAutocontrolScan(q: DbQueryer, row: ExecutionRow, documentId: string, lock = false) {
+  assertPaperAutocontrolScope(row);
+  const doc = (await q.query<AutocontrolScanFile & { id: string; removed_at: string | null }>(`
+    SELECT id::text,storage_path,mime_type,size_bytes::text,sha256,removed_at
+    FROM public.quality_documents WHERE id=$1::uuid AND entity_type='CONTROL' AND entity_id=$2::uuid
+    ${lock ? "FOR UPDATE" : ""}`, [documentId, row.id])).rows[0];
+  if (!doc || doc.removed_at) throw new HttpError(422, "AUTOCONTROL_SCAN_REQUIRED", "Joignez la fiche papier renseignée à ce contrôle.");
+  return doc!;
+}
+
+export async function repoRecordAutocontrolCapture(params: {
+  id: string; body: AutocontrolCaptureBodyDTO; actor: QualityActor; idempotencyKey: string | null | undefined;
+}): Promise<ExecutionDetail | null> {
+  return withTransaction(async client => {
+    const before = await selectExecutionRow(client, params.id, true);
+    if (!before) return null;
+    const idem = await acquireIdempotency({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey,
+      commandType: "quality.execution.autocontrol-capture", requestPayload: { id: params.id, ...params.body } });
+    if (idem.replay) return buildExecutionDetail(before, await selectMeasurements(client, params.id));
+    assertOptimisticVersion({ expectedUpdatedAt: params.body.expected_updated_at, currentUpdatedAt: before.updated_at });
+    if (before.validation_date || before.status === "CANCELLED") throw new HttpError(409, "QUALITY_EXECUTION_CLOSED", "Ce contrôle est déjà décidé.");
+    assertPaperAutocontrolScope(before);
+    if (!before.plan_snapshot_sha256) throw new HttpError(409, "QUALITY_SNAPSHOT_MISSING", "Préparez le plan figé de cet OF.");
+    assertSnapshotIntegrity(before.plan_snapshot, before.plan_snapshot_sha256);
+    const specs = characteristicsFromSnapshot(before.plan_snapshot);
+    const measures = await selectMeasurements(client, params.id);
+    if (params.body.mode === "PAPER" && measures.length) throw new HttpError(409, "AUTOCONTROL_CAPTURE_MIXED", "Des mesures sont déjà saisies : poursuivez ce contrôle sur tablette.");
+    let verdict: QualityVerdict;
+    let controlled: number;
+    let conforming: number;
+    if (params.body.mode === "PAPER") {
+      const body = params.body;
+      const doc = await readAutocontrolScan(client, before, body.document_id, true);
+      const digest = await verifyAutocontrolScanFile(doc, true);
+      const scope = assertPaperAutocontrolScope(before);
+      assertAutocontrolCapture({ ...scope, controlId: before.id, mode: "PAPER", scan: {
+        ...scope, controlId: before.id, removed: false, uploadCommitted: true,
+        antivirusClean: true, mimeType: doc.mime_type, bytes: Number(doc.size_bytes),
+      } });
+      verdict = paperAutocontrolVerdict(toNumber(before.qty_population), body.conforming_qty);
+      controlled = toNumber(before.qty_population); conforming = body.conforming_qty;
+      const assignments = new Map(body.instruments.map(item => [item.characteristic_key, item.instrument_id]));
+      if (assignments.size !== body.instruments.length || body.instruments.some(item => !specs.some(spec => spec.key === item.characteristic_key))) {
+        throw new HttpError(422, "AUTOCONTROL_INSTRUMENT_SCOPE", "Sélectionnez les instruments des caractéristiques de ce plan.");
+      }
+      const snapshots = [];
+      for (const spec of specs) {
+        const check = await evaluateInstrumentForCharacteristic(client, { spec, instrumentId: assignments.get(spec.key) ?? null, at: new Date(before.control_date) });
+        if (!check.allowed) throw new HttpError(409, check.code, check.message, { characteristic: spec.key });
+        if (check.snapshot) snapshots.push({ characteristic_key: spec.key, snapshot: check.snapshot });
+      }
+      await client.query(`INSERT INTO public.quality_autocontrol_capture(control_id,document_id,document_sha256,conforming_qty,instrument_snapshots,captured_by)
+        VALUES($1::uuid,$2::uuid,$3,$4,$5::jsonb,$6) ON CONFLICT(control_id) DO UPDATE SET
+        document_id=EXCLUDED.document_id,document_sha256=EXCLUDED.document_sha256,conforming_qty=EXCLUDED.conforming_qty,
+        instrument_snapshots=EXCLUDED.instrument_snapshots,captured_by=EXCLUDED.captured_by,captured_at=now()`,
+        [params.id, body.document_id, digest, conforming, JSON.stringify(snapshots), params.actor.user_id]);
+    } else {
+      await client.query("DELETE FROM public.quality_autocontrol_capture WHERE control_id=$1::uuid", [params.id]);
+      const computed = computeExecutionVerdict({ characteristics: specs, samples: await loadSamples(client, params.id), population: toNumber(before.qty_population) });
+      ({ controlled, conforming } = computeExecutionQuantities(computed, toNumber(before.qty_population)));
+      verdict = computed.verdict;
+    }
+    assertQuantityLedger({ ...rowToLedger(before), controlled, conforming });
+    await client.query(`UPDATE public.quality_control SET qty_controlled=$2,qty_conforming=$3,verdict=$4,verdict_computed=$4,
+      status='IN_PROGRESS',updated_at=now(),updated_by=$5,controlled_by=$5 WHERE id=$1::uuid`, [params.id, controlled, conforming, verdict, params.actor.user_id]);
+    const evidence = { mode: params.body.mode, document_id: params.body.mode === "PAPER" ? params.body.document_id : null, controlled, conforming, verdict };
+    await insertQualityEvent(client, { entity_type: "CONTROL", entity_id: params.id, event_type: "AUTOCONTROL_CAPTURE",
+      actor: params.actor, old_values: { paper_capture: before.paper_capture ?? null }, new_values: evidence,
+      correlation_id: before.correlation_id, idempotency_key: idem.idempotencyKey, rule_code: "AUTOCONTROL_PAPER_OR_TABLET" });
+    await insertAuditLog(client, params.actor, { action: "qualite.executions.autocontrol-capture", entity_type: "quality_control", entity_id: params.id, details: evidence });
+    await saveReceipt({ client, actor: params.actor, idempotencyKey: idem.idempotencyKey, requestHash: idem.requestHash,
+      commandType: "quality.execution.autocontrol-capture", aggregateType: "CONTROL", aggregateId: params.id,
+      requestPayload: { id: params.id, ...params.body }, resultPayload: { control_id: params.id }, correlationId: before.correlation_id });
+    const after = await selectExecutionRow(client, params.id);
+    return buildExecutionDetail(after!, await selectMeasurements(client, params.id));
+  });
+}
+
+async function executionComputation(q: DbQueryer, row: ExecutionRow, specs: readonly QualityCharacteristicSpec[]) {
+  if (!row.paper_capture) return computeExecutionVerdict({ characteristics: specs, samples: await loadSamples(q, row.id), population: toNumber(row.qty_population) });
+  const doc = await readAutocontrolScan(q, row, row.paper_capture.document_id);
+  const digest = await verifyAutocontrolScanFile(doc, false);
+  if (digest !== row.paper_capture.document_sha256) throw new HttpError(409, "AUTOCONTROL_SCAN_CHANGED", "Le scan doit être vérifié à nouveau.");
+  if (toNumber(row.qty_controlled) !== toNumber(row.qty_population) || toNumber(row.qty_conforming) !== Number(row.paper_capture.conforming_qty)) {
+    throw new HttpError(409, "AUTOCONTROL_LEDGER_CHANGED", "Le résultat papier et les quantités du contrôle doivent correspondre.");
+  }
+  return { verdict: paperAutocontrolVerdict(toNumber(row.qty_population), Number(row.paper_capture.conforming_qty)), missing: [], blocking: [] };
+}
+
+function executionPreviewHash(row: ExecutionRow, verdict: QualityVerdict) {
+  const payload = { control_id: row.id, verdict, ledger: rowToLedger(row), snapshot_sha256: row.plan_snapshot_sha256 };
+  return qualitySha256(row.paper_capture ? { ...payload, paper_capture: row.paper_capture } : payload);
 }
 
 export async function repoCancelEmptyExecution(params: {
@@ -1675,6 +1795,8 @@ export async function repoRecordMeasurements(params: {
     const before = await selectExecutionRow(client, params.id, true);
     if (!before) return null;
 
+    if (before.paper_capture) throw new HttpError(409, "AUTOCONTROL_PAPER_MODE", "Ce contrôle utilise la fiche papier : choisissez le mode tablette pour saisir des mesures.");
+
     assertOptimisticVersion({
       expectedUpdatedAt: params.body.expected_updated_at,
       currentUpdatedAt: before.updated_at,
@@ -2009,17 +2131,9 @@ export async function repoPreviewVerdict(id: string): Promise<VerdictPreview | n
   assertSnapshotIntegrity(row.plan_snapshot, row.plan_snapshot_sha256);
 
   const specs = characteristicsFromSnapshot(row.plan_snapshot);
-  const samples = await loadSamples(pool, id);
   const population = toNumber(row.qty_population);
-  const computation = computeExecutionVerdict({ characteristics: specs, samples, population });
+  const computation = await executionComputation(pool, row, specs);
   const ledger = rowToLedger(row);
-
-  const payload = {
-    control_id: id,
-    verdict: computation.verdict,
-    ledger,
-    snapshot_sha256: row.plan_snapshot_sha256,
-  };
 
   return {
     control_id: id,
@@ -2028,7 +2142,7 @@ export async function repoPreviewVerdict(id: string): Promise<VerdictPreview | n
     blocking: computation.blocking,
     ledger,
     releasable_qty: population > 0 ? executionReleasableQty(ledger, computation.verdict) : 0,
-    preview_sha256: qualitySha256(payload),
+    preview_sha256: executionPreviewHash(row, computation.verdict),
   };
 }
 
@@ -2202,9 +2316,7 @@ export async function repoDecideExecution(params: {
       throw new HttpError(422,"QUALITY_RELEASE_UNIT_MISMATCH","La décision doit conserver l’unité du contrôle.");
 
     const specs = characteristicsFromSnapshot(before.plan_snapshot);
-    const samples = await loadSamples(client, params.id);
-    const population = toNumber(before.qty_population);
-    const computation = computeExecutionVerdict({ characteristics: specs, samples, population });
+    const computation = await executionComputation(client, before, specs);
 
     const evidenceRes = await client.query<{ total: number }>(
       `
@@ -2216,6 +2328,9 @@ export async function repoDecideExecution(params: {
     const evidenceCount = evidenceRes.rows[0]?.total ?? 0;
 
     const requestedVerdict = params.body.verdict_override ?? computation.verdict;
+    if (before.paper_capture && requestedVerdict !== computation.verdict) {
+      throw new HttpError(409, "AUTOCONTROL_PAPER_RESULT_MISMATCH", "Corrigez le résultat de la fiche papier avant de décider.");
+    }
     assertManualVerdictOverride({
       computed: computation.verdict,
       requested: requestedVerdict,
@@ -2227,12 +2342,7 @@ export async function repoDecideExecution(params: {
     // L'aperçu doit être frais : il porte le verdict calculé et le registre.
     assertPreviewFresh({
       expectedHash: params.body.preview_sha256,
-      currentHash: qualitySha256({
-        control_id: params.id,
-        verdict: computation.verdict,
-        ledger: rowToLedger(before),
-        snapshot_sha256: before.plan_snapshot_sha256,
-      }),
+      currentHash: executionPreviewHash(before, computation.verdict),
     });
 
     let derogation: DerogationState | null = null;

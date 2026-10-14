@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   start: vi.fn(),
   query: vi.fn(),
   revokePin: vi.fn(),
+  qualityScope: vi.fn(), capture: vi.fn(), control: vi.fn(),
 }));
 vi.mock("../../config/database", () => ({
   default: { query: m.query, connect: vi.fn() },
@@ -35,6 +36,10 @@ vi.mock("./services/terminal-operator.service", () => ({
 vi.mock("./repository/terminal-dossier.repository", () => ({
   operationContext: m.scope,
   dossierDocuments: m.documents,
+  assertQualityScope: m.qualityScope,
+}));
+vi.mock("../qualite/services/quality-360.service", () => ({
+  svcRecordAutocontrolCapture: m.capture, svcGetExecution: m.control,
 }));
 vi.mock("../production/services/production-execution.service", () => ({
   svcStartExecution: m.start,
@@ -104,9 +109,32 @@ beforeEach(() => {
   m.scope.mockResolvedValue({});
   m.documents.mockResolvedValue([]);
   m.start.mockResolvedValue({ id: "execution" });
+  m.qualityScope.mockResolvedValue(undefined);
+  m.capture.mockResolvedValue({ capture_mode: "PAPER", ledger: { released: 0 } });
+  m.control.mockResolvedValue({ source_type: "OF_OPERATION", of_id: 12, operation_id: operation, trigger_type: "IN_PROCESS", validation_date: null, status: "IN_PROGRESS" });
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("native terminal HTTP boundary", () => {
+  const controlId="33333333-3333-4333-8333-333333333333";
+  const capturePath=`${endpoint}/controls/${controlId}/autocontrol-capture`;
+  const captureBody={mode:"PAPER",expected_updated_at:"2026-10-14T12:00:00Z",document_id:"44444444-4444-4444-8444-444444444444",complete_sheet:true,conforming_qty:4,instruments:[]};
+  it("records a scoped paper result under the paired operator identity without a quality release", async () => {
+    const out=await request(app).post(capturePath).set(headers).set("Idempotency-Key","autocontrol-terminal-12").send(captureBody);
+    expect(out.status).toBe(200);expect(out.body.ledger.released).toBe(0);
+    expect(m.qualityScope).toHaveBeenCalledWith(expect.anything(),12,operation,controlId);
+    expect(m.capture).toHaveBeenCalledWith(expect.objectContaining({id:controlId,actor:expect.objectContaining({user_id:7,device_type:"ANDROID_TERMINAL"}),body:captureBody}));
+  });
+  it("rejects an unrelated control before any capture command", async () => {
+    m.qualityScope.mockRejectedValue(new HttpError(403,"TERMINAL_QUALITY_SCOPE","other operation"));
+    expect((await request(app).post(capturePath).set(headers).set("Idempotency-Key","autocontrol-terminal-12").send(captureBody)).status).toBe(403);
+    expect(m.capture).not.toHaveBeenCalled();
+  });
+  it("never accepts paper documents under an ERP token alone or for another operation", async () => {
+    const path=`${endpoint}/controls/${controlId}/paper-documents`;
+    expect((await request(app).get(path).set("Authorization","Bearer erp-admin")).status).toBe(401);
+    m.control.mockResolvedValue({source_type:"OF_OPERATION",of_id:13,operation_id:operation,trigger_type:"IN_PROCESS"});
+    expect((await request(app).get(path).set(headers)).status).toBe(409);
+  });
   it("routes PIN revocation before the parameterized device revocation", async () => {
     const result = await request(app).post('/terminals/admin/pins/revoke')
       .set('Authorization', 'Bearer erp-admin').send({ site_code: 'QA', user_id: 7 });

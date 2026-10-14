@@ -2,6 +2,13 @@ import { Router, type RequestHandler } from "express";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireQualityCapability } from "../middlewares/quality-authorization.middleware";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
+import { asyncHandler } from "../../../utils/asyncHandler";
+import { HttpError } from "../../../utils/httpError";
+import { assertPaperAutocontrolScope } from "../domain/autocontrol-capture";
+import { idParamSchema } from "../validators/quality-360.validators";
+import { svcGetExecution } from "../services/quality-360.service";
+import { attachControlDocuments, listControlDocuments, downloadControlDocument } from "../controllers/qualite.controller";
 import {
   cancelEmptyExecution,
   consumeDerogation,
@@ -30,6 +37,7 @@ import {
   qualityIntelligence,
   qualityInvestigation,
   recordMeasurements,
+  recordAutocontrolCapture,
   reviseDeliveryPolicy,
   revisePlan,
   transitionDerogation,
@@ -100,6 +108,27 @@ router.post(
   recordMeasurements
 );
 router.get("/executions/:id/verdict-preview", requireQualityCapability("read"), previewVerdict);
+const paperUpload = createSecureUpload("quality-document");
+const requireAutocontrol: RequestHandler = asyncHandler(async (req, _res, next) => {
+  const { params } = idParamSchema.parse({ params: req.params });
+  const execution = await svcGetExecution(params.id);
+  if (!execution) throw new HttpError(404, "NOT_FOUND", "Contrôle introuvable.");
+  assertPaperAutocontrolScope(execution);
+  next();
+});
+const requireOpenAutocontrol: RequestHandler = asyncHandler(async (req, _res, next) => {
+  const { params } = idParamSchema.parse({ params: req.params });
+  const execution = await svcGetExecution(params.id);
+  if (!execution) throw new HttpError(404, "NOT_FOUND", "Contrôle introuvable.");
+  assertPaperAutocontrolScope(execution);
+  if (execution.validation_date || execution.status === "CANCELLED") throw new HttpError(409, "QUALITY_EXECUTION_CLOSED", "Ce contrôle est déjà décidé.");
+  next();
+});
+router.get("/executions/:id/paper-documents", requireQualityCapability("read"), requireAutocontrol, listControlDocuments);
+router.get("/executions/:id/paper-documents/:docId/file", requireQualityCapability("read"), requireAutocontrol, downloadControlDocument);
+router.post("/executions/:id/paper-documents", requireQualityCapability("measurement_write"), requireOpenAutocontrol,
+  paperUpload.array("documents[]", 1), attachControlDocuments);
+router.post("/executions/:id/autocontrol-capture", requireQualityCapability("measurement_write"), recordAutocontrolCapture);
 // La décision de libération est séparée de la saisie de mesure.
 router.post("/executions/:id/decision", requireQualityCapability("release_decide"), decideExecution);
 router.post('/executions/:id/cancel-empty', requireQualityCapability('release_decide'), cancelEmptyExecution);

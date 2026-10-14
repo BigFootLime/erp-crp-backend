@@ -50,7 +50,6 @@ export async function identifyTerminal(
         ? "Trop de tentatives. Patientez cinq minutes."
         : "Code non reconnu. Réessayez.",
     );
-  await requireModule(result.pin.user_id, terminalModule[terminal.kind]);
   const account = await findAuthenticatedAccountState(result.pin.user_id);
   if (!account || account.status !== "Active")
     throw new HttpError(
@@ -58,6 +57,7 @@ export async function identifyTerminal(
       "TERMINAL_ACCOUNT_REJECTED",
       "Compte indisponible.",
     );
+  await requireModule(result.pin.user_id, terminalModule[terminal.kind]);
   const device = await repoFindDeviceById(terminal.device_id);
   if (
     !device ||

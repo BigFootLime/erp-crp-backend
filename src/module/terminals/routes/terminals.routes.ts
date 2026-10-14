@@ -1,5 +1,7 @@
 import * as controllers from "../controllers/terminals.controller";
 import { Router } from "express";
+import { createSecureUpload } from "../../../shared/uploads/secure-upload";
+import { attachControlDocuments, listControlDocuments, downloadControlDocument } from "../../qualite/controllers/qualite.controller";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { HttpError } from "../../../utils/httpError";
 import { grantAccountModuleAccessToRequest } from "../../access-control/context/account-module-access.context";
@@ -115,6 +117,12 @@ router.post(
   "/operator/ofs/:of_id/operations/:operation_id/controls/:id/measurements",
   controllers.recordMeasurements,
 );
+const paperUpload = createSecureUpload("quality-document");
+router.post("/operator/ofs/:of_id/operations/:operation_id/controls/:id/autocontrol-capture", controllers.recordAutocontrolCapture);
+router.get("/operator/ofs/:of_id/operations/:operation_id/controls/:id/paper-documents", controllers.requireAutocontrolDocumentScope, listControlDocuments);
+router.get("/operator/ofs/:of_id/operations/:operation_id/controls/:id/paper-documents/:docId/file", controllers.requireAutocontrolDocumentScope, downloadControlDocument);
+router.post("/operator/ofs/:of_id/operations/:operation_id/controls/:id/paper-documents", controllers.requireAutocontrolDocumentScope,
+  paperUpload.array("documents[]", 1), attachControlDocuments);
 router.use((_req, _res, next) =>
   next(
     new HttpError(404, "TERMINAL_ROUTE_UNKNOWN", "Fonction terminal inconnue."),

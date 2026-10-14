@@ -30,6 +30,8 @@ type OpenApiOperation = Record<string, unknown>;
 type OpenApiPathItem = Record<string, OpenApiOperation>;
 
 const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
+  "get /auth/test-registration": "Disponibilité du formulaire test, désactivé par défaut et limité à current_database()=cerp_test avec opt-in serveur.",
+  "post /auth/test-registration": "Création test uniquement avec opt-in serveur, vérification de la base connectée, débit persisté, idempotence et MFA obligatoire avant première session.",
   "post /terminals/pair": "Appairage par secret temporaire aléatoire de 128 bits, à usage unique, valable quinze minutes et lié à un terminal enregistré.",
   "post /auth/activate": "Activation par jeton administratif à usage unique avec limitation de débit.",
   "post /auth/forgot-password": "Demande de récupération non révélatrice avec limitation de débit.",
@@ -107,6 +109,10 @@ const TERMINAL_SESSION_OPERATIONS = new Set([
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/confirm",
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{action}",
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/measurements",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/autocontrol-capture",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents/{docId}/file",
 ]);
 
 function operationKey(route: GeneratedRouteContract): string {

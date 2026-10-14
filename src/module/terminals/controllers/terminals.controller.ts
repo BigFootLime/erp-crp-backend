@@ -654,3 +654,28 @@ export const recordMeasurements = handle(async (req, res) => {
     }),
   );
 });
+
+// Same capture command, authenticated operator identity and exact terminal scope.
+export const recordAutocontrolCapture = handle(async (req, res) => {
+  const s = scope(req);
+  const id = v.uuid.parse(req.params.id);
+  await dossier.assertQualityScope(req.terminal!, s.of_id, s.operation_id, id);
+  const body = qv.autocontrolCaptureSchema.shape.body.parse(req.body);
+  res.json(await quality.svcRecordAutocontrolCapture({ id, body, actor: audit(req), idempotencyKey: key(req) }));
+});
+
+export const requireAutocontrolDocumentScope: RequestHandler = (req, _res, next) => {
+  void (async () => {
+    const s = scope(req); const id = v.uuid.parse(req.params.id);
+    await dossier.assertQualityScope(req.terminal!, s.of_id, s.operation_id, id);
+    const control = await quality.svcGetExecution(id);
+    if (!control || control.source_type !== "OF_OPERATION" || control.of_id !== s.of_id || control.operation_id !== s.operation_id
+      || !["FIRST_ARTICLE", "IN_PROCESS", "FINAL"].includes(control.trigger_type ?? "")) {
+      throw new HttpError(409, "AUTOCONTROL_OPERATION_REQUIRED", "La fiche doit appartenir à cette opération.");
+    }
+    if (req.method === "POST" && (control.validation_date || control.status === "CANCELLED")) {
+      throw new HttpError(409, "QUALITY_EXECUTION_CLOSED", "Ce contrôle est déjà décidé.");
+    }
+    next();
+  })().catch(next);
+};

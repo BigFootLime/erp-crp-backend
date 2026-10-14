@@ -13,6 +13,8 @@ import {
 } from "../services/auth.service";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import pool from '../../../config/database';
+import {sharedDirectoryClient,directoryAuthenticationResult} from '../../../shared-directory/site-runtime';
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = loginSchema.parse(req.body);
@@ -22,13 +24,15 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   const device = parseDevice(user_agent);
 
   // Rate-limit anti-bruteforce (A.8.5) : par IP + identifiant, avant toute vérification.
-  const data = await loginUser(username, password, {
+  const meta={
     ip,
     user_agent,
     device_type: device.device_type,
     os: device.os,
     browser: device.browser,
-  });
+  };
+  const directory=sharedDirectoryClient();
+  const data=directory ? await directoryAuthenticationResult(pool,await directory.call('login',{input:{username,password},meta}),meta):await loginUser(username,password,meta);
 
   return res.status(200).json({
     message: "Connexion réussie",
@@ -55,14 +59,16 @@ export const forgotPassword = asyncHandler(async (req: Request, res: Response) =
 
   if (!suppressAction && parsed.success) {
     // Fire-and-forget: we don't want email delivery or DB latency to become an enumeration side-channel.
-    void requestPasswordReset(parsed.data.usernameOrEmail, {
+    const directory=sharedDirectoryClient();
+    const action=directory?directory.call('password-forgot',{input:parsed.data,meta:{ip,user_agent,device_type:device.device_type,os:device.os,browser:device.browser}}):requestPasswordReset(parsed.data.usernameOrEmail, {
       request_id: req.requestId ?? null,
       ip,
       user_agent,
       device_type: device.device_type,
       os: device.os,
       browser: device.browser,
-    }).catch((e) => {
+    });
+    void action.catch((e) => {
       // Important: never leak existence; never leak token (not available here).
       console.warn(
         JSON.stringify({
@@ -89,14 +95,17 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
   const user_agent = req.headers["user-agent"]?.toString() ?? null;
   const device = parseDevice(user_agent);
 
-  await resetPasswordWithToken(token, newPassword, {
+  const meta={
     ip,
     user_agent,
     device_type: device.device_type,
     os: device.os,
     browser: device.browser,
-  });
+  };
 
+  const directory=sharedDirectoryClient();
+  if(directory)await directory.call('password-reset',{input:{token,newPassword},meta});
+  else await resetPasswordWithToken(token,newPassword,meta);
   return res.status(200).json({ message: "Mot de passe réinitialisé" });
 });
 
@@ -104,13 +113,15 @@ export const activateAccount = asyncHandler(async (req: Request, res: Response) 
   const { token, newPassword } = activateAccountSchema.parse(req.body);
   const user_agent = req.headers["user-agent"]?.toString() ?? null;
   const device = parseDevice(user_agent);
-  const result = await activateAccountWithInvitation(token, newPassword, {
+  const meta={
     ip: getClientIp(req),
     user_agent,
     device_type: device.device_type,
     os: device.os,
     browser: device.browser,
-  });
+  };
+  const directory=sharedDirectoryClient();
+  const result=directory?await directory.call<{replayed:boolean}>('account-activate',{input:{token,newPassword},meta}):await activateAccountWithInvitation(token,newPassword,meta);
   res.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
   return res.status(200).json({
     message: result.replayed ? "Compte déjà activé" : "Compte activé",

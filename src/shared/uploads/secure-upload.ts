@@ -1427,6 +1427,11 @@ function releaseRegisteredUploadDestinations(files: readonly Express.Multer.File
     return destinations;
   });
 }
+/** Finish a private transport while preserving every uncertain durable inode. */
+export function releaseSecureUploadOwnership(files:readonly Express.Multer.File[]):void{
+  const records=releaseRegisteredUploadDestinations(files);
+  if(records.some(record=>!['committed','rolled-back'].includes(record.state)))logger.error('private_upload_ownership_preserved',{count:records.length});
+}
 
 function auditUpload(
   req: Request,
@@ -1920,6 +1925,11 @@ async function validateFiles(
   }
 }
 
+/** Private transports reuse the same byte validation and scanner as HTTP uploads. */
+export async function validateSecureUploadBuffer(usage:UploadUsage,buffer:Buffer,filename:string,mimeType:string,signal:AbortSignal):Promise<Express.Multer.File>{
+  const file={fieldname:'avatar',originalname:filename,encoding:'7bit',mimetype:mimeType,size:buffer.length,buffer,path:'',destination:'',filename:''} as Express.Multer.File;
+  await validateFiles([file],getUploadPolicy(usage),signal,'immediate');return file;
+}
 function translateMulterError(error: unknown, policy: UploadPolicy): Error {
   if (!(error instanceof multer.MulterError)) return error instanceof Error ? error : new Error("Upload failure");
   switch (error.code) {

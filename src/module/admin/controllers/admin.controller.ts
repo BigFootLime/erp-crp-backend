@@ -3,6 +3,9 @@ import type { RequestHandler } from "express";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import * as adminService from "../services/admin.service";
+import pool from '../../../config/database';
+import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
+import {directoryAdminList,directoryAdminUser,directoryAdminToken,directoryAdminCall,directoryTargetId} from '../../../shared-directory/admin.facade';
 import { recoverAccountBySuperadmin } from "../services/account-recovery.service";
 import {
   adminCreateUserSchema,
@@ -16,7 +19,8 @@ import {
   resetPasswordByAdminSchema,
 } from "../validators/admin.validators";
 
-export const listUsersAdmin: RequestHandler = asyncHandler(async (_req, res) => {
+export const listUsersAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  if(sharedDirectoryClient()){res.json(await directoryAdminList(pool,req));return;}
   res.json(await adminService.listUsers());
 });
 
@@ -54,6 +58,7 @@ export const getAdminAnalytics: RequestHandler = asyncHandler(async (req, res) =
 
 export const getUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
+  if(sharedDirectoryClient()){res.json(await directoryAdminUser(pool,req,'admin-user',{profile_id:await directoryTargetId(pool,Number(dto.params.id))}));return;}
   const user = await adminService.getUser(Number(dto.params.id));
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
@@ -66,7 +71,7 @@ export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => 
   });
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
 
-  const result = await adminService.createUserByAdmin({
+  const result = sharedDirectoryClient()?await directoryAdminUser(pool,req,'admin-user-create',dto):await adminService.createUserByAdmin({
     ...dto.body,
     actorUserId: req.user.id,
     idempotencyKey: dto.headers.idempotencyKey,
@@ -79,6 +84,7 @@ export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUpdateUserSchema.parse({ params: req.params, body: req.body });
   const userId = Number(dto.params.id);
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  if(sharedDirectoryClient()){res.json(await directoryAdminUser(pool,req,'admin-user-update',{profile_id:await directoryTargetId(pool,userId),input:dto.body}));return;}
   const user = await adminService.updateUserByAdmin(userId, dto.body, req.user.id);
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
@@ -91,7 +97,7 @@ export const createAccountInvitationAdmin: RequestHandler = asyncHandler(async (
     body: req.body,
   });
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
-  const result = await adminService.createAccountInvitationByAdmin({
+  const result = sharedDirectoryClient()?await directoryAdminToken(pool,req,'admin-user-invite',{profile_id:await directoryTargetId(pool,Number(dto.params.id)),key:dto.headers.idempotencyKey},Number(dto.params.id)):await adminService.createAccountInvitationByAdmin({
     userId: Number(dto.params.id),
     actorUserId: req.user.id,
     idempotencyKey: dto.headers.idempotencyKey,
@@ -107,7 +113,7 @@ export const createPasswordResetTokenAdmin: RequestHandler = asyncHandler(async 
     body: req.body,
   });
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
-  const result = await adminService.createPasswordResetTokenByAdmin({
+  const result = sharedDirectoryClient()?await directoryAdminToken(pool,req,'admin-user-reset-token',{profile_id:await directoryTargetId(pool,Number(dto.params.id)),key:dto.headers.idempotencyKey},Number(dto.params.id)):await adminService.createPasswordResetTokenByAdmin({
     userId: Number(dto.params.id),
     actorUserId: req.user.id,
     idempotencyKey: dto.headers.idempotencyKey,
@@ -119,6 +125,7 @@ export const createPasswordResetTokenAdmin: RequestHandler = asyncHandler(async 
 export const resetUserPasswordAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = resetPasswordByAdminSchema.parse({ params: req.params, body: req.body });
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
+  if(sharedDirectoryClient()){await directoryAdminCall(pool,req,'admin-user-password',{profile_id:await directoryTargetId(pool,Number(dto.params.id)),input:dto.body});res.status(204).end();return;}
   await adminService.resetUserPasswordByAdmin({
     userId: dto.params.id,
     actorUserId: req.user.id,
@@ -134,7 +141,7 @@ export const recoverUserAccountAdmin: RequestHandler = asyncHandler(async (req, 
   if (actor?.mfa !== true || !actor.mfa_factor_id || typeof actor.mfa_factor_version !== "number" || typeof actor.session_epoch !== "number") {
     throw new HttpError(403, "RECOVERY_MFA_REQUIRED", "Activez et confirmez votre authentification 2FA avant de récupérer un autre compte.");
   }
-  const result = await recoverAccountBySuperadmin({
+  const result = sharedDirectoryClient()?await directoryAdminToken(pool,req,'admin-user-recover',{profile_id:await directoryTargetId(pool,Number(dto.params.id)),key:dto.headers.idempotencyKey,input:dto.body},Number(dto.params.id)):await recoverAccountBySuperadmin({
     userId: Number(dto.params.id), actorUserId: actor.id, actorSessionEpoch: actor.session_epoch,
     actorFactorId: actor.mfa_factor_id, actorFactorVersion: actor.mfa_factor_version,
     idempotencyKey: dto.headers.idempotencyKey, reason: dto.body.reason,

@@ -1,0 +1,5 @@
+DO $$ BEGIN
+ IF to_regclass('public.cerp_directory_projection_state') IS NULL OR to_regclass('public.cerp_directory_approved_actor_bindings') IS NULL OR to_regclass('public.cerp_directory_actor_state') IS NULL OR to_regclass('public.cerp_directory_company_state') IS NULL OR to_regclass('public.cerp_directory_company_bindings') IS NULL THEN RAISE EXCEPTION 'Shared directory projection schema incomplete'; END IF;
+ IF has_table_privilege('cerp_app','public.cerp_directory_approved_actor_bindings','INSERT') OR has_table_privilege('cerp_app','public.cerp_directory_approved_actor_bindings','UPDATE') OR has_table_privilege('cerp_app','public.cerp_directory_approved_actor_bindings','DELETE') THEN RAISE EXCEPTION 'Actor approval must remain privileged'; END IF;
+ IF NOT has_column_privilege('cerp_app','public.users','directory_profile_id','UPDATE') OR NOT has_column_privilege('cerp_app','public.operator_device_sessions','directory_global_epoch','UPDATE') THEN RAISE EXCEPTION 'Shared directory projection grants missing'; END IF;
+END $$;

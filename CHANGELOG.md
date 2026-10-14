@@ -1,5 +1,18 @@
 # Changelog
 
+## Préparé pour livraison commune — CERP 2.0 (#1577 / #1331)
+
+- Intégration commune avec inscription, paramétrage et annuaire partagé (#1563/#1568). Droits applicatifs minimaux corrigés sur les tables de suivi du démarrage ; les quatre migrations sont appliquées, rejouées et vérifiées sous cerp_app sur un clone de schéma isolé, sans données métier.
+- Vérifications de l’ensemble : 99 tests backend ciblés, compilation stricte, inventaire OpenAPI régénéré (1 524 opérations). Déploiement et recette intégrale restent distincts de ces contrôles.
+- Version produit 2.0.0, affichage 2.0 dans l’interface web et le bureau Electron. Conservation des identifiants techniques exacts pour le support.
+- Livraison via dev puis main, branches Prod créées au commit effectivement livré. Publication et recette restante non revendiquées par cette préparation.
+
+## Préparé pour livraison commune — Autocontrôle papier/tablette (#1328)
+
+- Scan obligatoire de la fiche renseignée, rattaché au contrôle exact de l’OF et de l’opération. Aucune ressaisie des mesures ni libération automatique ; résultat et instruments confirmés, décision qualité séparée. Saisie numérique conservée.
+- Mode persistant, commandes versionnées/idempotentes/auditées, protection du scan utilisé et des quantités, accès terminaux appairés strictement limité. Migration additive qualifiée sur schéma PostgreSQL17 isolé ; aucune ancienne archive réécrite.
+- Recette intégrale reportée à la demande humaine ; publication commune avec inscription/paramétrage, pas de déploiement indépendant de ce lot.
+
 ## 2026-10-14 — Compatibilité GED Finance (#1268)
 
 - Aligner les métadonnées du profil GED historique de Prod avec le contrat canonique de Test, en conservant documents, liens, utilisateurs et protections existantes. Un lien proforma exige son parent réel.
@@ -16,6 +29,20 @@
 ## En développement — Avoirs d’acompte monétaires (#1268)
 
 - Sélection HT exacte sur une facture386 qualifiée, TVA cumulative d’origine et aucune consommation physique de pièces. Contrat conservé pour les avoirs par quantité ; brouillons et avoirs émis partagent leurs budgets, preuves et rollback protégés. 8006tests et build strict passent ; trois brouillons/replays PostgreSQL17 isolés totalisent100HT/20TVA, double réservation et quantité physique frauduleuse refusées. États fiscaux initiaux simulés ; recette réelle et reste du lot Finance non terminés.
+
+- #1568 : précision finale comptes/entreprise communs et synchronisés, référence Production, aucun profil/société fictifs. Le provisionnement local ne qualifie pas encore cet annuaire ; activation réelle fermée même avec le flag, en attendant l’intégration Auth/MFA/entreprise commune. Précontrôle d’identités en agrégats seulement, sans rapprochement automatique d’IDs locaux.
+
+## 2026-10-14 — Managed Test instances (#1568, local qualification)
+
+- Durable numbered registry, common-Test admin/MFA authorization, idempotent create/retry/delete commands and fail-closed HTTP/WebSocket routing to fixed per-database APIs.
+- Root helper with blank canonical template, private instance keys/storage, pinned releases, physical identity checks and verified snapshot/archive before deletion. Local qualification and hosting activation limits are documented in `docs/architecture/managed-tests-1568.md`.
+
+## 2026-10-14 — Test signup and initial setup (#1563)
+
+- Opt-in signup restricted to the actual Test database, server-owned privileges, canonical RH targets/schedules, catalog avatars and mandatory initial MFA.
+- Private personal avatar uploads with shared secure media promotion, stable command retries and audit; administrative invitations can atomically provision the catalogue avatar and RH profile while retaining the Inactive lifecycle. Test privilege exception fails closed on the actual connected database.
+- Source-backed setup status and first-ten-login reminder, per-user progress, canonical company creation with versioned legal mentions and idempotent commands.
+- Additive migration, guarded rollback and local isolated PostgreSQL/API evidence. See `docs/architecture/initial-setup-1563.md`.
 
 ## 2026-10-14 — Impression après planning (#1320)
 
