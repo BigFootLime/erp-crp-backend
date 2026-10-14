@@ -1,5 +1,12 @@
 # Changelog
 
+- #1568 : précision finale comptes/entreprise communs et synchronisés, référence Production, aucun profil/société fictifs. Le provisionnement local ne qualifie pas encore cet annuaire ; activation réelle fermée même avec le flag, en attendant l’intégration Auth/MFA/entreprise commune. Précontrôle d’identités en agrégats seulement, sans rapprochement automatique d’IDs locaux.
+
+## 2026-10-14 — Managed Test instances (#1568, local qualification)
+
+- Durable numbered registry, common-Test admin/MFA authorization, idempotent create/retry/delete commands and fail-closed HTTP/WebSocket routing to fixed per-database APIs.
+- Root helper with blank canonical template, private instance keys/storage, pinned releases, physical identity checks and verified snapshot/archive before deletion. Local qualification and hosting activation limits are documented in `docs/architecture/managed-tests-1568.md`.
+
 ## 2026-10-14 — Test signup and initial setup (#1563)
 
 - Opt-in signup restricted to the actual Test database, server-owned privileges, canonical RH targets/schedules, catalog avatars and mandatory initial MFA.

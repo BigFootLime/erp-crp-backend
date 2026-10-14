@@ -4,9 +4,12 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { AVATAR_KEYS, testRegistrationSchema } from "../validators/test-registration.validator";
 import { registrationEnabled } from "../repository/test-registration.repository";
 import { createTestAccount } from "../services/test-registration.service";
+import { connectedTestInfo } from '../../../config/managed-database';
+import pool from '../../../config/database';
 export const testRegistrationOptions=asyncHandler(async (_req,res) => {
   res.setHeader("Cache-Control","no-store");
-  res.json({enabled:await registrationEnabled(),database:"cerp_test",role:"superAdmin",avatars:AVATAR_KEYS});
+  const info=await connectedTestInfo(pool);
+  res.json({enabled:await registrationEnabled(),database:info?.database ?? null,role:"superAdmin",avatars:AVATAR_KEYS});
 });
 export const testRegistration=asyncHandler(async (req,res) => {
   res.setHeader("Cache-Control","no-store");

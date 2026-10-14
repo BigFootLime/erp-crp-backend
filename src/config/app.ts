@@ -12,6 +12,7 @@ import { requestIdMiddleware } from "../middlewares/requestId";
 import { requestLogger } from "../middlewares/requestLogger";
 import { stripQueryFromUrl } from "../utils/logPath";
 import pool from "./database";
+import {connectedTestInfo} from './managed-database';
 import { resolveTrustProxySetting } from "./trust-proxy";
 import { getRealtimeReadiness } from "../sockets/sockeServer";
 import { installStructuredConsole, logger } from "../shared/observability/logger";
@@ -169,10 +170,11 @@ app.get("/api/v1/environment", async (_req, res) => {
       "SELECT current_database() AS database"
     );
     const database = rows[0]?.database ?? null;
+    const testInfo=await connectedTestInfo(pool);
     const environment =
       database === "cerp_prod"
         ? "production"
-        : database === "cerp_test"
+        : testInfo
         ? "test"
         : database
         ? "other"
@@ -181,6 +183,7 @@ app.get("/api/v1/environment", async (_req, res) => {
       database,
       environment,
       appEnv: process.env.NODE_ENV ?? null,
+      label:testInfo?.label ?? null,
     });
   } catch {
     // Base injoignable : on ne ment pas, on répond "unknown" (le badge se masquera).

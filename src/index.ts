@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { createServer } from "http";
 
 import pool from "./config/database";
+import {assertManagedDatabaseAtStartup} from './config/managed-database';
 import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
@@ -31,6 +32,7 @@ installStructuredConsole();
 async function start(): Promise<void> {
   assertE2EIsolation();
   assertMfaStartupConfiguration();
+  await assertManagedDatabaseAtStartup(pool);
   // Run the GED identity/RW proof before the generic upload-root preflight:
   // otherwise a missing mount could be replaced by a newly created directory
   // on the system disk before the sentinel has been checked.
@@ -72,7 +74,7 @@ async function start(): Promise<void> {
   initSocketServer(httpServer);
   const stopExpiredLockMaintenance = startExpiredLockMaintenance();
 
-  const listenHost = e2eListenHost();
+  const listenHost = process.env.CERP_MANAGED_TEST_ID ? '127.0.0.1':e2eListenHost();
   httpServer.listen(port, listenHost, () => {
     logger.info("upload_scanner_initialized", {
       mode: uploadScanner.mode,

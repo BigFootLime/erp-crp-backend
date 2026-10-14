@@ -7,11 +7,11 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { TestRegistration } from "../validators/test-registration.validator";
 import type { MfaAuditMeta } from "../services/mfa.service";
 import { createEmployeeWorkProfile } from './work-profile.repository';
+import { connectedTestInfo } from '../../../config/managed-database';
 
 export async function registrationEnabled(q: Pick<PoolClient, "query"> = pool) {
   if (process.env.CERP_TEST_REGISTRATION_ENABLED !== "true") return false;
-  const { rows } = await q.query<{ database: string }>("SELECT current_database() AS database");
-  return rows[0]?.database === "cerp_test";
+  return !!await connectedTestInfo(q);
 }
 export async function registerTestAccount(input: TestRegistration, passwordHash: string, key: string, requestHash: string, meta: MfaAuditMeta) {
   const client = await pool.connect();
