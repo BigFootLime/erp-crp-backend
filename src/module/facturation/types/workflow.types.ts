@@ -4,6 +4,7 @@ import type {
   PaymentStatus,
 } from "../domain/finance-policy";
 import type { InvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
+import type { FinalInvoiceContribution } from "../domain/proforma-final-invoice";
 
 export type FinanceBlocker = {
   code: string;
@@ -35,6 +36,9 @@ export type EligibleDeliverySource = {
   pricing_version: string | null;
   rule_code: string;
   blockers: FinanceBlocker[];
+  physical_client_id?: string;
+  proforma_reference?: string | null;
+  global_discount_percent?: string;
 };
 
 export type FacturePreviewLine = {
@@ -53,6 +57,9 @@ export type FacturePreviewLine = {
   total_incl_tax: string;
   pricing_version: string | null;
   rule_code: string;
+  /** Server-selected company/affair evidence; never accepted from a caller. */
+  proforma_contributions?: FinalInvoiceContribution[];
+  proforma_reference?: string;
 };
 
 export type FinanceDueDate = {

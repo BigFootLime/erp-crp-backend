@@ -103,5 +103,7 @@ async function main(){
   console.log(JSON.stringify({marker:'PROFORMA1268_RECEIPT_REPOSITORIES_PASS',paidAmount:'80.00',fiscalRows:'synthetic storage fixtures only; no legal sequence, Finance issuance or external payment',businessRecipePassed:false}));
   await require('./prepayment-snapshot-concurrency-1268.cjs')(pool,database);
   await require('./delivery-prepayment-sql-rehearsal-1268.cjs')(pool,database,selection.client_id);
+  await require('./proforma-final-invoice-rehearsal-1268.cjs')(pool,database,{physicalClientId:selection.client_id,
+    billedClientId:clientId('Qualification société A'),proformaId:funding.id,partId:target});
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

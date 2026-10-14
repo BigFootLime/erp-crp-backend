@@ -8,7 +8,7 @@ BEGIN
   END IF;
   FOREACH model_table IN ARRAY ARRAY['proforma_client','delivery_affair_billing_shares','proforma_affair_lines',
     'proforma_billing_parts','delivery_affair_prepayment_terms','proforma_deposit_sources',
-    'proforma_receipt_assignments','proforma_receipt_releases'] LOOP
+    'proforma_receipt_assignments','proforma_receipt_releases','proforma_final_invoice_sources'] LOOP
     IF to_regclass('public.'||model_table) IS NOT NULL THEN
       EXECUTE format('SELECT EXISTS(SELECT 1 FROM public.%I LIMIT 1)',model_table) INTO has_evidence;
       IF has_evidence THEN RAISE EXCEPTION 'proforma rollback refused: % contains saved evidence',model_table; END IF;
@@ -27,6 +27,10 @@ ALTER TABLE public.finance_event_log ADD CONSTRAINT finance_event_log_aggregate_
 -- The additive order currency column is retained; old code ignores it and no
 -- commercial currency evidence is destroyed during an application rollback.
 DROP TRIGGER IF EXISTS trg_require_deposit_binding_1268 ON public.facture_source_allocations;
+DROP TRIGGER IF EXISTS trg_require_final_binding_1268 ON public.facture_source_allocations;
+DROP FUNCTION IF EXISTS public.fn_require_final_binding_1268();
+DROP TABLE IF EXISTS public.proforma_final_invoice_sources;
+DROP FUNCTION IF EXISTS public.fn_proforma_final_binding_1268();
 DROP TRIGGER IF EXISTS trg_validate_facture_source_allocation_227 ON public.facture_source_allocations;
 CREATE TRIGGER trg_validate_facture_source_allocation_227 BEFORE INSERT ON public.facture_source_allocations
   FOR EACH ROW EXECUTE FUNCTION public.fn_validate_facturation_allocation_227();

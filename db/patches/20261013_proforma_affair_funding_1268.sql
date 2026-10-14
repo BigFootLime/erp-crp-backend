@@ -157,6 +157,19 @@ CREATE TABLE IF NOT EXISTS public.proforma_deposit_sources (
   correlation_id uuid NOT NULL
 );
 
+-- A final invoice can bill a company other than the physical BL recipient.
+-- Its exact affair quantities are retained separately from monetary advances.
+CREATE TABLE IF NOT EXISTS public.proforma_final_invoice_sources (
+  facture_source_allocation_id uuid NOT NULL REFERENCES public.facture_source_allocations(id) ON DELETE RESTRICT,
+  proforma_billing_part_id uuid NOT NULL REFERENCES public.proforma_billing_parts(id) ON DELETE RESTRICT,
+  quantity numeric(18,3) NOT NULL CHECK (quantity>0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  created_by integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  correlation_id uuid NOT NULL,
+  PRIMARY KEY(facture_source_allocation_id,proforma_billing_part_id)
+);
+CREATE INDEX IF NOT EXISTS proforma_final_part_1268_idx ON public.proforma_final_invoice_sources(proforma_billing_part_id);
+
 CREATE TABLE IF NOT EXISTS public.proforma_receipt_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   payment_allocation_id uuid NOT NULL REFERENCES public.paiement_allocations(id) ON DELETE RESTRICT,
@@ -487,15 +500,39 @@ CREATE OR REPLACE FUNCTION public.fn_validate_invoice_source_1268()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE source_qty numeric(18,3); used_qty numeric(18,3); source_client text; target_client text;
   source_valid boolean; part_ht numeric(18,2); part_ttc numeric(18,2); used_ht numeric(18,2); used_ttc numeric(18,2);
+  has_proforma boolean; billed_party_authorized boolean;
 BEGIN
   IF NEW.source_type='DELIVERY_LINE' THEN
     SELECT line.quantite::numeric(18,3),delivery.client_id,invoice.client_id INTO source_qty,source_client,target_client
     FROM public.bon_livraison_ligne line JOIN public.bon_livraison delivery ON delivery.id=line.bon_livraison_id
     JOIN public.facture invoice ON invoice.id=NEW.facture_id
-    WHERE line.id::text=NEW.source_line_id FOR UPDATE OF line,delivery,invoice;
+    WHERE line.id::text=NEW.source_line_id AND delivery.id::text=NEW.source_id FOR UPDATE OF line,delivery,invoice;
     SELECT COALESCE(sum(quantity_selected),0)::numeric(18,3) INTO used_qty FROM public.facture_source_allocations
       WHERE source_type='DELIVERY_LINE' AND source_line_id=NEW.source_line_id AND allocation_status IN ('DRAFT','CONSUMED');
-    IF source_qty IS NULL OR source_client IS DISTINCT FROM target_client OR used_qty+NEW.quantity_selected>source_qty THEN
+    SELECT EXISTS (
+      SELECT 1 FROM public.bon_livraison_ligne_allocations delivered
+      LEFT JOIN public.stock_reservations reservation ON reservation.id=delivered.reservation_id
+      JOIN public.commande_ligne_affaire_allocation affair ON affair.id=
+        COALESCE(delivered.commande_ligne_affaire_allocation_id,reservation.commande_ligne_affaire_allocation_id)
+      JOIN public.commande_client command ON command.id=affair.commande_id
+      LEFT JOIN public.delivery_affair_prepayment_terms terms ON terms.allocation_id=affair.id
+      WHERE delivered.bon_livraison_ligne_id::text=NEW.source_line_id
+        AND COALESCE(terms.requirement,command.delivery_prepayment_requirement,'UNCONFIRMED')='PROFORMA'
+    ) INTO has_proforma;
+    SELECT EXISTS (
+      SELECT 1 FROM public.bon_livraison_ligne_allocations delivered
+      LEFT JOIN public.stock_reservations reservation ON reservation.id=delivered.reservation_id
+      JOIN public.delivery_affair_prepayment_terms terms ON terms.allocation_id=
+        COALESCE(delivered.commande_ligne_affaire_allocation_id,reservation.commande_ligne_affaire_allocation_id)
+      JOIN public.proforma_affair_lines proforma_line ON proforma_line.id=terms.proforma_line_id
+      JOIN public.proforma_client proforma ON proforma.id=proforma_line.proforma_id
+      JOIN public.proforma_billing_parts part ON part.proforma_line_id=proforma_line.id
+      JOIN public.facture invoice ON invoice.id=NEW.facture_id
+      WHERE delivered.bon_livraison_ligne_id::text=NEW.source_line_id AND terms.requirement='PROFORMA'
+        AND proforma.status='ISSUED' AND proforma.currency=invoice.currency AND part.billed_client_id=target_client
+    ) INTO billed_party_authorized;
+    IF source_qty IS NULL OR (has_proforma AND NOT billed_party_authorized)
+      OR (NOT has_proforma AND source_client IS DISTINCT FROM target_client) OR used_qty+NEW.quantity_selected>source_qty THEN
       RAISE EXCEPTION 'invoice source allocations have a client mismatch or exceed delivered quantity' USING ERRCODE='23514';
     END IF;
   ELSIF NEW.source_type='DEPOSIT' THEN
@@ -557,6 +594,89 @@ DROP TRIGGER IF EXISTS trg_require_deposit_binding_1268 ON public.facture_source
 CREATE CONSTRAINT TRIGGER trg_require_deposit_binding_1268 AFTER INSERT OR UPDATE ON public.facture_source_allocations
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_require_deposit_binding_1268();
 
+CREATE OR REPLACE FUNCTION public.fn_proforma_final_binding_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE valid_binding boolean; part_qty numeric(18,3); physical_qty numeric(18,3);
+  used_part_qty numeric(18,3); used_physical_qty numeric(18,3); v_source_line_id text; v_affair_id bigint;
+BEGIN
+  IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'final invoice proforma lineage is append only' USING ERRCODE='55000'; END IF;
+  PERFORM public.fn_lock_delivery_prepayment_write_1268();
+  SELECT source.source_type='DELIVERY_LINE' AND source.allocation_status='DRAFT'
+    AND source.source_id=delivery.id::text AND delivery.statut IN ('SHIPPED','DELIVERED')
+    AND invoice.document_status='DRAFT' AND invoice.client_id::text=part.billed_client_id
+    AND invoice.currency=proforma.currency AND proforma.status='ISSUED' AND terms.requirement='PROFORMA'
+    AND delivered_line.commande_ligne_id=affair.commande_ligne_id AND terms.allocation_id=affair.id
+    AND invoice_line.facture_id=invoice.id AND invoice_line.quantite=source.quantity_selected
+    AND invoice_line.prix_unitaire_ht=part.unit_price_ex_tax AND invoice_line.remise_ligne=part.discount_percent
+    AND invoice_line.taux_tva=part.tax_rate_percent AND invoice.remise_globale=part.global_discount_percent,
+    part.quantity,source.source_line_id,proforma_line.allocation_id
+    INTO valid_binding,part_qty,v_source_line_id,v_affair_id
+  FROM public.facture_source_allocations source
+  JOIN public.facture invoice ON invoice.id=source.facture_id
+  JOIN public.facture_ligne invoice_line ON invoice_line.id=source.facture_ligne_id
+  JOIN public.bon_livraison_ligne delivered_line ON delivered_line.id::text=source.source_line_id
+  JOIN public.bon_livraison delivery ON delivery.id=delivered_line.bon_livraison_id
+  JOIN public.proforma_billing_parts part ON part.id=NEW.proforma_billing_part_id
+  JOIN public.proforma_affair_lines proforma_line ON proforma_line.id=part.proforma_line_id
+  JOIN public.commande_ligne_affaire_allocation affair ON affair.id=proforma_line.allocation_id
+  JOIN public.proforma_client proforma ON proforma.id=proforma_line.proforma_id
+  JOIN public.delivery_affair_prepayment_terms terms ON terms.proforma_line_id=proforma_line.id
+  WHERE source.id=NEW.facture_source_allocation_id FOR UPDATE OF part,source,invoice;
+  IF NOT COALESCE(valid_binding,false) THEN RAISE EXCEPTION 'final invoice needs issued proforma company and frozen prices' USING ERRCODE='23514'; END IF;
+  SELECT sum(delivered.quantite) INTO physical_qty
+  FROM public.bon_livraison_ligne_allocations delivered
+  LEFT JOIN public.stock_reservations reservation ON reservation.id=delivered.reservation_id
+  WHERE delivered.bon_livraison_ligne_id::text=v_source_line_id
+    AND COALESCE(delivered.commande_ligne_affaire_allocation_id,reservation.commande_ligne_affaire_allocation_id)=v_affair_id;
+  SELECT COALESCE(sum(binding.quantity),0) INTO used_part_qty
+  FROM public.proforma_final_invoice_sources binding
+  JOIN public.facture_source_allocations source ON source.id=binding.facture_source_allocation_id
+  WHERE binding.proforma_billing_part_id=NEW.proforma_billing_part_id AND source.allocation_status IN ('DRAFT','CONSUMED');
+  SELECT COALESCE(sum(binding.quantity),0) INTO used_physical_qty
+  FROM public.proforma_final_invoice_sources binding
+  JOIN public.facture_source_allocations source ON source.id=binding.facture_source_allocation_id
+  JOIN public.proforma_billing_parts used_part ON used_part.id=binding.proforma_billing_part_id
+  JOIN public.proforma_affair_lines used_line ON used_line.id=used_part.proforma_line_id
+  WHERE source.source_line_id=v_source_line_id AND used_line.allocation_id=v_affair_id
+    AND source.allocation_status IN ('DRAFT','CONSUMED');
+  IF physical_qty IS NULL OR used_physical_qty+NEW.quantity>physical_qty OR used_part_qty+NEW.quantity>part_qty THEN
+    RAISE EXCEPTION 'final invoice quantities exceed delivered affair or billed company quota' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_proforma_final_binding_1268 ON public.proforma_final_invoice_sources;
+CREATE TRIGGER trg_proforma_final_binding_1268 BEFORE INSERT OR UPDATE OR DELETE ON public.proforma_final_invoice_sources
+  FOR EACH ROW EXECUTE FUNCTION public.fn_proforma_final_binding_1268();
+
+CREATE OR REPLACE FUNCTION public.fn_require_final_binding_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE source public.facture_source_allocations%ROWTYPE; linked_qty numeric(18,3); has_proforma boolean;
+BEGIN
+  SELECT * INTO source FROM public.facture_source_allocations WHERE id=NEW.id;
+  IF NOT FOUND OR source.source_type<>'DELIVERY_LINE' OR source.allocation_status NOT IN ('DRAFT','CONSUMED') THEN RETURN NULL; END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM public.bon_livraison_ligne_allocations delivered
+    LEFT JOIN public.stock_reservations reservation ON reservation.id=delivered.reservation_id
+    JOIN public.commande_ligne_affaire_allocation affair ON affair.id=
+      COALESCE(delivered.commande_ligne_affaire_allocation_id,reservation.commande_ligne_affaire_allocation_id)
+    JOIN public.commande_client command ON command.id=affair.commande_id
+    LEFT JOIN public.delivery_affair_prepayment_terms terms ON terms.allocation_id=affair.id
+    WHERE delivered.bon_livraison_ligne_id::text=source.source_line_id
+      AND COALESCE(terms.requirement,command.delivery_prepayment_requirement,'UNCONFIRMED')='PROFORMA'
+  ) INTO has_proforma;
+  SELECT COALESCE(sum(quantity),0) INTO linked_qty FROM public.proforma_final_invoice_sources
+    WHERE facture_source_allocation_id=source.id;
+  IF (has_proforma AND linked_qty<>source.quantity_selected) OR (NOT has_proforma AND linked_qty<>0) THEN
+    RAISE EXCEPTION 'final invoice requires exact retained proforma company quantities' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_require_final_binding_1268 ON public.facture_source_allocations;
+CREATE CONSTRAINT TRIGGER trg_require_final_binding_1268 AFTER INSERT OR UPDATE ON public.facture_source_allocations
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_require_final_binding_1268();
+
 -- Schema runners may operate as postgres, whereas API transactions use cerp_app.
 -- Evidence is retained; only draft children can be removed under their guards.
 GRANT SELECT,INSERT,UPDATE ON public.proforma_client,public.delivery_affair_billing_shares,
@@ -567,4 +687,6 @@ GRANT SELECT,INSERT,UPDATE,DELETE ON public.proforma_affair_lines,public.proform
 REVOKE TRUNCATE ON public.proforma_affair_lines,public.proforma_billing_parts FROM cerp_app;
 GRANT SELECT,INSERT ON public.proforma_deposit_sources,public.proforma_receipt_assignments,public.proforma_receipt_releases TO cerp_app;
 REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_deposit_sources,public.proforma_receipt_assignments,public.proforma_receipt_releases FROM cerp_app;
+GRANT SELECT,INSERT ON public.proforma_final_invoice_sources TO cerp_app;
+REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_final_invoice_sources FROM cerp_app;
 GRANT USAGE,SELECT ON SEQUENCE public.proforma_client_reference_seq TO cerp_app;

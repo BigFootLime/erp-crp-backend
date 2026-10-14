@@ -71,3 +71,12 @@ Le défaut de reprise de la commande109 a depuis été corrigé dans main : les1
 La branche proformas intègre dev90ed8027 (même arbre que main05c0d05a) : reprise des réservations propres, origine matière/traitement des lots, calendrier et nombres Finance, nouvelle fiche papier. Deux conflits de changelog/tests sont résolus en conservant les deux suites.7820 tests sur703 fichiers et build strict passent. La copie des3788 fichiers de source est vérifiée par les objets Git ; le checkout principal et son index restent inchangés, sans nouveau worktree.
 
 Restent obligatoires avant livraison : facture finale multi-sociétés, déduction exacte des acomptes, filiation urgente, vraie émission/archivage/comptabilité des acomptes, écrans guidés et recettes de paiements/corrections. Le lot est sauvegardé sur sa branche de travail ; aucun schéma Test/Prod ni runtime live n’est modifié par ce rapprochement.
+
+
+## Facture finale : sociétés et quantités — 14 octobre
+
+Les sources de BL proposées à une société suivent la répartition de la proforma émise, même si le destinataire physique est différent. Une part figée de 30 pièces ne peut pas être dépassée entre plusieurs BL ou brouillons. Les lots physiques sont regroupés par affaire avant le calcul : deux lots livrant 8 et 4 pièces donnent 12, sans multiplication du quota. Les contributions exactes sont conservées dans un lien append-only ; le retrait d’un brouillon libère le budget sans supprimer son historique. Les avoirs ne rendent pas silencieusement une quantité livrée refacturable. Les prix/remises/TVA figés de la proforma gouvernent la facture, et non une modification ultérieure de la commande. L’aperçu utilise une transaction REPEATABLE READ READ ONLY ; l’enregistrement recontrôle sous les verrous Finance.
+
+7836 tests sur 704 fichiers et build strict passent. PostgreSQL 17 isolé : application, réapplication, permissions applicatives, rollback vide et refus de rollback avec preuves, lecteurs et aperçus réels, quotas partiels, mauvais destinataire, omission du lien, double demande concurrente, retrait et conservation de l’historique passent. La base temporaire est supprimée ; aucun changement Test/Prod, aucune expédition réelle ni émission fiscale n’est revendiquée. Sauvegarde Test/Prod vérifiée sur VPS, datée 00:43:06 UTC.
+
+Toujours requis avant déploiement du lot : déduction des acomptes et restes à payer, comptabilité/fiscalité complètes, PDF/GED proforma, interface guidée, filiation urgente, émission légale et recette live. Ces protections de quantité ne terminent pas le flux financier.

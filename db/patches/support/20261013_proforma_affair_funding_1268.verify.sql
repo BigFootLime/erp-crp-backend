@@ -3,7 +3,7 @@ DECLARE required_table text;
 BEGIN
   FOREACH required_table IN ARRAY ARRAY['delivery_prepayment_epoch_1268','proforma_client','delivery_affair_billing_shares','proforma_affair_lines',
     'proforma_billing_parts','delivery_affair_prepayment_terms','proforma_deposit_sources',
-    'proforma_receipt_assignments','proforma_receipt_releases'] LOOP
+    'proforma_receipt_assignments','proforma_receipt_releases','proforma_final_invoice_sources'] LOOP
     IF to_regclass('public.'||required_table) IS NULL THEN RAISE EXCEPTION 'proforma #1268 table missing: %',required_table; END IF;
   END LOOP;
   IF (SELECT count(*) FROM public.delivery_prepayment_epoch_1268 WHERE singleton)<>1 THEN
@@ -38,6 +38,12 @@ BEGIN
     AND source.allocation_status IN ('DRAFT','CONSUMED') AND NOT EXISTS (
       SELECT 1 FROM public.proforma_deposit_sources binding WHERE binding.facture_source_allocation_id=source.id
     )) THEN RAISE EXCEPTION 'proforma #1268 deposit source has no retained fiscal lineage'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.facture_source_allocations'::regclass
+    AND tgname='trg_require_final_binding_1268' AND NOT tgisinternal AND tgenabled<>'D' AND tgdeferrable AND tginitdeferred)
+    OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='public.proforma_final_invoice_sources'::regclass
+      AND tgname='trg_proforma_final_binding_1268' AND NOT tgisinternal AND tgenabled<>'D') THEN
+    RAISE EXCEPTION 'proforma #1268 final invoice company lineage guards missing';
+  END IF;
 END;
 $$;
 SELECT current_database() AS database_name,now() AS verified_at,

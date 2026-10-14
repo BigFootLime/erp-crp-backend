@@ -65,6 +65,7 @@ describe("commande INTERNE non facturable", () => {
 
   it("rend une source interne introuvable en preview puis bloque la création sans écriture", async () => {
     mocks.poolQuery.mockResolvedValue({ rows: [] });
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
     const preview = await repoPreviewFacture(previewInput);
     expect(preview.lines).toEqual([]);
     expect(preview.blockers).toEqual(expect.arrayContaining([

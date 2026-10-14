@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Factures finales : destinataire physique distinct de la société facturée autorisée, quotas de quantité par affaire/société sur plusieurs BL et brouillons, contributions append-only. Prix de la proforma figés, aperçus cohérents en lecture seule, aucun double comptage des lots ni réouverture automatique après avoir.7836 tests/704 fichiers, build et qualification PostgreSQL17 isolée passent. Déduction des acomptes, interface et recette fiscale/live restent en cours ; ce lot n’est pas déployé.
+
 - BL : couverture proforma par affaire et société facturée, cohérence des sources physiques, refus des sources modifiées et regroupements incompatibles. Aperçus cohérents, ordre de verrous partagé avec Finance et reprise409 après changement concurrent d'encaissement ; aucune livraison autorisée par un instantané périmé.
 - Décision structurée de prépaiement à la commande, sans imposer de décision aux anciennes commandes. PostgreSQL17 isolé : concurrence SERIALIZABLE, attentes réelles de verrous et jointures BL passent. Suite complète7782 assertions/700 fichiers et build passent ; écrans, facture finale et déploiement encore en cours.
 
