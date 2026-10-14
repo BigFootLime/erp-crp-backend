@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { getGeneratedRootPath } from "../../../utils/cerpStorage";
 
 import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
+import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 
 import {
   money,
@@ -278,6 +279,45 @@ describe("identite des parties", () => {
 });
 
 describe("facture — rendu reel", () => {
+  it("prints discounted VAT bases from the same frozen fiscal model",async()=>{
+    const totals={subtotalExTax:"100.00",globalDiscountPercent:"5",globalDiscountAmount:"5.00",totalExTax:"95.00",totalTax:"19.00",totalInclTax:"114.00"};
+    const lines=[ligne({quantity:"1",unitPriceExTax:"100.00",totalExTax:"100.00",taxAmount:"20.00",totalInclTax:"120.00"})];
+    const input:FinanceDocumentInput={...FACTURE,lines,totals,dueDates:[{dueDate:"2026-08-21",label:"30 jours net",amount:"114.00"}],
+      taxBreakdown:allocateDocumentTaxBreakdown({lines:[{ratePercent:"20",net:"100.00",tax:"20.00"}],totalExTax:"95.00",totalTax:"19.00",totalInclTax:"114.00"})};
+    const text=drawnText(await renderFinanceDocument(input));
+    expect(text).toContain("95,00");expect(text).toContain("19,00");expect(text).toContain("114,00");expect(text).toContain("Remise globale (5 %)");
+    expect(text).not.toContain("20,00 €");
+  });
+  it("sépare le montant fiscal, les acomptes réellement payés et le net dû",async()=>{
+    const input:FinanceDocumentInput={...FACTURE,prepayments:{version:1,amount_paid:"1200.00",amount_due:"11358.24",applications:[
+      {source_line_id:"line-1",billing_part_id:"part-1",assignment_id:"receipt-1",deposit_source_id:"deposit-1",
+        deposit_invoice_id:8,deposit_invoice_number:"AC-2026-0008",deposit_invoice_date:"2026-07-15",
+        amount_ex_tax:"1000.00",tax_amount:"200.00",amount_incl_tax:"1200.00"},
+    ]},dueDates:[{dueDate:"2026-08-21",label:"Solde",amount:"11358.24"}]};
+    const original=JSON.stringify(input),text=drawnText(await renderFinanceDocument(input));
+    expect(text).toContain("Acomptes déjà réglés");expect(text).toContain("Net à payer");
+    expect(text).toContain("12 558,24");expect(text).toContain("11 358,24");expect(text).toContain("1 200,00");
+    expect(text).toContain("AC-2026-0008");expect(text).toContain("15/07/2026");
+    expect(JSON.stringify(input)).toBe(original);
+  });
+  it("regroupe les affectations de plusieurs BL par facture d'acompte",async()=>{
+    const base={source_line_id:"line-1",billing_part_id:"part-1",assignment_id:"receipt-1",deposit_source_id:"deposit-1",
+      deposit_invoice_id:8,deposit_invoice_number:"AC-2026-0008",deposit_invoice_date:"2026-07-15",
+      amount_ex_tax:"1000.00",tax_amount:"200.00",amount_incl_tax:"1200.00"};
+    const text=drawnText(await renderFinanceDocument({...FACTURE,prepayments:{version:1,amount_paid:"2400.00",amount_due:"10158.24",
+      applications:[base,{...base,source_line_id:"line-2"}]}}));
+    expect(text.match(/AC-2026-0008/g)).toHaveLength(1);
+    expect(text).toContain("2 400,00");expect(text).not.toContain("receipt-1");expect(text).not.toContain("deposit-1");
+  });
+  it("affiche un net nul pour une facture totalement réglée par acomptes",async()=>{
+    const text=drawnText(await renderFinanceDocument({...FACTURE,prepayments:{version:1,amount_paid:"12558.24",amount_due:"0.00",applications:[]},
+      dueDates:[{dueDate:"2026-08-21",label:"Déjà réglée",amount:"0.00"}]}));
+    expect(text).toContain("Net à payer");expect(text).toContain("0,00");
+  });
+  it("identifie clairement l'acompte sur le PDF réellement rendu",async()=>{
+    const bytes=await renderFinanceDocument({...FACTURE,invoiceTypeCode:386});
+    expect(drawnPages(bytes).join('\n')).toMatch(/FACTURE D.ACOMPTE/i);
+  });
   it("affiche les quantités et taux sans les zéros de stockage, sans modifier l'instantané", async () => {
     const input: FinanceDocumentInput = {
       ...FACTURE,
@@ -325,7 +365,7 @@ describe("facture — rendu reel", () => {
     expect(text).toContain("ABB FRANCE");
     expect(text).toContain("TVA FR98765432100");
     // Ventilation de la TVA et totaux.
-    expect(text).toContain("RÉCAPITULATIF");
+    expect(text.toUpperCase()).toContain("RÉCAPITULATIF");
       expect(text).toContain("MONTANT TVA");
     expect(text).toContain("2 093,04 €");
     // Echeances.
@@ -407,7 +447,7 @@ describe("facture — rendu reel", () => {
     const text = drawnText(bytes);
     expect(text).toContain("DÉSIGNATION");
     expect(text).toContain("Émetteur".toUpperCase());
-    expect(text).toContain("316L — usinage complet");
+    expect(text.replace(/\s+/g," ")).toContain("316L — usinage complet");
   }, 60_000);
 });
 
@@ -422,7 +462,8 @@ describe("avoir — rendu reel", () => {
     const text = pages[0];
     expect(text).toContain("AV-2026-0007");
     expect(text).toContain("FA-2026-0142");
-    expect(text).toContain("NON_CONFORME");
+    expect(text).toContain("Non-conformité");
+    expect(text).not.toContain("NON_CONFORME");
     expect(text).toContain("Total TTC à créditer");
     expect(text).toContain("Page 1 / 1");
   }, 60_000);
@@ -448,7 +489,7 @@ describe("facture et avoir partagent la meme grammaire", () => {
       const text = drawnText(bytes);
       expect(text).toContain("CROIX ROUSSE PRECISION");
       expect(text).toContain("Page 1 / 1");
-      expect(text).toContain("RÉCAPITULATIF");
+      expect(text.toUpperCase()).toContain("RÉCAPITULATIF");
       expect(text).toContain("MONTANT TVA");
     }
   }, 90_000);

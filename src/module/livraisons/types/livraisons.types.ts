@@ -284,6 +284,7 @@ export type ShipmentPreviewPack = {
 }
 
 export type BonLivraisonShipmentPreview = {
+  prepayment: import("../repository/delivery-prepayment-boundary.repository").DeliveryPrepaymentControl
   bon_livraison_id: string
   numero: string
   status: BonLivraisonStatut
@@ -349,6 +350,8 @@ export type LivraisonPreparationTask = {
 }
 
 export type BonLivraisonPreparation = {
+  prepayment: import("../repository/delivery-prepayment-boundary.repository").DeliveryPrepaymentControl
+  blockers: Array<{ code: string; message: string; allocationId?: number }>
   bon_livraison_id: string
   numero: string
   status: BonLivraisonStatut

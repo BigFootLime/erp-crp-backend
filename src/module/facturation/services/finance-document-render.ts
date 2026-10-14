@@ -5,8 +5,13 @@ import {
   type CerpDocumentContext,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
-import { formatDateFR, money, percent, quantity, rate } from "../../../shared/pdf/format-fr";
+import { formatDateFR, money, percent, quantity, rate, unitPrice } from "../../../shared/pdf/format-fr";
+import { renderWorkshopBoxes,renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
 import { issuerIdentityLine, issuerLegalMentions, issuerPaymentDetails } from "../../../shared/pdf/legal-mentions";
+import type { FinalPrepaymentPlan } from "../domain/final-invoice-prepayments";
+import { formatDecimal,moneyToCents,parseDecimal } from "../domain/decimal-money";
+import type { DocumentTaxBreakdown } from "../domain/document-tax-breakdown";
+import { documentTaxBreakdownFromSnapshot } from "../domain/document-tax-breakdown";
 
 // Reexportes : la mise en forme francaise est desormais partagee avec le bon de livraison
 // et l'accuse de reception, qui portent les memes mentions legales.
@@ -58,21 +63,27 @@ export type FinanceDocumentTotals = {
 
 export type FinanceDocumentInput = {
   kind: "FACTURE" | "AVOIR";
+  invoiceTypeCode?:380|386;
   /** Numero legal, ou reference de brouillon si le document n'est pas encore emis. */
   number: string;
   /** `true` tant que le document n'est pas emis : il doit alors le dire. */
   draft: boolean;
+  /** Demonstration files are visibly separated from actual fiscal documents. */
+  example?: boolean;
   issueDate: string;
   currency: string;
   issuer: FinanceParty;
   client: FinanceParty;
   lines: FinanceDocumentLine[];
   totals: FinanceDocumentTotals;
+  prepayments?: FinalPrepaymentPlan;
+  taxBreakdown?: DocumentTaxBreakdown;
   dueDates: Array<{ dueDate: string; label: string; amount: string }>;
   /** Avoir : facture corrigee et motif. */
   correctedInvoice?: string | null;
   reasonCode?: string | null;
   reason?: string | null;
+  originalGlobalDiscountPercent?:string;
   /** Texte destine au client. Jamais le commentaire interne. */
   customerText?: string | null;
   /** Empreinte de l'instantane immuable, quand le document est emis. */
@@ -84,6 +95,9 @@ function clean(value: unknown): string | null {
   const s = typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
   return s ? s : null;
 }
+
+const creditReasonLabels:Readonly<Record<string,string>>={RETURN:"Retour",QUALITY:"Non-conformité",NON_CONFORME:"Non-conformité",
+  PRICE_CORRECTION:"Correction de prix",QUANTITY_CORRECTION:"Correction de quantité",COMMERCIAL_GESTURE:"Geste commercial",OTHER:"Autre"};
 
 /** Premiere valeur non vide parmi plusieurs cles possibles. L'instantane est libre de forme. */
 function pick(source: FinanceParty, ...keys: string[]): string | null {
@@ -166,27 +180,21 @@ export function partyLines(party: FinanceParty, options: { identifiers?: boolean
  * centimes pour eviter toute derive en virgule flottante.
  */
 export function taxBreakdown(lines: FinanceDocumentLine[]): FinanceTaxLine[] {
-  const toCents = (value: string): number => {
-    const n = Number.parseFloat(String(value).replace(/\s/g, "").replace(",", "."));
-    return Number.isFinite(n) ? Math.round(n * 100) : 0;
-  };
-  const fromCents = (cents: number): string => (cents / 100).toFixed(2);
-
-  const byRate = new Map<string, { base: number; tax: number }>();
+  const byRate = new Map<string, { base: bigint; tax: bigint }>();
   for (const line of lines) {
     const rate = clean(line.taxRatePercent) ?? "0";
-    const bucket = byRate.get(rate) ?? { base: 0, tax: 0 };
-    bucket.base += toCents(line.totalExTax);
-    bucket.tax += toCents(line.taxAmount);
+    const bucket = byRate.get(rate) ?? { base: 0n, tax: 0n };
+    bucket.base += moneyToCents(line.totalExTax);
+    bucket.tax += moneyToCents(line.taxAmount);
     byRate.set(rate, bucket);
   }
 
   return [...byRate.entries()]
-    .sort((a, b) => Number.parseFloat(a[0]) - Number.parseFloat(b[0]))
+    .sort((a,b)=>parseDecimal(a[0],4,"Taux de TVA")<parseDecimal(b[0],4,"Taux de TVA")?-1:parseDecimal(a[0],4,"Taux de TVA")>parseDecimal(b[0],4,"Taux de TVA")?1:0)
     .map(([ratePercent, sums]) => ({
       ratePercent,
-      baseExTax: fromCents(sums.base),
-      taxAmount: fromCents(sums.tax),
+      baseExTax: formatDecimal(sums.base,2),
+      taxAmount: formatDecimal(sums.tax,2),
     }));
 }
 
@@ -310,7 +318,7 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
       cells: {
         designation: line.designation,
         quantite: clean(line.quantity) ? quantity(line.quantity) : "—",
-        pu: money(line.unitPriceExTax, input.currency),
+        pu: unitPrice(line.unitPriceExTax, input.currency),
         tva: rate(line.taxRatePercent) ?? "—",
         ht: money(line.totalExTax, input.currency),
       },
@@ -321,28 +329,35 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
 /** Rattachement de l'exemplaire a l'instantane conserve, quand il existe. */
 function traceabilityNote(input: FinanceDocumentInput): string | null {
   const parts = [
-    clean(input.snapshotUuid) ? `Instantané immuable ${input.snapshotUuid}` : null,
-    clean(input.draftReference) ? `Référence brouillon ${input.draftReference}` : null,
+    `${input.kind==="AVOIR"?"Avoir":"Facture"} ${input.number}`,
+    input.draft && clean(input.draftReference) && input.draftReference!==input.number ? `Brouillon ${input.draftReference}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
 }
 
 export async function renderFinanceDocument(input: FinanceDocumentInput): Promise<Buffer> {
   const isAvoir = input.kind === "AVOIR";
-  const documentType = isAvoir ? "Avoir" : "Facture";
+  const documentType = isAvoir ? "Avoir" : input.invoiceTypeCode===386 ? "Facture d’acompte" : "Facture";
   const clientName = pick(input.client, "company_name", "name", "raison_sociale") ?? "Client";
-  const taxes = taxBreakdown(input.lines);
+  const taxes = input.taxBreakdown ? documentTaxBreakdownFromSnapshot({snapshot:{tax_breakdown:input.taxBreakdown},
+    lines:input.lines.map(line=>({ratePercent:line.taxRatePercent,net:line.totalExTax,tax:line.taxAmount})),
+    totalExTax:input.totals.totalExTax,totalTax:input.totals.totalTax,totalInclTax:input.totals.totalInclTax}).entries.map(entry=>({
+      ratePercent:entry.rate_percent,baseExTax:entry.taxable_amount,taxAmount:entry.tax_amount})) : taxBreakdown(input.lines);
+  const soleDue=input.dueDates.length===1?input.dueDates[0]:undefined;
+  const compactDue=!isAvoir && soleDue && moneyToCents(soleDue.amount)===moneyToCents(input.prepayments?.amount_due??input.totals.totalInclTax);
 
   return renderCerpDocument(
     {
+      designVersion:"structured-v5",
       documentType,
       name: input.number,
-      code: formatDateFR(input.issueDate),
+      code: input.number,
       subtitle: clientName,
       // Un brouillon doit se denoncer comme tel : sans cela, imprime, il passerait pour une
       // piece emise — et une facture non emise n'a aucune valeur fiscale.
       status: input.draft ? "Brouillon" : "Émis",
-      flag: input.draft ? "Ne pas transmettre" : null,
+      watermark: input.example ? "EXEMPLE" : null,
+      flag: input.draft ? "NE PAS TRANSMETTRE" : null,
       monogramName: clientName,
       generatedAt: formatDateFR(input.issueDate),
       generatedBy: null,
@@ -374,39 +389,39 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       ctx.legalStrip(
         isAvoir
           ? [
-              { label: "Numéro d'avoir", value: input.number },
               { label: "Date d'émission", value: formatDateFR(input.issueDate) },
               { label: "Facture corrigée", value: clean(input.correctedInvoice) },
               { label: "Devise", value: input.currency },
             ]
           : [
-              { label: "Numéro de facture", value: input.number },
               { label: "Date d'émission", value: formatDateFR(input.issueDate) },
-              { label: "Échéance", value: input.dueDates.length ? formatDateFR(input.dueDates.at(-1)?.dueDate) : null },
+              { label: "Échéance", value: input.dueDates.length ? formatDateFR(input.dueDates.at(-1)?.dueDate)
+                +(compactDue && clean(soleDue?.label)?`\n${soleDue!.label}`:"") : null },
               { label: "Devise", value: input.currency },
-            ]
+            ],
+        {compact:true}
       );
 
-      ctx.section("Parties", { cohesion: 90 });
-      ctx.addressCards(partyCards(input));
+      renderWorkshopBoxes(ctx,partyCards(input).map(card=>({title:card.caption,
+        fields:[{label:"Coordonnées",value:card.lines?.join("\n")||"Non renseigné"}]})),{compact:true});
 
       if (isAvoir && clean(input.reason)) {
         ctx.notesSection(
           "Motif",
-          clean(input.reasonCode) ? `${input.reasonCode} — ${input.reason}` : (input.reason as string)
+          creditReasonLabels[clean(input.reasonCode)?.toUpperCase()??""] ? `${creditReasonLabels[clean(input.reasonCode)!.toUpperCase()]} — ${input.reason}` : (input.reason as string)
         );
       }
 
-      ctx.section(isAvoir ? "Lignes créditées" : "Lignes facturées", { cohesion: 104 });
-      ctx.linesTable({
+      renderWorkshopTable(ctx,{
+        title:isAvoir ? "Lignes créditées" : "Lignes facturées",bodySize:9.5,padding:6,
         columns: [
-          { key: "designation", label: "Désignation", flex: 4.6 },
-          { key: "quantite", label: "Quantité", flex: 1.1, align: "right" },
+          { key: "designation", label: "DÉSIGNATION", flex: 4.6,firstLineBold:true },
+          { key: "quantite", label: "QUANTITÉ", flex: 1.1, align: "right" },
           { key: "pu", label: "PU HT", flex: 1.7, align: "right" },
           { key: "tva", label: "TVA", flex: 0.9, align: "right" },
-          { key: "ht", label: "Total HT", flex: 1.7, align: "right" },
+          { key: "ht", label: "TOTAL HT", flex: 1.7, align: "right" },
         ],
-        rows: documentLines(input),
+        rows: documentLines(input).map(row=>({cells:{...row.cells,designation:row.cells.designation+(row.meta?`\n${row.meta}`:"")}})),
         emptyLabel: isAvoir ? "Aucune ligne créditée." : "Aucune ligne facturée.",
       });
 
@@ -434,13 +449,30 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
             value: money(input.totals.totalInclTax, input.currency),
             strong: true,
           },
+          ...(!isAvoir && input.prepayments && moneyToCents(input.prepayments.amount_paid)>0n ? [
+            {label:"Acomptes déjà réglés",value:`− ${money(input.prepayments.amount_paid,input.currency)}`},
+            {label:"Net à payer",value:money(input.prepayments.amount_due,input.currency),strong:true},
+          ]:[]),
         ],
         input.currency
       );
 
-      if (!isAvoir && input.dueDates.length) {
-        ctx.section("Échéances de règlement", { cohesion: 60 });
-        ctx.linesTable({
+      if (!isAvoir && input.prepayments?.applications.length) {
+        const advances = new Map<string,{number:string;date:string;amount:bigint}>();
+        for (const application of input.prepayments.applications) {
+          const key=String(application.deposit_invoice_id),existing=advances.get(key);
+          const amount=moneyToCents(application.amount_incl_tax);
+          advances.set(key,{number:application.deposit_invoice_number,date:application.deposit_invoice_date,amount:amount+(existing?.amount??0n)});
+        }
+        renderWorkshopTable(ctx,{title:"Acomptes déduits",bodySize:9.5,padding:6,columns:[{key:"number",label:"Facture d’acompte",flex:4},{key:"date",label:"Date",flex:2},
+          {key:"amount",label:"Montant déduit TTC",flex:2.5,align:"right"}],
+          rows:[...advances.values()].map(advance=>({cells:{number:advance.number,date:formatDateFR(advance.date),
+            amount:money(`${advance.amount/100n}.${String(advance.amount%100n).padStart(2,"0")}`,input.currency)}})),emptyLabel:"Aucun acompte déduit."});
+      }
+
+      if (!isAvoir && input.dueDates.length && !compactDue) {
+        renderWorkshopTable(ctx,{
+          title:"Échéances de règlement",bodySize:9.5,padding:6,
           columns: [
             { key: "date", label: "Échéance", flex: 1.6 },
             { key: "label", label: "Libellé", flex: 4 },
@@ -459,7 +491,10 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       }
 
       if (clean(input.customerText)) {
-        ctx.notesSection("Informations client", input.customerText as string);
+        ctx.notes(input.customerText as string);
+      }
+      if (isAvoir && input.originalGlobalDiscountPercent && parseDecimal(input.originalGlobalDiscountPercent,4,"Remise d'origine")>0n) {
+        ctx.notes(`Remise de la facture d’origine comprise dans les lignes : ${rate(input.originalGlobalDiscountPercent)}.`);
       }
 
     }

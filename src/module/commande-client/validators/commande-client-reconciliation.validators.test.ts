@@ -54,6 +54,18 @@ function payload() {
   };
 }
 
+describe("structured order prepayment decision", () => {
+  it("accepts the two explicit choices and preserves an omitted update value", () => {
+    expect(createCommandeBodySchema.parse(payload()).delivery_prepayment_requirement).toBeUndefined();
+    for (const choice of ["NOT_REQUIRED","PROFORMA"] as const) {
+      expect(createCommandeBodySchema.parse({...payload(),delivery_prepayment_requirement:choice}).delivery_prepayment_requirement).toBe(choice);
+    }
+  });
+  it("refuses free-text or client-provided payment flags", () => {
+    expect(createCommandeBodySchema.safeParse({...payload(),delivery_prepayment_requirement:"paid"}).success).toBe(false);
+  });
+});
+
 describe("createCommandeBodySchema — reconciled customer order", () => {
   it("accepts a fully arbitrated line with its pinned technical version", () => {
     expect(createCommandeBodySchema.safeParse(payload()).success).toBe(true);

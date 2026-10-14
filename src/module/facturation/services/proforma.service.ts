@@ -1,0 +1,20 @@
+import pool from "../../../config/database";
+import type { ProformaDraftBodyDTO, ProformaListQueryDTO } from "../validators/proforma.validators";
+import { buildProformaPreview } from "../repository/proforma-preview.repository";
+import { repoCreateProforma, repoDecideDeliveryPrepaymentTerms, repoIssueProforma } from "../repository/proforma-command.repository";
+import { repoGetProforma, repoListProformas, repoPreviewExistingProforma } from "../repository/proforma-read.repository";
+import { repoCancelProforma, repoPreviewProformaChanges, repoRefreshProforma } from "../repository/proforma-lifecycle.repository";
+import { repoAssignProformaReceipts, repoReleaseProformaReceipt } from "../repository/proforma-receipts.repository";
+
+export const svcPreviewProforma = (input: ProformaDraftBodyDTO) => buildProformaPreview(pool, input, false);
+export const svcCreateProforma = (args: Parameters<typeof repoCreateProforma>[0]) => repoCreateProforma(args);
+export const svcIssueProforma = (args: Parameters<typeof repoIssueProforma>[0]) => repoIssueProforma(args);
+export const svcDecideDeliveryPrepaymentTerms = (args: Parameters<typeof repoDecideDeliveryPrepaymentTerms>[0]) => repoDecideDeliveryPrepaymentTerms(args);
+export const svcListProformas = (query: ProformaListQueryDTO) => repoListProformas(query);
+export const svcGetProforma = (id: string) => repoGetProforma(id);
+export const svcPreviewExistingProforma = (id: string) => repoPreviewExistingProforma(id);
+export const svcPreviewProformaChanges = (id: string, input: ProformaDraftBodyDTO) => repoPreviewProformaChanges(id, input);
+export const svcRefreshProforma = (args: Parameters<typeof repoRefreshProforma>[0]) => repoRefreshProforma(args);
+export const svcCancelProforma = (args: Parameters<typeof repoCancelProforma>[0]) => repoCancelProforma(args);
+export const svcAssignProformaReceipts = (args: Parameters<typeof repoAssignProformaReceipts>[0]) => repoAssignProformaReceipts(args);
+export const svcReleaseProformaReceipt = (args: Parameters<typeof repoReleaseProformaReceipt>[0]) => repoReleaseProformaReceipt(args);

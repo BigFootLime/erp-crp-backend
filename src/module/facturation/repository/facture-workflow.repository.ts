@@ -3,6 +3,14 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { todayInParis } from "../domain/reporting-policy";
 import { bindInvoiceUrgencyChargeTx, readInvoiceUrgencyChargesTx } from './facture-urgency-charges.repository';
+import { bindProformaDepositInvoiceSourceTx,buildProformaDepositInvoiceLine,readProformaDepositInvoiceSources } from './proforma-deposit-invoice.repository';
+import { planProformaFinalInvoice } from "../domain/proforma-final-invoice";
+import { planFinalInvoicePrepayments } from "../domain/final-invoice-prepayments";
+import { finalPrepaymentTargets } from "../domain/final-prepayment-targets";
+import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
+import { bindFinalInvoicePrepayments, readFinalInvoicePrepaymentReceipts } from "./final-invoice-prepayments.repository";
+import { freezeAdvanceClearing } from "./advance-clearing.repository";
+import { bindProformaFinalInvoiceSourceTx, proformaBilledPartySourceWhere, readProformaFinalInvoiceAffairs } from "./proforma-final-invoice.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
 import { lockDeliveryQualityReleaseScope, repoGetDeliveryQualityRelease } from "../../livraisons/repository/quality-release.repository";
@@ -12,6 +20,7 @@ import {
 } from "../../commande-client/repository/commande-fulfillment.repository";
 import {
   assertFactureTransition,
+  invoiceSettlementStatusFromBalance,
   financePreviewHash,
   type FactureWorkflowStatus,
 } from "../domain/finance-policy";
@@ -24,6 +33,7 @@ import {
   computeExactLineTotals,
   moneyToCents,
   parseDecimal,
+  formatDecimal,
 } from "../domain/decimal-money";
 import type {
   EligibleDeliverySource,
@@ -145,6 +155,7 @@ type DeliverySourceRow = {
 
 export type FinanceDocumentSnapshot = {
   document_type: "FACTURE";
+  invoice_type_code?: "380" | "386";
   uuid: string;
   draft_reference: string;
   legal_number: string;
@@ -156,6 +167,9 @@ export type FinanceDocumentSnapshot = {
   regulatory_snapshot: InvoiceRegulatorySnapshot;
   lines: FacturePreviewLine[];
   totals: FacturePreview["totals"];
+  prepayments?: FacturePreview["prepayments"];
+  advance_clearing?: import("../domain/advance-clearing").AdvanceClearingSnapshot;
+  tax_breakdown?: FacturePreview["tax_breakdown"];
   internal_comment: string | null;
   customer_text: string | null;
 };
@@ -204,7 +218,10 @@ function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unk
     values.push(value);
     return `$${values.length}`;
   };
-  if (filters.client_id) where.push(`bl.client_id = ${push(filters.client_id)}`);
+  if (filters.client_id) {
+    const party = push(filters.client_id);
+    where.push(`(bl.client_id = ${party} OR ${proformaBilledPartySourceWhere(party)})`);
+  }
   if (filters.commande_id) where.push(`COALESCE(cl.commande_id, bl.commande_id) = ${push(filters.commande_id)}::bigint`);
   if (filters.livraison_id) where.push(`bl.id = ${push(filters.livraison_id)}::uuid`);
   if (filters.affaire_id) where.push(`bl.affaire_id = ${push(filters.affaire_id)}::bigint`);
@@ -220,7 +237,7 @@ function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unk
   return { sql: `WHERE ${where.join(" AND ")}`, values };
 }
 
-const DELIVERY_SOURCE_SELECT = `
+const deliverySourceSelect = (ownInvoiceSql = "NULL") => `
   SELECT
     bl.id::text AS source_id,
     bll.id::text AS source_line_id,
@@ -260,7 +277,8 @@ const DELIVERY_SOURCE_SELECT = `
     FROM public.facture_source_allocations source
     WHERE source.source_type = 'DELIVERY_LINE'
       AND source.source_line_id = bll.id::text
-      AND source.allocation_status = 'CONSUMED'
+      AND source.allocation_status IN ('DRAFT','CONSUMED')
+      AND (${ownInvoiceSql}::bigint IS NULL OR source.facture_id<>${ownInvoiceSql})
   ) invoiced ON TRUE
   LEFT JOIN LATERAL (
     SELECT COALESCE(SUM(source.quantity_credited), 0) AS quantity
@@ -270,10 +288,12 @@ const DELIVERY_SOURCE_SELECT = `
       AND source.allocation_status = 'CONSUMED'
   ) credited ON TRUE
 `;
+const DELIVERY_SOURCE_SELECT = deliverySourceSelect();
 
 function sourceBlockers(
   row: DeliverySourceRow,
-  policy: BillingPolicyRow | null
+  policy: BillingPolicyRow | null,
+  hasFrozenPricing = false
 ): FinanceBlocker[] {
   const blockers: FinanceBlocker[] = [];
   if (!policy) {
@@ -296,7 +316,7 @@ function sourceBlockers(
       source_line_id: row.source_line_id,
     });
   }
-  if (!row.commande_line_id || row.unit_price_ex_tax === null) {
+  if (!row.commande_line_id || (!hasFrozenPricing && row.unit_price_ex_tax === null)) {
     blockers.push({
       code: "PRICING_SOURCE_MISSING",
       message: "La ligne de commande et son prix contractuel sont requis.",
@@ -378,8 +398,40 @@ export async function repoListEligibleFactureSources(
     `,
     [...values, pageSize, (page - 1) * pageSize]
   );
+  const billingAffairs = filters.client_id ? await readProformaFinalInvoiceAffairs(pool,
+    result.rows.map(row => row.source_line_id), filters.client_id) : [];
+  const items = result.rows.map(row => {
+    const item = mapEligibleSource(row, policy);
+    if (!filters.client_id) return item;
+    try {
+      const affairs = billingAffairs.filter(affair => affair.source_line_id === row.source_line_id);
+      const authority = planProformaFinalInvoice({ affairs,
+        sourceQuantity: row.quantity_source, remainingSourceQuantity: item.quantity_remaining,
+        billedClientId: filters.client_id, currency: affairs[0]?.currency ?? "EUR" });
+      if (authority) {
+        item.physical_client_id = row.client_id;
+        item.client_id = filters.client_id;
+        item.client_name = authority.billed_client_name;
+        item.quantity_remaining = authority.capacity;
+        item.unit_price_ex_tax = authority.unit_price_ex_tax;
+        item.discount_percent = authority.discount_percent;
+        item.tax_rate_percent = authority.tax_rate_percent;
+        item.global_discount_percent = authority.global_discount_percent;
+        item.pricing_version = authority.source_revision;
+        item.proforma_reference = authority.proforma_reference;
+        item.blockers = sourceBlockers(row, policy, true);
+        if (parseDecimal(authority.capacity, 3, "Quota facturable") === 0n) item.blockers.push({ code: "PROFORMA_FINAL_QUOTA_EXHAUSTED",
+          message: "Le quota livré de cette société est déjà entièrement affecté à des factures.", source_line_id: row.source_line_id });
+      }
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status >= 500) throw error;
+      item.quantity_remaining = "0.000";
+      item.blockers.push({ code: error.code, message: error.message, source_line_id: row.source_line_id });
+    }
+    return item;
+  });
   return {
-    items: result.rows.map((row) => mapEligibleSource(row, policy)),
+    items,
     total: count.rows[0]?.total ?? 0,
     policy_active: Boolean(policy),
   };
@@ -388,19 +440,20 @@ export async function repoListEligibleFactureSources(
 async function loadSelectedDeliverySources(
   queryer: DbQueryer,
   sourceLineIds: string[],
-  lock: boolean
+  lock: boolean,
+  ownInvoiceId?: number
 ): Promise<DeliverySourceRow[]> {
   if (!sourceLineIds.length) return [];
   const result = await queryer.query<DeliverySourceRow>(
     `
-      ${DELIVERY_SOURCE_SELECT}
+      ${deliverySourceSelect("$2")}
       WHERE bll.id = ANY($1::uuid[])
         AND bl.statut IN ('SHIPPED','DELIVERED')
         AND COALESCE(upper(cc.order_type), '') <> 'INTERNE'
       ORDER BY bll.id
       ${lock ? "FOR UPDATE OF bll" : ""}
     `,
-    [sourceLineIds]
+    [sourceLineIds, ownInvoiceId ?? null]
   );
   return result.rows;
 }
@@ -411,11 +464,11 @@ function assertDueDates(preview: FacturePreview): void {
     (sum, due) => sum + moneyToCents(due.amount, "Montant d'échéance"),
     0n
   );
-  const invoiceTotal = moneyToCents(preview.totals.total_incl_tax, "Total TTC");
+  const invoiceTotal = moneyToCents(preview.prepayments?.amount_due ?? preview.totals.total_incl_tax, "Net à payer");
   if (dueTotal !== invoiceTotal) {
     preview.blockers.push({
       code: "DUE_DATES_TOTAL_MISMATCH",
-      message: "La somme des échéances doit être exactement égale au total TTC.",
+      message: "La somme des échéances doit correspondre au net à payer, après les acomptes déjà réglés.",
     });
   }
 }
@@ -425,8 +478,9 @@ async function buildFacturePreview(
   input: FacturePreviewBodyDTO,
   lock: boolean,
   invoiceId?: number
-): Promise<{ preview: FacturePreview; policy: BillingPolicyRow | null; sources: DeliverySourceRow[] }> {
-  const unsupported = input.sources.filter((source) => source.source_type !== "DELIVERY_LINE");
+): Promise<{ preview: FacturePreview; policy: BillingPolicyRow | null; sources: Array<{commande_id:string|null;affaire_id:string|null}> }> {
+  const unsupported = input.sources.filter((source) => source.source_type === "MILESTONE");
+  const depositSelections=input.sources.filter(source=>source.source_type==='DEPOSIT');
   const sourceLineIds = input.sources
     .filter((source) => source.source_type === "DELIVERY_LINE")
     .map((source) => source.source_line_id);
@@ -434,7 +488,8 @@ async function buildFacturePreview(
     throw new HttpError(422, "DUPLICATE_SOURCE_LINE", "Une ligne source ne peut apparaître qu'une fois.");
   }
   const policy = await loadActiveBillingPolicy(queryer);
-  const rows = await loadSelectedDeliverySources(queryer, sourceLineIds, lock);
+  const rows = await loadSelectedDeliverySources(queryer, sourceLineIds, lock, invoiceId);
+  const billingAffairs = await readProformaFinalInvoiceAffairs(queryer, sourceLineIds, input.client_id, invoiceId);
   const byId = new Map(rows.map((row) => [row.source_line_id, row]));
   const blockers: FinanceBlocker[] = unsupported.map((source) => ({
     code: "SOURCE_TYPE_NOT_ENABLED",
@@ -442,6 +497,9 @@ async function buildFacturePreview(
     source_line_id: source.source_line_id,
   }));
   const lines: FacturePreviewLine[] = [];
+  if(depositSelections.length && input.sources.some(source=>source.source_type!=='DEPOSIT'))blockers.push({code:'PROFORMA_DEPOSIT_MIXED_SOURCE',message:"Préparez une facture d'acompte distincte de la facture des pièces livrées."});
+  if(depositSelections.length && parseDecimal(input.global_discount_percent,4,'Remise globale')!==0n)blockers.push({code:'PROFORMA_DEPOSIT_DISCOUNT_ALREADY_APPLIED',message:"Les remises de la commande sont déjà comprises dans la proforma."});
+  if(new Set(depositSelections.map(source=>source.source_line_id)).size!==depositSelections.length)throw new HttpError(422,'DUPLICATE_SOURCE_LINE',"Une ligne d'acompte ne peut apparaître qu'une fois.");
 
   for (const selection of input.sources) {
     if (selection.source_type !== "DELIVERY_LINE") continue;
@@ -454,8 +512,25 @@ async function buildFacturePreview(
       });
       continue;
     }
-    blockers.push(...sourceBlockers(row, policy));
-    if (row.client_id !== input.client_id) {
+    let authority: ReturnType<typeof planProformaFinalInvoice> = null;
+    let authorityFailed = false;
+    try {
+      authority = planProformaFinalInvoice({
+        affairs: billingAffairs.filter(affair => affair.source_line_id === row.source_line_id),
+        quantity: selection.quantity, sourceQuantity: row.quantity_source,
+        remainingSourceQuantity: formatDecimal(parseDecimal(row.quantity_source, 3, "Quantité livrée") - parseDecimal(row.quantity_already_invoiced, 3, "Quantité affectée"), 3),
+        billedClientId: input.client_id, currency: input.currency,
+      });
+      if (authority && parseDecimal(authority.global_discount_percent, 4, "Remise figée") !== parseDecimal(input.global_discount_percent, 4, "Remise globale")) {
+        blockers.push({ code: "PROFORMA_FINAL_DISCOUNT_MISMATCH", message: "Appliquez la remise globale figée de la proforma.", source_line_id: row.source_line_id });
+      }
+    } catch (error) {
+      if (!(error instanceof HttpError) || error.status >= 500) throw error;
+      authorityFailed = true;
+      blockers.push({ code: error.code, message: error.message, source_line_id: row.source_line_id });
+    }
+    blockers.push(...sourceBlockers(row, policy, Boolean(authority)));
+    if (!authority && !authorityFailed && row.client_id !== input.client_id) {
       blockers.push({
         code: "SOURCE_CLIENT_MISMATCH",
         message: "Toutes les sources doivent appartenir au client facturé.",
@@ -472,12 +547,14 @@ async function buildFacturePreview(
         source_line_id: row.source_line_id,
       });
     }
-    if (!row.unit_price_ex_tax || row.discount_percent === null || row.tax_rate_percent === null) continue;
+    if (authorityFailed) continue;
+    const pricing = authority ?? row;
+    if (!pricing.unit_price_ex_tax || pricing.discount_percent === null || pricing.tax_rate_percent === null) continue;
     const exact = computeExactLineTotals({
       quantity: selection.quantity,
-      unitPriceExTax: row.unit_price_ex_tax,
-      discountPercent: row.discount_percent,
-      taxRatePercent: row.tax_rate_percent,
+      unitPriceExTax: pricing.unit_price_ex_tax,
+      discountPercent: pricing.discount_percent,
+      taxRatePercent: pricing.tax_rate_percent,
     });
     lines.push({
       source_type: "DELIVERY_LINE",
@@ -487,14 +564,15 @@ async function buildFacturePreview(
       code_piece: row.code_piece,
       quantity: selection.quantity,
       unit: row.unit,
-      unit_price_ex_tax: row.unit_price_ex_tax,
-      discount_percent: row.discount_percent,
-      tax_rate_percent: row.tax_rate_percent,
+      unit_price_ex_tax: pricing.unit_price_ex_tax,
+      discount_percent: pricing.discount_percent,
+      tax_rate_percent: pricing.tax_rate_percent,
       total_ex_tax: exact.totalExTax,
       tax_amount: exact.taxAmount,
       total_incl_tax: exact.totalInclTax,
-      pricing_version: row.pricing_version,
-      rule_code: policy ? `DELIVERY_${row.delivery_status}:${policy.policy_version}` : "POLICY_REQUIRED",
+      pricing_version: authority?.source_revision ?? row.pricing_version,
+      rule_code: authority ? "PROFORMA_FINAL_QUANTITY_V1" : policy ? `DELIVERY_${row.delivery_status}:${policy.policy_version}` : "POLICY_REQUIRED",
+      ...(authority ? { proforma_contributions: authority.contributions, proforma_reference: authority.proforma_reference } : {}),
     });
   }
 
@@ -505,6 +583,13 @@ async function buildFacturePreview(
       .map(row => row.commande_id).filter((id): id is string => id !== null),
     clientId: input.client_id, currency: input.currency, lock, invoiceId,
   }));
+  const depositSources=await readProformaDepositInvoiceSources(queryer,depositSelections.map(source=>source.source_line_id),lock,invoiceId);
+  for(const selection of depositSelections) {
+    const source=depositSources.find(source=>source.source_line_id===selection.source_line_id);
+    if(!source){blockers.push({code:'PROFORMA_DEPOSIT_SOURCE_NOT_FOUND',message:"La ligne de proforma sélectionnée n'existe plus.",source_line_id:selection.source_line_id});continue;}
+    try {lines.push(buildProformaDepositInvoiceLine(source,selection,input.client_id,input.currency));}
+    catch(error){if(!(error instanceof HttpError)||error.status>=500)throw error;blockers.push({code:error.code,message:error.message,source_line_id:selection.source_line_id});}
+  }
   const totals = computeExactDocumentTotals(
     lines.map((line) => ({
       quantity: line.quantity,
@@ -514,11 +599,23 @@ async function buildFacturePreview(
     })),
     input.global_discount_percent
   );
+  const prepaymentTargets = finalPrepaymentTargets(lines, totals.totalInclTax);
+  const taxBreakdown=allocateDocumentTaxBreakdown({lines:lines.map(line=>({ratePercent:line.tax_rate_percent,net:line.total_ex_tax,tax:line.tax_amount})),
+    totalExTax:totals.totalExTax,totalTax:totals.totalTax,totalInclTax:totals.totalInclTax});
+  const prepayments = planFinalInvoicePrepayments({
+    billedClientId: input.client_id, currency: input.currency, invoiceTotalInclTax: totals.totalInclTax,
+    targets: prepaymentTargets,
+    receipts: await readFinalInvoicePrepaymentReceipts(queryer, {
+      partIds: prepaymentTargets.map(target => target.billing_part_id), clientId: input.client_id,
+      currency: input.currency, ownInvoiceId: invoiceId,
+    }),
+  });
   const dueDates = input.due_dates.map((due) => ({
     ...due,
+    amount_autofilled: due.amount === undefined,
     amount:
       due.amount ??
-      (input.due_dates.length === 1 ? totals.totalInclTax : ""),
+      (input.due_dates.length === 1 ? prepayments.amount_due : ""),
   }));
   if (dueDates.some((due) => !due.amount)) {
     blockers.push({
@@ -546,6 +643,8 @@ async function buildFacturePreview(
     client_id: input.client_id,
     currency: input.currency,
     lines,
+    prepayments,
+    tax_breakdown:taxBreakdown,
     totals: {
       subtotal_ex_tax: totals.subtotalExTax,
       global_discount_percent: totals.discountPercent,
@@ -576,11 +675,24 @@ async function buildFacturePreview(
       blockers: preview.blockers,
     });
   }
-  return { preview, policy, sources: rows };
+  return { preview, policy, sources: [...rows,...depositSources] };
 }
 
 export async function repoPreviewFacture(input: FacturePreviewBodyDTO): Promise<FacturePreview> {
-  return (await buildFacturePreview(pool, input, false)).preview;
+  const client = await pool.connect();
+  try {
+    // Delivered quantities, company quotas and prices must come from one read
+    // snapshot. The locked command still rechecks the preview before writing.
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const preview = (await buildFacturePreview(client, input, false)).preview;
+    await client.query("COMMIT");
+    return preview;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function clientSnapshot(queryer: DbQueryer, clientId: string): Promise<Record<string, unknown>> {
@@ -742,6 +854,8 @@ export async function repoCreateFactureDraft(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const { preview_hash: expectedPreviewHash, ...previewInput } = params.input;
     const { preview, policy, sources } = await buildFacturePreview(client, previewInput, true);
     ensurePreviewUsable(preview, expectedPreviewHash);
@@ -760,6 +874,7 @@ export async function repoCreateFactureDraft(params: {
     if (!uuid) throw new Error("Failed to allocate facture uuid");
     const year = new Date().getUTCFullYear();
     const draftReference = `DFT-${year}-${String(factureId).padStart(6, "0")}`;
+    const correlationId = newCorrelationId();
     const clientData = await clientSnapshot(client, params.input.client_id);
     // Brouillon : les mentions du jour. Elles seront **re-resolues a l'emission**, seul
     // moment ou la loi les fige (cf. svcIssueFacture).
@@ -818,6 +933,7 @@ export async function repoCreateFactureDraft(params: {
       ]
     );
 
+    const savedSourceIds = new Map<string,string>();
     for (let index = 0; index < preview.lines.length; index += 1) {
       const line = preview.lines[index];
       const lineInsert = await client.query<{ id: string }>(
@@ -853,14 +969,14 @@ export async function repoCreateFactureDraft(params: {
           lineId: factureLineId, actor: params.actor.userId });
         continue;
       }
-      await client.query(
+      const sourceInsert=await client.query<{id:string}>(
         `
           INSERT INTO public.facture_source_allocations (
             facture_id, facture_ligne_id, source_type, source_id, source_line_id,
             quantity_selected, quantity_consumed, amount_ex_tax, amount_incl_tax,
             allocation_status, source_snapshot, rule_code, created_by
           )
-          VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,'DRAFT',$9::jsonb,$10,$11)
+          VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,'DRAFT',$9::jsonb,$10,$11) RETURNING id::text
         `,
         [
           factureId,
@@ -876,19 +992,33 @@ export async function repoCreateFactureDraft(params: {
           params.actor.userId,
         ]
       );
+      if(line.source_type==='DEPOSIT') {
+        const sourceAllocationId=sourceInsert.rows[0]?.id;
+        if(!sourceAllocationId)throw new Error('Failed to save deposit invoice source');
+        await bindProformaDepositInvoiceSourceTx(client,{sourceAllocationId,partId:line.source_line_id,actorId:params.actor.userId,correlationId});
+      }
+      if (sourceInsert.rows[0]?.id) savedSourceIds.set(line.source_line_id,sourceInsert.rows[0].id);
+      if (line.proforma_contributions?.length) {
+        const sourceAllocationId = sourceInsert.rows[0]?.id;
+        if (!sourceAllocationId) throw new Error("Failed to save final proforma invoice source");
+        await bindProformaFinalInvoiceSourceTx(client, { sourceAllocationId, contributions: line.proforma_contributions, actorId: params.actor.userId, correlationId });
+      }
     }
+    if (preview.prepayments) await bindFinalInvoicePrepayments(client, {
+      invoiceId: factureId, plan: preview.prepayments, sourceIds: savedSourceIds,
+      actorId: params.actor.userId, correlationId,
+    });
     for (const due of preview.due_dates) {
       await client.query(
         `
           INSERT INTO public.facture_echeance (
-            facture_id, due_date, label, amount_due, status, created_by
+            facture_id, due_date, label, amount_due, status, created_by, amount_autofilled
           )
-          VALUES ($1,$2::date,$3,$4,'OPEN',$5)
+          VALUES ($1,$2::date,$3,$4,'OPEN',$5,$6)
         `,
-        [factureId, due.due_date, due.label, due.amount, params.actor.userId]
+        [factureId, due.due_date, due.label, due.amount, params.actor.userId, due.amount_autofilled ?? false]
       );
     }
-    const correlationId = newCorrelationId();
     const result: FinanceCommandResult = {
       id: factureId,
       uuid,
@@ -1022,18 +1152,19 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     source_id: string;
     source_line_id: string;
     quantity: string;
+    advance_amount_ex_tax:string;
   }>(
     `
-      SELECT source_type, source_id, source_line_id, quantity_selected::text AS quantity
+      SELECT source_type, source_id, source_line_id, quantity_selected::text AS quantity,amount_ex_tax::numeric(18,2)::text AS advance_amount_ex_tax
       FROM public.facture_source_allocations
       WHERE facture_id = $1
       ORDER BY facture_ligne_id, id
     `,
     [factureId]
   );
-  const dueDates = await client.query<{ due_date: string; amount: string; label: string }>(
+  const dueDates = await client.query<{ due_date: string; amount: string; label: string; amount_autofilled: boolean }>(
     `
-      SELECT due_date::text AS due_date, amount_due::text AS amount, label
+      SELECT due_date::text AS due_date, amount_due::text AS amount, label, amount_autofilled
       FROM public.facture_echeance
       WHERE facture_id = $1
       ORDER BY due_date, id
@@ -1043,9 +1174,9 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
   return {
     client_id: row.client_id,
     currency: row.currency,
-    sources: sources.rows,
+    sources: sources.rows.map(source=>source.source_type==='DEPOSIT'?source:{source_type:source.source_type,source_id:source.source_id,source_line_id:source.source_line_id,quantity:source.quantity}),
     global_discount_percent: row.remise_globale,
-    due_dates: dueDates.rows,
+    due_dates: dueDates.rows.map(due => ({due_date:due.due_date,label:due.label,...(due.amount_autofilled?{}:{amount:due.amount})})),
     internal_comment: row.commentaires,
     customer_text: row.customer_text,
     regulatory: {
@@ -1093,6 +1224,8 @@ async function transitionFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);
@@ -1224,6 +1357,8 @@ export async function repoValidateFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     if (facture.statut !== "PENDING_VALIDATION") {
@@ -1324,6 +1459,8 @@ export async function repoIssueFacture(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as FinanceCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const facture = await lockFacture(client, params.factureId);
     if (!facture) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
     await repoAssertFactureHasNoInternalSource(client, params.factureId);
@@ -1370,6 +1507,7 @@ export async function repoIssueFacture(params: {
     // entre-temps, la facture doit porter ce qui est en vigueur le jour ou elle est emise.
     const snapshot: FinanceDocumentSnapshot = {
       document_type: "FACTURE",
+      invoice_type_code:preview.lines.every(line=>line.source_type==='DEPOSIT')?'386':'380',
       uuid: facture.uuid,
       draft_reference: facture.draft_reference,
       legal_number: legal.legalNumber,
@@ -1381,6 +1519,9 @@ export async function repoIssueFacture(params: {
       regulatory_snapshot: preview.regulatory_snapshot!,
       lines: preview.lines,
       totals: preview.totals,
+      prepayments: preview.prepayments,
+      advance_clearing: await freezeAdvanceClearing(client, params.factureId, preview.prepayments?.amount_paid ?? "0.00"),
+      tax_breakdown: preview.tax_breakdown,
       internal_comment: facture.commentaires,
       customer_text: facture.customer_text,
     };
@@ -1416,6 +1557,9 @@ export async function repoIssueFacture(params: {
       `,
       [params.factureId, params.actor.userId]
     );
+    const issuedSettlementStatus = invoiceSettlementStatusFromBalance({totalCents:moneyToCents(preview.totals.total_incl_tax),
+      settledCents:moneyToCents(preview.prepayments?.amount_paid ?? "0")});
+    const issuedStatus = issuedSettlementStatus === "UNPAID" ? "ISSUED" : issuedSettlementStatus;
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.facture
@@ -1424,9 +1568,9 @@ export async function repoIssueFacture(params: {
             legal_period = $3,
             legal_sequence_value = $4,
             date_emission = $5::date,
-            statut = 'ISSUED',
+            statut = $11,
             document_status = 'ISSUED',
-            settlement_status = 'UNPAID',
+            settlement_status = $12,
             issued_at = now(),
             issued_by = $6,
             immutable_snapshot = $7::jsonb,
@@ -1452,6 +1596,8 @@ export async function repoIssueFacture(params: {
         // differentes sur la meme piece.
         JSON.stringify(issuerAtIssue),
         JSON.stringify(preview.regulatory_snapshot),
+        issuedStatus,
+        issuedSettlementStatus,
       ]
     );
     await client.query(
@@ -1489,7 +1635,7 @@ export async function repoIssueFacture(params: {
       uuid: facture.uuid,
       draft_reference: facture.draft_reference,
       legal_number: legal.legalNumber,
-      status: "ISSUED",
+      status: issuedStatus,
       row_version: updated.rows[0]?.row_version ?? facture.row_version + 1,
       correlation_id: correlationId,
       idempotent_replay: false,
@@ -1501,7 +1647,8 @@ export async function repoIssueFacture(params: {
       eventType: "FACTURE_ISSUED",
       oldValues: { status: facture.statut },
       newValues: {
-        status: "ISSUED",
+        status: issuedStatus,
+        settlement_status: issuedSettlementStatus,
         legal_number: legal.legalNumber,
         document_checksum_sha256: artifact.checksumSha256,
         authoritative_archive_id: legalArchive.id,

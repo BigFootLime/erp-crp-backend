@@ -3,6 +3,8 @@ import type { PoolClient } from "pg";
 
 import pool from "../../config/database";
 import { HttpError } from "../../utils/httpError";
+import { accountingDocumentTax } from "./accounting-document-tax";
+import { accountingFinanceKind } from "./accounting-finance-kind";
 import {
   assertPreviewCanAdvance,
   buildAccountingPreview,
@@ -39,6 +41,7 @@ type BatchRow = {
   period_from: string;
   period_to: string;
   source_types: AccountingSourceType[];
+  only_unexported: boolean;
   status: "PREVIEWED" | "VALIDATED" | "GENERATED" | "CANCELLED";
   row_version: number;
   source_count: number;
@@ -119,7 +122,7 @@ async function mappingById(client: PoolClient, id: string, lock = false): Promis
 async function batchById(client: PoolClient, id: string, lock = false): Promise<BatchRow> {
   const result = await client.query<BatchRow>(
     `SELECT b.id::text,b.batch_number,b.mapping_version_id::text,m.version_code AS mapping_version_code,
-            m.adapter_code,b.period_from::text,b.period_to::text,b.source_types,b.status,b.row_version,
+            m.adapter_code,b.period_from::text,b.period_to::text,b.source_types,b.only_unexported,b.status,b.row_version,
             b.source_count,b.line_count,b.currency_totals,b.findings,b.source_sha256,b.lines_sha256,
             b.artifact_filename,b.artifact_sha256,b.artifact_size,b.created_at::text,b.validated_at::text,
             b.generated_at::text,b.cancelled_at::text,b.cancellation_reason,b.reexport_of_batch_id::text,
@@ -147,6 +150,13 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
               source.total_ht::numeric(18,2)::text AS total_ex_tax,
               COALESCE(source.total_tax,source.total_ttc-source.total_ht)::numeric(18,2)::text AS total_tax,
               source.total_ttc::numeric(18,2)::text AS total_incl_tax,
+              source.immutable_snapshot->'tax_breakdown' AS tax_snapshot,
+              source.immutable_snapshot AS fiscal_snapshot,
+              EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=source.id AND source_type='DEPOSIT') AS has_deposit_sources,
+              EXISTS(SELECT 1 FROM public.paiement p LEFT JOIN public.paiement_allocations a ON a.paiement_id=p.id
+                WHERE (a.facture_id=source.id OR (a.id IS NULL AND p.facture_id=source.id)) AND a.advance_vat_snapshot IS NULL
+                  AND p.status NOT IN('REJECTED','REVERSED') AND p.workflow_status<>'REVERSED' AND p.reversal_of_id IS NULL) AS has_unqualified_advance_cash,
+              COALESCE(source.immutable_snapshot ? 'tax_breakdown',false) AS tax_snapshot_present,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('tax_rate',tax.tax_rate,'total_ex_tax',tax.total_ex_tax,'tax_amount',tax.tax_amount) ORDER BY tax.tax_rate)
                 FROM (SELECT fl.taux_tva::numeric(8,4)::text AS tax_rate,
                              SUM(fl.total_ht)::numeric(18,2)::text AS total_ex_tax,
@@ -171,6 +181,11 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
               source.total_ht::numeric(18,2)::text AS total_ex_tax,
               COALESCE(source.total_tax,source.total_ttc-source.total_ht)::numeric(18,2)::text AS total_tax,
               source.total_ttc::numeric(18,2)::text AS total_incl_tax,
+              source.immutable_snapshot->'tax_breakdown' AS tax_snapshot,
+              source.immutable_snapshot AS fiscal_snapshot,
+              (SELECT immutable_snapshot FROM public.facture WHERE id=source.facture_id) AS corrected_invoice_fiscal_snapshot,
+              EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=source.facture_id AND source_type='DEPOSIT') AS has_deposit_sources,
+              COALESCE(source.immutable_snapshot ? 'tax_breakdown',false) AS tax_snapshot_present,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('tax_rate',tax.tax_rate,'total_ex_tax',tax.total_ex_tax,'tax_amount',tax.tax_amount) ORDER BY tax.tax_rate)
                 FROM (SELECT al.taux_tva::numeric(8,4)::text AS tax_rate,
                              SUM(al.total_ht)::numeric(18,2)::text AS total_ex_tax,
@@ -194,6 +209,12 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
               upper(source.currency) AS currency,NULLIF(btrim(source.mode),'') AS payment_mode,
               '0.00'::text AS total_ex_tax,'0.00'::text AS total_tax,
               source.montant::numeric(18,2)::text AS total_incl_tax,'[]'::jsonb AS tax_breakdown,
+              CASE WHEN EXISTS(SELECT 1 FROM public.facture f LEFT JOIN public.paiement_allocations a ON a.facture_id=f.id AND a.paiement_id=source.id
+                WHERE (a.id IS NOT NULL OR (source.facture_id=f.id AND NOT EXISTS(SELECT 1 FROM public.paiement_allocations WHERE paiement_id=source.id)))
+                  AND a.advance_vat_snapshot IS NULL AND (f.immutable_snapshot->>'invoice_type_code'='386'
+                    OR EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=f.id AND source_type='DEPOSIT')))
+                THEN jsonb_build_object('code','ACCOUNTING_ADVANCE_CASH_UNQUALIFIED','message','Les encaissements d''acompte doivent être rapprochés avant export de la TVA.')
+                ELSE NULL END AS financial_context_error,
               claim.batch_id::text AS claimed_batch_id
        FROM public.paiement source JOIN public.clients client ON client.client_id=source.client_id
        LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='PAYMENT' AND claim.source_id=source.id::text AND claim.released_at IS NULL
@@ -242,7 +263,61 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
     );
     rows.push(...result.rows);
   }
-  return rows;
+  if (input.source_types.includes("ADVANCE_VAT")) {
+    const result = await client.query<AccountingSourceDocument>(`
+      SELECT 'ADVANCE_VAT'::text AS source_type,a.id::text AS source_id,
+        'TVA-'||COALESCE(p.code,'PAY-'||p.id::text)||'-'||a.id::text AS source_number,
+        to_char(a.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_updated_at,
+        COALESCE(p.value_date,p.date_paiement)::text AS entry_date,p.client_id,NULLIF(btrim(c.compte_tiers),'') AS third_party_account,
+        upper(p.currency) AS currency,NULL::text AS payment_mode,'0.00'::text AS total_ex_tax,
+        ((a.advance_vat_snapshot->>'tax_after')::numeric-(a.advance_vat_snapshot->>'tax_before')::numeric)::numeric(18,2)::text AS total_tax,
+        ((a.advance_vat_snapshot->>'tax_after')::numeric-(a.advance_vat_snapshot->>'tax_before')::numeric)::numeric(18,2)::text AS total_incl_tax,
+        COALESCE((SELECT jsonb_agg(jsonb_build_object('tax_rate',e->>'tax_rate','total_ex_tax','0.00','tax_amount',e->>'tax_amount'))
+          FROM jsonb_array_elements(a.advance_vat_snapshot->'entries') e),'[]'::jsonb) AS tax_breakdown,
+        a.advance_vat_snapshot,claim.batch_id::text AS claimed_batch_id
+      FROM public.paiement_allocations a JOIN public.paiement p ON p.id=a.paiement_id JOIN public.clients c ON c.client_id=p.client_id
+      LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='ADVANCE_VAT' AND claim.source_id=a.id::text AND claim.released_at IS NULL
+      WHERE a.advance_vat_snapshot IS NOT NULL AND p.status NOT IN('REJECTED','REVERSED') AND p.workflow_status<>'REVERSED' AND p.reversal_of_id IS NULL
+        AND COALESCE(p.value_date,p.date_paiement) BETWEEN $1::date AND $2::date
+        AND (a.advance_vat_snapshot->>'tax_after')::numeric>(a.advance_vat_snapshot->>'tax_before')::numeric
+      ORDER BY COALESCE(p.value_date,p.date_paiement),a.id`, [input.period_from,input.period_to]);
+    rows.push(...result.rows);
+  }
+  if (input.source_types.includes("CUSTOMER_REFUND")) {
+    const result=await client.query<AccountingSourceDocument>(`SELECT 'CUSTOMER_REFUND'::text AS source_type,r.id::text AS source_id,r.code AS source_number,
+      to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_updated_at,r.booking_date::text AS entry_date,
+      r.client_id,NULLIF(btrim(c.compte_tiers),'') AS third_party_account,r.currency,r.mode AS payment_mode,
+      '0.00'::text AS total_ex_tax,'0.00'::text AS total_tax,r.amount_ttc::text AS total_incl_tax,'[]'::jsonb AS tax_breakdown,
+      claim.batch_id::text AS claimed_batch_id FROM public.customer_refunds r JOIN public.clients c ON c.client_id=r.client_id
+      LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='CUSTOMER_REFUND' AND claim.source_id=r.id::text AND claim.released_at IS NULL
+      WHERE r.booking_date BETWEEN $1::date AND $2::date ORDER BY r.booking_date,r.id`,[input.period_from,input.period_to]);
+    rows.push(...result.rows);
+  }
+  if (input.source_types.includes("CUSTOMER_REFUND_REVERSAL")) {
+    const result=await client.query<AccountingSourceDocument>(`
+      SELECT 'CUSTOMER_REFUND_REVERSAL'::text AS source_type,reversal.id::text AS source_id,reversal.code AS source_number,
+        to_char(reversal.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_updated_at,
+        reversal.booking_date::text AS entry_date,reversal.client_id,NULLIF(btrim(customer.compte_tiers),'') AS third_party_account,
+        reversal.currency,reversal.mode AS payment_mode,'0.00'::text AS total_ex_tax,'0.00'::text AS total_tax,
+        reversal.amount_ttc::text AS total_incl_tax,'[]'::jsonb AS tax_breakdown,claim.batch_id::text AS claimed_batch_id,
+        reversal.refund_id::text AS refund_reversal_of_id,
+        (SELECT jsonb_agg(jsonb_build_object('journal_code',entry.journal_code,'account_number',entry.account_number,
+          'third_party_account',entry.third_party_account,'currency',entry.currency,
+          'debit',entry.debit::numeric(18,2)::text,'credit',entry.credit::numeric(18,2)::text,'tax_rate',entry.tax_rate,'axes',entry.axes)
+          ORDER BY entry.line_no)
+         FROM public.accounting_export_source_claims original_claim
+         JOIN public.accounting_export_batches original_batch ON original_batch.id=original_claim.batch_id AND original_batch.status='GENERATED'
+         JOIN public.accounting_export_entries entry ON entry.batch_id=original_claim.batch_id
+           AND entry.source_type='CUSTOMER_REFUND' AND entry.source_id=reversal.refund_id::text
+         WHERE original_claim.source_type='CUSTOMER_REFUND' AND original_claim.source_id=reversal.refund_id::text
+           AND original_claim.released_at IS NULL) AS refund_reversal_entries
+      FROM public.customer_refund_reversals reversal JOIN public.clients customer ON customer.client_id=reversal.client_id
+      LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='CUSTOMER_REFUND_REVERSAL'
+        AND claim.source_id=reversal.id::text AND claim.released_at IS NULL
+      WHERE reversal.booking_date BETWEEN $1::date AND $2::date ORDER BY reversal.booking_date,reversal.id`,[input.period_from,input.period_to]);
+    rows.push(...result.rows);
+  }
+  return rows.filter(source => !input.only_unexported || !source.claimed_batch_id).map(accountingDocumentTax).map(accountingFinanceKind);
 }
 
 async function persistPreview(params: {
@@ -264,11 +339,11 @@ async function persistPreview(params: {
   await params.client.query(
     `INSERT INTO public.accounting_export_batches
       (id,batch_number,mapping_version_id,period_from,period_to,source_types,status,row_version,
-       source_count,line_count,currency_totals,findings,source_sha256,lines_sha256,created_by,correlation_id,reexport_of_batch_id)
-     VALUES ($1::uuid,$2,$3::uuid,$4::date,$5::date,$6::text[],'PREVIEWED',1,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14::uuid,$15::uuid)`,
+       source_count,line_count,currency_totals,findings,source_sha256,lines_sha256,created_by,correlation_id,reexport_of_batch_id,only_unexported)
+     VALUES ($1::uuid,$2,$3::uuid,$4::date,$5::date,$6::text[],'PREVIEWED',1,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14::uuid,$15::uuid,$16::boolean)`,
     [id,batchNumber,params.mapping.id,params.input.period_from,params.input.period_to,params.input.source_types,
       preview.source_count,preview.lines.length,JSON.stringify(preview.currency_totals),JSON.stringify(preview.findings),
-      preview.source_sha256,preview.lines_sha256,params.actor.userId,correlationId,params.reexportOf ?? null]
+      preview.source_sha256,preview.lines_sha256,params.actor.userId,correlationId,params.reexportOf ?? null,params.input.only_unexported ?? false]
   );
   for (const source of sources) {
     await params.client.query(
@@ -366,6 +441,7 @@ async function runBatchCommand(params: {
     await client.query("BEGIN");
     const receipt = await acquireReceipt({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey, commandType: params.commandType, payload: { batch_id: params.batchId, ...params.body } });
     if (receipt.replay) { await client.query("COMMIT"); return { ...(receipt.replay as unknown as BatchRow), idempotent_replay: true }; }
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const batch = await batchById(client, params.batchId, true);
     if (batch.row_version !== params.body.expected_version) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le lot comptable a changé.");
     const expectedStatus = params.commandType === "ACCOUNTING_EXPORT_VALIDATE" ? "PREVIEWED" : "VALIDATED";
@@ -377,6 +453,7 @@ async function runBatchCommand(params: {
         period_from: batch.period_from,
         period_to: batch.period_to,
         source_types: batch.source_types,
+        only_unexported: batch.only_unexported,
       }),
       mapping.config
     );
@@ -427,9 +504,15 @@ export async function repoCancelAccountingBatch(params: { batchId: string; body:
     await client.query("BEGIN");
     const receipt = await acquireReceipt({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey, commandType: "ACCOUNTING_EXPORT_CANCEL", payload: { batch_id: params.batchId, ...params.body } });
     if (receipt.replay) { await client.query("COMMIT"); return { ...(receipt.replay as unknown as BatchRow), idempotent_replay: true }; }
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const batch = await batchById(client, params.batchId, true);
     if (batch.row_version !== params.body.expected_version) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le lot comptable a changé.");
     if (batch.status === "CANCELLED") throw new HttpError(409, "ACCOUNTING_EXPORT_ALREADY_CANCELLED", "Ce lot est déjà annulé.");
+    const correctedRefund=await client.query(`SELECT 1 FROM public.accounting_export_source_claims claim
+      JOIN public.customer_refund_reversals reversal ON reversal.refund_id::text=claim.source_id
+      WHERE claim.batch_id=$1::uuid AND claim.source_type='CUSTOMER_REFUND' AND claim.released_at IS NULL LIMIT 1`,[batch.id]);
+    if(batch.status==='GENERATED' && correctedRefund.rows.length)
+      throw new HttpError(409,"ACCOUNTING_REFUND_ORIGINAL_RETAINED","Ce lot contient un remboursement corrigé. Conservez l'export d'origine et exportez sa contrepassation.");
     await client.query(`UPDATE public.accounting_export_source_claims SET released_at=now(),released_by=$2,release_reason=$3 WHERE batch_id=$1::uuid AND released_at IS NULL`, [batch.id,params.actor.userId,params.body.reason]);
     await client.query(`UPDATE public.accounting_export_batches SET status='CANCELLED',row_version=row_version+1,cancelled_at=now(),cancelled_by=$2,cancellation_reason=$3 WHERE id=$1::uuid`, [batch.id,params.actor.userId,params.body.reason]);
     const result = { ...(await batchById(client, batch.id)), idempotent_replay: false };

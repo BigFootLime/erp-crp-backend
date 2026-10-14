@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { deliveryAffairsOperation, deliveryAffairsSchemas } from "./delivery-affairs-contract";
+import { proformaOperation, proformaSchemas } from "./proforma-contract";
 import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
 import { clientCrmOperation, clientCrmSchemas } from "./client-crm-contract";
 import { clientContractOperation, clientContractSchemas } from "./client-contract-contract";
@@ -219,7 +220,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     };
   }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched)))))));
+  return proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))));
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -354,6 +355,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
       ...clientContractForecastSchemas,
       ...clientContractReplenishmentSchemas,
       ...deliveryAffairsSchemas,
+      ...proformaSchemas,
       ...assemblyComponentSchemas,
       ...assemblyComponentReturnSchemas,
       ...legacySchemas,

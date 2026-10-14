@@ -3,6 +3,7 @@ import { renderSupplierPurchaseOrderOfficialPdf } from "../../module/commande-fo
 import { renderDevisOfficialPdf } from "../../module/devis/services/devis-official-pdf";
 import { renderCommandeArOfficialPdf } from "../../module/commande-client/services/commande-ar.service";
 import { renderClientProfilePdf } from "../../module/client/services/client-profile-pdf";
+import { renderProformaOfficialPdf } from "../../module/facturation/services/proforma-document";
 import { renderCurrentTechnicalDocumentPdf } from "./current-technical-document-pdf";
 import { renderInternalCreationSnapshotPdf } from "./internal-creation-snapshot-pdf";
 import { renderShippedDeliveryOfficialPdf } from "../../module/livraisons/services/delivery-authoritative-document";
@@ -22,6 +23,7 @@ export function createAuthoritativePdfProducerRegistry(): AuthoritativePdfProduc
   registry.register("commande-client", "CUSTOMER_ORDER_ACKNOWLEDGEMENT", renderCommandeArOfficialPdf);
   registry.register("client", "CLIENT_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("client", "CLIENT_PROFILE", renderClientProfilePdf);
+  registry.register("proforma", "CUSTOMER_PROFORMA", renderProformaOfficialPdf);
   registry.register("fournisseur", "SUPPLIER_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("commande-client", "CUSTOMER_ORDER_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);
   registry.register("ordre-fabrication", "OF_CREATION_SNAPSHOT", renderInternalCreationSnapshotPdf);

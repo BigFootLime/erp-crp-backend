@@ -123,6 +123,9 @@ describe("DRAFT quarantine quality-scope allocation", () => {
     const query = vi.fn(async (rawSql: unknown) => {
       const sql = String(rawSql)
       if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] }
+      if (sql.includes("fn_lock_delivery_prepayment_read_1268")) return { rows: [] }
+      if (sql.includes("source.id IS NULL OR")) return { rows: [] }
+      if (sql.includes("SELECT id FROM public.bon_livraison")) return { rows: [{ id: ids.delivery }] }
       if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "1" }] }
       if (sql.includes("WITH delivery_lines AS")) {
         return { rows: [{ commande_id: "12", client_id: null, order_type: "INTERNE", contract_id: null, has_unbound_lines: false }] }

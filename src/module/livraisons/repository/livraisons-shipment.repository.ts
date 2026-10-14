@@ -42,6 +42,8 @@ import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildShippedDeliveryArtifactInput } from "../services/delivery-authoritative-document"
 import { readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import { lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary } from "./delivery-prepayment-boundary.repository"
+import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -102,6 +104,7 @@ type ShipmentSnapshot = {
   allocations: AllocationRow[]
   document_pack: ShipmentPreviewPack | null
   contract_boundary: Awaited<ReturnType<typeof readDeliveryContractBoundary>>
+  prepayment: Awaited<ReturnType<typeof readDeliveryPrepaymentBoundary>>
 }
 
 type AllocationGroup = {
@@ -126,6 +129,7 @@ async function loadShipmentSnapshot(
   bonLivraisonId: string,
   forUpdate = false
 ): Promise<ShipmentSnapshot | null> {
+  if (forUpdate) await lockDeliveryPrepaymentSources(client, bonLivraisonId)
   const header = await client.query<HeaderRow>(
     `
       SELECT
@@ -242,6 +246,7 @@ async function loadShipmentSnapshot(
     allocations: allocations.rows,
     document_pack: pack.rows[0] ?? null,
     contract_boundary: await readDeliveryContractBoundary(client, bonLivraisonId),
+    prepayment: await readDeliveryPrepaymentBoundary(client, bonLivraisonId),
   }
 }
 
@@ -291,6 +296,7 @@ function buildPreview(
 ): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
   if (snapshot.contract_boundary.blocker) blockers.push(snapshot.contract_boundary.blocker)
+  blockers.push(...snapshot.prepayment.blockers)
   const byLine = new Map<string, AllocationRow[]>()
   for (const allocation of snapshot.allocations) {
     const rows = byLine.get(allocation.bon_livraison_ligne_id) ?? []
@@ -501,6 +507,7 @@ function buildPreview(
     })),
     blockers: blockers.map((blocker) => blocker.code).sort(),
     contract_group_key: snapshot.contract_boundary.groupKey,
+    prepayment: snapshot.prepayment,
     document_pack: snapshot.document_pack,
     quality_release: qualityRelease
       ? { state: qualityRelease.state, preview_sha256: qualityRelease.preview_sha256 }
@@ -544,6 +551,7 @@ function buildPreview(
     simulated_movements: simulatedMovements,
     document_pack: snapshot.document_pack,
     quality_release: qualityRelease,
+    prepayment: snapshot.prepayment,
     totals: {
       lines: snapshot.lines.length,
       allocations: snapshot.allocations.length,
@@ -643,10 +651,12 @@ function adjustedForOwnReservation(
 export async function repoGetLivraisonShipmentPreview(
   bonLivraisonId: string
 ): Promise<BonLivraisonShipmentPreview | null> {
-  const snapshot = await loadShipmentSnapshot(pool, bonLivraisonId)
-  if (!snapshot) return null
-  const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId)
-  return buildPreview(snapshot, qualityRelease, true, true, true)
+  return withDeliveryReadSnapshot(async tx => {
+    const snapshot = await loadShipmentSnapshot(tx, bonLivraisonId)
+    if (!snapshot) return null
+    const qualityRelease = await repoGetDeliveryQualityRelease(bonLivraisonId, tx)
+    return buildPreview(snapshot, qualityRelease, true, true, true)
+  })
 }
 
 export async function prepareLivraisonInTransaction(

@@ -47,9 +47,19 @@ const sourceSelectionSchema = z
     source_type: z.enum(["DELIVERY_LINE", "MILESTONE", "DEPOSIT"]),
     source_id: z.string().trim().min(1).max(200),
     source_line_id: z.string().trim().min(1).max(200),
-    quantity: decimal(3, "Quantité"),
+    quantity: decimal(3, "Quantité").optional(),
+    advance_amount_ex_tax: decimal(2, "Montant de l'acompte HT").optional(),
   })
-  .strict();
+  .strict().superRefine((source,ctx)=>{
+    if(source.source_type==='DEPOSIT') {
+      if(source.quantity!==undefined && !/^1(?:\.0{1,3})?$/.test(source.quantity))ctx.addIssue({code:z.ZodIssueCode.custom,path:['quantity'],message:"Un acompte porte sur un montant, pas sur une quantité de pièces."});
+      if(!source.advance_amount_ex_tax || /^0(?:\.0+)?$/.test(source.advance_amount_ex_tax))ctx.addIssue({code:z.ZodIssueCode.custom,path:['advance_amount_ex_tax'],message:"Sélectionnez un montant d'acompte HT positif."});
+      if(!z.string().uuid().safeParse(source.source_id).success || !z.string().uuid().safeParse(source.source_line_id).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_line_id'],message:"Sélectionnez une ligne de proforma existante."});
+    } else {
+      if(source.quantity===undefined)ctx.addIssue({code:z.ZodIssueCode.custom,path:['quantity'],message:"Sélectionnez la quantité livrée à facturer."});
+      if(source.advance_amount_ex_tax!==undefined)ctx.addIssue({code:z.ZodIssueCode.custom,path:['advance_amount_ex_tax'],message:"Ce montant s'applique uniquement aux factures d'acompte."});
+    }
+  }).transform(source=>({...source,quantity:source.source_type==='DEPOSIT'?'1.000':source.quantity!}));
 
 const dueDateSchema = z
   .object({
@@ -122,9 +132,18 @@ export type ValidationDecisionBodyDTO = z.infer<typeof validationDecisionBodySch
 const avoirLineSelectionSchema = z
   .object({
     facture_line_id: z.coerce.number().int().positive(),
-    quantity: decimal(3, "Quantité créditée"),
+    quantity: decimal(3, "Quantité créditée").optional(),
+    advance_amount_ex_tax: decimal(2, "Montant d'acompte HT crédité").optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value,context)=>{
+    if((value.quantity===undefined)===(value.advance_amount_ex_tax===undefined))context.addIssue({
+      code:z.ZodIssueCode.custom,path:["advance_amount_ex_tax"],message:"Choisissez une quantité ou un montant d'acompte HT, jamais les deux.",
+    });
+    if(value.advance_amount_ex_tax!==undefined&&/^0(?:\.0+)?$/.test(value.advance_amount_ex_tax))context.addIssue({
+      code:z.ZodIssueCode.custom,path:["advance_amount_ex_tax"],message:"Le montant d'acompte HT doit être strictement positif.",
+    });
+  });
 
 export const avoirPreviewBodySchema = z
   .object({

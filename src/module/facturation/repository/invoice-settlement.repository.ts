@@ -6,6 +6,7 @@ import {
   isInvoiceIssuedForSettlement,
 } from "../domain/finance-policy";
 import { formatDecimal, moneyToCents } from "../domain/decimal-money";
+import { customerInvoiceBalance } from "../domain/customer-balance";
 import {
   insertFinanceEvent,
   insertGlobalFinanceAudit,
@@ -24,10 +25,12 @@ type InvoiceSettlementHeaderRow = {
 };
 
 type InvoiceSettlementEvidenceRow = {
+  applied_prepayment_ttc: string;
   allocated_payment_ttc: string;
   legacy_direct_payment_ttc: string;
   consumed_credit_ttc: string;
   legacy_direct_credit_ttc: string;
+  refunded_ttc: string;
 };
 
 export type LockedInvoiceSettlement = {
@@ -41,6 +44,11 @@ export type LockedInvoiceSettlement = {
   totalCents: bigint;
   settledCents: bigint;
   settledAmount: string;
+  cashCents: bigint;
+  creditedCents: bigint;
+  refundedCents: bigint;
+  refundableCents: bigint;
+  dueCents: bigint;
 };
 
 /**
@@ -80,6 +88,8 @@ export async function lockInvoiceSettlement(
   const evidenceResult = await client.query<InvoiceSettlementEvidenceRow>(
     `
       SELECT
+        public.fn_invoice_applied_prepayment_1268(f.id)::numeric(18,2)::text AS applied_prepayment_ttc,
+        COALESCE((SELECT sum(amount_ttc) FROM public.customer_refunds_effective_1268 WHERE facture_id=f.id),0)::numeric(18,2)::text AS refunded_ttc,
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM public.paiement_allocations pa
@@ -126,11 +136,16 @@ export async function lockInvoiceSettlement(
   );
   const evidence = evidenceResult.rows[0];
   if (!evidence) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
-  const settledCents =
+  const cashCents =
+    moneyToCents(evidence.applied_prepayment_ttc ?? "0", "Acomptes déjà réglés") +
     moneyToCents(evidence.allocated_payment_ttc, "Paiements alloués") +
-    moneyToCents(evidence.legacy_direct_payment_ttc, "Paiements historiques") +
+    moneyToCents(evidence.legacy_direct_payment_ttc, "Paiements historiques");
+  const creditedCents =
     moneyToCents(evidence.consumed_credit_ttc, "Avoirs consommés") +
     moneyToCents(evidence.legacy_direct_credit_ttc, "Avoirs historiques");
+  const refundedCents = moneyToCents(evidence.refunded_ttc ?? "0", "Remboursements enregistrés");
+  const balance = customerInvoiceBalance({ gross: moneyToCents(header.total_ttc), cash: cashCents, credits: creditedCents, refunds: refundedCents });
+  const settledCents = balance.settled;
   return {
     id: header.id,
     uuid: header.uuid,
@@ -142,6 +157,7 @@ export async function lockInvoiceSettlement(
     totalCents: moneyToCents(header.total_ttc, "Total facture"),
     settledCents,
     settledAmount: formatDecimal(settledCents, 2),
+    cashCents, creditedCents, refundedCents, refundableCents: balance.refundable, dueCents: balance.due,
   };
 }
 
@@ -164,11 +180,11 @@ export function assertInvoiceCreditWithinBalance(
   invoice: LockedInvoiceSettlement,
   creditCents: bigint
 ): void {
-  if (invoice.settledCents + creditCents > invoice.totalCents) {
+  if (creditCents <= 0n || invoice.creditedCents + creditCents > invoice.totalCents) {
     throw new HttpError(
       409,
       "AVOIR_INVOICE_BALANCE_EXCEEDED",
-      "L'avoir dépasse le solde encore réglable de la facture."
+      "L'avoir dépasse le montant de la facture qui n'a pas encore été crédité."
     );
   }
 }

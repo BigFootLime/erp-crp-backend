@@ -55,6 +55,15 @@ describe("GED parent-record download authorization", () => {
       entityId: gammeId,
     });
   });
+  it("keeps proforma bytes behind a live Finance parent, even when CRM can see the client",async()=>{
+    const id="12686000-0000-4000-8000-000000000001";
+    mocks.links.mockResolvedValue([{entity_type:"PROFORMA",entity_id:id}]);mocks.exists.mockResolvedValue(true);
+    mocks.profile.mockResolvedValueOnce({is_superadmin:false,modules:[{module_key:"clients",allowed:true}]});
+    await expect(assertGedVersionParentReadable(7,documentId)).rejects.toMatchObject({status:404,code:"GED_VERSION_NOT_FOUND"});
+    mocks.profile.mockResolvedValueOnce({is_superadmin:false,modules:[{module_key:"facturation",allowed:true}]});
+    await expect(assertGedVersionParentReadable(7,documentId)).resolves.toEqual({moduleKey:"facturation",entityType:"PROFORMA",entityId:id});
+    expect(mocks.exists).toHaveBeenCalledWith("PROFORMA",id);
+  });
 
   it("authorizes and canonicalizes a writable entity attachment before upload", async () => {
     const gammeId = "22222222-2222-4222-8222-222222222222";
@@ -139,6 +148,7 @@ describe("GED parent-record download authorization", () => {
     ["integer", "AFFAIRE", "not-a-number"],
     ["uuid", "STOCK_ARTICLE", "not-a-uuid"],
     ["uuid", "FOURNISSEUR", "not-a-uuid"],
+    ["uuid", "PROFORMA", "not-a-uuid"],
   ])("turns a malformed persisted %s parent id into the same opaque denial", async (_kind, entity_type, entity_id) => {
     mocks.links.mockResolvedValue([{ entity_type, entity_id }]);
 

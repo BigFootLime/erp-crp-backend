@@ -190,6 +190,7 @@ z.object({
   mode_port_id: z.string().uuid().optional().nullable(),
   mode_reglement_id: z.string().uuid().optional().nullable(),
   conditions_paiement_id: z.number().int().optional().nullable(),
+  delivery_prepayment_requirement: z.enum(["NOT_REQUIRED", "PROFORMA"]).optional(),
   biller_id: z.string().uuid().optional().nullable(),
   compte_vente_id: z.string().uuid().optional().nullable(),
   commentaire: z.string().optional().nullable(),
@@ -200,6 +201,9 @@ z.object({
   echeances: z.array(commandeEcheanceInputSchema).optional().default([]),
 }))
   .superRefine((val, ctx) => {
+    if (val.order_type === "INTERNE" && val.delivery_prepayment_requirement === "PROFORMA") {
+      ctx.addIssue({code:z.ZodIssueCode.custom,path:["delivery_prepayment_requirement"],message:"Une commande interne ne reçoit pas de proforma client."});
+    }
     if (val.creation_flow_version === 2 && val.save_intent === "VALIDATE") {
       const requiredDecisions = ["designation", "quantite", "unite", "prix_unitaire_ht"];
       val.lignes.forEach((line, index) => {

@@ -25,6 +25,7 @@ export const CREATION_SNAPSHOT_DOCUMENT_KINDS = [
   "STOCK_ARTICLE_CREATION_SNAPSHOT",
   "DELIVERY_NOTE_CREATION_SNAPSHOT",
   "DELIVERY_NOTE_SHIPPED",
+  "CUSTOMER_PROFORMA",
 ] as const;
 
 export type CreationSnapshotDocumentKind = (typeof CREATION_SNAPSHOT_DOCUMENT_KINDS)[number];
@@ -38,7 +39,7 @@ export type CreationSnapshotHandlers = Readonly<{
 
 type CreationSnapshotHandlerConfig = Readonly<{
   /** Fixed module-owned aggregate namespace (never derived from a request). */
-  entityType: "client" | "fournisseur" | "commande-client" | "ordre-fabrication" | "piece-technique" | "affaire" | "stock-article" | "bon-livraison";
+  entityType: "client" | "fournisseur" | "commande-client" | "ordre-fabrication" | "piece-technique" | "affaire" | "stock-article" | "bon-livraison" | "proforma";
   /** Fixed module-owned internal document kind (never derived from a request). */
   documentKind: CreationSnapshotDocumentKind;
   /** Parses the module's existing `:id` semantics and returns its canonical string form. */

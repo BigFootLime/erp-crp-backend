@@ -4,6 +4,7 @@ import type {
   PaymentStatus,
 } from "../domain/finance-policy";
 import type { InvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
+import type { FinalInvoiceContribution } from "../domain/proforma-final-invoice";
 
 export type FinanceBlocker = {
   code: string;
@@ -35,6 +36,9 @@ export type EligibleDeliverySource = {
   pricing_version: string | null;
   rule_code: string;
   blockers: FinanceBlocker[];
+  physical_client_id?: string;
+  proforma_reference?: string | null;
+  global_discount_percent?: string;
 };
 
 export type FacturePreviewLine = {
@@ -53,6 +57,9 @@ export type FacturePreviewLine = {
   total_incl_tax: string;
   pricing_version: string | null;
   rule_code: string;
+  /** Server-selected company/affair evidence; never accepted from a caller. */
+  proforma_contributions?: FinalInvoiceContribution[];
+  proforma_reference?: string;
 };
 
 export type FinanceDueDate = {
@@ -60,6 +67,8 @@ export type FinanceDueDate = {
   due_date: string;
   label: string;
   amount: string;
+  /** Server remembers whether the sole installment was calculated automatically. */
+  amount_autofilled?: boolean;
   allocated_amount?: string;
   balance?: string;
   status?: "OPEN" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
@@ -70,6 +79,8 @@ export type FacturePreview = {
   client_id: string;
   currency: string;
   lines: FacturePreviewLine[];
+  prepayments?: import("../domain/final-invoice-prepayments").FinalPrepaymentPlan;
+  tax_breakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;
@@ -107,6 +118,10 @@ export type AvoirPreviewLine = {
   unit: string | null;
   unit_price_ex_tax: string;
   discount_percent: string;
+  original_line_discount_percent?:string;
+  credit_basis?:"AMOUNT_EX_TAX";
+  source_quantity_selected?:string;
+  advance_amount_ex_tax?:string;
   tax_rate_percent: string;
   total_ex_tax: string;
   tax_amount: string;
@@ -122,6 +137,8 @@ export type AvoirPreview = {
   reason_code: string;
   reason: string;
   lines: AvoirPreviewLine[];
+  tax_breakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
+  original_global_discount_percent?:string;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;

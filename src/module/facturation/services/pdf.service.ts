@@ -6,10 +6,11 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetAvoir } from "../repository/avoirs.repository";
 import { repoGetFacture } from "../repository/factures.repository";
+import { readFinanceDraftInput } from "./finance-draft-input";
 
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 
-import { renderFinanceDocument, type FinanceDocumentLine, type FinanceParty } from "./finance-document-render";
+import { renderFinanceDocument, type FinanceParty } from "./finance-document-render";
 
 /**
  * Facture et avoir a l'etat de **brouillon**.
@@ -22,12 +23,6 @@ import { renderFinanceDocument, type FinanceDocumentLine, type FinanceParty } fr
  * Ces deux fonctions **refusent de s'executer sur un document emis** : l'exemplaire legal est
  * ecrit une seule fois, par le workflow, et ne se regenere pas.
  */
-
-/** Montant du referentiel (nombre) vers la chaine a deux decimales attendue par le rendu. */
-function amount(value: number | null | undefined): string {
-  const n = typeof value === "number" && Number.isFinite(value) ? value : 0;
-  return n.toFixed(2);
-}
 
 async function ensureDocsDir(): Promise<string> {
   const uploadDir = ensureDocumentStoragePath();
@@ -51,46 +46,6 @@ async function getIssuerParty(issueDate: string | null): Promise<FinanceParty> {
   return readIssuerParty({ at: issueDate }) as Promise<FinanceParty>;
 }
 
-/**
- * Identite du client telle que connue du referentiel de facturation.
- *
- * ⚠️ `client_id` est un identifiant technique : il n'entre pas dans la partie. L'ancienne
- * version l'imprimait sous la raison sociale, sur un document adresse au client.
- */
-function clientParty(client: { company_name?: string | null } | null | undefined): FinanceParty {
-  const name = typeof client?.company_name === "string" ? client.company_name.trim() : "";
-  return name ? { company_name: name } : {};
-}
-
-function draftLines(
-  lignes: Array<{
-    designation: string;
-    code_piece: string | null;
-    quantite: number;
-    unite: string | null;
-    prix_unitaire_ht: number;
-    remise_ligne: number;
-    taux_tva: number;
-    total_ht: number;
-    total_ttc: number;
-  }>
-): FinanceDocumentLine[] {
-  return lignes.map((line) => ({
-    designation: line.designation,
-    codePiece: line.code_piece,
-    quantity: String(line.quantite ?? 0),
-    unit: line.unite,
-    unitPriceExTax: amount(line.prix_unitaire_ht),
-    discountPercent: amount(line.remise_ligne),
-    taxRatePercent: amount(line.taux_tva),
-    totalExTax: amount(line.total_ht),
-    // Le referentiel du brouillon ne stocke pas la taxe par ligne : elle se deduit des deux
-    // totaux deja calcules, sans jamais reappliquer un taux nous-memes.
-    taxAmount: amount((line.total_ttc ?? 0) - (line.total_ht ?? 0)),
-    totalInclTax: amount(line.total_ttc),
-  }));
-}
-
 export async function svcGenerateFacturePdf(factureId: number): Promise<{ document_id: string }> {
   const detail = await repoGetFacture(factureId, "client,lignes");
   if (!detail) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture not found");
@@ -107,28 +62,17 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
   const fileName = `Facture_${detail.facture.numero}.pdf`;
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
-  const f = detail.facture;
-  const pdf = await renderFinanceDocument({
-    kind: "FACTURE",
-    number: f.numero,
-    draft: true,
-    issueDate: f.date_emission,
-    currency: "EUR",
-    issuer: await getIssuerParty(f.date_emission),
-    client: clientParty(f.client),
-    lines: draftLines(detail.lignes),
-    totals: {
-      subtotalExTax: amount(f.total_ht),
-      globalDiscountPercent: amount(f.remise_globale),
-      globalDiscountAmount: "0.00",
-      totalExTax: amount(f.total_ht),
-      totalTax: amount((f.total_ttc ?? 0) - (f.total_ht ?? 0)),
-      totalInclTax: amount(f.total_ttc),
-    },
-    dueDates: f.date_echeance ? [{ dueDate: f.date_echeance, label: "Échéance", amount: amount(f.total_ttc) }] : [],
-    customerText: f.commentaires,
-    draftReference: f.numero,
-  });
+  const readClient = await pool.connect();
+  let draftInput: Omit<Parameters<typeof renderFinanceDocument>[0], "issuer">;
+  try {
+    await readClient.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    draftInput = await readFinanceDraftInput(readClient, "FACTURE", factureId);
+    await readClient.query("COMMIT");
+  } catch (error) {
+    await readClient.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { readClient.release(); }
+  const pdf = await renderFinanceDocument({...draftInput, issuer: await getIssuerParty(draftInput.issueDate)});
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, pdf);
 
@@ -172,29 +116,17 @@ export async function svcGenerateAvoirPdf(avoirId: number): Promise<{ document_i
   const fileName = `Avoir_${detail.avoir.numero}.pdf`;
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
-  const a = detail.avoir;
-  const pdf = await renderFinanceDocument({
-    kind: "AVOIR",
-    number: a.numero,
-    draft: true,
-    issueDate: a.date_emission,
-    currency: "EUR",
-    issuer: await getIssuerParty(a.date_emission),
-    client: clientParty(a.client),
-    lines: draftLines(detail.lignes),
-    totals: {
-      subtotalExTax: amount(a.total_ht),
-      globalDiscountPercent: "0.00",
-      globalDiscountAmount: "0.00",
-      totalExTax: amount(a.total_ht),
-      totalTax: amount((a.total_ttc ?? 0) - (a.total_ht ?? 0)),
-      totalInclTax: amount(a.total_ttc),
-    },
-    dueDates: [],
-    correctedInvoice: a.facture?.numero ?? null,
-    reason: a.motif,
-    draftReference: a.numero,
-  });
+  const readClient = await pool.connect();
+  let draftInput: Omit<Parameters<typeof renderFinanceDocument>[0], "issuer">;
+  try {
+    await readClient.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    draftInput = await readFinanceDraftInput(readClient, "AVOIR", avoirId);
+    await readClient.query("COMMIT");
+  } catch (error) {
+    await readClient.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally { readClient.release(); }
+  const pdf = await renderFinanceDocument({...draftInput, issuer: await getIssuerParty(draftInput.issueDate)});
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, pdf);
 

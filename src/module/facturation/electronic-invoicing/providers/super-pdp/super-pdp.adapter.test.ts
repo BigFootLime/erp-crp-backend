@@ -94,6 +94,29 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe("SUPER PDP adapter", () => {
+  it("exports a document allowance instead of undiscounted VAT bases",()=>{
+    const result=buildSuperPdpEn16931Invoice({...source,totals:{net:"95.00",tax:"19.00",gross:"114.00"}});
+    expect(result).toMatchObject({totals:{sum_invoice_lines_amount:"100.00",sum_allowances_amount:"5.00",
+      total_without_vat:"95.00",total_with_vat:"114.00",amount_due_for_payment:"114.00"},
+      document_level_allowances:[{amount:"5.00",base_amount:"100.00",reason:"Remise globale",vat_category_code:"S",vat_rate:"20"}],
+      vat_break_down:[{vat_category_taxable_amount:"95.00",vat_category_tax_amount:"19.00",vat_category_rate:"20"}]});
+  });
+  it("keeps multiple VAT groups, the allowance and advances in exact balance",()=>{
+    const result=buildSuperPdpEn16931Invoice({...source,lines:[...source.lines,{...source.lines[0],id:2,quantity:"1",unit_price_ex_tax:"100.00",
+      vat_rate:"5.5",total_ex_tax:"100.00",total_incl_tax:"105.50"}],totals:{net:"190.00",tax:"24.23",gross:"214.23"},
+      prepayments:{amountPaid:"40.00",amountDue:"174.23"}});
+    expect(result).toMatchObject({totals:{sum_invoice_lines_amount:"200.00",sum_allowances_amount:"10.00",paid_amount:"40.00",amount_due_for_payment:"174.23"},
+      vat_break_down:[{vat_category_taxable_amount:"95.00",vat_category_tax_amount:"5.23",vat_category_rate:"5.5"},
+        {vat_category_taxable_amount:"95.00",vat_category_tax_amount:"19.00",vat_category_rate:"20"}]});
+    expect(result.document_level_allowances).toHaveLength(2);
+  });
+  it("preserves fiscal totals and sends exact paid/net due amounts",()=>{
+    const result=buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"58.37",amountDue:"61.63"}});
+    expect(result).toMatchObject({totals:{total_without_vat:"100.00",total_with_vat:"120.00",paid_amount:"58.37",amount_due_for_payment:"61.63"}});
+    expect(buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"120.00",amountDue:"0.00"}})).toMatchObject({totals:{paid_amount:"120.00",amount_due_for_payment:"0.00"}});
+    expect(()=>buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"58.37",amountDue:"61.64"}})).toThrow();
+    expect(()=>buildSuperPdpEn16931Invoice({...creditSource,prepayments:{amountPaid:"58.37",amountDue:"61.63"}})).toThrow();
+  });
   it("builds a source-backed EN16931 model and rejects unqualified zero VAT", () => {
     const result = buildSuperPdpEn16931Invoice(source);
     expect(result).toMatchObject({
@@ -123,6 +146,10 @@ describe("SUPER PDP adapter", () => {
       ...source,
       lines: [{ ...source.lines[0], vat_rate: "0" }],
     })).toThrowError(/catégorie et le motif de TVA/i);
+  });
+
+  it("distinguishes the issued advance invoice from a standard invoice",()=>{
+    expect(buildSuperPdpEn16931Invoice({...source,invoiceTypeCode:386,lines:source.lines.map(line=>({...line,unit:'acompte'}))})).toMatchObject({type_code:386});
   });
 
   it("builds an EN16931 credit note with the immutable corrected-invoice reference", () => {

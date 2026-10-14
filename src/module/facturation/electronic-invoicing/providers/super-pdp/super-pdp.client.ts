@@ -106,6 +106,7 @@ const providerEnInvoiceSchema = z.object({
     total_vat_amount: providerAmountSchema.optional(),
     total_with_vat: providerDecimalSchema,
     amount_due_for_payment: providerDecimalSchema,
+    paid_amount: providerDecimalSchema.optional(),
   }).passthrough(),
   vat_break_down: z.array(z.object({
     vat_category_code: z.string().max(20),
