@@ -55,6 +55,7 @@ export async function writeImmutableAvoirDocument(
       totalInclTax: snapshot.totals.total_incl_tax,
     },
     dueDates: [],
+    taxBreakdown:snapshot.tax_breakdown,
     correctedInvoice: snapshot.facture_number,
     reasonCode: snapshot.reason_code,
     reason: snapshot.reason,

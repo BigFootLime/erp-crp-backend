@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { todayInParis } from "../domain/reporting-policy";
+import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 import { HttpError } from "../../../utils/httpError";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { parseInvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
@@ -85,6 +86,7 @@ export type AvoirDocumentSnapshot = {
   reason: string;
   lines: AvoirPreviewLine[];
   totals: AvoirPreview["totals"];
+  tax_breakdown?: AvoirPreview["tax_breakdown"];
 };
 
 export type AvoirDocumentArtifact = {
@@ -247,6 +249,8 @@ async function buildAvoirPreview(
     reason_code: input.reason_code,
     reason: input.reason,
     lines,
+    tax_breakdown:allocateDocumentTaxBreakdown({lines:lines.map(line=>({ratePercent:line.tax_rate_percent,net:line.total_ex_tax,tax:line.tax_amount})),
+      totalExTax:totals.totalExTax,totalTax:totals.totalTax,totalInclTax:totals.totalInclTax}),
     totals: {
       subtotal_ex_tax: totals.subtotalExTax,
       global_discount_percent: totals.discountPercent,
@@ -839,6 +843,7 @@ export async function repoIssueAvoir(params: {
       reason: preview.reason,
       lines: preview.lines,
       totals: preview.totals,
+      tax_breakdown:preview.tax_breakdown,
     };
     artifact = await params.writeDocument(snapshot);
     // #625: preserve the byte-exact issued credit note for GED retry/reconcile.

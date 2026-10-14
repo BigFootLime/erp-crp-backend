@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../config/database";
 import { HttpError } from "../../utils/httpError";
+import { accountingDocumentTax } from "./accounting-document-tax";
 import {
   assertPreviewCanAdvance,
   buildAccountingPreview,
@@ -147,6 +148,8 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
               source.total_ht::numeric(18,2)::text AS total_ex_tax,
               COALESCE(source.total_tax,source.total_ttc-source.total_ht)::numeric(18,2)::text AS total_tax,
               source.total_ttc::numeric(18,2)::text AS total_incl_tax,
+              source.immutable_snapshot->'tax_breakdown' AS tax_snapshot,
+              COALESCE(source.immutable_snapshot ? 'tax_breakdown',false) AS tax_snapshot_present,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('tax_rate',tax.tax_rate,'total_ex_tax',tax.total_ex_tax,'tax_amount',tax.tax_amount) ORDER BY tax.tax_rate)
                 FROM (SELECT fl.taux_tva::numeric(8,4)::text AS tax_rate,
                              SUM(fl.total_ht)::numeric(18,2)::text AS total_ex_tax,
@@ -171,6 +174,8 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
               source.total_ht::numeric(18,2)::text AS total_ex_tax,
               COALESCE(source.total_tax,source.total_ttc-source.total_ht)::numeric(18,2)::text AS total_tax,
               source.total_ttc::numeric(18,2)::text AS total_incl_tax,
+              source.immutable_snapshot->'tax_breakdown' AS tax_snapshot,
+              COALESCE(source.immutable_snapshot ? 'tax_breakdown',false) AS tax_snapshot_present,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('tax_rate',tax.tax_rate,'total_ex_tax',tax.total_ex_tax,'tax_amount',tax.tax_amount) ORDER BY tax.tax_rate)
                 FROM (SELECT al.taux_tva::numeric(8,4)::text AS tax_rate,
                              SUM(al.total_ht)::numeric(18,2)::text AS total_ex_tax,
@@ -242,7 +247,7 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
     );
     rows.push(...result.rows);
   }
-  return rows;
+  return rows.map(accountingDocumentTax);
 }
 
 async function persistPreview(params: {

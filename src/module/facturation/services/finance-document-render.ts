@@ -9,7 +9,9 @@ import { formatDateFR, money, percent, quantity, rate, unitPrice } from "../../.
 import { renderWorkshopBoxes,renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
 import { issuerIdentityLine, issuerLegalMentions, issuerPaymentDetails } from "../../../shared/pdf/legal-mentions";
 import type { FinalPrepaymentPlan } from "../domain/final-invoice-prepayments";
-import { moneyToCents } from "../domain/decimal-money";
+import { formatDecimal,moneyToCents,parseDecimal } from "../domain/decimal-money";
+import type { DocumentTaxBreakdown } from "../domain/document-tax-breakdown";
+import { documentTaxBreakdownFromSnapshot } from "../domain/document-tax-breakdown";
 
 // Reexportes : la mise en forme francaise est desormais partagee avec le bon de livraison
 // et l'accuse de reception, qui portent les memes mentions legales.
@@ -75,6 +77,7 @@ export type FinanceDocumentInput = {
   lines: FinanceDocumentLine[];
   totals: FinanceDocumentTotals;
   prepayments?: FinalPrepaymentPlan;
+  taxBreakdown?: DocumentTaxBreakdown;
   dueDates: Array<{ dueDate: string; label: string; amount: string }>;
   /** Avoir : facture corrigee et motif. */
   correctedInvoice?: string | null;
@@ -173,27 +176,21 @@ export function partyLines(party: FinanceParty, options: { identifiers?: boolean
  * centimes pour eviter toute derive en virgule flottante.
  */
 export function taxBreakdown(lines: FinanceDocumentLine[]): FinanceTaxLine[] {
-  const toCents = (value: string): number => {
-    const n = Number.parseFloat(String(value).replace(/\s/g, "").replace(",", "."));
-    return Number.isFinite(n) ? Math.round(n * 100) : 0;
-  };
-  const fromCents = (cents: number): string => (cents / 100).toFixed(2);
-
-  const byRate = new Map<string, { base: number; tax: number }>();
+  const byRate = new Map<string, { base: bigint; tax: bigint }>();
   for (const line of lines) {
     const rate = clean(line.taxRatePercent) ?? "0";
-    const bucket = byRate.get(rate) ?? { base: 0, tax: 0 };
-    bucket.base += toCents(line.totalExTax);
-    bucket.tax += toCents(line.taxAmount);
+    const bucket = byRate.get(rate) ?? { base: 0n, tax: 0n };
+    bucket.base += moneyToCents(line.totalExTax);
+    bucket.tax += moneyToCents(line.taxAmount);
     byRate.set(rate, bucket);
   }
 
   return [...byRate.entries()]
-    .sort((a, b) => Number.parseFloat(a[0]) - Number.parseFloat(b[0]))
+    .sort((a,b)=>parseDecimal(a[0],4,"Taux de TVA")<parseDecimal(b[0],4,"Taux de TVA")?-1:parseDecimal(a[0],4,"Taux de TVA")>parseDecimal(b[0],4,"Taux de TVA")?1:0)
     .map(([ratePercent, sums]) => ({
       ratePercent,
-      baseExTax: fromCents(sums.base),
-      taxAmount: fromCents(sums.tax),
+      baseExTax: formatDecimal(sums.base,2),
+      taxAmount: formatDecimal(sums.tax,2),
     }));
 }
 
@@ -338,7 +335,10 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
   const isAvoir = input.kind === "AVOIR";
   const documentType = isAvoir ? "Avoir" : input.invoiceTypeCode===386 ? "Facture d’acompte" : "Facture";
   const clientName = pick(input.client, "company_name", "name", "raison_sociale") ?? "Client";
-  const taxes = taxBreakdown(input.lines);
+  const taxes = input.taxBreakdown ? documentTaxBreakdownFromSnapshot({snapshot:{tax_breakdown:input.taxBreakdown},
+    lines:input.lines.map(line=>({ratePercent:line.taxRatePercent,net:line.totalExTax,tax:line.taxAmount})),
+    totalExTax:input.totals.totalExTax,totalTax:input.totals.totalTax,totalInclTax:input.totals.totalInclTax}).entries.map(entry=>({
+      ratePercent:entry.rate_percent,baseExTax:entry.taxable_amount,taxAmount:entry.tax_amount})) : taxBreakdown(input.lines);
   const soleDue=input.dueDates.length===1?input.dueDates[0]:undefined;
   const compactDue=!isAvoir && soleDue && moneyToCents(soleDue.amount)===moneyToCents(input.prepayments?.amount_due??input.totals.totalInclTax);
 

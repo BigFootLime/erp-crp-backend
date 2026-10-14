@@ -7,6 +7,7 @@ import { bindProformaDepositInvoiceSourceTx,buildProformaDepositInvoiceLine,read
 import { planProformaFinalInvoice } from "../domain/proforma-final-invoice";
 import { planFinalInvoicePrepayments } from "../domain/final-invoice-prepayments";
 import { finalPrepaymentTargets } from "../domain/final-prepayment-targets";
+import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 import { bindFinalInvoicePrepayments, readFinalInvoicePrepaymentReceipts } from "./final-invoice-prepayments.repository";
 import { bindProformaFinalInvoiceSourceTx, proformaBilledPartySourceWhere, readProformaFinalInvoiceAffairs } from "./proforma-final-invoice.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
@@ -166,6 +167,7 @@ export type FinanceDocumentSnapshot = {
   lines: FacturePreviewLine[];
   totals: FacturePreview["totals"];
   prepayments?: FacturePreview["prepayments"];
+  tax_breakdown?: FacturePreview["tax_breakdown"];
   internal_comment: string | null;
   customer_text: string | null;
 };
@@ -596,6 +598,8 @@ async function buildFacturePreview(
     input.global_discount_percent
   );
   const prepaymentTargets = finalPrepaymentTargets(lines, totals.totalInclTax);
+  const taxBreakdown=allocateDocumentTaxBreakdown({lines:lines.map(line=>({ratePercent:line.tax_rate_percent,net:line.total_ex_tax,tax:line.tax_amount})),
+    totalExTax:totals.totalExTax,totalTax:totals.totalTax,totalInclTax:totals.totalInclTax});
   const prepayments = planFinalInvoicePrepayments({
     billedClientId: input.client_id, currency: input.currency, invoiceTotalInclTax: totals.totalInclTax,
     targets: prepaymentTargets,
@@ -638,6 +642,7 @@ async function buildFacturePreview(
     currency: input.currency,
     lines,
     prepayments,
+    tax_breakdown:taxBreakdown,
     totals: {
       subtotal_ex_tax: totals.subtotalExTax,
       global_discount_percent: totals.discountPercent,
@@ -1513,6 +1518,7 @@ export async function repoIssueFacture(params: {
       lines: preview.lines,
       totals: preview.totals,
       prepayments: preview.prepayments,
+      tax_breakdown: preview.tax_breakdown,
       internal_comment: facture.commentaires,
       customer_text: facture.customer_text,
     };

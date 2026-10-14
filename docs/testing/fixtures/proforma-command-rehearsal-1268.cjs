@@ -124,5 +124,6 @@ async function main(){
   assert.equal((await pool.query('SELECT count(*)::int AS n FROM public.finance_legal_sequences')).rows[0].n,0);
   console.log(JSON.stringify({marker:'PROFORMA1268_COMMERCIAL_PDF_ISSUE_PASS',actualCommercialIssuance:true,immutableExactBytes:true,
     archiveIntents:1,idempotentReplay:true,legalSequenceConsumed:false,gedFilingExecuted:false,uiRecipe:false}));
+  await require('./document-tax-accounting-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A')});
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

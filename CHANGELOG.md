@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Remise globale et TVA : ventilation documentaire commune figée pour PDF, facture électronique et export comptable. Lectures de brouillon exactes et échéanciers conservés ; prix financiers à quatre décimales, anciens exemplaires/lignes figées inchangés. 7 894 tests / 711 fichiers, build strict et exports comptables réels sur PostgreSQL isolé passent. Comptabilité des acomptes, avoirs partiels, écrans et recette fiscale/métier restent ouverts ; aucun déploiement de ce lot. Référence visuelle commune à tous les exports précisée selon l'OF approuvé.
+
 - Factures finales : affectation des acomptes réellement encaissés, net à payer/échéances cohérents et contrôle des budgets dans PostgreSQL ; aucune seconde entrée de trésorerie. Faits figés repris en PDF et facture électronique. Factures/avoirs au dessin structuré commun, précision des prix conservée, exemples fictifs relus. 7 867 tests et build strict passent ; comptabilité, interface et recette fiscale/métier restent ouverts avant déploiement.
 
 - Document proforma : design commun structuré, destinataire/sociétés séparés, précision des prix et quantités, snapshot et bytes exacts conservés au replay, parent GED Finance et quatre transports documentaires sécurisés. Correction du cycle d’aperçu créé par ses métadonnées de liaison.7 842 tests/705 fichiers, build et émission commerciale PostgreSQL isolée passent ; déduction des acomptes, interface et rangement GED/recette live restent en cours. Aucun déploiement de ce lot.

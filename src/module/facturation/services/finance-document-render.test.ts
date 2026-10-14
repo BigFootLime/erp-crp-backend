@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { getGeneratedRootPath } from "../../../utils/cerpStorage";
 
 import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
+import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 
 import {
   money,
@@ -278,6 +279,15 @@ describe("identite des parties", () => {
 });
 
 describe("facture — rendu reel", () => {
+  it("prints discounted VAT bases from the same frozen fiscal model",async()=>{
+    const totals={subtotalExTax:"100.00",globalDiscountPercent:"5",globalDiscountAmount:"5.00",totalExTax:"95.00",totalTax:"19.00",totalInclTax:"114.00"};
+    const lines=[ligne({quantity:"1",unitPriceExTax:"100.00",totalExTax:"100.00",taxAmount:"20.00",totalInclTax:"120.00"})];
+    const input:FinanceDocumentInput={...FACTURE,lines,totals,dueDates:[{dueDate:"2026-08-21",label:"30 jours net",amount:"114.00"}],
+      taxBreakdown:allocateDocumentTaxBreakdown({lines:[{ratePercent:"20",net:"100.00",tax:"20.00"}],totalExTax:"95.00",totalTax:"19.00",totalInclTax:"114.00"})};
+    const text=drawnText(await renderFinanceDocument(input));
+    expect(text).toContain("95,00");expect(text).toContain("19,00");expect(text).toContain("114,00");expect(text).toContain("Remise globale (5 %)");
+    expect(text).not.toContain("20,00 €");
+  });
   it("sépare le montant fiscal, les acomptes réellement payés et le net dû",async()=>{
     const input:FinanceDocumentInput={...FACTURE,prepayments:{version:1,amount_paid:"1200.00",amount_due:"11358.24",applications:[
       {source_line_id:"line-1",billing_part_id:"part-1",assignment_id:"receipt-1",deposit_source_id:"deposit-1",

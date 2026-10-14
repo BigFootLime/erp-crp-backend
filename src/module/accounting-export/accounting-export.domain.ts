@@ -45,6 +45,9 @@ export type AccountingSourceDocument = {
   tax_breakdown: Array<{ tax_rate: string; tax_category?: string | null; total_ex_tax: string; tax_amount: string }>;
   partner_country_code?: string | null;
   claimed_batch_id: string | null;
+  tax_snapshot?: import("../facturation/domain/document-tax-breakdown").DocumentTaxBreakdown|null;
+  tax_snapshot_present?: boolean;
+  tax_breakdown_error?: {code:string;message:string};
 };
 
 export type AccountingEntryLine = {
@@ -108,6 +111,8 @@ function supplierMappingValue(map: Record<string, string> | undefined, category:
 
 function validateSourceTotals(source: AccountingSourceDocument): AccountingFinding[] {
   const findings: AccountingFinding[] = [];
+  if(source.tax_breakdown_error)findings.push({severity:"BLOCKER",code:"ACCOUNTING_TAX_BREAKDOWN_INVALID",
+    message:`${source.source_number}: ${source.tax_breakdown_error.message}`,source_type:source.source_type,source_id:source.source_id});
   const exTax = moneyToCents(source.total_ex_tax, "Total HT");
   const tax = moneyToCents(source.total_tax, "Total TVA");
   const inclTax = moneyToCents(source.total_incl_tax, "Total TTC");

@@ -2,6 +2,7 @@ import { HttpError } from "../../../../../utils/httpError";
 import type { ElectronicInvoiceSourceDocument } from "../../electronic-invoice.domain";
 import { parseInvoiceRegulatorySnapshot } from "../../electronic-invoice-regulatory.domain";
 import { moneyToCents } from "../../../domain/decimal-money";
+import { documentTaxBreakdownFromSnapshot } from "../../../domain/document-tax-breakdown";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -263,11 +264,9 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
   const sellerIdentifier = partyLegalIdentifier(sellerSiret, sellerSiren, "vendeur");
   const buyerIdentifier = partyLegalIdentifier(buyerSiret, null, "acheteur");
   const lineResults = source.lines.map((line, index) => lineRecord(record(line, `lines[${index}]`), index));
-  const vatGroups = new Map<string, { net: Decimal; tax: Decimal }>();
-  for (const result of lineResults) {
-    const previous = vatGroups.get(result.vatRate) ?? { net: { coefficient: 0n, scale: 0 }, tax: { coefficient: 0n, scale: 0 } };
-    vatGroups.set(result.vatRate, { net: add(previous.net, result.net), tax: add(previous.tax, result.tax) });
-  }
+  const taxBreakdown=documentTaxBreakdownFromSnapshot({snapshot:source.taxBreakdown?{tax_breakdown:source.taxBreakdown}:{},
+    lines:lineResults.map(line=>({ratePercent:line.vatRate,net:formatDecimal(line.net),tax:formatDecimal(line.tax)})),
+    totalExTax:source.totals.net,totalTax:source.totals.tax,totalInclTax:source.totals.gross});
   const currency = source.currency.toUpperCase();
   if(source.prepayments && (source.documentType!=="INVOICE" || moneyToCents(source.prepayments.amountPaid)<0n
     || moneyToCents(source.prepayments.amountDue)<0n || moneyToCents(source.prepayments.amountPaid)+moneyToCents(source.prepayments.amountDue)!==moneyToCents(source.totals.gross)))
@@ -286,6 +285,10 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
       }],
     } : {}),
     currency_code: currency,
+    ...(moneyToCents(taxBreakdown.allowance_ex_tax)>0n?{document_level_allowances:taxBreakdown.entries
+      .filter(entry=>moneyToCents(entry.allowance_ex_tax)>0n).map(entry=>({amount:entry.allowance_ex_tax,
+        base_amount:entry.subtotal_ex_tax,reason:"Remise globale",vat_category_code:"S",
+        vat_rate:formatDecimal(decimal(entry.rate_percent,"Taux de remise"))}))}:{}),
     process_control: {
       business_process_type: regulatory.billingFrameCode,
       specification_identifier: "urn:cen.eu:en16931:2017",
@@ -322,18 +325,19 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
       },
     } : {}),
     totals: {
-      sum_invoice_lines_amount: source.totals.net,
+      sum_invoice_lines_amount: taxBreakdown.subtotal_ex_tax,
+      sum_allowances_amount: taxBreakdown.allowance_ex_tax,
       total_without_vat: source.totals.net,
       total_vat_amount: { value: source.totals.tax, currency_code: currency },
       total_with_vat: source.totals.gross,
       paid_amount: source.prepayments?.amountPaid ?? "0.00",
       amount_due_for_payment: source.prepayments?.amountDue ?? source.totals.gross,
     },
-    vat_break_down: [...vatGroups.entries()].map(([vatRate, totals]) => ({
-      vat_category_taxable_amount: formatDecimal(totals.net),
-      vat_category_tax_amount: formatDecimal(totals.tax),
+    vat_break_down: taxBreakdown.entries.map(entry => ({
+      vat_category_taxable_amount: entry.taxable_amount,
+      vat_category_tax_amount: entry.tax_amount,
       vat_category_code: "S",
-      vat_category_rate: vatRate,
+      vat_category_rate: formatDecimal(decimal(entry.rate_percent,"Taux de TVA")),
     })),
     lines: lineResults.map(({ invoiceLine }) => invoiceLine),
   };

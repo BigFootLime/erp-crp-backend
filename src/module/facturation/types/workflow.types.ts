@@ -80,6 +80,7 @@ export type FacturePreview = {
   currency: string;
   lines: FacturePreviewLine[];
   prepayments?: import("../domain/final-invoice-prepayments").FinalPrepaymentPlan;
+  tax_breakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;
@@ -132,6 +133,7 @@ export type AvoirPreview = {
   reason_code: string;
   reason: string;
   lines: AvoirPreviewLine[];
+  tax_breakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;

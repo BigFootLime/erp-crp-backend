@@ -64,6 +64,7 @@ export async function writeImmutableFactureDocument(
       amount: due.amount,
     })),
     prepayments: snapshot.prepayments,
+    taxBreakdown: snapshot.tax_breakdown,
     // `internal_comment` reste dans l'ERP : seul le texte destine au client est imprime.
     customerText: snapshot.customer_text,
     snapshotUuid: snapshot.uuid,
