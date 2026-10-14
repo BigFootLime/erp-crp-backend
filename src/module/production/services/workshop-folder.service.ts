@@ -175,7 +175,8 @@ export async function previewWorkshopFolder(ofId: number, folderId: string) {
         throw copyUnavailable();
     return { pdf: await readCopy(copy), metadata: info };
 }
-export async function printWorkshopFolder(ofId: number, folderId: string, key: string, actorId: number, audit: AuditContext) {
+export async function printWorkshopFolder(ofId: number, folderId: string, key: string, actorId: number, audit: AuditContext,
+  afterDelivery?: (tx: documents.DbQueryer, intent: OfPrintIntent, folderId: string) => Promise<void>) {
     const folder = await folders.getWorkshopFolder(ofId, folderId);
     if (!folder)
         throw new HttpError(404, "WORKSHOP_FOLDER_NOT_FOUND", "Dossier introuvable sur cet OF.");
@@ -193,6 +194,7 @@ export async function printWorkshopFolder(ofId: number, folderId: string, key: s
             await insertAuditLog(tx, audit, { action: "OF_WORKSHOP_FOLDER_PRINT", entity_type: "of_document", entity_id: folder.document_id,
                 details: { of_id: ofId, folder_id: folderId, print_intent_id: intent.id, pdf_sha256: copy.pdf_sha256, physical_print_confirmed: false } });
         }
+        await afterDelivery?.(tx, intent, folderId);
         return pdf;
     };
     return requestOfDocumentPrint(ofId, folder.document_id, scopedKey(`print:${folderId}`, key), actorId, audit, { expectedDocumentStatus: folder.document_status,
