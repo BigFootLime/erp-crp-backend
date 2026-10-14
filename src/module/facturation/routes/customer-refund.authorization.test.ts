@@ -2,8 +2,9 @@ import express from "express";
 import request from "supertest";
 import { ZodError } from "zod";
 import { beforeEach,describe,expect,it,vi } from "vitest";
-const mocks=vi.hoisted(()=>({preview:vi.fn(),register:vi.fn()}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),register:vi.fn(),previewReversal:vi.fn(),registerReversal:vi.fn()}));
 vi.mock("../services/customer-refund.service",()=>({svcPreviewCustomerRefund:mocks.preview,svcRegisterCustomerRefund:mocks.register}));
+vi.mock("../services/customer-refund-reversal.service",()=>({svcPreviewCustomerRefundReversal:mocks.previewReversal,svcReverseCustomerRefund:mocks.registerReversal}));
 import router from "./paiements.routes";
 function app(){
   const server=express();server.use(express.json());
@@ -16,7 +17,8 @@ function app(){
 const body={avoir_id:1,amount:'60.00',preview_hash:'a'.repeat(64),confirm:true,value_date:'2026-10-14',booking_date:'2026-10-14',
   mode:'VIREMENT',reference:'FIXTURE-NO-BANK-TRANSFER',reason:'Preuve synthétique de qualification'};
 describe("refund workflow HTTP authorization and typed inputs",()=>{
- beforeEach(()=>{vi.clearAllMocks();mocks.preview.mockResolvedValue({maximum_amount:'60.00'});mocks.register.mockResolvedValue({id:'fixture',idempotent_replay:false});});
+ beforeEach(()=>{vi.clearAllMocks();mocks.preview.mockResolvedValue({maximum_amount:'60.00'});mocks.register.mockResolvedValue({id:'fixture',idempotent_replay:false});
+  mocks.previewReversal.mockResolvedValue({amount:'60.00'});mocks.registerReversal.mockResolvedValue({id:'correction-fixture',idempotent_replay:false});});
  it.each([undefined,'Secretaire','Tourneur'])('refuses unauthorized refund reads and records for %s',async role=>{
    for(const endpoint of ['preview','register']){const call=request(app()).post('/paiements/workflow/refunds/'+endpoint);
      if(role)call.set('x-test-role',role);const response=await call.send(endpoint==='preview'?{avoir_id:1}:body);
@@ -32,5 +34,21 @@ describe("refund workflow HTTP authorization and typed inputs",()=>{
    for(const input of [{...body,value_date:'2026-02-31'},{...body,client_id:'another-company'},{...body,payment_id:2},{...body,amount:'0.00'}]){
      expect((await request(app()).post('/paiements/workflow/refunds/register').set('x-test-role','Comptable').send(input)).status).toBe(400);
    }expect(mocks.register).not.toHaveBeenCalled();
+ });
+ it.each([undefined,'Secretaire','Tourneur'])('protects correction reads and writes for %s',async role=>{
+   for(const endpoint of ['preview','register']){const call=request(app()).post('/paiements/workflow/refunds/reversals/'+endpoint);
+     if(role)call.set('x-test-role',role);expect((await call.send({refund_id:'12680000-0000-4000-8000-000000000001'})).status).toBe(role?403:401);}
+   expect(mocks.previewReversal).not.toHaveBeenCalled();expect(mocks.registerReversal).not.toHaveBeenCalled();
+ });
+ it('allows the same qualified accountant to correct once and replay without a second actor',async()=>{
+   const correction={refund_id:'12680000-0000-4000-8000-000000000001',preview_hash:body.preview_hash,confirm:true,
+     value_date:body.value_date,booking_date:body.booking_date,reference:body.reference,reason:body.reason};
+   expect((await request(app()).post('/paiements/workflow/refunds/reversals/preview').set('x-test-role','Comptable')
+     .send({refund_id:correction.refund_id})).status).toBe(200);
+   const send=()=>request(app()).post('/paiements/workflow/refunds/reversals/register').set('x-test-role','Comptable')
+     .set('Idempotency-Key','correction-fixture-key').send(correction);
+   expect((await send()).status).toBe(201);
+   expect(mocks.registerReversal).toHaveBeenCalledWith(expect.objectContaining({actor:expect.objectContaining({userId:7}),idempotencyKey:'correction-fixture-key'}));
+   mocks.registerReversal.mockResolvedValue({id:'correction-fixture',idempotent_replay:true});expect((await send()).status).toBe(200);
  });
 });

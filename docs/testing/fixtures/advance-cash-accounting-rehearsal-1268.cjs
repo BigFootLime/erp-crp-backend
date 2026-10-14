@@ -22,7 +22,7 @@ module.exports=async function advanceCashAccounting(pool,database,args){
  const config=accountingMappingConfigSchema.parse({delimiter:';',sales_journal:'VE',credit_journal:'AV',bank_journal_by_mode:{},bank_account_by_mode:{},
    default_bank_journal:'BQ',default_bank_account:'512QUAL',sales_account_by_tax:{'20':'701QUAL'},vat_output_account_by_tax:{'20':'445710QUAL'},
    advance_account_by_tax:{'20':'419100QUAL'},advance_vat_pending_account_by_tax:{'20':'445800QUAL'},default_axes:{}});
- const mapping=await accounting.repoCreateAccountingMapping({actor,idempotencyKey:'qual-advance-cash-map',input:{version_code:'QUAL-ADVANCE-CASH',adapter_code:'GENERIC_DELIMITED_V1',effective_from:date,activate:true,config}});
+ const mapping=await accounting.repoCreateAccountingMapping({actor,idempotencyKey:'qual-advance-cash-map',input:{version_code:'QUAL-ADVANCE-CASH',adapter_code:'GENERIC_DELIMITED_V1',effective_from:date,effective_to:date,activate:true,config}});
  const payments=[],batches=[];
  for(const [index,amount,tax]of[[0,'80.00','13.33'],[1,'40.00','6.67']]){
    const command={actor,idempotencyKey:'qual-advance-cash-payment-'+index,input:registerPaymentBodySchema.parse({client_id:args.billedClientId,

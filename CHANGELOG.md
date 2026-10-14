@@ -1,5 +1,9 @@
 # Changelog
 
+## En développement — Correction des remboursements (#1268)
+
+- Contrepassation complète, montant/société/devise repris de l'original, motif et dates contrôlés, répétition idempotente sans second validateur. Les preuves originales restent immuables ; les soldes économiques retrouvent leurs budgets. L'export inverse les comptes/journal/axes d'origine malgré un nouveau paramétrage, et conserve leur export. Original non exporté et correction peuvent partir ensemble. 8 027 tests et build strict passent ; deux corrections/replays, doublons, remplacement des remboursements et soldes bancaires/client/TVA finaux nuls qualifiés sur PostgreSQL 17 isolé. Écran de correction, contrepassation des encaissements, déploiement et recette réelle restent ouverts.
+
 ## En développement — Avoirs d’acompte monétaires (#1268)
 
 - Sélection HT exacte sur une facture386 qualifiée, TVA cumulative d’origine et aucune consommation physique de pièces. Contrat conservé pour les avoirs par quantité ; brouillons et avoirs émis partagent leurs budgets, preuves et rollback protégés. 8006tests et build strict passent ; trois brouillons/replays PostgreSQL17 isolés totalisent100HT/20TVA, double réservation et quantité physique frauduleuse refusées. États fiscaux initiaux simulés ; recette réelle et reste du lot Finance non terminés.

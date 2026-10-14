@@ -15,8 +15,11 @@ import {
   registerPaymentWorkflow,
 } from "../controllers/payment-workflow.controller";
 import { previewCustomerRefund, registerCustomerRefund } from "../controllers/customer-refund.controller";
+import { previewCustomerRefundReversal,reverseCustomerRefund } from "../controllers/customer-refund-reversal.controller";
 
 const router = Router();
+router.post("/workflow/refunds/reversals/preview", requireFinanceCapability("payment_allocate"), previewCustomerRefundReversal);
+router.post("/workflow/refunds/reversals/register", requireFinanceCapability("payment_register"), requireFinanceCapability("payment_allocate"), reverseCustomerRefund);
 router.post("/workflow/refunds/preview", requireFinanceCapability("payment_allocate"), previewCustomerRefund);
 router.post("/workflow/refunds/register", requireFinanceCapability("payment_register"), requireFinanceCapability("payment_allocate"), registerCustomerRefund);
 

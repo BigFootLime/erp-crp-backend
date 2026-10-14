@@ -18,7 +18,7 @@ async function refundOrigins(tx: Queryer,invoiceId:number):Promise<RefundOrigin[
   return (await tx.query<RefundOrigin>(`
     WITH origins AS (
       SELECT 'INVOICE_ALLOCATION'::text AS origin_type,a.id::text AS origin_id,p.id AS payment_id,a.id AS payment_allocation_id,
-        greatest(0,a.amount_ttc-COALESCE((SELECT sum(r.amount_ttc) FROM public.customer_refund_sources r WHERE r.origin_type='INVOICE_ALLOCATION' AND r.origin_id=a.id::text),0)
+        greatest(0,a.amount_ttc-COALESCE((SELECT sum(r.amount_ttc) FROM public.customer_refund_sources_effective_1268 r WHERE r.origin_type='INVOICE_ALLOCATION' AND r.origin_id=a.id::text),0)
           -COALESCE((SELECT sum(applied.amount_ttc) FROM public.proforma_final_prepayments applied
             JOIN public.proforma_receipt_assignments receipt ON receipt.id=applied.receipt_assignment_id
             JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
@@ -26,11 +26,11 @@ async function refundOrigins(tx: Queryer,invoiceId:number):Promise<RefundOrigin[
       FROM public.paiement_allocations a JOIN public.paiement p ON p.id=a.paiement_id WHERE a.facture_id=$1
       UNION ALL
       SELECT 'INVOICE_DIRECT',p.id::text,p.id,NULL::uuid,greatest(0,p.montant-COALESCE((SELECT sum(amount_ttc)
-        FROM public.customer_refund_sources WHERE origin_type='INVOICE_DIRECT' AND origin_id=p.id::text),0))
+        FROM public.customer_refund_sources_effective_1268 WHERE origin_type='INVOICE_DIRECT' AND origin_id=p.id::text),0))
       FROM public.paiement p WHERE p.facture_id=$1 AND NOT EXISTS(SELECT 1 FROM public.paiement_allocations WHERE paiement_id=p.id)
       UNION ALL
       SELECT 'APPLIED_ADVANCE',applied.id::text,p.id,a.id,greatest(0,applied.amount_ttc-COALESCE((SELECT sum(amount_ttc)
-        FROM public.customer_refund_sources WHERE origin_type='APPLIED_ADVANCE' AND origin_id=applied.id::text),0))
+        FROM public.customer_refund_sources_effective_1268 WHERE origin_type='APPLIED_ADVANCE' AND origin_id=applied.id::text),0))
       FROM public.proforma_final_prepayments applied JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
       JOIN public.proforma_receipt_assignments receipt ON receipt.id=applied.receipt_assignment_id
       JOIN public.paiement_allocations a ON a.id=receipt.payment_allocation_id JOIN public.paiement p ON p.id=a.paiement_id
@@ -38,9 +38,9 @@ async function refundOrigins(tx: Queryer,invoiceId:number):Promise<RefundOrigin[
     ) SELECT origins.origin_type,origins.origin_id,p.id::int AS payment_id,origins.payment_allocation_id::text,
       COALESCE(p.code,'PAY-'||p.id::text) AS payment_number,COALESCE(p.value_date,p.date_paiement)::text AS value_date,p.mode,
       origins.source_available::numeric(18,2)::text,
-      greatest(0,p.montant-COALESCE((SELECT sum(amount_ttc) FROM public.customer_refund_sources WHERE paiement_id=p.id),0))::numeric(18,2)::text AS payment_available,
+      greatest(0,p.montant-COALESCE((SELECT sum(amount_ttc) FROM public.customer_refund_sources_effective_1268 WHERE paiement_id=p.id),0))::numeric(18,2)::text AS payment_available,
       CASE WHEN a.id IS NULL THEN NULL ELSE greatest(0,a.amount_ttc-COALESCE((SELECT sum(amount_ttc)
-        FROM public.customer_refund_sources WHERE payment_allocation_id=a.id),0))::numeric(18,2)::text END AS allocation_available
+        FROM public.customer_refund_sources_effective_1268 WHERE payment_allocation_id=a.id),0))::numeric(18,2)::text END AS allocation_available
     FROM origins JOIN public.paiement p ON p.id=origins.payment_id LEFT JOIN public.paiement_allocations a ON a.id=origins.payment_allocation_id
     JOIN public.facture invoice ON invoice.id=$1
     WHERE origins.source_available>0 AND p.client_id=invoice.client_id AND p.currency=invoice.currency
@@ -50,7 +50,7 @@ async function refundOrigins(tx: Queryer,invoiceId:number):Promise<RefundOrigin[
 
 async function buildRefundPreview(tx: Queryer,input: CustomerRefundPreviewDTO) {
   const credit=(await tx.query<Credit>(`SELECT a.id::int,a.uuid::text,a.facture_id::int,a.client_id,upper(a.currency) AS currency,a.statut,
-    a.total_ttc::numeric(18,2)::text AS amount,COALESCE((SELECT sum(amount_ttc) FROM public.customer_refunds WHERE avoir_id=a.id),0)::numeric(18,2)::text AS refunded
+    a.total_ttc::numeric(18,2)::text AS amount,COALESCE((SELECT sum(amount_ttc) FROM public.customer_refunds_effective_1268 WHERE avoir_id=a.id),0)::numeric(18,2)::text AS refunded
     FROM public.avoir a WHERE a.id=$1`,[input.avoir_id])).rows[0];
   if (!credit) throw new HttpError(404,"AVOIR_NOT_FOUND","Avoir introuvable.");
   if (!["ISSUED","emis","emise","envoyee"].includes(credit.statut)) throw new HttpError(409,"CUSTOMER_REFUND_CREDIT_NOT_ISSUED","Émettez l’avoir avant d’enregistrer son remboursement.");

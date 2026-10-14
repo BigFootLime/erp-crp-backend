@@ -5,7 +5,7 @@ import { canonicalJson } from "../facturation/domain/finance-policy";
 import { divideHalfUp, formatDecimal, moneyToCents, parseDecimal } from "../facturation/domain/decimal-money";
 
 export const ACCOUNTING_EXPORT_ADAPTER = "GENERIC_DELIMITED_V1" as const;
-export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT", "SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE", "ADVANCE_VAT", "CUSTOMER_REFUND"] as const;
+export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT", "SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE", "ADVANCE_VAT", "CUSTOMER_REFUND", "CUSTOMER_REFUND_REVERSAL"] as const;
 export type AccountingSourceType = (typeof ACCOUNTING_SOURCE_TYPES)[number];
 
 export type AccountingMappingConfig = {
@@ -59,6 +59,8 @@ export type AccountingSourceDocument = {
   advance_vat_snapshot?: import("../facturation/domain/advance-vat").AdvanceVatSnapshot | null;
   advance_clearing?: import("../facturation/domain/advance-clearing").AdvanceClearingSnapshot;
   advance_credit_vat?: import("../facturation/domain/advance-credit-vat").AdvanceCreditVatSnapshot;
+  refund_reversal_of_id?:string;
+  refund_reversal_entries?:Array<Pick<AccountingEntryLine,"journal_code"|"account_number"|"third_party_account"|"currency"|"debit"|"credit"|"tax_rate"|"axes">>;
 };
 
 export type AccountingEntryLine = {
@@ -127,7 +129,7 @@ function validateSourceTotals(source: AccountingSourceDocument): AccountingFindi
   const exTax = moneyToCents(source.total_ex_tax, "Total HT");
   const tax = moneyToCents(source.total_tax, "Total TVA");
   const inclTax = moneyToCents(source.total_incl_tax, "Total TTC");
-  if (source.source_type === "PAYMENT" || source.source_type === "CUSTOMER_REFUND") {
+  if (source.source_type === "PAYMENT" || source.source_type === "CUSTOMER_REFUND" || source.source_type === "CUSTOMER_REFUND_REVERSAL") {
     if (inclTax <= 0n) {
       findings.push({
         severity: "BLOCKER",
@@ -185,7 +187,7 @@ function sourceLines(
       source_id: source.source_id,
     });
   }
-  if (!source.third_party_account?.trim()) {
+  if (!source.third_party_account?.trim() && !(source.source_type==="CUSTOMER_REFUND_REVERSAL" && source.refund_reversal_entries?.length)) {
     findings.push({
       severity: "BLOCKER",
       code: "ACCOUNTING_THIRD_PARTY_ACCOUNT_MISSING",
@@ -218,6 +220,23 @@ function sourceLines(
   const lines: AccountingEntryLine[] = [];
   const push = (line: Omit<AccountingEntryLine, "line_no">) => lines.push({ ...line, line_no: firstLine + lines.length });
   if(source.financial_context_error)return{lines,findings};
+
+  if(source.source_type==="CUSTOMER_REFUND_REVERSAL"){
+    const original=source.refund_reversal_entries;
+    const amount=moneyToCents(source.total_incl_tax);
+    if(!original?.length || original.some(line=>line.currency!==source.currency || !line.account_number.trim() || !line.journal_code.trim()
+      || line.tax_rate!==null || moneyToCents(line.debit)<0n || moneyToCents(line.credit)<0n
+      || (moneyToCents(line.debit)===0n)===(moneyToCents(line.credit)===0n))
+      || original.reduce((sum,line)=>sum+moneyToCents(line.debit),0n)!==amount
+      || original.reduce((sum,line)=>sum+moneyToCents(line.credit),0n)!==amount){
+      findings.push({severity:"BLOCKER",code:"ACCOUNTING_REFUND_REVERSAL_ORIGINAL_REQUIRED",
+        message:`${source.source_number}: incluez le remboursement d'origine ou son export comptable conservé.`,source_type:source.source_type,source_id:source.source_id});
+      return{lines,findings};
+    }
+    for(const line of original)push({...common,journal_code:line.journal_code,account_number:line.account_number,
+      third_party_account:line.third_party_account,currency:line.currency,debit:line.credit,credit:line.debit,tax_rate:null,axes:line.axes});
+    return{lines,findings};
+  }
 
   if (source.source_type === "ADVANCE_VAT") {
     if (!source.advance_vat_snapshot || ![1, 2].includes(source.advance_vat_snapshot.version)) {
@@ -426,7 +445,15 @@ export function buildAccountingPreview(
 ): AccountingPreview {
   const lines: AccountingEntryLine[] = [];
   const findings: AccountingFinding[] = [];
-  for (const source of [...sources].sort((a, b) =>
+  const prepared=sources.map(source=>{
+    if(source.source_type!=="CUSTOMER_REFUND_REVERSAL" || source.refund_reversal_entries?.length)return source;
+    const original=sources.find(item=>item.source_type==="CUSTOMER_REFUND" && item.source_id===source.refund_reversal_of_id);
+    if(!original)return source;
+    const built=sourceLines(original,mapping,1);
+    if(built.findings.some(item=>item.severity==="BLOCKER"))return source;
+    return{...source,refund_reversal_entries:built.lines};
+  });
+  for (const source of [...prepared].sort((a, b) =>
     `${a.entry_date}:${a.source_type}:${a.source_number}:${a.source_id}`.localeCompare(
       `${b.entry_date}:${b.source_type}:${b.source_number}:${b.source_id}`
     )

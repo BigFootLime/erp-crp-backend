@@ -55,4 +55,5 @@ module.exports=async function qualifyCustomerRefund(pool,database,args){
    advanceVatCorrections:['10.00','10.00'],actualRefundCommands:2,refundReplays:2,refundTotal:'120.00',guidedCashOrigins:true,
    generatedCreditRefundBatches:2,bankAfterFullRefund:'0.00',advancesAfterFullRefund:'0.00',vatAfterFullRefund:'0.00',customerBalance:'0.00',
    duplicateRefundRefused:true,refundEvidenceImmutable:true,creditFiscalIssuance:'explicit simulated storage',externalCash:false,uiRecipe:false,businessRecipePassed:false}));
+ await require('./customer-refund-reversal-rehearsal-1268.cjs')(pool,database,{...args,refundId:created[1]});
 };

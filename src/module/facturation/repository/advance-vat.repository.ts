@@ -55,7 +55,7 @@ export async function freezeAdvanceVat(tx: Pick<PoolClient, "query">, args: {
     const credits = (await tx.query<{ snapshot: Record<string, unknown>; net: string; tax: string; gross: string }>(`
       SELECT immutable_snapshot AS snapshot,total_ht::text AS net,total_tax::text AS tax,total_ttc::text AS gross
       FROM public.avoir WHERE facture_id=$1 AND statut IN('ISSUED','emis','emise','envoyee') ORDER BY id`, [args.invoiceId])).rows;
-    const refunds = (await tx.query<{ amount: string }>(`SELECT COALESCE(sum(amount_ttc),0)::text AS amount FROM public.customer_refunds WHERE facture_id=$1`, [args.invoiceId])).rows[0];
+    const refunds = (await tx.query<{ amount: string }>(`SELECT COALESCE(sum(amount_ttc),0)::text AS amount FROM public.customer_refunds_effective_1268 WHERE facture_id=$1`, [args.invoiceId])).rows[0];
     return planAdjustedAdvanceVat({ invoiceId: args.invoiceId, invoiceSha256: invoice.immutable_checksum,
       invoiceGross: invoice.total_incl_tax, allocationAmount: args.amount,
       originalTax: tax.entries.map(group => ({ tax_rate: group.rate_percent, tax_amount: group.tax_amount })), prior: prior.map(row => row.snapshot!),

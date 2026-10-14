@@ -27,14 +27,14 @@ describe("monetary draft commit conflicts",()=>{
  it("rolls back a deferred budget conflict and returns an actionable business 409",async()=>{
   mocks.commitError={code:"23514",message:"ADVANCE-AMOUNT-1268 cumulative draft and issued credits exceed the original line budget"};
   const preview=await repoPreviewAvoir(input);
-  await expect(repoCreateAvoirDraft({actor:{userId:7},idempotencyKey:"fixture-amount-key",input:{...input,preview_hash:preview.preview_hash}}))
+  await expect(repoCreateAvoirDraft({actor:{userId:7,requestId:'amount-conflict-fixture',path:'/qualification/credits'},idempotencyKey:"fixture-amount-key",input:{...input,preview_hash:preview.preview_hash}}))
    .rejects.toMatchObject({status:409,code:"AVOIR_ADVANCE_AMOUNT_CONFLICT"});
   expect(mocks.query.mock.calls.some(([sql])=>sql==="ROLLBACK")).toBe(true);expect(mocks.release).toHaveBeenCalledOnce();
  });
  it("keeps an unrelated failure visible to the server error handler",async()=>{
   mocks.commitError=new Error("Unrelated commit transport failure");
   const preview=await repoPreviewAvoir(input);
-  await expect(repoCreateAvoirDraft({actor:{userId:7},idempotencyKey:"fixture-amount-key",input:{...input,preview_hash:preview.preview_hash}})).rejects.toBe(mocks.commitError);
+  await expect(repoCreateAvoirDraft({actor:{userId:7,requestId:'amount-conflict-fixture',path:'/qualification/credits'},idempotencyKey:"fixture-amount-key",input:{...input,preview_hash:preview.preview_hash}})).rejects.toBe(mocks.commitError);
   expect(mocks.release).toHaveBeenCalledOnce();
  });
 });

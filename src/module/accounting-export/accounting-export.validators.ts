@@ -53,9 +53,9 @@ export const createAccountingPreviewSchema = z.object({
   mapping_version_id: z.string().uuid(),
   period_from: isoDate,
   period_to: isoDate,
-  source_types: z.array(z.enum(ACCOUNTING_SOURCE_TYPES)).min(1).max(7)
+  source_types: z.array(z.enum(ACCOUNTING_SOURCE_TYPES)).min(1).max(8)
     .refine((values) => new Set(values).size === values.length, "Types source dupliqués.")
-    .transform(values => values.includes("PAYMENT") ? [...new Set([...values,"ADVANCE_VAT" as const,"CUSTOMER_REFUND" as const])] : values),
+    .transform(values => values.includes("PAYMENT") ? [...new Set([...values,"ADVANCE_VAT" as const,"CUSTOMER_REFUND" as const,"CUSTOMER_REFUND_REVERSAL" as const])] : values),
   only_unexported: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (value.period_to < value.period_from) {

@@ -293,6 +293,30 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
       WHERE r.booking_date BETWEEN $1::date AND $2::date ORDER BY r.booking_date,r.id`,[input.period_from,input.period_to]);
     rows.push(...result.rows);
   }
+  if (input.source_types.includes("CUSTOMER_REFUND_REVERSAL")) {
+    const result=await client.query<AccountingSourceDocument>(`
+      SELECT 'CUSTOMER_REFUND_REVERSAL'::text AS source_type,reversal.id::text AS source_id,reversal.code AS source_number,
+        to_char(reversal.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_updated_at,
+        reversal.booking_date::text AS entry_date,reversal.client_id,NULLIF(btrim(customer.compte_tiers),'') AS third_party_account,
+        reversal.currency,reversal.mode AS payment_mode,'0.00'::text AS total_ex_tax,'0.00'::text AS total_tax,
+        reversal.amount_ttc::text AS total_incl_tax,'[]'::jsonb AS tax_breakdown,claim.batch_id::text AS claimed_batch_id,
+        reversal.refund_id::text AS refund_reversal_of_id,
+        (SELECT jsonb_agg(jsonb_build_object('journal_code',entry.journal_code,'account_number',entry.account_number,
+          'third_party_account',entry.third_party_account,'currency',entry.currency,
+          'debit',entry.debit::numeric(18,2)::text,'credit',entry.credit::numeric(18,2)::text,'tax_rate',entry.tax_rate,'axes',entry.axes)
+          ORDER BY entry.line_no)
+         FROM public.accounting_export_source_claims original_claim
+         JOIN public.accounting_export_batches original_batch ON original_batch.id=original_claim.batch_id AND original_batch.status='GENERATED'
+         JOIN public.accounting_export_entries entry ON entry.batch_id=original_claim.batch_id
+           AND entry.source_type='CUSTOMER_REFUND' AND entry.source_id=reversal.refund_id::text
+         WHERE original_claim.source_type='CUSTOMER_REFUND' AND original_claim.source_id=reversal.refund_id::text
+           AND original_claim.released_at IS NULL) AS refund_reversal_entries
+      FROM public.customer_refund_reversals reversal JOIN public.clients customer ON customer.client_id=reversal.client_id
+      LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='CUSTOMER_REFUND_REVERSAL'
+        AND claim.source_id=reversal.id::text AND claim.released_at IS NULL
+      WHERE reversal.booking_date BETWEEN $1::date AND $2::date ORDER BY reversal.booking_date,reversal.id`,[input.period_from,input.period_to]);
+    rows.push(...result.rows);
+  }
   return rows.filter(source => !input.only_unexported || !source.claimed_batch_id).map(accountingDocumentTax).map(accountingFinanceKind);
 }
 
@@ -417,6 +441,7 @@ async function runBatchCommand(params: {
     await client.query("BEGIN");
     const receipt = await acquireReceipt({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey, commandType: params.commandType, payload: { batch_id: params.batchId, ...params.body } });
     if (receipt.replay) { await client.query("COMMIT"); return { ...(receipt.replay as unknown as BatchRow), idempotent_replay: true }; }
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const batch = await batchById(client, params.batchId, true);
     if (batch.row_version !== params.body.expected_version) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le lot comptable a changé.");
     const expectedStatus = params.commandType === "ACCOUNTING_EXPORT_VALIDATE" ? "PREVIEWED" : "VALIDATED";
@@ -479,9 +504,15 @@ export async function repoCancelAccountingBatch(params: { batchId: string; body:
     await client.query("BEGIN");
     const receipt = await acquireReceipt({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey, commandType: "ACCOUNTING_EXPORT_CANCEL", payload: { batch_id: params.batchId, ...params.body } });
     if (receipt.replay) { await client.query("COMMIT"); return { ...(receipt.replay as unknown as BatchRow), idempotent_replay: true }; }
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const batch = await batchById(client, params.batchId, true);
     if (batch.row_version !== params.body.expected_version) throw new HttpError(409, "CONCURRENT_MODIFICATION", "Le lot comptable a changé.");
     if (batch.status === "CANCELLED") throw new HttpError(409, "ACCOUNTING_EXPORT_ALREADY_CANCELLED", "Ce lot est déjà annulé.");
+    const correctedRefund=await client.query(`SELECT 1 FROM public.accounting_export_source_claims claim
+      JOIN public.customer_refund_reversals reversal ON reversal.refund_id::text=claim.source_id
+      WHERE claim.batch_id=$1::uuid AND claim.source_type='CUSTOMER_REFUND' AND claim.released_at IS NULL LIMIT 1`,[batch.id]);
+    if(batch.status==='GENERATED' && correctedRefund.rows.length)
+      throw new HttpError(409,"ACCOUNTING_REFUND_ORIGINAL_RETAINED","Ce lot contient un remboursement corrigé. Conservez l'export d'origine et exportez sa contrepassation.");
     await client.query(`UPDATE public.accounting_export_source_claims SET released_at=now(),released_by=$2,release_reason=$3 WHERE batch_id=$1::uuid AND released_at IS NULL`, [batch.id,params.actor.userId,params.body.reason]);
     await client.query(`UPDATE public.accounting_export_batches SET status='CANCELLED',row_version=row_version+1,cancelled_at=now(),cancelled_by=$2,cancellation_reason=$3 WHERE id=$1::uuid`, [batch.id,params.actor.userId,params.body.reason]);
     const result = { ...(await batchById(client, batch.id)), idempotent_replay: false };

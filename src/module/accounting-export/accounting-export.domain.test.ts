@@ -49,6 +49,38 @@ function source(overrides: Partial<AccountingSourceDocument> = {}): AccountingSo
 }
 
 describe("accounting export domain", () => {
+  it("inverts the retained refund posting despite changed accounts and axes", () => {
+    const original=buildAccountingPreview([source({source_type:'CUSTOMER_REFUND',source_id:'refund-1',payment_mode:'VIREMENT',
+      total_ex_tax:'0.00',total_tax:'0.00',tax_breakdown:[]})],mapping);
+    const correction=source({source_type:'CUSTOMER_REFUND_REVERSAL',source_id:'reversal-1',refund_reversal_of_id:'refund-1',
+      total_ex_tax:'0.00',total_tax:'0.00',tax_breakdown:[],third_party_account:null,refund_reversal_entries:original.lines});
+    const changed={...mapping,bank_account_by_mode:{VIREMENT:'512999'},bank_journal_by_mode:{VIREMENT:'NEW'},default_axes:{SITE:'CHANGED'}};
+    const preview=buildAccountingPreview([correction],changed);
+    expect(preview.findings).toEqual([]);
+    expect(preview.lines.map(line=>[line.journal_code,line.account_number,line.third_party_account,line.debit,line.credit,line.axes]))
+      .toEqual(original.lines.map(line=>[line.journal_code,line.account_number,line.third_party_account,line.credit,line.debit,line.axes]));
+    expect(preview.lines.every(line=>line.tax_rate===null)).toBe(true);
+  });
+  it("nets a not-yet-exported refund and its reversal in one batch", () => {
+    const refund=source({source_type:'CUSTOMER_REFUND',source_id:'refund-1',payment_mode:'VIREMENT',total_ex_tax:'0.00',total_tax:'0.00',tax_breakdown:[]});
+    const correction={...refund,source_type:'CUSTOMER_REFUND_REVERSAL' as const,source_id:'reversal-1',refund_reversal_of_id:'refund-1'};
+    const preview=buildAccountingPreview([refund,correction],mapping);
+    expect(preview.findings).toEqual([]);expect(preview.lines).toHaveLength(4);
+    for(const account of ['512100','4110042']) expect(preview.lines.filter(line=>line.account_number===account)
+      .reduce((sum,line)=>sum+Number(line.debit)-Number(line.credit),0)).toBe(0);
+  });
+  it("requires the retained original or the paired original in the batch", () => {
+    const correction=source({source_type:'CUSTOMER_REFUND_REVERSAL',source_id:'reversal-1',refund_reversal_of_id:'refund-1',
+      total_ex_tax:'0.00',total_tax:'0.00',tax_breakdown:[]});
+    expect(buildAccountingPreview([correction],mapping).findings).toContainEqual(expect.objectContaining({code:'ACCOUNTING_REFUND_REVERSAL_ORIGINAL_REQUIRED'}));
+  });
+  it("rejects a partial original posting instead of producing a partial inverse", () => {
+    const refund=source({source_type:'CUSTOMER_REFUND',source_id:'refund-1',payment_mode:'VIREMENT',total_ex_tax:'0.00',total_tax:'0.00',tax_breakdown:[]});
+    const original=buildAccountingPreview([refund],mapping);
+    const correction={...refund,source_type:'CUSTOMER_REFUND_REVERSAL' as const,source_id:'reversal-1',refund_reversal_of_id:'refund-1',refund_reversal_entries:original.lines.slice(0,1)};
+    const preview=buildAccountingPreview([correction],mapping);
+    expect(preview.lines).toHaveLength(0);expect(preview.findings).toContainEqual(expect.objectContaining({code:'ACCOUNTING_REFUND_REVERSAL_ORIGINAL_REQUIRED'}));
+  });
   it("produces a balanced invoice with exact cents and normalized tax mappings", () => {
     const preview = buildAccountingPreview([source()], mapping);
     expect(preview.findings).toEqual([]);

@@ -14,3 +14,14 @@ export const registerCustomerRefundSchema = customerRefundPreviewSchema.extend({
 });
 export type CustomerRefundPreviewDTO = z.infer<typeof customerRefundPreviewSchema>;
 export type RegisterCustomerRefundDTO = z.infer<typeof registerCustomerRefundSchema>;
+
+export const customerRefundReversalPreviewSchema=z.object({refund_id:z.string().uuid()}).strict();
+export const reverseCustomerRefundSchema=customerRefundReversalPreviewSchema.extend({
+  preview_hash:z.string().regex(/^[a-f0-9]{64}$/),confirm:z.literal(true),
+  value_date:date,booking_date:date,reference:z.string().trim().min(1).max(200),
+  reason:z.string().trim().min(8).max(2000),proof_document_id:z.string().uuid().nullable().optional(),
+}).strict().superRefine((input,context)=>{
+  if(input.booking_date<input.value_date)context.addIssue({code:z.ZodIssueCode.custom,path:["booking_date"],message:"La date comptable ne peut pas précéder la date de valeur."});
+});
+export type CustomerRefundReversalPreviewDTO=z.infer<typeof customerRefundReversalPreviewSchema>;
+export type ReverseCustomerRefundDTO=z.infer<typeof reverseCustomerRefundSchema>;

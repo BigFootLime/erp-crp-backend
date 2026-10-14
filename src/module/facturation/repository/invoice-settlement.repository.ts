@@ -89,7 +89,7 @@ export async function lockInvoiceSettlement(
     `
       SELECT
         public.fn_invoice_applied_prepayment_1268(f.id)::numeric(18,2)::text AS applied_prepayment_ttc,
-        COALESCE((SELECT sum(amount_ttc) FROM public.customer_refunds WHERE facture_id=f.id),0)::numeric(18,2)::text AS refunded_ttc,
+        COALESCE((SELECT sum(amount_ttc) FROM public.customer_refunds_effective_1268 WHERE facture_id=f.id),0)::numeric(18,2)::text AS refunded_ttc,
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM public.paiement_allocations pa
