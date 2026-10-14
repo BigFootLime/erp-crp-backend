@@ -13,6 +13,16 @@ export async function assertDirectoryIdentity(db:Queryable,expectedId:string){
  const meta=(await db.query('SELECT directory_id,schema_version,import_mode FROM public.cerp_shared_directory WHERE singleton=true')).rows[0];
  if(meta?.directory_id!==id || meta.schema_version!==1 || meta.import_mode!=='EMPTY_NO_LEGACY_IMPORT')throw new Error('DIRECTORY_SOURCE_MARKER_INVALID');
 }
+export async function assertDirectoryApplicationRole(db:Queryable){
+ const role=(await db.query(`SELECT current_user AS actor,r.rolsuper,r.rolcreatedb,r.rolcreaterole,
+  pg_has_role(r.oid,'cerp_app','MEMBER') AS business_member,
+  has_database_privilege('cerp_app',current_database(),'CONNECT') AS business_connect,
+  EXISTS(SELECT 1 FROM pg_database WHERE datname=current_database() AND datdba=r.oid) OR
+  EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relowner=r.oid) OR
+  EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proowner=r.oid) AS owns_authority_objects
+  FROM pg_roles r WHERE r.rolname=current_user`)).rows[0];
+ if(role?.actor!=='cerp_directory_app'||role.rolsuper||role.rolcreatedb||role.rolcreaterole||role.business_member||role.business_connect||role.owns_authority_objects)throw new Error('DIRECTORY_SOURCE_DATABASE_ROLE_INVALID');
+}
 export async function consumeCallNonce(db:Queryable,nonce:string,expires:Date){
  directoryIdSchema.parse(nonce);
  const inserted=await db.query('INSERT INTO public.cerp_directory_call_nonces(nonce,expires_at) VALUES($1::uuid,$2) ON CONFLICT DO NOTHING RETURNING nonce',[nonce,expires]);

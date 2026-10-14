@@ -34,6 +34,7 @@
   "synthetic_identities_only": true,
   "scanner_fixture_only": true,
   "dedicated_database_role": true,
+  "canonical_cerp_app_fk_and_definer_owners": true,
   "live_prod_changed": false,
   "live_test_changed": false
 }

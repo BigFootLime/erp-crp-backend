@@ -1,11 +1,13 @@
 import {signDirectoryCall} from './call-signature';
 import {directorySessionSchema,siteIdSchema} from './model';
+export const LOCAL_DIRECTORY_ENDPOINT='http://127.0.0.1:8085/internal/directory';
+export const WIREGUARD_DIRECTORY_ENDPOINT='http://10.90.0.2:8086/internal/directory';
 /** The site comes from a verified startup pool, never an HTTP header. */
 export class DirectoryClient {
  private readonly base:string;
  constructor(base:string,private readonly site:string,private readonly key:string){
-  const url=new URL(base);siteIdSchema.parse(site);
-  if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||url.port!=='8085'||url.pathname!=='/internal/directory')throw new Error('DIRECTORY_ENDPOINT_INVALID');
+  siteIdSchema.parse(site);
+  if(base!==LOCAL_DIRECTORY_ENDPOINT&&base!==WIREGUARD_DIRECTORY_ENDPOINT)throw new Error('DIRECTORY_ENDPOINT_INVALID');
   this.base=base;
  }
  async call<T>(operation:string,payload:unknown):Promise<T>{
