@@ -462,7 +462,8 @@ describe("avoir — rendu reel", () => {
     const text = pages[0];
     expect(text).toContain("AV-2026-0007");
     expect(text).toContain("FA-2026-0142");
-    expect(text).toContain("NON_CONFORME");
+    expect(text).toContain("Non-conformité");
+    expect(text).not.toContain("NON_CONFORME");
     expect(text).toContain("Total TTC à créditer");
     expect(text).toContain("Page 1 / 1");
   }, 60_000);

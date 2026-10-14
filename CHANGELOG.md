@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Avoirs partiels : prix/remise/TVA d'origine, budgets et dernier centime repris sans double remise ; quantités et montants déjà crédités contrôlés. Deux ambiguïtés de paramètres SQL à la création corrigées après reproduction PostgreSQL. Empreinte d'aperçu stable après stockage des quantités. Motifs PDF en français et exemple relu. 7 907 tests / 713 fichiers, build et repositories natifs isolés passent ; émission réelle, avoirs déjà payés/remboursements, comptabilité des acomptes et écrans restent ouverts avant déploiement.
+
 - Remise globale et TVA : ventilation documentaire commune figée pour PDF, facture électronique et export comptable. Lectures de brouillon exactes et échéanciers conservés ; prix financiers à quatre décimales, anciens exemplaires/lignes figées inchangés. 7 894 tests / 711 fichiers, build strict et exports comptables réels sur PostgreSQL isolé passent. Comptabilité des acomptes, avoirs partiels, écrans et recette fiscale/métier restent ouverts ; aucun déploiement de ce lot. Référence visuelle commune à tous les exports précisée selon l'OF approuvé.
 
 - Factures finales : affectation des acomptes réellement encaissés, net à payer/échéances cohérents et contrôle des budgets dans PostgreSQL ; aucune seconde entrée de trésorerie. Faits figés repris en PDF et facture électronique. Factures/avoirs au dessin structuré commun, précision des prix conservée, exemples fictifs relus. 7 867 tests et build strict passent ; comptabilité, interface et recette fiscale/métier restent ouverts avant déploiement.

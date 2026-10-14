@@ -83,6 +83,7 @@ export type FinanceDocumentInput = {
   correctedInvoice?: string | null;
   reasonCode?: string | null;
   reason?: string | null;
+  originalGlobalDiscountPercent?:string;
   /** Texte destine au client. Jamais le commentaire interne. */
   customerText?: string | null;
   /** Empreinte de l'instantane immuable, quand le document est emis. */
@@ -94,6 +95,9 @@ function clean(value: unknown): string | null {
   const s = typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : "";
   return s ? s : null;
 }
+
+const creditReasonLabels:Readonly<Record<string,string>>={RETURN:"Retour",QUALITY:"Non-conformité",NON_CONFORME:"Non-conformité",
+  PRICE_CORRECTION:"Correction de prix",QUANTITY_CORRECTION:"Correction de quantité",COMMERCIAL_GESTURE:"Geste commercial",OTHER:"Autre"};
 
 /** Premiere valeur non vide parmi plusieurs cles possibles. L'instantane est libre de forme. */
 function pick(source: FinanceParty, ...keys: string[]): string | null {
@@ -404,7 +408,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       if (isAvoir && clean(input.reason)) {
         ctx.notesSection(
           "Motif",
-          clean(input.reasonCode) ? `${input.reasonCode} — ${input.reason}` : (input.reason as string)
+          creditReasonLabels[clean(input.reasonCode)?.toUpperCase()??""] ? `${creditReasonLabels[clean(input.reasonCode)!.toUpperCase()]} — ${input.reason}` : (input.reason as string)
         );
       }
 
@@ -488,6 +492,9 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
 
       if (clean(input.customerText)) {
         ctx.notes(input.customerText as string);
+      }
+      if (isAvoir && input.originalGlobalDiscountPercent && parseDecimal(input.originalGlobalDiscountPercent,4,"Remise d'origine")>0n) {
+        ctx.notes(`Remise de la facture d’origine comprise dans les lignes : ${rate(input.originalGlobalDiscountPercent)}.`);
       }
 
     }

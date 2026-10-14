@@ -25,6 +25,7 @@ type DraftRow = {
   reason:string|null;
   reason_code:string|null;
   corrected_invoice:string|null;
+  original_global_discount_percent:string|null;
 };
 
 /** Exact values from one repeatable snapshot; tables are a closed internal choice. */
@@ -47,6 +48,7 @@ export async function readFinanceDraftInput(tx:Pick<PoolClient,"query">,kind:"FA
     ${invoice?"record.customer_text":"NULL::text"} AS customer_text,
     ${invoice?"NULL::text":"record.motif"} AS reason,${invoice?"NULL::text":"record.reason_code"} AS reason_code,
     ${invoice?"NULL::text":"(SELECT COALESCE(legal_number,numero) FROM public.facture WHERE id=record.facture_id)"} AS corrected_invoice,
+    ${invoice?"NULL::text":"(SELECT COALESCE(immutable_snapshot->'totals'->>'global_discount_percent',remise_globale::numeric(9,4)::text,'0.0000') FROM public.facture WHERE id=record.facture_id)"} AS original_global_discount_percent,
     ${invoice?"record.date_echeance::text":"NULL::text"} AS fallback_due_date,
     ${invoice?`COALESCE((SELECT jsonb_agg(jsonb_build_object('dueDate',due.due_date::text,'label',due.label,'amount',due.amount_due::numeric(18,2)::text)
       ORDER BY due.due_date,due.id) FROM public.facture_echeance due WHERE due.facture_id=record.id),'[]'::jsonb)`:"'[]'::jsonb"} AS due_dates,
@@ -69,5 +71,6 @@ export async function readFinanceDraftInput(tx:Pick<PoolClient,"query">,kind:"FA
     totals:{subtotalExTax:tax.subtotal_ex_tax,globalDiscountPercent:row.discount_percent,globalDiscountAmount:tax.allowance_ex_tax,
       totalExTax:row.total_ex_tax,totalTax:row.total_tax,totalInclTax:row.total_incl_tax},taxBreakdown:tax,prepayments,
     dueDates:row.due_dates.length?row.due_dates:(row.fallback_due_date?[{dueDate:row.fallback_due_date,label:"Échéance",amount:prepayments?.amount_due??row.total_incl_tax}]:[]),
-    customerText:row.customer_text,reason:row.reason,reasonCode:row.reason_code,correctedInvoice:row.corrected_invoice};
+    customerText:row.customer_text,reason:row.reason,reasonCode:row.reason_code,correctedInvoice:row.corrected_invoice,
+    originalGlobalDiscountPercent:row.original_global_discount_percent??undefined};
 }

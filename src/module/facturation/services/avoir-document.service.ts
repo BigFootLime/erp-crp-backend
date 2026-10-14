@@ -59,6 +59,7 @@ export async function writeImmutableAvoirDocument(
     correctedInvoice: snapshot.facture_number,
     reasonCode: snapshot.reason_code,
     reason: snapshot.reason,
+    originalGlobalDiscountPercent:snapshot.original_global_discount_percent,
     snapshotUuid: snapshot.uuid,
     draftReference: snapshot.draft_reference,
   });

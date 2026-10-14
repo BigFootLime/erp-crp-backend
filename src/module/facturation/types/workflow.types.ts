@@ -118,6 +118,7 @@ export type AvoirPreviewLine = {
   unit: string | null;
   unit_price_ex_tax: string;
   discount_percent: string;
+  original_line_discount_percent?:string;
   tax_rate_percent: string;
   total_ex_tax: string;
   tax_amount: string;
@@ -134,6 +135,7 @@ export type AvoirPreview = {
   reason: string;
   lines: AvoirPreviewLine[];
   tax_breakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
+  original_global_discount_percent?:string;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;

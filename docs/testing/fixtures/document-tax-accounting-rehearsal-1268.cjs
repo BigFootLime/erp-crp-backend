@@ -5,6 +5,8 @@ const accounting=require('../../../dist/module/accounting-export/accounting-expo
 const {accountingMappingConfigSchema}=require('../../../dist/module/accounting-export/accounting-export.validators');
 const {readFinanceDraftInput}=require('../../../dist/module/facturation/services/finance-draft-input');
 const {repoLoadElectronicInvoiceSource}=require('../../../dist/module/facturation/electronic-invoicing/electronic-invoice.repository');
+const {repoPreviewAvoir,repoCreateAvoirDraft}=require('../../../dist/module/facturation/repository/avoir-workflow.repository');
+const {avoirPreviewBodySchema,createAvoirDraftBodySchema}=require('../../../dist/module/facturation/validators/workflow.validators');
 
 /** The fiscal row is an explicit storage fixture. Exercise actual export commands. */
 module.exports=async function qualifyTaxAccounting(pool,database,args){
@@ -65,6 +67,51 @@ module.exports=async function qualifyTaxAccounting(pool,database,args){
   await seed.query('COMMIT');
  }catch(error){await seed.query('ROLLBACK');throw error;}finally{seed.release();}
  await assert.rejects(()=>readFinanceDraftInput(pool,'FACTURE',invoiceId),error=>error.code==='FACTURE_DOCUMENT_IMMUTABLE');
+ const creditInput=avoirPreviewBodySchema.parse({facture_id:invoiceId,reason_code:'QUALITY',reason:'Retour de qualification sans opération réelle',lines:[{facture_line_id:1268501,quantity:'1'}]});
+ const creditPreview=await repoPreviewAvoir(creditInput);
+ assert.equal(creditPreview.totals.total_ex_tax,'95.00');assert.equal(creditPreview.totals.total_tax,'19.00');assert.equal(creditPreview.totals.total_incl_tax,'114.00');
+ assert.equal(creditPreview.lines[0].unit_price_ex_tax,'100.0000');assert.equal(creditPreview.lines[0].discount_percent,'5.0000');
+ assert.equal(creditPreview.original_global_discount_percent,'5.0000');assert.equal(creditPreview.totals.global_discount_amount,'0.00');
+ const creditArgs={actor,idempotencyKey:'qual1268-original-discount-credit',input:createAvoirDraftBodySchema.parse({...creditInput,preview_hash:creditPreview.preview_hash})};
+ const credit=await repoCreateAvoirDraft(creditArgs),creditReplay=await repoCreateAvoirDraft(creditArgs);
+ assert.equal(creditReplay.id,credit.id);assert.equal(creditReplay.idempotent_replay,true);
+ const creditSource=(await pool.query('SELECT quantity_selected::text AS quantity,amount_ttc::numeric(18,2)::text AS amount FROM public.avoir_source_allocations WHERE avoir_id=$1',[credit.id])).rows[0];
+ assert.equal(creditSource.amount,'114.00');
+ const restoredPreview=await repoPreviewAvoir({...creditInput,lines:[{facture_line_id:1268501,quantity:creditSource.quantity}]});
+ assert.equal(restoredPreview.preview_hash,creditPreview.preview_hash);
+ const storedCredit=await readFinanceDraftInput(pool,'AVOIR',credit.id);
+ assert.equal(storedCredit.totals.totalInclTax,'114.00');assert.equal(storedCredit.originalGlobalDiscountPercent,'5.0000');
+ const repeatedId=1268531,repeatedLine=1268531;
+ await pool.query(`INSERT INTO public.facture(id,numero,client_id,statut,total_ht,total_tax,total_ttc,currency,date_emission,remise_globale)
+   VALUES($1,'QUAL-CREDIT-THIRDS',$2,'DRAFT',95,19,114,'EUR','2026-08-20',5)`,[repeatedId,args.billedClientId]);
+ await pool.query(`INSERT INTO public.facture_ligne(id,facture_id,ordre,designation,quantite,unite,prix_unitaire_ht,remise_ligne,taux_tva,total_ht,tax_amount,total_ttc)
+   VALUES($1,$2,1,'Trois pièces de qualification',3,'pce',33.33,0,20,100,20,120)`,[repeatedLine,repeatedId]);
+ const repeatedSnapshot={synthetic_fiscal_storage_fixture:true,totals:{global_discount_percent:'5.0000'},lines:[{quantity:'3.000',unit_price_ex_tax:'33.3333',discount_percent:'0.0000',
+   tax_rate_percent:'20.0000',total_ex_tax:'100.00',tax_amount:'20.00',total_incl_tax:'120.00'}]};
+ await pool.query(`UPDATE public.facture SET statut='ISSUED',document_status='ISSUED',legal_number='QUAL-CREDIT-THIRDS-NO-SEQUENCE',
+   issued_at=now(),issued_by=7,immutable_snapshot=$2::jsonb,document_checksum_sha256=repeat('f',64),row_version=2 WHERE id=$1`,[repeatedId,JSON.stringify(repeatedSnapshot)]);
+ const thirds=[];
+ for(let index=0;index<3;index++){
+  const selection=avoirPreviewBodySchema.parse({facture_id:repeatedId,reason_code:'QUALITY',reason:'Retour partiel de qualification',lines:[{facture_line_id:repeatedLine,quantity:'1.000'}]});
+  const preview=await repoPreviewAvoir(selection);assert.equal(preview.lines[0].unit_price_ex_tax,'33.3333');
+  thirds.push([preview.totals.total_ex_tax,preview.totals.total_tax,preview.totals.total_incl_tax]);
+  const created=await repoCreateAvoirDraft({actor,idempotencyKey:'qual1268-credit-third-'+index,input:createAvoirDraftBodySchema.parse({...selection,preview_hash:preview.preview_hash})});
+  // Simulate only the existing consumed-credit fiscal storage. This does not
+  // invoke legal issuance, numbering, validation, document writing or payment.
+  const consume=await pool.connect();try{
+   await consume.query('BEGIN');
+   await consume.query("UPDATE public.avoir_source_allocations SET allocation_status='CONSUMED',quantity_credited=quantity_selected,consumed_at=now(),consumed_by=7 WHERE avoir_id=$1",[created.id]);
+   await consume.query(`UPDATE public.avoir SET statut='ISSUED',legal_number=$2,issued_at=now(),issued_by=7,immutable_snapshot=$3::jsonb,
+     document_checksum_sha256=repeat('a',64),row_version=2 WHERE id=$1`,[created.id,'QUAL-CREDIT-THIRD-'+index,JSON.stringify({synthetic_fiscal_storage_fixture:true,lines:preview.lines,totals:preview.totals})]);
+   await consume.query('COMMIT');
+  }catch(error){await consume.query('ROLLBACK');throw error;}finally{consume.release();}
+ }
+ assert.deepEqual(thirds,[['31.67','6.33','38.00'],['31.66','6.34','38.00'],['31.67','6.33','38.00']]);
+ const consumed=(await pool.query(`SELECT sum(credit_line.total_ht)::numeric(18,2)::text AS net,sum(credit_line.tax_amount)::numeric(18,2)::text AS tax,
+   sum(source.amount_ttc)::numeric(18,2)::text AS gross FROM public.avoir_source_allocations source JOIN public.avoir_ligne credit_line ON credit_line.id=source.avoir_line_id
+   WHERE source.facture_id=$1 AND source.allocation_status='CONSUMED'`,[repeatedId])).rows[0];
+ assert.deepEqual(consumed,{net:'95.00',tax:'19.00',gross:'114.00'});
+ await assert.rejects(()=>repoPreviewAvoir(avoirPreviewBodySchema.parse({facture_id:repeatedId,reason_code:'QUALITY',reason:'Refus du quatrième retour',lines:[{facture_line_id:repeatedLine,quantity:'1'}]})),error=>error.code==='AVOIR_QUANTITY_EXCEEDS_REMAINING');
  const config={delimiter:';',sales_journal:'VE',credit_journal:'AV',bank_journal_by_mode:{},bank_account_by_mode:{},default_bank_journal:null,default_bank_account:null,
   sales_account_by_tax:{'20':'70120','5.5':'70155'},vat_output_account_by_tax:{'20':'4457120','5.5':'4457155'},default_axes:{}};
  const mapping=await accounting.repoCreateAccountingMapping({actor,idempotencyKey:'qual1268-tax-mapping',input:{version_code:'QUAL1268-TAX',
@@ -93,5 +140,9 @@ module.exports=async function qualifyTaxAccounting(pool,database,args){
   idempotentReplay:true,duplicateExportBlocked:true,claims:1,fiscalInvoice:'synthetic storage fixture',
   exactDraftReader:true,unitPriceRetained:'0.0250',multipleInstallmentsRetained:true,issuedDraftRegenerationRefused:true,
   creditPriceAndPercentagesRetained:true,legacyIssuedSnapshotPriceRetained:true,
+  actualCreditPreviewAndDraft:true,originalCreditAllowanceIncludedOnce:true,creditSourceAmount:'114.00',creditDraftReplay:true,
+  successiveCreditRepositoryAmounts:thirds,fourthCreditRefused:true,originalCreditPriceFromSnapshot:true,
+  creditInputsValidatedByApiSchemas:true,
+  creditPreviewHashStableAfterStorage:true,
   actualFiscalIssuance:false,externalAccountingImport:false,uiRecipe:false,businessRecipePassed:false}));
 };
