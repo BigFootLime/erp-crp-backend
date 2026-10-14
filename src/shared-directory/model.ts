@@ -13,6 +13,7 @@ export const privateOwnerSeedSchema=z.object({
 export const directoryProfileSchema=z.object({
  profile_id:z.string().uuid(),source_user_id:z.number().int().positive(),database:siteIdSchema,
  username:z.string(),name:z.string(),surname:z.string(),email:z.string().nullable(),avatar_key:z.string().nullable(),avatar_asset_id:z.string().uuid().nullable(),
+ tel_no:z.string().nullable().default(null),
  role:z.string(),roles:z.array(z.string()),is_superadmin:z.boolean(),status:z.enum(['Active','Inactive','Blocked','Suspended']),
  job_title:z.string().nullable(),employment_type:z.string().nullable(),weekly_hours_target:z.number().nullable(),work_profile_incomplete:z.boolean(),
  mfa_reenrollment_required:z.boolean(),

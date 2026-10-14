@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé — Mon compte et avatar (#1338 / frontend #1582)
+
+- API personnelle strictement limitée au compte connecté : nom/prénom, email, téléphone et avatar prédéfini ; annuaire partagé et audit conservés. Retour possible d’une image importée à un personnage, sans effacer les médias historiques.
+- Aucun champ de droits, contrat, mot de passe ou MFA modifiable dans ce parcours. Aucun changement de schéma ou dépendance ; livraison coordonnée avec le frontend.
+
 ## Préparé pour livraison commune — CERP 2.0 (#1577 / #1331)
 
 - Intégration commune avec inscription, paramétrage et annuaire partagé (#1563/#1568). Droits applicatifs minimaux corrigés sur les tables de suivi du démarrage ; les quatre migrations sont appliquées, rejouées et vérifiées sous cerp_app sur un clone de schéma isolé, sans données métier.
