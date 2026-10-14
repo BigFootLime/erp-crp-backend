@@ -15,6 +15,7 @@ import {mountDirectoryPasswords} from './password.operations';
 import {mountDirectoryAdmin} from './admin.operations';
 import {mountDirectoryCompany} from './company.operations';
 import {mountDirectoryAvatars} from './avatar.operations';
+import {mountDirectorySelfProfile} from './self-profile.operations';
 import {directoryProfileForSite} from './admin.repository';
 const sessionInput=z.object({directory_session:z.string().max(100)}).strict();
 const authMeta=z.object({ip:z.string().max(80).nullable(),user_agent:z.string().max(512).nullable(),device_type:z.string().max(80).nullable(),os:z.string().max(80).nullable(),browser:z.string().max(80).nullable()}).strict();
@@ -93,6 +94,7 @@ export function createDirectoryServer(options:Options){
  mountDirectoryAdmin(app,options.db,wrap);
  mountDirectoryCompany(app,options.db,wrap);
  mountDirectoryAvatars(app,options.db,wrap);
+ mountDirectorySelfProfile(app,options.db,wrap);
  app.use((_req,res)=>res.status(404).json({code:'DIRECTORY_OPERATION_UNKNOWN',message:'Opération annuaire inconnue.'}));
  app.use((error:unknown,_req:express.Request,res:express.Response,_next:express.NextFunction)=>{
   const e=error as Error&{status?:number;code?:string};

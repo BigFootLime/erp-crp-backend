@@ -91,6 +91,30 @@ async function main(){
   await synchronizeDirectoryCompany(secondPool,sessionB.directory_session);check('same company UUID and legal history in second Test',(await secondPool.query('SELECT biller_id FROM factureur')).rows[0].biller_id===saved.biller_id&&(await secondPool.query('SELECT count(*) n FROM finance_legal_mentions')).rows[0].n==='1');
  }finally{await secondPool.end();}
  await site.initializeSharedDirectorySite(sitePool,{CERP_SHARED_DIRECTORY_ENABLED:'true',CERP_SHARED_DIRECTORY_SITE:siteA,CERP_SHARED_DIRECTORY_ID:directoryId,CERP_DIRECTORY_SITE_CALL_KEY:keys.get(siteA)});
+ const securitySql=`SELECT u.password,u.role,u.status,u.mfa_reenrollment_required,
+  coalesce(e.session_epoch,0)::text AS epoch,
+  (SELECT jsonb_agg(to_jsonb(m) ORDER BY m.database_id) FROM cerp_directory_memberships m WHERE m.profile_id=p.profile_id) AS memberships,
+  (SELECT jsonb_agg(jsonb_build_object('id',f.id,'version',f.version,'state',f.state) ORDER BY f.id) FROM user_mfa_factors f WHERE f.user_id=u.id) AS factors
+  FROM users u JOIN cerp_directory_profiles p ON p.user_id=u.id LEFT JOIN realtime_session_epochs e ON e.user_id=u.id WHERE u.id=$1`;
+ const securityBefore=JSON.stringify((await sourceDb.query(securitySql,[sessionA.identity.source_user_id])).rows[0]);
+ const ownInput={name:'  fixture family  ',surname:' élise ',email:`self.${nonce}@example.invalid`,tel_no:'+33 6 12 34 56 78'};
+ await clientA.call('profile-self-update',{directory_session:sessionA.directory_session,input:ownInput,meta});
+ const updatedA=await clientA.validate(sessionA.directory_session),updatedB=await clientB.validate(sessionB.directory_session);
+ check('own personal identity and contact normalize at common authority',updatedA.name==='FIXTURE FAMILY'&&updatedA.surname==='ÉLISE'&&updatedA.email===ownInput.email&&updatedA.tel_no==='+33612345678');
+ check('same personal profile visible immediately on a second base',updatedB.name===updatedA.name&&updatedB.email===updatedA.email&&updatedB.tel_no===updatedA.tel_no);
+ await site.projectDirectoryIdentity(sitePool,updatedA);
+ const ownLocal=await require('../../src/module/auth/repository/self-profile.repository').readSelfProfile(local.id);
+ check('own profile exposes canonical contact despite retained legacy email collision',ownLocal.username===seed.profile.username&&ownLocal.email===updatedA.email&&ownLocal.name===updatedA.name&&ownLocal.tel_no===updatedA.tel_no);
+ for(const input of [{role:'Administrateur Systeme et Reseau'},{is_superadmin:true},{profile_id:invited.profile.profile_id},{mfa_reenrollment_required:true}])await clientA.call('profile-self-update',{directory_session:sessionA.directory_session,input,meta}).then(()=>check('own profile rejects target or privileged fields',false),e=>check('own profile rejects target or privileged fields',e.status===400));
+ await clientB.call('profile-self-update',{directory_session:sessionA.directory_session,input:{name:'CROSS SITE'},meta}).then(()=>check('personal update rejects cross-site session',false),e=>check('personal update rejects cross-site session',e.status===401));
+ await clientA.call('profile-self-update',{directory_session:sessionA.directory_session,input:{email:invited.profile.email},meta}).then(()=>check('personal email collision preserves existing profiles',false),e=>check('personal email collision preserves existing profiles',e.status===409&&e.code==='PROFILE_EMAIL_IN_USE'));
+ await clientA.call('profile-self-update',{directory_session:sessionA.directory_session,input:{avatar_key:'programmer'},meta});
+ const preset=await clientB.validate(sessionB.directory_session);
+ check('selecting a preset replaces uploaded avatar on all bases',preset.avatar_key==='programmer'&&preset.avatar_asset_id===null);
+ await clientA.call('profile-self-update',{directory_session:sessionA.directory_session,input:{avatar_key:'programmer'},meta});
+ check('repeated personal save does not duplicate audit',(await sourceDb.query("SELECT count(*)::int n FROM erp_audit_logs WHERE action='AUTH_SELF_PROFILE_UPDATED'")).rows[0].n===2);
+ check('personal changes preserve roles memberships password and MFA',JSON.stringify((await sourceDb.query(securitySql,[sessionA.identity.source_user_id])).rows[0])===securityBefore);
+ check('personal change never modifies another account',(await sourceDb.query('SELECT email FROM users WHERE id=$1',[invited.profile.source_user_id])).rows[0].email===invited.profile.email);
  const {synchronizeDirectoryActor}=require('../../src/shared-directory/actor.runtime');check('legacy PIN actor without approved UUID is rejected',await synchronizeDirectoryActor(sitePool,1)===null);
  const input={username:'TEST_ONLY_FIXTURE',name:'FIXTURE',surname:'MEMBER',email:`test.${nonce}@example.invalid`,password:secret,avatar_key:'duck',weekly_hours_target:35,daily_hours_target:7,day_start:'08:00',day_end:'16:00',break_minutes:60,working_days:[1,2,3,4,5]};
  const created=await clientA.call('register',{input,key:crypto.randomUUID(),meta});check('public registration still starts with MFA',created.status==='mfa_enrollment_required');

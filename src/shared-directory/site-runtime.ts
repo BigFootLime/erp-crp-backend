@@ -62,6 +62,7 @@ export async function projectDirectoryProfile(db:Pool,raw:DirectoryProfile,assur
     AND (directory_username,name,surname,directory_email,role,is_superadmin,avatar_key,status) IS DISTINCT FROM ($2,$3,$4,$5,$6,$7,$8,$10)`,[row.id,identity.username,identity.name,identity.surname,identity.email,identity.role,identity.is_superadmin,identity.avatar_key,identity.profile_id,identity.status]);
   }
   await tx.query('UPDATE public.users SET directory_avatar_asset_id=$2::uuid WHERE id=$1 AND directory_avatar_asset_id IS DISTINCT FROM $2::uuid',[row.id,identity.avatar_asset_id]);
+  await tx.query('UPDATE public.users SET tel_no=$2 WHERE id=$1 AND tel_no IS DISTINCT FROM $2',[row.id,identity.tel_no]);
   await tx.query('UPDATE public.users SET mfa_reenrollment_required=$2 WHERE id=$1 AND mfa_reenrollment_required IS DISTINCT FROM $2',[row.id,identity.mfa_reenrollment_required]);
   const metadata={job_title:identity.job_title,employment_type:identity.employment_type,weekly_hours_target:identity.weekly_hours_target,work_profile_incomplete:identity.work_profile_incomplete};
   await tx.query('UPDATE public.users SET directory_profile_metadata=$2::jsonb WHERE id=$1 AND directory_profile_metadata IS DISTINCT FROM $2::jsonb',[row.id,JSON.stringify(metadata)]);

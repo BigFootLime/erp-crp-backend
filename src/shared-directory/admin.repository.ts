@@ -11,7 +11,7 @@ export async function directoryProfileForSite(db:Pool,site:string,profileId:stri
  const source=(await db.query('SELECT user_id FROM public.cerp_directory_profiles WHERE profile_id=$1::uuid',[profileId])).rows[0];
  if(!source)throw new HttpError(404,'USER_NOT_FOUND','Utilisateur inconnu.');
  if(site!=='cerp_prod')await ensureTestMembership(db,site,source.user_id);
- const row=(await db.query(`SELECT p.profile_id,p.user_id AS source_user_id,$2::text AS database,u.username,u.name,u.surname,u.email,u.avatar_key,${avatarProjectionSql} AS avatar_asset_id,
+ const row=(await db.query(`SELECT p.profile_id,p.user_id AS source_user_id,$2::text AS database,u.username,u.name,u.surname,u.email,u.tel_no,u.avatar_key,${avatarProjectionSql} AS avatar_asset_id,
   coalesce(m.role_key,u.role) AS role,CASE WHEN cardinality(m.roles)>0 THEN m.roles ELSE ARRAY[coalesce(m.role_key,u.role)] END AS roles,coalesce(m.is_superadmin,false) AS is_superadmin,
   CASE WHEN m.profile_id IS NULL OR m.status<>'Active' THEN 'Inactive' ELSE u.status END AS status,p.job_title,p.employment_type,p.weekly_hours_target::float AS weekly_hours_target,p.work_profile_incomplete,u.mfa_reenrollment_required
   FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id

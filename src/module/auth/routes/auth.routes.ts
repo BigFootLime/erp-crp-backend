@@ -28,6 +28,7 @@ import { requireSuperadmin } from '../../access-control/middlewares/require-supe
 import { testRegistration, testRegistrationOptions } from '../controllers/test-registration.controller';
 import { uploadOwnAvatar } from '../controllers/avatar.controller';
 import { createSecureUpload } from '../../../shared/uploads/secure-upload';
+import {getSelfProfile,patchSelfProfile} from '../controllers/self-profile.controller';
 
 const router: Router = Router();
 const avatarUpload = createSecureUpload('image', {maxFiles:1});
@@ -49,6 +50,8 @@ router.get(
 // Profil d'accès module (#326) — volontairement SANS authorizeRole : chaque compte,
 // opérateur compris, doit pouvoir charger la navigation à laquelle il a droit.
 router.get('/access-profile', authenticateToken, getAccessProfile);
+router.get('/me/profile', authenticateToken, getSelfProfile);
+router.patch('/me/profile', authenticateToken, patchSelfProfile);
 router.put('/me/avatar', authenticateToken, avatarUpload.single('avatar'), uploadOwnAvatar);
 router.get('/me/navigation-preferences', authenticateToken, getNavigationPreferences);
 router.put('/me/navigation-preferences', authenticateToken, putNavigationPreferences);
