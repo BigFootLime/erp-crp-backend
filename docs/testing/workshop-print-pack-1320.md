@@ -16,7 +16,7 @@ Les références de plans viennent de l'instantané OF : identifiant de document
 
 Les fiches de préparation et d'informations techniques/suivi reprennent les rubriques des modèles source MD38-D et MD61-A lus sur Z:\Qualité. Elles utilisent la grammaire CERP/Helvetica, le logo CRP et uniquement le code client. Les identités sont préremplies ; les commentaires, constatations, mesures et signatures restent vierges. Le modèle source reste inchangé ; le rendu adapté porte CERP support/1.0.
 
-PDF-LIB1.17.1 est épinglé pour l'assemblage. La comparaison du lockfile ne révèle aucune modification des versions préexistantes ; quatre entrées nécessaires sont ajoutées. Le runtime PDFKit déjà présent assure la conversion des images.
+PDF-LIB 1.17.1 est épinglé pour l’assemblage. Les lockfiles pnpm et npm conservent toutes les versions et entrées préexistantes ; quatre entrées pnpm et sept entrées npm nécessaires sont ajoutées. Le Dockerfile utilisant npm ci, son lockfile est synchronisé avant publication. Le runtime PDFKit déjà présent assure la conversion des images.
 
 ## Vérification locale
 
