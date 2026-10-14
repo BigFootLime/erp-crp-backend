@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé pour livraison commune — CERP 2.0 (#1577 / #1331)
+
+- Version produit 2.0.0, affichage 2.0 dans l’interface web et le bureau Electron. Conservation des identifiants techniques exacts pour le support.
+- Livraison via dev puis main, branches Prod créées au commit effectivement livré. Publication et recette restante non revendiquées par cette préparation.
+
 ## Préparé pour livraison commune — Autocontrôle papier/tablette (#1328)
 
 - Scan obligatoire de la fiche renseignée, rattaché au contrôle exact de l’OF et de l’opération. Aucune ressaisie des mesures ni libération automatique ; résultat et instruments confirmés, décision qualité séparée. Saisie numérique conservée.
