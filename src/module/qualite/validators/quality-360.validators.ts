@@ -45,6 +45,19 @@ export const cancelEmptyExecutionSchema = z.object({
 }).strict();
 export type CancelEmptyExecutionBodyDTO = z.infer<typeof cancelEmptyExecutionSchema>['body'];
 
+export const autocontrolCaptureSchema = z.object({
+  params: z.object({ id: uuid }).strict(),
+  body: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("DIGITAL"), expected_updated_at: isoDateTime }).strict(),
+    z.object({
+      mode: z.literal("PAPER"), expected_updated_at: isoDateTime, document_id: uuid,
+      complete_sheet: z.literal(true), conforming_qty: z.number().finite().min(0).max(1_000_000_000),
+      instruments: z.array(z.object({ characteristic_key: shortText(40), instrument_id: uuid }).strict()).max(200),
+    }).strict(),
+  ]),
+}).strict();
+export type AutocontrolCaptureBodyDTO = z.infer<typeof autocontrolCaptureSchema>["body"];
+
 // Les quantités sont finies, positives ou nulles et bornées : un Infinity ou un
 // NaN ne franchit jamais la validation.
 const quantity = z

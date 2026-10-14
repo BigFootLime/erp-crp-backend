@@ -66,7 +66,7 @@ export async function operatorDossier(
     ),
   ]);
   const controls = (await Promise.all(controlIds.map(getControl))).filter(
-    (c) => c !== null,
+    (c) => c !== null && (c.source_type !== "OF_OPERATION" || c.operation_id === operationId),
   );
   const [material, firstArticle, requiredTools] = await Promise.all([
     materialForOf(context),

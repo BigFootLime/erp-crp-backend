@@ -17,6 +17,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { QualityActor } from "../repository/quality-360.repository";
 import {
   cancelEmptyExecutionSchema,
+  autocontrolCaptureSchema,
   consumeDerogationSchema,
   assignQualityCauseSchema,
   createQualityCostSchema,
@@ -49,6 +50,7 @@ import {
 } from "../validators/quality-360.validators";
 import {
   svcCancelEmptyExecution,
+  svcRecordAutocontrolCapture,
   svcConsumeDerogation,
   svcAssignQualityCause,
   svcCreateQualityCost,
@@ -308,6 +310,14 @@ export const recordMeasurements: RequestHandler = asyncHandler(async (req, res) 
     body: parsed.body,
     actor: buildActor(req),
   });
+  if (!out) notFound("Contrôle");
+  res.json(out);
+});
+
+export const recordAutocontrolCapture: RequestHandler = asyncHandler(async (req, res) => {
+  const parsed = parseOrThrow(autocontrolCaptureSchema, { params: req.params, body: req.body });
+  const out = await svcRecordAutocontrolCapture({ id: parsed.params.id, body: parsed.body,
+    actor: buildActor(req), idempotencyKey: idempotencyKey(req) });
   if (!out) notFound("Contrôle");
   res.json(out);
 });
