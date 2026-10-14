@@ -58,6 +58,7 @@ import identificationRoutes from "../module/identification/identification.routes
 import operationalMediaRoutes from "../module/operational-media/routes/operational-media.routes";
 import subcontractRoutes from "../module/subcontract/subcontract.routes";
 import supplierInvoiceRoutes from "../module/supplier-invoices/supplier-invoice.routes";
+import onboardingRoutes from "../module/onboarding/routes/onboarding.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -145,6 +146,7 @@ router.use("/admin/webhooks", webhookAdminRoutes);
 router.use("/admin/client-portal", clientPortalAdminRoutes);
 router.use("/admin/reference-data", referenceDataRoutes);
 router.use("/admin", adminRoutes);
+router.use("/admin/onboarding", onboardingRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
 router.use(commercialReferencesRoutes);

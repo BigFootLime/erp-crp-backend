@@ -17,6 +17,7 @@ interface JwtPayload {
   username: string;
   email: string;
   role: string;
+  avatar_key?: string | null;
   primary_role?: string;
   roles?: string[];
   session_epoch?: number;

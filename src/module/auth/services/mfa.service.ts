@@ -194,7 +194,7 @@ async function loadFactor(tx: PoolClient, userId: number, state: "ACTIVE" | "PEN
 
 async function loadUser(tx: PoolClient, userId: number, forUpdate = false): Promise<UserMfaRow | null> {
   const { rows } = await tx.query<UserMfaRow>(
-    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required,
+    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required, u.avatar_key,
             COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
             COALESCE((SELECT array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
                         FROM public.user_role_assignments ura WHERE ura.user_id = u.id),

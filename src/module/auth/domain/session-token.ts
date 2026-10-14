@@ -8,6 +8,7 @@ export type SessionIdentity = {
   username: string;
   email: string | null;
   role: string;
+  avatar_key?: string | null;
   roles?: string[] | null;
   realtime_session_epoch?: string | number | null;
 };
@@ -29,6 +30,7 @@ export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance) {
     username: user.username,
     email: user.email,
     role: effectiveRole,
+    avatar_key: user.avatar_key ?? null,
     primary_role: user.role,
     roles: assignedRoles,
     session_epoch: sessionEpoch,
@@ -49,6 +51,7 @@ export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance) {
       username: user.username,
       email: user.email,
       role: effectiveRole,
+      avatar_key: user.avatar_key ?? null,
       primary_role: user.role,
       roles: assignedRoles,
     },

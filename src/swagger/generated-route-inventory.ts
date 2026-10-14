@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "64b1e24ad5abf79052037bd8bdea9d6e0041be12bd512661ccd987fb4fff8b1b";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ba0b026b4eec7828446de1c3652141a591b3161a968f0ec1d169bee96b3c74d8";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -611,6 +611,78 @@ export const GENERATED_ROUTE_INVENTORY = [
       "moduleAccessGate",
       "requireSuperadmin",
       "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/onboarding/company",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "companies"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/admin/onboarding/company",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:10",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "company"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/admin/onboarding/progress",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "progress"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/onboarding/status",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:7",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "status"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin"
     ]
   },
   {
@@ -1842,7 +1914,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/access-profile",
-    "source": "src/module/auth/routes/auth.routes.ts:43",
+    "source": "src/module/auth/routes/auth.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1854,7 +1926,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/activate",
-    "source": "src/module/auth/routes/auth.routes.ts:34",
+    "source": "src/module/auth/routes/auth.routes.ts:39",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -1866,7 +1938,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/forgot-password",
-    "source": "src/module/auth/routes/auth.routes.ts:32",
+    "source": "src/module/auth/routes/auth.routes.ts:37",
     "middleware": [
       "anonymous",
       "forgotPasswordRateLimit",
@@ -1878,7 +1950,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/login",
-    "source": "src/module/auth/routes/auth.routes.ts:30",
+    "source": "src/module/auth/routes/auth.routes.ts:35",
     "middleware": [
       "anonymous",
       "loginRateLimit",
@@ -1890,7 +1962,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me",
-    "source": "src/module/auth/routes/auth.routes.ts:35",
+    "source": "src/module/auth/routes/auth.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1902,7 +1974,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:44",
+    "source": "src/module/auth/routes/auth.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1914,7 +1986,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:45",
+    "source": "src/module/auth/routes/auth.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1926,7 +1998,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/enrollment",
-    "source": "src/module/auth/routes/auth.routes.ts:48",
+    "source": "src/module/auth/routes/auth.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1939,7 +2011,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:52",
+    "source": "src/module/auth/routes/auth.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1954,7 +2026,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:53",
+    "source": "src/module/auth/routes/auth.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1970,7 +2042,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/recovery-codes",
-    "source": "src/module/auth/routes/auth.routes.ts:50",
+    "source": "src/module/auth/routes/auth.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1983,7 +2055,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/replacement",
-    "source": "src/module/auth/routes/auth.routes.ts:49",
+    "source": "src/module/auth/routes/auth.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1996,7 +2068,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/revoke",
-    "source": "src/module/auth/routes/auth.routes.ts:51",
+    "source": "src/module/auth/routes/auth.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2009,7 +2081,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/status",
-    "source": "src/module/auth/routes/auth.routes.ts:46",
+    "source": "src/module/auth/routes/auth.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2021,7 +2093,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/step-up",
-    "source": "src/module/auth/routes/auth.routes.ts:47",
+    "source": "src/module/auth/routes/auth.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2034,7 +2106,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/verify",
-    "source": "src/module/auth/routes/auth.routes.ts:31",
+    "source": "src/module/auth/routes/auth.routes.ts:36",
     "middleware": [
       "anonymous",
       "mfaRateLimit",
@@ -2046,11 +2118,34 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/reset-password",
-    "source": "src/module/auth/routes/auth.routes.ts:33",
+    "source": "src/module/auth/routes/auth.routes.ts:38",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
       "resetPassword"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/auth/test-registration",
+    "source": "src/module/auth/routes/auth.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "testRegistrationOptions"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/test-registration",
+    "source": "src/module/auth/routes/auth.routes.ts:33",
+    "middleware": [
+      "anonymous",
+      "registerRateLimit",
+      "testRegistration"
     ],
     "authenticated": false,
     "rbac": []

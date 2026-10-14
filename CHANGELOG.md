@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14 — Test signup and initial setup (#1563)
+
+- Opt-in signup restricted to the actual Test database, server-owned privileges, canonical RH targets/schedules, catalog avatars and mandatory initial MFA.
+- Source-backed setup status and first-ten-login reminder, per-user progress, canonical company creation with versioned legal mentions and idempotent commands.
+- Additive migration, guarded rollback and local isolated PostgreSQL/API evidence. See `docs/architecture/initial-setup-1563.md`.
+
 ## 2026-10-14 — Fiche papier d’autocontrôle
 
 - Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.

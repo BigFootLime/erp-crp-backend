@@ -11,6 +11,7 @@ import {
   loginRateLimit,
   mfaRateLimit,
   resetPasswordRateLimit,
+  registerRateLimit,
 } from '../middlewares/auth-rate-limit.middleware';
 import {
   policy,
@@ -24,8 +25,12 @@ import {
   verifyChallenge,
 } from '../controllers/mfa.controller';
 import { requireSuperadmin } from '../../access-control/middlewares/require-superadmin';
+import { testRegistration, testRegistrationOptions } from '../controllers/test-registration.controller';
 
 const router: Router = Router();
+
+router.get('/test-registration', testRegistrationOptions);
+router.post('/test-registration', registerRateLimit, testRegistration);
 
 router.post('/login', loginRateLimit, login);
 router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
