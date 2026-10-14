@@ -27,6 +27,7 @@ describe("#469 direct legacy payment immutability", () => {
       sqlCalls.push(sql);
       if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
       if (sql.includes("pg_advisory_xact_lock")) return { rows: [], rowCount: 1 };
+      if (sql.includes("fn_lock_delivery_prepayment_write_1268")) return { rows: [], rowCount: 1 };
       if (sql.includes("FROM public.finance_command_receipts")) {
         return { rows: [], rowCount: 0 };
       }

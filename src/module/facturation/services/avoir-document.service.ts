@@ -55,9 +55,11 @@ export async function writeImmutableAvoirDocument(
       totalInclTax: snapshot.totals.total_incl_tax,
     },
     dueDates: [],
+    taxBreakdown:snapshot.tax_breakdown,
     correctedInvoice: snapshot.facture_number,
     reasonCode: snapshot.reason_code,
     reason: snapshot.reason,
+    originalGlobalDiscountPercent:snapshot.original_global_discount_percent,
     snapshotUuid: snapshot.uuid,
     draftReference: snapshot.draft_reference,
   });

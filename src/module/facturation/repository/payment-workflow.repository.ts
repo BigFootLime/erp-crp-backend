@@ -8,6 +8,7 @@ import {
   type PaymentStatus,
 } from "../domain/finance-policy";
 import { formatDecimal, moneyToCents } from "../domain/decimal-money";
+import { freezeAdvanceVat } from "./advance-vat.repository";
 import type { PaymentCommandResult } from "../types/workflow.types";
 import type {
   AllocatePaymentBodyDTO,
@@ -273,13 +274,16 @@ async function insertAllocations(params: {
   allocations: readonly ResolvedAllocation[];
 }): Promise<void> {
   for (const allocation of params.allocations) {
+    const advanceVat = await freezeAdvanceVat(params.client, {
+      invoiceId: allocation.factureId, paymentId: params.paymentId, amount: allocation.amount,
+    });
     await params.client.query(
       `
         INSERT INTO public.paiement_allocations (
           paiement_id, facture_id, facture_due_date_id,
-          amount_ttc, created_by, correlation_id
+          amount_ttc, created_by, correlation_id, advance_vat_snapshot
         )
-        VALUES ($1,$2,$3::uuid,$4,$5,$6::uuid)
+        VALUES ($1,$2,$3::uuid,$4,$5,$6::uuid,$7::jsonb)
       `,
       [
         params.paymentId,
@@ -288,6 +292,7 @@ async function insertAllocations(params: {
         allocation.amount,
         params.actor.userId,
         params.correlationId,
+        advanceVat ? JSON.stringify(advanceVat) : null,
       ]
     );
     if (allocation.dueDateId) {
@@ -351,6 +356,8 @@ export async function repoRegisterPayment(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as PaymentCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const amountCents = moneyToCents(params.input.amount, "Montant du paiement");
     if (amountCents <= 0n) {
       throw new HttpError(422, "PAYMENT_AMOUNT_INVALID", "Le montant doit être positif.");
@@ -538,6 +545,8 @@ export async function repoAllocatePayment(params: {
       await client.query("COMMIT");
       return { ...(receipt.replay as unknown as PaymentCommandResult), idempotent_replay: true };
     }
+    // Serialize financial evidence with proforma coverage and BL decisions before parent row locks.
+    await client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
     const payment = await lockPayment(client, params.paymentId);
     if (!payment) throw new HttpError(404, "PAYMENT_NOT_FOUND", "Paiement introuvable.");
     if (["REJECTED", "REVERSED"].includes(payment.status)) {

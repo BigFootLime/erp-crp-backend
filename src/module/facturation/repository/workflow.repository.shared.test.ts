@@ -77,6 +77,7 @@ describe("finance workflow idempotency race guard", () => {
     const query = vi.fn(async (sql: string, values?: unknown[]) => {
       if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
       if (sql.includes("FROM public.finance_command_receipts")) return { rows: [] };
+      if (sql.includes("fn_lock_delivery_prepayment_write_1268")) return { rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     });
     const client = { query } as unknown as PoolClient;
@@ -93,6 +94,7 @@ describe("finance workflow idempotency race guard", () => {
     expect(String(query.mock.calls[0]?.[0])).toContain("pg_advisory_xact_lock");
     expect(query.mock.calls[0]?.[1]).toEqual(["finance:7:facture-attempt-001"]);
     expect(String(query.mock.calls[1]?.[0])).toContain("finance_command_receipts");
+    expect(String(query.mock.calls[2]?.[0])).toContain("fn_lock_delivery_prepayment_write_1268");
   });
 
   it("rejects the same actor/key with a different command payload (409)", async () => {

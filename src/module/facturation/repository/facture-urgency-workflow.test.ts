@@ -59,4 +59,18 @@ describe('urgency fee in the canonical invoice workflow',()=>{
   it('does not accept caller-defined urgency prices as input sources',()=>{
     expect(facturePreviewBodySchema.safeParse({...input,sources:[{source_type:'ORDER_CHARGE',source_id:'10',source_line_id:charge.id,quantity:'1'}]}).success).toBe(false);
   });
+  it('reads a preview in one read-only snapshot and releases the connection',async()=>{
+    await repoPreviewFacture(input);
+    expect(mocks.query.mock.calls[0][0]).toBe('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    expect(mocks.query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
+    expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.query.mock.calls.some(([sql])=>/^\s*(INSERT|UPDATE|DELETE)/i.test(sql))).toBe(false);
+  });
+  it('rolls back a failed source read without keeping a transaction or recording a draft',async()=>{
+    mocks.query.mockImplementationOnce(async()=>({rows:[]})).mockRejectedValueOnce(new Error('fixture source read failure'));
+    await expect(repoPreviewFacture(input)).rejects.toThrow('fixture source read failure');
+    expect(mocks.query.mock.calls.at(-1)?.[0]).toBe('ROLLBACK');
+    expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.receipt).not.toHaveBeenCalled();
+  });
 });

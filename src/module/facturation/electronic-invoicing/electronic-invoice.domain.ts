@@ -291,6 +291,9 @@ export type ElectronicInvoiceSourceDocument = {
   invoiceId: number | null;
   creditNoteId: number | null;
   documentType: ElectronicInvoiceDocumentType;
+  invoiceTypeCode?:380|386;
+  prepayments?: Readonly<{amountPaid:string;amountDue:string}>;
+  taxBreakdown?: import("../domain/document-tax-breakdown").DocumentTaxBreakdown;
   precedingInvoice: Readonly<{
     legalNumber: string;
     issueDate: string;

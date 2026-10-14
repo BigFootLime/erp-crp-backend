@@ -1,5 +1,17 @@
 # Documents lisibles en atelier — premier lot de la refonte PDF
 
+## Référence approuvée courante — 14 octobre 2026
+
+La capture OF-EXEMPLE-23149 fournie par Keenan est la référence commune pour **toutes** les familles d'exports, avec adaptation des seules rubriques métier : logo CRP complet, Helvetica/Helvetica-Bold, titre centré, numéro rouge lisible, cartouches anthracite compacts, fond blanc opaque, filets fins et tableaux entièrement cadrés. Ne pas reproduire le filigrane EXEMPLE sur un document réel. Les UUID/SHA techniques restent internes. La date de génération au pied suffit, sans doublon « Édité le » dans l'en-tête.
+
+Pour les OF/gammes : code client seul, sans nom ni logo client. Affaire de livraison distincte du code client. Commande/délai (AR ou interne toujours identifié)/quantités, matière et débit, client/documents, puis pièce occupent la moitié supérieure de la première page. Traitements et autres composants figurent dans la nomenclature **avant** la gamme. La ligne pointillée repère le pli A4 ; plusieurs pages sont autorisées, sans couper une opération ou ses visas inutilement. Les temps sont affichés en minutes ou heures/minutes, sans heures décimales. Les références sont conservées et mesurées pour éviter les retours de ligne arbitraires ; aucune valeur ou exigence n'est tronquée pour gagner de la place.
+
+Les documents commerciaux conservent les identités nécessaires du destinataire/sociétés facturées et leurs montants exacts. La densité est adaptée à chaque document : pas de bloc, texte d'aide ou échéance répétés sans nécessité. Contrôler les cas simples, longs et multipages en rendu A4, avec pieds, en-têtes et signatures lisibles. Ne jamais régénérer les bytes d'une édition déjà émise.
+
+L'OF 1.7 et la fiche papier d'autocontrôle 2.0 sont déjà livrés. Les exemples proforma, facture et avoir utilisent le dessin structuré commun sur la branche #1268 ; ils ne constituent pas encore une livraison de ce lot. PT/gamme séparée, BL, devis/ARC, commandes fournisseurs, certificats et étiquettes restent à harmoniser/rejouer dans WP-289. Aucune famille ne doit être déclarée terminée sur la seule base d'une maquette.
+
+## Historique du premier lot
+
 Le gabarit `of-ordre-fabrication/1.3` remplace les onze colonnes serrées de la gamme par des cartes d’opération. Chaque carte porte son numéro, sa machine, son programme, ses temps, ses quantités et les visas effectivement enregistrés. Les petites durées unitaires conservent leurs heures décimales : une durée sous une minute n’est plus présentée comme « 0 min » dans la nouvelle carte.
 
 Le socle `editorial-v2` apporte des bandeaux opaques numérotés, des champs mesurés, des en-têtes de tableau adaptés au texte, des références répétées sur les pages suivantes et une pagination tenant compte des zones de signature. La palette CERP, le logo officiel complet et la géométrie A4 sont conservés. Les grilles de plus de trois identifiants prennent plusieurs lignes lisibles.

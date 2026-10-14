@@ -26,6 +26,15 @@ function invoiceRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("#469 invoice settlement repository", () => {
+  it("inclut l'acompte déjà déduit dans le solde sans créer un second règlement",async()=>{
+    const query=vi.fn(async()=>({rows:[invoiceRow({applied_prepayment_ttc:"35.00",allocated_payment_ttc:"0.00",
+      legacy_direct_payment_ttc:"0.00",consumed_credit_ttc:"0.00",legacy_direct_credit_ttc:"0.00"})],rowCount:1}));
+    const invoice=await lockInvoiceSettlement({query} as unknown as Pick<PoolClient,"query">,42);
+    expect(invoice?.settledAmount).toBe("35.00");
+    expect(()=>assertInvoiceCreditWithinBalance(invoice!,10000n)).not.toThrow();
+    expect(()=>assertInvoiceCreditWithinBalance(invoice!,10001n)).toThrow();
+    expect(query.mock.calls).toHaveLength(2);
+  });
   it("additionne allocations modernes et preuves directes historiques sans changer de source", async () => {
     const query = vi.fn(async (_sqlValue: unknown) => ({ rows: [invoiceRow()], rowCount: 1 }));
     const invoice = await lockInvoiceSettlement(
@@ -70,7 +79,7 @@ describe("#469 invoice settlement repository", () => {
     expect(() => assertInvoiceCreditWithinBalance(invoice!, 10_000n)).not.toThrow();
   });
 
-  it("refuse un avoir qui dépasserait le solde économique unifié", async () => {
+  it("autorise l’avoir sur une facture payée, avec crédit client distinct du reste à payer", async () => {
     const query = vi.fn(async () => ({
       rows: [invoiceRow({
         allocated_payment_ttc: "20.00",
@@ -85,7 +94,8 @@ describe("#469 invoice settlement repository", () => {
       42
     );
 
-    expect(() => assertInvoiceCreditWithinBalance(invoice!, 1_100n)).toThrowError(
+    expect(() => assertInvoiceCreditWithinBalance(invoice!, 1_100n)).not.toThrow();
+    expect(() => assertInvoiceCreditWithinBalance(invoice!, 10_001n)).toThrowError(
       expect.objectContaining({
         status: 409,
         code: "AVOIR_INVOICE_BALANCE_EXCEEDED",

@@ -16,6 +16,7 @@ export type FinanceActorContext = {
 };
 
 export type DbQueryer = Pick<PoolClient, "query">;
+export type FinanceAggregateType = "FACTURE" | "AVOIR" | "PAIEMENT" | "PROFORMA";
 
 export async function acquireFinanceIdempotency(params: {
   client: PoolClient;
@@ -55,6 +56,11 @@ export async function acquireFinanceIdempotency(params: {
       "Cette Idempotency-Key a déjà été utilisée avec un autre contenu."
     );
   }
+  if (decision !== "REPLAY") {
+    // Match BL read guards before locking an invoice, credit note or payment.
+    // The SQL epoch also protects stale SERIALIZABLE shipment snapshots.
+    await params.client.query("SELECT public.fn_lock_delivery_prepayment_write_1268()");
+  }
   return {
     idempotencyKey,
     requestHash,
@@ -68,7 +74,7 @@ export async function saveFinanceReceipt(params: {
   idempotencyKey: string;
   requestHash: string;
   commandType: string;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   requestPayload: unknown;
   resultPayload: unknown;
@@ -105,7 +111,7 @@ export async function saveFinanceReceipt(params: {
 
 export async function insertFinanceEvent(params: {
   client: PoolClient;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   eventType: string;
   oldValues?: unknown;
@@ -152,7 +158,7 @@ export async function insertFinanceEvent(params: {
 export async function insertFinanceOutbox(params: {
   client: PoolClient;
   eventKey: string;
-  aggregateType: "FACTURE" | "AVOIR" | "PAIEMENT";
+  aggregateType: FinanceAggregateType;
   aggregateId: string;
   eventType: string;
   payload: unknown;

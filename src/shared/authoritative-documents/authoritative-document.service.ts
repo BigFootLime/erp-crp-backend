@@ -27,6 +27,7 @@ const GED_ENTITY_TYPE_BY_ARCHIVE_ENTITY: Readonly<Record<string, string>> = Obje
   "commande-fournisseur": "COMMANDE_FOURNISSEUR",
   facture: "FACTURE",
   avoir: "AVOIR",
+  proforma: "PROFORMA",
 });
 export const INTERNAL_CREATION_SNAPSHOT_KINDS = new Set([
   "CLIENT_CREATION_SNAPSHOT", "SUPPLIER_CREATION_SNAPSHOT", "CUSTOMER_ORDER_CREATION_SNAPSHOT",

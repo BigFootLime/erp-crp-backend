@@ -3,6 +3,10 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
+import { invoicePrepaymentAmountsFromSnapshot } from "../domain/final-invoice-prepayments";
+import { documentTaxBreakdownFromSnapshot } from "../domain/document-tax-breakdown";
+import { formatDecimal,moneyToCents } from "../domain/decimal-money";
 import {
   canonicalJson,
   financeRequestHash,
@@ -70,6 +74,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringValue(record: Readonly<Record<string, unknown>>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+/** Issued snapshots retain the original four-decimal prices, including legacy
+ * invoices whose line columns rounded them. Never substitute mutable rows for
+ * a present but malformed fiscal snapshot. */
+function issuedInvoiceLines(snapshot: Record<string, unknown> | null, legacyLines: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  if (!snapshot || !Object.prototype.hasOwnProperty.call(snapshot, "lines")) return legacyLines;
+  if (!Array.isArray(snapshot.lines) || snapshot.lines.some(line => !isRecord(line) || Array.isArray(line))) {
+    throw new HttpError(409, "EINVOICE_ISSUED_LINES_INVALID", "Les lignes figées de la facture doivent être vérifiées avant transmission.");
+  }
+  return snapshot.lines.map((line, index) => ({
+    id: line.source_line_id ?? index + 1,
+    order: index + 1,
+    description: line.designation,
+    item_code: line.code_piece,
+    quantity: line.quantity,
+    unit: line.unit,
+    unit_price_ex_tax: line.unit_price_ex_tax,
+    discount_percent: line.discount_percent,
+    vat_rate: line.tax_rate_percent,
+    total_ex_tax: line.total_ex_tax,
+    total_incl_tax: line.total_incl_tax,
+  }));
 }
 
 function sourceMissingFields(source: ElectronicInvoiceSourceDocument): string[] {
@@ -377,6 +404,7 @@ export async function repoLoadElectronicInvoiceSource(
     total_tax: string;
     total_ttc: string;
     document_status: string;
+    immutable_snapshot:Record<string,unknown>|null;
     lines: Array<Record<string, unknown>>;
   }>(
     `
@@ -393,6 +421,7 @@ export async function repoLoadElectronicInvoiceSource(
         f.total_tax::text,
         f.total_ttc::text,
         f.document_status,
+        f.immutable_snapshot,
         COALESCE((
           SELECT jsonb_agg(jsonb_build_object(
             'id', fl.id,
@@ -429,6 +458,8 @@ export async function repoLoadElectronicInvoiceSource(
     invoiceId: row.id,
     creditNoteId: null,
     documentType: "INVOICE",
+    invoiceTypeCode:invoiceTypeCodeFromSnapshot(row.immutable_snapshot),
+    prepayments:invoicePrepaymentAmountsFromSnapshot(row.immutable_snapshot,row.total_ttc),
     precedingInvoice: null,
     legalNumber: row.numero,
     issueDate: row.date_emission,
@@ -437,7 +468,7 @@ export async function repoLoadElectronicInvoiceSource(
     issuerSnapshot: row.issuer_snapshot ?? {},
     customerSnapshot: row.client_snapshot ?? {},
     regulatorySnapshot: row.regulatory_snapshot ?? {},
-    lines: row.lines,
+    lines: issuedInvoiceLines(row.immutable_snapshot, row.lines),
     totals: { net: row.total_ht, tax: row.total_tax, gross: row.total_ttc },
   };
   const missing = sourceMissingFields(source);
@@ -449,7 +480,10 @@ export async function repoLoadElectronicInvoiceSource(
       { missing }
     );
   }
-  return source;
+  return {...source,taxBreakdown:documentTaxBreakdownFromSnapshot({snapshot:row.immutable_snapshot,
+    lines:source.lines.map(line=>({ratePercent:String(line.vat_rate),net:String(line.total_ex_tax),
+      tax:formatDecimal(moneyToCents(String(line.total_incl_tax))-moneyToCents(String(line.total_ex_tax)),2)})),
+    totalExTax:source.totals.net,totalTax:source.totals.tax,totalInclTax:source.totals.gross})};
 }
 
 export async function repoLoadElectronicCreditNoteSource(
@@ -469,10 +503,11 @@ export async function repoLoadElectronicCreditNoteSource(
     statut: string;
     facture_numero: string;
     facture_date_emission: string;
+    facture_immutable_snapshot:Record<string,unknown>|null;
   }>(
     `SELECT a.id::int,a.numero,a.date_emission::text,upper(a.currency) AS currency,
             a.issuer_snapshot,a.client_snapshot,a.regulatory_snapshot,a.immutable_snapshot,a.statut,
-            f.numero AS facture_numero,f.date_emission::text AS facture_date_emission
+            f.numero AS facture_numero,f.date_emission::text AS facture_date_emission,f.immutable_snapshot AS facture_immutable_snapshot
        FROM public.avoir a
        JOIN public.facture f ON f.id=a.facture_id
       WHERE a.id=$1
@@ -514,7 +549,7 @@ export async function repoLoadElectronicCreditNoteSource(
     precedingInvoice: {
       legalNumber: row.facture_numero,
       issueDate: row.facture_date_emission,
-      typeCode: 380,
+      typeCode: invoiceTypeCodeFromSnapshot(row.facture_immutable_snapshot),
     },
     legalNumber: row.numero,
     issueDate: row.date_emission,
@@ -539,7 +574,10 @@ export async function repoLoadElectronicCreditNoteSource(
       { missing }
     );
   }
-  return source;
+  return {...source,taxBreakdown:documentTaxBreakdownFromSnapshot({snapshot:row.immutable_snapshot,
+    lines:source.lines.map(line=>({ratePercent:String(line.vat_rate),net:String(line.total_ex_tax),
+      tax:formatDecimal(moneyToCents(String(line.total_incl_tax))-moneyToCents(String(line.total_ex_tax)),2)})),
+    totalExTax:source.totals.net,totalTax:source.totals.tax,totalInclTax:source.totals.gross})};
 }
 
 export async function repoGetElectronicInvoiceState(invoiceId: number): Promise<ElectronicInvoiceDocumentState | null> {

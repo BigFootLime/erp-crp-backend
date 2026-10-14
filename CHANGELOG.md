@@ -1,5 +1,17 @@
 # Changelog
 
+## En développement — Historique des remboursements (#1268)
+
+- Lecture typée et protégée de l'historique d'un avoir, avec remboursements originaux et corrections conservés. Treize tests HTTP de permissions/filtre et build strict 1 508 routes passent ; PostgreSQL17 sous droits applicatifs confirme trois faits dont deux corrigés. Raccordement de la fiche avoir dans le lot frontend1571, sans nouvelle migration pour cette lecture. Lot Finance non déployé.
+
+## En développement — Correction des remboursements (#1268)
+
+- Contrepassation complète, montant/société/devise repris de l'original, motif et dates contrôlés, répétition idempotente sans second validateur. Les preuves originales restent immuables ; les soldes économiques retrouvent leurs budgets. L'export inverse les comptes/journal/axes d'origine malgré un nouveau paramétrage, et conserve leur export. Original non exporté et correction peuvent partir ensemble. 8 027 tests et build strict passent ; deux corrections/replays, doublons, remplacement des remboursements et soldes bancaires/client/TVA finaux nuls qualifiés sur PostgreSQL 17 isolé. Écran de correction, contrepassation des encaissements, déploiement et recette réelle restent ouverts.
+
+## En développement — Avoirs d’acompte monétaires (#1268)
+
+- Sélection HT exacte sur une facture386 qualifiée, TVA cumulative d’origine et aucune consommation physique de pièces. Contrat conservé pour les avoirs par quantité ; brouillons et avoirs émis partagent leurs budgets, preuves et rollback protégés. 8006tests et build strict passent ; trois brouillons/replays PostgreSQL17 isolés totalisent100HT/20TVA, double réservation et quantité physique frauduleuse refusées. États fiscaux initiaux simulés ; recette réelle et reste du lot Finance non terminés.
+
 ## 2026-10-14 — Impression après planning (#1320)
 
 - Demande persistante créée au premier engagement d'une opération, y compris externalisée, sans reprise automatique des anciens créneaux ni doublon lors d'un déplacement. Prise en charge par poste, exemplaire lié atomiquement à son intention et accusé audité ; une acceptation OS reste distincte d'une sortie papier.
@@ -10,6 +22,28 @@
 - Premier exemplaire OF officiel sans filigrane, puis DUPLICATA ; brouillons marqués BROUILLON. Demandes idempotentes et compteur persistant distinct des téléchargements, variantes archivées séparément en GED, original conservé. Route et bouton d’impression OF raccordés ; compilation stricte, 121 tests backend, 5 tests du bouton et concurrence PostgreSQL 17 qualifiés avant publication.
 - Dossier complet raccordé aux plans GED figés et à l’autocontrôle exact de l’OF, avec suivi MD61 et préparation MD38 conditionnelle. Éditions et variantes archivées séparément ; compteur et impression du dossier atomiques. Bouton guidé sur la fiche OF/export, accès direct aux rubriques manquantes. 106 vérifications backend, 9 vérifications web et commandes concurrentes PostgreSQL 17 qualifiées. L’automaticité après planning, la queue A4 Electron et la recette réelle complète restent en cours.
 
+## En développement — Proformas et sociétés facturées (#1268)
+
+- Avoirs sur factures payées : correction distincte de l'encaissement, calcul du crédit client et remboursements avec origines bancaires choisies côté serveur, preuves immuables, replay et export sans double TVA. Paiements reçus après un avoir d'acompte : TVA restante par catégorie, anciennes écritures conservées. 7 945 tests / 721 fichiers, build et commandes PostgreSQL17 isolées passent. Erreur de droit SELECT FOR UPDATE corrigée sans élargir les permissions ; fixtures et remboursement excessif corrigés après reproduction. Avoirs monétaires arbitraires, contrepassations, interface et recette réelle restent ouverts ; lot non déployé.
+
+- Classification fiscale des acomptes, comptes configurés d’avances/TVA en attente et ventilation TVA immuable par paiement. Export complémentaire sans seconde banque ; reprise figée d’acomptes sur facture finale. 7 920 tests / 716 fichiers, build et commandes PostgreSQL17 isolées passent. Migration additive avec rollback protégé, sans backfill historique. Interface, remboursements/contrepassations et recette réelle restent en cours ; lot non déployé.
+
+- Avoirs partiels : prix/remise/TVA d'origine, budgets et dernier centime repris sans double remise ; quantités et montants déjà crédités contrôlés. Deux ambiguïtés de paramètres SQL à la création corrigées après reproduction PostgreSQL. Empreinte d'aperçu stable après stockage des quantités. Motifs PDF en français et exemple relu. 7 907 tests / 713 fichiers, build et repositories natifs isolés passent ; émission réelle, avoirs déjà payés/remboursements, comptabilité des acomptes et écrans restent ouverts avant déploiement.
+
+- Remise globale et TVA : ventilation documentaire commune figée pour PDF, facture électronique et export comptable. Lectures de brouillon exactes et échéanciers conservés ; prix financiers à quatre décimales, anciens exemplaires/lignes figées inchangés. 7 894 tests / 711 fichiers, build strict et exports comptables réels sur PostgreSQL isolé passent. Comptabilité des acomptes, avoirs partiels, écrans et recette fiscale/métier restent ouverts ; aucun déploiement de ce lot. Référence visuelle commune à tous les exports précisée selon l'OF approuvé.
+
+- Factures finales : affectation des acomptes réellement encaissés, net à payer/échéances cohérents et contrôle des budgets dans PostgreSQL ; aucune seconde entrée de trésorerie. Faits figés repris en PDF et facture électronique. Factures/avoirs au dessin structuré commun, précision des prix conservée, exemples fictifs relus. 7 867 tests et build strict passent ; comptabilité, interface et recette fiscale/métier restent ouverts avant déploiement.
+
+- Document proforma : design commun structuré, destinataire/sociétés séparés, précision des prix et quantités, snapshot et bytes exacts conservés au replay, parent GED Finance et quatre transports documentaires sécurisés. Correction du cycle d’aperçu créé par ses métadonnées de liaison.7 842 tests/705 fichiers, build et émission commerciale PostgreSQL isolée passent ; déduction des acomptes, interface et rangement GED/recette live restent en cours. Aucun déploiement de ce lot.
+
+- Factures finales : destinataire physique distinct de la société facturée autorisée, quotas de quantité par affaire/société sur plusieurs BL et brouillons, contributions append-only. Prix de la proforma figés, aperçus cohérents en lecture seule, aucun double comptage des lots ni réouverture automatique après avoir.7836 tests/704 fichiers, build et qualification PostgreSQL17 isolée passent. Déduction des acomptes, interface et recette fiscale/live restent en cours ; ce lot n’est pas déployé.
+
+- BL : couverture proforma par affaire et société facturée, cohérence des sources physiques, refus des sources modifiées et regroupements incompatibles. Aperçus cohérents, ordre de verrous partagé avec Finance et reprise409 après changement concurrent d'encaissement ; aucune livraison autorisée par un instantané périmé.
+- Décision structurée de prépaiement à la commande, sans imposer de décision aux anciennes commandes. PostgreSQL17 isolé : concurrence SERIALIZABLE, attentes réelles de verrous et jointures BL passent. Suite complète7782 assertions/700 fichiers et build passent ; écrans, facture finale et déploiement encore en cours.
+
+- Règles exactes de couverture des affaires, répartition de quantité entre sociétés, paiements partiels/annulés, libérations et avoirs d'acompte. Prix/remises/TVA lus dans la commande ; aucun champ « payé » ne fait autorité.
+- Modèle SQL additif et commandes réelles éprouvés sur PostgreSQL 17 isolé : permissions, répartition entre sociétés, reprise des brouillons, annulation sans encaissement, audit/replay et concurrence de double création. Un retrait d'affaire ne dispense pas silencieusement du paiement ; l'historique et le rollback restent protégés. Aucun changement de schéma Test/Prod. Dix opérations API écrites avec Finance/RBAC ;246 tests ciblés et build vert. Écrans, PDF/GED, BL, acomptes, factures finales et budgets financiers encore en cours ; aucun déploiement ni parcours métier complet revendiqué pour ce lot.
+- Ventilation/libération de règlements déjà affectés, aperçus/brouillons d'acompte monétaires plafonnés par société et filiation fiscale obligatoire. Distinction386/380 dans les documents PDF/électroniques, sans seconde remise de commande ni consommation de pièces. Douze opérations proforma,330 tests et build verts ; SQL et repositories de ventilation éprouvés avec fixtures fiscales synthétiques sur base isolée. Émission Finance complète, comptabilité, factures finales, BL, écrans et recette live restent en cours.
 ## 2026-10-14 — Fiche papier d’autocontrôle
 
 - Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.

@@ -9,6 +9,7 @@ import type {
 } from "../repository/facture-workflow.repository";
 
 import { renderFinanceDocument } from "./finance-document-render";
+import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 
 /**
  * Exemplaire legal immuable de la facture.
@@ -30,6 +31,7 @@ export async function writeImmutableFactureDocument(
 
   const pdf = await renderFinanceDocument({
     kind: "FACTURE",
+    invoiceTypeCode:invoiceTypeCodeFromSnapshot(snapshot),
     number: snapshot.legal_number,
     draft: false,
     issueDate: snapshot.issue_date,
@@ -61,6 +63,8 @@ export async function writeImmutableFactureDocument(
       label: due.label,
       amount: due.amount,
     })),
+    prepayments: snapshot.prepayments,
+    taxBreakdown: snapshot.tax_breakdown,
     // `internal_comment` reste dans l'ERP : seul le texte destine au client est imprime.
     customerText: snapshot.customer_text,
     snapshotUuid: snapshot.uuid,
