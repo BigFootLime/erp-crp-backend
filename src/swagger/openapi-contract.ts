@@ -107,6 +107,10 @@ const TERMINAL_SESSION_OPERATIONS = new Set([
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/declaration/confirm",
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{action}",
   "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/measurements",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/autocontrol-capture",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents",
+  "post /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents",
+  "get /terminals/operator/ofs/{of_id}/operations/{operation_id}/controls/{id}/paper-documents/{docId}/file",
 ]);
 
 function operationKey(route: GeneratedRouteContract): string {

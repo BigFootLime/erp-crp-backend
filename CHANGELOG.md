@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé pour livraison commune — Autocontrôle papier/tablette (#1328)
+
+- Scan obligatoire de la fiche renseignée, rattaché au contrôle exact de l’OF et de l’opération. Aucune ressaisie des mesures ni libération automatique ; résultat et instruments confirmés, décision qualité séparée. Saisie numérique conservée.
+- Mode persistant, commandes versionnées/idempotentes/auditées, protection du scan utilisé et des quantités, accès terminaux appairés strictement limité. Migration additive qualifiée sur schéma PostgreSQL17 isolé ; aucune ancienne archive réécrite.
+- Recette intégrale reportée à la demande humaine ; publication commune avec inscription/paramétrage, pas de déploiement indépendant de ce lot.
+
 ## 2026-10-14 — Compatibilité GED Finance (#1268)
 
 - Aligner les métadonnées du profil GED historique de Prod avec le contrat canonique de Test, en conservant documents, liens, utilisateurs et protections existantes. Un lien proforma exige son parent réel.
