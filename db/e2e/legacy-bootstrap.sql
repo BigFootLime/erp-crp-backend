@@ -400,8 +400,10 @@ CREATE TABLE public.factureur (
   default_iban text,
   default_bic text,
   text_on_invoice text,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  creation_date timestamp DEFAULT CURRENT_TIMESTAMP,
+  created_by varchar,
+  modification_date timestamp DEFAULT CURRENT_TIMESTAMP,
+  modified_by varchar
 );
 
 CREATE TABLE public.facture (
