@@ -34,10 +34,21 @@
     "one legal version after unchanged save",
     "backdated legal edits rejected (409; actual=409; code=LEGAL_MENTIONS_DATE_CONFLICT)",
     "data rollback refused",
-    "account remains present"
+    "account remains present",
+    "actual production database name rejected in isolated cluster with opt-in enabled"
   ],
   "live_test_changed": false,
   "live_prod_changed": false,
   "patch_sha256": "39bd5a5c8eaea6f0c7f7e8d78d276056a8470cdfcab3c87fc1e371d5babf05fb",
-  "result": "PASS"
+  "result": "PASS",
+  "integration_fixture_migrations": 301,
+  "upstream_backend_dev": "54377e805026ea370657b72c083594585d8bdb22",
+  "upstream_frontend_dev": "ffdb568f4c54e428cd2a14ac122d0442d2ecb8cc",
+  "verification": {
+    "backend_tests": 50,
+    "frontend_tests": 17,
+    "browser_journeys": 9,
+    "postgres_checks": 33,
+    "openapi_operations": 1489
+  }
 }
