@@ -97,6 +97,7 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
       "X-Correlation-Id",
       "Content-Disposition",
       "X-CERP-Document-SHA256",
+      "X-Print-Intent-Id", "X-Print-Copy", "X-Print-Database", "X-Print-Actor-Id", "X-Print-SHA256",
     ],
     optionsSuccessStatus: 204,
   });

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prepareFolder,previewFolder,printFolder } from "../controllers/workshop-folder.controller";
+import { listDispatch,claimDispatch,printDispatch,acknowledgeDispatch } from "../controllers/workshop-dispatch.controller";
 import {ofTravelerSource,listOfTravelers,issueOfTraveler,previewOfTraveler,downloadOfTraveler,printOfTraveler} from "../controllers/of-traveler.controller";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
@@ -53,6 +54,11 @@ router.use(authenticateToken);
 
 router.get("/capabilities", capabilities);
 router.get("/machine-families", requireOfCapability("read"), listMachineFamilies);
+// Durable planning jobs precede the parameterized /:ofId routes.
+router.get("/workshop-dispatch", requireOfCapability("document"), listDispatch);
+router.post("/workshop-dispatch/:jobId/claim", requireOfCapability("document"), claimDispatch);
+router.post("/workshop-dispatch/:jobId/print", requireOfCapability("document"), printDispatch);
+router.post("/workshop-dispatch/:jobId/receipt", requireOfCapability("document"), acknowledgeDispatch);
 
 /* -------------------------------- AR client ------------------------------- */
 // Déclaré AVANT les routes `/:ofId/...` : sans cela, « ar-dossiers » serait

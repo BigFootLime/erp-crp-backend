@@ -7,6 +7,11 @@
 - Source-backed setup status and first-ten-login reminder, per-user progress, canonical company creation with versioned legal mentions and idempotent commands.
 - Additive migration, guarded rollback and local isolated PostgreSQL/API evidence. See `docs/architecture/initial-setup-1563.md`.
 
+## 2026-10-14 — Impression après planning (#1320)
+
+- Demande persistante créée au premier engagement d'une opération, y compris externalisée, sans reprise automatique des anciens créneaux ni doublon lors d'un déplacement. Prise en charge par poste, exemplaire lié atomiquement à son intention et accusé audité ; une acceptation OS reste distincte d'une sortie papier.
+- Métadonnées PDF issues de la connexion PostgreSQL et de l'acteur authentifié. Qualification PostgreSQL 17 isolée : triggers transactionnels, concurrence, replays, droits et rollback protégé passent. Émission/préparation initiales synthétiques ; publications et recette native réelle suivies séparément.
+
 ## En développement — Dossier de fabrication complet (#1320)
 
 - Premier exemplaire OF officiel sans filigrane, puis DUPLICATA ; brouillons marqués BROUILLON. Demandes idempotentes et compteur persistant distinct des téléchargements, variantes archivées séparément en GED, original conservé. Route et bouton d’impression OF raccordés ; compilation stricte, 121 tests backend, 5 tests du bouton et concurrence PostgreSQL 17 qualifiés avant publication.
