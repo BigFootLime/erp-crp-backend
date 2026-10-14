@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const {repoPreviewCustomerRefundReversal,repoReverseCustomerRefund}=require('../../../dist/module/facturation/repository/customer-refund-reversal.repository');
-const {repoPreviewCustomerRefund,repoRegisterCustomerRefund}=require('../../../dist/module/facturation/repository/customer-refund.repository');
+const {repoPreviewCustomerRefund,repoRegisterCustomerRefund,repoListCustomerRefunds}=require('../../../dist/module/facturation/repository/customer-refund.repository');
 const {reverseCustomerRefundSchema,registerCustomerRefundSchema}=require('../../../dist/module/facturation/validators/customer-refund.validators');
 const {createAccountingPreviewSchema}=require('../../../dist/module/accounting-export/accounting-export.validators');
 const {lockInvoiceSettlement}=require('../../../dist/module/facturation/repository/invoice-settlement.repository');
@@ -70,8 +70,10 @@ module.exports=async function qualifyRefundReversal(pool,database,args){
  assert.ok(balances.every(row=>row.balance==='0.00'));
  assert.equal((await pool.query('SELECT sum(amount_ttc)::numeric(18,2)::text AS amount FROM public.customer_refunds_effective_1268 WHERE facture_id=$1',[args.invoiceId])).rows[0].amount,'120.00');
  assert.equal((await pool.query('SELECT count(*)::int AS count FROM public.customer_refunds WHERE facture_id=$1',[args.invoiceId])).rows[0].count,4);
+ const history=await repoListCustomerRefunds({avoir_id:origin.avoir_id});assert.equal(history.items.length,3);
+ assert.equal(history.items.filter(row=>row.reversal_id).length,2);assert.ok(history.items.every(row=>row.amount==='60.00'));
  console.log(JSON.stringify({marker:'PROFORMA1268_REFUND_REVERSALS_PASS',actualCorrectionCommands:2,replays:2,duplicatesRefused:2,
   correctedRefundAmount:'60.00',cashBudgetRestored:true,oldAccountsJournalAxesRetained:true,originalExportCannotBeReleased:true,
   pairedUnexportedRefundAndCorrection:true,originalRefundFactsRetained:4,effectiveRefundTotal:'120.00',finalLedgerBalances:'all zero',
-  additionalVatCorrection:false,externalCash:false,uiRecipe:false,businessRecipePassed:false}));
+  additionalVatCorrection:false,typedHistoryRows:3,correctedHistoryRows:2,externalCash:false,uiRecipe:false,businessRecipePassed:false}));
 };

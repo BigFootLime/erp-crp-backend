@@ -71,6 +71,16 @@ export async function repoPreviewCustomerRefund(input: CustomerRefundPreviewDTO)
   }catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
 }
 
+export async function repoListCustomerRefunds(input:CustomerRefundPreviewDTO) {
+  const result=await pool.query(`SELECT refund.id::text,refund.code,refund.avoir_id::int,refund.facture_id::int,
+    refund.currency,refund.amount_ttc::numeric(18,2)::text AS amount,refund.value_date::text,refund.booking_date::text,
+    refund.mode,refund.reference,refund.reason,reversal.id::text AS reversal_id,reversal.code AS reversal_code,
+    reversal.value_date::text AS reversal_date,reversal.reason AS reversal_reason
+    FROM public.customer_refunds refund LEFT JOIN public.customer_refund_reversals reversal ON reversal.refund_id=refund.id
+    WHERE refund.avoir_id=$1 ORDER BY refund.created_at DESC,refund.id`,[input.avoir_id]);
+  return{items:result.rows};
+}
+
 /** Records an already executed bank refund. It never initiates a bank transfer. */
 export async function repoRegisterCustomerRefund(args:{input:RegisterCustomerRefundDTO;actor:FinanceActorContext;idempotencyKey:string|undefined}) {
   const tx=await pool.connect();try {

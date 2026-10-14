@@ -2,8 +2,8 @@ import express from "express";
 import request from "supertest";
 import { ZodError } from "zod";
 import { beforeEach,describe,expect,it,vi } from "vitest";
-const mocks=vi.hoisted(()=>({preview:vi.fn(),register:vi.fn(),previewReversal:vi.fn(),registerReversal:vi.fn()}));
-vi.mock("../services/customer-refund.service",()=>({svcPreviewCustomerRefund:mocks.preview,svcRegisterCustomerRefund:mocks.register}));
+const mocks=vi.hoisted(()=>({preview:vi.fn(),register:vi.fn(),previewReversal:vi.fn(),registerReversal:vi.fn(),list:vi.fn()}));
+vi.mock("../services/customer-refund.service",()=>({svcPreviewCustomerRefund:mocks.preview,svcRegisterCustomerRefund:mocks.register,svcListCustomerRefunds:mocks.list}));
 vi.mock("../services/customer-refund-reversal.service",()=>({svcPreviewCustomerRefundReversal:mocks.previewReversal,svcReverseCustomerRefund:mocks.registerReversal}));
 import router from "./paiements.routes";
 function app(){
@@ -18,7 +18,18 @@ const body={avoir_id:1,amount:'60.00',preview_hash:'a'.repeat(64),confirm:true,v
   mode:'VIREMENT',reference:'FIXTURE-NO-BANK-TRANSFER',reason:'Preuve synthétique de qualification'};
 describe("refund workflow HTTP authorization and typed inputs",()=>{
  beforeEach(()=>{vi.clearAllMocks();mocks.preview.mockResolvedValue({maximum_amount:'60.00'});mocks.register.mockResolvedValue({id:'fixture',idempotent_replay:false});
-  mocks.previewReversal.mockResolvedValue({amount:'60.00'});mocks.registerReversal.mockResolvedValue({id:'correction-fixture',idempotent_replay:false});});
+  mocks.previewReversal.mockResolvedValue({amount:'60.00'});mocks.registerReversal.mockResolvedValue({id:'correction-fixture',idempotent_replay:false});mocks.list.mockResolvedValue({items:[]});});
+ it.each([undefined,'Secretaire','Tourneur'])('protects refund history for %s',async role=>{
+  const call=request(app()).get('/paiements/workflow/refunds?avoir_id=42');if(role)call.set('x-test-role',role);
+  expect((await call).status).toBe(role?403:401);expect(mocks.list).not.toHaveBeenCalled();
+ });
+ it('lists original and corrected facts for one selected credit with typed filters',async()=>{
+  expect((await request(app()).get('/paiements/workflow/refunds?avoir_id=42').set('x-test-role','Comptable')).status).toBe(200);
+  expect(mocks.list).toHaveBeenCalledWith({avoir_id:42});mocks.list.mockClear();
+  for(const query of ['avoir_id=other','avoir_id=0','avoir_id=42&client_id=another-company'])
+   expect((await request(app()).get('/paiements/workflow/refunds?'+query).set('x-test-role','Comptable')).status).toBe(400);
+  expect(mocks.list).not.toHaveBeenCalled();
+ });
  it.each([undefined,'Secretaire','Tourneur'])('refuses unauthorized refund reads and records for %s',async role=>{
    for(const endpoint of ['preview','register']){const call=request(app()).post('/paiements/workflow/refunds/'+endpoint);
      if(role)call.set('x-test-role',role);const response=await call.send(endpoint==='preview'?{avoir_id:1}:body);
