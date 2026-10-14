@@ -8,6 +8,7 @@ import {
   type PaymentStatus,
 } from "../domain/finance-policy";
 import { formatDecimal, moneyToCents } from "../domain/decimal-money";
+import { freezeAdvanceVat } from "./advance-vat.repository";
 import type { PaymentCommandResult } from "../types/workflow.types";
 import type {
   AllocatePaymentBodyDTO,
@@ -273,13 +274,16 @@ async function insertAllocations(params: {
   allocations: readonly ResolvedAllocation[];
 }): Promise<void> {
   for (const allocation of params.allocations) {
+    const advanceVat = await freezeAdvanceVat(params.client, {
+      invoiceId: allocation.factureId, paymentId: params.paymentId, amount: allocation.amount,
+    });
     await params.client.query(
       `
         INSERT INTO public.paiement_allocations (
           paiement_id, facture_id, facture_due_date_id,
-          amount_ttc, created_by, correlation_id
+          amount_ttc, created_by, correlation_id, advance_vat_snapshot
         )
-        VALUES ($1,$2,$3::uuid,$4,$5,$6::uuid)
+        VALUES ($1,$2,$3::uuid,$4,$5,$6::uuid,$7::jsonb)
       `,
       [
         params.paymentId,
@@ -288,6 +292,7 @@ async function insertAllocations(params: {
         allocation.amount,
         params.actor.userId,
         params.correlationId,
+        advanceVat ? JSON.stringify(advanceVat) : null,
       ]
     );
     if (allocation.dueDateId) {

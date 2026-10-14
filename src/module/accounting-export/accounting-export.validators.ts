@@ -19,6 +19,8 @@ export const accountingMappingConfigSchema = z.object({
   default_bank_account: accountNumber.nullable().default(null),
   sales_account_by_tax: z.record(taxRateKey, accountNumber),
   vat_output_account_by_tax: z.record(taxRateKey, accountNumber),
+  advance_account_by_tax:z.record(taxRateKey,accountNumber).optional(),
+  advance_vat_pending_account_by_tax:z.record(taxRateKey,accountNumber).optional(),
   purchase_journal: journalCode.nullable().default(null),
   supplier_credit_journal: journalCode.nullable().default(null),
   purchase_account_by_tax_category: z.record(taxCategoryRateKey, accountNumber).default({}),
@@ -51,8 +53,10 @@ export const createAccountingPreviewSchema = z.object({
   mapping_version_id: z.string().uuid(),
   period_from: isoDate,
   period_to: isoDate,
-  source_types: z.array(z.enum(ACCOUNTING_SOURCE_TYPES)).min(1).max(5)
-    .refine((values) => new Set(values).size === values.length, "Types source dupliqués."),
+  source_types: z.array(z.enum(ACCOUNTING_SOURCE_TYPES)).min(1).max(6)
+    .refine((values) => new Set(values).size === values.length, "Types source dupliqués.")
+    .transform(values => values.includes("PAYMENT") && !values.includes("ADVANCE_VAT") ? [...values, "ADVANCE_VAT" as const] : values),
+  only_unexported: z.boolean().optional(),
 }).strict().superRefine((value, context) => {
   if (value.period_to < value.period_from) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["period_to"], message: "La date de fin précède la date de début." });

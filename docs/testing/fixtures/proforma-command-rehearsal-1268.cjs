@@ -12,6 +12,8 @@ const {repoRefreshProforma,repoCancelProforma}=require('../../../dist/module/fac
 const {repoGetProforma,repoListProformas}=require('../../../dist/module/facturation/repository/proforma-read.repository');
 const {repoAssignProformaReceipts,repoReleaseProformaReceipt}=require('../../../dist/module/facturation/repository/proforma-receipts.repository');
 const {readProformaDepositInvoiceSources,buildProformaDepositInvoiceLine}=require('../../../dist/module/facturation/repository/proforma-deposit-invoice.repository');
+const {allocateDocumentTaxBreakdown}=require('../../../dist/module/facturation/domain/document-tax-breakdown');
+const {freezeAdvanceVat}=require('../../../dist/module/facturation/repository/advance-vat.repository');
 
 async function main(){
   assert.equal((await pool.query('SELECT current_database() AS name')).rows[0].name,database);
@@ -84,9 +86,11 @@ async function main(){
     await seed.query("INSERT INTO public.proforma_deposit_sources(facture_source_allocation_id,proforma_billing_part_id,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000001',$1,7,'12682000-0000-4000-8000-000000000099')",[target]);
     await seed.query("UPDATE public.facture_source_allocations SET allocation_status='CONSUMED',quantity_consumed=1 WHERE facture_id=1268201");
     await seed.query(`UPDATE public.facture SET statut='ISSUED',document_status='ISSUED',legal_number='QUAL-SYNTHETIC-NO-LEGAL-SEQUENCE',issued_at=now(),issued_by=7,
-      immutable_snapshot='{"invoice_type_code":"386","synthetic_fiscal_storage_fixture":true}',document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268201`);
+      immutable_snapshot=$1::jsonb,document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268201`,[JSON.stringify({invoice_type_code:'386',synthetic_fiscal_storage_fixture:true,
+        tax_breakdown:allocateDocumentTaxBreakdown({lines:[{ratePercent:'20',net:'100.00',tax:'20.00'}],totalExTax:'100.00',totalTax:'20.00',totalInclTax:'120.00'})})]);
     await seed.query("INSERT INTO public.paiement(id,uuid,client_id,montant,status,workflow_status,currency) VALUES(1268201,'12682000-0000-4000-8000-000000000002',$1,120,'ALLOCATED','ALLOCATED','EUR')",[clientId('Qualification société A')]);
-    await seed.query("INSERT INTO public.paiement_allocations(id,paiement_id,facture_id,amount_ttc,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000003',1268201,1268201,120,7,'12682000-0000-4000-8000-000000000099')");
+    const cashVat=await freezeAdvanceVat(seed,{invoiceId:1268201,paymentId:1268201,amount:'120.00'});
+    await seed.query("INSERT INTO public.paiement_allocations(id,paiement_id,facture_id,amount_ttc,created_by,correlation_id,advance_vat_snapshot) VALUES('12682000-0000-4000-8000-000000000003',1268201,1268201,120,7,'12682000-0000-4000-8000-000000000099',$1::jsonb)",[JSON.stringify(cashVat)]);
     await seed.query('COMMIT');
   }catch(error){await seed.query('ROLLBACK');throw error;}finally{seed.release();}
   const depositSources=await readProformaDepositInvoiceSources(pool,[target],false);
@@ -125,5 +129,6 @@ async function main(){
   console.log(JSON.stringify({marker:'PROFORMA1268_COMMERCIAL_PDF_ISSUE_PASS',actualCommercialIssuance:true,immutableExactBytes:true,
     archiveIntents:1,idempotentReplay:true,legalSequenceConsumed:false,gedFilingExecuted:false,uiRecipe:false}));
   await require('./document-tax-accounting-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A')});
+  await require('./advance-cash-accounting-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A')});
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

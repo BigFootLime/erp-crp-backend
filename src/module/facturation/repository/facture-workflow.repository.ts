@@ -9,6 +9,7 @@ import { planFinalInvoicePrepayments } from "../domain/final-invoice-prepayments
 import { finalPrepaymentTargets } from "../domain/final-prepayment-targets";
 import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 import { bindFinalInvoicePrepayments, readFinalInvoicePrepaymentReceipts } from "./final-invoice-prepayments.repository";
+import { freezeAdvanceClearing } from "./advance-clearing.repository";
 import { bindProformaFinalInvoiceSourceTx, proformaBilledPartySourceWhere, readProformaFinalInvoiceAffairs } from "./proforma-final-invoice.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
@@ -167,6 +168,7 @@ export type FinanceDocumentSnapshot = {
   lines: FacturePreviewLine[];
   totals: FacturePreview["totals"];
   prepayments?: FacturePreview["prepayments"];
+  advance_clearing?: import("../domain/advance-clearing").AdvanceClearingSnapshot;
   tax_breakdown?: FacturePreview["tax_breakdown"];
   internal_comment: string | null;
   customer_text: string | null;
@@ -1518,6 +1520,7 @@ export async function repoIssueFacture(params: {
       lines: preview.lines,
       totals: preview.totals,
       prepayments: preview.prepayments,
+      advance_clearing: await freezeAdvanceClearing(client, params.factureId, preview.prepayments?.amount_paid ?? "0.00"),
       tax_breakdown: preview.tax_breakdown,
       internal_comment: facture.commentaires,
       customer_text: facture.customer_text,

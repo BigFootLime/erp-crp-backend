@@ -5,7 +5,7 @@ import { canonicalJson } from "../facturation/domain/finance-policy";
 import { divideHalfUp, formatDecimal, moneyToCents, parseDecimal } from "../facturation/domain/decimal-money";
 
 export const ACCOUNTING_EXPORT_ADAPTER = "GENERIC_DELIMITED_V1" as const;
-export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT", "SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE"] as const;
+export const ACCOUNTING_SOURCE_TYPES = ["INVOICE", "CREDIT_NOTE", "PAYMENT", "SUPPLIER_INVOICE", "SUPPLIER_CREDIT_NOTE", "ADVANCE_VAT"] as const;
 export type AccountingSourceType = (typeof ACCOUNTING_SOURCE_TYPES)[number];
 
 export type AccountingMappingConfig = {
@@ -18,6 +18,8 @@ export type AccountingMappingConfig = {
   default_bank_account: string | null;
   sales_account_by_tax: Record<string, string>;
   vat_output_account_by_tax: Record<string, string>;
+  advance_account_by_tax?:Record<string,string>;
+  advance_vat_pending_account_by_tax?:Record<string,string>;
   purchase_journal?: string | null;
   supplier_credit_journal?: string | null;
   purchase_account_by_tax_category?: Record<string, string>;
@@ -48,6 +50,14 @@ export type AccountingSourceDocument = {
   tax_snapshot?: import("../facturation/domain/document-tax-breakdown").DocumentTaxBreakdown|null;
   tax_snapshot_present?: boolean;
   tax_breakdown_error?: {code:string;message:string};
+  fiscal_snapshot?:Record<string,unknown>|null;
+  corrected_invoice_fiscal_snapshot?:Record<string,unknown>|null;
+  has_deposit_sources?:boolean;
+  has_unqualified_advance_cash?: boolean;
+  financial_kind?:"STANDARD"|"ADVANCE"|"ADVANCE_CREDIT"|"FINAL_WITH_ADVANCES";
+  financial_context_error?:{code:string;message:string};
+  advance_vat_snapshot?: import("../facturation/domain/advance-vat").AdvanceVatSnapshot | null;
+  advance_clearing?: import("../facturation/domain/advance-clearing").AdvanceClearingSnapshot;
 };
 
 export type AccountingEntryLine = {
@@ -163,6 +173,8 @@ function sourceLines(
   firstLine: number
 ): { lines: AccountingEntryLine[]; findings: AccountingFinding[] } {
   const findings = validateSourceTotals(source);
+  if(source.financial_context_error)findings.push({severity:"BLOCKER",code:source.financial_context_error.code,
+    message:`${source.source_number}: ${source.financial_context_error.message}`,source_type:source.source_type,source_id:source.source_id});
   if (source.claimed_batch_id) {
     findings.push({
       severity: "BLOCKER",
@@ -204,6 +216,50 @@ function sourceLines(
   };
   const lines: AccountingEntryLine[] = [];
   const push = (line: Omit<AccountingEntryLine, "line_no">) => lines.push({ ...line, line_no: firstLine + lines.length });
+  if(source.financial_context_error)return{lines,findings};
+
+  if (source.source_type === "ADVANCE_VAT") {
+    if (!source.advance_vat_snapshot || source.advance_vat_snapshot.version !== 1) {
+      findings.push({ severity: "BLOCKER", code: "ACCOUNTING_ADVANCE_VAT_EVIDENCE_MISSING",
+        message: `${source.source_number}: preuve de TVA encaissée absente.`, source_type: source.source_type, source_id: source.source_id });
+      return { lines, findings };
+    }
+    for (const entry of source.tax_breakdown) {
+      if (moneyToCents(entry.tax_amount) === 0n) continue;
+      const rate = normalizeTaxRate(entry.tax_rate), pending = mappingValue(mapping.advance_vat_pending_account_by_tax ?? {}, rate),
+        collected = mappingValue(mapping.vat_output_account_by_tax, rate);
+      if (!pending || !collected) {
+        findings.push({ severity: "BLOCKER", code: "ACCOUNTING_ADVANCE_VAT_MAPPING_MISSING",
+          message: `${source.source_number}: comptes de TVA en attente et collectée requis pour ${rate}.`, source_type: source.source_type, source_id: source.source_id });
+        continue;
+      }
+      push({ ...common, journal_code: mapping.sales_journal, account_number: pending, third_party_account: null,
+        debit: entry.tax_amount, credit: "0.00", tax_rate: rate });
+      push({ ...common, journal_code: mapping.sales_journal, account_number: collected, third_party_account: null,
+        debit: "0.00", credit: entry.tax_amount, tax_rate: rate });
+    }
+    return { lines, findings };
+  }
+
+  if(source.financial_kind==="ADVANCE_CREDIT"||(source.financial_kind==="FINAL_WITH_ADVANCES"&&!source.advance_clearing)){
+    findings.push({severity:"BLOCKER",code:"ACCOUNTING_ADVANCE_SETTLEMENT_CONTEXT_REQUIRED",
+      message:`${source.source_number}: les preuves de TVA encaissée et de reprise d'acompte doivent être qualifiées avant l'export.`,source_type:source.source_type,source_id:source.source_id});
+    return{lines,findings};
+  }
+  if(source.financial_kind==="ADVANCE"){
+    const journal=mapping.sales_journal;
+    push({...common,journal_code:journal,account_number:source.third_party_account??"",debit:source.total_incl_tax,credit:"0.00",tax_rate:null});
+    for(const tax of source.tax_breakdown){
+      const rate=normalizeTaxRate(tax.tax_rate),holding=mappingValue(mapping.advance_account_by_tax??{},rate),pending=mappingValue(mapping.advance_vat_pending_account_by_tax??{},rate);
+      if(!holding)findings.push({severity:"BLOCKER",code:"ACCOUNTING_ADVANCE_ACCOUNT_MISSING",message:`${source.source_number}: compte d'avance absent pour TVA ${rate}.`,source_type:source.source_type,source_id:source.source_id});
+      else if(moneyToCents(tax.total_ex_tax)!==0n)push({...common,journal_code:journal,account_number:holding,third_party_account:null,debit:"0.00",credit:tax.total_ex_tax,tax_rate:rate});
+      if(moneyToCents(tax.tax_amount)!==0n){
+        if(!pending)findings.push({severity:"BLOCKER",code:"ACCOUNTING_ADVANCE_PENDING_VAT_ACCOUNT_MISSING",message:`${source.source_number}: compte de TVA en attente absent pour ${rate}.`,source_type:source.source_type,source_id:source.source_id});
+        else push({...common,journal_code:journal,account_number:pending,third_party_account:null,debit:"0.00",credit:tax.tax_amount,tax_rate:rate});
+      }
+    }
+    return{lines,findings};
+  }
 
   if (source.source_type === "PAYMENT") {
     const mode = source.payment_mode?.trim() || "DEFAULT";
@@ -323,6 +379,23 @@ function sourceLines(
       } else {
         push({ ...common, journal_code: journal, account_number: vatAccount, third_party_account: null, debit: isCredit ? tax.tax_amount : "0.00", credit: isCredit ? "0.00" : tax.tax_amount, tax_rate: rate });
       }
+    }
+  }
+  if (source.financial_kind === "FINAL_WITH_ADVANCES" && source.advance_clearing) {
+    for (const entry of source.advance_clearing.entries) {
+      const rate = normalizeTaxRate(entry.tax_rate), holding = mappingValue(mapping.advance_account_by_tax ?? {}, rate),
+        collected = mappingValue(mapping.vat_output_account_by_tax, rate);
+      if (!holding || (moneyToCents(entry.tax_amount) !== 0n && !collected)) {
+        findings.push({ severity: "BLOCKER", code: "ACCOUNTING_ADVANCE_CLEARING_MAPPING_MISSING",
+          message: `${source.source_number}: comptes de reprise d'acompte absents pour ${rate}.`, source_type: source.source_type, source_id: source.source_id });
+        continue;
+      }
+      if (moneyToCents(entry.amount_ex_tax) !== 0n) push({ ...common, journal_code: journal, account_number: holding,
+        third_party_account: null, debit: entry.amount_ex_tax, credit: "0.00", tax_rate: rate });
+      if (moneyToCents(entry.tax_amount) !== 0n) push({ ...common, journal_code: journal, account_number: collected!,
+        third_party_account: null, debit: entry.tax_amount, credit: "0.00", tax_rate: rate });
+      push({ ...common, journal_code: journal, account_number: source.third_party_account ?? "",
+        debit: "0.00", credit: entry.amount_incl_tax, tax_rate: null });
     }
   }
   return { lines, findings };

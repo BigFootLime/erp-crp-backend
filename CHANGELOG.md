@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Classification fiscale des acomptes, comptes configurés d’avances/TVA en attente et ventilation TVA immuable par paiement. Export complémentaire sans seconde banque ; reprise figée d’acomptes sur facture finale. 7 920 tests / 716 fichiers, build et commandes PostgreSQL17 isolées passent. Migration additive avec rollback protégé, sans backfill historique. Interface, remboursements/contrepassations et recette réelle restent en cours ; lot non déployé.
+
 - Avoirs partiels : prix/remise/TVA d'origine, budgets et dernier centime repris sans double remise ; quantités et montants déjà crédités contrôlés. Deux ambiguïtés de paramètres SQL à la création corrigées après reproduction PostgreSQL. Empreinte d'aperçu stable après stockage des quantités. Motifs PDF en français et exemple relu. 7 907 tests / 713 fichiers, build et repositories natifs isolés passent ; émission réelle, avoirs déjà payés/remboursements, comptabilité des acomptes et écrans restent ouverts avant déploiement.
 
 - Remise globale et TVA : ventilation documentaire commune figée pour PDF, facture électronique et export comptable. Lectures de brouillon exactes et échéanciers conservés ; prix financiers à quatre décimales, anciens exemplaires/lignes figées inchangés. 7 894 tests / 711 fichiers, build strict et exports comptables réels sur PostgreSQL isolé passent. Comptabilité des acomptes, avoirs partiels, écrans et recette fiscale/métier restent ouverts ; aucun déploiement de ce lot. Référence visuelle commune à tous les exports précisée selon l'OF approuvé.
