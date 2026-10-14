@@ -1,5 +1,8 @@
 // src/module/admin/repository/admin.repository.ts
 import pool from "../../../config/database";
+import { createEmployeeWorkProfile } from '../../auth/repository/work-profile.repository';
+import type { WorkProfile } from '../../auth/validators/work-profile.validator';
+import { registrationEnabled } from '../../auth/repository/test-registration.repository';
 import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
@@ -475,6 +478,9 @@ export async function repoProvisionUser(input: {
   role: string;
   roles: string[];
   assignedBy: number | null;
+  avatar_key?: string;
+  work_profile?: WorkProfile;
+  test_superadmin?: true;
   gender?: string | null;
   address?: string | null;
   lane?: string | null;
@@ -620,6 +626,13 @@ export async function repoProvisionUser(input: {
       roles: input.roles,
       assignedBy: input.assignedBy,
     });
+
+    if (input.avatar_key) await tx.query('UPDATE public.users SET avatar_key=$2 WHERE id=$1',[created.id,input.avatar_key]);
+    if (input.work_profile) await createEmployeeWorkProfile(tx,created.id,input.work_profile,`EMP-${created.id}`);
+    if (input.test_superadmin) {
+      if (!await registrationEnabled(tx)) throw new HttpError(403,'TEST_SUPERADMIN_FORBIDDEN','Ce rôle d’essai est réservé à une base Test ouverte à la création.');
+      await tx.query('UPDATE public.users SET is_superadmin=true,mfa_reenrollment_required=true WHERE id=$1',[created.id]);
+    }
 
     await tx.query(
       `UPDATE public.admin_user_provisioning_requests

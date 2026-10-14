@@ -1,0 +1,19 @@
+{
+  "result": "PASS",
+  "checks": [
+    "owned fixture cluster",
+    "starts without any imported users or company",
+    "private owner installed once",
+    "same owner command replays without duplicate",
+    "39h CDI and requested job, without invented avatar",
+    "only requested owner has active Prod and common Test administration",
+    "company remains unconfigured",
+    "first login requires actual MFA enrollment before any session",
+    "signed call replay refused"
+  ],
+  "first_login_mfa_required": true,
+  "local_only": true,
+  "live_prod_changed": false,
+  "live_test_changed": false,
+  "owner_installed_online": false
+}

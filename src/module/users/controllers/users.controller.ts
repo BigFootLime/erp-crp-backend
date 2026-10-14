@@ -6,6 +6,6 @@ import { listAssignableUsersQuerySchema } from "../validators/users.validators";
 
 export const listAssignableUsersController: RequestHandler = asyncHandler(async (req, res) => {
   const query = listAssignableUsersQuerySchema.parse(req.query);
-  const items = await listAssignableUsers({ q: query.q, role: query.role, limit: query.limit });
+  const items = await listAssignableUsers({ q: query.q, role: query.role, limit: query.limit,directorySession:req.user?.directory_session });
   res.json({ items });
 });

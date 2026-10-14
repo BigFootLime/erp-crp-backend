@@ -1,0 +1,11 @@
+import { Router } from "express";
+import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
+import { authenticateToken } from "../../auth/middlewares/auth.middleware";
+import { status,progress,companies,company } from "../controllers/onboarding.controller";
+const router=Router();
+router.use(authenticateToken,requireSuperadmin);
+router.get("/status",status);
+router.put("/progress",progress);
+router.get("/company",companies);
+router.put("/company",company);
+export default router;

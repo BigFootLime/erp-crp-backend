@@ -6,6 +6,8 @@ import { mediaFilename } from "../repository/operational-media.repository";
 import { collectOperationalMediaCapabilities } from "../services/operational-media-health.service";
 import { authorizeOperationalMediaRead } from "../services/operational-media.service";
 import logger from "../../../utils/logger";
+import pool from '../../../config/database';
+import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
 
 export const getMediaCapabilities: RequestHandler = async (_req, res, next) => {
   try {
@@ -20,6 +22,11 @@ export const downloadOperationalImage: RequestHandler = async (req, res, next) =
     const userId = req.user?.id;
     if (typeof userId !== "number") { res.status(401).json({ error: "Utilisateur non authentifié" }); return; }
     const assetId = typeof req.params.assetId === "string" ? req.params.assetId : "";
+    const directory=sharedDirectoryClient();
+    if(directory&&req.user?.directory_session&&!((await pool.query('SELECT 1 FROM public.operational_media_assets WHERE id::text=$1',[assetId])).rows.length)){
+      const avatar=await directory.downloadAvatar(req.user.directory_session,assetId);
+      res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');res.type(avatar.mime).send(avatar.bytes);return;
+    }
     const media = await authorizeOperationalMediaRead({ assetId, userId });
     const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
     const device = parseDevice(userAgent);

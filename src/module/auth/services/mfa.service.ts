@@ -3,6 +3,7 @@ import bwipjs from "bwip-js";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { avatarProjectionSql } from '../repository/avatar.repository';
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { bumpRealtimeSessionEpoch } from "../../../shared/realtime/realtime-control-plane";
 import { ApiError } from "../../../utils/apiError";
@@ -194,7 +195,8 @@ async function loadFactor(tx: PoolClient, userId: number, state: "ACTIVE" | "PEN
 
 async function loadUser(tx: PoolClient, userId: number, forUpdate = false): Promise<UserMfaRow | null> {
   const { rows } = await tx.query<UserMfaRow>(
-    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required,
+    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required, u.avatar_key,
+            ${avatarProjectionSql} AS profile_picture_asset_id,
             COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
             COALESCE((SELECT array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
                         FROM public.user_role_assignments ura WHERE ura.user_id = u.id),
