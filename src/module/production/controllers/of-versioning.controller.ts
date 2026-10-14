@@ -16,6 +16,7 @@ import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 import * as service from "../services/of-versioning.service";
 import { publicOfDocumentArchiveResult } from "../services/of-document-archive";
 import { requestOfDocumentPrint } from "../services/of-document-print.service";
+import { printResponseContext, setWorkshopPrintHeaders } from "./workshop-print-response";
 import { idempotencyKeyOf } from "../middlewares/of-versioning-authorization.middleware";
 import {
   assessVarianceSchema,
@@ -360,12 +361,12 @@ export const printDocument = asyncHandler(async (req: Request, res: Response) =>
   const { ofId, documentId } = documentIdParam.parse(req.params);
   const key = idempotencyKeyOf(req);
   if (!key) throw new HttpError(400,"IDEMPOTENCY_KEY_REQUIRED","La demande d’impression doit être identifiée.");
+  const database = await printResponseContext();
   const result = await requestOfDocumentPrint(ofId,documentId,key,actorOf(req).userId!,buildAuditContext(req));
   res.setHeader("Content-Type","application/pdf");
   res.setHeader("Content-Length",String(result.pdf.length));
   res.setHeader("Cache-Control","private, no-store");
-  res.setHeader("X-Print-Intent-Id",result.intent.id);
-  res.setHeader("X-Print-Copy",result.intent.copy_mark ?? "ORIGINAL");
+  setWorkshopPrintHeaders(res,database,result.intent.actor_id,result.intent.id,result.intent.copy_mark,result.pdf);
   res.setHeader("X-Document-Sha256",result.intent.copy_sha256);
   res.setHeader("Content-Disposition",buildContentDisposition(`OF-${documentId}-${result.intent.copy_mark ?? "ORIGINAL"}.pdf`,false));
   res.end(result.pdf);

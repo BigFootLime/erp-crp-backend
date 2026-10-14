@@ -8,6 +8,7 @@ import { ofIdParam } from "../validators/of-versioning.validators";
 import { workshopFolderParams as folderParams, workshopFolderCommand as emptyCommand } from "../validators/workshop-folder.validators";
 import { prepareWorkshopFolder, previewWorkshopFolder, printWorkshopFolder } from "../services/workshop-folder.service";
 import type { OfActor } from "../services/of-versioning.service";
+import { printResponseContext, setWorkshopPrintHeaders } from "./workshop-print-response";
 function actor(req: Request): OfActor {
     if (!req.user || typeof req.user.id !== "number")
         throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
@@ -40,8 +41,8 @@ export const previewFolder = asyncHandler(async (req: Request, res: Response) =>
 export const printFolder = asyncHandler(async (req: Request, res: Response) => {
     const { ofId, folderId } = folderParams.parse(req.params);
     emptyCommand.parse(req.body ?? {});
+    const database = await printResponseContext();
     const result = await printWorkshopFolder(ofId, folderId, key(req), actor(req).userId!, buildAuditContext(req));
-    res.setHeader("X-Print-Intent-Id", result.intent.id);
-    res.setHeader("X-Print-Copy", result.intent.copy_mark ?? "ORIGINAL");
+    setWorkshopPrintHeaders(res, database, result.intent.actor_id, result.intent.id, result.intent.copy_mark, result.pdf);
     pdfResponse(res, result.pdf, `DOSSIER-OF-${ofId}-${result.intent.copy_mark ?? "ORIGINAL"}.pdf`);
 });
