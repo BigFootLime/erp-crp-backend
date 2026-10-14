@@ -9,6 +9,7 @@ export type SessionIdentity = {
   email: string | null;
   role: string;
   avatar_key?: string | null;
+  profile_picture_asset_id?: string | null;
   roles?: string[] | null;
   realtime_session_epoch?: string | number | null;
 };
@@ -52,6 +53,7 @@ export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance) {
       email: user.email,
       role: effectiveRole,
       avatar_key: user.avatar_key ?? null,
+      profile_picture_asset: user.profile_picture_asset_id ? {asset_id:user.profile_picture_asset_id,status:"AVAILABLE" as const}:null,
       primary_role: user.role,
       roles: assignedRoles,
     },

@@ -1,4 +1,5 @@
 import pool from '../../../config/database';
+import { avatarProjectionSql } from './avatar.repository';
 import type { PoolClient } from 'pg';
 import {
   bumpRealtimeAuthorizationEpoch,
@@ -69,6 +70,7 @@ export const findUserByUsername = async (username: string) => {
       `
         SELECT
           u.*,
+          ${avatarProjectionSql} AS profile_picture_asset_id,
           COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
           COALESCE(
             array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)

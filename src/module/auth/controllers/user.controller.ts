@@ -1,15 +1,20 @@
 import { RequestHandler } from 'express';
+import { readUserAvatar } from '../repository/avatar.repository';
 
-export const getProfile: RequestHandler = (req, res) => {
+export const getProfile: RequestHandler = async (req, res, next) => {
+ try {
+  const avatar=req.user ? await readUserAvatar(req.user.id):null;
   res.status(200).json({
     message: 'Profil utilisateur',
     user: req.user
       ? {
           ...req.user,
+          ...avatar,
           role: req.user.role,
           primary_role: req.user.primary_role ?? req.user.role,
           roles: req.user.roles ?? [req.user.primary_role ?? req.user.role],
         }
       : null,
   });
+ } catch(error) {next(error);}
 };

@@ -26,8 +26,11 @@ import {
 } from '../controllers/mfa.controller';
 import { requireSuperadmin } from '../../access-control/middlewares/require-superadmin';
 import { testRegistration, testRegistrationOptions } from '../controllers/test-registration.controller';
+import { uploadOwnAvatar } from '../controllers/avatar.controller';
+import { createSecureUpload } from '../../../shared/uploads/secure-upload';
 
 const router: Router = Router();
+const avatarUpload = createSecureUpload('image', {maxFiles:1});
 
 router.get('/test-registration', testRegistrationOptions);
 router.post('/test-registration', registerRateLimit, testRegistration);
@@ -46,6 +49,7 @@ router.get(
 // Profil d'accès module (#326) — volontairement SANS authorizeRole : chaque compte,
 // opérateur compris, doit pouvoir charger la navigation à laquelle il a droit.
 router.get('/access-profile', authenticateToken, getAccessProfile);
+router.put('/me/avatar', authenticateToken, avatarUpload.single('avatar'), uploadOwnAvatar);
 router.get('/me/navigation-preferences', authenticateToken, getNavigationPreferences);
 router.put('/me/navigation-preferences', authenticateToken, putNavigationPreferences);
 router.get('/mfa/status', authenticateToken, status);

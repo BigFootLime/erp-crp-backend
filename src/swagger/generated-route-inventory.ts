@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "1e83e12a8506af9d35fcfc01adf7951bfa1f1f8d3e4914f2bda20c84bbb1df02";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "b6bd5105188457709b0cad23f1a7e897bcbcd5f5fa9d229b5db89aafbfa892fc";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -403,7 +403,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/analytics",
-    "source": "src/module/admin/routes/admin.routes.ts:40",
+    "source": "src/module/admin/routes/admin.routes.ts:44",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -556,7 +556,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/erp-settings/{key}",
-    "source": "src/module/admin/routes/admin.routes.ts:42",
+    "source": "src/module/admin/routes/admin.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -576,7 +576,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/erp-settings/{key}",
-    "source": "src/module/admin/routes/admin.routes.ts:43",
+    "source": "src/module/admin/routes/admin.routes.ts:47",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -596,7 +596,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/login-logs",
-    "source": "src/module/admin/routes/admin.routes.ts:39",
+    "source": "src/module/admin/routes/admin.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -688,7 +688,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/operations",
-    "source": "src/module/admin/routes/admin.routes.ts:41",
+    "source": "src/module/admin/routes/admin.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -923,7 +923,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/roles",
-    "source": "src/module/admin/routes/admin.routes.ts:33",
+    "source": "src/module/admin/routes/admin.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -943,7 +943,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/users",
-    "source": "src/module/admin/routes/admin.routes.ts:32",
+    "source": "src/module/admin/routes/admin.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -963,7 +963,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/users",
-    "source": "src/module/admin/routes/admin.routes.ts:35",
+    "source": "src/module/admin/routes/admin.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -983,7 +983,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/users/{id}",
-    "source": "src/module/admin/routes/admin.routes.ts:34",
+    "source": "src/module/admin/routes/admin.routes.ts:37",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1003,7 +1003,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/admin/users/{id}",
-    "source": "src/module/admin/routes/admin.routes.ts:36",
+    "source": "src/module/admin/routes/admin.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1023,7 +1023,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/users/{id}/account-recovery",
-    "source": "src/module/admin/routes/admin.routes.ts:47",
+    "source": "src/module/admin/routes/admin.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1041,9 +1041,30 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "put",
+    "path": "/admin/users/{id}/avatar",
+    "source": "src/module/admin/routes/admin.routes.ts:39",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "avatarUpload.single(avatar)",
+      "uploadAdminUserAvatar"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
     "method": "post",
     "path": "/admin/users/{id}/invitations",
-    "source": "src/module/admin/routes/admin.routes.ts:37",
+    "source": "src/module/admin/routes/admin.routes.ts:41",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1063,7 +1084,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/admin/users/{id}/password",
-    "source": "src/module/admin/routes/admin.routes.ts:46",
+    "source": "src/module/admin/routes/admin.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1083,7 +1104,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/users/{id}/password-reset-token",
-    "source": "src/module/admin/routes/admin.routes.ts:45",
+    "source": "src/module/admin/routes/admin.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1914,7 +1935,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/access-profile",
-    "source": "src/module/auth/routes/auth.routes.ts:48",
+    "source": "src/module/auth/routes/auth.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1926,7 +1947,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/activate",
-    "source": "src/module/auth/routes/auth.routes.ts:39",
+    "source": "src/module/auth/routes/auth.routes.ts:42",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -1938,7 +1959,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/forgot-password",
-    "source": "src/module/auth/routes/auth.routes.ts:37",
+    "source": "src/module/auth/routes/auth.routes.ts:40",
     "middleware": [
       "anonymous",
       "forgotPasswordRateLimit",
@@ -1950,7 +1971,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/login",
-    "source": "src/module/auth/routes/auth.routes.ts:35",
+    "source": "src/module/auth/routes/auth.routes.ts:38",
     "middleware": [
       "anonymous",
       "loginRateLimit",
@@ -1962,7 +1983,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me",
-    "source": "src/module/auth/routes/auth.routes.ts:40",
+    "source": "src/module/auth/routes/auth.routes.ts:43",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1972,9 +1993,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": []
   },
   {
+    "method": "put",
+    "path": "/auth/me/avatar",
+    "source": "src/module/auth/routes/auth.routes.ts:52",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "avatarUpload.single(avatar)",
+      "uploadOwnAvatar"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
     "method": "get",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:49",
+    "source": "src/module/auth/routes/auth.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1986,7 +2020,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:50",
+    "source": "src/module/auth/routes/auth.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1998,7 +2032,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/enrollment",
-    "source": "src/module/auth/routes/auth.routes.ts:53",
+    "source": "src/module/auth/routes/auth.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2011,7 +2045,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:57",
+    "source": "src/module/auth/routes/auth.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2026,7 +2060,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:58",
+    "source": "src/module/auth/routes/auth.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2042,7 +2076,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/recovery-codes",
-    "source": "src/module/auth/routes/auth.routes.ts:55",
+    "source": "src/module/auth/routes/auth.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2055,7 +2089,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/replacement",
-    "source": "src/module/auth/routes/auth.routes.ts:54",
+    "source": "src/module/auth/routes/auth.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2068,7 +2102,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/revoke",
-    "source": "src/module/auth/routes/auth.routes.ts:56",
+    "source": "src/module/auth/routes/auth.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2081,7 +2115,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/status",
-    "source": "src/module/auth/routes/auth.routes.ts:51",
+    "source": "src/module/auth/routes/auth.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2093,7 +2127,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/step-up",
-    "source": "src/module/auth/routes/auth.routes.ts:52",
+    "source": "src/module/auth/routes/auth.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2106,7 +2140,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/verify",
-    "source": "src/module/auth/routes/auth.routes.ts:36",
+    "source": "src/module/auth/routes/auth.routes.ts:39",
     "middleware": [
       "anonymous",
       "mfaRateLimit",
@@ -2118,7 +2152,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/reset-password",
-    "source": "src/module/auth/routes/auth.routes.ts:38",
+    "source": "src/module/auth/routes/auth.routes.ts:41",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -2130,7 +2164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/test-registration",
-    "source": "src/module/auth/routes/auth.routes.ts:32",
+    "source": "src/module/auth/routes/auth.routes.ts:35",
     "middleware": [
       "anonymous",
       "testRegistrationOptions"
@@ -2141,7 +2175,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/test-registration",
-    "source": "src/module/auth/routes/auth.routes.ts:33",
+    "source": "src/module/auth/routes/auth.routes.ts:36",
     "middleware": [
       "anonymous",
       "registerRateLimit",

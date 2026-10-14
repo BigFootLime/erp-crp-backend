@@ -3,6 +3,8 @@ import { z } from "zod";
 import { canonicalizeAuthUsername } from "../../auth/domain/auth-identity";
 import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from "../../auth/domain/roles";
 import { isoDate, strictEmail, trimString } from "../../auth/validators/_helpers";
+import { AVATAR_KEYS } from '../../auth/validators/test-registration.validator';
+import { workProfileSchema } from '../../auth/validators/work-profile.validator';
 
 const userIdParam = z
   .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
@@ -114,6 +116,9 @@ const userCreateBody = userCoreObject
     // A newly provisioned account cannot authenticate before accepting an
     // administrator-issued invitation.
     status: z.literal("Inactive").default("Inactive"),
+    avatar_key: z.enum(AVATAR_KEYS).optional(),
+    work_profile: workProfileSchema.optional(),
+    test_superadmin: z.literal(true).optional(),
   })
   .superRefine(refineEmploymentDates);
 

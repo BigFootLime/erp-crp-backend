@@ -6,6 +6,7 @@ import { bumpRealtimeAuthorizationEpoch, bumpRealtimeSessionEpoch } from "../../
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { TestRegistration } from "../validators/test-registration.validator";
 import type { MfaAuditMeta } from "../services/mfa.service";
+import { createEmployeeWorkProfile } from './work-profile.repository';
 
 export async function registrationEnabled(q: Pick<PoolClient, "query"> = pool) {
   if (process.env.CERP_TEST_REGISTRATION_ENABLED !== "true") return false;
@@ -29,12 +30,7 @@ export async function registerTestAccount(input: TestRegistration, passwordHash:
     [input.username,passwordHash,input.name,input.surname,input.email,input.avatar_key]);
     const userId = rows[0].id;
     await tx.query("INSERT INTO public.user_role_assignments(user_id,role_key) VALUES ($1,'Administrateur Systeme et Reseau') ON CONFLICT DO NOTHING", [userId]);
-    const employee = await tx.query<{ id: string }>("INSERT INTO public.hr_employees(user_id,matricule) VALUES($1,$2) RETURNING id", [userId,`TEST-${userId}`]);
-    await tx.query(`INSERT INTO public.hr_employment_contracts(employee_id,contract_type,weekly_hours_target,daily_hours_target,start_date)
-      VALUES($1,$2,$3,$4,(now() AT TIME ZONE 'Europe/Paris')::date)`,
-    [employee.rows[0].id,input.weekly_hours_target === 35 ? "H35" : input.weekly_hours_target === 39 ? "H39" : "OTHER",input.weekly_hours_target,input.daily_hours_target]);
-    for (const day of input.working_days) await tx.query(`INSERT INTO public.hr_work_schedules(employee_id,day_of_week,expected_start,expected_end,expected_break_minutes)
-      VALUES($1,$2,$3::time,$4::time,$5)`, [employee.rows[0].id,day === 7 ? 0 : day,input.day_start,input.day_end,input.break_minutes]);
+    await createEmployeeWorkProfile(tx,userId,input,`TEST-${userId}`);
     await tx.query("INSERT INTO public.test_account_registrations(idempotency_key,request_hash,user_id) VALUES($1::uuid,$2,$3)", [key,requestHash,userId]);
     await bumpRealtimeSessionEpoch(tx,userId);
     await bumpRealtimeAuthorizationEpoch(tx);

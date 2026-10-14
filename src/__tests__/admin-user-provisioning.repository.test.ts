@@ -138,6 +138,36 @@ describe("administrative user provisioning repository", () => {
     expect(client.release).toHaveBeenCalledOnce();
   });
 
+  it('creates the avatar and canonical RH contract/schedules in the same inactive-account transaction',async()=>{
+    const query=vi.fn(async(sql:string)=>{
+      if(sql.includes('INSERT INTO public.admin_user_provisioning_requests')) return {rowCount:1,rows:[{idempotency_key:input.idempotencyKey}]};
+      if(sql.includes('INSERT INTO public.users')) return {rows:[createdUser]};
+      if(sql.includes('INSERT INTO public.hr_employees')) return {rows:[{id:'employee-fixture'}]};
+      if(sql.includes('realtime_session_epochs')) return {rows:[{session_epoch:'1'}]};
+      if(sql.includes('realtime_authorization_epoch')) return {rows:[{epoch:'1'}]};
+      return {rowCount:1,rows:[]};
+    });
+    connect.mockResolvedValue(makeClient(query));
+    await repoProvisionUser({...input,avatar_key:'programmer',work_profile:{weekly_hours_target:35,daily_hours_target:7,day_start:'08:00',day_end:'16:00',break_minutes:60,working_days:[1,7]}});
+    expect(query).toHaveBeenCalledWith('UPDATE public.users SET avatar_key=$2 WHERE id=$1',[42,'programmer']);
+    expect(query.mock.calls.filter(([sql])=>String(sql).includes('INSERT INTO public.hr_employment_contracts'))).toHaveLength(1);
+    const scheduleCalls=query.mock.calls.filter(([sql])=>String(sql).includes('INSERT INTO public.hr_work_schedules'));
+    expect(scheduleCalls).toHaveLength(2);expect((scheduleCalls[1] as unknown[])[1]).toEqual(['employee-fixture',0,'08:00','16:00',60]);expect(query.mock.calls.at(-1)?.[0]).toBe('COMMIT');
+  });
+
+  it('cannot apply the test superadmin exception to a physically connected production database',async()=>{
+    const previous=process.env.CERP_TEST_REGISTRATION_ENABLED;process.env.CERP_TEST_REGISTRATION_ENABLED='true';
+    const query=vi.fn(async(sql:string)=>{
+      if(sql.includes('INSERT INTO public.admin_user_provisioning_requests')) return {rowCount:1,rows:[{idempotency_key:input.idempotencyKey}]};
+      if(sql.includes('INSERT INTO public.users')) return {rows:[createdUser]};
+      if(sql.includes('current_database()')) return {rows:[{database:'cerp_prod'}]};
+      return {rowCount:1,rows:[]};
+    });
+    connect.mockResolvedValue(makeClient(query));
+    try {await expect(repoProvisionUser({...input,test_superadmin:true})).rejects.toMatchObject({code:'TEST_SUPERADMIN_FORBIDDEN'});expect(query).toHaveBeenCalledWith('ROLLBACK');expect(query.mock.calls.some(([sql])=>String(sql).includes('is_superadmin=true'))).toBe(false);expect(insertAuditLog).not.toHaveBeenCalled();}
+    finally {if(previous===undefined) delete process.env.CERP_TEST_REGISTRATION_ENABLED;else process.env.CERP_TEST_REGISTRATION_ENABLED=previous;}
+  });
+
   it("replays the winning transaction without creating or auditing twice", async () => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes("INSERT INTO public.admin_user_provisioning_requests")) {

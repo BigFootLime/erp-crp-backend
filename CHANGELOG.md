@@ -3,6 +3,7 @@
 ## 2026-10-14 — Test signup and initial setup (#1563)
 
 - Opt-in signup restricted to the actual Test database, server-owned privileges, canonical RH targets/schedules, catalog avatars and mandatory initial MFA.
+- Private personal avatar uploads with shared secure media promotion, stable command retries and audit; administrative invitations can atomically provision the catalogue avatar and RH profile while retaining the Inactive lifecycle. Test privilege exception fails closed on the actual connected database.
 - Source-backed setup status and first-ten-login reminder, per-user progress, canonical company creation with versioned legal mentions and idempotent commands.
 - Additive migration, guarded rollback and local isolated PostgreSQL/API evidence. See `docs/architecture/initial-setup-1563.md`.
 
