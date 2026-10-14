@@ -1,7 +1,7 @@
 import type {Pool} from 'pg';
 import {randomBytes} from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import {DirectoryClient} from './client';
+import {DirectoryClient,LOCAL_DIRECTORY_ENDPOINT} from './client';
 import {directoryIdSchema,directorySessionSchema,directoryProfileSchema,siteIdSchema,type DirectorySession,type DirectoryProfile} from './model';
 import {issueSessionToken} from '../module/auth/domain/session-token';
 import {insertLoginLog} from '../module/auth/repository/authLog.repository';
@@ -22,7 +22,7 @@ export async function initializeSharedDirectorySite(db:Pool,env:NodeJS.ProcessEn
  siteIdSchema.parse(actual);
  if(actual!==env.CERP_SHARED_DIRECTORY_SITE)throw new Error('DIRECTORY_SITE_CONFIGURATION_MISMATCH');
  if(!(await db.query("SELECT to_regclass('public.cerp_directory_projection_state') IS NOT NULL AS ok")).rows[0]?.ok)throw new Error('DIRECTORY_SITE_PATCH_REQUIRED');
- const next=new DirectoryClient('http://127.0.0.1:8085/internal/directory',actual,env.CERP_DIRECTORY_SITE_CALL_KEY??'');
+ const next=new DirectoryClient(env.CERP_DIRECTORY_ENDPOINT??LOCAL_DIRECTORY_ENDPOINT,actual,env.CERP_DIRECTORY_SITE_CALL_KEY??'');
  const info=await next.call<{directory_id:string;schema_version:number}>('info',{});
  if(info.directory_id!==directoryIdSchema.parse(env.CERP_SHARED_DIRECTORY_ID)||info.schema_version!==1)throw new Error('DIRECTORY_AUTHORITY_MISMATCH');
  client=next;site=actual;authorityId=info.directory_id;
