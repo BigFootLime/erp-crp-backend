@@ -283,6 +283,16 @@ async function loadSources(client: PoolClient, input: CreateAccountingPreviewDTO
       ORDER BY COALESCE(p.value_date,p.date_paiement),a.id`, [input.period_from,input.period_to]);
     rows.push(...result.rows);
   }
+  if (input.source_types.includes("CUSTOMER_REFUND")) {
+    const result=await client.query<AccountingSourceDocument>(`SELECT 'CUSTOMER_REFUND'::text AS source_type,r.id::text AS source_id,r.code AS source_number,
+      to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS source_updated_at,r.booking_date::text AS entry_date,
+      r.client_id,NULLIF(btrim(c.compte_tiers),'') AS third_party_account,r.currency,r.mode AS payment_mode,
+      '0.00'::text AS total_ex_tax,'0.00'::text AS total_tax,r.amount_ttc::text AS total_incl_tax,'[]'::jsonb AS tax_breakdown,
+      claim.batch_id::text AS claimed_batch_id FROM public.customer_refunds r JOIN public.clients c ON c.client_id=r.client_id
+      LEFT JOIN public.accounting_export_source_claims claim ON claim.source_type='CUSTOMER_REFUND' AND claim.source_id=r.id::text AND claim.released_at IS NULL
+      WHERE r.booking_date BETWEEN $1::date AND $2::date ORDER BY r.booking_date,r.id`,[input.period_from,input.period_to]);
+    rows.push(...result.rows);
+  }
   return rows.filter(source => !input.only_unexported || !source.claimed_batch_id).map(accountingDocumentTax).map(accountingFinanceKind);
 }
 

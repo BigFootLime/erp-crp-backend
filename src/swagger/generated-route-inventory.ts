@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "144a81f1b5b0f3566e837827577aa5c5dc746f3c7cf5b5bf42f2603770dde8d4";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "7df010d711386605f127803d8a73f07e19d2faa92283f371b8019690d43eb1f9";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -10995,7 +10995,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/paiements",
-    "source": "src/module/facturation/routes/paiements.routes.ts:32",
+    "source": "src/module/facturation/routes/paiements.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11012,7 +11012,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/paiements",
-    "source": "src/module/facturation/routes/paiements.routes.ts:34",
+    "source": "src/module/facturation/routes/paiements.routes.ts:37",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11029,7 +11029,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/paiements/{id}",
-    "source": "src/module/facturation/routes/paiements.routes.ts:36",
+    "source": "src/module/facturation/routes/paiements.routes.ts:39",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11046,7 +11046,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/paiements/{id}",
-    "source": "src/module/facturation/routes/paiements.routes.ts:33",
+    "source": "src/module/facturation/routes/paiements.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11063,7 +11063,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/paiements/{id}",
-    "source": "src/module/facturation/routes/paiements.routes.ts:35",
+    "source": "src/module/facturation/routes/paiements.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11080,7 +11080,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/paiements/workflow/{id}/allocations",
-    "source": "src/module/facturation/routes/paiements.routes.ts:26",
+    "source": "src/module/facturation/routes/paiements.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11096,8 +11096,44 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
-    "path": "/paiements/workflow/register",
+    "path": "/paiements/workflow/refunds/preview",
     "source": "src/module/facturation/routes/paiements.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)",
+      "previewCustomerRefund"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_allocate)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/paiements/workflow/refunds/register",
+    "source": "src/module/facturation/routes/paiements.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_register)",
+      "requireFinanceCapability(payment_allocate)",
+      "registerCustomerRefund"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(payment_register)",
+      "requireFinanceCapability(payment_allocate)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/paiements/workflow/register",
+    "source": "src/module/facturation/routes/paiements.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",

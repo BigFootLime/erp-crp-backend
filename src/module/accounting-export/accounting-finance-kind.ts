@@ -2,6 +2,7 @@ import type { AccountingSourceDocument } from "./accounting-export.domain";
 import { invoiceTypeCodeFromSnapshot } from "../facturation/domain/invoice-kind";
 import { invoicePrepaymentAmountsFromSnapshot } from "../facturation/domain/final-invoice-prepayments";
 import { readAdvanceClearing } from "../facturation/domain/advance-clearing";
+import { readAdvanceCreditVat } from "../facturation/domain/advance-credit-vat";
 
 /** The issued fiscal record decides the posting family; labels and current
  * payment balances never turn an advance into a sale. */
@@ -14,7 +15,9 @@ export function accountingFinanceKind(source:AccountingSourceDocument):Accountin
       message:"Le type fiscal de cet acompte doit être vérifié ; il ne peut pas être exporté comme une vente."}};
     if(kind===386 && source.has_unqualified_advance_cash) return { ...source, financial_context_error: {
       code: "ACCOUNTING_ADVANCE_CASH_UNQUALIFIED", message: "Les anciens encaissements d'acompte doivent être rapprochés avant export de la TVA." } };
-    if(kind===386)return{...source,financial_kind:source.source_type==="CREDIT_NOTE"?"ADVANCE_CREDIT":"ADVANCE"};
+    if(kind===386)return{...source,financial_kind:source.source_type==="CREDIT_NOTE"?"ADVANCE_CREDIT":"ADVANCE",
+      advance_credit_vat:source.source_type==="CREDIT_NOTE" && source.fiscal_snapshot?.advance_credit_vat !== undefined
+        ? readAdvanceCreditVat(source.fiscal_snapshot.advance_credit_vat,source.total_ex_tax,source.total_tax,source.total_incl_tax) : undefined};
     const paid=source.source_type==="INVOICE"?invoicePrepaymentAmountsFromSnapshot(snapshot,source.total_incl_tax):undefined;
     if (paid && paid.amountPaid !== "0.00") return { ...source, financial_kind: "FINAL_WITH_ADVANCES",
       advance_clearing: snapshot?.advance_clearing === undefined ? undefined : readAdvanceClearing(snapshot.advance_clearing,paid.amountPaid) };

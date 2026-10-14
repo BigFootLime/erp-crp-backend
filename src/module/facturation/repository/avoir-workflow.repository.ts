@@ -6,6 +6,7 @@ import { todayInParis } from "../domain/reporting-policy";
 import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
 import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalCreditEffectiveDiscount,type OriginalCreditLine } from "../domain/invoice-credit-budget";
 import { HttpError } from "../../../utils/httpError";
+import { freezeAdvanceCreditVat } from "./advance-credit-vat.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { parseInvoiceRegulatorySnapshot } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 import {
@@ -100,6 +101,7 @@ export type AvoirDocumentSnapshot = {
   totals: AvoirPreview["totals"];
   tax_breakdown?: AvoirPreview["tax_breakdown"];
   original_global_discount_percent?:string;
+  advance_credit_vat?: import("../domain/advance-credit-vat").AdvanceCreditVatSnapshot;
 };
 
 export type AvoirDocumentArtifact = {
@@ -887,6 +889,7 @@ export async function repoIssueAvoir(params: {
       totals: preview.totals,
       tax_breakdown:preview.tax_breakdown,
       original_global_discount_percent:preview.original_global_discount_percent,
+      advance_credit_vat:preview.tax_breakdown ? await freezeAdvanceCreditVat(client,preview.facture_id,preview.tax_breakdown) : undefined,
     };
     artifact = await params.writeDocument(snapshot);
     // #625: preserve the byte-exact issued credit note for GED retry/reconcile.

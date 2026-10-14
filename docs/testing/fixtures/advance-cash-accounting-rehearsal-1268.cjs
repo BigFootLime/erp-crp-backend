@@ -57,4 +57,6 @@ module.exports=async function advanceCashAccounting(pool,database,args){
  console.log(JSON.stringify({marker:'PROFORMA1268_ADVANCE_CASH_ACCOUNTING_PASS',actualPaymentCommands:2,paymentReplays:2,vatEffects:['13.33','6.67'],
    actualAccountingGeneratedBatches:2,deltaWithoutDuplicateBank:true,bankTotal:'120.00',salesTotal:'0.00',pendingVat:'0.00',collectedVat:'20.00',
    overpaymentRefused:true,immutableCashVat:true,initialInvoiceState:'synthetic issued storage fixture',externalCash:false,uiRecipe:false,businessRecipePassed:false}));
+ await require('./customer-refund-rehearsal-1268.cjs')(pool,database,{invoiceId,date,billedClientId:args.billedClientId,mappingId:mapping.id,batches});
+ await require('./advance-receipt-after-credit-1268.cjs')(pool,database,{date,billedClientId:args.billedClientId,mappingId:mapping.id});
 };

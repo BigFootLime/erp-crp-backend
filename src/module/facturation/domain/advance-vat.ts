@@ -3,7 +3,7 @@ import { divideHalfUp, formatDecimal, moneyToCents, parseDecimal } from "./decim
 import { apportionExactCents } from "./final-prepayment-targets";
 
 export type AdvanceVatSnapshot = {
-  version: 1;
+  version: 1 | 2;
   invoice_id: number;
   invoice_sha256: string;
   allocation_amount: string;
@@ -12,6 +12,11 @@ export type AdvanceVatSnapshot = {
   tax_before: string;
   tax_after: string;
   entries: Array<{ tax_rate: string; tax_amount: string }>;
+  adjustment?: {
+    credited_gross: string; refunded_gross: string; credited_pending_tax: string; credited_collected_tax: string;
+    due_before: string; pending_tax_before: string;
+    credit_pending_by_tax: Array<{ tax_rate: string; tax_amount: string }>;
+  };
 };
 
 function invalid(): never {

@@ -4,6 +4,8 @@ import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 import { planAdvanceVat, type AdvanceVatSnapshot } from "../domain/advance-vat";
 import { moneyToCents } from "../domain/decimal-money";
 import { documentTaxBreakdownFromSnapshot } from "../domain/document-tax-breakdown";
+import { planAdjustedAdvanceVat } from "../domain/adjusted-advance-vat";
+import { readAdvanceCreditVat } from "../domain/advance-credit-vat";
 
 type AdvanceInvoiceFacts = {
   fiscal_snapshot: Record<string, unknown> | null; immutable_checksum: string; has_deposit_sources: boolean;
@@ -45,9 +47,19 @@ export async function freezeAdvanceVat(tx: Pick<PoolClient, "query">, args: {
       AND NOT EXISTS(SELECT 1 FROM public.paiement_allocations WHERE paiement_id=p.id)),0)::text AS legacy,
       COALESCE((SELECT sum(total_ttc) FROM public.avoir WHERE facture_id=$1 AND statut IN('ISSUED','emis','emise','envoyee')),0)::text AS credits`,
     [args.invoiceId,args.paymentId])).rows[0];
-  if (moneyToCents(other?.legacy ?? "0") !== 0n || moneyToCents(other?.credits ?? "0") !== 0n
+  if (moneyToCents(other?.legacy ?? "0") !== 0n
     || prior.some(row => !row.snapshot || moneyToCents(row.amount) !== moneyToCents(row.snapshot.allocation_amount))) {
     throw new HttpError(409, "ADVANCE_VAT_HISTORY_UNQUALIFIED", "Les anciens encaissements ou avoirs de cet acompte nécessitent un rapprochement de TVA.");
+  }
+  if (moneyToCents(other?.credits ?? "0") !== 0n) {
+    const credits = (await tx.query<{ snapshot: Record<string, unknown>; net: string; tax: string; gross: string }>(`
+      SELECT immutable_snapshot AS snapshot,total_ht::text AS net,total_tax::text AS tax,total_ttc::text AS gross
+      FROM public.avoir WHERE facture_id=$1 AND statut IN('ISSUED','emis','emise','envoyee') ORDER BY id`, [args.invoiceId])).rows;
+    const refunds = (await tx.query<{ amount: string }>(`SELECT COALESCE(sum(amount_ttc),0)::text AS amount FROM public.customer_refunds WHERE facture_id=$1`, [args.invoiceId])).rows[0];
+    return planAdjustedAdvanceVat({ invoiceId: args.invoiceId, invoiceSha256: invoice.immutable_checksum,
+      invoiceGross: invoice.total_incl_tax, allocationAmount: args.amount,
+      originalTax: tax.entries.map(group => ({ tax_rate: group.rate_percent, tax_amount: group.tax_amount })), prior: prior.map(row => row.snapshot!),
+      credits: credits.map(row => readAdvanceCreditVat(row.snapshot?.advance_credit_vat, row.net, row.tax, row.gross)), refundedGross: refunds?.amount ?? "0" });
   }
   return planAdvanceVat({ invoiceId: args.invoiceId, invoiceSha256: invoice.immutable_checksum,
     invoiceGross: invoice.total_incl_tax, allocationAmount: args.amount,

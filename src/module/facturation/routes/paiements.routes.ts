@@ -14,8 +14,11 @@ import {
   allocatePaymentWorkflow,
   registerPaymentWorkflow,
 } from "../controllers/payment-workflow.controller";
+import { previewCustomerRefund, registerCustomerRefund } from "../controllers/customer-refund.controller";
 
 const router = Router();
+router.post("/workflow/refunds/preview", requireFinanceCapability("payment_allocate"), previewCustomerRefund);
+router.post("/workflow/refunds/register", requireFinanceCapability("payment_register"), requireFinanceCapability("payment_allocate"), registerCustomerRefund);
 
 router.post(
   "/workflow/register",

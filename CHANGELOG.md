@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Avoirs sur factures payées : correction distincte de l'encaissement, calcul du crédit client et remboursements avec origines bancaires choisies côté serveur, preuves immuables, replay et export sans double TVA. Paiements reçus après un avoir d'acompte : TVA restante par catégorie, anciennes écritures conservées. 7 945 tests / 721 fichiers, build et commandes PostgreSQL17 isolées passent. Erreur de droit SELECT FOR UPDATE corrigée sans élargir les permissions ; fixtures et remboursement excessif corrigés après reproduction. Avoirs monétaires arbitraires, contrepassations, interface et recette réelle restent ouverts ; lot non déployé.
+
 - Classification fiscale des acomptes, comptes configurés d’avances/TVA en attente et ventilation TVA immuable par paiement. Export complémentaire sans seconde banque ; reprise figée d’acomptes sur facture finale. 7 920 tests / 716 fichiers, build et commandes PostgreSQL17 isolées passent. Migration additive avec rollback protégé, sans backfill historique. Interface, remboursements/contrepassations et recette réelle restent en cours ; lot non déployé.
 
 - Avoirs partiels : prix/remise/TVA d'origine, budgets et dernier centime repris sans double remise ; quantités et montants déjà crédités contrôlés. Deux ambiguïtés de paramètres SQL à la création corrigées après reproduction PostgreSQL. Empreinte d'aperçu stable après stockage des quantités. Motifs PDF en français et exemple relu. 7 907 tests / 713 fichiers, build et repositories natifs isolés passent ; émission réelle, avoirs déjà payés/remboursements, comptabilité des acomptes et écrans restent ouverts avant déploiement.
