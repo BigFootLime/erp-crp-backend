@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-14 — Compatibilité GED Finance (#1268)
+
+- Aligner les métadonnées du profil GED historique de Prod avec le contrat canonique de Test, en conservant documents, liens, utilisateurs et protections existantes. Un lien proforma exige son parent réel.
+- Vérifier tous les auteurs canoniques du modèle Finance composé, remboursements et corrections compris, sans modifier les checksums des migrations déployées.
+
 ## En développement — Historique des remboursements (#1268)
 
 - Lecture typée et protégée de l'historique d'un avoir, avec remboursements originaux et corrections conservés. Treize tests HTTP de permissions/filtre et build strict 1 508 routes passent ; PostgreSQL17 sous droits applicatifs confirme trois faits dont deux corrigés. Raccordement de la fiche avoir dans le lot frontend1571, sans nouvelle migration pour cette lecture. Lot Finance non déployé.
