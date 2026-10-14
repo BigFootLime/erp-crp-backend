@@ -1,5 +1,6 @@
 DO $$
 DECLARE required_table text;
+  epoch_writers text[]:=ARRAY['paiement','paiement_allocations','facture','facture_source_allocations','avoir','avoir_source_allocations'];
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.ged_entity_types WHERE entity_type='PROFORMA' AND module_key='facturation'
     AND target_table='proforma_client' AND target_pk_column='id' AND is_active) THEN
@@ -23,7 +24,13 @@ BEGIN
     OR (amount_due_at_issue IS NOT NULL AND amount_due_at_issue<>total_ttc-prepaid_amount_ttc)) THEN
     RAISE EXCEPTION 'proforma #1268 final net due disagrees with gross and advances';
   END IF;
-  IF (SELECT count(*) FROM pg_trigger WHERE tgname='trg_delivery_prepayment_epoch_1268' AND NOT tgisinternal AND tgenabled<>'D')<>6 THEN
+  FOREACH required_table IN ARRAY ARRAY['customer_refunds','customer_refund_sources','customer_refund_reversals'] LOOP
+    IF to_regclass('public.'||required_table) IS NOT NULL THEN epoch_writers:=array_append(epoch_writers,required_table); END IF;
+  END LOOP;
+  IF (SELECT count(*) FROM pg_trigger WHERE tgname='trg_delivery_prepayment_epoch_1268' AND NOT tgisinternal AND tgenabled<>'D')<>cardinality(epoch_writers)
+    OR EXISTS(SELECT 1 FROM unnest(epoch_writers) writer WHERE NOT EXISTS(
+      SELECT 1 FROM pg_trigger WHERE tgname='trg_delivery_prepayment_epoch_1268' AND NOT tgisinternal AND tgenabled<>'D'
+        AND tgrelid=to_regclass('public.'||writer) AND tgfoid='public.fn_touch_delivery_prepayment_1268()'::regprocedure)) THEN
     RAISE EXCEPTION 'proforma #1268 fiscal/cash snapshot guards missing';
   END IF;
   IF (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled<>'D'
