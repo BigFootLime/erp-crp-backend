@@ -6,6 +6,11 @@
 - Source-backed setup status and first-ten-login reminder, per-user progress, canonical company creation with versioned legal mentions and idempotent commands.
 - Additive migration, guarded rollback and local isolated PostgreSQL/API evidence. See `docs/architecture/initial-setup-1563.md`.
 
+## En développement — Dossier de fabrication complet (#1320)
+
+- Premier exemplaire OF officiel sans filigrane, puis DUPLICATA ; brouillons marqués BROUILLON. Demandes idempotentes et compteur persistant distinct des téléchargements, variantes archivées séparément en GED, original conservé. Route et bouton d’impression OF raccordés ; compilation stricte, 121 tests backend, 5 tests du bouton et concurrence PostgreSQL 17 qualifiés avant publication.
+- Dossier complet raccordé aux plans GED figés et à l’autocontrôle exact de l’OF, avec suivi MD61 et préparation MD38 conditionnelle. Éditions et variantes archivées séparément ; compteur et impression du dossier atomiques. Bouton guidé sur la fiche OF/export, accès direct aux rubriques manquantes. 106 vérifications backend, 9 vérifications web et commandes concurrentes PostgreSQL 17 qualifiées. L’automaticité après planning, la queue A4 Electron et la recette réelle complète restent en cours.
+
 ## 2026-10-14 — Fiche papier d’autocontrôle
 
 - Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.

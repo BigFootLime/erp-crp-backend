@@ -1141,11 +1141,13 @@ export async function emitDocument(
   actor: OfActor,
   audit: AuditContext,
   idempotencyKey: string | null,
-  generatedAt: string
+  generatedAt: string,
+  documentStatus: "OFFICIEL" | "BROUILLON" = "OFFICIEL",
+  beforeInsert?: (tx: repo.DbQueryer) => Promise<void>
 ) {
   const assertReplayScope = (existing: repo.OfDocumentRow) => {
     const saved = existing.payload as OfDocumentPayload;
-    if (Number(existing.of_id) !== ofId || (input.revisionId && existing.revision_id !== input.revisionId)
+    if (Number(existing.of_id) !== ofId || saved.documentStatut !== documentStatus || (input.revisionId && existing.revision_id !== input.revisionId)
       || (input.expectedSnapshotSha256 && saved.snapshotSha256 !== input.expectedSnapshotSha256)
       || (input.expectedSourceFingerprint && saved.sourceFingerprint !== input.expectedSourceFingerprint)) {
       throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette action a déjà été utilisée pour un autre document.");
@@ -1161,7 +1163,7 @@ export async function emitDocument(
   }
   const { payload, revisionId } = await buildDocumentPayload(ofId, {
     revisionId: input.revisionId,
-    documentStatut: "OFFICIEL",
+    documentStatut: documentStatus,
     generatedAt,
     auteur: actor.username,
   });
@@ -1241,8 +1243,9 @@ export async function emitDocument(
       }
 
       await repo.lockOf(tx, ofId);
+      await beforeInsert?.(tx);
       const current = await buildDocumentPayloadTx(ofId, {
-        revisionId: input.revisionId, documentStatut: "OFFICIEL", generatedAt, auteur: actor.username,
+        revisionId: input.revisionId, documentStatut: documentStatus, generatedAt, auteur: actor.username,
       }, tx);
       if (current.payload.sourceFingerprint !== payload.sourceFingerprint || current.revisionId !== revisionId) {
         throw new HttpError(409, "OF_DOCUMENT_SOURCE_CHANGED", "Les données de l'OF ont changé pendant l'émission. Actualisez l'aperçu.");
@@ -1250,7 +1253,7 @@ export async function emitDocument(
 
       // Double émission : une révision ne porte qu'UN document officiel. L'index
       // unique partiel le garantit, ce contrôle le dit clairement.
-      const already = await repo.getOfficialDocument(ofId, revisionId, tx);
+      const already = documentStatus === "OFFICIEL" ? await repo.getOfficialDocument(ofId, revisionId, tx) : null;
       if (already) {
         throw new HttpError(
           409,
@@ -1284,14 +1287,14 @@ export async function emitDocument(
         generatedAt,
         generatedBy: actor.userId,
         generatedByLabel: actor.username,
-        statut: "OFFICIEL",
+        statut: documentStatus,
         gedDocumentId: archive.gedDocumentId,
         gedVersionId: archive.gedVersionId,
         idempotencyKey,
       });
 
       await insertAuditLog(tx, audit, {
-        action: "OF_DOCUMENT_EMIT",
+        action: documentStatus === "OFFICIEL" ? "OF_DOCUMENT_EMIT" : "OF_DOCUMENT_DRAFT_EMIT",
         entity_type: "of_document",
         entity_id: document.id,
         details: {
@@ -1342,14 +1345,15 @@ export async function emitDocument(
 }
 
 /**
- * Réimprime un document émis.
+ * Télécharge le document émis depuis l'URL historique du PDF.
  *
  * L'archive GED est la source ; à défaut, le PDF est reconstruit depuis le
  * payload figé — déterministe par construction — puis son empreinte est comparée
  * à celle enregistrée. Un écart lève une erreur : mieux vaut refuser que servir
  * un document qui n'est pas celui qui a été émis.
  *
- * Une réimpression NE crée PAS de révision.
+ * Ce GET n'alloue aucun exemplaire : la commande d'impression distincte
+ * gère l'original et le duplicata. L'audit d'accès reste conservé.
  */
 export async function reprintDocument(
   ofId: number,
@@ -1363,9 +1367,8 @@ export async function reprintDocument(
   const { pdf, source } = await readOfDocumentStoredPdf(document);
 
   await repo.withOfTransaction(async (tx) => {
-    await repo.bumpReprintCount(tx, { ofId, documentId });
     await insertAuditLog(tx, audit, {
-      action: "OF_DOCUMENT_REPRINT",
+      action: "OF_DOCUMENT_DOWNLOAD",
       entity_type: "of_document",
       entity_id: documentId,
       details: { of_id: ofId, pdf_sha256: document.pdf_sha256, source },
