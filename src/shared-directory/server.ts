@@ -2,7 +2,7 @@ import express from 'express';
 import {z} from 'zod';
 import type {Pool} from 'pg';
 import {verifyDirectoryCall} from './call-signature';
-import {consumeCallNonce,assertDirectoryIdentity,bindChallenge,assertChallengeSite,hasActiveMembership,ensureTestMembership,createDirectorySession,validateDirectorySession} from './session.repository';
+import {consumeCallNonce,assertDirectoryIdentity,assertDirectoryApplicationRole,bindChallenge,assertChallengeSite,hasActiveMembership,ensureTestMembership,createDirectorySession,validateDirectorySession} from './session.repository';
 import {loginUser} from '../module/auth/services/auth.service';
 import {verifyMfaChallenge} from '../module/auth/services/mfa.service';
 import {loginSchema,verifyMfaChallengeSchema} from '../module/auth/validators/auth.validator';
@@ -100,5 +100,5 @@ export function createDirectoryServer(options:Options){
   const reject=e.message?.startsWith('DIRECTORY_');
   res.status(error instanceof z.ZodError?400:reject?401:e.status??503).json({code:reject?e.message:e.code??'DIRECTORY_UNAVAILABLE',message:reject?'Votre accès doit être vérifié à nouveau.':e.status===401?'Identifiants invalides':'L’annuaire est momentanément indisponible.'});
  });
- return {app,initialize:async()=>{await assertDirectoryIdentity(options.db,options.directoryId);if(process.env.NODE_ENV!=='test'&&(await options.db.query('SELECT current_user AS actor')).rows[0]?.actor!=='cerp_directory_app')throw new Error('DIRECTORY_SOURCE_DATABASE_ROLE_INVALID');}};
+ return {app,initialize:async()=>{await assertDirectoryIdentity(options.db,options.directoryId);if(process.env.NODE_ENV!=='test')await assertDirectoryApplicationRole(options.db);}};
 }

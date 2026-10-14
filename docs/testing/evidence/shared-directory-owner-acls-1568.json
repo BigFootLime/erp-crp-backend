@@ -1,0 +1,11 @@
+{
+  "result": "PASS",
+  "original_app_roles_42501_reproduced": true,
+  "canonical_fk_owner_preserved": true,
+  "canonical_security_definer_preserved": true,
+  "bootstrap_assignment_created": true,
+  "business_connect_denied": true,
+  "runtime_not_owner_or_superuser_or_business_member": true,
+  "synthetic_only": true,
+  "live_changed": false
+}
