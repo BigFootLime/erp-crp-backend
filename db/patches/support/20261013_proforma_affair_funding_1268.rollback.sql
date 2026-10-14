@@ -18,6 +18,10 @@ BEGIN
     OR EXISTS(SELECT 1 FROM public.finance_event_log WHERE aggregate_type='PROFORMA') THEN
     RAISE EXCEPTION 'proforma rollback refused: Finance contains saved proforma commands/events';
   END IF;
+  IF EXISTS(SELECT 1 FROM public.ged_document_links WHERE entity_type='PROFORMA')
+    OR EXISTS(SELECT 1 FROM public.authoritative_pdf_archives WHERE entity_type='proforma') THEN
+    RAISE EXCEPTION 'proforma rollback refused: contains saved evidence in document archives';
+  END IF;
 END;
 $$;
 ALTER TABLE public.finance_command_receipts DROP CONSTRAINT IF EXISTS finance_command_receipts_aggregate_type_check;
@@ -44,6 +48,7 @@ DROP TABLE IF EXISTS public.proforma_billing_parts;
 DROP TABLE IF EXISTS public.proforma_affair_lines;
 DROP TABLE IF EXISTS public.delivery_affair_billing_shares;
 DROP TABLE IF EXISTS public.proforma_client;
+DELETE FROM public.ged_entity_types WHERE entity_type='PROFORMA' AND target_table='proforma_client';
 DROP SEQUENCE IF EXISTS public.proforma_client_reference_seq;
 DROP FUNCTION IF EXISTS public.fn_proforma_receipt_budget_1268();
 DROP FUNCTION IF EXISTS public.fn_protect_proforma_1268();

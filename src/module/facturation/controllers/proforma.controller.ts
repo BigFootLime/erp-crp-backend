@@ -1,6 +1,7 @@
 import type { Request, RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
+import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
 import { deliveryPrepaymentTermsBodySchema, proformaAllocationParamsSchema, proformaCreateBodySchema,
   proformaDraftBodySchema, proformaIdParamsSchema, proformaIssueBodySchema, proformaListQuerySchema,
   proformaRefreshBodySchema, proformaCancelBodySchema, proformaReceiptAssignmentBodySchema,
@@ -46,4 +47,10 @@ export const releaseProformaReceipt = handle(async (req,res) => {
 export const decideDeliveryPrepaymentTerms = handle(async (req,res) => {
   res.json(await svcDecideDeliveryPrepaymentTerms({ ...context(req), allocationId: proformaAllocationParamsSchema.parse(req.params).allocationId,
     input: deliveryPrepaymentTermsBodySchema.parse(req.body) }));
+});
+export const proformaDocumentHandlers = createCreationSnapshotHandlers({
+  entityType: "proforma", documentKind: "CUSTOMER_PROFORMA",
+  parseEntityId: req => proformaIdParamsSchema.parse({ id: req.params.id }).id,
+  canReadEntity: async id => { await svcGetProforma(id); return true; },
+  baseUrl: id => `/api/v1/proformas/${encodeURIComponent(id)}/documents`,
 });

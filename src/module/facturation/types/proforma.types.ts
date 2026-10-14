@@ -19,4 +19,4 @@ export type ProformaPreview = {
   preview_hash: string;
 };
 export type ProformaCommandResult = { id: string; reference: string; status: "DRAFT" | "ISSUED" | "CANCELLED";
-  row_version: number; correlation_id: string; idempotent_replay: boolean };
+  row_version: number; correlation_id: string; idempotent_replay: boolean; document_archive_id?: string };

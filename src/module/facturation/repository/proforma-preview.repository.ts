@@ -44,7 +44,9 @@ export async function buildProformaPreview(tx: Queryer, input: ProformaDraftBody
     // shares are allocated during creation, with these exact quantities.
     const proposedSource = { ...source, billing_shares: distribution.map(part => ({ id: "", billed_client_id: part.billedClientId, quantity: part.quantity })) };
     const { prepayment_requirement: _requirement, terms_version: _version,
-      bound_proforma_id: _boundId, bound_proforma_status: _boundStatus, has_active_delivery: _hasDelivery, ...snapshot } = proposedSource;
+      bound_proforma_id: _boundId, bound_proforma_status: _boundStatus,
+      bound_proforma_reference: _boundReference, bound_proforma_source_revision: _boundRevision,
+      has_active_delivery: _hasDelivery, ...snapshot } = proposedSource;
     return { allocation_id: source.allocation_id, source_revision: proformaOrderSourceRevision(proposedSource, input.currency),
       source_snapshot: snapshot, billing_parts: distribution.map(part => ({ billed_client_id: part.billedClientId,
         quantity: part.quantity, billed_client_snapshot: parties.get(part.billedClientId)!,

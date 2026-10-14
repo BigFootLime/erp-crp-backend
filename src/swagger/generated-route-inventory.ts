@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "9025ebf7b1439ba3879a2589c2cac9381078f5f5df5f7a8315ea8e554aad2673";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "144a81f1b5b0f3566e837827577aa5c5dc746f3c7cf5b5bf42f2603770dde8d4";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -17166,7 +17166,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/{id}/cancel",
-    "source": "src/module/facturation/routes/proforma.routes.ts:17",
+    "source": "src/module/facturation/routes/proforma.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17181,9 +17181,77 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/proformas/{id}/documents",
+    "source": "src/module/facturation/routes/proforma.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "proformaDocumentHandlers.metadata"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/proformas/{id}/documents/{documentId}/download",
+    "source": "src/module/facturation/routes/proforma.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "proformaDocumentHandlers.download"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/proformas/{id}/documents/{documentId}/preview",
+    "source": "src/module/facturation/routes/proforma.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "proformaDocumentHandlers.preview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/proformas/{id}/documents/{documentId}/print-intent",
+    "source": "src/module/facturation/routes/proforma.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireFinanceCapability(read)",
+      "proformaDocumentHandlers.printIntent"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireFinanceCapability(read)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/proformas/{id}/issue",
-    "source": "src/module/facturation/routes/proforma.routes.ts:16",
+    "source": "src/module/facturation/routes/proforma.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17217,7 +17285,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/{id}/preview",
-    "source": "src/module/facturation/routes/proforma.routes.ts:14",
+    "source": "src/module/facturation/routes/proforma.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17234,7 +17302,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/{id}/receipts",
-    "source": "src/module/facturation/routes/proforma.routes.ts:18",
+    "source": "src/module/facturation/routes/proforma.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17251,7 +17319,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/{id}/receipts/{assignmentId}/release",
-    "source": "src/module/facturation/routes/proforma.routes.ts:19",
+    "source": "src/module/facturation/routes/proforma.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -17268,7 +17336,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/proformas/{id}/refresh",
-    "source": "src/module/facturation/routes/proforma.routes.ts:15",
+    "source": "src/module/facturation/routes/proforma.routes.ts:19",
     "middleware": [
       "anonymous",
       "authenticateToken",

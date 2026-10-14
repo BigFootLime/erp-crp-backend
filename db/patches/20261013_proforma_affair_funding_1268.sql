@@ -93,6 +93,11 @@ CREATE TABLE IF NOT EXISTS public.proforma_client (
     (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL AND length(trim(cancellation_reason))>=3))
 );
 
+-- Private commercial documents have their own real Finance parent. Never link
+-- a proforma to a fictitious invoice or inherit CRM access through the recipient.
+INSERT INTO public.ged_entity_types(entity_type,label,module_key,target_table,target_pk_column,sort_order,is_active)
+  VALUES('PROFORMA','Proforma','facturation','proforma_client','id',127,true) ON CONFLICT(entity_type) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS public.delivery_affair_billing_shares (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   allocation_id bigint NOT NULL REFERENCES public.commande_ligne_affaire_allocation(id) ON DELETE RESTRICT,

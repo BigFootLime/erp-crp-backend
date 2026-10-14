@@ -59,8 +59,11 @@ describe("authoritative proforma previews", () => {
   });
   it("binding and stock/delivery metadata are excluded from the frozen financial preview", async () => {
     const first = await buildProformaPreview(tx, selection, false);
-    mocks.read.mockResolvedValue([{ ...source, terms_version: 3, prepayment_requirement: "PROFORMA", bound_proforma_id: "OWN", bound_proforma_status: "DRAFT", has_active_delivery: false }]);
+    mocks.read.mockResolvedValue([{ ...source, terms_version: 3, prepayment_requirement: "PROFORMA", bound_proforma_id: "OWN", bound_proforma_status: "DRAFT",
+      bound_proforma_reference:"PF-2026-001",bound_proforma_source_revision:"b".repeat(64),has_active_delivery: false }]);
     const second = await buildProformaPreview(tx, selection, false, "OWN");
     expect(first.preview_hash).toBe(second.preview_hash);
+    expect(second.affairs[0]!.source_snapshot).not.toHaveProperty("bound_proforma_reference");
+    expect(second.affairs[0]!.source_snapshot).not.toHaveProperty("bound_proforma_source_revision");
   });
 });

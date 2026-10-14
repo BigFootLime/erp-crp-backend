@@ -105,5 +105,24 @@ async function main(){
   await require('./delivery-prepayment-sql-rehearsal-1268.cjs')(pool,database,selection.client_id);
   await require('./proforma-final-invoice-rehearsal-1268.cjs')(pool,database,{physicalClientId:selection.client_id,
     billedClientId:clientId('Qualification société A'),proformaId:funding.id,partId:target});
+  const commercialSelection={client_id:selection.client_id,currency:'EUR',affairs:[{allocation_id:1268002,
+    billing_parts:[{billed_client_id:clientId('Qualification société A'),quantity:'10.000'}]}]};
+  const commercialPreview=await buildProformaPreview(pool,commercialSelection,false);
+  const commercial=await repoCreateProforma({actor,idempotencyKey:'qualification-commercial-pdf-create',
+    input:{...commercialSelection,preview_hash:commercialPreview.preview_hash}});
+  const issueArgs={actor,id:commercial.id,idempotencyKey:'qualification-commercial-pdf-issue',
+    input:{expected_version:1,preview_hash:commercialPreview.preview_hash,confirm:true}};
+  const issued=await repoIssueProforma(issueArgs),issuedReplay=await repoIssueProforma(issueArgs);
+  assert.equal(issuedReplay.idempotent_replay,true);assert.equal(issued.document_archive_id,issuedReplay.document_archive_id);
+  const archived=(await pool.query(`SELECT id::text,exact_pdf_bytes,source_snapshot,exact_pdf_sha256
+    FROM public.authoritative_pdf_archives WHERE entity_type='proforma' AND entity_id=$1`,[commercial.id])).rows;
+  assert.equal(archived.length,1);assert.equal(archived[0].exact_pdf_bytes.subarray(0,5).toString(),'%PDF-');
+  assert.equal(archived[0].source_snapshot.reference,issued.reference);
+  assert.equal(archived[0].source_snapshot.fiscal_invoice_created,false);
+  assert.equal(archived[0].source_snapshot.template_version,'proforma/1.1');
+  assert.equal(require('node:crypto').createHash('sha256').update(archived[0].exact_pdf_bytes).digest('hex'),archived[0].exact_pdf_sha256);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM public.finance_legal_sequences')).rows[0].n,0);
+  console.log(JSON.stringify({marker:'PROFORMA1268_COMMERCIAL_PDF_ISSUE_PASS',actualCommercialIssuance:true,immutableExactBytes:true,
+    archiveIntents:1,idempotentReplay:true,legalSequenceConsumed:false,gedFilingExecuted:false,uiRecipe:false}));
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());

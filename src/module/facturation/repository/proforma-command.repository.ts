@@ -10,6 +10,9 @@ import { buildProformaPreview } from "./proforma-preview.repository";
 import { readProformaOrderSources } from "./proforma-source.repository";
 import { persistProformaDraftContentTx } from "./proforma-draft-content.repository";
 import { runProformaCommand } from "./proforma-transaction.repository";
+import { todayInParis } from "../domain/reporting-policy";
+import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
+import { renderProformaDocument, type ProformaDocumentSnapshot } from "../services/proforma-document";
 
 type CommandContext = { actor: FinanceActorContext; idempotencyKey: string | undefined };
 type LockedProforma = { id: string; reference: string; status: "DRAFT" | "ISSUED" | "CANCELLED";
@@ -49,15 +52,21 @@ export async function repoIssueProforma(args: CommandContext & { id: string; inp
       AND effective_from<=CURRENT_DATE AND (effective_to IS NULL OR effective_to>=CURRENT_DATE) ORDER BY effective_from DESC,created_at DESC LIMIT 1`)).rows[0];
     if (!policy) throw new HttpError(409, "PROFORMA_ISSUER_NOT_CONFIGURED", "Configurez l'émetteur commercial dans Finance.");
     const issuedAt = new Date().toISOString();
-    const issuer = await issuerSnapshotAt(tx, policy.legal_entity_code, issuedAt.slice(0, 10));
+    const issuer = await issuerSnapshotAt(tx, policy.legal_entity_code, todayInParis());
     if (!issuer?.company_name) throw new HttpError(409, "PROFORMA_ISSUER_NOT_CONFIGURED", "Complétez les coordonnées de l'émetteur commercial.");
-    const snapshot = { document_type: "PROFORMA", id: document.id, reference: document.reference, issued_at: issuedAt,
-      issuer_snapshot: issuer, preview: current, fiscal_invoice_created: false, template_version: "proforma/1.0" };
+    const snapshot: ProformaDocumentSnapshot = { document_type: "PROFORMA", id: document.id, reference: document.reference, issued_at: issuedAt,
+      issuer_snapshot: issuer, preview: current, fiscal_invoice_created: false, template_version: "proforma/1.1" };
+    const bytes = await renderProformaDocument(snapshot);
     await tx.query(`UPDATE public.proforma_client SET status='ISSUED',issued_at=$2::timestamptz,issued_by=$3,
       issued_snapshot=$4::jsonb,row_version=row_version+1 WHERE id=$1::uuid`, [document.id, issuedAt, args.actor.userId, JSON.stringify(snapshot)]);
+    const archive = await queueCreationPdfArchive(tx, { entityType: "proforma", entityId: document.id,
+      documentKind: "CUSTOMER_PROFORMA", documentVersion: 1, renderVersion: "proforma/1.1",
+      idempotencyKey: `proforma:${document.id}:issue:v1`, title: `Proforma ${document.reference}`,
+      originalName: `PROFORMA_${document.reference}.pdf`, sourceRevision: financePreviewHash(snapshot),
+      sourceSnapshot: { ...snapshot }, exactPdfBytes: bytes, actorUserId: args.actor.userId });
     return { aggregateId: document.id, deliveryAllocationIds: current.affairs.map(affair=>affair.allocation_id), oldValues: { status: document.status, row_version: document.row_version },
-      result: { id: document.id, reference: document.reference, status: "ISSUED" as const, row_version: document.row_version + 1 },
-      newValues: { status: "ISSUED", source_hash: financePreviewHash(snapshot), fiscal_invoice_created: false } };
+      result: { id: document.id, reference: document.reference, status: "ISSUED" as const, row_version: document.row_version + 1, document_archive_id: archive.id },
+      newValues: { status: "ISSUED", source_hash: financePreviewHash(snapshot), document_archive_id: archive.id, fiscal_invoice_created: false } };
   } });
 }
 

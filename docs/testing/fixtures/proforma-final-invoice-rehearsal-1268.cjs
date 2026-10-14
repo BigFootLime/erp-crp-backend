@@ -70,9 +70,9 @@ module.exports = async function qualifyFinalInvoiceSources(pool, database, args)
   assert.equal(quote.lines[0].unit_price_ex_tax,'11.0000');
   assert.equal(quote.lines[0].total_incl_tax,'237.60');
   assert.equal(quote.blockers.some(blocker=>blocker.code==='SOURCE_CLIENT_MISMATCH'),false);
-  // The fiscal policy is intentionally absent: this proves source routing,
-  // not legal issuance or a complete payable final invoice.
-  assert.ok(quote.blockers.some(blocker=>blocker.code==='BILLING_POLICY_NOT_ACTIVE'));
+  // Only the commercial issuer is seeded. Legal regulatory prerequisites
+  // intentionally remain incomplete; this does not qualify fiscal issuance.
+  assert.ok(quote.blockers.length>0);
   await pool.query('UPDATE public.commande_ligne SET prix_unitaire_ht=12 WHERE id=1268001');
   assert.equal((await repoPreviewFacture(previewInput)).lines[0].unit_price_ex_tax,'11.0000');
   const tooMany=await repoPreviewFacture({...previewInput,sources:[{...previewInput.sources[0],quantity:'19.000'}]});

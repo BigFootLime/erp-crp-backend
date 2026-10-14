@@ -1,6 +1,10 @@
 DO $$
 DECLARE required_table text;
 BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.ged_entity_types WHERE entity_type='PROFORMA' AND module_key='facturation'
+    AND target_table='proforma_client' AND target_pk_column='id' AND is_active) THEN
+    RAISE EXCEPTION 'proforma #1268 private GED parent missing or misconfigured';
+  END IF;
   FOREACH required_table IN ARRAY ARRAY['delivery_prepayment_epoch_1268','proforma_client','delivery_affair_billing_shares','proforma_affair_lines',
     'proforma_billing_parts','delivery_affair_prepayment_terms','proforma_deposit_sources',
     'proforma_receipt_assignments','proforma_receipt_releases','proforma_final_invoice_sources'] LOOP
