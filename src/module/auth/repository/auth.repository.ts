@@ -1,4 +1,5 @@
 import pool from '../../../config/database';
+import { avatarProjectionSql } from './avatar.repository';
 import type { PoolClient } from 'pg';
 import {
   bumpRealtimeAuthorizationEpoch,
@@ -69,6 +70,7 @@ export const findUserByUsername = async (username: string) => {
       `
         SELECT
           u.*,
+          ${avatarProjectionSql} AS profile_picture_asset_id,
           COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
           COALESCE(
             array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
@@ -98,6 +100,9 @@ export type AuthUserLookupRow = {
 };
 
 export type AuthenticatedAccountState = {
+  directory_global_epoch?:number;
+  directory_membership_version?:number;
+  reenrollment_required?:boolean;
   status: string | null;
   session_epoch: number;
   is_superadmin: boolean;
@@ -114,6 +119,8 @@ export type AuthenticatedAccountState = {
 export const findAuthenticatedAccountState = async (
   userId: number,
 ): Promise<AuthenticatedAccountState | null> => {
+  const {sharedDirectoryClient}=await import('../../../shared-directory/site-runtime');
+  if(sharedDirectoryClient())return (await import('../../../shared-directory/actor.runtime')).synchronizeDirectoryActor(pool,userId);
   const { rows } = await pool.query<{
     status: string | null;
     session_epoch: string;

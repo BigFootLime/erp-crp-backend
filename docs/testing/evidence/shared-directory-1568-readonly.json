@@ -1,0 +1,20 @@
+{
+  "at": "2026-10-14T13:19:50.207458+00:00",
+  "read_only": true,
+  "production_accounts": 18,
+  "test_accounts": 22,
+  "production_active_accounts": 18,
+  "test_active_accounts": 20,
+  "matching_identities": 18,
+  "matching_identity_different_id": 0,
+  "same_id_different_identity": 0,
+  "production_billers": 1,
+  "test_billers": 1,
+  "production_primary_company": 0,
+  "test_primary_company": 0,
+  "configured_company_coordinates_equal": null,
+  "write_performed": false,
+  "credential_values_read": false,
+  "account_fields_exported": false,
+  "automatic_reconciliation_authorized": false
+}

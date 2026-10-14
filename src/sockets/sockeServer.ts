@@ -46,6 +46,8 @@ import {
   type RealtimeSubscription,
 } from "../shared/realtime/realtime-room-policy";
 
+import pool from '../config/database';
+import {sharedDirectoryClient,validateSiteDirectoryToken} from '../shared-directory/site-runtime';
 type JwtUser = {
   id: number;
   username?: string;
@@ -57,6 +59,12 @@ type JwtUser = {
   iat?: number;
   jti?: string;
   session_epoch?: number;
+  directory_session?:string;
+  directory_profile_id?:string;
+  directory_global_epoch?:number;
+  directory_membership_version?:number;
+  mfa_factor_id?:string;
+  mfa_factor_version?:number;
 };
 
 type RoomAck = {
@@ -723,6 +731,12 @@ export class RealtimeSocketRuntime {
     await this.disconnectUser(userId);
   }
 
+  private async loadLiveAccount(user:JwtUser):Promise<RealtimeAccountAuthorization|null>{
+    if(sharedDirectoryClient()){
+      try{await validateSiteDirectoryToken(pool,user);}catch{return null;}
+    }
+    return this.dependencies.loadAccountAuthorization(user.id);
+  }
   private installSocketHandlers(): void {
     this.io.use((socket, next) => {
       void (async () => {
@@ -747,7 +761,7 @@ export class RealtimeSocketRuntime {
         }
         let account: RealtimeAccountAuthorization | null;
         try {
-          account = await this.dependencies.loadAccountAuthorization(decoded.id);
+          account = await this.loadLiveAccount(decoded);
         } catch {
           throw new Error("SERVICE_UNAVAILABLE");
         }
@@ -943,7 +957,7 @@ export class RealtimeSocketRuntime {
     const user = currentJwtUser(socket);
     if (!user || tokenIsExpired(user)) return false;
     const account = accountOverride === undefined
-      ? await this.dependencies.loadAccountAuthorization(user.id)
+      ? await this.loadLiveAccount(user)
       : accountOverride;
     this.assertAuthorizationHealth(healthGeneration);
     if (!account?.active || !tokenMatchesAccount(user, account)) return false;
@@ -1060,7 +1074,7 @@ export class RealtimeSocketRuntime {
         socket.disconnect(true);
         return;
       }
-      const account = await this.dependencies.loadAccountAuthorization(user.id);
+      const account = await this.loadLiveAccount(user);
       if (!account?.active || !tokenMatchesAccount(user, account)) {
         this.disconnectForAuthorization(socket, "ACCOUNT_CHANGED");
         return;
@@ -1274,7 +1288,7 @@ export class RealtimeSocketRuntime {
       throw new Error("INVALID_REALTIME_STORED_TARGET");
     }
     const sockets = onlySocket ? [onlySocket] : [...this.io.sockets.sockets.values()];
-    const accountLoads = new Map<number, Promise<RealtimeAccountAuthorization | null>>();
+    const accountLoads = new Map<string, Promise<RealtimeAccountAuthorization | null>>();
     let matchingRecipients = 0;
     const results = await Promise.allSettled(sockets.map(async (socket) => {
       this.assertAuthorizationHealth(healthGeneration);
@@ -1288,10 +1302,11 @@ export class RealtimeSocketRuntime {
       }
       const user = currentJwtUser(socket);
       if (!user) return;
-      let accountLoad = accountLoads.get(user.id);
+      const sessionKey=`${user.id}:${user.directory_session??''}`;
+      let accountLoad = accountLoads.get(sessionKey);
       if (!accountLoad) {
-        accountLoad = this.dependencies.loadAccountAuthorization(user.id);
-        accountLoads.set(user.id, accountLoad);
+        accountLoad = this.loadLiveAccount(user);
+        accountLoads.set(sessionKey, accountLoad);
       }
       const account = await accountLoad;
       this.assertAuthorizationHealth(healthGeneration);
@@ -1348,7 +1363,7 @@ export class RealtimeSocketRuntime {
     this.assertAuthorizationHealth(healthGeneration);
     const user = currentJwtUser(socket);
     if (!user) throw new Error("UNAUTHORIZED");
-    const account = await this.dependencies.loadAccountAuthorization(user.id);
+    const account = await this.loadLiveAccount(user);
     this.assertAuthorizationHealth(healthGeneration);
     if (!account?.active || !tokenMatchesAccount(user, account)) {
       this.disconnectForAuthorization(socket, "ACCOUNT_CHANGED");
@@ -1464,14 +1479,15 @@ export class RealtimeSocketRuntime {
   }
 
   private async revalidateConnectedSessions(): Promise<void> {
-    const loads = new Map<number, Promise<RealtimeAccountAuthorization | null>>();
+    const loads = new Map<string, Promise<RealtimeAccountAuthorization | null>>();
     await Promise.allSettled([...this.io.sockets.sockets.values()].map(async (socket) => {
       const user = currentJwtUser(socket);
       if (!user) return;
-      let load = loads.get(user.id);
+      const sessionKey=`${user.id}:${user.directory_session??''}`;
+      let load = loads.get(sessionKey);
       if (!load) {
-        load = this.dependencies.loadAccountAuthorization(user.id);
-        loads.set(user.id, load);
+        load = this.loadLiveAccount(user);
+        loads.set(sessionKey, load);
       }
       const account = await load;
       if (!account?.active || !tokenMatchesAccount(user, account)) {
@@ -1485,7 +1501,7 @@ export class RealtimeSocketRuntime {
     this.assertAuthorizationHealth(healthGeneration);
     const user = currentJwtUser(socket);
     if (!user) throw new Error("UNAUTHORIZED");
-    const account = await this.dependencies.loadAccountAuthorization(user.id);
+    const account = await this.loadLiveAccount(user);
     this.assertAuthorizationHealth(healthGeneration);
     if (!account?.active || !tokenMatchesAccount(user, account)) {
       this.disconnectForAuthorization(socket, "ACCOUNT_CHANGED");

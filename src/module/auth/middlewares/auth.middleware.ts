@@ -11,12 +11,15 @@ import {
   normalizeAssignedRoles,
 } from "../domain/roles";
 import { findAuthenticatedAccountState } from "../repository/auth.repository";
+import pool from '../../../config/database';
+import {sharedDirectoryClient,validateSiteDirectoryToken} from '../../../shared-directory/site-runtime';
 
 interface JwtPayload {
   id: number;
   username: string;
   email: string;
   role: string;
+  avatar_key?: string | null;
   primary_role?: string;
   roles?: string[];
   session_epoch?: number;
@@ -25,6 +28,10 @@ interface JwtPayload {
   mfa_verified_at?: number;
   mfa_factor_id?: string;
   mfa_factor_version?: number;
+  directory_session?:string;
+  directory_profile_id?:string;
+  directory_global_epoch?:number;
+  directory_membership_version?:number;
 }
 
 declare global {
@@ -55,6 +62,14 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
     req.user = decoded;
+    if(sharedDirectoryClient()){
+      void validateSiteDirectoryToken(pool,decoded).then(identity=>{
+        req.user={...decoded,username:identity.username,email:identity.email??'',role:identity.role,primary_role:identity.role,roles:identity.roles};next();
+      }).catch(error=>{
+        const unavailable=(error as Error&{status?:number}).status===503||error.name==='TimeoutError';
+        res.status(unavailable?503:401).json({code:unavailable?'DIRECTORY_UNAVAILABLE':'MFA_REQUIRED',message:unavailable?'L’annuaire commun est momentanément indisponible.':'Une nouvelle connexion est requise.'});
+      });return;
+    }
     requireActiveAccount(req, res, next);
   } catch (err) {
     console.warn(

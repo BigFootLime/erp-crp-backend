@@ -19,8 +19,11 @@ import {
   upsertErpSettingAdmin,
 } from "../controllers/admin.controller";
 import { getOperationsConsole } from "../controllers/operations-console.controller";
+import { uploadAdminUserAvatar } from '../../auth/controllers/avatar.controller';
+import { createSecureUpload } from '../../../shared/uploads/secure-upload';
 
 const router = Router();
+const avatarUpload = createSecureUpload('image', {maxFiles:1});
 
 router.use(authenticateToken);
 // Account administration is a sensitive exception to the open-by-default
@@ -33,6 +36,7 @@ router.get("/users", listUsersAdmin);
 router.get("/roles", listRolesAdmin);
 router.get("/users/:id", getUserAdmin);
 router.post("/users", createUserAdmin);
+router.put('/users/:id/avatar', avatarUpload.single('avatar'), uploadAdminUserAvatar);
 router.patch("/users/:id", patchUserAdmin);
 router.post("/users/:id/invitations", createAccountInvitationAdmin);
 
