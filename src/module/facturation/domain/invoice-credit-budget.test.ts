@@ -1,5 +1,5 @@
 import { describe,expect,it } from "vitest";
-import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalInvoiceAmountCredit,originalCreditEffectiveDiscount,type OriginalCreditLine } from "./invoice-credit-budget";
+import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalInvoiceAmountCredit,originalCreditEffectiveDiscount,advanceCreditCommandError,type OriginalCreditLine } from "./invoice-credit-budget";
 const line=(override:Partial<OriginalCreditLine>={}):OriginalCreditLine=>({id:"1",quantity:"3.000",net:"100.00",tax:"20.00",gross:"120.00",rate:"20",discount:"0",
  creditedQuantity:"0.000",creditedNet:"0.00",creditedTax:"0.00",creditedGross:"0.00",...override});
 describe("credits retain original document values",()=>{
@@ -47,6 +47,12 @@ describe("credits retain original document values",()=>{
 });
 
 describe("monetary advance credits",()=>{
+ it("maps only a known database guard to a recoverable 409",()=>{
+  expect(advanceCreditCommandError({code:"23514",message:"ADVANCE-AMOUNT-1268 cumulative draft and issued credits exceed the original line budget"}))
+   .toMatchObject({status:409,code:"AVOIR_ADVANCE_AMOUNT_CONFLICT"});
+ });
+ it.each([{code:"23514",message:"Unrelated guard"},{code:"42P01",message:"ADVANCE-AMOUNT-1268 unknown relation"}])
+  ("preserves an unrelated failure %j",error=>expect(advanceCreditCommandError(error)).toBe(error));
  it("credits one cent without rounding it to a fraction of a piece",()=>{
   const original=line({quantity:"1.000",net:"12345.67",tax:"2469.13",gross:"14814.80"});
   expect(originalInvoiceAmountCredit(original,{net:1234567n,tax:246913n,gross:1481480n},"0.01")).toEqual({net:"0.01",tax:"0.00",gross:"0.01"});

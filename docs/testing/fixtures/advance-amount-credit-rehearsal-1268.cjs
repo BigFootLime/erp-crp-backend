@@ -44,7 +44,7 @@ module.exports=async function qualifyAdvanceAmounts(pool,database,args){
    const excessInput={...input,lines:[{facture_line_id:invoiceId,advance_amount_ex_tax:'100.00'}]};
    const excessPreview=await repoPreviewAvoir(excessInput);
    await assert.rejects(()=>repoCreateAvoirDraft({actor,idempotencyKey:'qual-amount-draft-overbook',
-    input:{...excessInput,preview_hash:excessPreview.preview_hash}}),e=>e.code==='23514'&&e.message.includes('cumulative draft and issued credits'));
+    input:{...excessInput,preview_hash:excessPreview.preview_hash}}),e=>e.code==='AVOIR_ADVANCE_AMOUNT_CONFLICT');
    await assert.rejects(()=>pool.query('UPDATE public.avoir_source_allocations SET quantity_selected=0.001 WHERE avoir_id=$1',[note.id]),
     e=>e.code==='23514'&&e.message.includes('zero physical consumption'));
   }

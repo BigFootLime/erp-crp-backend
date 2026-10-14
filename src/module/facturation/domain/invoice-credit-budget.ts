@@ -59,6 +59,16 @@ export function originalInvoiceAmountCredit(line:OriginalCreditLine,budget:Origi
   return{net:formatDecimal(net,2),tax:formatDecimal(tax,2),gross:formatDecimal(net+tax,2)};
 }
 
+/** Only known monetary-credit conflicts become recoverable business errors.
+ * Never expose raw PostgreSQL messages or disguise unrelated server failures. */
+export function advanceCreditCommandError(error:unknown):unknown {
+  if(error && typeof error==="object" && "code" in error && error.code==="23514" && "message" in error
+    && typeof error.message==="string" && error.message.startsWith("ADVANCE-AMOUNT-1268 ")) {
+    return new HttpError(409,"AVOIR_ADVANCE_AMOUNT_CONFLICT","Le solde ou la source de cet acompte a changé. Actualisez l'avoir avant de continuer.");
+  }
+  return error;
+}
+
 /** Include the original document allowance in the credit's line price once.
  * Preserve its separate provenance; do not discount the credit again. */
 export function originalCreditEffectiveDiscount(lineDiscount:string,documentDiscount:string):string{

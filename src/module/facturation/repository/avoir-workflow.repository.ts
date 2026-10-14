@@ -4,7 +4,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { todayInParis } from "../domain/reporting-policy";
 import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
-import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalInvoiceAmountCredit,originalCreditEffectiveDiscount,type OriginalCreditLine } from "../domain/invoice-credit-budget";
+import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalInvoiceAmountCredit,originalCreditEffectiveDiscount,advanceCreditCommandError,type OriginalCreditLine } from "../domain/invoice-credit-budget";
 import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 import { HttpError } from "../../../utils/httpError";
 import { freezeAdvanceCreditVat } from "./advance-credit-vat.repository";
@@ -543,7 +543,7 @@ export async function repoCreateAvoirDraft(params: {
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
-    throw error;
+    throw advanceCreditCommandError(error);
   } finally {
     client.release();
   }
@@ -695,7 +695,7 @@ async function transitionAvoir(params: {
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
-    throw error;
+    throw advanceCreditCommandError(error);
   } finally {
     client.release();
   }
@@ -805,7 +805,7 @@ export async function repoValidateAvoir(params: {
     return result;
   } catch (error) {
     await client.query("ROLLBACK");
-    throw error;
+    throw advanceCreditCommandError(error);
   } finally {
     client.release();
   }
@@ -1088,7 +1088,7 @@ export async function repoIssueAvoir(params: {
   } catch (error) {
     await client.query("ROLLBACK");
     if (artifact) await artifact.cleanup().catch(() => undefined);
-    throw error;
+    throw advanceCreditCommandError(error);
   } finally {
     client.release();
   }
