@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "64b1e24ad5abf79052037bd8bdea9d6e0041be12bd512661ccd987fb4fff8b1b";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ba0c9a435d9605dee5ebe155bf4deb75207b92adc33dda1061cb55bceaef60c3";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -14529,7 +14529,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/ar-dossiers",
-    "source": "src/module/production/routes/of-versioning.routes.ts:136",
+    "source": "src/module/production/routes/of-versioning.routes.ts:137",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14549,7 +14549,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/document/preview",
-    "source": "src/module/production/routes/of-versioning.routes.ts:153",
+    "source": "src/module/production/routes/of-versioning.routes.ts:154",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14567,7 +14567,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/document/preview.pdf",
-    "source": "src/module/production/routes/of-versioning.routes.ts:154",
+    "source": "src/module/production/routes/of-versioning.routes.ts:155",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14585,7 +14585,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/documents",
-    "source": "src/module/production/routes/of-versioning.routes.ts:156",
+    "source": "src/module/production/routes/of-versioning.routes.ts:157",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14603,7 +14603,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/documents",
-    "source": "src/module/production/routes/of-versioning.routes.ts:159",
+    "source": "src/module/production/routes/of-versioning.routes.ts:160",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14623,7 +14623,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/documents/{documentId}/pdf",
-    "source": "src/module/production/routes/of-versioning.routes.ts:167",
+    "source": "src/module/production/routes/of-versioning.routes.ts:168",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14639,9 +14639,29 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "post",
+    "path": "/production/of-versioning/{ofId}/documents/{documentId}/print-intents",
+    "source": "src/module/production/routes/of-versioning.routes.ts:169",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireIdempotencyKey",
+      "requireOfCapability(document)",
+      "printDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireIdempotencyKey",
+      "requireOfCapability(document)"
+    ]
+  },
+  {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/planning-versions",
-    "source": "src/module/production/routes/of-versioning.routes.ts:107",
+    "source": "src/module/production/routes/of-versioning.routes.ts:108",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14659,7 +14679,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/planning-versions",
-    "source": "src/module/production/routes/of-versioning.routes.ts:110",
+    "source": "src/module/production/routes/of-versioning.routes.ts:111",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14679,7 +14699,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/planning-versions/{versionId}/refuse",
-    "source": "src/module/production/routes/of-versioning.routes.ts:128",
+    "source": "src/module/production/routes/of-versioning.routes.ts:129",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14697,7 +14717,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/planning-versions/{versionId}/submit",
-    "source": "src/module/production/routes/of-versioning.routes.ts:116",
+    "source": "src/module/production/routes/of-versioning.routes.ts:117",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14715,7 +14735,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/planning-versions/{versionId}/validate",
-    "source": "src/module/production/routes/of-versioning.routes.ts:123",
+    "source": "src/module/production/routes/of-versioning.routes.ts:124",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14733,7 +14753,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/revisions",
-    "source": "src/module/production/routes/of-versioning.routes.ts:64",
+    "source": "src/module/production/routes/of-versioning.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14751,7 +14771,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/revisions",
-    "source": "src/module/production/routes/of-versioning.routes.ts:70",
+    "source": "src/module/production/routes/of-versioning.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14771,7 +14791,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/revisions/{revisionId}",
-    "source": "src/module/production/routes/of-versioning.routes.ts:66",
+    "source": "src/module/production/routes/of-versioning.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14789,7 +14809,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/revisions/{revisionId}/visas",
-    "source": "src/module/production/routes/of-versioning.routes.ts:79",
+    "source": "src/module/production/routes/of-versioning.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14809,7 +14829,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/revisions/compare",
-    "source": "src/module/production/routes/of-versioning.routes.ts:65",
+    "source": "src/module/production/routes/of-versioning.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14827,7 +14847,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/time-variance",
-    "source": "src/module/production/routes/of-versioning.routes.ts:92",
+    "source": "src/module/production/routes/of-versioning.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14845,7 +14865,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/time-variance",
-    "source": "src/module/production/routes/of-versioning.routes.ts:93",
+    "source": "src/module/production/routes/of-versioning.routes.ts:94",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14865,7 +14885,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/time-variance/{proposalId}/resolve",
-    "source": "src/module/production/routes/of-versioning.routes.ts:99",
+    "source": "src/module/production/routes/of-versioning.routes.ts:100",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14883,7 +14903,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/time-variance/assess",
-    "source": "src/module/production/routes/of-versioning.routes.ts:90",
+    "source": "src/module/production/routes/of-versioning.routes.ts:91",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14901,7 +14921,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/traveler",
-    "source": "src/module/production/routes/of-versioning.routes.ts:146",
+    "source": "src/module/production/routes/of-versioning.routes.ts:147",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14919,7 +14939,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/traveler",
-    "source": "src/module/production/routes/of-versioning.routes.ts:147",
+    "source": "src/module/production/routes/of-versioning.routes.ts:148",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14939,7 +14959,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/traveler/{documentId}/download",
-    "source": "src/module/production/routes/of-versioning.routes.ts:149",
+    "source": "src/module/production/routes/of-versioning.routes.ts:150",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14957,7 +14977,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/traveler/{documentId}/preview",
-    "source": "src/module/production/routes/of-versioning.routes.ts:148",
+    "source": "src/module/production/routes/of-versioning.routes.ts:149",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14975,7 +14995,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/production/of-versioning/{ofId}/traveler/{documentId}/print-intents",
-    "source": "src/module/production/routes/of-versioning.routes.ts:150",
+    "source": "src/module/production/routes/of-versioning.routes.ts:151",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14993,7 +15013,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/{ofId}/traveler/source",
-    "source": "src/module/production/routes/of-versioning.routes.ts:145",
+    "source": "src/module/production/routes/of-versioning.routes.ts:146",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15011,7 +15031,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/ar-dossiers",
-    "source": "src/module/production/routes/of-versioning.routes.ts:59",
+    "source": "src/module/production/routes/of-versioning.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15029,7 +15049,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/production/of-versioning/ar-dossiers/{dossierId}",
-    "source": "src/module/production/routes/of-versioning.routes.ts:60",
+    "source": "src/module/production/routes/of-versioning.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15047,7 +15067,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/capabilities",
-    "source": "src/module/production/routes/of-versioning.routes.ts:52",
+    "source": "src/module/production/routes/of-versioning.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15063,7 +15083,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/production/of-versioning/machine-families",
-    "source": "src/module/production/routes/of-versioning.routes.ts:53",
+    "source": "src/module/production/routes/of-versioning.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",

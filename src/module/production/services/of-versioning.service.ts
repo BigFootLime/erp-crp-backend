@@ -1342,14 +1342,15 @@ export async function emitDocument(
 }
 
 /**
- * Réimprime un document émis.
+ * Télécharge le document émis depuis l'URL historique du PDF.
  *
  * L'archive GED est la source ; à défaut, le PDF est reconstruit depuis le
  * payload figé — déterministe par construction — puis son empreinte est comparée
  * à celle enregistrée. Un écart lève une erreur : mieux vaut refuser que servir
  * un document qui n'est pas celui qui a été émis.
  *
- * Une réimpression NE crée PAS de révision.
+ * Ce GET n'alloue aucun exemplaire : la commande d'impression distincte
+ * gère l'original et le duplicata. L'audit d'accès reste conservé.
  */
 export async function reprintDocument(
   ofId: number,
@@ -1363,9 +1364,8 @@ export async function reprintDocument(
   const { pdf, source } = await readOfDocumentStoredPdf(document);
 
   await repo.withOfTransaction(async (tx) => {
-    await repo.bumpReprintCount(tx, { ofId, documentId });
     await insertAuditLog(tx, audit, {
-      action: "OF_DOCUMENT_REPRINT",
+      action: "OF_DOCUMENT_DOWNLOAD",
       entity_type: "of_document",
       entity_id: documentId,
       details: { of_id: ofId, pdf_sha256: document.pdf_sha256, source },

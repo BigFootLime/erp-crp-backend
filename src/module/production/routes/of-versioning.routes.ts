@@ -25,6 +25,7 @@ import {
   listRevisions,
   previewPayload,
   previewPdf,
+  printDocument,
   refusePlanning,
   reprintDocument,
   resolveProposal,
@@ -165,5 +166,6 @@ router.post(
 
 // Réimpression : restitue le binaire archivé, ne crée aucune révision.
 router.get("/:ofId/documents/:documentId/pdf", requireOfCapability("document"), reprintDocument);
+router.post("/:ofId/documents/:documentId/print-intents", requireIdempotencyKey, requireOfCapability("document"), printDocument);
 
 export default router;

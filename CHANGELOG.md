@@ -1,5 +1,10 @@
 # Changelog
 
+## En développement — Dossier de fabrication complet (#1320)
+
+- Premier exemplaire OF officiel sans filigrane, puis DUPLICATA ; brouillons marqués BROUILLON. Demandes idempotentes et compteur persistant distinct des téléchargements, variantes archivées séparément en GED, original conservé. Route et bouton d’impression OF raccordés ; compilation stricte, 121 tests backend, 5 tests du bouton et concurrence PostgreSQL 17 qualifiés avant publication.
+- Moteur d’assemblage du dossier et fiches vierges adaptés des modèles Qualité. Les plans PNG/JPEG sont imprimables ; leurs sources restent figées. Le bouton du dossier complet, l’automaticité après planning, les annexes réelles et la queue A4 Electron restent en cours. Aucun essai physique n’est revendiqué.
+
 ## 2026-10-14 — Fiche papier d’autocontrôle
 
 - Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.
