@@ -55,7 +55,7 @@ export async function readSetupCompanies() {
  const {rows}=await pool.query(`SELECT f.biller_id,f.biller_name,f.street,f.house_number,f.postal_code,f.city,f.country,f.phone,f.email,
    m.legal_form,m.siret,m.vat_number,m.share_capital,m.rcs_city,m.rcs_number,
    m.late_penalty_rate,m.recovery_indemnity,m.effective_from::text AS effective_from,
-   f.updated_at::text AS expected_updated_at,
+   f.modification_date::text AS expected_updated_at,
    EXISTS(SELECT 1 FROM public.erp_settings s WHERE s.key='company.primary_biller_id' AND s.value_text=f.biller_id::text) AS selected
   FROM public.factureur f LEFT JOIN LATERAL(SELECT * FROM public.finance_legal_mentions l WHERE l.biller_id=f.biller_id AND l.effective_to IS NULL ORDER BY l.version DESC LIMIT 1) m ON true
   ORDER BY f.biller_name`);
@@ -78,14 +78,14 @@ export async function saveSetupCompany(input:SetupCompany,userId:number,key:stri
   }
   let id=input.biller_id;
   if(id) {
-   const current=await tx.query<{updated_at:string}>("SELECT updated_at::text AS updated_at FROM public.factureur WHERE biller_id=$1::uuid FOR UPDATE",[id]);
+   const current=await tx.query<{updated_at:string}>("SELECT modification_date::text AS updated_at FROM public.factureur WHERE biller_id=$1::uuid FOR UPDATE",[id]);
    if(!current.rows[0] || current.rows[0].updated_at!==input.expected_updated_at) throw new HttpError(409,"COMPANY_CHANGED","L’entreprise a changé. Rechargez sa fiche avant d’enregistrer.");
   }
   const args=[input.biller_name,input.street,input.house_number,input.postal_code,input.city,input.country,input.phone,input.email];
   if(!id) {
-   const result=await tx.query<{biller_id:string}>(`INSERT INTO public.factureur(biller_name,street,house_number,postal_code,city,country,phone,email)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING biller_id`,args); id=result.rows[0].biller_id;
-  } else await tx.query(`UPDATE public.factureur SET biller_name=$1,street=$2,house_number=$3,postal_code=$4,city=$5,country=$6,phone=$7,email=$8,updated_at=now() WHERE biller_id=$9::uuid`,[...args,id]);
+   const result=await tx.query<{biller_id:string}>(`INSERT INTO public.factureur(biller_name,street,house_number,postal_code,city,country,phone,email,creation_date,modification_date)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,now(),now()) RETURNING biller_id`,args); id=result.rows[0].biller_id;
+  } else await tx.query(`UPDATE public.factureur SET biller_name=$1,street=$2,house_number=$3,postal_code=$4,city=$5,country=$6,phone=$7,email=$8,modification_date=now() WHERE biller_id=$9::uuid`,[...args,id]);
   const {rows}=await tx.query<Record<string,unknown>>("SELECT * FROM public.finance_legal_mentions WHERE biller_id=$1::uuid AND effective_to IS NULL FOR UPDATE",[id]);
   const previous=rows[0];
   const changed=!previous || legalKeys.some(k=>["share_capital","late_penalty_rate","recovery_indemnity"].includes(k)
