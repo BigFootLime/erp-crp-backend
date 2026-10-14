@@ -63,4 +63,11 @@ Suite backend complète : 700 fichiers, 7782 tests passent ;31 fichiers/254 asse
 
 Le choix structuré NOT_REQUIRED/PROFORMA est prévu dans la création de commande ; l'absence de champ lors d'une modification conserve la décision. Les commandes historiques restent sans décision automatique. Les écrans guidés, l'émission fiscale complète, la comptabilité et les déductions sur facture finale restent en cours avant intégration dev/main et déploiement.
 
-La navigation Base Test est rétablie. OF92 apparaît annulé et l'acteur reste à vérifier. Commande109/affaire187 affiche12 pièces réservées ; l'analyse de relance propose encore4 pièces à fabriquer. Aucun nouveau lancement n'a été confirmé : ce défaut de reprise doit être traité avant de poursuivre AR/BL/facture.
+Le défaut de reprise de la commande109 a depuis été corrigé dans main : les12 réservées propres et8 libres ne relancent plus4 pièces inutiles. Le parcours hors proforma a atteint AR26, BL57 expédié après contrôle documentaire simulé, puis facture2 émise et reliquat8 libre. Ces preuves ne qualifient pas le parcours proforma.
+
+
+## Reprise sur le code déployé — 14 octobre,02:20
+
+La branche proformas intègre dev90ed8027 (même arbre que main05c0d05a) : reprise des réservations propres, origine matière/traitement des lots, calendrier et nombres Finance, nouvelle fiche papier. Deux conflits de changelog/tests sont résolus en conservant les deux suites.7820 tests sur703 fichiers et build strict passent. La copie des3788 fichiers de source est vérifiée par les objets Git ; le checkout principal et son index restent inchangés, sans nouveau worktree.
+
+Restent obligatoires avant livraison : facture finale multi-sociétés, déduction exacte des acomptes, filiation urgente, vraie émission/archivage/comptabilité des acomptes, écrans guidés et recettes de paiements/corrections. Le lot est sauvegardé sur sa branche de travail ; aucun schéma Test/Prod ni runtime live n’est modifié par ce rapprochement.

@@ -20,14 +20,18 @@ export function drawWorkshopDocumentHeader(
   doc.font("Helvetica-Bold").fontSize(18).fillColor("#B90101")
   doc.text(safe(header.name), textX, bottom, { width: textWidth, align: "center" })
   bottom = Math.max(doc.y + 10, y + logoWidth / CERP_LOGO_RATIO + 10)
-  if (header.designVersion !== "workshop-v4") {
+  if (header.designVersion !== "workshop-v4" && header.designVersion !== "structured-v5") {
     doc.font("Helvetica").fontSize(9).fillColor("#3D444C")
     doc.text(safe(`Édité le\n${header.generatedAt}`), x + width - 105, y + 3, { width: 105, align: "right" })
     bottom = Math.max(bottom, doc.y + 10)
   }
   doc.save().lineWidth(1.1).strokeColor("#3D444C")
   doc.moveTo(x, bottom).lineTo(x + width, bottom).stroke().restore()
-  const state = [header.code, `Fabrication : ${header.status}`, header.flag].filter(Boolean).join("  |  ")
+  // The shared form design is also used outside production. Archived workshop
+  // editions retain their original wording and geometry.
+  const state = header.designVersion === "structured-v5"
+    ? [header.code && header.code !== header.name ? header.code : null, header.status, header.flag].filter(Boolean).join("  |  ")
+    : [header.code, `Fabrication : ${header.status}`, header.flag].filter(Boolean).join("  |  ")
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#3D444C")
   doc.text(safe(state), x, bottom + 8, { width })
   return doc.y + 16

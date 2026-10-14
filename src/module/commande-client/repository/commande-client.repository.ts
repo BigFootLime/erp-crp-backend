@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { readCommandeDuplicateLinesTx } from "./commande-duplicate-lines.repository";
+import { readFullyReservedCommandeCoverage } from "./commande-reserved-coverage.repository";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -6346,8 +6347,16 @@ async function computeCommandeStockAnalysis(db: PoolClient, params: {
   assembly_feature_enabled: boolean;
 }): Promise<CommandeStockAnalysis> {
   const refs = await selectCommandeLineRefs(db, params.commande_id);
+  const ownedCoverage = await readFullyReservedCommandeCoverage(db, params.commande_id, refs);
   const candidates=await loadScopedDeliveryStockCandidates(db,Array.from(new Set(refs.map(r=>r.article_id).filter((id):id is string=>!!id))));
-  const allocations=allocateCompatibleStock(refs.map(ref=>({...ref,qty_ordered:Number(ref.qty_ordered)})),candidates);
+  const allocations=ownedCoverage ? refs.map(ref => {
+    const owned = ownedCoverage.get(ref.commande_ligne_id)!;
+    const quantity = Number(ref.qty_ordered);
+    return { old_available_qty: owned.old_qty, old_used_qty: owned.old_qty,
+      new_available_qty: owned.new_qty, new_used_qty: owned.new_qty,
+      available_qty: quantity, available_used_qty: quantity, shortage_qty: 0,
+      proposed_production_qty: 0, status: 'FULL' as const };
+  }) : allocateCompatibleStock(refs.map(ref=>({...ref,qty_ordered:Number(ref.qty_ordered)})),candidates);
 
   const ledger = createAssemblyPlanningLedger();
   const lines: CommandeStockAnalysisLine[] = [];

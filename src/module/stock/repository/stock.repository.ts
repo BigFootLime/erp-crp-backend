@@ -1,3 +1,4 @@
+import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
 import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
@@ -5921,16 +5922,16 @@ export async function repoListConsolidatedInventory(
           ORDER BY reference_value
         ) AS of_references,
         ARRAY(
-          SELECT DISTINCT reference.reference_value
-          FROM public.stock_lot_trace_references reference
-          WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'MP_LOT'
-          ORDER BY reference.reference_value
+          SELECT DISTINCT reference_value
+          FROM (${stockLotTraceReferenceValuesSql("b.lot_id", "MP_LOT")}) recorded_origins
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
         ) AS mp_references,
         ARRAY(
-          SELECT DISTINCT reference.reference_value
-          FROM public.stock_lot_trace_references reference
-          WHERE reference.lot_id = b.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
-          ORDER BY reference.reference_value
+          SELECT DISTINCT reference_value
+          FROM (${stockLotTraceReferenceValuesSql("b.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+          WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+          ORDER BY reference_value
         ) AS tr_references
     ) traceability ON b.lot_id IS NOT NULL
     LEFT JOIN public.articles_matiere article_material ON article_material.article_id = a.id
@@ -9574,16 +9575,16 @@ async function queryInventorySessionLines(
             ORDER BY reference_value
           ) AS of_references,
           ARRAY(
-            SELECT DISTINCT reference.reference_value
-            FROM public.stock_lot_trace_references reference
-            WHERE reference.lot_id = snapshot.lot_id AND reference.reference_type = 'MP_LOT'
-            ORDER BY reference.reference_value
+            SELECT DISTINCT reference_value
+            FROM (${stockLotTraceReferenceValuesSql("snapshot.lot_id", "MP_LOT")}) recorded_origins
+            WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+            ORDER BY reference_value
           ) AS mp_references,
           ARRAY(
-            SELECT DISTINCT reference.reference_value
-            FROM public.stock_lot_trace_references reference
-            WHERE reference.lot_id = snapshot.lot_id AND reference.reference_type = 'TRAITEMENT_LOT'
-            ORDER BY reference.reference_value
+            SELECT DISTINCT reference_value
+            FROM (${stockLotTraceReferenceValuesSql("snapshot.lot_id", "TRAITEMENT_LOT")}) recorded_origins
+            WHERE reference_value IS NOT NULL AND btrim(reference_value) <> ''
+            ORDER BY reference_value
           ) AS tr_references
       ) traceability ON snapshot.lot_id IS NOT NULL
       LEFT JOIN public.stock_inventory_lines materialized

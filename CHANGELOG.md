@@ -8,6 +8,27 @@
 - Règles exactes de couverture des affaires, répartition de quantité entre sociétés, paiements partiels/annulés, libérations et avoirs d'acompte. Prix/remises/TVA lus dans la commande ; aucun champ « payé » ne fait autorité.
 - Modèle SQL additif et commandes réelles éprouvés sur PostgreSQL 17 isolé : permissions, répartition entre sociétés, reprise des brouillons, annulation sans encaissement, audit/replay et concurrence de double création. Un retrait d'affaire ne dispense pas silencieusement du paiement ; l'historique et le rollback restent protégés. Aucun changement de schéma Test/Prod. Dix opérations API écrites avec Finance/RBAC ;246 tests ciblés et build vert. Écrans, PDF/GED, BL, acomptes, factures finales et budgets financiers encore en cours ; aucun déploiement ni parcours métier complet revendiqué pour ce lot.
 - Ventilation/libération de règlements déjà affectés, aperçus/brouillons d'acompte monétaires plafonnés par société et filiation fiscale obligatoire. Distinction386/380 dans les documents PDF/électroniques, sans seconde remise de commande ni consommation de pièces. Douze opérations proforma,330 tests et build verts ; SQL et repositories de ventilation éprouvés avec fixtures fiscales synthétiques sur base isolée. Émission Finance complète, comptabilité, factures finales, BL, écrans et recette live restent en cours.
+## 2026-10-14 — Fiche papier d’autocontrôle
+
+- Nouvelle fiche vierge avec grille cotes/tolérances, première et dernière pièce, instrument, surveillance, opération et visa. Logo CRP, titre centré, numéro rouge et zones encadrées selon la référence approuvée. Mesures et signatures jamais préremplies.
+- Code client, définition figée et affaires exactes capturés ; fabrication interne identifiée. Date Europe/Paris, pagination répétée et consignes longues conservées ; anciennes fiches stockées inchangées.
+- Six cas dédiés, build strict, suite complète et lecture des sources réelles sous cerp_app validés. Saisie tablette, dépôt du scan, fiche jaune et impression du dossier complet restent en cours.
+
+## 2026-10-14 — Calendrier et nombres Finance
+
+- Factures et avoirs utilisent la date Europe/Paris lors de leur émission. Après minuit en France, la date UTC de la veille ne fuit plus dans le numéro et le document. Les exemplaires déjà émis restent immuables.
+- Les PDF financiers affichent les quantités et taux sans les zéros de stockage, en conservant chaque décimale significative. Aucun montant ni instantané recalculé.
+-136 tests ciblés,7653 tests/688 fichiers et build strict passent ; aperçu compilé inspecté.
+
+## 2026-10-14 — Provenance des lots produits
+
+- Stock et BL affichent les lots matière débités et les lots revenus d'un traitement à partir des preuves de fabrication enregistrées. Projection commune à douze lectures, références historiques conservées, débits compensés exclus et traitement distingué d'une sous-traitance quelconque.
+- 7 651 tests / 688 fichiers, build strict et lecture réelle READ ONLY de LOT1310 passent. Aucune ressaisie de traçabilité ni nouvelle écriture de stock ; les validations qualité et d'expédition restent actives.
+
+## 2026-10-14 — Stock déjà réservé à la commande
+
+- L'aperçu de relance reconnaît la couverture physique propre des lignes.12 déjà réservées et8 libres ne produisent plus une fausse proposition de fabrication de4 pièces. Aucune réservation supplémentaire ni planning fictif ; provenance OLD/NEW et contrôles physiques conservés.
+- Lecteur réel vérifié en lecture seule sur Base Test, suite complète7641 tests/687 fichiers et build strict passent. Les commandes de reprise, qualité et expédition gardent leurs garde-fous et leur audit.
 
 ## 2026-10-13 — Reprise stock et annulation explicite de brouillon (#1305)
 

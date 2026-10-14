@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { todayInParis } from "../domain/reporting-policy";
 import { bindInvoiceUrgencyChargeTx, readInvoiceUrgencyChargesTx } from './facture-urgency-charges.repository';
 import { bindProformaDepositInvoiceSourceTx,buildProformaDepositInvoiceLine,readProformaDepositInvoiceSources } from './proforma-deposit-invoice.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
@@ -545,7 +546,7 @@ async function buildFacturePreview(
         queryer,
         clientId: input.client_id,
         entityCode: policy.legal_entity_code,
-        at: new Date().toISOString().slice(0, 10),
+        at: todayInParis(),
         selection: input.regulatory,
       });
     } catch (error) {
@@ -778,7 +779,7 @@ export async function repoCreateFactureDraft(params: {
     const clientData = await clientSnapshot(client, params.input.client_id);
     // Brouillon : les mentions du jour. Elles seront **re-resolues a l'emission**, seul
     // moment ou la loi les fige (cf. svcIssueFacture).
-    const draftDate = new Date().toISOString().slice(0, 10);
+    const draftDate = todayInParis();
     const issuerData = await issuerSnapshot(client, policy.legal_entity_code, draftDate);
     const commandeIds = [...new Set(sources.map((row) => row.commande_id).filter(Boolean))];
     const affaireIds = [...new Set(sources.map((row) => row.affaire_id).filter(Boolean))];
@@ -1372,7 +1373,7 @@ export async function repoIssueFacture(params: {
     if (!policy) throw new HttpError(503, "BILLING_POLICY_NOT_ACTIVE", "Politique Finance absente.");
     assertFactureTransition(facture.statut, "ISSUED");
     const qualityReleases = await assertInvoiceDeliveryQuality(client, params.factureId);
-    const issueDate = new Date().toISOString().slice(0, 10);
+    const issueDate = todayInParis();
     // Fail before consuming a legal sequence value: an immutable fiscal document must never
     // be issued without the complete legal version applicable on its issue date.
     const issuerAtIssue = await requireFinanceIssuerSnapshotAt(

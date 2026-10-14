@@ -282,6 +282,36 @@ describe("facture — rendu reel", () => {
     const bytes=await renderFinanceDocument({...FACTURE,invoiceTypeCode:386});
     expect(drawnPages(bytes).join('\n')).toMatch(/FACTURE D.ACOMPTE/i);
   });
+  it("affiche les quantités et taux sans les zéros de stockage, sans modifier l'instantané", async () => {
+    const input: FinanceDocumentInput = {
+      ...FACTURE,
+      lines: [ligne({ quantity: "12.000", taxRatePercent: "20.0000", discountPercent: "3.0000" })],
+    };
+    const before = JSON.stringify(input);
+    const bytes = await renderFinanceDocument(input);
+    const text = drawnText(bytes);
+    expect(text).toContain("20 %");
+    expect(text).toContain("Remise 3 %");
+    expect(text).not.toContain("12.000");
+    expect(text).not.toContain("20,0000");
+    expect(text).not.toContain("3,0000");
+    expect(JSON.stringify(input)).toBe(before);
+    keep("1314-facture-nombres-compacts", bytes);
+  }, 60_000);
+
+  it("conserve chaque décimale significative des quantités et taux du document", async () => {
+    const bytes = await renderFinanceDocument({
+      ...FACTURE,
+      lines: [ligne({ quantity: "12.505", taxRatePercent: "5.5500" })],
+    });
+    const text = drawnText(bytes);
+    expect(text).toContain("12,505");
+    expect(text).toContain("5,55 %");
+    expect(text).not.toContain("12,51");
+    expect(text).not.toContain("5,5500");
+    keep("1314-facture-decimales-significatives", bytes);
+  }, 60_000);
+
   it("scenario 1 (facture emise, 2 taux) : une page, mentions portees", async () => {
     const bytes = await renderFinanceDocument(FACTURE);
     keep("60-facture-emise", bytes);
@@ -332,7 +362,7 @@ describe("facture — rendu reel", () => {
 
     const text = drawnText(bytes);
     expect(text).toContain("Sous-total HT");
-    expect(text).toContain("Remise globale (3,00 %)");
+    expect(text).toContain("Remise globale (3 %)");
     // La remise est bien retranchee a l'affichage, jamais presentee en positif.
     expect(text).toContain("- 313,96 €");
   }, 60_000);
