@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
+import { invoicePrepaymentAmountsFromSnapshot } from "../domain/final-invoice-prepayments";
 import {
   canonicalJson,
   financeRequestHash,
@@ -433,6 +434,7 @@ export async function repoLoadElectronicInvoiceSource(
     creditNoteId: null,
     documentType: "INVOICE",
     invoiceTypeCode:invoiceTypeCodeFromSnapshot(row.immutable_snapshot),
+    prepayments:invoicePrepaymentAmountsFromSnapshot(row.immutable_snapshot,row.total_ttc),
     precedingInvoice: null,
     legalNumber: row.numero,
     issueDate: row.date_emission,

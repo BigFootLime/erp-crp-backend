@@ -26,6 +26,14 @@ function invoiceRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("#469 invoice settlement repository", () => {
+  it("inclut l'acompte déjà déduit dans le solde sans créer un second règlement",async()=>{
+    const query=vi.fn(async()=>({rows:[invoiceRow({applied_prepayment_ttc:"35.00",allocated_payment_ttc:"0.00",
+      legacy_direct_payment_ttc:"0.00",consumed_credit_ttc:"0.00",legacy_direct_credit_ttc:"0.00"})],rowCount:1}));
+    const invoice=await lockInvoiceSettlement({query} as unknown as Pick<PoolClient,"query">,42);
+    expect(invoice?.settledAmount).toBe("35.00");
+    expect(()=>assertInvoiceCreditWithinBalance(invoice!,6501n)).toThrow();
+    expect(query.mock.calls).toHaveLength(2);
+  });
   it("additionne allocations modernes et preuves directes historiques sans changer de source", async () => {
     const query = vi.fn(async (_sqlValue: unknown) => ({ rows: [invoiceRow()], rowCount: 1 }));
     const invoice = await lockInvoiceSettlement(

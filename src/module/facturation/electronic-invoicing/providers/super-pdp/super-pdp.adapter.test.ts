@@ -94,6 +94,13 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe("SUPER PDP adapter", () => {
+  it("preserves fiscal totals and sends exact paid/net due amounts",()=>{
+    const result=buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"58.37",amountDue:"61.63"}});
+    expect(result).toMatchObject({totals:{total_without_vat:"100.00",total_with_vat:"120.00",paid_amount:"58.37",amount_due_for_payment:"61.63"}});
+    expect(buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"120.00",amountDue:"0.00"}})).toMatchObject({totals:{paid_amount:"120.00",amount_due_for_payment:"0.00"}});
+    expect(()=>buildSuperPdpEn16931Invoice({...source,prepayments:{amountPaid:"58.37",amountDue:"61.64"}})).toThrow();
+    expect(()=>buildSuperPdpEn16931Invoice({...creditSource,prepayments:{amountPaid:"58.37",amountDue:"61.63"}})).toThrow();
+  });
   it("builds a source-backed EN16931 model and rejects unqualified zero VAT", () => {
     const result = buildSuperPdpEn16931Invoice(source);
     expect(result).toMatchObject({

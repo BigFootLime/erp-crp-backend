@@ -1,6 +1,7 @@
 import { HttpError } from "../../../../../utils/httpError";
 import type { ElectronicInvoiceSourceDocument } from "../../electronic-invoice.domain";
 import { parseInvoiceRegulatorySnapshot } from "../../electronic-invoice-regulatory.domain";
+import { moneyToCents } from "../../../domain/decimal-money";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -268,6 +269,9 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
     vatGroups.set(result.vatRate, { net: add(previous.net, result.net), tax: add(previous.tax, result.tax) });
   }
   const currency = source.currency.toUpperCase();
+  if(source.prepayments && (source.documentType!=="INVOICE" || moneyToCents(source.prepayments.amountPaid)<0n
+    || moneyToCents(source.prepayments.amountDue)<0n || moneyToCents(source.prepayments.amountPaid)+moneyToCents(source.prepayments.amountDue)!==moneyToCents(source.totals.gross)))
+    throw new HttpError(409,"EINVOICE_PREPAYMENT_TOTAL_MISMATCH","Les acomptes et le net à payer doivent correspondre à la facture émise.");
   const iban = optionalString(issuer, "iban")?.replace(/\s/g, "") ?? null;
   const bic = optionalString(issuer, "bic")?.replace(/\s/g, "") ?? null;
   return {
@@ -322,7 +326,8 @@ export function buildSuperPdpEn16931Invoice(source: ElectronicInvoiceSourceDocum
       total_without_vat: source.totals.net,
       total_vat_amount: { value: source.totals.tax, currency_code: currency },
       total_with_vat: source.totals.gross,
-      amount_due_for_payment: source.totals.gross,
+      paid_amount: source.prepayments?.amountPaid ?? "0.00",
+      amount_due_for_payment: source.prepayments?.amountDue ?? source.totals.gross,
     },
     vat_break_down: [...vatGroups.entries()].map(([vatRate, totals]) => ({
       vat_category_taxable_amount: formatDecimal(totals.net),

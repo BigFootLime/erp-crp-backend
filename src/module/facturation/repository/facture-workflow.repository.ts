@@ -5,6 +5,9 @@ import { todayInParis } from "../domain/reporting-policy";
 import { bindInvoiceUrgencyChargeTx, readInvoiceUrgencyChargesTx } from './facture-urgency-charges.repository';
 import { bindProformaDepositInvoiceSourceTx,buildProformaDepositInvoiceLine,readProformaDepositInvoiceSources } from './proforma-deposit-invoice.repository';
 import { planProformaFinalInvoice } from "../domain/proforma-final-invoice";
+import { planFinalInvoicePrepayments } from "../domain/final-invoice-prepayments";
+import { finalPrepaymentTargets } from "../domain/final-prepayment-targets";
+import { bindFinalInvoicePrepayments, readFinalInvoicePrepaymentReceipts } from "./final-invoice-prepayments.repository";
 import { bindProformaFinalInvoiceSourceTx, proformaBilledPartySourceWhere, readProformaFinalInvoiceAffairs } from "./proforma-final-invoice.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { HttpError } from "../../../utils/httpError";
@@ -15,6 +18,7 @@ import {
 } from "../../commande-client/repository/commande-fulfillment.repository";
 import {
   assertFactureTransition,
+  invoiceSettlementStatusFromBalance,
   financePreviewHash,
   type FactureWorkflowStatus,
 } from "../domain/finance-policy";
@@ -161,6 +165,7 @@ export type FinanceDocumentSnapshot = {
   regulatory_snapshot: InvoiceRegulatorySnapshot;
   lines: FacturePreviewLine[];
   totals: FacturePreview["totals"];
+  prepayments?: FacturePreview["prepayments"];
   internal_comment: string | null;
   customer_text: string | null;
 };
@@ -455,11 +460,11 @@ function assertDueDates(preview: FacturePreview): void {
     (sum, due) => sum + moneyToCents(due.amount, "Montant d'échéance"),
     0n
   );
-  const invoiceTotal = moneyToCents(preview.totals.total_incl_tax, "Total TTC");
+  const invoiceTotal = moneyToCents(preview.prepayments?.amount_due ?? preview.totals.total_incl_tax, "Net à payer");
   if (dueTotal !== invoiceTotal) {
     preview.blockers.push({
       code: "DUE_DATES_TOTAL_MISMATCH",
-      message: "La somme des échéances doit être exactement égale au total TTC.",
+      message: "La somme des échéances doit correspondre au net à payer, après les acomptes déjà réglés.",
     });
   }
 }
@@ -590,11 +595,21 @@ async function buildFacturePreview(
     })),
     input.global_discount_percent
   );
+  const prepaymentTargets = finalPrepaymentTargets(lines, totals.totalInclTax);
+  const prepayments = planFinalInvoicePrepayments({
+    billedClientId: input.client_id, currency: input.currency, invoiceTotalInclTax: totals.totalInclTax,
+    targets: prepaymentTargets,
+    receipts: await readFinalInvoicePrepaymentReceipts(queryer, {
+      partIds: prepaymentTargets.map(target => target.billing_part_id), clientId: input.client_id,
+      currency: input.currency, ownInvoiceId: invoiceId,
+    }),
+  });
   const dueDates = input.due_dates.map((due) => ({
     ...due,
+    amount_autofilled: due.amount === undefined,
     amount:
       due.amount ??
-      (input.due_dates.length === 1 ? totals.totalInclTax : ""),
+      (input.due_dates.length === 1 ? prepayments.amount_due : ""),
   }));
   if (dueDates.some((due) => !due.amount)) {
     blockers.push({
@@ -622,6 +637,7 @@ async function buildFacturePreview(
     client_id: input.client_id,
     currency: input.currency,
     lines,
+    prepayments,
     totals: {
       subtotal_ex_tax: totals.subtotalExTax,
       global_discount_percent: totals.discountPercent,
@@ -910,6 +926,7 @@ export async function repoCreateFactureDraft(params: {
       ]
     );
 
+    const savedSourceIds = new Map<string,string>();
     for (let index = 0; index < preview.lines.length; index += 1) {
       const line = preview.lines[index];
       const lineInsert = await client.query<{ id: string }>(
@@ -973,21 +990,26 @@ export async function repoCreateFactureDraft(params: {
         if(!sourceAllocationId)throw new Error('Failed to save deposit invoice source');
         await bindProformaDepositInvoiceSourceTx(client,{sourceAllocationId,partId:line.source_line_id,actorId:params.actor.userId,correlationId});
       }
+      if (sourceInsert.rows[0]?.id) savedSourceIds.set(line.source_line_id,sourceInsert.rows[0].id);
       if (line.proforma_contributions?.length) {
         const sourceAllocationId = sourceInsert.rows[0]?.id;
         if (!sourceAllocationId) throw new Error("Failed to save final proforma invoice source");
         await bindProformaFinalInvoiceSourceTx(client, { sourceAllocationId, contributions: line.proforma_contributions, actorId: params.actor.userId, correlationId });
       }
     }
+    if (preview.prepayments) await bindFinalInvoicePrepayments(client, {
+      invoiceId: factureId, plan: preview.prepayments, sourceIds: savedSourceIds,
+      actorId: params.actor.userId, correlationId,
+    });
     for (const due of preview.due_dates) {
       await client.query(
         `
           INSERT INTO public.facture_echeance (
-            facture_id, due_date, label, amount_due, status, created_by
+            facture_id, due_date, label, amount_due, status, created_by, amount_autofilled
           )
-          VALUES ($1,$2::date,$3,$4,'OPEN',$5)
+          VALUES ($1,$2::date,$3,$4,'OPEN',$5,$6)
         `,
-        [factureId, due.due_date, due.label, due.amount, params.actor.userId]
+        [factureId, due.due_date, due.label, due.amount, params.actor.userId, due.amount_autofilled ?? false]
       );
     }
     const result: FinanceCommandResult = {
@@ -1133,9 +1155,9 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     `,
     [factureId]
   );
-  const dueDates = await client.query<{ due_date: string; amount: string; label: string }>(
+  const dueDates = await client.query<{ due_date: string; amount: string; label: string; amount_autofilled: boolean }>(
     `
-      SELECT due_date::text AS due_date, amount_due::text AS amount, label
+      SELECT due_date::text AS due_date, amount_due::text AS amount, label, amount_autofilled
       FROM public.facture_echeance
       WHERE facture_id = $1
       ORDER BY due_date, id
@@ -1147,7 +1169,7 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     currency: row.currency,
     sources: sources.rows.map(source=>source.source_type==='DEPOSIT'?source:{source_type:source.source_type,source_id:source.source_id,source_line_id:source.source_line_id,quantity:source.quantity}),
     global_discount_percent: row.remise_globale,
-    due_dates: dueDates.rows,
+    due_dates: dueDates.rows.map(due => ({due_date:due.due_date,label:due.label,...(due.amount_autofilled?{}:{amount:due.amount})})),
     internal_comment: row.commentaires,
     customer_text: row.customer_text,
     regulatory: {
@@ -1490,6 +1512,7 @@ export async function repoIssueFacture(params: {
       regulatory_snapshot: preview.regulatory_snapshot!,
       lines: preview.lines,
       totals: preview.totals,
+      prepayments: preview.prepayments,
       internal_comment: facture.commentaires,
       customer_text: facture.customer_text,
     };
@@ -1525,6 +1548,9 @@ export async function repoIssueFacture(params: {
       `,
       [params.factureId, params.actor.userId]
     );
+    const issuedSettlementStatus = invoiceSettlementStatusFromBalance({totalCents:moneyToCents(preview.totals.total_incl_tax),
+      settledCents:moneyToCents(preview.prepayments?.amount_paid ?? "0")});
+    const issuedStatus = issuedSettlementStatus === "UNPAID" ? "ISSUED" : issuedSettlementStatus;
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.facture
@@ -1533,9 +1559,9 @@ export async function repoIssueFacture(params: {
             legal_period = $3,
             legal_sequence_value = $4,
             date_emission = $5::date,
-            statut = 'ISSUED',
+            statut = $11,
             document_status = 'ISSUED',
-            settlement_status = 'UNPAID',
+            settlement_status = $12,
             issued_at = now(),
             issued_by = $6,
             immutable_snapshot = $7::jsonb,
@@ -1561,6 +1587,8 @@ export async function repoIssueFacture(params: {
         // differentes sur la meme piece.
         JSON.stringify(issuerAtIssue),
         JSON.stringify(preview.regulatory_snapshot),
+        issuedStatus,
+        issuedSettlementStatus,
       ]
     );
     await client.query(
@@ -1598,7 +1626,7 @@ export async function repoIssueFacture(params: {
       uuid: facture.uuid,
       draft_reference: facture.draft_reference,
       legal_number: legal.legalNumber,
-      status: "ISSUED",
+      status: issuedStatus,
       row_version: updated.rows[0]?.row_version ?? facture.row_version + 1,
       correlation_id: correlationId,
       idempotent_replay: false,
@@ -1610,7 +1638,8 @@ export async function repoIssueFacture(params: {
       eventType: "FACTURE_ISSUED",
       oldValues: { status: facture.statut },
       newValues: {
-        status: "ISSUED",
+        status: issuedStatus,
+        settlement_status: issuedSettlementStatus,
         legal_number: legal.legalNumber,
         document_checksum_sha256: artifact.checksumSha256,
         authoritative_archive_id: legalArchive.id,

@@ -292,6 +292,7 @@ export type ElectronicInvoiceSourceDocument = {
   creditNoteId: number | null;
   documentType: ElectronicInvoiceDocumentType;
   invoiceTypeCode?:380|386;
+  prepayments?: Readonly<{amountPaid:string;amountDue:string}>;
   precedingInvoice: Readonly<{
     legalNumber: string;
     issueDate: string;

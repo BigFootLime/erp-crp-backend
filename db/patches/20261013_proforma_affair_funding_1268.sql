@@ -175,6 +175,20 @@ CREATE TABLE IF NOT EXISTS public.proforma_final_invoice_sources (
 );
 CREATE INDEX IF NOT EXISTS proforma_final_part_1268_idx ON public.proforma_final_invoice_sources(proforma_billing_part_id);
 
+ALTER TABLE public.facture ADD COLUMN IF NOT EXISTS prepaid_amount_ttc numeric(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE public.facture ADD COLUMN IF NOT EXISTS amount_due_at_issue numeric(18,2) NULL;
+ALTER TABLE public.facture_echeance ADD COLUMN IF NOT EXISTS amount_autofilled boolean NOT NULL DEFAULT false;
+-- A fully prepaid final invoice has a genuine zero due date, never a fake cent.
+ALTER TABLE public.facture_echeance DROP CONSTRAINT IF EXISTS facture_echeance_amount_due_check;
+ALTER TABLE public.facture_echeance DROP CONSTRAINT IF EXISTS facture_echeance_nonnegative_due_1268_ck;
+ALTER TABLE public.facture_echeance ADD CONSTRAINT facture_echeance_nonnegative_due_1268_ck CHECK(amount_due>=0);
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.facture'::regclass AND conname='facture_prepaid_amount_1268_ck') THEN
+  ALTER TABLE public.facture ADD CONSTRAINT facture_prepaid_amount_1268_ck CHECK(prepaid_amount_ttc>=0 AND prepaid_amount_ttc<=total_ttc
+    AND (amount_due_at_issue IS NULL OR (amount_due_at_issue>=0 AND amount_due_at_issue=total_ttc-prepaid_amount_ttc)));
+ END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS public.proforma_receipt_assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   payment_allocation_id uuid NOT NULL REFERENCES public.paiement_allocations(id) ON DELETE RESTRICT,
@@ -197,6 +211,110 @@ CREATE TABLE IF NOT EXISTS public.proforma_receipt_releases (
   correlation_id uuid NOT NULL
 );
 CREATE INDEX IF NOT EXISTS proforma_release_assignment_1268_idx ON public.proforma_receipt_releases(assignment_id);
+
+CREATE TABLE IF NOT EXISTS public.proforma_final_prepayments(
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ final_source_allocation_id uuid NOT NULL REFERENCES public.facture_source_allocations(id) ON DELETE RESTRICT,
+ proforma_billing_part_id uuid NOT NULL REFERENCES public.proforma_billing_parts(id) ON DELETE RESTRICT,
+ receipt_assignment_id uuid NOT NULL REFERENCES public.proforma_receipt_assignments(id) ON DELETE RESTRICT,
+ deposit_source_id uuid NOT NULL REFERENCES public.proforma_deposit_sources(facture_source_allocation_id) ON DELETE RESTRICT,
+ amount_ex_tax numeric(18,2) NOT NULL CHECK(amount_ex_tax>=0),tax_amount numeric(18,2) NOT NULL CHECK(tax_amount>=0),
+ amount_ttc numeric(18,2) NOT NULL CHECK(amount_ttc>0 AND amount_ttc=amount_ex_tax+tax_amount),
+ created_at timestamptz NOT NULL DEFAULT now(),created_by integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+ correlation_id uuid NOT NULL,
+ UNIQUE(final_source_allocation_id,proforma_billing_part_id,receipt_assignment_id)
+);
+CREATE INDEX IF NOT EXISTS proforma_final_receipt_1268_idx ON public.proforma_final_prepayments(receipt_assignment_id);
+CREATE INDEX IF NOT EXISTS proforma_final_deposit_1268_idx ON public.proforma_final_prepayments(deposit_source_id);
+
+-- Same two-stage largest-remainder allocation as the preview: document gross
+-- to invoice lines, then each line to its retained affair/company quantities.
+CREATE OR REPLACE FUNCTION public.fn_final_prepayment_targets_1268(p_invoice_id bigint)
+RETURNS TABLE(final_source_allocation_id uuid,proforma_billing_part_id uuid,amount_ttc numeric)
+LANGUAGE sql STABLE AS $$
+ WITH line_weights AS(
+  SELECT line.id,line.total_ttc*100 AS weight,invoice.total_ttc*100 AS total,
+    COALESCE(source.source_line_id,line.snapshot_json->>'source_line_id',line.id::text) AS tie_key,
+    source.id AS source_id
+  FROM public.facture_ligne line JOIN public.facture invoice ON invoice.id=line.facture_id
+  LEFT JOIN public.facture_source_allocations source ON source.facture_ligne_id=line.id AND source.allocation_status IN('DRAFT','CONSUMED')
+  WHERE line.facture_id=p_invoice_id
+ ), line_floors AS(
+  SELECT *,COALESCE(floor(total*weight/NULLIF(sum(weight) OVER(),0)),0) AS cents,
+    COALESCE(mod(total*weight,NULLIF(sum(weight) OVER(),0)),0) AS remainder FROM line_weights
+ ), line_budgets AS(
+  SELECT *,cents+CASE WHEN row_number() OVER(ORDER BY remainder DESC,tie_key COLLATE "C")<=total-sum(cents) OVER() THEN 1 ELSE 0 END AS budget
+  FROM line_floors
+ ), part_weights AS(
+  SELECT line.source_id,binding.proforma_billing_part_id,line.budget,binding.quantity*1000 AS weight,
+    sum(binding.quantity*1000) OVER(PARTITION BY line.source_id) AS total_weight
+  FROM line_budgets line JOIN public.proforma_final_invoice_sources binding ON binding.facture_source_allocation_id=line.source_id
+ ), part_floors AS(
+  SELECT *,floor(budget*weight/NULLIF(total_weight,0)) AS cents,mod(budget*weight,NULLIF(total_weight,0)) AS remainder FROM part_weights
+ )
+ SELECT source_id,proforma_billing_part_id,
+  (cents+CASE WHEN row_number() OVER(PARTITION BY source_id ORDER BY remainder DESC,proforma_billing_part_id::text COLLATE "C")
+    <=budget-sum(cents) OVER(PARTITION BY source_id) THEN 1 ELSE 0 END)/100
+ FROM part_floors;
+$$;
+
+CREATE OR REPLACE FUNCTION public.fn_final_prepayment_budget_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE valid_binding boolean; v_receipt_amount numeric; v_released numeric; v_used_receipt numeric;
+ v_deposit_gross numeric; v_deposit_net numeric; v_used_gross numeric; v_used_net numeric; v_credits numeric;
+ v_target numeric; v_used_target numeric; v_final_invoice bigint; expected_net numeric;
+BEGIN
+ IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'final prepayment evidence is append only' USING ERRCODE='55000'; END IF;
+ PERFORM public.fn_lock_delivery_prepayment_write_1268();
+ SELECT final.source_type='DELIVERY_LINE' AND final.allocation_status='DRAFT' AND final_invoice.document_status='DRAFT'
+   AND receipt.deposit_source_id=NEW.deposit_source_id AND deposit.source_type='DEPOSIT' AND deposit.allocation_status='CONSUMED'
+   AND deposit_invoice.document_status='ISSUED' AND deposit_invoice.immutable_snapshot->>'invoice_type_code'='386'
+   AND final_invoice.client_id=deposit_invoice.client_id AND final_invoice.client_id::text=part.billed_client_id
+   AND payment.client_id=deposit_invoice.client_id AND payment.currency=deposit_invoice.currency
+   AND final_invoice.currency=deposit_invoice.currency AND payment_allocation.facture_id=deposit_invoice.id
+   AND payment.status IN('UNALLOCATED','PARTIALLY_ALLOCATED','ALLOCATED') AND payment.workflow_status IN('RECORDED','ALLOCATED')
+   AND payment.reversal_of_id IS NULL,
+   receipt.amount_ttc,deposit.amount_incl_tax,deposit.amount_ex_tax,final.facture_id
+ INTO valid_binding,v_receipt_amount,v_deposit_gross,v_deposit_net,v_final_invoice
+ FROM public.facture_source_allocations final JOIN public.facture final_invoice ON final_invoice.id=final.facture_id
+ JOIN public.proforma_final_invoice_sources final_binding ON final_binding.facture_source_allocation_id=final.id AND final_binding.proforma_billing_part_id=NEW.proforma_billing_part_id
+ JOIN public.proforma_receipt_assignments receipt ON receipt.id=NEW.receipt_assignment_id
+ JOIN public.proforma_deposit_sources deposit_binding ON deposit_binding.facture_source_allocation_id=NEW.deposit_source_id AND deposit_binding.proforma_billing_part_id=NEW.proforma_billing_part_id
+ JOIN public.proforma_billing_parts part ON part.id=NEW.proforma_billing_part_id
+ JOIN public.facture_source_allocations deposit ON deposit.id=NEW.deposit_source_id
+ JOIN public.facture deposit_invoice ON deposit_invoice.id=deposit.facture_id
+ JOIN public.paiement_allocations payment_allocation ON payment_allocation.id=receipt.payment_allocation_id
+ JOIN public.paiement payment ON payment.id=payment_allocation.paiement_id
+ WHERE final.id=NEW.final_source_allocation_id FOR UPDATE OF final,final_invoice,part;
+ IF NOT COALESCE(valid_binding,false) THEN RAISE EXCEPTION 'final prepayment requires same company/currency and genuine paid advance' USING ERRCODE='23514'; END IF;
+ SELECT COALESCE(sum(amount_ttc),0) INTO v_released FROM public.proforma_receipt_releases WHERE assignment_id=NEW.receipt_assignment_id;
+ SELECT COALESCE(sum(applied.amount_ttc),0) INTO v_used_receipt FROM public.proforma_final_prepayments applied
+ JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
+ WHERE applied.receipt_assignment_id=NEW.receipt_assignment_id AND final.allocation_status IN('DRAFT','CONSUMED');
+ SELECT COALESCE(sum(applied.amount_ttc),0),COALESCE(sum(applied.amount_ex_tax),0) INTO v_used_gross,v_used_net
+ FROM public.proforma_final_prepayments applied JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
+ WHERE applied.deposit_source_id=NEW.deposit_source_id AND final.allocation_status IN('DRAFT','CONSUMED');
+ SELECT COALESCE(sum(credit.amount_ttc),0) INTO v_credits FROM public.avoir_source_allocations credit
+ JOIN public.facture_source_allocations deposit ON deposit.facture_id=credit.facture_id AND deposit.facture_ligne_id=credit.facture_ligne_id
+ WHERE deposit.id=NEW.deposit_source_id AND credit.allocation_status='CONSUMED';
+ SELECT amount_ttc INTO v_target FROM public.fn_final_prepayment_targets_1268(v_final_invoice)
+ WHERE final_source_allocation_id=NEW.final_source_allocation_id AND proforma_billing_part_id=NEW.proforma_billing_part_id;
+ SELECT COALESCE(sum(amount_ttc),0) INTO v_used_target FROM public.proforma_final_prepayments
+ WHERE final_source_allocation_id=NEW.final_source_allocation_id AND proforma_billing_part_id=NEW.proforma_billing_part_id;
+ expected_net:=round((v_used_gross+NEW.amount_ttc)*v_deposit_net/v_deposit_gross,2)-v_used_net;
+ IF v_target IS NULL OR v_used_target+NEW.amount_ttc>v_target OR v_used_receipt+NEW.amount_ttc>v_receipt_amount-v_released
+   OR v_used_gross+NEW.amount_ttc>v_deposit_gross-v_credits OR NEW.amount_ex_tax<>expected_net THEN
+  RAISE EXCEPTION 'final prepayment exceeds unused cash, deposit or delivered value' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_final_prepayment_budget_1268 ON public.proforma_final_prepayments;
+CREATE TRIGGER trg_final_prepayment_budget_1268 BEFORE INSERT OR UPDATE OR DELETE ON public.proforma_final_prepayments
+ FOR EACH ROW EXECUTE FUNCTION public.fn_final_prepayment_budget_1268();
+GRANT SELECT,INSERT ON public.proforma_final_prepayments TO cerp_app;
+REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_final_prepayments FROM cerp_app;
+GRANT EXECUTE ON FUNCTION public.fn_final_prepayment_targets_1268(bigint) TO cerp_app;
 
 CREATE OR REPLACE FUNCTION public.fn_proforma_receipt_budget_1268()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -695,3 +813,114 @@ REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_deposit_sources,public.proforma
 GRANT SELECT,INSERT ON public.proforma_final_invoice_sources TO cerp_app;
 REVOKE UPDATE,DELETE,TRUNCATE ON public.proforma_final_invoice_sources FROM cerp_app;
 GRANT USAGE,SELECT ON SEQUENCE public.proforma_client_reference_seq TO cerp_app;
+
+-- Applied advances are settlement evidence, not another bank movement.
+CREATE OR REPLACE FUNCTION public.fn_invoice_applied_prepayment_1268(p_invoice_id bigint)
+RETURNS numeric LANGUAGE sql STABLE AS $$
+ SELECT COALESCE(sum(applied.amount_ttc),0)
+ FROM public.proforma_final_prepayments applied
+ JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id AND final.allocation_status='CONSUMED'
+ JOIN public.proforma_receipt_assignments receipt ON receipt.id=applied.receipt_assignment_id
+ JOIN public.paiement_allocations allocation ON allocation.id=receipt.payment_allocation_id
+ JOIN public.paiement payment ON payment.id=allocation.paiement_id
+ JOIN public.facture_source_allocations deposit ON deposit.id=applied.deposit_source_id AND deposit.allocation_status='CONSUMED'
+ JOIN public.facture advance_invoice ON advance_invoice.id=deposit.facture_id AND advance_invoice.document_status='ISSUED'
+ WHERE final.facture_id=p_invoice_id AND payment.status IN('UNALLOCATED','PARTIALLY_ALLOCATED','ALLOCATED')
+  AND payment.workflow_status IN('RECORDED','ALLOCATED') AND payment.reversal_of_id IS NULL;
+$$;
+GRANT EXECUTE ON FUNCTION public.fn_invoice_applied_prepayment_1268(bigint) TO cerp_app;
+
+-- Deferred guards see the complete draft/issue transaction, including due dates.
+-- Historical invoices with no new due-at-issue value remain untouched.
+CREATE OR REPLACE FUNCTION public.fn_check_final_prepayments_1268()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE row_data jsonb; invoice_ids bigint[]; v_invoice_id bigint; invoice public.facture%ROWTYPE;
+ v_applied numeric; v_due numeric; v_settled numeric;
+BEGIN
+ row_data:=COALESCE(to_jsonb(NEW),to_jsonb(OLD));
+ IF TG_TABLE_NAME='facture' THEN invoice_ids:=ARRAY[(row_data->>'id')::bigint];
+ ELSIF TG_TABLE_NAME IN('facture_source_allocations','facture_echeance','paiement_allocations','avoir','avoir_source_allocations') THEN
+  invoice_ids:=ARRAY[(row_data->>'facture_id')::bigint];
+ ELSIF TG_TABLE_NAME='proforma_final_prepayments' THEN
+  SELECT ARRAY[facture_id] INTO invoice_ids FROM public.facture_source_allocations WHERE id=(row_data->>'final_source_allocation_id')::uuid;
+ ELSIF TG_TABLE_NAME='paiement' THEN
+  SELECT array_agg(id) INTO invoice_ids FROM(SELECT facture_id AS id FROM public.paiement_allocations WHERE paiement_id=(row_data->>'id')::integer
+    UNION SELECT (row_data->>'facture_id')::bigint) impacted;
+ ELSIF TG_TABLE_NAME IN('proforma_receipt_assignments','proforma_receipt_releases') THEN
+  SELECT ARRAY[deposit.facture_id] INTO invoice_ids FROM public.proforma_receipt_assignments receipt
+   JOIN public.facture_source_allocations deposit ON deposit.id=receipt.deposit_source_id
+   WHERE receipt.id=CASE WHEN TG_TABLE_NAME='proforma_receipt_releases' THEN (row_data->>'assignment_id')::uuid ELSE (row_data->>'id')::uuid END;
+ END IF;
+ -- A change to an advance or its receipt also protects every final application.
+ SELECT array_agg(DISTINCT id) INTO invoice_ids FROM(
+  SELECT unnest(invoice_ids) AS id UNION
+  SELECT final.facture_id FROM public.proforma_final_prepayments applied
+  JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
+  JOIN public.facture_source_allocations deposit ON deposit.id=applied.deposit_source_id
+  WHERE deposit.facture_id=ANY(invoice_ids)
+ ) impacted WHERE id IS NOT NULL;
+ FOREACH v_invoice_id IN ARRAY COALESCE(invoice_ids,ARRAY[]::bigint[]) LOOP
+  SELECT * INTO invoice FROM public.facture WHERE id=v_invoice_id;
+  IF NOT FOUND OR invoice.amount_due_at_issue IS NULL OR invoice.document_status='CANCELLED' THEN CONTINUE; END IF;
+  SELECT COALESCE(sum(applied.amount_ttc),0) INTO v_applied FROM public.proforma_final_prepayments applied
+   JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
+   WHERE final.facture_id=v_invoice_id AND final.allocation_status IN('DRAFT','CONSUMED');
+  SELECT COALESCE(sum(amount_due),0) INTO v_due FROM public.facture_echeance WHERE facture_id=v_invoice_id;
+  IF v_applied<>invoice.prepaid_amount_ttc OR v_due<>invoice.amount_due_at_issue THEN
+   RAISE EXCEPTION 'final invoice advances and installments must equal retained net due' USING ERRCODE='23514';
+  END IF;
+  IF EXISTS(SELECT 1 FROM public.proforma_final_prepayments applied
+    JOIN public.facture_source_allocations final ON final.id=applied.final_source_allocation_id
+    JOIN public.proforma_receipt_assignments receipt ON receipt.id=applied.receipt_assignment_id
+    JOIN public.paiement_allocations allocation ON allocation.id=receipt.payment_allocation_id
+    JOIN public.paiement payment ON payment.id=allocation.paiement_id
+    JOIN public.facture_source_allocations deposit ON deposit.id=applied.deposit_source_id
+    JOIN public.facture advance_invoice ON advance_invoice.id=deposit.facture_id
+    WHERE final.facture_id=v_invoice_id AND final.allocation_status IN('DRAFT','CONSUMED') AND(
+      payment.status NOT IN('UNALLOCATED','PARTIALLY_ALLOCATED','ALLOCATED') OR payment.workflow_status NOT IN('RECORDED','ALLOCATED')
+      OR payment.reversal_of_id IS NOT NULL OR deposit.allocation_status<>'CONSUMED' OR advance_invoice.document_status<>'ISSUED'
+      OR (SELECT COALESCE(sum(used.amount_ttc),0) FROM public.proforma_final_prepayments used
+        JOIN public.facture_source_allocations active ON active.id=used.final_source_allocation_id
+        WHERE used.receipt_assignment_id=receipt.id AND active.allocation_status IN('DRAFT','CONSUMED'))>
+        receipt.amount_ttc-(SELECT COALESCE(sum(amount_ttc),0) FROM public.proforma_receipt_releases WHERE assignment_id=receipt.id)
+      OR (SELECT COALESCE(sum(used.amount_ttc),0) FROM public.proforma_final_prepayments used
+        JOIN public.facture_source_allocations active ON active.id=used.final_source_allocation_id
+        WHERE used.deposit_source_id=deposit.id AND active.allocation_status IN('DRAFT','CONSUMED'))>
+        deposit.amount_incl_tax-(SELECT COALESCE(sum(amount_ttc),0) FROM public.avoir_source_allocations
+          WHERE facture_id=deposit.facture_id AND facture_ligne_id=deposit.facture_ligne_id AND allocation_status='CONSUMED')
+    )) THEN RAISE EXCEPTION 'applied advance still requires its original unused net receipt' USING ERRCODE='23514'; END IF;
+  IF EXISTS(SELECT 1 FROM public.fn_final_prepayment_targets_1268(v_invoice_id) target
+    WHERE target.amount_ttc<(SELECT COALESCE(sum(amount_ttc),0) FROM public.proforma_final_prepayments applied
+      WHERE applied.final_source_allocation_id=target.final_source_allocation_id AND applied.proforma_billing_part_id=target.proforma_billing_part_id)) THEN
+   RAISE EXCEPTION 'applied advance exceeds delivered company value' USING ERRCODE='23514';
+  END IF;
+  IF invoice.document_status='ISSUED' AND(
+    invoice.immutable_snapshot->'prepayments'->>'version' IS DISTINCT FROM '1'
+    OR (invoice.immutable_snapshot->'prepayments'->>'amount_paid')::numeric IS DISTINCT FROM invoice.prepaid_amount_ttc
+    OR (invoice.immutable_snapshot->'prepayments'->>'amount_due')::numeric IS DISTINCT FROM invoice.amount_due_at_issue) THEN
+   RAISE EXCEPTION 'issued final invoice must freeze its actual advance and net due' USING ERRCODE='23514';
+  END IF;
+  IF invoice.document_status='ISSUED' THEN
+   SELECT public.fn_invoice_applied_prepayment_1268(v_invoice_id)
+    +COALESCE((SELECT sum(allocation.amount_ttc) FROM public.paiement_allocations allocation JOIN public.paiement payment ON payment.id=allocation.paiement_id
+      WHERE allocation.facture_id=v_invoice_id AND payment.status NOT IN('REJECTED','REVERSED') AND payment.workflow_status<>'REVERSED' AND payment.reversal_of_id IS NULL),0)
+    +COALESCE((SELECT sum(montant) FROM public.paiement payment WHERE payment.facture_id=v_invoice_id AND payment.status NOT IN('REJECTED','REVERSED')
+      AND payment.workflow_status<>'REVERSED' AND payment.reversal_of_id IS NULL AND NOT EXISTS(SELECT 1 FROM public.paiement_allocations WHERE paiement_id=payment.id)),0)
+    +COALESCE((SELECT sum(amount_ttc) FROM public.avoir_source_allocations WHERE facture_id=v_invoice_id AND allocation_status='CONSUMED'),0)
+    +COALESCE((SELECT sum(total_ttc) FROM public.avoir credit WHERE credit.facture_id=v_invoice_id AND credit.statut IN('ISSUED','emis','emise','envoyee')
+      AND NOT EXISTS(SELECT 1 FROM public.avoir_source_allocations WHERE avoir_id=credit.id)),0)
+    INTO v_settled;
+   IF v_settled>invoice.total_ttc THEN RAISE EXCEPTION 'cash credits and applied advances exceed final invoice' USING ERRCODE='23514'; END IF;
+  END IF;
+ END LOOP;
+ RETURN NULL;
+END;
+$$;
+DO $$ DECLARE guarded_table text; BEGIN
+ FOREACH guarded_table IN ARRAY ARRAY['facture','facture_source_allocations','facture_echeance','proforma_final_prepayments',
+   'paiement','paiement_allocations','avoir','avoir_source_allocations','proforma_receipt_assignments','proforma_receipt_releases'] LOOP
+  EXECUTE format('DROP TRIGGER IF EXISTS trg_check_final_prepayments_1268 ON public.%I',guarded_table);
+  EXECUTE format('CREATE CONSTRAINT TRIGGER trg_check_final_prepayments_1268 AFTER INSERT OR UPDATE OR DELETE ON public.%I
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.fn_check_final_prepayments_1268()',guarded_table);
+ END LOOP;
+END $$;

@@ -5,8 +5,11 @@ import {
   type CerpDocumentContext,
   type CerpLineRow,
 } from "../../../shared/pdf/cerp-document";
-import { formatDateFR, money, percent, quantity, rate } from "../../../shared/pdf/format-fr";
+import { formatDateFR, money, percent, quantity, rate, unitPrice } from "../../../shared/pdf/format-fr";
+import { renderWorkshopBoxes,renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
 import { issuerIdentityLine, issuerLegalMentions, issuerPaymentDetails } from "../../../shared/pdf/legal-mentions";
+import type { FinalPrepaymentPlan } from "../domain/final-invoice-prepayments";
+import { moneyToCents } from "../domain/decimal-money";
 
 // Reexportes : la mise en forme francaise est desormais partagee avec le bon de livraison
 // et l'accuse de reception, qui portent les memes mentions legales.
@@ -63,12 +66,15 @@ export type FinanceDocumentInput = {
   number: string;
   /** `true` tant que le document n'est pas emis : il doit alors le dire. */
   draft: boolean;
+  /** Demonstration files are visibly separated from actual fiscal documents. */
+  example?: boolean;
   issueDate: string;
   currency: string;
   issuer: FinanceParty;
   client: FinanceParty;
   lines: FinanceDocumentLine[];
   totals: FinanceDocumentTotals;
+  prepayments?: FinalPrepaymentPlan;
   dueDates: Array<{ dueDate: string; label: string; amount: string }>;
   /** Avoir : facture corrigee et motif. */
   correctedInvoice?: string | null;
@@ -311,7 +317,7 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
       cells: {
         designation: line.designation,
         quantite: clean(line.quantity) ? quantity(line.quantity) : "—",
-        pu: money(line.unitPriceExTax, input.currency),
+        pu: unitPrice(line.unitPriceExTax, input.currency),
         tva: rate(line.taxRatePercent) ?? "—",
         ht: money(line.totalExTax, input.currency),
       },
@@ -322,8 +328,8 @@ function documentLines(input: FinanceDocumentInput): CerpLineRow[] {
 /** Rattachement de l'exemplaire a l'instantane conserve, quand il existe. */
 function traceabilityNote(input: FinanceDocumentInput): string | null {
   const parts = [
-    clean(input.snapshotUuid) ? `Instantané immuable ${input.snapshotUuid}` : null,
-    clean(input.draftReference) ? `Référence brouillon ${input.draftReference}` : null,
+    `${input.kind==="AVOIR"?"Avoir":"Facture"} ${input.number}`,
+    input.draft && clean(input.draftReference) && input.draftReference!==input.number ? `Brouillon ${input.draftReference}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : null;
 }
@@ -333,17 +339,21 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
   const documentType = isAvoir ? "Avoir" : input.invoiceTypeCode===386 ? "Facture d’acompte" : "Facture";
   const clientName = pick(input.client, "company_name", "name", "raison_sociale") ?? "Client";
   const taxes = taxBreakdown(input.lines);
+  const soleDue=input.dueDates.length===1?input.dueDates[0]:undefined;
+  const compactDue=!isAvoir && soleDue && moneyToCents(soleDue.amount)===moneyToCents(input.prepayments?.amount_due??input.totals.totalInclTax);
 
   return renderCerpDocument(
     {
+      designVersion:"structured-v5",
       documentType,
       name: input.number,
-      code: formatDateFR(input.issueDate),
+      code: input.number,
       subtitle: clientName,
       // Un brouillon doit se denoncer comme tel : sans cela, imprime, il passerait pour une
       // piece emise — et une facture non emise n'a aucune valeur fiscale.
       status: input.draft ? "Brouillon" : "Émis",
-      flag: input.draft ? "Ne pas transmettre" : null,
+      watermark: input.example ? "EXEMPLE" : null,
+      flag: input.draft ? "NE PAS TRANSMETTRE" : null,
       monogramName: clientName,
       generatedAt: formatDateFR(input.issueDate),
       generatedBy: null,
@@ -375,21 +385,21 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       ctx.legalStrip(
         isAvoir
           ? [
-              { label: "Numéro d'avoir", value: input.number },
               { label: "Date d'émission", value: formatDateFR(input.issueDate) },
               { label: "Facture corrigée", value: clean(input.correctedInvoice) },
               { label: "Devise", value: input.currency },
             ]
           : [
-              { label: "Numéro de facture", value: input.number },
               { label: "Date d'émission", value: formatDateFR(input.issueDate) },
-              { label: "Échéance", value: input.dueDates.length ? formatDateFR(input.dueDates.at(-1)?.dueDate) : null },
+              { label: "Échéance", value: input.dueDates.length ? formatDateFR(input.dueDates.at(-1)?.dueDate)
+                +(compactDue && clean(soleDue?.label)?`\n${soleDue!.label}`:"") : null },
               { label: "Devise", value: input.currency },
-            ]
+            ],
+        {compact:true}
       );
 
-      ctx.section("Parties", { cohesion: 90 });
-      ctx.addressCards(partyCards(input));
+      renderWorkshopBoxes(ctx,partyCards(input).map(card=>({title:card.caption,
+        fields:[{label:"Coordonnées",value:card.lines?.join("\n")||"Non renseigné"}]})),{compact:true});
 
       if (isAvoir && clean(input.reason)) {
         ctx.notesSection(
@@ -398,16 +408,16 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
         );
       }
 
-      ctx.section(isAvoir ? "Lignes créditées" : "Lignes facturées", { cohesion: 104 });
-      ctx.linesTable({
+      renderWorkshopTable(ctx,{
+        title:isAvoir ? "Lignes créditées" : "Lignes facturées",bodySize:9.5,padding:6,
         columns: [
-          { key: "designation", label: "Désignation", flex: 4.6 },
-          { key: "quantite", label: "Quantité", flex: 1.1, align: "right" },
+          { key: "designation", label: "DÉSIGNATION", flex: 4.6,firstLineBold:true },
+          { key: "quantite", label: "QUANTITÉ", flex: 1.1, align: "right" },
           { key: "pu", label: "PU HT", flex: 1.7, align: "right" },
           { key: "tva", label: "TVA", flex: 0.9, align: "right" },
-          { key: "ht", label: "Total HT", flex: 1.7, align: "right" },
+          { key: "ht", label: "TOTAL HT", flex: 1.7, align: "right" },
         ],
-        rows: documentLines(input),
+        rows: documentLines(input).map(row=>({cells:{...row.cells,designation:row.cells.designation+(row.meta?`\n${row.meta}`:"")}})),
         emptyLabel: isAvoir ? "Aucune ligne créditée." : "Aucune ligne facturée.",
       });
 
@@ -435,13 +445,30 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
             value: money(input.totals.totalInclTax, input.currency),
             strong: true,
           },
+          ...(!isAvoir && input.prepayments && moneyToCents(input.prepayments.amount_paid)>0n ? [
+            {label:"Acomptes déjà réglés",value:`− ${money(input.prepayments.amount_paid,input.currency)}`},
+            {label:"Net à payer",value:money(input.prepayments.amount_due,input.currency),strong:true},
+          ]:[]),
         ],
         input.currency
       );
 
-      if (!isAvoir && input.dueDates.length) {
-        ctx.section("Échéances de règlement", { cohesion: 60 });
-        ctx.linesTable({
+      if (!isAvoir && input.prepayments?.applications.length) {
+        const advances = new Map<string,{number:string;date:string;amount:bigint}>();
+        for (const application of input.prepayments.applications) {
+          const key=String(application.deposit_invoice_id),existing=advances.get(key);
+          const amount=moneyToCents(application.amount_incl_tax);
+          advances.set(key,{number:application.deposit_invoice_number,date:application.deposit_invoice_date,amount:amount+(existing?.amount??0n)});
+        }
+        renderWorkshopTable(ctx,{title:"Acomptes déduits",bodySize:9.5,padding:6,columns:[{key:"number",label:"Facture d’acompte",flex:4},{key:"date",label:"Date",flex:2},
+          {key:"amount",label:"Montant déduit TTC",flex:2.5,align:"right"}],
+          rows:[...advances.values()].map(advance=>({cells:{number:advance.number,date:formatDateFR(advance.date),
+            amount:money(`${advance.amount/100n}.${String(advance.amount%100n).padStart(2,"0")}`,input.currency)}})),emptyLabel:"Aucun acompte déduit."});
+      }
+
+      if (!isAvoir && input.dueDates.length && !compactDue) {
+        renderWorkshopTable(ctx,{
+          title:"Échéances de règlement",bodySize:9.5,padding:6,
           columns: [
             { key: "date", label: "Échéance", flex: 1.6 },
             { key: "label", label: "Libellé", flex: 4 },
@@ -460,7 +487,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       }
 
       if (clean(input.customerText)) {
-        ctx.notesSection("Informations client", input.customerText as string);
+        ctx.notes(input.customerText as string);
       }
 
     }

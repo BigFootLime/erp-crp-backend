@@ -8,12 +8,16 @@ BEGIN
   END IF;
   FOREACH model_table IN ARRAY ARRAY['proforma_client','delivery_affair_billing_shares','proforma_affair_lines',
     'proforma_billing_parts','delivery_affair_prepayment_terms','proforma_deposit_sources',
-    'proforma_receipt_assignments','proforma_receipt_releases','proforma_final_invoice_sources'] LOOP
+    'proforma_receipt_assignments','proforma_receipt_releases','proforma_final_invoice_sources','proforma_final_prepayments'] LOOP
     IF to_regclass('public.'||model_table) IS NOT NULL THEN
       EXECUTE format('SELECT EXISTS(SELECT 1 FROM public.%I LIMIT 1)',model_table) INTO has_evidence;
       IF has_evidence THEN RAISE EXCEPTION 'proforma rollback refused: % contains saved evidence',model_table; END IF;
     END IF;
   END LOOP;
+  IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='facture' AND column_name='amount_due_at_issue') THEN
+    EXECUTE 'SELECT EXISTS(SELECT 1 FROM public.facture WHERE amount_due_at_issue IS NOT NULL OR prepaid_amount_ttc<>0)' INTO has_evidence;
+    IF has_evidence THEN RAISE EXCEPTION 'proforma rollback refused: final invoice net due contains saved evidence'; END IF;
+  END IF;
   IF EXISTS(SELECT 1 FROM public.finance_command_receipts WHERE aggregate_type='PROFORMA')
     OR EXISTS(SELECT 1 FROM public.finance_event_log WHERE aggregate_type='PROFORMA') THEN
     RAISE EXCEPTION 'proforma rollback refused: Finance contains saved proforma commands/events';
@@ -24,6 +28,25 @@ BEGIN
   END IF;
 END;
 $$;
+DO $$ DECLARE guarded_table text; BEGIN
+ FOREACH guarded_table IN ARRAY ARRAY['facture','facture_source_allocations','facture_echeance','proforma_final_prepayments',
+  'paiement','paiement_allocations','avoir','avoir_source_allocations','proforma_receipt_assignments','proforma_receipt_releases'] LOOP
+  IF to_regclass('public.'||guarded_table) IS NOT NULL THEN
+   EXECUTE format('DROP TRIGGER IF EXISTS trg_check_final_prepayments_1268 ON public.%I',guarded_table);
+  END IF;
+ END LOOP;
+END $$;
+DROP FUNCTION IF EXISTS public.fn_check_final_prepayments_1268();
+DROP FUNCTION IF EXISTS public.fn_invoice_applied_prepayment_1268(bigint);
+DROP FUNCTION IF EXISTS public.fn_final_prepayment_targets_1268(bigint);
+DROP TABLE IF EXISTS public.proforma_final_prepayments;
+DROP FUNCTION IF EXISTS public.fn_final_prepayment_budget_1268();
+ALTER TABLE public.facture DROP CONSTRAINT IF EXISTS facture_prepaid_amount_1268_ck;
+ALTER TABLE public.facture DROP COLUMN IF EXISTS prepaid_amount_ttc;
+ALTER TABLE public.facture DROP COLUMN IF EXISTS amount_due_at_issue;
+ALTER TABLE public.facture_echeance DROP COLUMN IF EXISTS amount_autofilled;
+ALTER TABLE public.facture_echeance DROP CONSTRAINT IF EXISTS facture_echeance_nonnegative_due_1268_ck;
+ALTER TABLE public.facture_echeance ADD CONSTRAINT facture_echeance_amount_due_check CHECK(amount_due>0);
 ALTER TABLE public.finance_command_receipts DROP CONSTRAINT IF EXISTS finance_command_receipts_aggregate_type_check;
 ALTER TABLE public.finance_command_receipts ADD CONSTRAINT finance_command_receipts_aggregate_type_check CHECK (aggregate_type IN ('FACTURE','AVOIR','PAIEMENT'));
 ALTER TABLE public.finance_event_log DROP CONSTRAINT IF EXISTS finance_event_log_aggregate_type_check;

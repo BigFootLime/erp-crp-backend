@@ -98,6 +98,7 @@ module.exports = async function qualifyFinalInvoiceSources(pool, database, args)
     assert.equal((await readProformaFinalInvoiceAffairs(reused,[line1],args.billedClientId))[0].part_already_selected,'18.000');
     assert.equal((await reused.query('SELECT count(*)::int AS n FROM public.proforma_final_invoice_sources WHERE facture_source_allocation_id=$1',[source1])).rows[0].n,1);
   } finally { await reused.query('ROLLBACK'); reused.release(); }
+  await require('./proforma-final-prepayment-rehearsal-1268.cjs')(pool,database,{...args,sourceLineId:line1});
   console.log(JSON.stringify({marker:'PROFORMA1268_FINAL_COMPANY_QUOTAS_PASS',physicalRecipientDifferent:true,
     partialDeliveredQuantities:[12,50],companyQuota:30,concurrentBudget:'one accepted, one rejected',
     ownInvoiceExcludedOnce:true,missingLineageRefused:true,wrongCompanyRefused:true,historyRetained:true,

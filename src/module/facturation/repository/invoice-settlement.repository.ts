@@ -24,6 +24,7 @@ type InvoiceSettlementHeaderRow = {
 };
 
 type InvoiceSettlementEvidenceRow = {
+  applied_prepayment_ttc: string;
   allocated_payment_ttc: string;
   legacy_direct_payment_ttc: string;
   consumed_credit_ttc: string;
@@ -80,6 +81,7 @@ export async function lockInvoiceSettlement(
   const evidenceResult = await client.query<InvoiceSettlementEvidenceRow>(
     `
       SELECT
+        public.fn_invoice_applied_prepayment_1268(f.id)::numeric(18,2)::text AS applied_prepayment_ttc,
         COALESCE((
           SELECT SUM(pa.amount_ttc)
           FROM public.paiement_allocations pa
@@ -127,6 +129,7 @@ export async function lockInvoiceSettlement(
   const evidence = evidenceResult.rows[0];
   if (!evidence) throw new HttpError(404, "FACTURE_NOT_FOUND", "Facture introuvable.");
   const settledCents =
+    moneyToCents(evidence.applied_prepayment_ttc ?? "0", "Acomptes déjà réglés") +
     moneyToCents(evidence.allocated_payment_ttc, "Paiements alloués") +
     moneyToCents(evidence.legacy_direct_payment_ttc, "Paiements historiques") +
     moneyToCents(evidence.consumed_credit_ttc, "Avoirs consommés") +

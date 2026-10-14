@@ -2,6 +2,8 @@
 
 ## En développement — Proformas et sociétés facturées (#1268)
 
+- Factures finales : affectation des acomptes réellement encaissés, net à payer/échéances cohérents et contrôle des budgets dans PostgreSQL ; aucune seconde entrée de trésorerie. Faits figés repris en PDF et facture électronique. Factures/avoirs au dessin structuré commun, précision des prix conservée, exemples fictifs relus. 7 867 tests et build strict passent ; comptabilité, interface et recette fiscale/métier restent ouverts avant déploiement.
+
 - Document proforma : design commun structuré, destinataire/sociétés séparés, précision des prix et quantités, snapshot et bytes exacts conservés au replay, parent GED Finance et quatre transports documentaires sécurisés. Correction du cycle d’aperçu créé par ses métadonnées de liaison.7 842 tests/705 fichiers, build et émission commerciale PostgreSQL isolée passent ; déduction des acomptes, interface et rangement GED/recette live restent en cours. Aucun déploiement de ce lot.
 
 - Factures finales : destinataire physique distinct de la société facturée autorisée, quotas de quantité par affaire/société sur plusieurs BL et brouillons, contributions append-only. Prix de la proforma figés, aperçus cohérents en lecture seule, aucun double comptage des lots ni réouverture automatique après avoir.7836 tests/704 fichiers, build et qualification PostgreSQL17 isolée passent. Déduction des acomptes, interface et recette fiscale/live restent en cours ; ce lot n’est pas déployé.

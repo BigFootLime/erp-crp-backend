@@ -77,14 +77,14 @@ async function main(){
     await seed.query('BEGIN');
     await seed.query(`UPDATE public.proforma_client SET status='ISSUED',row_version=2,issued_at=now(),issued_by=7,
       issued_snapshot='{"synthetic_fiscal_storage_fixture":true}' WHERE id=$1`,[funding.id]);
-    await seed.query("INSERT INTO public.facture(id,numero,client_id,statut,total_ht,total_tax,total_ttc,currency) VALUES(1268201,'QUAL-SYNTHETIC-ADVANCE', $1,'DRAFT',100,20,120,'EUR')",[clientId('Qualification société A')]);
+    await seed.query("INSERT INTO public.facture(id,numero,client_id,statut,total_ht,total_tax,total_ttc,currency,date_emission) VALUES(1268201,'QUAL-SYNTHETIC-ADVANCE', $1,'DRAFT',100,20,120,'EUR','2026-10-13')",[clientId('Qualification société A')]);
     await seed.query("INSERT INTO public.facture_ligne(id,facture_id,designation,quantite,prix_unitaire_ht,taux_tva,total_ht,tax_amount,total_ttc) VALUES(1268201,1268201,'Acompte synthétique isolé',1,100,20,100,20,120)");
     await seed.query(`INSERT INTO public.facture_source_allocations(id,facture_id,facture_ligne_id,source_type,source_id,source_line_id,quantity_selected,amount_ex_tax,amount_incl_tax,source_snapshot,rule_code,created_by)
       VALUES('12682000-0000-4000-8000-000000000001',1268201,1268201,'DEPOSIT',$1,$2,1,100,120,'{"synthetic_fiscal_storage_fixture":true}','PROFORMA_DEPOSIT_V1',7)`,[funding.id,target]);
     await seed.query("INSERT INTO public.proforma_deposit_sources(facture_source_allocation_id,proforma_billing_part_id,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000001',$1,7,'12682000-0000-4000-8000-000000000099')",[target]);
     await seed.query("UPDATE public.facture_source_allocations SET allocation_status='CONSUMED',quantity_consumed=1 WHERE facture_id=1268201");
     await seed.query(`UPDATE public.facture SET statut='ISSUED',document_status='ISSUED',legal_number='QUAL-SYNTHETIC-NO-LEGAL-SEQUENCE',issued_at=now(),issued_by=7,
-      immutable_snapshot='{"synthetic_fiscal_storage_fixture":true}',document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268201`);
+      immutable_snapshot='{"invoice_type_code":"386","synthetic_fiscal_storage_fixture":true}',document_checksum_sha256=repeat('d',64),row_version=2 WHERE id=1268201`);
     await seed.query("INSERT INTO public.paiement(id,uuid,client_id,montant,status,workflow_status,currency) VALUES(1268201,'12682000-0000-4000-8000-000000000002',$1,120,'ALLOCATED','ALLOCATED','EUR')",[clientId('Qualification société A')]);
     await seed.query("INSERT INTO public.paiement_allocations(id,paiement_id,facture_id,amount_ttc,created_by,correlation_id) VALUES('12682000-0000-4000-8000-000000000003',1268201,1268201,120,7,'12682000-0000-4000-8000-000000000099')");
     await seed.query('COMMIT');

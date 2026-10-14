@@ -67,6 +67,8 @@ export type FinanceDueDate = {
   due_date: string;
   label: string;
   amount: string;
+  /** Server remembers whether the sole installment was calculated automatically. */
+  amount_autofilled?: boolean;
   allocated_amount?: string;
   balance?: string;
   status?: "OPEN" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
@@ -77,6 +79,7 @@ export type FacturePreview = {
   client_id: string;
   currency: string;
   lines: FacturePreviewLine[];
+  prepayments?: import("../domain/final-invoice-prepayments").FinalPrepaymentPlan;
   totals: {
     subtotal_ex_tax: string;
     global_discount_percent: string;

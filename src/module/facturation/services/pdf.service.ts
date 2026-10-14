@@ -6,6 +6,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetAvoir } from "../repository/avoirs.repository";
 import { repoGetFacture } from "../repository/factures.repository";
+import { readSavedFinalInvoicePrepayments } from "../repository/final-invoice-prepayments.repository";
 
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 
@@ -80,7 +81,7 @@ function draftLines(
     codePiece: line.code_piece,
     quantity: String(line.quantite ?? 0),
     unit: line.unite,
-    unitPriceExTax: amount(line.prix_unitaire_ht),
+    unitPriceExTax: Number.isFinite(line.prix_unitaire_ht) ? line.prix_unitaire_ht.toFixed(4) : "0.0000",
     discountPercent: amount(line.remise_ligne),
     taxRatePercent: amount(line.taux_tva),
     totalExTax: amount(line.total_ht),
@@ -108,6 +109,9 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
   const filePath = path.join(docsDir, `${documentId}.pdf`);
 
   const f = detail.facture;
+  const savedPrepayments=await readSavedFinalInvoicePrepayments(pool,f.id);
+  const commercialHeader=(await pool.query<{currency:string;customer_text:string|null}>(
+    "SELECT currency,customer_text FROM public.facture WHERE id=$1",[f.id])).rows[0];
   const advance=(await pool.query<{advance:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=$1 AND source_type='DEPOSIT')
     AND NOT EXISTS(SELECT 1 FROM public.facture_source_allocations WHERE facture_id=$1 AND source_type<>'DEPOSIT') AS advance`,[f.id])).rows[0]?.advance??false;
   const pdf = await renderFinanceDocument({
@@ -116,7 +120,7 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
     number: f.numero,
     draft: true,
     issueDate: f.date_emission,
-    currency: "EUR",
+    currency: commercialHeader?.currency ?? "EUR",
     issuer: await getIssuerParty(f.date_emission),
     client: clientParty(f.client),
     lines: draftLines(detail.lignes),
@@ -128,8 +132,9 @@ export async function svcGenerateFacturePdf(factureId: number): Promise<{ docume
       totalTax: amount((f.total_ttc ?? 0) - (f.total_ht ?? 0)),
       totalInclTax: amount(f.total_ttc),
     },
-    dueDates: f.date_echeance ? [{ dueDate: f.date_echeance, label: "Échéance", amount: amount(f.total_ttc) }] : [],
-    customerText: f.commentaires,
+    prepayments:savedPrepayments,
+    dueDates: f.date_echeance ? [{ dueDate: f.date_echeance, label: "Échéance", amount: savedPrepayments?.amount_due ?? amount(f.total_ttc) }] : [],
+    customerText: commercialHeader?.customer_text ?? null,
     draftReference: f.numero,
   });
   await fs.mkdir(path.dirname(filePath), { recursive: true });
