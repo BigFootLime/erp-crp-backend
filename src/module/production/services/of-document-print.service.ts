@@ -10,6 +10,11 @@ import { readOfDocumentStoredPdf } from "./of-document-stored-pdf";
 import { composeWorkshopPackPdf } from "./workshop-pack-pdf";
 
 const digest = (pdf: Buffer) => createHash("sha256").update(pdf).digest("hex");
+export type OfPrintDelivery = {
+  expectedDocumentStatus: string;
+  deliver: (tx: documents.DbQueryer, intent: prints.OfPrintIntent) => Promise<Buffer>;
+  replay: (intent: prints.OfPrintIntent) => Promise<Buffer>;
+};
 function assertScope(intent: prints.OfPrintIntent, ofId: number, documentId: string, actorId: number) {
   if (intent.of_id !== ofId || intent.document_id !== documentId || intent.actor_id !== actorId) {
     throw new HttpError(409,"IDEMPOTENCY_KEY_REUSED","Cette demande concerne une autre impression.");
@@ -27,7 +32,7 @@ async function readExactCopy(intent: prints.OfPrintIntent, document: documents.O
 
 /** Download is a read. Only this explicit command accepts an official ordinal.
  * The same key keeps its exact archived copy, even after a lost COMMIT reply. */
-export async function requestOfDocumentPrint(ofId: number, documentId: string, key: string, actorId: number, audit: AuditContext) {
+export async function requestOfDocumentPrint(ofId: number, documentId: string, key: string, actorId: number, audit: AuditContext, delivery?: OfPrintDelivery) {
   let ownership: OfDocumentArchiveResult | null = null;
   try {
     return await documents.withOfTransaction(async tx => {
@@ -35,10 +40,14 @@ export async function requestOfDocumentPrint(ofId: number, documentId: string, k
       await documents.lockOf(tx,ofId);
       const document = await documents.getDocument(ofId,documentId,tx);
       if (!document) throw new HttpError(404,"OF_DOCUMENT_NOT_FOUND","Document introuvable sur cet ordre de fabrication.");
+      if (delivery && document.statut !== delivery.expectedDocumentStatus) {
+        throw new HttpError(409,"OF_PRINT_VERSION_CHANGED","La version du dossier a changé. Actualisez avant d’imprimer.");
+      }
       const existing = await prints.findPrintIntent(key,tx);
       if (existing) {
         assertScope(existing,ofId,documentId,actorId);
-        return { intent:existing, pdf:await readExactCopy(existing,document), replayed:true };
+        const copy=await readExactCopy(existing,document);
+        return { intent:existing, pdf:delivery ? await delivery.deliver(tx,existing) : copy, replayed:true };
       }
       const ordinal = document.statut === "OFFICIEL"
         ? nextWorkshopOfficialOrdinal(await prints.officialPrintCount(tx,ofId,document.revision_id)) : null;
@@ -77,7 +86,7 @@ export async function requestOfDocumentPrint(ofId: number, documentId: string, k
       await insertAuditLog(tx,audit,{action:"OF_DOCUMENT_PRINT_INTENT",entity_type:"of_document",entity_id:documentId,
         details:{of_id:ofId,print_intent_id:intent.id,official_ordinal:ordinal,copy_mark:mark,pdf_sha256:intent.copy_sha256,
           physical_print_confirmed:false}});
-      return { intent,pdf,replayed:false };
+      return { intent,pdf:delivery ? await delivery.deliver(tx,intent) : pdf,replayed:false };
     },{afterConfirmedRollback:()=>compensateOfDocumentArchive(ownership)});
   } catch (error) {
     if (!(error instanceof documents.OfCommitUncertainError)) throw error;
@@ -86,6 +95,7 @@ export async function requestOfDocumentPrint(ofId: number, documentId: string, k
     assertScope(saved,ofId,documentId,actorId);
     const document = await documents.getDocument(ofId,documentId);
     if (!document) throw error;
-    return {intent:saved,pdf:await readExactCopy(saved,document),replayed:true};
+    const originalCopy = await readExactCopy(saved,document);
+    return {intent:saved,pdf:delivery ? await delivery.replay(saved) : originalCopy,replayed:true};
   }
 }

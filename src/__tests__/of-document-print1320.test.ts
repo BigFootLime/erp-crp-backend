@@ -75,4 +75,14 @@ describe("OF print requests are distinct from archive reads",()=>{
     mock.get.mockResolvedValue(null);await expect(print()).rejects.toMatchObject({code:"OF_DOCUMENT_NOT_FOUND"});
     expect(mock.original).not.toHaveBeenCalled();expect(mock.insert).not.toHaveBeenCalled();
   });
+  it("does not commit an accepted ordinal when complete packet delivery fails",async()=>{
+    const deliver=vi.fn().mockRejectedValue(new Error("missing packet"));
+    await expect(requestOfDocumentPrint(7,"doc","packet-key",42,{} as any,{expectedDocumentStatus:"OFFICIEL",deliver,replay:vi.fn()})).rejects.toThrow("missing packet");
+    expect(deliver).toHaveBeenCalledOnce();expect(mock.cleanup).toHaveBeenCalledOnce();
+  });
+  it("reconciles the exact packet delivery after a lost COMMIT response",async()=>{
+    mock.commitUncertain=true;const packet=Buffer.from("packet bytes"),replay=vi.fn().mockResolvedValue(packet);
+    const result=await requestOfDocumentPrint(7,"doc","packet-key",42,{} as any,{expectedDocumentStatus:"OFFICIEL",deliver:vi.fn().mockResolvedValue(packet),replay});
+    expect(result.pdf).toBe(packet);expect(result.replayed).toBe(true);expect(replay).toHaveBeenCalledOnce();
+  });
 });
