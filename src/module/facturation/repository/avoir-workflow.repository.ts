@@ -4,7 +4,8 @@ import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { todayInParis } from "../domain/reporting-policy";
 import { allocateDocumentTaxBreakdown } from "../domain/document-tax-breakdown";
-import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalCreditEffectiveDiscount,type OriginalCreditLine } from "../domain/invoice-credit-budget";
+import { originalInvoiceCreditBudgets,originalInvoiceLineCredit,originalInvoiceAmountCredit,originalCreditEffectiveDiscount,type OriginalCreditLine } from "../domain/invoice-credit-budget";
+import { invoiceTypeCodeFromSnapshot } from "../domain/invoice-kind";
 import { HttpError } from "../../../utils/httpError";
 import { freezeAdvanceCreditVat } from "./advance-credit-vat.repository";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
@@ -81,6 +82,7 @@ type AvoirSourceRow = {
   credited_net:string;
   credited_tax:string;
   credited_gross:string;
+  is_advance_source:boolean;
 };
 
 export type AvoirDocumentSnapshot = {
@@ -162,7 +164,10 @@ async function loadAvoirSources(
         fl.total_ttc::numeric(18,2)::text AS original_gross,
         COALESCE(credited.net,0)::numeric(18,2)::text AS credited_net,
         COALESCE(credited.tax,0)::numeric(18,2)::text AS credited_tax,
-        COALESCE(credited.gross,0)::numeric(18,2)::text AS credited_gross
+        COALESCE(credited.gross,0)::numeric(18,2)::text AS credited_gross,
+        EXISTS(SELECT 1 FROM public.facture_source_allocations advance
+          WHERE advance.facture_ligne_id=fl.id AND advance.facture_id=f.id
+            AND advance.source_type='DEPOSIT' AND advance.allocation_status='CONSUMED') AS is_advance_source
       FROM public.facture f
       JOIN public.facture_ligne fl ON fl.facture_id = f.id
       LEFT JOIN LATERAL (
@@ -248,16 +253,27 @@ async function buildAvoirPreview(
     }
     const invoiced = parseDecimal(row.quantity_invoiced, 3, "Quantité facturée");
     const credited = parseDecimal(row.quantity_already_credited, 3, "Quantité déjà créditée");
-    const selected = parseDecimal(selection.quantity, 3, "Quantité créditée");
+    const monetary = selection.advance_amount_ex_tax !== undefined;
+    if (monetary && (invoiceTypeCodeFromSnapshot(header.original_snapshot) !== 386 || !row.is_advance_source
+      || parseDecimal(originalGlobalDiscount,4,"Remise d'origine") !== 0n
+      || parseDecimal(row.discount_percent,4,"Remise de ligne") !== 0n)) {
+      throw new HttpError(409,"AVOIR_AMOUNT_REQUIRES_ADVANCE","Le crédit par montant est réservé aux lignes d'une facture d'acompte qualifiée.");
+    }
+    if ((selection.quantity !== undefined) === monetary) {
+      throw new HttpError(422,"AVOIR_SELECTION_INVALID","Choisissez une quantité ou un montant d'acompte HT.");
+    }
+    const selected = monetary ? 0n : parseDecimal(selection.quantity!, 3, "Quantité créditée");
     const remaining = invoiced - credited;
-    if (selected <= 0n || selected > remaining) {
+    if (!monetary && (selected <= 0n || selected > remaining)) {
       throw new HttpError(
         409,
         "AVOIR_QUANTITY_EXCEEDS_REMAINING",
         "La quantité d'avoir dépasse la quantité encore créditable."
       );
     }
-    const totals=originalInvoiceLineCredit(creditFacts(row),budgets.get(row.facture_line_id)!,selection.quantity);
+    const totals=monetary
+      ? originalInvoiceAmountCredit(creditFacts(row),budgets.get(row.facture_line_id)!,selection.advance_amount_ex_tax!)
+      : originalInvoiceLineCredit(creditFacts(row),budgets.get(row.facture_line_id)!,selection.quantity!);
     lines.push({
       facture_line_id: selection.facture_line_id,
       designation: row.designation,
@@ -267,11 +283,12 @@ async function buildAvoirPreview(
       quantity_remaining: `${remaining / 1000n}.${(remaining % 1000n)
         .toString()
         .padStart(3, "0")}`,
-      quantity_selected: formatDecimal(selected,3),
-      unit: row.unit,
-      unit_price_ex_tax: row.unit_price_ex_tax,
-      discount_percent: originalCreditEffectiveDiscount(row.discount_percent,originalGlobalDiscount),
+      quantity_selected: monetary ? "1.000" : formatDecimal(selected,3),
+      unit: monetary ? "acompte" : row.unit,
+      unit_price_ex_tax: monetary ? totals.net : row.unit_price_ex_tax,
+      discount_percent: monetary ? "0.0000" : originalCreditEffectiveDiscount(row.discount_percent,originalGlobalDiscount),
       original_line_discount_percent:row.discount_percent,
+      ...(monetary ? {credit_basis:"AMOUNT_EX_TAX" as const,source_quantity_selected:"0.000",advance_amount_ex_tax:totals.net} : {}),
       tax_rate_percent: row.tax_rate_percent,
       total_ex_tax: totals.net,
       tax_amount: totals.tax,
@@ -327,6 +344,8 @@ export async function repoListAvoirEligibleLines(factureId: number): Promise<{
     quantity_already_credited: string;
     quantity_remaining: string;
     eligible: boolean;
+    credit_mode:"QUANTITY"|"AMOUNT_EX_TAX";
+    amount_remaining_ex_tax:string;
   }>;
 }> {
   const rows = await loadAvoirSources(factureId);
@@ -349,6 +368,8 @@ export async function repoListAvoirEligibleLines(factureId: number): Promise<{
       const remaining =
         parseDecimal(row.quantity_invoiced, 3, "Quantité facturée") -
         parseDecimal(row.quantity_already_credited, 3, "Quantité déjà créditée");
+      const monetary = invoiceTypeCodeFromSnapshot(header.original_snapshot)===386 && row.is_advance_source;
+      const amountRemaining = moneyToCents(row.original_net)-moneyToCents(row.credited_net);
       return {
         facture_line_id: Number.parseInt(row.facture_line_id, 10),
         designation: row.designation,
@@ -357,7 +378,9 @@ export async function repoListAvoirEligibleLines(factureId: number): Promise<{
         quantity_invoiced: row.quantity_invoiced,
         quantity_already_credited: row.quantity_already_credited,
         quantity_remaining: `${remaining / 1000n}.${(remaining % 1000n).toString().padStart(3, "0")}`,
-        eligible: remaining > 0n,
+        eligible: monetary ? amountRemaining > 0n : remaining > 0n,
+        credit_mode:monetary ? "AMOUNT_EX_TAX" : "QUANTITY",
+        amount_remaining_ex_tax:formatDecimal(amountRemaining,2),
       };
     }),
   };
@@ -460,16 +483,17 @@ export async function repoCreateAvoirDraft(params: {
             source_type, source_line_id, quantity_selected,
             quantity_credited, amount_ttc, allocation_status, created_by
           )
-          VALUES ($1,$2,$3,$4::bigint,'INVOICE_LINE',($4::bigint)::text,$5,0,$6,'DRAFT',$7)
+          VALUES ($1,$2,$3,$4::bigint,$8,($4::bigint)::text,$5,0,$6,'DRAFT',$7)
         `,
         [
           avoirId,
           Number.parseInt(inserted.rows[0]!.id, 10),
           preview.facture_id,
           line.facture_line_id,
-          line.quantity_selected,
+          line.source_quantity_selected ?? line.quantity_selected,
           line.total_incl_tax,
           params.actor.userId,
+          line.credit_basis === "AMOUNT_EX_TAX" ? "INVOICE_AMOUNT" : "INVOICE_LINE",
         ]
       );
     }
@@ -567,12 +591,14 @@ async function savedAvoirInput(client: PoolClient, avoirId: number): Promise<Avo
   );
   const row = header.rows[0];
   if (!row) throw new HttpError(404, "AVOIR_NOT_FOUND", "Avoir introuvable.");
-  const lines = await client.query<{ facture_line_id: number; quantity: string }>(
+  const lines = await client.query<{ facture_line_id: number; quantity: string; source_type:string; advance_amount_ex_tax:string|null }>(
     `
-      SELECT facture_ligne_id AS facture_line_id, quantity_selected::text AS quantity
-      FROM public.avoir_source_allocations
-      WHERE avoir_id = $1
-      ORDER BY avoir_line_id, id
+      SELECT source.facture_ligne_id AS facture_line_id, source.quantity_selected::text AS quantity,
+        source.source_type, line.snapshot_json->>'advance_amount_ex_tax' AS advance_amount_ex_tax
+      FROM public.avoir_source_allocations source
+      LEFT JOIN public.avoir_ligne line ON line.id=source.avoir_line_id
+      WHERE source.avoir_id = $1
+      ORDER BY source.avoir_line_id, source.id
     `,
     [avoirId]
   );
@@ -580,7 +606,9 @@ async function savedAvoirInput(client: PoolClient, avoirId: number): Promise<Avo
     facture_id: row.facture_id,
     reason_code: row.reason_code,
     reason: row.motif,
-    lines: lines.rows,
+    lines: lines.rows.map(line=>line.source_type==="INVOICE_AMOUNT"
+      ? {facture_line_id:line.facture_line_id,advance_amount_ex_tax:line.advance_amount_ex_tax ?? ""}
+      : {facture_line_id:line.facture_line_id,quantity:line.quantity}),
   };
 }
 

@@ -119,6 +119,9 @@ export type AvoirPreviewLine = {
   unit_price_ex_tax: string;
   discount_percent: string;
   original_line_discount_percent?:string;
+  credit_basis?:"AMOUNT_EX_TAX";
+  source_quantity_selected?:string;
+  advance_amount_ex_tax?:string;
   tax_rate_percent: string;
   total_ex_tax: string;
   tax_amount: string;

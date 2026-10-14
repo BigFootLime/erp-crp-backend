@@ -1,5 +1,19 @@
 # Changelog
 
+## En développement — Avoirs d’acompte monétaires (#1268)
+
+- Sélection HT exacte sur une facture386 qualifiée, TVA cumulative d’origine et aucune consommation physique de pièces. Contrat conservé pour les avoirs par quantité ; brouillons et avoirs émis partagent leurs budgets, preuves et rollback protégés. 8006tests et build strict passent ; trois brouillons/replays PostgreSQL17 isolés totalisent100HT/20TVA, double réservation et quantité physique frauduleuse refusées. États fiscaux initiaux simulés ; recette réelle et reste du lot Finance non terminés.
+
+## 2026-10-14 — Impression après planning (#1320)
+
+- Demande persistante créée au premier engagement d'une opération, y compris externalisée, sans reprise automatique des anciens créneaux ni doublon lors d'un déplacement. Prise en charge par poste, exemplaire lié atomiquement à son intention et accusé audité ; une acceptation OS reste distincte d'une sortie papier.
+- Métadonnées PDF issues de la connexion PostgreSQL et de l'acteur authentifié. Qualification PostgreSQL 17 isolée : triggers transactionnels, concurrence, replays, droits et rollback protégé passent. Émission/préparation initiales synthétiques ; publications et recette native réelle suivies séparément.
+
+## En développement — Dossier de fabrication complet (#1320)
+
+- Premier exemplaire OF officiel sans filigrane, puis DUPLICATA ; brouillons marqués BROUILLON. Demandes idempotentes et compteur persistant distinct des téléchargements, variantes archivées séparément en GED, original conservé. Route et bouton d’impression OF raccordés ; compilation stricte, 121 tests backend, 5 tests du bouton et concurrence PostgreSQL 17 qualifiés avant publication.
+- Dossier complet raccordé aux plans GED figés et à l’autocontrôle exact de l’OF, avec suivi MD61 et préparation MD38 conditionnelle. Éditions et variantes archivées séparément ; compteur et impression du dossier atomiques. Bouton guidé sur la fiche OF/export, accès direct aux rubriques manquantes. 106 vérifications backend, 9 vérifications web et commandes concurrentes PostgreSQL 17 qualifiées. L’automaticité après planning, la queue A4 Electron et la recette réelle complète restent en cours.
+
 ## En développement — Proformas et sociétés facturées (#1268)
 
 - Avoirs sur factures payées : correction distincte de l'encaissement, calcul du crédit client et remboursements avec origines bancaires choisies côté serveur, preuves immuables, replay et export sans double TVA. Paiements reçus après un avoir d'acompte : TVA restante par catégorie, anciennes écritures conservées. 7 945 tests / 721 fichiers, build et commandes PostgreSQL17 isolées passent. Erreur de droit SELECT FOR UPDATE corrigée sans élargir les permissions ; fixtures et remboursement excessif corrigés après reproduction. Avoirs monétaires arbitraires, contrepassations, interface et recette réelle restent ouverts ; lot non déployé.

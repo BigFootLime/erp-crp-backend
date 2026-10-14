@@ -45,6 +45,20 @@ export function originalInvoiceLineCredit(line:OriginalCreditLine,budget:Origina
   return{net:formatDecimal(net,2),tax:formatDecimal(tax,2),gross:formatDecimal(net+tax,2)};
 }
 
+/** Advances are monetary obligations, not thousandths of a fabricated piece.
+ * Cumulative original VAT carries the final cent across arbitrary net credits. */
+export function originalInvoiceAmountCredit(line:OriginalCreditLine,budget:OriginalCreditBudget,selectedNet:string){
+  const priorNet=moneyToCents(line.creditedNet),priorTax=moneyToCents(line.creditedTax),priorGross=moneyToCents(line.creditedGross);
+  if(budget.net<=0n||budget.net+budget.tax!==budget.gross||priorNet<0n||priorTax<0n||priorNet+priorTax!==priorGross
+    ||priorNet>budget.net||priorTax>budget.tax||priorGross>budget.gross)invalid();
+  const net=moneyToCents(selectedNet);
+  if(net<=0n||net>budget.net-priorNet)
+    throw new HttpError(409,"AVOIR_AMOUNT_EXCEEDS_REMAINING","Le montant HT dépasse le solde encore créditable de cet acompte.");
+  const tax=divideHalfUp(budget.tax*(priorNet+net),budget.net)-priorTax;
+  if(tax<0n||priorTax+tax>budget.tax||priorGross+net+tax>budget.gross)invalid();
+  return{net:formatDecimal(net,2),tax:formatDecimal(tax,2),gross:formatDecimal(net+tax,2)};
+}
+
 /** Include the original document allowance in the credit's line price once.
  * Preserve its separate provenance; do not discount the credit again. */
 export function originalCreditEffectiveDiscount(lineDiscount:string,documentDiscount:string):string{

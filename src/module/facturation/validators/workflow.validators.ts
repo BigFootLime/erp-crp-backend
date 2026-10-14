@@ -132,9 +132,18 @@ export type ValidationDecisionBodyDTO = z.infer<typeof validationDecisionBodySch
 const avoirLineSelectionSchema = z
   .object({
     facture_line_id: z.coerce.number().int().positive(),
-    quantity: decimal(3, "Quantité créditée"),
+    quantity: decimal(3, "Quantité créditée").optional(),
+    advance_amount_ex_tax: decimal(2, "Montant d'acompte HT crédité").optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value,context)=>{
+    if((value.quantity===undefined)===(value.advance_amount_ex_tax===undefined))context.addIssue({
+      code:z.ZodIssueCode.custom,path:["advance_amount_ex_tax"],message:"Choisissez une quantité ou un montant d'acompte HT, jamais les deux.",
+    });
+    if(value.advance_amount_ex_tax!==undefined&&/^0(?:\.0+)?$/.test(value.advance_amount_ex_tax))context.addIssue({
+      code:z.ZodIssueCode.custom,path:["advance_amount_ex_tax"],message:"Le montant d'acompte HT doit être strictement positif.",
+    });
+  });
 
 export const avoirPreviewBodySchema = z
   .object({

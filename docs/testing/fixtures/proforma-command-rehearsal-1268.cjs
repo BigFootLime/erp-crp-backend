@@ -130,5 +130,6 @@ async function main(){
     archiveIntents:1,idempotentReplay:true,legalSequenceConsumed:false,gedFilingExecuted:false,uiRecipe:false}));
   await require('./document-tax-accounting-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A')});
   await require('./advance-cash-accounting-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A')});
+  await require('./advance-amount-credit-rehearsal-1268.cjs')(pool,database,{billedClientId:clientId('Qualification société A'),proformaId:funding.id,partId:target});
 }
 main().catch(error=>{console.error(JSON.stringify({marker:'PROFORMA1268_REPOSITORY_COMMANDS_FAIL',code:error.code||error.name,message:error.message}));process.exitCode=1;}).finally(()=>pool.end());
