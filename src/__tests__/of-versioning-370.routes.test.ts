@@ -110,6 +110,7 @@ describe("#370 — la surface HTTP est réellement montée", () => {
         "GET /:ofId/documents",
         "POST /:ofId/documents",
         "GET /:ofId/documents/:documentId/pdf",
+        "POST /:ofId/documents/:documentId/print-intents",
       ])
     );
   });
@@ -170,6 +171,7 @@ describe("#370 — la clé d'idempotence est exigée sur les commandes à effet"
     ["post", `${BASE}/1/planning-versions`, PLANIFICATION],
     ["post", `${BASE}/1/ar-dossiers`, COMMERCIAL],
     ["post", `${BASE}/1/documents`, PLANIFICATION],
+    ["post", `${BASE}/1/documents/6b1f6f7e-0000-4000-8000-000000000000/print-intents`, PLANIFICATION],
   ];
 
   it.each(COMMANDS)("%s %s exige Idempotency-Key", async (_method, path, role) => {

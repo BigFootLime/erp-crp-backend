@@ -5,7 +5,7 @@ vi.mock("../module/production/repository/of-versioning.repository", () => ({
 }));
 vi.mock("../module/production/services/of-document-stored-pdf", () => ({ readOfDocumentStoredPdf: mocks.stored }));
 import { emitDocument } from "../module/production/services/of-versioning.service";
-const document = { of_id: 95, revision_id: "revision-95", payload: { snapshotSha256: "hash-95", sourceFingerprint: "facts-95" } };
+const document = { of_id: 95, revision_id: "revision-95", payload: { documentStatut:"OFFICIEL",snapshotSha256: "hash-95", sourceFingerprint: "facts-95" } };
 const actor = { userId: 1, username: "Recette" } as Parameters<typeof emitDocument>[2];
 const audit = {} as Parameters<typeof emitDocument>[3];
 beforeEach(() => { vi.resetAllMocks(); mocks.find.mockResolvedValue(document); mocks.stored.mockResolvedValue({ pdf: Buffer.from("saved") }); });

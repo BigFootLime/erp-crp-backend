@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { prepareFolder,previewFolder,printFolder } from "../controllers/workshop-folder.controller";
 import {ofTravelerSource,listOfTravelers,issueOfTraveler,previewOfTraveler,downloadOfTraveler,printOfTraveler} from "../controllers/of-traveler.controller";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
@@ -25,6 +26,7 @@ import {
   listRevisions,
   previewPayload,
   previewPdf,
+  printDocument,
   refusePlanning,
   reprintDocument,
   resolveProposal,
@@ -141,6 +143,9 @@ router.post(
 );
 
 /* -------------------------------- Document -------------------------------- */
+router.post("/:ofId/workshop-folders",requireIdempotencyKey,requireOfCapability("document"),prepareFolder);
+router.get("/:ofId/workshop-folders/:folderId/preview",requireOfCapability("document"),previewFolder);
+router.post("/:ofId/workshop-folders/:folderId/print-intents",requireIdempotencyKey,requireOfCapability("document"),printFolder);
 
 router.get("/:ofId/traveler/source", requireOfCapability("document"), ofTravelerSource);
 router.get("/:ofId/traveler", requireOfCapability("document"), listOfTravelers);
@@ -165,5 +170,6 @@ router.post(
 
 // Réimpression : restitue le binaire archivé, ne crée aucune révision.
 router.get("/:ofId/documents/:documentId/pdf", requireOfCapability("document"), reprintDocument);
+router.post("/:ofId/documents/:documentId/print-intents", requireIdempotencyKey, requireOfCapability("document"), printDocument);
 
 export default router;
