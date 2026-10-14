@@ -1,0 +1,75 @@
+import {createHash,randomBytes} from 'node:crypto';
+import type {Pool,PoolClient} from 'pg';
+import jwt from 'jsonwebtoken';
+import {avatarProjectionSql} from '../module/auth/repository/avatar.repository';
+import {directoryWorkProfile} from './work-profile';
+import {directorySessionSchema,directoryIdSchema,siteIdSchema,type DirectorySession} from './model';
+type Queryable=Pick<Pool|PoolClient,'query'>;
+const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+export async function assertDirectoryIdentity(db:Queryable,expectedId:string){
+ const id=directoryIdSchema.parse(expectedId);
+ const actual=(await db.query('SELECT current_database() AS database,current_user AS actor')).rows[0];
+ if(actual?.database!==`cerp_directory_${id.replace(/-/g,'')}`)throw new Error('DIRECTORY_SOURCE_IDENTITY_MISMATCH');
+ const meta=(await db.query('SELECT directory_id,schema_version,import_mode FROM public.cerp_shared_directory WHERE singleton=true')).rows[0];
+ if(meta?.directory_id!==id || meta.schema_version!==1 || meta.import_mode!=='EMPTY_NO_LEGACY_IMPORT')throw new Error('DIRECTORY_SOURCE_MARKER_INVALID');
+}
+export async function consumeCallNonce(db:Queryable,nonce:string,expires:Date){
+ directoryIdSchema.parse(nonce);
+ const inserted=await db.query('INSERT INTO public.cerp_directory_call_nonces(nonce,expires_at) VALUES($1::uuid,$2) ON CONFLICT DO NOTHING RETURNING nonce',[nonce,expires]);
+ if(inserted.rows.length!==1)throw new Error('DIRECTORY_CALL_REPLAYED');
+ await db.query('DELETE FROM public.cerp_directory_call_nonces WHERE nonce IN (SELECT nonce FROM public.cerp_directory_call_nonces WHERE expires_at<now() LIMIT 1000)');
+}
+export async function bindChallenge(db:Queryable,site:string,challenge:string,expiresSeconds=900){
+ siteIdSchema.parse(site);
+ await db.query('INSERT INTO public.cerp_directory_challenges(token_hash,database_id,expires_at) VALUES($1,$2,now()+$3::int*interval\'1 second\') ON CONFLICT DO NOTHING',[hash(challenge),site,expiresSeconds]);
+}
+export async function assertChallengeSite(db:Queryable,site:string,challenge:string){
+ siteIdSchema.parse(site);
+ if(!(await db.query('SELECT 1 FROM public.cerp_directory_challenges WHERE token_hash=$1 AND database_id=$2 AND expires_at>now()',[hash(challenge),site])).rows.length)throw new Error('DIRECTORY_CHALLENGE_REJECTED');
+}
+export async function ensureTestMembership(db:Queryable,site:string,sourceUserId:number){
+ siteIdSchema.parse(site);
+ if(site==='cerp_prod')return;
+ await db.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,status,is_superadmin)
+  SELECT profile_id,$1,'Administrateur Systeme et Reseau','Active',true FROM public.cerp_directory_profiles WHERE user_id=$2
+  ON CONFLICT(profile_id,database_id) DO NOTHING`,[site,sourceUserId]);
+}
+export async function hasActiveMembership(db:Queryable,site:string,username:string){
+ const result=await db.query(`SELECT u.id FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id
+  JOIN public.cerp_directory_memberships m ON m.profile_id=p.profile_id AND m.database_id=$1
+  WHERE upper(u.username)=upper($2) AND u.status='Active' AND m.status='Active'`,[site,username]);
+ return result.rows[0]?.id as number|undefined;
+}
+export async function createDirectorySession(db:Queryable,site:string,canonicalToken:string,sourceJwtSecret:string){
+ siteIdSchema.parse(site);
+ const claims=jwt.verify(canonicalToken,sourceJwtSecret,{algorithms:['HS256']}) as jwt.JwtPayload;
+ if(claims.mfa!==true || !Number.isSafeInteger(claims.id) || !Number.isSafeInteger(claims.session_epoch) || !Number.isSafeInteger(claims.mfa_factor_version) || !Number.isSafeInteger(claims.mfa_verified_at))throw new Error('DIRECTORY_MFA_REQUIRED');
+ directoryIdSchema.parse(claims.mfa_factor_id);
+ const method=claims.amr?.includes('recovery_code')?'recovery_code':claims.amr?.includes('totp')?'totp':null;
+ if(!method)throw new Error('DIRECTORY_MFA_REQUIRED');
+ const token=`dir_${randomBytes(32).toString('hex')}`;
+ const inserted=await db.query(`INSERT INTO public.cerp_directory_sessions(token_hash,profile_id,database_id,global_session_epoch,membership_version,mfa_factor_id,mfa_factor_version,mfa_verified_at,mfa_method,expires_at)
+  SELECT $1,p.profile_id,$2,$3,m.version,$4::uuid,$5,to_timestamp($6),$8,now()+interval '1 day'
+  FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id
+  JOIN public.cerp_directory_memberships m ON m.profile_id=p.profile_id AND m.database_id=$2
+  JOIN public.user_mfa_factors f ON f.user_id=u.id AND f.id=$4::uuid AND f.version=$5 AND f.state='ACTIVE'
+  LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
+  WHERE u.id=$7 AND u.status='Active' AND m.status='Active' AND coalesce(e.session_epoch,0)=$3 RETURNING token_hash`,
+ [hash(token),site,claims.session_epoch,claims.mfa_factor_id,claims.mfa_factor_version,claims.mfa_verified_at,claims.id,method]);
+ if(inserted.rows.length!==1)throw new Error('DIRECTORY_SESSION_REJECTED');
+ return {directory_session:token,identity:await validateDirectorySession(db,site,token)};
+}
+export async function validateDirectorySession(db:Queryable,site:string,token:string):Promise<DirectorySession>{
+ siteIdSchema.parse(site);if(!/^dir_[a-f0-9]{64}$/.test(token))throw new Error('DIRECTORY_SESSION_REJECTED');
+ const row=(await db.query(`SELECT p.profile_id,u.id AS source_user_id,s.database_id AS database,u.username,u.name,u.surname,u.email,u.avatar_key,${avatarProjectionSql} AS avatar_asset_id,
+  m.role_key AS role,CASE WHEN cardinality(m.roles)>0 THEN m.roles ELSE ARRAY[m.role_key] END AS roles,m.is_superadmin,u.status,p.job_title,p.employment_type,p.weekly_hours_target::float AS weekly_hours_target,p.work_profile_incomplete,u.mfa_reenrollment_required,s.global_session_epoch,m.version AS membership_version,
+  s.mfa_factor_id,s.mfa_factor_version,s.mfa_verified_at,s.mfa_method
+  FROM public.cerp_directory_sessions s JOIN public.cerp_directory_profiles p ON p.profile_id=s.profile_id JOIN public.users u ON u.id=p.user_id
+  JOIN public.cerp_directory_memberships m ON m.profile_id=p.profile_id AND m.database_id=s.database_id
+  JOIN public.user_mfa_factors f ON f.id=s.mfa_factor_id AND f.user_id=u.id
+  LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
+  WHERE s.token_hash=$1 AND s.database_id=$2 AND s.expires_at>now() AND u.status='Active' AND NOT u.mfa_reenrollment_required AND m.status='Active'
+  AND m.version=s.membership_version AND coalesce(e.session_epoch,0)=s.global_session_epoch AND f.state='ACTIVE' AND f.version=s.mfa_factor_version`,[hash(token),site])).rows[0];
+ if(!row)throw new Error('DIRECTORY_SESSION_REJECTED');
+ return directorySessionSchema.parse({...row,...await directoryWorkProfile(db,row.source_user_id),global_session_epoch:Number(row.global_session_epoch),mfa_verified_at:new Date(row.mfa_verified_at).toISOString()});
+}

@@ -1,9 +1,12 @@
 import { RequestHandler } from 'express';
 import { readUserAvatar } from '../repository/avatar.repository';
+import pool from '../../../config/database';
+import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
+import {readDirectoryAvatar} from '../../../shared-directory/avatar.facade';
 
 export const getProfile: RequestHandler = async (req, res, next) => {
  try {
-  const avatar=req.user ? await readUserAvatar(req.user.id):null;
+  const avatar=req.user ? sharedDirectoryClient()?await readDirectoryAvatar(pool,req.user.id):await readUserAvatar(req.user.id):null;
   res.status(200).json({
     message: 'Profil utilisateur',
     user: req.user

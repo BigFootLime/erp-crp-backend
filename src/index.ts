@@ -4,6 +4,7 @@ import { createServer } from "http";
 
 import pool from "./config/database";
 import {assertManagedDatabaseAtStartup} from './config/managed-database';
+import {initializeSharedDirectorySite} from './shared-directory/site-runtime';
 import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
@@ -33,6 +34,7 @@ async function start(): Promise<void> {
   assertE2EIsolation();
   assertMfaStartupConfiguration();
   await assertManagedDatabaseAtStartup(pool);
+  await initializeSharedDirectorySite(pool);
   // Run the GED identity/RW proof before the generic upload-root preflight:
   // otherwise a missing mount could be replaced by a newly created directory
   // on the system disk before the sentinel has been checked.

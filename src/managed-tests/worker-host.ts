@@ -12,6 +12,8 @@ import {checkedChild,type ManagedHostConfig} from './host-config';
 import {ordinalSchema,requireManagedId} from './model';
 import {databaseConnection,pgCommand,sqlIdentifier,withDatabase,assertInstanceMarker} from './postgres-host';
 import {verifyTemplate,assertBlankTemplate} from './template';
+import {updateManagedCallerKey} from '../shared-directory/caller-keys';
+import {DirectoryClient} from '../shared-directory/client';
 const run=promisify(execFile);
 const manifestSchema=z.object({id:z.string(),ordinal:ordinalSchema,port:z.number().int().min(1024).max(65535),template_version:z.string(),state:z.enum(['ALLOCATED','READY','DELETING','DELETED']),snapshot:z.string().nullable(),snapshot_sha256:z.string().nullable()}).strict();
 type Manifest=z.infer<typeof manifestSchema>;
@@ -43,6 +45,8 @@ export class ManagedHostWorker {
   private async prepareFiles(id:string,port:number){
     const base=parse(await fs.readFile(this.config.source_env));const sourceUrl=new URL(base.DATABASE_URL??'');
     if(sourceUrl.pathname!=='/cerp_test' || !['localhost','127.0.0.1','[::1]'].includes(sourceUrl.hostname)) throw new Error('MANAGED_APP_DATABASE_SOURCE_INVALID');
+    if(!this.config.directory_id||!this.config.directory_callers_file||base.CERP_SHARED_DIRECTORY_ENABLED!=='true'||base.CERP_SHARED_DIRECTORY_ID!==this.config.directory_id)throw new Error('MANAGED_SHARED_DIRECTORY_REQUIRED');
+    const directoryKey=await updateManagedCallerKey(this.config.directory_callers_file,id);
     const adminUrl=new URL(this.config.admin_database_url),host=(url:URL)=>url.hostname==='localhost' ? '127.0.0.1':url.hostname;
     if(host(sourceUrl)!==host(adminUrl) || (sourceUrl.port||'5432')!==(adminUrl.port||'5432')) throw new Error('MANAGED_APP_CLUSTER_MISMATCH');
     const {uid,gid}=await this.host.identity();
@@ -56,6 +60,7 @@ export class ManagedHostWorker {
     const marker=path.join(roots.CERP_GED_VAULT_ROOT,'.cerp-ged-volume');try{await fs.writeFile(marker,`${id}\n`,{flag:'wx',mode:0o640});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST' || await fs.readFile(marker,'utf8')!==`${id}\n`) throw error;}
     for(const key of Object.keys(base)) if(/^(RESEND_|SMTP_|SENDGRID_|CERP_E2E_)/.test(key)) delete base[key];
     Object.assign(base,roots,{NODE_ENV:'production',PORT:String(port),DATABASE_URL:databaseConnection(base.DATABASE_URL,id),JWT_SECRET:randomBytes(48).toString('hex'),MFA_ROOT_KEY:randomBytes(32).toString('base64'),MFA_KEY_ID:id,AUTH_RATE_LIMIT_HASH_KEY:randomBytes(48).toString('hex'),CERP_MANAGED_TEST_ID:id,CERP_TEST_REGISTRATION_ENABLED:'true',PG_POOL_MAX:'3',CERP_API_RELEASE_ROOT:this.config.api_release,CERP_GED_SENTINEL:marker,CERP_GED_REQUIRE_SENTINEL:'true',CERP_UPLOAD_ADMIN_TRUST_ROOTS:[this.config.control_root,path.dirname(this.config.control_root),this.config.data_root,path.dirname(this.config.data_root)].join(',')});
+    Object.assign(base,{CERP_SHARED_DIRECTORY_ENABLED:'true',CERP_SHARED_DIRECTORY_SITE:id,CERP_SHARED_DIRECTORY_ID:this.config.directory_id,CERP_DIRECTORY_SITE_CALL_KEY:directoryKey!});
     const content=Object.entries(base).map(([key,value])=>{if(!/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\r\n\0]/.test(value)) throw new Error('MANAGED_ENV_INVALID');return `${key}=${JSON.stringify(value)}`;}).join('\n')+'\n';
     const files=await this.files(id);await atomicFile(files.env,content);
     await this.repairPermissions(id,uid,gid);
@@ -81,13 +86,15 @@ export class ManagedHostWorker {
       }finally{await handle.close();}
     }
   }
-  async status(){try{await this.volume();await verifyTemplate(this.config);return {ready:true,template_version:this.config.template_version};}catch{return {ready:false,template_version:this.config.template_version};}}
+  async status(){try{await this.volume();await verifyTemplate(this.config);const env=parse(await fs.readFile(this.config.source_env));if(!this.config.directory_id||!this.config.directory_callers_file||env.CERP_SHARED_DIRECTORY_ENABLED!=='true')throw new Error('MANAGED_SHARED_DIRECTORY_REQUIRED');const client=new DirectoryClient('http://127.0.0.1:8085/internal/directory','cerp_test',env.CERP_DIRECTORY_SITE_CALL_KEY??'');const info=await client.call<{directory_id:string;capabilities:string[]}>('info',{});if(info.directory_id!==this.config.directory_id||!['shared-auth-mfa','shared-users','shared-company','shared-avatar'].every(c=>info.capabilities.includes(c)))throw new Error('MANAGED_SHARED_DIRECTORY_REQUIRED');return {ready:true,template_version:this.config.template_version};}catch{return {ready:false,template_version:this.config.template_version};}}
   async create(id:string,ordinal:number){
     requireManagedId(id);ordinalSchema.parse(ordinal);await this.resourcePreflight();let manifest=await this.readManifest(id,ordinal);
     if(manifest?.state==='DELETED' || manifest?.state==='DELETING') throw new Error('MANAGED_INSTANCE_REMOVED');
     if(!manifest){await verifyTemplate(this.config);manifest={id,ordinal,port:await freePort(),template_version:this.config.template_version,state:'ALLOCATED',snapshot:null,snapshot_sha256:null};await this.saveManifest(manifest);}
     const files=await this.files(id);try{const stat=await fs.lstat(files.env);if(!stat.isFile() || stat.isSymbolicLink()) throw new Error('MANAGED_ENV_INVALID');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;await this.prepareFiles(id,manifest.port);}
     await this.repairPermissions(id);
+    const prepared=parse(await fs.readFile(files.env));
+    if(prepared.CERP_SHARED_DIRECTORY_ENABLED!=='true'||prepared.CERP_SHARED_DIRECTORY_SITE!==id||prepared.CERP_SHARED_DIRECTORY_ID!==this.config.directory_id||!this.config.directory_callers_file)throw new Error('MANAGED_SHARED_DIRECTORY_REQUIRED');
     if(!await this.exists(id)) {
       if(manifest.template_version!==this.config.template_version) throw new Error('MANAGED_TEMPLATE_RELEASE_MISMATCH');
       await withDatabase(this.config.admin_database_url,'postgres',async client=>{await client.query(`CREATE DATABASE ${sqlIdentifier(id)} TEMPLATE ${sqlIdentifier(this.config.template_database)}`);await client.query(`COMMENT ON DATABASE ${sqlIdentifier(id)} IS ${"'"+id+"'"}`);});
@@ -134,6 +141,7 @@ export class ManagedHostWorker {
     }
     const data=await checkedChild(this.config.data_root,id),archive=await checkedChild(this.config.data_root,'archives',id);
     try{const stat=await fs.lstat(data);if(!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('MANAGED_DATA_PATH_INVALID');await fs.mkdir(path.dirname(archive),{recursive:true,mode:0o700});await fs.rename(data,archive);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;}
+    if(this.config.directory_callers_file)await updateManagedCallerKey(this.config.directory_callers_file,id,true);
     manifest.state='DELETED';await this.saveManifest(manifest);return {id,port:null,template_version:manifest.template_version,deleted:true};
   }
 }

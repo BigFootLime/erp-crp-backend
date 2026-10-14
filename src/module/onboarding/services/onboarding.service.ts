@@ -2,8 +2,9 @@ import { readSetupFacts } from "../repository/onboarding.repository";
 import { repoGetFinanceConfigurationReadiness } from "../../facturation/repository/finance-configuration.repository";
 import { repoReferenceCatalog } from "../../reference-data/repository/reference-data.repository";
 export const SETUP_REMINDER_LOGINS=10;
-export async function getSetupStatus(userId:number) {
+export async function getSetupStatus(userId:number,directoryLoginCount?:number) {
  const [facts,finance,references]=await Promise.all([readSetupFacts(userId),repoGetFinanceConfigurationReadiness({}),repoReferenceCatalog()]);
+ if(directoryLoginCount!==undefined)facts.login_count=directoryLoginCount;
  const sections={company:!!facts.company_ready,workshop:!!facts.workshop_ready,costs:!!facts.costs_ready && (facts.machine_count===0 || facts.rated_count===facts.machine_count),
   machines:facts.machine_count>0 && facts.qualified_count===facts.machine_count,maintenance:facts.machine_count>0 && facts.maintained_count===facts.machine_count,
   hours:!!facts.hours_ready,stock:!!facts.stock_ready,finance:finance.readiness.ready && finance.active_policy?.legal_entity_code===facts.primary_biller_id,
