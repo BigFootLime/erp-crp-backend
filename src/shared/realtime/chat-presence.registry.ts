@@ -55,6 +55,27 @@ export class PostgresChatPresenceRegistry implements ChatPresenceRegistry {
   }
 
   async heartbeat(userId: number, connectionId: string): Promise<ChatPresenceDelta | null> {
+    // A normal heartbeat only renews this node's already-live lease.  It cannot
+    // change the user's online state, so avoid taking the per-user advisory
+    // lock on the hot path.  The guarded predicate is important: a missing or
+    // expired lease falls through to the serialized recovery path below, which
+    // remains responsible for an exact 0 -> 1 transition.
+    const renewed = await pool.query<{ user_id: string }>(
+      `UPDATE public.realtime_chat_presence
+       SET last_seen_at = clock_timestamp(),
+           expires_at = clock_timestamp() + ($4::text || ' seconds')::interval
+       WHERE node_id = $1
+         AND connection_id = $2
+         AND user_id = $3
+         AND expires_at > clock_timestamp()
+       RETURNING user_id::text`,
+      [this.nodeId, connectionId, userId, ttlSeconds()]
+    );
+    if (renewed.rowCount === 1) return null;
+
+    // The presence entry is missing or has expired.  Serialize this recovery
+    // with connect/disconnect/sweep so it can publish an online transition only
+    // when there truly is no remaining unexpired connection for the user.
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

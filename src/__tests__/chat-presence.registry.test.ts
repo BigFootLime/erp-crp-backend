@@ -69,4 +69,33 @@ describe("chat presence registry", () => {
     expect(calls.some((sql) => sql.includes("SELECT COUNT(*)::text"))).toBe(false);
     expect(calls.some((sql) => sql.includes("pg_notify('cerp_realtime_control'"))).toBe(false);
   });
+
+  it("renews an existing live lease without taking the per-user advisory lock", async () => {
+    mocks.poolQuery.mockResolvedValue({ rows: [{ user_id: "7" }], rowCount: 1 });
+    const registry = new PostgresChatPresenceRegistry("node-a");
+
+    await expect(registry.heartbeat(7, "socket-a")).resolves.toBeNull();
+
+    expect(mocks.poolQuery).toHaveBeenCalledOnce();
+    expect(String(mocks.poolQuery.mock.calls[0]?.[0])).toContain("UPDATE public.realtime_chat_presence");
+    expect(String(mocks.poolQuery.mock.calls[0]?.[0])).toContain("expires_at > clock_timestamp()");
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.clientQuery).not.toHaveBeenCalled();
+  });
+
+  it("serializes a missing heartbeat lease and emits online only after recovery", async () => {
+    mocks.poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    mocks.clientQuery.mockImplementation(async (statement: unknown) => {
+      const sql = String(statement);
+      if (sql.includes("SELECT COUNT(*)::text")) return { rows: [{ count: "0" }] };
+      return { rows: [], rowCount: 1 };
+    });
+    const registry = new PostgresChatPresenceRegistry("node-a");
+
+    await expect(registry.heartbeat(7, "socket-a")).resolves.toEqual({ userId: 7, online: true });
+
+    const calls = mocks.clientQuery.mock.calls.map((call) => String(call[0]));
+    expect(calls.some((sql) => sql.includes("pg_advisory_xact_lock($1::bigint)"))).toBe(true);
+    expect(calls.some((sql) => sql.includes("pg_notify('cerp_realtime_control'"))).toBe(true);
+  });
 });

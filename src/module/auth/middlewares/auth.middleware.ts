@@ -34,6 +34,51 @@ interface JwtPayload {
   directory_membership_version?:number;
 }
 
+type DirectoryAuthenticationError = Error & {
+  code?: unknown;
+};
+
+const rejectedDirectorySessionCodes = new Set([
+  "DIRECTORY_SESSION_REQUIRED",
+  "DIRECTORY_SESSION_REJECTED",
+  "DIRECTORY_SESSION_STALE",
+  "DIRECTORY_LOCAL_SESSION_STALE",
+]);
+
+/**
+ * A directory validation failure is a rejected session only when the
+ * authority says so. Local projection and database failures remain
+ * availability failures: accepting the JWT would be unsafe, while returning
+ * 401 would wrongly erase a valid client session.
+ */
+function directoryAuthenticationFailure(error: unknown): {
+  status: 401 | 503;
+  code: "MFA_REQUIRED" | "DIRECTORY_UNAVAILABLE";
+  reason:
+    | "directory_session_rejected"
+    | "database_lock_timeout"
+    | "database_query_timeout"
+    | "directory_timeout"
+    | "directory_unavailable";
+} {
+  const failure = error as DirectoryAuthenticationError;
+  const code = typeof failure?.code === "string" ? failure.code : "";
+
+  if (rejectedDirectorySessionCodes.has(code) || rejectedDirectorySessionCodes.has(failure?.message ?? "")) {
+    return { status: 401, code: "MFA_REQUIRED", reason: "directory_session_rejected" };
+  }
+  if (code === "55P03") {
+    return { status: 503, code: "DIRECTORY_UNAVAILABLE", reason: "database_lock_timeout" };
+  }
+  if (code === "57014") {
+    return { status: 503, code: "DIRECTORY_UNAVAILABLE", reason: "database_query_timeout" };
+  }
+  if (failure?.name === "TimeoutError") {
+    return { status: 503, code: "DIRECTORY_UNAVAILABLE", reason: "directory_timeout" };
+  }
+  return { status: 503, code: "DIRECTORY_UNAVAILABLE", reason: "directory_unavailable" };
+}
+
 declare global {
   namespace Express {
     interface Request {
@@ -66,7 +111,9 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
       void validateSiteDirectoryToken(pool,decoded).then(identity=>{
         req.user={...decoded,username:identity.username,email:identity.email??'',role:identity.role,primary_role:identity.role,roles:identity.roles};next();
       }).catch(error=>{
-        const unavailable=(error as Error&{status?:number}).status===503||error.name==='TimeoutError';
+        const failure = directoryAuthenticationFailure(error);
+        console.warn(JSON.stringify({ type: "directory_auth_failure", reason: failure.reason, status: failure.status }));
+        const unavailable = failure.status === 503;
         res.status(unavailable?503:401).json({code:unavailable?'DIRECTORY_UNAVAILABLE':'MFA_REQUIRED',message:unavailable?'L’annuaire commun est momentanément indisponible.':'Une nouvelle connexion est requise.'});
       });return;
     }

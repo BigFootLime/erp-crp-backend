@@ -9,6 +9,11 @@ const snapshotSchema=z.object({revision:z.number().int().nonnegative(),primary_b
 export async function synchronizeDirectoryCompany(db:Pool,session:string){
  const client=sharedDirectoryClient();if(!client)return;
  const snapshot=snapshotSchema.parse(await client.call('company-snapshot',{directory_session:session,input:{}}));
+ // The authority snapshot is still fetched on every validated directory
+ // session.  Only the local projection work is skipped when its immutable
+ // revision is already current; this is not an authorization cache.
+ const current=(await db.query<{revision:number}>('SELECT revision FROM public.cerp_directory_company_state WHERE singleton')).rows[0];
+ if(current?.revision===snapshot.revision)return;
  const localCreators=new Map<string,number>();for(const profile of snapshot.profiles)localCreators.set(profile.profile_id,(await projectDirectoryProfile(db,profile)).id);
  const tx=await db.connect();await tx.query('BEGIN');
  try{
