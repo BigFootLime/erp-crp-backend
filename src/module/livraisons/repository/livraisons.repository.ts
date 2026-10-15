@@ -723,6 +723,136 @@ type HeaderRow = {
   updated_by_surname: string | null
 }
 
+type DirectAllocationSourceRow = {
+  delivery_id: string
+  delivery_commande_id: string | null
+  delivery_affaire_id: string | null
+  delivery_client_id: string
+  line_id: string
+  line_commande_ligne_id: string | null
+  line_commande_id: string | null
+  line_article_id: string | null
+  candidate_id: string | null
+  candidate_commande_id: string | null
+  candidate_commande_ligne_id: string | null
+  candidate_affaire_id: string | null
+  candidate_client_id: string | null
+  candidate_order_type: string | null
+  candidate_article_id: string | null
+}
+
+type DirectAllocationSourceSnapshot = {
+  rows: DirectAllocationSourceRow[]
+  signature: string
+}
+
+/**
+ * This is deliberately a read-only snapshot. Finance's epoch lock is acquired
+ * first and the candidate source rows are locked canonically before the BL row.
+ * The caller must compare a second snapshot after locking the BL and its line.
+ */
+async function readDirectAllocationSourceSnapshot(
+  db: Queryable,
+  bonLivraisonId: string,
+  lineId: string
+): Promise<DirectAllocationSourceSnapshot> {
+  const result = await db.query<DirectAllocationSourceRow>(
+    `
+      SELECT
+        bl.id::text AS delivery_id,
+        bl.commande_id::text AS delivery_commande_id,
+        bl.affaire_id::text AS delivery_affaire_id,
+        bl.client_id::text AS delivery_client_id,
+        line.id::text AS line_id,
+        line.commande_ligne_id::text AS line_commande_ligne_id,
+        command_line.commande_id::text AS line_commande_id,
+        command_line.article_id::text AS line_article_id,
+        candidate.id::text AS candidate_id,
+        candidate.commande_id::text AS candidate_commande_id,
+        candidate.commande_ligne_id::text AS candidate_commande_ligne_id,
+        candidate.livraison_affaire_id::text AS candidate_affaire_id,
+        candidate_command.client_id::text AS candidate_client_id,
+        candidate_command.order_type::text AS candidate_order_type,
+        COALESCE(candidate.article_ref_id, command_line.article_id)::text AS candidate_article_id
+      FROM public.bon_livraison bl
+      JOIN public.bon_livraison_ligne line
+        ON line.bon_livraison_id = bl.id
+      LEFT JOIN public.commande_ligne command_line
+        ON command_line.id = line.commande_ligne_id
+      LEFT JOIN public.commande_ligne_affaire_allocation candidate
+        ON candidate.commande_ligne_id = line.commande_ligne_id
+      LEFT JOIN public.commande_client candidate_command
+        ON candidate_command.id = candidate.commande_id
+      WHERE bl.id = $1::uuid
+        AND line.id = $2::uuid
+      ORDER BY candidate.id NULLS FIRST
+    `,
+    [bonLivraisonId, lineId]
+  )
+  const rows = result.rows
+  return {
+    rows,
+    signature: JSON.stringify(rows.map(row => [
+      row.delivery_id,
+      row.delivery_commande_id,
+      row.delivery_affaire_id,
+      row.delivery_client_id,
+      row.line_id,
+      row.line_commande_ligne_id,
+      row.line_commande_id,
+      row.line_article_id,
+      row.candidate_id,
+      row.candidate_commande_id,
+      row.candidate_commande_ligne_id,
+      row.candidate_affaire_id,
+      row.candidate_client_id,
+      row.candidate_order_type,
+      row.candidate_article_id,
+    ])),
+  }
+}
+
+function directAllocationCandidateIds(snapshot: DirectAllocationSourceSnapshot): number[] {
+  const ids = snapshot.rows.flatMap(row => row.candidate_id === null ? [] : [Number(row.candidate_id)])
+  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new HttpError(409, "DELIVERY_ALLOCATION_SOURCE_INVALID", "La provenance de l\u2019allocation doit \u00eatre v\u00e9rifi\u00e9e.")
+  }
+  return [...new Set(ids)].sort((a, b) => a - b)
+}
+
+function resolveDirectAllocationSource(
+  snapshot: DirectAllocationSourceSnapshot,
+  inputArticleId: string
+): number | null {
+  const context = snapshot.rows[0]
+  if (!context) return null
+  const candidates = snapshot.rows.filter((row): row is DirectAllocationSourceRow & { candidate_id: string } => row.candidate_id !== null)
+  const matching = candidates.filter(candidate =>
+    context.line_commande_ligne_id !== null &&
+    (context.delivery_commande_id === null || context.line_commande_id === context.delivery_commande_id) &&
+    (context.line_article_id === null || context.line_article_id === inputArticleId) &&
+    candidate.candidate_commande_id === context.line_commande_id &&
+    candidate.candidate_commande_ligne_id === context.line_commande_ligne_id &&
+    (candidate.candidate_client_id === context.delivery_client_id ||
+      (candidate.candidate_client_id === null && candidate.candidate_order_type === "INTERNE")) &&
+    candidate.candidate_article_id === inputArticleId &&
+    (context.delivery_affaire_id === null || candidate.candidate_affaire_id === context.delivery_affaire_id)
+  )
+
+  if (matching.length > 1) {
+    throw new HttpError(409, "DELIVERY_ALLOCATION_SOURCE_AMBIGUOUS", "La provenance de l\u2019allocation est ambigu\u00eb : s\u00e9lectionnez une affaire coh\u00e9rente avant de poursuivre.")
+  }
+  if (matching.length === 1) return Number(matching[0]!.candidate_id)
+
+  // A BL explicitly tied to an affaire must have one persisted, coherent
+  // command-line allocation. A manual/legacy line without such context remains
+  // unbound and is rejected later by the existing Finance preparation boundary.
+  if (context.delivery_affaire_id !== null || candidates.length > 0) {
+    throw new HttpError(409, "DELIVERY_ALLOCATION_SOURCE_MISMATCH", "La provenance commande/affaire de cette allocation ne correspond pas au bon de livraison.")
+  }
+  return null
+}
+
 async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: boolean }): Promise<HeaderRow | null> {
   const lock = opts?.forUpdate ? "FOR UPDATE OF bl" : ""
   const sql = `
@@ -1885,6 +2015,13 @@ export async function repoCreateLivraisonLineAllocation(
 ): Promise<{ allocationId: string }> {
   const db = await pool.connect()
   return withRealtimeOutboxTransaction(db, async (db) => {
+    // Finance writers and allocation provenance use the same canonical order:
+    // epoch, command/contract/affair, then BL. Do not acquire the BL lock first.
+    await lockDeliveryPrepaymentRead(db)
+    const sourceBefore = await readDirectAllocationSourceSnapshot(db, bonLivraisonId, lineId)
+    const sourceIds = directAllocationCandidateIds(sourceBefore)
+    if (sourceIds.length) await readProformaOrderSources(db, sourceIds, true)
+
     const header = await getHeader(db, bonLivraisonId, { forUpdate: true })
     if (!header) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (header.statut !== "DRAFT") {
@@ -1911,6 +2048,10 @@ export async function repoCreateLivraisonLineAllocation(
     )
     const line = lineRes.rows[0] ?? null
     if (!line) throw new HttpError(404, "LINE_NOT_FOUND", "Bon de livraison line not found")
+    const sourceAfter = await readDirectAllocationSourceSnapshot(db, bonLivraisonId, lineId)
+    if (sourceBefore.signature !== sourceAfter.signature) {
+      throw new HttpError(409, "DELIVERY_PREPAYMENT_SOURCE_CHANGED", "La provenance de l\u2019allocation a chang\u00e9 : actualisez le BL avant de continuer.")
+    }
     const allocated = await db.query<{ quantity: number }>(
       `
         SELECT COALESCE(SUM(quantite), 0)::float8 AS quantity
@@ -1937,6 +2078,7 @@ export async function repoCreateLivraisonLineAllocation(
         "La quantité allouée dépasserait la quantité de la ligne."
       )
     }
+    const commandeLigneAffaireAllocationId = resolveDirectAllocationSource(sourceAfter, input.article_id)
 
     const article = await db.query<{
       stock_managed: boolean
@@ -2066,6 +2208,7 @@ export async function repoCreateLivraisonLineAllocation(
           location_id,
           stock_level_id,
           stock_batch_id,
+          commande_ligne_affaire_allocation_id,
           reservation_id,
           stock_movement_line_id,
           quantite,
@@ -2081,12 +2224,13 @@ export async function repoCreateLivraisonLineAllocation(
           $6::uuid,
           $7::uuid,
           $8::uuid,
+          $9::bigint,
           NULL,
           NULL,
-          $9,
           $10,
           $11,
-          $11
+          $12,
+          $12
         )
         RETURNING id::text AS id
       `,
@@ -2099,6 +2243,7 @@ export async function repoCreateLivraisonLineAllocation(
         source.location_id,
         stockLevelId,
         stockBatchId,
+        commandeLigneAffaireAllocationId,
         input.quantite,
         input.unite ?? null,
         userId,
@@ -2124,6 +2269,7 @@ export async function repoCreateLivraisonLineAllocation(
         location_id: source.location_id,
         stock_level_id: stockLevelId,
         stock_batch_id: stockBatchId,
+        commande_ligne_affaire_allocation_id: commandeLigneAffaireAllocationId,
         quantite: input.quantite,
         unite: input.unite ?? null,
       },
@@ -3071,7 +3217,7 @@ export async function repoCreateLivraisonFromCommande(
         FROM commande_to_affaire cta
         WHERE cta.commande_id = $1
           AND (cta.role = 'LIVRAISON' OR cta.role IS NULL)
-        ORDER BY (cta.role = 'LIVRAISON') DESC, cta.date_conversion DESC, cta.id DESC
+        ORDER BY (cta.role = 'LIVRAISON') DESC NULLS LAST, cta.date_conversion DESC NULLS LAST, cta.id DESC
         LIMIT 1
         `
       : `

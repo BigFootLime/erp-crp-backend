@@ -42,6 +42,15 @@ BL.
 anciens clients API. Le frontend CERP ne l'utilise plus et ce point d'entrée ne
 fait pas partie du nouveau parcours opérateur.
 
+Une allocation directe au statut `DRAFT` peut identifier un lot en quarantaine
+pour établir le périmètre du contrôle `LOT_RELEASE`, sans réserver ni consommer
+le stock. Le serveur conserve sa provenance commande/affaire lorsqu'elle est
+unique et cohérente avec la ligne, le client, l'article et l'éventuelle affaire
+du BL ; une ambiguïté ou une incohérence est refusée. Les lignes historiques
+sans provenance restent bloquées par le contrôle financier à la préparation.
+La libération Qualité et les conditions de paiement sont toujours revérifiées
+avant toute préparation ou expédition.
+
 ## Patch
 
 `db/patches/20260724_expedition_deliveries_226.sql` et ses scripts
