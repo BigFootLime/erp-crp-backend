@@ -135,6 +135,16 @@ describe("#446 Base OLD corrective guards", () => {
     expect(historicalPieceSource).not.toContain("'EN_DEVIS'");
   });
 
+  it("uses native text columns and holds imported OLD lots pending quality release", () => {
+    const positionStart = stockRepository.indexOf("async function ensureHistoricalPositionTx");
+    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
+    const historicalPositionAndImport = stockRepository.slice(positionStart, historicalImportEnd);
+
+    expect(positionStart).toBeGreaterThanOrEqual(0);
+    expect(historicalPositionAndImport).not.toContain("::citext");
+    expect(historicalPositionAndImport).toContain("lot_status, piece_technique_version_id");
+    expect(historicalPositionAndImport).toContain("'EN_ATTENTE'");
+  });
   it("keeps OLD imports independent from orders, affairs and fabrication orders", () => {
     const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
     const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
