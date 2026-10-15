@@ -113,7 +113,7 @@ export async function projectDirectoryProfile(db:Pool,raw:DirectoryProfile,assur
   await tx.query('COMMIT');return {id:row.id,session_epoch:Number(epoch)};
  }catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
 }
-export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?:{ip:string|null;user_agent:string|null;device_type:string|null;os:string|null;browser:string|null}):Promise<Record<string,unknown>>{
+export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?:{ip:string|null;user_agent:string|null;device_type:string|null;os:string|null;browser:string|null},sessionStartedAt?:number):Promise<Record<string,unknown>>{
  const value=result as {directory_session?:string;identity?:DirectorySession;recovery_codes?:string[]};
  if(!value.directory_session){
   const challenge=result as {status?:string;challenge_token?:string;token?:string};
@@ -122,7 +122,7 @@ export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?
  }
  const identity=directorySessionSchema.parse(value.identity),projection=await projectDirectoryIdentity(db,identity);
  if(meta)await insertLoginLog({user_id:projection.id,username_attempt:identity.username,success:true,...meta});
- return {...issueSessionToken({id:projection.id,username:identity.username,email:identity.email,role:identity.role,roles:identity.roles,avatar_key:identity.avatar_key,profile_picture_asset_id:identity.avatar_asset_id,realtime_session_epoch:projection.session_epoch},{factorId:identity.mfa_factor_id,factorVersion:identity.mfa_factor_version,verifiedAt:new Date(identity.mfa_verified_at),method:identity.mfa_method}, {session:value.directory_session,profileId:identity.profile_id,membershipVersion:identity.membership_version,globalEpoch:identity.global_session_epoch}),...(value.recovery_codes?{recovery_codes:value.recovery_codes}:{})};
+ return {...issueSessionToken({id:projection.id,username:identity.username,email:identity.email,role:identity.role,roles:identity.roles,avatar_key:identity.avatar_key,profile_picture_asset_id:identity.avatar_asset_id,realtime_session_epoch:projection.session_epoch},{factorId:identity.mfa_factor_id,factorVersion:identity.mfa_factor_version,verifiedAt:new Date(identity.mfa_verified_at),method:identity.mfa_method}, {session:value.directory_session,profileId:identity.profile_id,membershipVersion:identity.membership_version,globalEpoch:identity.global_session_epoch},sessionStartedAt),...(value.recovery_codes?{recovery_codes:value.recovery_codes}:{})};
 }
 export async function validateSiteDirectoryToken(db:Pool,claims:{id:number;directory_session?:string;directory_profile_id?:string;directory_global_epoch?:number;directory_membership_version?:number;mfa_factor_id?:string;mfa_factor_version?:number;session_epoch?:number}){
  if(!client||!claims.directory_session)throw new Error('DIRECTORY_SESSION_REQUIRED');

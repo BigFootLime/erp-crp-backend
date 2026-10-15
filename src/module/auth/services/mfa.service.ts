@@ -611,7 +611,7 @@ export async function getMfaStatus(userId: number) {
     enrolled_at: row.enrolled_at?.toISOString() ?? null,
     locked_until: row.locked_until?.toISOString() ?? null,
     recovery_codes_remaining: Number.parseInt(row.recovery_codes_remaining, 10),
-    can_enroll: !enrolled && (row.mfa_reenrollment_required || policy !== "disabled"),
+    can_enroll: !enrolled && (row.mfa_reenrollment_required || policyRequired || policy !== "disabled"),
     can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin, row.role, row.roles),
   };
 }
@@ -629,7 +629,7 @@ export async function beginOwnMfaEnrollment(
       return { ok: false as const, status: 401, code: "AUTH_INVALID", message: "Identifiants invalides" };
     }
     const policy = await loadMfaPolicy(tx);
-    if (policy === "disabled") {
+    if (policy === "disabled" && !policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles)) {
       return { ok: false as const, status: 409, code: "MFA_DISABLED", message: "L'enrôlement MFA est désactivé par la politique de l'organisation." };
     }
     if (await loadFactor(tx, userId, "ACTIVE", true)) {
@@ -688,7 +688,7 @@ async function authenticatedMutation<T>(
   return outcome.value;
 }
 
-export async function stepUpMfa(userId: number, code: string, meta: MfaAuditMeta) {
+export async function stepUpMfa(userId: number, code: string, meta: MfaAuditMeta, sessionStartedAt?: number) {
   const client = await pool.connect();
   const outcome = await withRealtimeOutboxTransaction(client, async (tx) => {
     const user = await loadUser(tx, userId, true);
@@ -708,7 +708,7 @@ export async function stepUpMfa(userId: number, code: string, meta: MfaAuditMeta
     factorVersion: outcome.factor.version,
     verifiedAt: new Date(),
     method: outcome.method,
-  });
+  }, undefined, sessionStartedAt);
 }
 
 export async function beginMfaReplacement(

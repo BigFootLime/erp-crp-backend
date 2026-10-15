@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("pg", () => {
   const pool = { on: vi.fn(), query: mocks.poolQuery, connect: vi.fn() };
-  return { Pool: vi.fn(() => pool) };
+  return { Pool: vi.fn(function () { return pool; }) };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

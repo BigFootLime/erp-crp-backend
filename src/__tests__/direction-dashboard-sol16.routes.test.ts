@@ -1,9 +1,12 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import { EventEmitter } from "events";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   poolQuery: vi.fn(),
+  currentRights: { value: [] as readonly import("../module/access-control/domain/sensitive-capabilities").SensitiveCapability[] },
   poolConnect: vi.fn(),
   currentRole: { value: "Directeur" as string | null },
 }));
@@ -15,7 +18,7 @@ vi.mock("pg", () => {
     query: mocks.poolQuery,
     connect: mocks.poolConnect,
   };
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({
@@ -42,6 +45,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
       email: "direction@test.invalid",
       role: mocks.currentRole.value,
     };
+    attachSensitiveAccountFixture(req as import("express").Request, mocks.currentRights.value);
     next();
   },
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -55,6 +59,7 @@ beforeEach(() => {
   mocks.poolQuery.mockReset();
   mocks.poolConnect.mockReset();
   mocks.currentRole.value = "Directeur";
+    mocks.currentRights.value = ALL_FIXTURE_SENSITIVE_RIGHTS;
   mocks.poolQuery.mockResolvedValue({ rows: [] });
 });
 
@@ -66,7 +71,7 @@ describe("SOL-16 cockpit Direction RBAC", () => {
 
   it("refuse un utilisateur standard et une secrétaire", async () => {
     for (const role of ["Operateur", "Secretaire"]) {
-      mocks.currentRole.value = role;
+      mocks.currentRole.value = role; mocks.currentRights.value = [];
       const response = await request(app).get(ENDPOINT);
       expect(response.status).toBe(403);
       expect(response.body?.code ?? response.body?.error).toBeTruthy();

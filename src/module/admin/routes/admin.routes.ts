@@ -3,11 +3,14 @@ import { Router } from "express";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
+import { requireSensitiveCapability } from "../../access-control/middlewares/sensitive-capability.middleware";
 import {
   createPasswordResetTokenAdmin,
   createAccountInvitationAdmin,
   createUserAdmin,
   getUserAdmin,
+  getPrivateUserProfile,
+  patchPrivateUserProfile,
   listRolesAdmin,
   listUsersAdmin,
   listLoginLogsAdmin,
@@ -26,6 +29,8 @@ const router = Router();
 const avatarUpload = createSecureUpload('image', {maxFiles:1});
 
 router.use(authenticateToken);
+router.get("/users/:id/private-profile", requireSensitiveCapability("hr.sensitive.read"), getPrivateUserProfile);
+router.patch("/users/:id/private-profile", requireSensitiveCapability("hr.sensitive.write"), patchPrivateUserProfile);
 // Account administration is a sensitive exception to the open-by-default
 // module model. The live database marker is authoritative; role labels and a
 // granted Administration module can never authorize account provisioning.

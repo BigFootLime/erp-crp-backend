@@ -91,8 +91,9 @@ export const status = asyncHandler(async (req: Request, res: Response) => {
 
 export const stepUp = asyncHandler(async (req: Request, res: Response) => {
   const body = stepUpMfaSchema.parse(req.body);
-  const shared=await sharedOperation(req,'mfa-step-up',body);if(shared)return res.status(200).json(await directoryAuthenticationResult(pool,shared.value));
-  return res.status(200).json(await stepUpMfa(authenticatedUserId(req), body.code, meta(req)));
+  const startedAt = req.user?.session_started_at ?? req.user?.iat;
+  const shared=await sharedOperation(req,'mfa-step-up',body);if(shared)return res.status(200).json(await directoryAuthenticationResult(pool,shared.value,undefined,startedAt));
+  return res.status(200).json(await stepUpMfa(authenticatedUserId(req), body.code, meta(req), startedAt));
 });
 
 export const startEnrollment = asyncHandler(async (req: Request, res: Response) => {

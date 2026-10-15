@@ -13,7 +13,7 @@ vi.mock('pg', () => {
     const emitter = new EventEmitter()
 
     return {
-        Pool: vi.fn(() => emitter),
+        Pool: vi.fn(function () { return emitter; }),
         __emitter__: emitter,
     }
 })

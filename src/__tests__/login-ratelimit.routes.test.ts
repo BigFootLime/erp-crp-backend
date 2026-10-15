@@ -6,7 +6,7 @@ const rateLimitState = vi.hoisted(() => ({ loginChecks: 0 }));
 // Fichier isolé : les maps de rate-limit (module-level) sont fraîches dans ce worker vitest.
 vi.mock("pg", () => {
   const pool = { on: vi.fn(), query: vi.fn().mockResolvedValue({ rows: [] }), connect: vi.fn() };
-  return { Pool: vi.fn(() => pool) };
+  return { Pool: vi.fn(function () { return pool; }) };
 });
 vi.mock("../utils/checkNetworkDrive", () => ({ checkNetworkDrive: vi.fn(() => Promise.resolve()) }));
 vi.mock("../module/auth/services/auth.service", () => ({

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import crypto from "node:crypto";
 
 import {
   assertMfaStartupConfiguration,
@@ -67,8 +68,19 @@ describe("SOL-32 MFA cryptography", () => {
     );
     expect(() => assertMfaStartupConfiguration({
       NODE_ENV: "production",
-      MFA_ROOT_KEY: "33".repeat(32),
+      MFA_ROOT_KEY: crypto.randomBytes(32).toString("hex"),
       MFA_KEY_ID: "production-v1",
     })).not.toThrow();
+  });
+
+  it("requires private key material in development and refuses the published fixture key", () => {
+    expect(() => assertMfaStartupConfiguration({ NODE_ENV: "development" })).toThrow(/required/);
+    expect(() => assertMfaStartupConfiguration({})).toThrow(/required/);
+    const fixtureKey = "9ddf1be3a6d4ae10ce5f4d410dd82f30a0e15b5de8388e251ad95ce87eb5206b";
+    expect(() => assertMfaStartupConfiguration({ NODE_ENV: "development", MFA_ROOT_KEY: fixtureKey })).toThrow(/disposable/);
+    expect(() => assertMfaStartupConfiguration({ NODE_ENV: "test" })).not.toThrow();
+  });
+  it.each(["00", "11", "33"])("refuses uniform demonstration keys outside tests: %s", byte => {
+    expect(() => assertMfaStartupConfiguration({ NODE_ENV: "production", MFA_ROOT_KEY: byte.repeat(32) })).toThrow(/disposable/);
   });
 });

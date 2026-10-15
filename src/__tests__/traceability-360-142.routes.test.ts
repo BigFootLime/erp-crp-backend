@@ -1,3 +1,6 @@
+// This suite exercises the historical route contract. Global module authorization is
+// exercised with the real gate in access-control.gate.test.ts, including missing-schema refusal.
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({ moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next() }));
 // #142 — Surface HTTP Traçabilité 360 : authentification, RBAC refusé par
 // défaut, anti-IDOR, validation stricte, non-fuite de chemin de stockage et
 // compatibilité du contrat historique.
@@ -25,7 +28,7 @@ vi.mock("pg", () => {
     query: mocks.clientQuery,
     release: mocks.clientRelease,
   });
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

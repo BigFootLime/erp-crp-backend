@@ -15,8 +15,6 @@ export type EncryptedMfaSecret = {
   keyId: string;
 };
 
-let warnedAboutFallback = false;
-
 function rootKey(env: NodeJS.ProcessEnv = process.env): Buffer {
   const raw = env.MFA_ROOT_KEY?.trim();
   if (raw) {
@@ -26,17 +24,13 @@ function rootKey(env: NodeJS.ProcessEnv = process.env): Buffer {
     if (decoded.length !== 32) {
       throw new Error("MFA_ROOT_KEY must encode exactly 32 bytes");
     }
+    if (env.NODE_ENV !== "test" && (crypto.timingSafeEqual(decoded, NON_PRODUCTION_ROOT_KEY) || decoded.every(byte => byte === decoded[0]))) {
+      throw new Error("The disposable test MFA key cannot protect persistent accounts");
+    }
     return decoded;
   }
-  if (env.NODE_ENV === "production") {
-    throw new Error("MFA_ROOT_KEY is required in production");
-  }
-  if (!warnedAboutFallback && env.NODE_ENV !== "test") {
-    warnedAboutFallback = true;
-    console.warn(JSON.stringify({
-      type: "mfa_non_production_key",
-      message: "MFA_ROOT_KEY is absent; the disposable non-production key is active",
-    }));
+  if (env.NODE_ENV !== "test") {
+    throw new Error("MFA_ROOT_KEY is required outside isolated tests");
   }
   return NON_PRODUCTION_ROOT_KEY;
 }

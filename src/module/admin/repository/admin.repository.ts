@@ -387,10 +387,10 @@ export async function repoListUsers(): Promise<AdminUserListRow[]> {
         u.status,
         u.last_login::text AS last_login,
         (
-          u.tel_no IS NULL
-          OR u.address IS NULL
-          OR u.date_of_birth IS NULL
-          OR u.social_security_number IS NULL
+          NULLIF(btrim(u.username), '') IS NULL
+          OR NULLIF(btrim(u.name), '') IS NULL
+          OR NULLIF(btrim(u.surname), '') IS NULL
+          OR NULLIF(btrim(u.email), '') IS NULL
         ) AS profile_incomplete
       FROM public.users u
       LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
@@ -405,7 +405,7 @@ type AdminUserDetailDbRow = Omit<AdminUserDetailRow, "profile_picture" | "profil
   profile_picture: string | null;
 };
 
-export async function repoGetUserById(userId: number): Promise<AdminUserDetailRow | null> {
+export async function repoGetUserById(userId: number, includePrivateProfile = false): Promise<AdminUserDetailRow | null> {
   const superadminIds = await readSuperadminIds();
   const { rows } = await pool.query<AdminUserDetailDbRow>(
     `
@@ -431,27 +431,27 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
         u.house_no,
         u.postcode,
         u.country,
-        u.salary::float AS salary,
-        u.date_of_birth::text AS date_of_birth,
+        CASE WHEN $2::boolean THEN u.salary::float ELSE NULL END AS salary,
+        CASE WHEN $2::boolean THEN u.date_of_birth::text ELSE NULL END AS date_of_birth,
         u.employment_date::text AS employment_date,
         u.employment_end_date::text AS employment_end_date,
-        u.national_id,
+        CASE WHEN $2::boolean THEN u.national_id ELSE NULL END AS national_id,
         u.profile_picture,
         u.last_login::text AS last_login,
         u.status,
         u.created_at::text AS created_at,
-        u.social_security_number,
+        CASE WHEN $2::boolean THEN u.social_security_number ELSE NULL END AS social_security_number,
         (
-          u.tel_no IS NULL
-          OR u.address IS NULL
-          OR u.date_of_birth IS NULL
-          OR u.social_security_number IS NULL
+          NULLIF(btrim(u.username), '') IS NULL
+          OR NULLIF(btrim(u.name), '') IS NULL
+          OR NULLIF(btrim(u.surname), '') IS NULL
+          OR NULLIF(btrim(u.email), '') IS NULL
         ) AS profile_incomplete
       FROM public.users u
       WHERE u.id = $1
       LIMIT 1
     `,
-    [userId]
+    [userId, includePrivateProfile]
   );
   const row = rows[0];
   if (!row) return null;

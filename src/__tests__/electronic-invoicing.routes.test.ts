@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,13 +42,14 @@ import electronicInvoiceWebhookRoutes from "../module/facturation/electronic-inv
 import factureRoutes from "../module/facturation/routes/factures.routes";
 import avoirRoutes from "../module/facturation/routes/avoirs.routes";
 
-function financeApp(options: { role?: string; authenticated?: boolean } = {}) {
+function financeApp(options: { role?: string; authenticated?: boolean; rights?: ReadonlyArray<(typeof ALL_FIXTURE_SENSITIVE_RIGHTS)[number]> } = {}) {
   const app = express();
   app.use(express.json());
   app.use(((req, _res, next) => {
     if (options.authenticated !== false) {
       req.user = { id: 7, username: "finance", email: "finance@test.invalid", role: options.role ?? "Comptable" };
     }
+    attachSensitiveAccountFixture(req, options.rights ?? ALL_FIXTURE_SENSITIVE_RIGHTS);
     req.requestId = "request-sol26";
     req.correlationId = "correlation-sol26";
     next();
@@ -116,25 +119,25 @@ describe("SOL-26 electronic invoicing HTTP boundary", () => {
   });
 
   it("keeps submission forbidden for the technical administrator", async () => {
-    const response = await request(financeApp({ role: "Administrateur Systeme et Reseau" }))
+    const response = await request(financeApp({ role: "Administrateur Systeme et Reseau", rights: [] }))
       .post("/factures/42/electronic-invoicing/submissions")
       .set("Idempotency-Key", "einvoice-submit-42-003")
       .send({ format: "UBL" });
     expect(response.status).toBe(403);
-    expect(response.body).toMatchObject({ code: "FINANCE_CAPABILITY_REQUIRED" });
+    expect(response.body).toMatchObject({ code: "SENSITIVE_CAPABILITY_REQUIRED" });
     expect(mocks.queue).not.toHaveBeenCalled();
   });
 
   it("reserves SUPER PDP activation to an electronic-invoicing administrator", async () => {
     mocks.activate.mockResolvedValue({ providerCode: "super-pdp-sandbox", idempotent_replay: false });
-    const forbidden = await request(financeApp({ role: "Comptable" }))
+    const forbidden = await request(financeApp({ role: "Comptable", rights: [] }))
       .post("/factures/electronic-invoicing/provider-configuration/activate")
       .set("Idempotency-Key", "super-pdp-activate-001")
       .send({ formats: ["UBL", "CII"], qualification_reference: "sandbox-qualified-2026" });
     expect(forbidden.status).toBe(403);
     expect(mocks.activate).not.toHaveBeenCalled();
 
-    const allowed = await request(financeApp({ role: "Administrateur Systeme et Reseau" }))
+    const allowed = await request(financeApp({ role: "Administrateur Systeme et Reseau", rights: ["finance.einvoice_admin"] }))
       .post("/factures/electronic-invoicing/provider-configuration/activate")
       .set("Idempotency-Key", "super-pdp-activate-001")
       .send({ formats: ["UBL", "CII"], qualification_reference: "sandbox-qualified-2026" });

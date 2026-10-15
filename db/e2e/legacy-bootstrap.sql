@@ -40,6 +40,8 @@ CREATE TABLE public.users (
   name text NOT NULL DEFAULT '',
   surname text NOT NULL DEFAULT '',
   email text UNIQUE,
+  -- Historical avatar storage predates the additive avatar-key migration.
+  profile_picture text,
   tel_no text,
   role text NOT NULL DEFAULT 'Employee',
   gender text,

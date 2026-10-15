@@ -12,7 +12,8 @@ import {repoCreateStockReceipt,type AuditContext} from "./receptions.repository"
 import {hashStockCommand} from "../../stock/domain/stock-command";
 const audit:AuditContext={user_id:1,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:null,page_key:null,client_session_id:null};
 const request={qty:2,dst_magasin_id:"warehouse",dst_emplacement_id:1};
-let client:{query:ReturnType<typeof vi.fn>;release:ReturnType<typeof vi.fn>};
+type FixtureQuery = (sql:string, values?:unknown[]) => Promise<{rows:Record<string,unknown>[]}>
+let client:{query:ReturnType<typeof vi.fn<FixtureQuery>>;release:ReturnType<typeof vi.fn>};
 beforeEach(()=>{
   vi.clearAllMocks();
   client={release:vi.fn(),query:vi.fn(async(sql:string,_values?:unknown[])=>{

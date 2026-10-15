@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, it, expect, vi } from "vitest";
 // NOTE: on ne mocke PAS auth.middleware ici — on veut le vrai comportement default-deny.
 vi.mock("pg", () => {
   const pool = { on: vi.fn(), query: vi.fn(), connect: vi.fn() };
-  return { Pool: vi.fn(() => pool) };
+  return { Pool: vi.fn(function () { return pool; }) };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

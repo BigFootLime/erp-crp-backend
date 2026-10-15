@@ -1,3 +1,6 @@
+// This suite exercises the historical route contract. Global module authorization is
+// exercised with the real gate in access-control.gate.test.ts, including missing-schema refusal.
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({ moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next() }));
 // Surface HTTP Métrologie 360 (#229) : RBAC refusé par défaut, validation
 // stricte, verrou optimiste obligatoire et non-fuite des chemins de stockage.
 
@@ -24,7 +27,7 @@ vi.mock("pg", () => {
     query: mocks.clientQuery,
     release: mocks.clientRelease,
   });
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({
