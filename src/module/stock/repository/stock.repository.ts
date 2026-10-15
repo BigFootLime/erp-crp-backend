@@ -6065,7 +6065,7 @@ async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { cli
   const id = crypto.randomUUID();
   await client.query(
     `INSERT INTO public.pieces_techniques (id, root_piece_technique_id, version_number, client_id, created_by, updated_by, famille_id, name_piece, code_piece, designation, prix_unitaire, statut, en_fabrication, code_client, client_name)
-     VALUES ($1::uuid,$1::uuid,1,$2,$3,$3,NULL,$4,$5,$4,0,'DRAFT',0,$6,$7)`,
+     VALUES ($1::uuid,$1::uuid,1,$2,$3,$3,NULL,$4,$5,$4,0,'DRAFT',false,$6,$7)`,
     [id, c.client_id, audit.user_id, input.designation, code, c.client_code, c.company_name]
   );
   await client.query(
