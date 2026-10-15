@@ -373,6 +373,9 @@ describe("DRAFT quarantine quality-scope allocation", () => {
         }] }
       }
       if (sql.includes("FROM public.bon_livraison_pack_versions")) return { rows: [] }
+      if (sql.includes("WITH canonical_source_orders AS")) {
+        return { rows: [{ commande_id: "12", order_type: "INTERNE", ar_sent_at: null }] }
+      }
       throw new Error(`Unexpected SQL: ${sql}`)
     })
 
