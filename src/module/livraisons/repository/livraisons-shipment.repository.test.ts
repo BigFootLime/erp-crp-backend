@@ -17,6 +17,7 @@ vi.mock("../services/delivery-authoritative-document", () => ({
 }));
 
 import {
+  hasMissingCustomerAcknowledgement,
   prepareLivraisonInTransaction,
   releaseLivraisonReservationsInTransaction,
 } from "./livraisons-shipment.repository";
@@ -30,6 +31,23 @@ const shipmentRepositorySource = readFileSync(
   resolve(repoRoot, "src/module/livraisons/repository/livraisons-shipment.repository.ts"),
   "utf8"
 );
+
+describe("mixed-delivery customer acknowledgement gate (#1357)", () => {
+  it("blocks shipment when one canonical customer order still lacks its AR", () => {
+    expect(hasMissingCustomerAcknowledgement([
+      { commande_id: "101", order_type: "FERME", ar_sent_at: "2026-10-15T08:00:00.000Z" },
+      { commande_id: "102", order_type: "FERME", ar_sent_at: null },
+    ])).toBe(true)
+  })
+
+  it("allows two sent customer ARs and keeps the INTERNE exception", () => {
+    expect(hasMissingCustomerAcknowledgement([
+      { commande_id: "101", order_type: "FERME", ar_sent_at: "2026-10-15T08:00:00.000Z" },
+      { commande_id: "102", order_type: "FERME", ar_sent_at: "2026-10-15T08:01:00.000Z" },
+      { commande_id: "103", order_type: "INTERNE", ar_sent_at: null },
+    ])).toBe(false)
+  })
+})
 
 describe("shipment stock movement audit contract", () => {
   it("writes the canonical stock_movement_id audit column", () => {
