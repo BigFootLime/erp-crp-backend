@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Disponibilité des sessions annuaire (#1341)
+
+- Éviter les transactions de projection répétées pour un profil inchangé, après validation de session auprès de l'autorité, et synchroniser les sociétés seulement lorsque leur révision change.
+- Conserver une session valide lors d'une panne technique : refus HTTP 503 au lieu d'une fausse expiration HTTP 401. Renouvellement atomique des présences actives ; récupération et transitions toujours verrouillées.
+- Correctif serveur sans migration ni modification des habilitations, distinct de la remédiation d'audit complète. Recette et promotion du commit exact décrites dans `docs/runbooks/directory-session-availability-1341.md`.
+
 ## Préparé — Mon compte et avatar (#1338 / frontend #1582)
 
 - API personnelle strictement limitée au compte connecté : nom/prénom, email, téléphone et avatar prédéfini ; annuaire partagé et audit conservés. Retour possible d’une image importée à un personnage, sans effacer les médias historiques.
