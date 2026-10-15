@@ -45,6 +45,14 @@ export const adminUserIdParamSchema = z.object({
   params: z.object({ id: userIdParam }),
 });
 
+export const adminAdministrativeLevelSchema = z.object({
+  params: z.object({ id: userIdParam }),
+  body: z.object({
+    is_superadmin: z.boolean(),
+    expected_version: z.number().int().nonnegative().safe(),
+  }).strict(),
+});
+
 const userCoreObject = z
   .object({
     username: usernameSchema,

@@ -4,6 +4,7 @@ import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { bumpRealtimeAuthorizationEpoch } from "../../../shared/realtime/realtime-control-plane";
 import { findAuthenticatedAccountState } from "../../auth/repository/auth.repository";
+import { sharedDirectoryClient } from "../../../shared-directory/site-runtime";
 import { SENSITIVE_CAPABILITIES, type SensitiveCapability } from "../domain/sensitive-capabilities";
 import { withTransaction } from "../repository/access-control.repository";
 import type { AccessAuditContext } from "../types/access-control.types";
@@ -28,6 +29,60 @@ export const sensitiveCapabilityMutationSchema = z.object({
   body: z.object({ granted: z.boolean(), expected_version: z.number().int().nonnegative().safe() }).strict(),
 });
 type GrantRow = { capability: SensitiveCapability; granted: boolean; version: string };
+const directoryTargetAssuranceSchema = z.object({
+  profile: z.object({ status: z.string(), mfa_reenrollment_required: z.boolean() }),
+  mfa_factor_id: z.string().uuid().nullable(),
+}).passthrough();
+const directoryAdminAssuranceSchema = z.object({
+  profile: z.object({ status: z.string(), is_superadmin: z.boolean(), mfa_reenrollment_required: z.boolean() }),
+  mfa_factor_id: z.string().uuid().nullable(),
+}).passthrough();
+
+async function assertSensitiveGrantActorAssured(directoryProfileId?: string | null) {
+  const directory = sharedDirectoryClient();
+  if (!directory) return;
+  if (!directoryProfileId) throw new HttpError(403, "FORBIDDEN", "Accès interdit.");
+  let source: z.infer<typeof directoryAdminAssuranceSchema>;
+  try {
+    source = directoryAdminAssuranceSchema.parse(await directory.call("validate-actor", { profile_id: directoryProfileId }));
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    if (status === 401 || status === 403 || status === 404) {
+      throw new HttpError(403, "FORBIDDEN", "Accès interdit.");
+    }
+    throw error;
+  }
+  if (source.profile.status !== "Active" || !source.profile.is_superadmin || source.profile.mfa_reenrollment_required || !source.mfa_factor_id) {
+    throw new HttpError(403, "FORBIDDEN", "Accès interdit.");
+  }
+}
+
+async function assertSensitiveGrantTargetAssured(userId: number, directoryProfileId?: string | null) {
+  const directory = sharedDirectoryClient();
+  if (directory) {
+    if (!directoryProfileId) {
+      throw new HttpError(409, "SENSITIVE_ACCESS_CANONICAL_PROFILE_REQUIRED", "Le compte doit d'abord être associé à l'annuaire avant cette habilitation.");
+    }
+    let source: z.infer<typeof directoryTargetAssuranceSchema>;
+    try {
+      source = directoryTargetAssuranceSchema.parse(await directory.call("validate-actor", { profile_id: directoryProfileId }));
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 401 || status === 403 || status === 404) {
+        throw new HttpError(409, "SENSITIVE_ACCESS_MFA_REQUIRED", "Le compte doit être actif et avoir activé sa double authentification avant cette habilitation.");
+      }
+      throw error;
+    }
+    if (source.profile.status !== "Active" || source.profile.mfa_reenrollment_required || !source.mfa_factor_id) {
+      throw new HttpError(409, "SENSITIVE_ACCESS_MFA_REQUIRED", "Le compte doit être actif et avoir activé sa double authentification avant cette habilitation.");
+    }
+    return;
+  }
+  const targetState = await findAuthenticatedAccountState(userId);
+  if (!targetState || targetState.status !== "Active" || !targetState.mfa_factor_id) {
+    throw new HttpError(409, "SENSITIVE_ACCESS_MFA_REQUIRED", "Le compte doit être actif et avoir activé sa double authentification avant cette habilitation.");
+  }
+}
 export async function getSensitiveCapabilityOverview(userId: number) {
   const account = (await pool.query<{ status: string; is_superadmin: boolean }>(
     "SELECT status, COALESCE(is_superadmin, false) AS is_superadmin FROM public.users WHERE id=$1", [userId],
@@ -44,21 +99,24 @@ export async function getSensitiveCapabilityOverview(userId: number) {
 }
 export async function setSensitiveCapability(input: z.infer<typeof sensitiveCapabilityMutationSchema>, audit: AccessAuditContext) {
   const { userId, capability } = input.params;
-  const targetState = await findAuthenticatedAccountState(userId);
-  if (input.body.granted && (!targetState || targetState.status !== "Active" || !targetState.mfa_factor_id)) {
-    throw new HttpError(409, "SENSITIVE_ACCESS_MFA_REQUIRED", "Le compte doit être actif et avoir activé sa double authentification avant cette habilitation.");
-  }
+  // Local MFA is authoritative only when the shared directory is disabled. With
+  // a directory, the locked recheck below uses the canonical profile id.
+  if (input.body.granted && !sharedDirectoryClient()) await assertSensitiveGrantTargetAssured(userId);
   await withTransaction(async tx => {
-    const actor = (await tx.query<{ is_superadmin: boolean; status: string }>(
-      "SELECT status, COALESCE(is_superadmin, false) AS is_superadmin FROM public.users WHERE id=$1 FOR SHARE", [audit.user_id],
+    const actor = (await tx.query<{ is_superadmin: boolean; status: string; directory_profile_id: string | null }>(
+      "SELECT status, COALESCE(is_superadmin, false) AS is_superadmin, directory_profile_id FROM public.users WHERE id=$1 FOR SHARE", [audit.user_id],
     )).rows[0];
     if (!actor?.is_superadmin || actor.status !== "Active") throw new HttpError(403, "FORBIDDEN", "Accès interdit.");
-    const target = (await tx.query<{ is_superadmin: boolean; status: string }>(
-      "SELECT status, COALESCE(is_superadmin, false) AS is_superadmin FROM public.users WHERE id=$1 FOR UPDATE", [userId],
+    const target = (await tx.query<{ is_superadmin: boolean; status: string; directory_profile_id: string | null }>(
+      "SELECT status, COALESCE(is_superadmin, false) AS is_superadmin, directory_profile_id FROM public.users WHERE id=$1 FOR UPDATE", [userId],
     )).rows[0];
     if (!target) throw new HttpError(404, "USER_NOT_FOUND", "Compte introuvable.");
     if (target.is_superadmin) throw new HttpError(409, "SUPERADMIN_CAPABILITIES_PROTECTED", "Les droits du compte de récupération ne se modifient pas dans cette matrice.");
     if (input.body.granted && target.status !== "Active") throw new HttpError(409, "ACCOUNT_INACTIVE", "Le compte doit être actif.");
+    // Direct authority read only: projecting here could deadlock on the locked local account rows.
+    await assertSensitiveGrantActorAssured(actor.directory_profile_id);
+    // Recheck after the target row lock: a factor may have been revoked after the preflight.
+    if (input.body.granted) await assertSensitiveGrantTargetAssured(userId, target.directory_profile_id);
     const current = (await tx.query<GrantRow>(
       "SELECT capability, granted, version::text AS version FROM public.app_user_sensitive_capabilities WHERE user_id=$1 AND capability=$2 FOR UPDATE", [userId, capability],
     )).rows[0];

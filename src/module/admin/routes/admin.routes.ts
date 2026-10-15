@@ -18,6 +18,7 @@ import {
   recoverUserAccountAdmin,
   getAdminAnalytics,
   patchUserAdmin,
+  patchAdministrativeLevelAdmin,
   getErpSettingAdmin,
   upsertErpSettingAdmin,
 } from "../controllers/admin.controller";
@@ -43,6 +44,7 @@ router.get("/users/:id", getUserAdmin);
 router.post("/users", createUserAdmin);
 router.put('/users/:id/avatar', avatarUpload.single('avatar'), uploadAdminUserAvatar);
 router.patch("/users/:id", patchUserAdmin);
+router.patch("/users/:id/administrative-level", patchAdministrativeLevelAdmin);
 router.post("/users/:id/invitations", createAccountInvitationAdmin);
 
 router.get("/login-logs", listLoginLogsAdmin);

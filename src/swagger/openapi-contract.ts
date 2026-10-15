@@ -225,6 +225,19 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
+  if (key === "patch /admin/users/{id}/administrative-level") {
+    operation.summary = "Modifier le statut SuperAdmin canonique";
+    operation.description = "Depuis Production, un SuperAdmin actif avec une confirmation MFA récente peut modifier le statut canonique du compte ciblé. La version attendue protège les modifications concurrentes ; le dernier propriétaire actif avec MFA est conservé et l'auto-retrait est refusé. La réponse contient le compte actualisé et le marqueur changed. Les habilitations métier sont gérées séparément.";
+    operation.requestBody = { required: true, content: { "application/json": { schema: {
+      type: "object", additionalProperties: false, required: ["is_superadmin", "expected_version"],
+      properties: { is_superadmin: { type: "boolean" }, expected_version: { type: "integer", minimum: 0 } },
+    } } } };
+    operation.responses = { ...(operation.responses as OpenApiObject),
+      "404": { description: "Compte ou profil annuaire introuvable." },
+      "428": { description: "Confirmation MFA récente requise avant toute modification." },
+      "503": { description: "Autorité commune indisponible ; aucune modification effectuée." },
+    };
+  }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
   return proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))));
 }

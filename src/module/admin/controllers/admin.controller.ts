@@ -9,7 +9,7 @@ import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as adminService from "../services/admin.service";
 import pool from '../../../config/database';
 import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
-import {directoryAdminList,directoryAdminUser,directoryAdminToken,directoryAdminCall,directoryTargetId} from '../../../shared-directory/admin.facade';
+import {directoryAdminList,directoryAdminUser,directoryAdminToken,directoryAdminCall,directoryTargetId,directoryAdminSuperadmin} from '../../../shared-directory/admin.facade';
 import { recoverAccountBySuperadmin } from "../services/account-recovery.service";
 import {
   adminCreateUserSchema,
@@ -17,6 +17,7 @@ import {
   adminCreatePasswordResetSchema,
   adminRecoverAccountSchema,
   adminUpdateUserSchema,
+  adminAdministrativeLevelSchema,
   adminUserIdParamSchema,
   adminErpSettingKeySchema,
   adminUpsertErpSettingSchema,
@@ -92,6 +93,13 @@ export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const user = await adminService.updateUserByAdmin(userId, dto.body, req.user.id);
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
+});
+
+export const patchAdministrativeLevelAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto=adminAdministrativeLevelSchema.parse({params:req.params,body:req.body});
+  if(!sharedDirectoryClient())throw new HttpError(409,'DIRECTORY_AUTHORITY_REQUIRED','Cette modification exige l’annuaire commun.');
+  res.setHeader('Cache-Control','no-store');
+  res.json(await directoryAdminSuperadmin(pool,req,Number(dto.params.id),dto.body));
 });
 
 export const getPrivateUserProfile: RequestHandler = asyncHandler(async (req, res) => {
