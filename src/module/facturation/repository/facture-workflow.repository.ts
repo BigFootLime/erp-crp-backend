@@ -1505,6 +1505,11 @@ export async function repoIssueFacture(params: {
     // Les mentions legales sont figees **a l'emission**, pas a la creation du brouillon.
     // Un brouillon peut vivre des semaines ; si le taux de penalite ou le capital change
     // entre-temps, la facture doit porter ce qui est en vigueur le jour ou elle est emise.
+    const advanceClearing = await freezeAdvanceClearing(
+      client,
+      params.factureId,
+      preview.prepayments?.amount_paid ?? "0.00"
+    );
     const snapshot: FinanceDocumentSnapshot = {
       document_type: "FACTURE",
       invoice_type_code:preview.lines.every(line=>line.source_type==='DEPOSIT')?'386':'380',
@@ -1520,7 +1525,7 @@ export async function repoIssueFacture(params: {
       lines: preview.lines,
       totals: preview.totals,
       prepayments: preview.prepayments,
-      advance_clearing: await freezeAdvanceClearing(client, params.factureId, preview.prepayments?.amount_paid ?? "0.00"),
+      ...(advanceClearing === undefined ? {} : { advance_clearing: advanceClearing }),
       tax_breakdown: preview.tax_breakdown,
       internal_comment: facture.commentaires,
       customer_text: facture.customer_text,
