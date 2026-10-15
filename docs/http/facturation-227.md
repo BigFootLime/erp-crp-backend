@@ -35,6 +35,11 @@ total TTC calculé par le serveur. Le brouillon exige le `preview_hash`.
 Validation et émission portent `expected_version`; l'émission porte également
 le hash et `confirm: true`.
 
+Sans acompte réglé, l'instantané fiscal immuable n'inclut pas de rubrique de
+lettrage d'acompte. Lorsqu'un lettrage existe, il est conservé tel quel dans
+l'instantané et dans l'archive PDF autoritative : aucune valeur `undefined`
+n'est admise par la canonicalisation qui protège cette archive.
+
 Statuts : `DRAFT → PENDING_VALIDATION → APPROVED → ISSUED`. Les états de
 paiement sont dérivés des allocations; une facture émise n'est jamais
 réécrite ni supprimée.
