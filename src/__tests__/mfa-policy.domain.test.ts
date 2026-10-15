@@ -15,8 +15,8 @@ describe("MFA policy", () => {
   });
 
   it.each([
-    ["disabled", true, false],
-    ["optional", true, false],
+    ["disabled", true, true],
+    ["optional", true, true],
     ["required_for_admins", false, false],
     ["required_for_admins", true, true],
     ["required_for_all", false, true],
@@ -47,7 +47,7 @@ describe("MFA policy", () => {
 
   it.each([
     ["disabled", false, true],
-    ["optional", true, true],
+    ["optional", true, false],
     ["required_for_admins", false, true],
     ["required_for_admins", true, false],
     ["required_for_all", false, false],

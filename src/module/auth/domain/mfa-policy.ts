@@ -25,6 +25,9 @@ export function policyRequiresMfa(
   role?: string | null,
   roles?: readonly string[] | null,
 ): boolean {
+  // Recovery and permission administration cannot be downgraded by a global
+  // preference intended for ordinary accounts.
+  if (isSuperadmin) return true;
   if (policy === "required_for_all") return true;
   if (policy === "required_for_admins") return isSuperadmin || hasPrivilegedAssignedRole(role, roles);
   return false;

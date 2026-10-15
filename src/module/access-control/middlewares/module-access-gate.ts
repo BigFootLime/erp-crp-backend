@@ -38,8 +38,7 @@ function warnKillSwitchOnce(): void {
 
 if (isGateDisabled()) warnKillSwitchOnce();
 
-// Une base sans le patch #326 ne doit pas briquer l'ERP entier : on laisse passer
-// et on le dit, une seule fois par processus pour ne pas noyer les journaux.
+// Missing authorization infrastructure is an operational failure, never a grant.
 let infrastructureWarned = false;
 
 function warnMissingInfrastructure(reason: string, moduleKey: string | null): void {
@@ -47,7 +46,7 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
   infrastructureWarned = true;
   console.warn(
     JSON.stringify({
-      type: "module_access_gate_open",
+      type: "module_access_infrastructure_unavailable",
       reason,
       module: moduleKey,
     })
@@ -78,7 +77,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
   if (!moduleKey) {
     // Les surfaces partagées authentifiées (utilisateurs, codes,
     // notifications, capabilities…) ne sont pas restrictibles par module.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared", elevated: true }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared", elevated: false }, next);
     return;
   }
 
@@ -94,7 +93,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     .then((profile) => {
       if (profile === null) {
         warnMissingInfrastructure("access_tables_missing", moduleKey);
-        next();
+        res.status(503).json({ error: "Le contrôle des accès est momentanément indisponible." });
         return;
       }
       if (profile.is_superadmin) {
@@ -107,7 +106,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
         // Le module existe dans le code mais pas dans le catalogue de la base :
         // même famille que l'absence de tables, on ne fabrique pas un refus.
         warnMissingInfrastructure("module_absent_from_catalog", moduleKey);
-        next();
+        res.status(503).json({ error: "Le contrôle des accès est momentanément indisponible." });
         return;
       }
       if (decision.allowed) {

@@ -835,9 +835,9 @@ describe("téléchargement sécurisé et compatibilité historique", () => {
     const response = await request(app).get("/download");
     expect(response.status).toBe(503);
     expect(response.body.code).toBe("MEDIA_INTEGRITY_ERROR");
-    // The cap is evaluated before either the transfer buffer or snapshot can
-    // allocate memory from an attacker-controlled file size.
-    expect(allocation).not.toHaveBeenCalled();
+    // Neither the transfer buffer nor snapshot may use the oversized file's
+    // length. Ignore unrelated Node/HTTP allocations while the request runs.
+    expect(allocation).not.toHaveBeenCalledWith(content.length);
   });
 
   it("refuses snapshot mode without a complete expected SHA-256", async () => {

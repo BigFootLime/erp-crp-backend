@@ -20,7 +20,7 @@ vi.mock("pg", () => {
   const emitter = new EventEmitter();
   const pool = { on: emitter.on.bind(emitter), query: mocks.poolQuery, connect: mocks.poolConnect };
   mocks.poolConnect.mockResolvedValue({ query: mocks.clientQuery, release: mocks.clientRelease });
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

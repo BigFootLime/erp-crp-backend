@@ -11,11 +11,11 @@ const routeDb = vi.hoisted(() => ({
 }));
 
 vi.mock("pg", () => ({
-  Pool: vi.fn(() => ({
+  Pool: vi.fn(function () { return {
     on: vi.fn(),
     query: routeDb.poolQuery,
     connect: routeDb.poolConnect,
-  })),
+  }; }),
 }));
 
 vi.mock("../utils/checkNetworkDrive", () => ({

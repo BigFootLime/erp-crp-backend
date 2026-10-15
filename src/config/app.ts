@@ -17,6 +17,9 @@ import { resolveTrustProxySetting } from "./trust-proxy";
 import { getRealtimeReadiness } from "../sockets/sockeServer";
 import { installStructuredConsole, logger } from "../shared/observability/logger";
 import { createObservabilityRouter } from "../shared/observability/routes";
+import { createOriginPolicy } from "./origins";
+import { deploymentIdentity } from "./deployment-security";
+import { createRequestBudget } from "../middlewares/request-budget";
 
 installStructuredConsole();
 const app = express();
@@ -30,28 +33,7 @@ app.use(requestIdMiddleware);
 
 app.use(helmet());
 
-const staticAllowedOrigins = new Set<string>([
-  "https://cerp.croix-rousse-precision.fr",
-  "http://cerp.croix-rousse-precision.fr",
-  "http://localhost:5173",
-  "http://localhost:5137",
-  "http://localhost:4173",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5137",
-  "http://127.0.0.1:4173",
-  "app://cerp",
-]);
-
-const envOrigins = (process.env.CORS_ORIGINS ?? "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-for (const o of envOrigins) staticAllowedOrigins.add(o);
-
-const isAllowedOrigin = (origin: string): boolean => {
-  return staticAllowedOrigins.has(origin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(origin);
-};
+const isAllowedOrigin = createOriginPolicy(process.env, true);
 
 const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
   const originHeader = req.headers.origin;
@@ -108,6 +90,7 @@ app.use(cors(corsOptionsDelegate));
 app.options("*", cors(corsOptionsDelegate));
 
 app.use(requestLogger);
+app.use("/api/v1", createRequestBudget());
 
 // Logger — format "dev" mais avec l'URL débarrassée de sa query string :
 // morgan(":url") rejouerait les PII des recherches (?q=email, ?siret=...) dans
@@ -182,6 +165,7 @@ app.get("/api/v1/environment", async (_req, res) => {
     res.json({
       database,
       environment,
+      deployment: deploymentIdentity(),
       appEnv: process.env.NODE_ENV ?? null,
       label:testInfo?.label ?? null,
     });

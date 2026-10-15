@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
   const pool = { on: emitter.on.bind(emitter), query: mocks.poolQuery, connect: mocks.poolConnect };
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({
@@ -156,6 +156,11 @@ beforeEach(() => {
 
   repo.repoIsSuperadmin.mockResolvedValue(false);
   repo.repoAuthorizationEpoch.mockResolvedValue(1n);
+  repo.repoResolveAccessProfile.mockResolvedValue(MODULE_CATALOG.map(module => ({
+    is_superadmin: false, module_key: module.module_key, label: module.label,
+    nav_page_keys: module.nav_page_keys, enabled_by_default: true, is_protected: module.is_protected,
+    is_active: true, access: null,
+  })));
   repo.repoListCatalogModules.mockResolvedValue([CATALOG_ROW, PROTECTED_ROW]);
   repo.repoListAccessUsers.mockResolvedValue([USER_ROW, SUPERADMIN_ROW]);
   repo.repoListAccessOverrides.mockResolvedValue([]);

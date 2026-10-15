@@ -1,8 +1,8 @@
 /**
  * #326 / back #200 — gate d'accès module monté globalement dans v1.routes.ts.
  * Le frontend masque, le backend refuse : ce fichier éprouve le refus réel, le
- * passage du superadmin, l'immunité du module protégé, le fail-open documenté sur
- * absence d'infrastructure (42P01) et le kill-switch d'exploitation.
+ * passage du superadmin, l'immunité du module protégé, le refus contrôlé sur
+ * absence d'infrastructure (42P01) et le kill-switch d'exploitation interne.
  */
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
   const pool = { on: emitter.on.bind(emitter), query: mocks.poolQuery, connect: mocks.poolConnect };
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({
@@ -176,6 +176,7 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
   });
 
   it("laisse passer le module protégé après résolution du compte", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([profileRow({ module_key: "administration", is_protected: true })]);
     const { res, next } = await run("/admin/users");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
@@ -302,18 +303,18 @@ describe("Gate d'accès module — décisions", () => {
 });
 
 describe("Gate d'accès module — absence d'infrastructure", () => {
-  it("tables absentes (42P01) ⇒ fail-open documenté, jamais un ERP briqué", async () => {
+  it("tables absentes (42P01) ⇒ indisponibilité contrôlée sans accorder de droits", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(null);
     const { res, next } = await run("/clients/1");
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.statusCode).toBe(0);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
   });
 
-  it("module absent du catalogue en base ⇒ fail-open, aucun refus fabriqué", async () => {
+  it("module absent du catalogue en base ⇒ indisponibilité contrôlée", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([profileRow({ module_key: "stock" })]);
     const { res, next } = await run("/clients/1");
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.statusCode).toBe(0);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
   });
 
   it("erreur de base non liée à l'infrastructure ⇒ remontée à la chaîne d'erreurs", async () => {

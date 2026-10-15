@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
   return {
-    Pool: vi.fn(() => ({ on: emitter.on.bind(emitter), query: vi.fn(), connect: vi.fn() })),
+    Pool: vi.fn(function () { return { on: emitter.on.bind(emitter), query: vi.fn(), connect: vi.fn() }; }),
     __emitter__: emitter,
   };
 });

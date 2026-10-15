@@ -1,3 +1,6 @@
+// This suite exercises the historical route contract. Global module authorization is
+// exercised with the real gate in access-control.gate.test.ts, including missing-schema refusal.
+vi.mock("../module/access-control/middlewares/module-access-gate", () => ({ moduleAccessGate: (_req: unknown, _res: unknown, next: () => void) => next() }));
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 

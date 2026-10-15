@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { assertDeploymentSecurity } from "./config/deployment-security";
 import crypto from "node:crypto";
 import { createServer } from "http";
 
@@ -32,6 +33,7 @@ installStructuredConsole();
 
 async function start(): Promise<void> {
   assertE2EIsolation();
+  assertDeploymentSecurity();
   assertMfaStartupConfiguration();
   await assertManagedDatabaseAtStartup(pool);
   await initializeSharedDirectorySite(pool);

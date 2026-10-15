@@ -53,7 +53,7 @@ function decide(params: {
 
 /**
  * Profil d'accès d'un compte. `null` signifie « infrastructure d'accès absente »
- * (42P01) : l'appelant décide alors de laisser passer, il ne reçoit pas un refus.
+ * (42P01) : la garde HTTP refuse alors l'accès avec une erreur de disponibilité.
  */
 export async function resolveAccessProfile(userId: number): Promise<ResolvedAccessProfile | null> {
   for (let attempt = 0; attempt < 3; attempt += 1) {

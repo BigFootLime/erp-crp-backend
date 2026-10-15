@@ -16,7 +16,7 @@ vi.mock("pg", () => {
   };
 
   return {
-    Pool: vi.fn(() => pool),
+    Pool: vi.fn(function () { return pool; }),
     __emitter__: emitter,
   };
 });

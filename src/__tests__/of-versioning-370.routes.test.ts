@@ -7,7 +7,7 @@
 
 import express from "express";
 import request from "supertest";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // Le module de base de données est remplacé : ces tests n'ouvrent aucune
 // connexion. Ils vérifient le routage et l'autorisation, pas le SQL.
@@ -53,6 +53,12 @@ const OPERATEUR = "Opérateur atelier";
 const COMMERCIAL = "Commercial";
 
 describe("#370 — la surface HTTP est réellement montée", () => {
+  beforeAll(async () => {
+    // Cold-loading the production route graph belongs to fixture setup. Keep
+    // the normal request timeout for each assertion once the graph is ready.
+    await buildApp();
+  }, 30_000);
+
   it("expose /capabilities pour un compte authentifié", async () => {
     const app = await buildApp();
     const res = await request(app).get(`${BASE}/capabilities`).set(ROLE_HEADER, ATELIER);

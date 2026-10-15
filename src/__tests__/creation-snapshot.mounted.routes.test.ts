@@ -29,7 +29,7 @@ vi.mock("pg", () => {
     query: mocks.poolQuery,
     connect: mocks.poolConnect,
   };
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

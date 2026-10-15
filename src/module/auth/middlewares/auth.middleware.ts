@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction, RequestHandler } from "express";
 import jwt from "jsonwebtoken";
+import { sessionVerifyOptions } from "../../../config/deployment-security";
+import { assertSessionLifetime } from "../domain/session-renewal";
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import {
   hasGrantedAccountModuleAccess,
@@ -15,6 +17,8 @@ import pool from '../../../config/database';
 import {sharedDirectoryClient,validateSiteDirectoryToken} from '../../../shared-directory/site-runtime';
 
 interface JwtPayload {
+  iat?: number;
+  session_started_at?: number;
   id: number;
   username: string;
   email: string;
@@ -105,7 +109,8 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
   const token = authHeader.split(" ")[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET as string, sessionVerifyOptions()) as JwtPayload;
+    if (decoded.session_started_at !== undefined) assertSessionLifetime(decoded.session_started_at);
     req.user = decoded;
     if(sharedDirectoryClient()){
       void validateSiteDirectoryToken(pool,decoded).then(identity=>{

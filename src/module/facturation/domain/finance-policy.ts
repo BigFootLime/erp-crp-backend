@@ -186,7 +186,10 @@ export function roleHasFinanceCapability(
   role: string | null | undefined,
   capability: FinanceCapability
 ): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
+  if (hasGrantedAccountModuleAccess()) {
+    const sensitive = financeSensitiveCapability(capability);
+    return sensitive ? hasSensitiveAccountCapability(sensitive) : true;
+  }
   // The technical administrator remains a global compatibility fallback for
   // existing Finance routes, but reminders explicitly separate configuration
   // from the business decision to approve/send a customer communication.
@@ -315,4 +318,5 @@ export function paymentStatusFromAllocation(params: {
   if (params.allocatedCents < params.paymentCents) return "PARTIALLY_ALLOCATED";
   return "ALLOCATED";
 }
-import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { hasGrantedAccountModuleAccess, hasSensitiveAccountCapability } from "../../access-control/context/account-module-access.context";
+import { financeSensitiveCapability } from "../../access-control/domain/sensitive-capabilities";

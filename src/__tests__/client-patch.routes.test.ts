@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("pg", () => {
   const emitter = new EventEmitter();
   const pool = { on: emitter.on.bind(emitter), query: mocks.poolQuery, connect: mocks.poolConnect };
-  return { Pool: vi.fn(() => pool), __emitter__: emitter };
+  return { Pool: vi.fn(function () { return pool; }), __emitter__: emitter };
 });
 
 vi.mock("../utils/checkNetworkDrive", () => ({

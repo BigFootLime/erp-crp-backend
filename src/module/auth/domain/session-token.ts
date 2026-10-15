@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import jwt from "jsonwebtoken";
+import { sessionSignOptions } from "../../../config/deployment-security";
 
 import { authorizationRole, normalizeAssignedRoles } from "./roles";
 
@@ -21,7 +22,7 @@ export type MfaAssurance = {
   method: "totp" | "recovery_code";
 };
 
-export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance, directory?:{session:string;profileId:string;membershipVersion:number;globalEpoch:number}) {
+export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance, directory?:{session:string;profileId:string;membershipVersion:number;globalEpoch:number}, sessionStartedAt = Math.floor(Date.now() / 1000)) {
   const assignedRoles = normalizeAssignedRoles(user.role, user.roles ?? undefined);
   const effectiveRole = authorizationRole(user.role, assignedRoles);
   const parsedEpoch = Number.parseInt(String(user.realtime_session_epoch ?? "0"), 10);
@@ -35,6 +36,7 @@ export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance, dir
     primary_role: user.role,
     roles: assignedRoles,
     session_epoch: sessionEpoch,
+    session_started_at: sessionStartedAt,
     jti: crypto.randomUUID(),
     ...(directory?{directory_session:directory.session,directory_profile_id:directory.profileId,directory_membership_version:directory.membershipVersion,directory_global_epoch:directory.globalEpoch}:{}),
     ...(mfa ? {
@@ -45,7 +47,7 @@ export function issueSessionToken(user: SessionIdentity, mfa?: MfaAssurance, dir
       mfa_factor_version: mfa.factorVersion,
     } : {}),
   };
-  const token = jwt.sign(payload, process.env.JWT_SECRET as string, { expiresIn: "1d" });
+  const token = jwt.sign(payload, process.env.JWT_SECRET as string, sessionSignOptions());
   return {
     token,
     user: {

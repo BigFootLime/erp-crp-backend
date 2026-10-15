@@ -11,7 +11,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const srcRoot = path.join(repoRoot, "src");
 const configPath = path.join(repoRoot, "vitest.config.ts");
 const requireFromRepo = createRequire(path.join(repoRoot, "package.json"));
-const vitestCli = requireFromRepo.resolve("vitest/vitest.mjs");
+const vitestCli = path.join(path.dirname(requireFromRepo.resolve("vitest/package.json")), "vitest.mjs");
 const testFilePattern = /\.(?:test|spec)\.(?:js|mjs|cjs|ts|mts|cts|jsx|tsx)$/i;
 
 function slash(filePath) {
