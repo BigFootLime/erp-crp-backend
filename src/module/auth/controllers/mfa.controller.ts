@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
+import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import pool from '../../../config/database';
 import {sharedDirectoryClient,directoryAuthenticationResult} from '../../../shared-directory/site-runtime';
@@ -50,11 +51,36 @@ async function sharedOperation(req:Request,operation:string,input:unknown){
   return {value:await directory.call(operation,{directory_session:req.user.directory_session,input,meta:clientMeta}),meta:clientMeta};
 }
 
+const directoryMfaFailures = new Map<string, { status: number; message: string }>([
+  ["MFA_CODE_INVALID", { status: 401, message: "Code MFA invalide." }],
+  ["MFA_LOCKED", { status: 423, message: "Le facteur MFA est temporairement verrouillé." }],
+  ["MFA_CHALLENGE_INVALID", { status: 400, message: "Défi MFA invalide." }],
+  ["MFA_CHALLENGE_USED", { status: 400, message: "Ce défi MFA a déjà été utilisé." }],
+  ["MFA_CHALLENGE_EXPIRED", { status: 400, message: "Le défi MFA a expiré." }],
+  ["MFA_CHALLENGE_STALE", { status: 400, message: "La session a changé. Reconnectez-vous." }],
+  ["MFA_FACTOR_INVALID", { status: 400, message: "Le facteur MFA n'est plus actif." }],
+  ["MFA_ENROLLMENT_EXPIRED", { status: 400, message: "L'enrôlement MFA a expiré." }],
+]);
+
+function mapDirectoryMfaFailure(error: unknown): never {
+  const candidate = error as { code?: unknown } | null;
+  const code = typeof candidate?.code === "string" ? candidate.code : null;
+  const failure = code ? directoryMfaFailures.get(code) : undefined;
+  if (failure && code !== null) throw new HttpError(failure.status, code, failure.message);
+  throw error;
+}
+
 export const verifyChallenge = asyncHandler(async (req: Request, res: Response) => {
   const body = verifyMfaChallengeSchema.parse(req.body);
   const directory=sharedDirectoryClient(),audit=meta(req);
   const {path: _path,request_id: _request,...clientMeta}=audit;
-  const result = directory ? await directoryAuthenticationResult(pool,await directory.call('verify-mfa',{input:body,meta:clientMeta}),clientMeta):await verifyMfaChallenge(body.challenge_token, body.code, audit);
+  let result;
+  try {
+    result = directory ? await directoryAuthenticationResult(pool,await directory.call('verify-mfa',{input:body,meta:clientMeta}),clientMeta):await verifyMfaChallenge(body.challenge_token, body.code, audit);
+  } catch (error) {
+    if (directory) mapDirectoryMfaFailure(error);
+    throw error;
+  }
   return res.status(200).json({ message: "Authentification renforcée validée", ...result });
 });
 

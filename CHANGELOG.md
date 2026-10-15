@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé — Réponses MFA de l'annuaire partagé (#1341)
+
+- Renvoyer les erreurs MFA connues avec leur statut et un message public constant : code invalide (401), facteur temporairement verrouillé (423), défi expiré ou périmé (400). Une erreur annuaire inconnue reste une erreur serveur sans détail interne.
+- Conserver la validation du facteur, le contrôle anti-rejeu et les limites de tentatives. Aucun changement de secret MFA, de droits, de données métier ou de schéma.
+
 ## Préparé — Disponibilité des sessions annuaire (#1341)
 
 - Éviter les transactions de projection répétées pour un profil inchangé, après validation de session auprès de l'autorité, et synchroniser les sociétés seulement lorsque leur révision change.
