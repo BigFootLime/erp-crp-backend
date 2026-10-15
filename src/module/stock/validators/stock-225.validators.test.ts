@@ -9,6 +9,7 @@ import {
   upsertInventoryLineSchema,
   historicalImportSchema,
   listConsolidatedInventoryQuerySchema,
+  updateLotQualitySchema,
 } from "./stock.validators";
 import {
   createStockReservationSchema,
@@ -21,6 +22,17 @@ const UUID_B = "22222222-2222-4222-8222-222222222222";
 const UUID_C = "33333333-3333-4333-8333-333333333333";
 
 describe("#225 stock validators", () => {
+  it("accepts the RFC3339 UTC lot version returned to the quality-status client", () => {
+    const expected_updated_at = "2026-10-15T23:39:29.123456Z";
+    expect(updateLotQualitySchema.safeParse({
+      body: {
+        lot_status: "LIBERE",
+        reason: "Libération contrôlée du lot",
+        expected_updated_at,
+      },
+    }).success).toBe(true);
+  });
+
   it("requires Fourniture Client identification only for achat_transforme", () => {
     const base = {
       designation: "Brut fourni par le client",

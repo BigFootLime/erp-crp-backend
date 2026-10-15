@@ -5331,7 +5331,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.expiry_at::text AS expiry_at,
         NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
         l.notes,
-        l.updated_at::text AS updated_at,
+        to_char(l.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
         l.created_at::text AS created_at
       FROM public.lots l
       JOIN public.articles a ON a.id = l.article_id
