@@ -737,6 +737,7 @@ type DirectAllocationSourceRow = {
   candidate_commande_ligne_id: string | null
   candidate_affaire_id: string | null
   candidate_client_id: string | null
+  candidate_order_type: string | null
   candidate_article_id: string | null
 }
 
@@ -771,6 +772,7 @@ async function readDirectAllocationSourceSnapshot(
         candidate.commande_ligne_id::text AS candidate_commande_ligne_id,
         candidate.livraison_affaire_id::text AS candidate_affaire_id,
         candidate_command.client_id::text AS candidate_client_id,
+        candidate_command.order_type::text AS candidate_order_type,
         COALESCE(candidate.article_ref_id, command_line.article_id)::text AS candidate_article_id
       FROM public.bon_livraison bl
       JOIN public.bon_livraison_ligne line
@@ -804,6 +806,7 @@ async function readDirectAllocationSourceSnapshot(
       row.candidate_commande_ligne_id,
       row.candidate_affaire_id,
       row.candidate_client_id,
+      row.candidate_order_type,
       row.candidate_article_id,
     ])),
   }
@@ -830,7 +833,8 @@ function resolveDirectAllocationSource(
     (context.line_article_id === null || context.line_article_id === inputArticleId) &&
     candidate.candidate_commande_id === context.line_commande_id &&
     candidate.candidate_commande_ligne_id === context.line_commande_ligne_id &&
-    candidate.candidate_client_id === context.delivery_client_id &&
+    (candidate.candidate_client_id === context.delivery_client_id ||
+      (candidate.candidate_client_id === null && candidate.candidate_order_type === "INTERNE")) &&
     candidate.candidate_article_id === inputArticleId &&
     (context.delivery_affaire_id === null || candidate.candidate_affaire_id === context.delivery_affaire_id)
   )
@@ -3213,7 +3217,7 @@ export async function repoCreateLivraisonFromCommande(
         FROM commande_to_affaire cta
         WHERE cta.commande_id = $1
           AND (cta.role = 'LIVRAISON' OR cta.role IS NULL)
-        ORDER BY (cta.role = 'LIVRAISON') DESC, cta.date_conversion DESC, cta.id DESC
+        ORDER BY (cta.role = 'LIVRAISON') DESC NULLS LAST, cta.date_conversion DESC NULLS LAST, cta.id DESC
         LIMIT 1
         `
       : `

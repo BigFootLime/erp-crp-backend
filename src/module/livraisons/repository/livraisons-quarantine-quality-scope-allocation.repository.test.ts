@@ -39,6 +39,7 @@ type SourceRow = {
   candidate_commande_ligne_id?: string | null
   candidate_affaire_id?: string | null
   candidate_client_id?: string | null
+  candidate_order_type?: string | null
   candidate_article_id?: string | null
 }
 
@@ -57,6 +58,7 @@ function sourceRow(overrides: SourceRow = {}) {
     candidate_commande_ligne_id: "91",
     candidate_affaire_id: "7",
     candidate_client_id: "1",
+    candidate_order_type: "FERME",
     candidate_article_id: ids.article,
     ...overrides,
   }
@@ -179,6 +181,28 @@ describe("DRAFT quarantine quality-scope allocation", () => {
 
     const insert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))
     expect(insert?.[1]).toContain(91)
+  })
+
+  it("preserves an internal order whose BL carries the configured delivery client", async () => {
+    const internal = sourceRow({ candidate_client_id: null, candidate_order_type: "INTERNE" })
+    const client = allocationClient("QUARANTAINE", 10, [[internal], [internal]])
+    connect.mockResolvedValueOnce(client)
+
+    await expect(repoCreateLivraisonLineAllocation(ids.delivery, ids.line, input, 7)).resolves.toEqual({ allocationId: ids.allocation })
+    const insert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))
+    expect(insert?.[1]?.[8]).toBe(91)
+  })
+
+  it("does not extend the internal-client exception to a customer order", async () => {
+    const missingClient = sourceRow({ candidate_client_id: null, candidate_order_type: "FERME" })
+    const client = allocationClient("QUARANTAINE", 10, [[missingClient], [missingClient]])
+    connect.mockResolvedValueOnce(client)
+
+    await expect(repoCreateLivraisonLineAllocation(ids.delivery, ids.line, input, 7)).rejects.toMatchObject({
+      status: 409,
+      code: "DELIVERY_ALLOCATION_SOURCE_MISMATCH",
+    })
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))).toBe(false)
   })
 
   it.each([
