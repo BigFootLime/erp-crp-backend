@@ -32,9 +32,40 @@ export async function projectDirectoryIdentity(db:Pool,raw:DirectorySession){
  const identity=directorySessionSchema.parse(raw);
  return projectDirectoryProfile(db,identity,identity);
 }
+type ExistingDirectoryProjection={
+ id:number;directory_username:string|null;name:string|null;surname:string|null;directory_email:string|null;role:string|null;status:string|null;is_superadmin:boolean|null;avatar_key:string|null;directory_avatar_asset_id:string|null;tel_no:string|null;mfa_reenrollment_required:boolean|null;directory_profile_metadata:unknown;roles:string[];work_profile_bound:boolean;source_user_id:number|null;global_session_epoch:number|string|null;membership_version:number|string|null;mfa_factor_id:string|null;mfa_factor_version:number|string|null;session_epoch:string;
+};
+async function currentDirectoryProjection(db:Pool,profileId:string){
+ return (await db.query<ExistingDirectoryProjection>(`SELECT u.id,u.directory_username,u.name,u.surname,u.directory_email,u.role,u.status,u.is_superadmin,u.avatar_key,u.directory_avatar_asset_id::text,u.tel_no,u.mfa_reenrollment_required,u.directory_profile_metadata,
+  coalesce(array_agg(r.role_key ORDER BY r.role_key) FILTER (WHERE r.role_key IS NOT NULL),ARRAY[]::text[]) AS roles,
+  EXISTS(SELECT 1 FROM public.cerp_directory_work_profile_bindings wb WHERE wb.profile_id=$1::uuid AND wb.user_id=u.id) AS work_profile_bound,
+  p.source_user_id,p.global_session_epoch,p.membership_version,p.mfa_factor_id::text,p.mfa_factor_version,
+  coalesce((SELECT session_epoch FROM public.realtime_session_epochs WHERE user_id=u.id),0)::text AS session_epoch
+  FROM public.users u
+  LEFT JOIN public.user_role_assignments r ON r.user_id=u.id
+  LEFT JOIN public.cerp_directory_projection_state p ON p.profile_id=u.directory_profile_id
+  WHERE u.directory_profile_id=$1::uuid
+  GROUP BY u.id,p.source_user_id,p.global_session_epoch,p.membership_version,p.mfa_factor_id,p.mfa_factor_version`,[profileId])).rows[0];
+}
+function sameSafeInteger(value:number|string|null,expected:number){
+ if(typeof value==='number')return Number.isSafeInteger(value)&&value===expected;
+ if(typeof value!=='string'||!/^\d+$/.test(value))return false;
+ const parsed=Number(value);return Number.isSafeInteger(parsed)&&parsed===expected;
+}
+function sameDirectoryProjection(row:ExistingDirectoryProjection|undefined,identity:DirectoryProfile,assurance?:DirectorySession){
+ if(!row)return false;
+ const metadata={job_title:identity.job_title,employment_type:identity.employment_type,weekly_hours_target:identity.weekly_hours_target,work_profile_incomplete:identity.work_profile_incomplete};
+ const actualMetadata=row.directory_profile_metadata;
+ const sameMetadata=typeof actualMetadata==='object'&&actualMetadata!==null&&Object.keys(actualMetadata).length===4&&Object.entries(metadata).every(([key,value])=>(actualMetadata as Record<string,unknown>)[key]===value);
+ if(row.directory_username!==identity.username||row.name!==identity.name||row.surname!==identity.surname||row.directory_email!==identity.email||row.role!==identity.role||row.status!==identity.status||row.is_superadmin!==identity.is_superadmin||row.avatar_key!==identity.avatar_key||row.directory_avatar_asset_id!==identity.avatar_asset_id||row.tel_no!==identity.tel_no||row.mfa_reenrollment_required!==identity.mfa_reenrollment_required||!sameMetadata||JSON.stringify(row.roles)!==JSON.stringify([...identity.roles].sort()))return false;
+ if(identity.work_profile&&!row.work_profile_bound)return false;
+ return !assurance||(row.source_user_id===identity.source_user_id&&sameSafeInteger(row.global_session_epoch,assurance.global_session_epoch)&&sameSafeInteger(row.membership_version,assurance.membership_version)&&row.mfa_factor_id===assurance.mfa_factor_id&&sameSafeInteger(row.mfa_factor_version,assurance.mfa_factor_version));
+}
 export async function projectDirectoryProfile(db:Pool,raw:DirectoryProfile,assurance?:DirectorySession){
  const identity=directoryProfileSchema.parse(Object.fromEntries(Object.keys(directoryProfileSchema.shape).map(key=>[key,raw[key as keyof DirectoryProfile]])));
  if(identity.database!==site)throw new Error('DIRECTORY_PROJECTION_SITE_MISMATCH');
+ const existing=await currentDirectoryProjection(db,identity.profile_id);
+ if(sameDirectoryProjection(existing,identity,assurance))return {id:existing.id,session_epoch:Number(existing.session_epoch)};
  const tx=await db.connect();await tx.query('BEGIN');
  try{
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`directory-profile:${identity.profile_id}`]);
