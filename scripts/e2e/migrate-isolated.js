@@ -11,9 +11,11 @@ const PATCH_DIR = path.join(ROOT, 'db', 'patches');
 const BOOTSTRAP = path.join(ROOT, 'db', 'e2e', 'legacy-bootstrap.sql');
 const NORMALIZE = path.join(ROOT, 'db', 'e2e', 'normalize-empty-uuid-spine.sql');
 const HISTORICAL_RUNTIME_CONTRACT = path.join(ROOT, 'db', 'e2e', 'historical-runtime-contract.sql');
+const HISTORICAL_USER_AVATAR_PREREQUISITE = path.join(ROOT, 'db', 'e2e', 'historical-user-avatar-prerequisite.sql');
 const DATA_ONLY_BASELINES = new Set(['20260727_repair_article_category_orphans_168.sql']);
 const NORMALIZE_BEFORE = '20260219_commande_affaires_livraison_production.sql';
 const REHEARSAL_STOP_PATCH = '20260810_system_reference_data_readiness.sql';
+const USER_AVATARS_PATCH = '20261014_user_avatars_1563.sql';
 
 function fail(message) {
   throw new Error(`[SOL-05 migration] ${message}`);
@@ -90,6 +92,7 @@ async function main() {
 
   let normalized = false;
   let stopBoundaryFound = false;
+  let avatarPrerequisiteApplied = false;
   for (const filename of orderedPatches()) {
     if (filename === '20260903_customer_order_technical_maturation.sql') {
       // The September migration expects these historical columns. Its checksum
@@ -115,16 +118,42 @@ async function main() {
       }
       normalized = true;
     }
+    if (filename === USER_AVATARS_PATCH) {
+      const avatarPrerequisite = new Client({ connectionString: process.env.DATABASE_URL });
+      await avatarPrerequisite.connect();
+      try {
+        await avatarPrerequisite.query("SET cerp.e2e_isolated = 'on'");
+        await executeFile(avatarPrerequisite, HISTORICAL_USER_AVATAR_PREREQUISITE);
+      } finally {
+        await avatarPrerequisite.end();
+      }
+      avatarPrerequisiteApplied = true;
+    }
     runPatch(filename, DATA_ONLY_BASELINES.has(filename) ? 'baseline' : 'up');
   }
 
   if (!normalized) fail(`normalization boundary ${NORMALIZE_BEFORE} was not found`);
   if (stopBefore && !stopBoundaryFound) fail(`rehearsal boundary ${stopBefore} was not found`);
+  if (!stopBefore && !avatarPrerequisiteApplied) fail(`avatar prerequisite boundary ${USER_AVATARS_PATCH} was not found`);
   const contract = new Client({ connectionString: process.env.DATABASE_URL });
   await contract.connect();
   try {
     await contract.query("SET cerp.e2e_isolated = 'on'");
     await executeFile(contract, HISTORICAL_RUNTIME_CONTRACT);
+    if (!stopBefore) {
+      const avatarBindingTrigger = await contract.query(`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_trigger
+          WHERE tgname = 'trg_operational_media_users_profile_picture'
+            AND tgrelid = 'public.users'::regclass
+            AND tgfoid = to_regprocedure('public.fn_operational_media_sync_binding()')
+            AND tgenabled <> 'D'
+            AND NOT tgisinternal
+        ) AS attached
+      `);
+      if (!avatarBindingTrigger.rows[0]?.attached) fail('user avatar operational-media trigger is missing after isolated replay');
+    }
   } finally {
     await contract.end();
   }

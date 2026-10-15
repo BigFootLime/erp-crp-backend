@@ -8,6 +8,7 @@ const root = process.cwd();
 const base = "20260823_authoritative_pdf_ged_entity_contract";
 const bridgeBase = "20260823_authoritative_pdf_ged_compatibility_bridge";
 const cleanupBase = "20260823_authoritative_pdf_ged_legacy_profile_cleanup";
+const financeBase = "20261014_finance_ged_profile_1268";
 const requiredTypes = ["BON_LIVRAISON", "DEVIS", "COMMANDE_FOURNISSEUR", "FACTURE", "AVOIR"];
 
 suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
@@ -22,6 +23,8 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
   let cleanup: string;
   let cleanupPreflight: string;
   let cleanupVerify: string;
+  let finance: string;
+  let financeVerify: string;
 
   beforeAll(async () => {
     const pg = await import("pg");
@@ -31,7 +34,7 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
     if (!/test|sandbox|local/i.test(database.rows[0]?.current_database ?? "")) {
       throw new Error("AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_TEST_DATABASE_URL must target a test/local/sandbox database");
     }
-    [patch, preflight, verify, rollback, bridge, bridgePreflight, bridgeVerify, cleanup, cleanupPreflight, cleanupVerify] = await Promise.all([
+    [patch, preflight, verify, rollback, bridge, bridgePreflight, bridgeVerify, cleanup, cleanupPreflight, cleanupVerify, finance, financeVerify] = await Promise.all([
       fs.readFile(path.join(root, "db/patches", `${base}.sql`), "utf8"),
       fs.readFile(path.join(root, "db/patches/support", `${base}.preflight.sql`), "utf8"),
       fs.readFile(path.join(root, "db/patches/support", `${base}.verify.sql`), "utf8"),
@@ -42,6 +45,8 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
       fs.readFile(path.join(root, "db/patches", `${cleanupBase}.sql`), "utf8"),
       fs.readFile(path.join(root, "db/patches/support", `${cleanupBase}.preflight.sql`), "utf8"),
       fs.readFile(path.join(root, "db/patches/support", `${cleanupBase}.verify.sql`), "utf8"),
+      fs.readFile(path.join(root, "db/patches", `${financeBase}.sql`), "utf8"),
+      fs.readFile(path.join(root, "db/patches/support", `${financeBase}.verify.sql`), "utf8"),
     ]);
   });
 
@@ -99,7 +104,7 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
     expect((await client.query("SELECT COUNT(*)::int AS count FROM public.ged_entity_types")).rows[0]?.count).toBe(0);
   }, 60_000);
 
-  it("temporarily bridges the empty legacy production profile and restores it exactly", async () => {
+  it("recognizes only the complete Finance profile after legacy bridge cleanup", async () => {
     await client.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
     await client.query(`
       CREATE TABLE public.ged_document_links (
@@ -142,6 +147,66 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
     await expect(client.query(
       "INSERT INTO public.ged_document_links(id, document_id, entity_type, entity_id) VALUES ('90000000-0000-4000-8000-000000000001', '90000000-0000-4000-8000-000000000002', 'client', '1')"
     )).resolves.toMatchObject({ rowCount: 1 });
+
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+        CREATE ROLE cerp_app;
+      END IF;
+    END $$;`);
+    await client.query(finance);
+    await client.query("INSERT INTO public.cerp_schema_migrations(filename) VALUES ($1)", [`${financeBase}.sql`]);
+
+    await expect(client.query(bridgeVerify)).resolves.toBeDefined();
+    await expect(client.query(verify)).resolves.toBeDefined();
+    await expect(client.query(cleanupVerify)).resolves.toBeDefined();
+    await expect(client.query(financeVerify)).resolves.toBeDefined();
+    expect((await client.query("SELECT singleton, registry_created FROM public.finance_ged_profile_state_1268")).rows)
+      .toEqual([{ singleton: true, registry_created: true }]);
+
+    await client.query("ALTER TABLE public.ged_document_links DISABLE TRIGGER trg_ged_validate_canonical_entity_link_20");
+    await expect(client.query(bridgeVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_CLEANUP_DRIFT"),
+    });
+    await client.query("ROLLBACK");
+    await expect(client.query(verify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_VERIFY_CLEANUP_DRIFT"),
+    });
+    await client.query("ROLLBACK");
+    await expect(client.query(cleanupVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_LEGACY_CLEANUP_VERIFY_FINANCE_PROFILE_INVALID"),
+    });
+    await client.query("ROLLBACK");
+    await client.query("ALTER TABLE public.ged_document_links ENABLE TRIGGER trg_ged_validate_canonical_entity_link_20");
+
+    await client.query("CREATE TABLE public.cerp_authoritative_pdf_ged_bridge_20260823(singleton boolean, source_profile text)");
+    await expect(client.query(bridgeVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_CLEANUP_DRIFT"),
+    });
+    await client.query("ROLLBACK");
+    await client.query("DROP TABLE public.cerp_authoritative_pdf_ged_bridge_20260823");
+
+    await client.query("DROP TRIGGER trg_ged_validate_canonical_entity_link_20 ON public.ged_document_links");
+    await expect(client.query(bridgeVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_CLEANUP_DRIFT"),
+    });
+    await client.query("ROLLBACK");
+    await client.query(`CREATE TRIGGER trg_ged_validate_canonical_entity_link_20
+      BEFORE INSERT OR UPDATE OF entity_type, entity_id ON public.ged_document_links
+      FOR EACH ROW EXECUTE FUNCTION public.fn_ged_validate_canonical_entity_link_20()`);
+
+    await client.query("DELETE FROM public.finance_ged_profile_state_1268");
+    await expect(client.query(bridgeVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_BRIDGE_MISSING"),
+    });
+    await client.query("ROLLBACK");
+    await expect(client.query(verify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_VERIFY_PREREQUISITE_MISSING"),
+    });
+    await client.query("ROLLBACK");
+    await expect(client.query(cleanupVerify)).rejects.toMatchObject({
+      message: expect.stringContaining("AUTHORITATIVE_PDF_GED_LEGACY_CLEANUP_VERIFY_CLOSED_PROFILE_INVALID"),
+    });
+    await client.query("ROLLBACK");
   }, 60_000);
 
   it("leaves an existing closed-registry profile unchanged", async () => {
@@ -178,7 +243,23 @@ suite("authoritative PDF/GED entity contract: PostgreSQL migration", () => {
     await client.query("INSERT INTO public.cerp_schema_migrations(filename) VALUES ($1)", [`${cleanupBase}.sql`]);
     await expect(client.query(cleanupVerify)).resolves.toBeDefined();
 
-    expect((await client.query("SELECT entity_type FROM public.ged_entity_types ORDER BY entity_type")).rows.map((row) => row.entity_type)).toEqual([...requiredTypes].sort());
+    await client.query(`DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+        CREATE ROLE cerp_app;
+      END IF;
+    END $$;`);
+    await client.query(finance);
+    await client.query("INSERT INTO public.cerp_schema_migrations(filename) VALUES ($1)", [`${financeBase}.sql`]);
+    await expect(client.query(bridgeVerify)).resolves.toBeDefined();
+    await expect(client.query(verify)).resolves.toBeDefined();
+    await expect(client.query(cleanupVerify)).resolves.toBeDefined();
+    await expect(client.query(financeVerify)).resolves.toBeDefined();
+    expect((await client.query("SELECT singleton, registry_created FROM public.finance_ged_profile_state_1268")).rows)
+      .toEqual([{ singleton: true, registry_created: false }]);
+
+    const entityTypes = (await client.query("SELECT entity_type FROM public.ged_entity_types ORDER BY entity_type")).rows.map((row) => row.entity_type);
+    expect(entityTypes).toEqual(expect.arrayContaining(requiredTypes));
+    expect(entityTypes).toHaveLength(17);
     expect((await client.query("SELECT to_regclass('public.cerp_authoritative_pdf_ged_bridge_20260823') AS marker")).rows[0]?.marker).toBeNull();
   }, 60_000);
 });
