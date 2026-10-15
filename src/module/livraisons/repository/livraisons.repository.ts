@@ -829,14 +829,15 @@ function resolveDirectAllocationSource(
   const candidates = snapshot.rows.filter((row): row is DirectAllocationSourceRow & { candidate_id: string } => row.candidate_id !== null)
   const matching = candidates.filter(candidate =>
     context.line_commande_ligne_id !== null &&
-    (context.delivery_commande_id === null || context.line_commande_id === context.delivery_commande_id) &&
+    // The BL header is an aggregate summary. A persisted source that is unique
+    // for this line/command/article/client remains canonical even when another
+    // line has made the header mixed or temporarily stale.
     (context.line_article_id === null || context.line_article_id === inputArticleId) &&
     candidate.candidate_commande_id === context.line_commande_id &&
     candidate.candidate_commande_ligne_id === context.line_commande_ligne_id &&
     (candidate.candidate_client_id === context.delivery_client_id ||
       (candidate.candidate_client_id === null && candidate.candidate_order_type === "INTERNE")) &&
-    candidate.candidate_article_id === inputArticleId &&
-    (context.delivery_affaire_id === null || candidate.candidate_affaire_id === context.delivery_affaire_id)
+    candidate.candidate_article_id === inputArticleId
   )
 
   if (matching.length > 1) {
@@ -844,13 +845,83 @@ function resolveDirectAllocationSource(
   }
   if (matching.length === 1) return Number(matching[0]!.candidate_id)
 
-  // A BL explicitly tied to an affaire must have one persisted, coherent
-  // command-line allocation. A manual/legacy line without such context remains
-  // unbound and is rejected later by the existing Finance preparation boundary.
-  if (context.delivery_affaire_id !== null || candidates.length > 0) {
+  // A present source set must still resolve uniquely. A legacy line that has
+  // no persisted source stays unbound and is governed by the existing Finance
+  // preparation boundary; a header alone cannot manufacture provenance.
+  if (candidates.length > 0) {
     throw new HttpError(409, "DELIVERY_ALLOCATION_SOURCE_MISMATCH", "La provenance commande/affaire de cette allocation ne correspond pas au bon de livraison.")
   }
   return null
+}
+
+/**
+ * Recompute the denormalized BL header from persisted allocation provenance.
+ * The caller already owns the BL lock. This query deliberately does not lock
+ * canonical sources after that lock: their Finance/provenance locks are taken
+ * earlier by the allocation path. Incomplete or legacy provenance never makes
+ * a header scope authoritative.
+ */
+async function reconcileDeliveryHeaderScopeFromAllocations(
+  db: Queryable,
+  bonLivraisonId: string,
+  userId: number
+): Promise<void> {
+  const scope = await db.query<{
+    allocation_rows: string
+    incomplete_rows: string
+    commande_count: string
+    commande_id: string | null
+    affaire_count: string
+    affaire_id: string | null
+  }>(
+    `
+      WITH delivery_scope AS (
+        SELECT
+          allocation.id AS allocation_id,
+          source.commande_id,
+          source.livraison_affaire_id
+        FROM public.bon_livraison_ligne line
+        LEFT JOIN public.bon_livraison_ligne_allocations allocation
+          ON allocation.bon_livraison_ligne_id = line.id
+        LEFT JOIN public.commande_ligne_affaire_allocation source
+          ON source.id = allocation.commande_ligne_affaire_allocation_id
+        WHERE line.bon_livraison_id = $1::uuid
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE allocation_id IS NOT NULL)::text AS allocation_rows,
+        COUNT(*) FILTER (
+          WHERE allocation_id IS NULL
+             OR commande_id IS NULL
+             OR livraison_affaire_id IS NULL
+        )::text AS incomplete_rows,
+        COUNT(DISTINCT commande_id)::text AS commande_count,
+        MIN(commande_id)::text AS commande_id,
+        COUNT(DISTINCT livraison_affaire_id)::text AS affaire_count,
+        MIN(livraison_affaire_id)::text AS affaire_id
+      FROM delivery_scope
+    `,
+    [bonLivraisonId]
+  )
+  const row = scope.rows[0]
+  // Null provenance must not leave a previously summarized header looking
+  // authoritative. Clearing the summary keeps legacy/incomplete lines subject
+  // to the existing Finance and contract boundaries instead of approving them.
+  const complete = Boolean(row)
+    && Number(row.allocation_rows) > 0
+    && Number(row.incomplete_rows) === 0
+  const commandeId = complete && Number(row!.commande_count) === 1 ? row!.commande_id : null
+  const affaireId = complete && Number(row!.affaire_count) === 1 ? row!.affaire_id : null
+  await db.query(
+    `
+      UPDATE public.bon_livraison
+      SET commande_id = $2::bigint,
+          affaire_id = $3::bigint,
+          updated_at = now(),
+          updated_by = $4
+      WHERE id = $1::uuid
+    `,
+    [bonLivraisonId, commandeId, affaireId, userId]
+  )
 }
 
 async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: boolean }): Promise<HeaderRow | null> {
@@ -1994,6 +2065,7 @@ export async function repoDeleteLivraisonLine(bonLivraisonId: string, lineId: st
     const ok = (delRes.rowCount ?? 0) > 0
 
     if (ok) {
+      await reconcileDeliveryHeaderScopeFromAllocations(db, bonLivraisonId, userId)
       await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
       await insertEvent(db, {
         bon_livraison_id: bonLivraisonId,
@@ -2251,6 +2323,7 @@ export async function repoCreateLivraisonLineAllocation(
     )
     const allocationId = ins.rows[0]?.id
     if (!allocationId) throw new Error("Failed to insert allocation")
+    await reconcileDeliveryHeaderScopeFromAllocations(db, bonLivraisonId, userId)
     await assertDeliveryContractBoundary(db, bonLivraisonId)
 
     await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
@@ -2337,6 +2410,7 @@ export async function repoDeleteLivraisonLineAllocation(
     const ok = (delRes.rowCount ?? 0) > 0
 
     if (ok) {
+      await reconcileDeliveryHeaderScopeFromAllocations(db, bonLivraisonId, userId)
       await db.query(`UPDATE bon_livraison SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`, [bonLivraisonId, userId])
       await insertEvent(db, {
         bon_livraison_id: bonLivraisonId,

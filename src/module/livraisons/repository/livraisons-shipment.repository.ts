@@ -85,6 +85,8 @@ type AllocationRow = {
   stock_batch_id: string | null
   reservation_id: string | null
   reservation_status: string | null
+  reservation_commande_ligne_affaire_allocation_id: number | null
+  commande_ligne_affaire_allocation_id: number | null
   reservation_quantity: number | null
   reservation_consumed: number | null
   stock_movement_line_id: string | null
@@ -103,8 +105,21 @@ type ShipmentSnapshot = {
   lines: LineRow[]
   allocations: AllocationRow[]
   document_pack: ShipmentPreviewPack | null
+  acknowledgement_sources: AcknowledgementSource[]
   contract_boundary: Awaited<ReturnType<typeof readDeliveryContractBoundary>>
   prepayment: Awaited<ReturnType<typeof readDeliveryPrepaymentBoundary>>
+}
+
+type AcknowledgementSource = {
+  commande_id: string
+  order_type: string | null
+  ar_sent_at: string | null
+}
+
+export function hasMissingCustomerAcknowledgement(sources: readonly AcknowledgementSource[]): boolean {
+  return sources.some(
+    (source) => String(source.order_type ?? "").toUpperCase() !== "INTERNE" && !source.ar_sent_at
+  )
 }
 
 type AllocationGroup = {
@@ -190,6 +205,8 @@ async function loadShipmentSnapshot(
         allocation.stock_batch_id::text AS stock_batch_id,
         allocation.reservation_id::text AS reservation_id,
         reservation.status AS reservation_status,
+        reservation.commande_ligne_affaire_allocation_id::bigint AS reservation_commande_ligne_affaire_allocation_id,
+        allocation.commande_ligne_affaire_allocation_id::bigint AS commande_ligne_affaire_allocation_id,
         reservation.qty_reserved::float8 AS reservation_quantity,
         reservation.qty_consumed::float8 AS reservation_consumed,
         allocation.stock_movement_line_id::text AS stock_movement_line_id,
@@ -240,11 +257,54 @@ async function loadShipmentSnapshot(
     [bonLivraisonId]
   )
 
+  // A reservation-cart BL can aggregate several canonical orders, so its
+  // nullable header command is not an authority for shipment eligibility.
+  // With forUpdate, Finance/source rows and then the BL are already locked by
+  // lockDeliveryPrepaymentSources; this is the transaction-local re-read used
+  // by the shipping gate.
+  const acknowledgementSources = await client.query<AcknowledgementSource>(
+    `
+      WITH canonical_source_orders AS (
+        SELECT DISTINCT source.commande_id
+        FROM public.bon_livraison_ligne line
+        JOIN public.bon_livraison_ligne_allocations allocated
+          ON allocated.bon_livraison_ligne_id = line.id
+        LEFT JOIN public.stock_reservations reservation
+          ON reservation.id = allocated.reservation_id
+        JOIN public.commande_ligne_affaire_allocation source
+          ON source.id = COALESCE(
+            allocated.commande_ligne_affaire_allocation_id,
+            reservation.commande_ligne_affaire_allocation_id
+          )
+        WHERE line.bon_livraison_id = $1::uuid
+      ), source_orders AS (
+        SELECT commande_id FROM canonical_source_orders
+        UNION ALL
+        -- Legacy BLs can predate canonical allocation sources.  Only then is
+        -- the header command a backward-compatible fallback; it can never
+        -- widen a mixed canonical BL with an unrelated command.
+        SELECT delivery.commande_id
+        FROM public.bon_livraison delivery
+        WHERE delivery.id = $1::uuid
+          AND delivery.commande_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM canonical_source_orders)
+      )
+      SELECT command.id::text AS commande_id,
+        command.order_type,
+        command.ar_sent_at::text AS ar_sent_at
+      FROM source_orders source
+      JOIN public.commande_client command ON command.id = source.commande_id
+      ORDER BY command.id
+    `,
+    [bonLivraisonId]
+  )
+
   return {
     header: row,
     lines: lines.rows,
     allocations: allocations.rows,
     document_pack: pack.rows[0] ?? null,
+    acknowledgement_sources: acknowledgementSources.rows,
     contract_boundary: await readDeliveryContractBoundary(client, bonLivraisonId),
     prepayment: await readDeliveryPrepaymentBoundary(client, bonLivraisonId),
   }
@@ -310,12 +370,7 @@ function buildPreview(
       message: "Le bon de livraison doit être au statut READY avant expédition.",
     })
   }
-  if (
-    enforceAcknowledgement &&
-    snapshot.header.commande_id !== null &&
-    String(snapshot.header.order_type ?? "").toUpperCase() !== "INTERNE" &&
-    !snapshot.header.ar_sent_at
-  ) {
+  if (enforceAcknowledgement && hasMissingCustomerAcknowledgement(snapshot.acknowledgement_sources)) {
     blockers.push({
       code: "CUSTOMER_ACKNOWLEDGEMENT_REQUIRED",
       message: "L’AR client doit être envoyé avant la livraison et la sortie physique du stock.",
@@ -708,6 +763,20 @@ export async function prepareLivraisonInTransaction(
     )
   }
 
+  const reservationSourceConflict = snapshot.allocations.find((allocation) =>
+    allocation.reservation_id !== null
+    && allocation.commande_ligne_affaire_allocation_id !== null
+    && allocation.reservation_commande_ligne_affaire_allocation_id !== null
+    && allocation.commande_ligne_affaire_allocation_id !== allocation.reservation_commande_ligne_affaire_allocation_id
+  )
+  if (reservationSourceConflict) {
+    throw new HttpError(
+      409,
+      "DELIVERY_RESERVATION_SOURCE_MISMATCH",
+      "La réservation existante ne correspond pas à la provenance canonique de cette allocation."
+    )
+  }
+
   const allocationsToReserve = snapshot.allocations.filter(
     (allocation) =>
       !allocation.reservation_id || allocation.reservation_status !== "ACTIVE"
@@ -773,6 +842,8 @@ export async function prepareLivraisonInTransaction(
             source_id,
             commande_ligne_id,
             bon_livraison_ligne_id,
+            commande_ligne_affaire_allocation_id,
+            livraison_affaire_id,
             affaire_id,
             status,
             reason,
@@ -790,7 +861,9 @@ export async function prepareLivraisonInTransaction(
             line.id::text,
             line.commande_ligne_id,
             line.id,
-            delivery.affaire_id,
+            allocation.commande_ligne_affaire_allocation_id,
+            source.livraison_affaire_id,
+            COALESCE(source.livraison_affaire_id, delivery.affaire_id),
             'ACTIVE',
             'Préparation du bon de livraison ' || delivery.numero,
             $7::uuid,
@@ -798,6 +871,11 @@ export async function prepareLivraisonInTransaction(
             $8
           FROM public.bon_livraison_ligne line
           JOIN public.bon_livraison delivery ON delivery.id = line.bon_livraison_id
+          JOIN public.bon_livraison_ligne_allocations allocation
+            ON allocation.id = $10::uuid
+           AND allocation.bon_livraison_ligne_id = line.id
+          LEFT JOIN public.commande_ligne_affaire_allocation source
+            ON source.id = allocation.commande_ligne_affaire_allocation_id
           WHERE line.id = $6::uuid
             AND delivery.id = $9::uuid
           RETURNING id::text AS id
@@ -812,6 +890,7 @@ export async function prepareLivraisonInTransaction(
           correlationId,
           userId,
           bonLivraisonId,
+          allocation.id,
         ]
       )
       const reservationId = reservation.rows[0]?.id
@@ -829,6 +908,30 @@ export async function prepareLivraisonInTransaction(
     }
   }
 
+  const duplicateReservationBinding = await client.query<{ reservation_id: string }>(
+    `
+      SELECT reservation.id::text AS reservation_id
+      FROM public.stock_reservations reservation
+      JOIN public.bon_livraison_ligne_allocations allocation
+        ON allocation.reservation_id = reservation.id
+      JOIN public.bon_livraison_ligne line
+        ON line.id = allocation.bon_livraison_ligne_id
+      WHERE line.bon_livraison_id = $1::uuid
+        AND reservation.status = 'ACTIVE'
+      GROUP BY reservation.id
+      HAVING COUNT(*) > 1
+      LIMIT 1
+    `,
+    [bonLivraisonId]
+  )
+  if (duplicateReservationBinding.rows[0]) {
+    throw new HttpError(
+      409,
+      "DELIVERY_RESERVATION_BINDING_AMBIGUOUS",
+      "Une réservation active est rattachée à plusieurs allocations du bon de livraison."
+    )
+  }
+
   await client.query(
     `
       UPDATE public.stock_reservations reservation
@@ -836,7 +939,16 @@ export async function prepareLivraisonInTransaction(
           source_id = allocation.bon_livraison_ligne_id::text,
           commande_ligne_id = line.commande_ligne_id,
           bon_livraison_ligne_id = allocation.bon_livraison_ligne_id,
-          affaire_id = delivery.affaire_id,
+          commande_ligne_affaire_allocation_id = COALESCE(
+            allocation.commande_ligne_affaire_allocation_id,
+            reservation.commande_ligne_affaire_allocation_id
+          ),
+          livraison_affaire_id = COALESCE(
+            source.livraison_affaire_id,
+            reservation.livraison_affaire_id,
+            delivery.affaire_id
+          ),
+          affaire_id = COALESCE(source.livraison_affaire_id, reservation.affaire_id, delivery.affaire_id),
           reason = 'Préparation du bon de livraison ' || delivery.numero,
           correlation_id = COALESCE(reservation.correlation_id, $2::uuid),
           updated_at = now(),
@@ -846,6 +958,8 @@ export async function prepareLivraisonInTransaction(
         ON line.id = allocation.bon_livraison_ligne_id
       JOIN public.bon_livraison delivery
         ON delivery.id = line.bon_livraison_id
+      LEFT JOIN public.commande_ligne_affaire_allocation source
+        ON source.id = allocation.commande_ligne_affaire_allocation_id
       WHERE delivery.id = $1::uuid
         AND allocation.reservation_id = reservation.id
         AND reservation.status = 'ACTIVE'
