@@ -14,7 +14,7 @@ vi.mock("../services/delivery-authoritative-document", () => ({
   buildShippedDeliveryArtifactInput: vi.fn().mockResolvedValue({}),
 }))
 
-import { repoCreateLivraisonLineAllocation } from "./livraisons.repository"
+import { repoCreateLivraisonLineAllocation, repoDeleteLivraisonLine, repoDeleteLivraisonLineAllocation } from "./livraisons.repository"
 import { prepareLivraisonInTransaction } from "./livraisons-shipment.repository"
 
 const ids = {
@@ -67,7 +67,8 @@ function sourceRow(overrides: SourceRow = {}) {
 function allocationClient(
   lotStatus: "LIBERE" | "QUARANTAINE" | "EN_ATTENTE" | "BLOQUE",
   qtyOnHand = 10,
-  snapshots: readonly (readonly SourceRow[])[] = [[sourceRow()], [sourceRow()]]
+  snapshots: readonly (readonly SourceRow[])[] = [[sourceRow()], [sourceRow()]],
+  headerScope = { allocation_rows: "1", incomplete_rows: "0", commande_count: "1", commande_id: "12", affaire_count: "1", affaire_id: "7" }
 ) {
   let snapshotRead = 0
   const query = vi.fn(async (rawSql: unknown, _params?: unknown[]) => {
@@ -85,6 +86,9 @@ function allocationClient(
     }
     if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] }
     if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "1" }] }
+    if (sql.includes("WITH delivery_scope AS")) {
+      return { rows: [headerScope] }
+    }
     if (sql.includes("WITH delivery_lines AS")) {
       return { rows: [{ commande_id: "12", client_id: "1", order_type: "FERME", contract_id: null, has_unbound_lines: false }] }
     }
@@ -112,7 +116,13 @@ function allocationClient(
     }
     if (sql.includes("SELECT lot_status FROM public.lots") && sql.includes("FOR SHARE")) return { rows: [{ lot_status: lotStatus }] }
     if (sql.includes("INSERT INTO public.bon_livraison_ligne_allocations")) return { rows: [{ id: ids.allocation }] }
-    if (sql.includes("UPDATE bon_livraison SET")) return { rows: [] }
+    if (sql.includes("FROM public.bon_livraison_ligne_allocations bla") && sql.includes("GROUP BY bla.reservation_id")) return { rows: [] }
+    if (sql.includes("FROM public.bon_livraison_ligne_allocations a") && sql.includes("FOR UPDATE")) {
+      return { rows: [{ stock_movement_line_id: null, reservation_id: null }] }
+    }
+    if (sql.includes("DELETE FROM public.bon_livraison_ligne_allocations")) return { rows: [], rowCount: 1 }
+    if (sql.includes("DELETE FROM bon_livraison_ligne WHERE")) return { rows: [], rowCount: 1 }
+    if (sql.includes("UPDATE bon_livraison SET") || sql.includes("UPDATE public.bon_livraison")) return { rows: [] }
     if (sql.includes("INSERT INTO bon_livraison_event_log")) return { rows: [{ id: ids.allocation, created_at: "2026-08-23T00:00:00.000Z" }] }
     throw new Error(`Unexpected SQL: ${sql}`)
   })
@@ -183,6 +193,49 @@ describe("DRAFT quarantine quality-scope allocation", () => {
     expect(insert?.[1]).toContain(91)
   })
 
+  it("clears the aggregate header when canonical affaires are mixed and another line is unbound", async () => {
+    const source = sourceRow({ candidate_affaire_id: "8" })
+    const client = allocationClient(
+      "QUARANTAINE",
+      10,
+      [[source], [source]],
+      { allocation_rows: "2", incomplete_rows: "1", commande_count: "2", commande_id: "12", affaire_count: "2", affaire_id: "7" }
+    )
+    connect.mockResolvedValueOnce(client)
+
+    await expect(repoCreateLivraisonLineAllocation(ids.delivery, ids.line, input, 7)).resolves.toEqual({ allocationId: ids.allocation })
+    const reconciliation = client.query.mock.calls.find(([sql]) => String(sql).includes("SET commande_id = $2::bigint"))
+    expect(reconciliation?.[1]).toEqual([ids.delivery, null, null, 7])
+  })
+
+  it("clears a removed allocation scope rather than retaining a stale affaire header", async () => {
+    const client = allocationClient(
+      "QUARANTAINE",
+      10,
+      [[sourceRow()], [sourceRow()]],
+      { allocation_rows: "1", incomplete_rows: "0", commande_count: "1", commande_id: "12", affaire_count: "1", affaire_id: "8" }
+    )
+    connect.mockResolvedValueOnce(client)
+
+    await expect(repoDeleteLivraisonLineAllocation(ids.delivery, ids.line, ids.allocation, 7)).resolves.toBe(true)
+    const reconciliation = client.query.mock.calls.find(([sql]) => String(sql).includes("SET commande_id = $2::bigint"))
+    expect(reconciliation?.[1]).toEqual([ids.delivery, "12", "8", 7])
+  })
+
+  it("reconciles the summary after deleting a complete line", async () => {
+    const client = allocationClient(
+      "QUARANTAINE",
+      10,
+      [[sourceRow()], [sourceRow()]],
+      { allocation_rows: "1", incomplete_rows: "0", commande_count: "1", commande_id: "12", affaire_count: "1", affaire_id: "8" }
+    )
+    connect.mockResolvedValueOnce(client)
+
+    await expect(repoDeleteLivraisonLine(ids.delivery, ids.line, 7)).resolves.toBe(true)
+    const reconciliation = client.query.mock.calls.find(([sql]) => String(sql).includes("SET commande_id = $2::bigint"))
+    expect(reconciliation?.[1]).toEqual([ids.delivery, "12", "8", 7])
+  })
+
   it("preserves an internal order whose BL carries the configured delivery client", async () => {
     const internal = sourceRow({ candidate_client_id: null, candidate_order_type: "INTERNE" })
     const client = allocationClient("QUARANTAINE", 10, [[internal], [internal]])
@@ -221,15 +274,16 @@ describe("DRAFT quarantine quality-scope allocation", () => {
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))).toBe(false)
   })
 
-  it("chooses the source that strictly matches the BL affaire", async () => {
-    const matching = sourceRow()
-    const otherAffaire = sourceRow({ candidate_id: "92", candidate_affaire_id: "8" })
-    const client = allocationClient("QUARANTAINE", 10, [[matching, otherAffaire], [matching, otherAffaire]])
+  it("accepts a unique canonical source when the BL header still names another affaire", async () => {
+    const canonicalOtherAffaire = sourceRow({ candidate_affaire_id: "8" })
+    const client = allocationClient("QUARANTAINE", 10, [[canonicalOtherAffaire], [canonicalOtherAffaire]])
     connect.mockResolvedValueOnce(client)
 
     await expect(repoCreateLivraisonLineAllocation(ids.delivery, ids.line, input, 7)).resolves.toEqual({ allocationId: ids.allocation })
     const insert = client.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))
     expect(insert?.[1]).toContain(91)
+    const headerScope = client.query.mock.calls.find(([sql]) => String(sql).includes("WITH delivery_scope AS"))
+    expect(headerScope).toBeDefined()
   })
 
   it("rejects ambiguous canonical sources before it writes stock or the BL allocation", async () => {
@@ -245,18 +299,6 @@ describe("DRAFT quarantine quality-scope allocation", () => {
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))).toBe(false)
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.stock_reservations"))).toBe(false)
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.stock_movement"))).toBe(false)
-  })
-
-  it("rejects an affaire header whose canonical source does not match", async () => {
-    const mismatch = sourceRow({ candidate_affaire_id: "8" })
-    const client = allocationClient("QUARANTAINE", 10, [[mismatch], [mismatch]])
-    connect.mockResolvedValueOnce(client)
-
-    await expect(repoCreateLivraisonLineAllocation(ids.delivery, ids.line, input, 7)).rejects.toMatchObject({
-      status: 409,
-      code: "DELIVERY_ALLOCATION_SOURCE_MISMATCH",
-    })
-    expect(client.query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO public.bon_livraison_ligne_allocations"))).toBe(false)
   })
 
   it("rejects a provenance change after the Finance and BL locks", async () => {

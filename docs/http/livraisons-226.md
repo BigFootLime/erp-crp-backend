@@ -45,9 +45,16 @@ fait pas partie du nouveau parcours opérateur.
 Une allocation directe au statut `DRAFT` peut identifier un lot en quarantaine
 pour établir le périmètre du contrôle `LOT_RELEASE`, sans réserver ni consommer
 le stock. Le serveur conserve sa provenance commande/affaire lorsqu'elle est
-unique et cohérente avec la ligne, le client, l'article et l'éventuelle affaire
-du BL ; une ambiguïté ou une incohérence est refusée. Les lignes historiques
-sans provenance restent bloquées par le contrôle financier à la préparation.
+unique et cohérente avec la ligne, le client et l'article ; une ambiguïté ou une
+incohérence est refusée. Les lignes historiques sans provenance restent bloquées
+par le contrôle financier à la préparation.
+
+Un BL peut regrouper des allocations provenant de plusieurs affaires de livraison.
+Ses champs `commande_id` et `affaire_id` sont un résumé agrégé : ils sont mis à
+`NULL` tant que le périmètre est mixte ou incomplet. La provenance autoritaire
+est portée par chaque allocation et chaque réservation préparée ; elle est
+recontrôlée avant la préparation et l'expédition.
+
 La libération Qualité et les conditions de paiement sont toujours revérifiées
 avant toute préparation ou expédition.
 
