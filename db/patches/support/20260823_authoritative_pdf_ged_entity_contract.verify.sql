@@ -4,6 +4,8 @@ BEGIN TRANSACTION READ ONLY;
 DO $verify$
 DECLARE
   cleanup_recorded boolean := false;
+  finance_profile_recorded boolean := false;
+  finance_profile_complete boolean := false;
 BEGIN
   IF to_regclass('public.cerp_schema_migrations') IS NOT NULL THEN
     SELECT EXISTS (
@@ -11,10 +13,28 @@ BEGIN
       FROM public.cerp_schema_migrations
       WHERE filename = '20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql'
     ) INTO cleanup_recorded;
+    SELECT EXISTS (
+      SELECT 1
+      FROM public.cerp_schema_migrations
+      WHERE filename = '20261014_finance_ged_profile_1268.sql'
+    ) INTO finance_profile_recorded;
   END IF;
 
-  IF cleanup_recorded AND to_regclass('public.ged_entity_types') IS NULL THEN
-    IF to_regclass('public.ged_document_links') IS NULL
+  -- Finance recreates the registry only after the legacy cleanup. Require its
+  -- immutable ledger entry and exact private state so registry drift cannot be
+  -- mistaken for the final Finance profile.
+  IF cleanup_recorded
+     AND finance_profile_recorded
+     AND to_regclass('public.finance_ged_profile_state_1268') IS NOT NULL THEN
+    SELECT COUNT(*) = 1
+       AND bool_and(singleton AND registry_created)
+      INTO finance_profile_complete
+      FROM public.finance_ged_profile_state_1268;
+  END IF;
+
+  IF cleanup_recorded AND (to_regclass('public.ged_entity_types') IS NULL OR finance_profile_complete) THEN
+    IF to_regclass('public.cerp_authoritative_pdf_ged_bridge_20260823') IS NOT NULL
+       OR to_regclass('public.ged_document_links') IS NULL
        OR to_regprocedure('public.fn_ged_link_guard()') IS NOT NULL
        OR to_regprocedure('public.fn_ged_validate_canonical_entity_link_20()') IS NULL
        OR NOT EXISTS (
@@ -22,6 +42,7 @@ BEGIN
           WHERE tgname = 'trg_ged_validate_canonical_entity_link_20'
             AND tgrelid = to_regclass('public.ged_document_links')
             AND tgfoid = to_regprocedure('public.fn_ged_validate_canonical_entity_link_20()')
+            AND tgenabled IN ('O', 'A')
             AND NOT tgisinternal
        ) THEN
       RAISE EXCEPTION 'AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_VERIFY_CLEANUP_DRIFT';

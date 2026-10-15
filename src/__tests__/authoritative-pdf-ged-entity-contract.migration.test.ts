@@ -18,6 +18,9 @@ const cleanup = fs.readFileSync(path.join(root, "db/patches", `${cleanupBase}.sq
 const cleanupPreflight = fs.readFileSync(path.join(root, "db/patches/support", `${cleanupBase}.preflight.sql`), "utf8");
 const cleanupVerify = fs.readFileSync(path.join(root, "db/patches/support", `${cleanupBase}.verify.sql`), "utf8");
 const cleanupRollback = fs.readFileSync(path.join(root, "db/patches/support", `${cleanupBase}.rollback.sql`), "utf8");
+const financeBase = "20261014_finance_ged_profile_1268";
+const financePatch = fs.readFileSync(path.join(root, "db/patches", `${financeBase}.sql`), "utf8");
+const entityVerify = fs.readFileSync(path.join(root, "db/patches/support", `${base}.verify.sql`), "utf8");
 const requiredTypes = ["BON_LIVRAISON", "DEVIS", "COMMANDE_FOURNISSEUR", "FACTURE", "AVOIR"];
 
 describe("authoritative PDF/GED entity-contract migration", () => {
@@ -70,11 +73,25 @@ describe("authoritative PDF/GED entity-contract migration", () => {
     }
     expect(cleanupVerify).toContain("LEGACY_SOL20");
     expect(cleanupVerify).toContain("CLOSED_REGISTRY");
+    expect(cleanupVerify).toContain(`${financeBase}.sql`);
+    expect(cleanupVerify).toContain("finance_ged_profile_state_1268");
+    expect(cleanupVerify).toContain("registry_created");
+    expect(cleanupVerify).toContain("tgenabled IN ('O', 'A')");
     expect(verify).toContain("20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql");
     expect(verify).toContain("AUTHORITATIVE_PDF_GED_ENTITY_CONTRACT_VERIFY_CLEANUP_DRIFT");
     expect(bridgeVerify).toContain("20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql");
     expect(bridgeVerify).toContain("trg_ged_validate_canonical_entity_link_20");
+    expect(bridgeVerify).toContain("tgenabled IN ('O', 'A')");
     expect(bridgeVerify).toContain("AUTHORITATIVE_PDF_GED_COMPATIBILITY_VERIFY_CLEANUP_DRIFT");
+    expect(bridgeVerify).toContain(`${financeBase}.sql`);
+    expect(bridgeVerify).toContain("finance_ged_profile_state_1268");
+    expect(bridgeVerify).toContain("registry_created");
+    expect(financePatch).toContain("finance_ged_profile_state_1268");
+    expect(financePatch).toContain("registry_created");
+    expect(entityVerify).toContain(`${financeBase}.sql`);
+    expect(entityVerify).toContain("finance_ged_profile_state_1268");
+    expect(entityVerify).toContain("registry_created");
+    expect(entityVerify).toContain("tgenabled IN ('O', 'A')");
     expect(bridgeRollback).toContain("immutable entity contract has consumed");
     expect(cleanupRollback).toContain("production legacy cleanup is not automatically reversible");
   });
