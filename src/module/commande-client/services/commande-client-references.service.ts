@@ -44,7 +44,7 @@ function commandArticleReference(article: StockArticleListItem) {
 
 /** Read-only customer identity needed to create a customer order. */
 export async function listCommandeClientReferences(value: unknown) {
-  const { q, limit } = query(value);
+  const { q, limit } = query(value, CLIENT_REFERENCE_LIMIT);
   const rows = await svcListClients(q, limit);
   return rows.map((row) => ({ client_id: row.client_id, client_code: row.client_code, company_name: row.company_name, status: row.status, blocked: Boolean(row.blocked) }));
 }
@@ -108,8 +108,8 @@ export async function getCommandeReferencePiece(pieceId: string) {
 /** Canonical piece versions used to reconcile the selected article version. */
 export async function listCommandeReferencePieceVersions(pieceId: string) {
   const rows = await listVersionsSVC(pieceId);
-  return rows.map(({ id, piece_technique_id, indice, statut, is_current, plan_reference, date_application, manufacturing_mode, assembly_supply_strategy }) => ({
-    id, piece_technique_id, indice, statut, is_current, plan_reference, date_application, manufacturing_mode, assembly_supply_strategy,
+  return rows.map(({ id, piece_technique_id, indice, indice_externe_original, version_interne, updated_at, statut, is_current, plan_reference, date_application, manufacturing_mode, assembly_supply_strategy }) => ({
+    id, piece_technique_id, indice, indice_externe_original, version_interne, updated_at, statut, is_current, plan_reference, date_application, manufacturing_mode, assembly_supply_strategy,
   }));
 }
 
@@ -123,7 +123,7 @@ export async function listCommandeReferenceArticleVersions(articleId: string, va
 /** Product choices and their server-side commercial eligibility for Commandes only. */
 export async function listCommandeReferenceArticles(value: unknown) {
   const filters = listArticlesQuerySchema.parse(value);
-  const result = await listStockArticlesSVC({ ...filters, pageSize: Math.min(filters.pageSize, REFERENCE_LIMIT) });
+  const result = await listStockArticlesSVC(filters);
   return { items: result.items.map(commandArticleReference), total: result.total };
 }
 
@@ -136,12 +136,12 @@ export async function getCommandeReferenceArticle(articleId: string) {
 /** Internal orders can choose a destination without opening the Stock workspace. */
 export async function listCommandeReferenceMagasins(value: unknown) {
   const filters = listMagasinsQuerySchema.parse(value);
-  const result = await listStockMagasinsSVC({ ...filters, pageSize: Math.min(filters.pageSize, REFERENCE_LIMIT) });
+  const result = await listStockMagasinsSVC(filters);
   return { items: result.items.map(({ id, code, name, is_active }) => ({ id, code, name, is_active })), total: result.total };
 }
 
 export async function listCommandeReferenceEmplacements(value: unknown) {
   const filters = listEmplacementsQuerySchema.parse(value);
-  const result = await listStockEmplacementsSVC({ ...filters, pageSize: Math.min(filters.pageSize, REFERENCE_LIMIT) });
+  const result = await listStockEmplacementsSVC(filters);
   return { items: result.items.map(({ id, magasin_id, code, name, is_scrap, is_active, location_type, allow_inbound, allow_outbound }) => ({ id, magasin_id, code, name, is_scrap, is_active, location_type, allow_inbound, allow_outbound })), total: result.total };
 }
