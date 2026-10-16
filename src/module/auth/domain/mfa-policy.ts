@@ -24,7 +24,9 @@ export function policyRequiresMfa(
   isSuperadmin: boolean,
   role?: string | null,
   roles?: readonly string[] | null,
+  mfaRequired = false,
 ): boolean {
+  if (mfaRequired || isSuperadmin) return true;
   if (policy === "required_for_all") return true;
   if (policy === "required_for_admins") return isSuperadmin || hasPrivilegedAssignedRole(role, roles);
   return false;
@@ -35,8 +37,9 @@ export function policyAllowsFactorRevocation(
   isSuperadmin: boolean,
   role?: string | null,
   roles?: readonly string[] | null,
+  mfaRequired = false,
 ): boolean {
-  return !policyRequiresMfa(policy, isSuperadmin, role, roles);
+  return !policyRequiresMfa(policy, isSuperadmin, role, roles, mfaRequired);
 }
 
 /**
@@ -51,6 +54,7 @@ export function accountRequiresMfa(params: {
   role?: string | null;
   roles?: readonly string[] | null;
   hasActiveFactor: boolean;
+  mfaRequired?: boolean;
 }): boolean {
-  return params.hasActiveFactor || policyRequiresMfa(params.policy, params.isSuperadmin, params.role, params.roles);
+  return params.hasActiveFactor || policyRequiresMfa(params.policy, params.isSuperadmin, params.role, params.roles, params.mfaRequired);
 }

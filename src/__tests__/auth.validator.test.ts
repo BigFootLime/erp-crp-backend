@@ -4,6 +4,10 @@ import { loginSchema, resetPasswordSchema } from "../module/auth/validators/auth
 import { strictEmail } from "../module/auth/validators/_helpers";
 
 describe("auth login validator", () => {
+  it("accepts an approved username from a two-letter first name without accepting an empty name", () => {
+    expect(loginSchema.parse({username: " li ", password: "secret"}).username).toBe("LI");
+    expect(() => loginSchema.parse({username: " ", password: "secret"})).toThrow();
+  });
   it("accepts the frontend database selector", () => {
     const parsed = loginSchema.parse({
       username: " admin ",

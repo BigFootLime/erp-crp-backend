@@ -99,6 +99,7 @@ type UserMfaRow = SessionIdentity & {
   status: string;
   is_superadmin: boolean;
   mfa_reenrollment_required?: boolean;
+  mfa_required?: boolean;
 };
 
 function mfaIssuer(): string {
@@ -195,7 +196,7 @@ async function loadFactor(tx: PoolClient, userId: number, state: "ACTIVE" | "PEN
 
 async function loadUser(tx: PoolClient, userId: number, forUpdate = false): Promise<UserMfaRow | null> {
   const { rows } = await tx.query<UserMfaRow>(
-    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required, u.avatar_key,
+    `SELECT u.id, u.username, u.email, u.password, u.role, u.status, u.is_superadmin, u.mfa_reenrollment_required, u.mfa_required, u.avatar_key,
             ${avatarProjectionSql} AS profile_picture_asset_id,
             COALESCE(rse.session_epoch, 0)::text AS realtime_session_epoch,
             COALESCE((SELECT array_agg(ura.role_key ORDER BY (ura.role_key = u.role) DESC, ura.role_key)
@@ -299,7 +300,7 @@ export async function beginMfaAfterPassword(user: PasswordLoginUser, meta: MfaAu
       });
       return { kind: "verify" as const, challenge };
     }
-    if (!user.mfa_reenrollment_required && !policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles)) return { kind: "none" as const };
+    if (!user.mfa_reenrollment_required && !policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles, user.mfa_required)) return { kind: "none" as const };
     const { factor, secret } = await createPendingFactor(tx, user);
     const challenge = await insertChallenge(tx, {
       userId: user.id,
@@ -572,6 +573,7 @@ export async function getMfaStatus(userId: number) {
   const { rows } = await pool.query<{
     is_superadmin: boolean;
     mfa_reenrollment_required: boolean;
+    mfa_required: boolean;
     role: string;
     roles: string[];
     policy: string | null;
@@ -582,7 +584,7 @@ export async function getMfaStatus(userId: number) {
     locked_until: Date | null;
     recovery_codes_remaining: string;
   }>(
-    `SELECT u.is_superadmin, u.mfa_reenrollment_required, u.role,
+    `SELECT u.is_superadmin, u.mfa_reenrollment_required, u.mfa_required, u.role,
              COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
                          FROM public.user_role_assignments ura WHERE ura.user_id=u.id), ARRAY[u.role]::text[]) AS roles,
             (SELECT value_text FROM public.erp_settings WHERE key=$2 LIMIT 1) AS policy,
@@ -598,10 +600,10 @@ export async function getMfaStatus(userId: number) {
   if (!row) throw new ApiError(404, "USER_NOT_FOUND", "Utilisateur inconnu.");
   const policy = normalizeMfaPolicy(row.policy);
   const enrolled = Boolean(row.factor_id);
-  const policyRequired = policyRequiresMfa(policy, row.is_superadmin, row.role, row.roles);
+  const policyRequired = policyRequiresMfa(policy, row.is_superadmin, row.role, row.roles, row.mfa_required);
   return {
     policy,
-    required: row.mfa_reenrollment_required || accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, role: row.role, roles: row.roles, hasActiveFactor: enrolled }),
+    required: row.mfa_reenrollment_required || accountRequiresMfa({ policy, isSuperadmin: row.is_superadmin, role: row.role, roles: row.roles, hasActiveFactor: enrolled, mfaRequired: row.mfa_required }),
     reenrollment_required: row.mfa_reenrollment_required,
     policy_required: policyRequired,
     enrolled,
@@ -611,8 +613,8 @@ export async function getMfaStatus(userId: number) {
     enrolled_at: row.enrolled_at?.toISOString() ?? null,
     locked_until: row.locked_until?.toISOString() ?? null,
     recovery_codes_remaining: Number.parseInt(row.recovery_codes_remaining, 10),
-    can_enroll: !enrolled && (row.mfa_reenrollment_required || policy !== "disabled"),
-    can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin, row.role, row.roles),
+    can_enroll: !enrolled && (policyRequired || row.mfa_reenrollment_required || policy !== "disabled"),
+    can_revoke: enrolled && policyAllowsFactorRevocation(policy, row.is_superadmin, row.role, row.roles, row.mfa_required),
   };
 }
 
@@ -629,7 +631,7 @@ export async function beginOwnMfaEnrollment(
       return { ok: false as const, status: 401, code: "AUTH_INVALID", message: "Identifiants invalides" };
     }
     const policy = await loadMfaPolicy(tx);
-    if (policy === "disabled") {
+    if (policy === "disabled" && !user.mfa_reenrollment_required && !policyRequiresMfa(policy, user.is_superadmin, user.role, user.roles, user.mfa_required)) {
       return { ok: false as const, status: 409, code: "MFA_DISABLED", message: "L'enrôlement MFA est désactivé par la politique de l'organisation." };
     }
     if (await loadFactor(tx, userId, "ACTIVE", true)) {
@@ -759,7 +761,7 @@ export async function regenerateRecoveryCodes(userId: number, password: string, 
 export async function revokeOwnMfa(userId: number, password: string, code: string, meta: MfaAuditMeta) {
   return authenticatedMutation(userId, password, code, meta, async (tx, user, factor, method) => {
     const policy = await loadMfaPolicy(tx);
-    if (!policyAllowsFactorRevocation(policy, user.is_superadmin, user.role, user.roles)) {
+    if (!policyAllowsFactorRevocation(policy, user.is_superadmin, user.role, user.roles, user.mfa_required)) {
       throw new ApiError(
         409,
         "MFA_REQUIRED_BY_POLICY",

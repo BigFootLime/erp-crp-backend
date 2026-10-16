@@ -1,6 +1,8 @@
 export type AuthRateLimitEndpoint =
   | "login"
   | "register"
+  | "accountRequest"
+  | "accountRequestStatus"
   | "forgotPassword"
   | "resetPassword"
   | "mfa"
@@ -109,6 +111,20 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
     MINUTE_MS,
     24 * HOUR_MS
   );
+  const accountRequestWindowMs = readBoundedInteger(
+    env,
+    "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_WINDOW_MS",
+    HOUR_MS,
+    MINUTE_MS,
+    24 * HOUR_MS
+  );
+  const accountRequestStatusWindowMs = readBoundedInteger(
+    env,
+    "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_STATUS_WINDOW_MS",
+    15 * MINUTE_MS,
+    MINUTE_MS,
+    24 * HOUR_MS
+  );
   const resetWindowMs = readBoundedInteger(
     env,
     "AUTH_RATE_LIMIT_RESET_WINDOW_MS",
@@ -179,6 +195,26 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
         email: {
           limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_REGISTER_IDENTIFIER_LIMIT", 3, 1, 10_000),
           windowMs: registerWindowMs,
+        },
+      }),
+      accountRequest: endpointConfig("closed-error", {
+        ip: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_IP_LIMIT", 40, 1, 10_000),
+          windowMs: accountRequestWindowMs,
+        },
+        email: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_EMAIL_LIMIT", 3, 1, 10_000),
+          windowMs: accountRequestWindowMs,
+        },
+      }),
+      accountRequestStatus: endpointConfig("closed-error", {
+        ip: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_STATUS_IP_LIMIT", 240, 1, 10_000),
+          windowMs: accountRequestStatusWindowMs,
+        },
+        token: {
+          limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_ACCOUNT_REQUEST_STATUS_RECEIPT_LIMIT", 20, 1, 10_000),
+          windowMs: accountRequestStatusWindowMs,
         },
       }),
       forgotPassword: endpointConfig("closed-generic", {

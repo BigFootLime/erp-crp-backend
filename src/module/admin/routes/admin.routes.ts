@@ -21,6 +21,7 @@ import {
 import { getOperationsConsole } from "../controllers/operations-console.controller";
 import { uploadAdminUserAvatar } from '../../auth/controllers/avatar.controller';
 import { createSecureUpload } from '../../../shared/uploads/secure-upload';
+import { adminAccountRequestRouter } from '../../account-requests/account-requests.routes';
 
 const router = Router();
 const avatarUpload = createSecureUpload('image', {maxFiles:1});
@@ -49,5 +50,6 @@ router.put("/erp-settings/:key", upsertErpSettingAdmin);
 router.post("/users/:id/password-reset-token", createPasswordResetTokenAdmin);
 router.patch("/users/:id/password", resetUserPasswordAdmin);
 router.post("/users/:id/account-recovery", recoverUserAccountAdmin);
+router.use(adminAccountRequestRouter);
 
 export default router;

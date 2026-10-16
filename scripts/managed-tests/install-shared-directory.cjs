@@ -24,8 +24,13 @@ async function main(){
   if(!exists){await admin.query(`CREATE DATABASE ${sqlId(database)} TEMPLATE ${sqlId(config.template_database)} ALLOW_CONNECTIONS false`);await admin.query(`REVOKE CONNECT ON DATABASE ${sqlId(database)} FROM PUBLIC,cerp_app; GRANT CONNECT ON DATABASE ${sqlId(database)} TO cerp_directory_app; ALTER DATABASE ${sqlId(database)} ALLOW_CONNECTIONS true`);}
  }finally{await admin.end();}
  const sourceUrl=new URL(config.admin_database_url);sourceUrl.pathname=`/${database}`;const source=new Client({connectionString:sourceUrl.toString()});await source.connect();
+ const mfaPatch=await fs.readFile(path.resolve(__dirname,'../../db/patches/20261016_account_mfa_requirement_1372.sql'),'utf8');
+ const accountRequestsPatch=await fs.readFile(path.resolve(__dirname,'../../db/shared-directory/patches/20261016_self_service_account_requests_1372.sql'),'utf8');
  let installed;try{
+  await source.query(mfaPatch);
+  for(const site of ['cerp_prod','cerp_test']){const url=new URL(config.admin_database_url);url.pathname=`/${site}`;const target=new Client({connectionString:url.toString()});await target.connect();try{await target.query(mfaPatch);}finally{await target.end();}}
   installed=await installEmptyDirectory(source,config.directory_id,seed);
+  await source.query(accountRequestsPatch);
   for(const site of ['cerp_prod','cerp_test']){const url=new URL(config.admin_database_url);url.pathname=`/${site}`;const target=new Client({connectionString:url.toString()});await target.connect();try{await approveBootstrapOwnerActor(source,target,config.directory_id,seed.command_id);}finally{await target.end();}}
  }finally{await source.end();}
  let callers;try{callers=[...await readDirectoryCallerKeys(config.callers_file)].map(([site,key])=>({site,key}));}catch(error){if(error.code!=='ENOENT')throw error;callers=['cerp_prod','cerp_test'].map(site=>({site,key:crypto.randomBytes(32).toString('hex')}));await writePrivate(config.callers_file,JSON.stringify(callers)+'\n');}

@@ -81,6 +81,7 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
  });
  endpoint('admin-user-recover',async(actor,input)=>{
   const body=z.object({profile_id:z.string().uuid(),key:z.string().uuid(),input:adminRecoverAccountSchema.shape.body}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
+  requireDirectoryAdmin(actor);
   return {...await recoverAccountBySuperadmin({userId:profile.source_user_id,actorUserId:actor.source_user_id,actorSessionEpoch:actor.global_session_epoch,actorFactorId:actor.mfa_factor_id,actorFactorVersion:actor.mfa_factor_version,idempotencyKey:body.key,reason:body.input.reason,meta:{ip:null,user_agent:null,device_type:null,os:null,browser:null,path:'/directory/admin-user-recover'}}),profile_id:body.profile_id};
  });
 }

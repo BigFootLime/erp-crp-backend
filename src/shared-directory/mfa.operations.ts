@@ -35,7 +35,7 @@ export function mountDirectoryMfa(app:Express,db:Pool,sourceJwtSecret:string,wra
  endpoint('mfa-policy-update',updateMfaPolicySchema,async(identity,body,meta)=>{
   const owner=(await db.query("SELECT 1 FROM public.cerp_directory_memberships WHERE profile_id=$1::uuid AND database_id='cerp_prod' AND status='Active' AND is_superadmin=true",[identity.profile_id])).rows.length>0;
   if(!owner)throw new HttpError(403,'DIRECTORY_OWNER_REQUIRED','La politique commune exige un administrateur de Production.');
-  if(body.policy!=='required_for_all')throw new HttpError(409,'DIRECTORY_MFA_REQUIRED','La double authentification reste obligatoire pour l’annuaire commun.');
+  if(!['optional','required_for_all'].includes(body.policy))throw new HttpError(409,'DIRECTORY_MFA_POLICY_INVALID','Choisissez la MFA facultative pour les salariés ou obligatoire pour tous. Elle reste obligatoire pour les administrateurs.');
   return updateMfaPolicyConfiguration({userId:identity.source_user_id,password:body.current_password,code:body.code,policy:body.policy,meta});
  });
 }

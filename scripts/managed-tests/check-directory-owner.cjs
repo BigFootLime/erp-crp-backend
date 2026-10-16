@@ -21,7 +21,8 @@ async function main(){
  const db=new Client({connectionString:`postgresql://cerp_fixture@127.0.0.1:15463/${database}`});await db.connect();
  try{
   check('starts without any imported users or company',(await db.query('SELECT (SELECT count(*) FROM users)+(SELECT count(*) FROM factureur) n')).rows[0].n==='0');
-  const installed=await installEmptyDirectory(db,directoryId,seed);check('private owner installed once',!installed.replayed);
+  await db.query(await fs.readFile(path.join(__dirname,'../../db/patches/20261016_account_mfa_requirement_1372.sql'),'utf8'));
+  const installed=await installEmptyDirectory(db,directoryId,seed);await db.query(await fs.readFile(path.join(__dirname,'../../db/shared-directory/patches/20261016_self_service_account_requests_1372.sql'),'utf8'));check('private owner installed once',!installed.replayed);
   check('same owner command replays without duplicate',(await installEmptyDirectory(db,directoryId,seed)).replayed);
   const profile=(await db.query('SELECT p.weekly_hours_target,p.employment_type,p.job_title,u.avatar_key,u.mfa_reenrollment_required FROM cerp_directory_profiles p JOIN users u ON u.id=p.user_id')).rows[0];
   check('39h CDI and requested job, without invented avatar',Number(profile.weekly_hours_target)===39&&profile.employment_type==='CDI'&&profile.job_title===seed.profile.job_title&&profile.avatar_key===null&&profile.mfa_reenrollment_required===true);
