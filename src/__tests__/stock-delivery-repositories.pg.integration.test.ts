@@ -40,6 +40,8 @@ const ids = {
   otherClient: "10000000-0000-4000-8000-000000000013",
   otherDeliveryAddress: "10000000-0000-4000-8000-000000000014",
   secondReservation: "10000000-0000-4000-8000-000000000015",
+  secondLot: "10000000-0000-4000-8000-000000000016",
+  secondStockBatch: "10000000-0000-4000-8000-000000000017",
 } as const;
 
 let harnessPool: Pool | null = null;
@@ -574,6 +576,10 @@ async function installMinimalSchema(db: Pool) {
       realtime_stream_ordinal BIGINT NULL
     );
   `);
+  const deliveryPatch = readFileSync(repoPath("db/patches/20260724_expedition_deliveries_226.sql"), "utf8");
+  const versionTrigger = deliveryPatch.match(/CREATE OR REPLACE FUNCTION public\.fn_bump_bon_livraison_version_226\(\)[\s\S]*?FOR EACH ROW EXECUTE FUNCTION public\.fn_bump_bon_livraison_version_226\(\);/);
+  if (!versionTrigger) throw new Error("Canonical delivery version trigger was not found");
+  await db.query(versionTrigger[0]);
 }
 
 async function clearScenario(db: Pool) {
@@ -588,6 +594,7 @@ async function clearScenario(db: Pool) {
       public.realtime_stream_enqueue_state,
       public.erp_audit_logs,
       public.delivery_outbox,
+      public.bon_livraison_command_receipts,
       public.bon_livraison_ship_receipts,
       public.bon_livraison_prepare_receipts,
       public.bon_livraison_pack_versions,
@@ -1678,7 +1685,12 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
   });
 
 
-  it("ships V2 consumption exactly once and persists stock, reservation and canonical allocation counters (#1369)", async () => {
+  it.each([
+    { caseId: "native", quantities: [10], prepared: [0], total: 10, refuses: false },
+    { caseId: "cart", quantities: [10], prepared: [10], total: 10, refuses: false },
+    { caseId: "incomplete-hold", quantities: [10], prepared: [5], total: 10, refuses: true },
+    { caseId: "decimal", quantities: [0.7, 0.1], prepared: [0.7, 0.1], total: 0.8, refuses: false },
+  ])("ships V2 consumption $caseId with atomic counters and replay (#1369)", async ({ caseId, quantities, prepared, total, refuses }) => {
     if (!harnessPool) throw new Error("Harness pool not initialized");
     await seedDeliveryScenario(harnessPool);
 
@@ -1708,6 +1720,26 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
     try {
       expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1`, [ids.reservation])).rows)
         .toEqual([{ consumed: 0, prepared: 0, status: "ACTIVE" }]);
+      await harnessPool.query("UPDATE public.stock_levels SET qty_total=$1,qty_reserved=$1", [total]);
+      await harnessPool.query("UPDATE public.stock_batches SET qty_total=$1,qty_reserved=$1", [total]);
+      await harnessPool.query("UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=$1,qty_reserved=$1,qty_remaining=$1 WHERE id=900", [total]);
+      await harnessPool.query("UPDATE public.stock_reservations SET qty_reserved=$2,qty_prepared=$3 WHERE id=$1", [ids.reservation, quantities[0], prepared[0]]);
+      const reservationIds = [ids.reservation, ids.secondReservation];
+      const lotIds = [ids.lot, ids.secondLot];
+      const batchIds = [ids.stockBatch, ids.secondStockBatch];
+      if (quantities.length === 2) {
+        await harnessPool.query("UPDATE public.stock_batches SET qty_total=$1,qty_reserved=$1,lot_id=$2::uuid WHERE id=$3::uuid", [quantities[0], ids.lot, ids.stockBatch]);
+        await harnessPool.query(`INSERT INTO public.lots(id,article_id,lot_code,lot_status,source_scope)
+          VALUES($1::uuid,$2::uuid,'LOT-INT-002','LIBERE','NEW')`, [ids.secondLot, ids.article]);
+        await harnessPool.query(`INSERT INTO public.stock_batches(id,stock_level_id,batch_code,qty_total,qty_reserved,lot_id)
+          VALUES($1::uuid,$2::uuid,'LOT-INT-002',$3,$3,$4::uuid)`, [ids.secondStockBatch, ids.stockLevel, quantities[1], ids.secondLot]);
+        await harnessPool.query(`INSERT INTO public.stock_reservations(
+          id,article_id,location_id,qty_reserved,qty_prepared,source_type,source_id,status,
+          commande_ligne_affaire_allocation_id,livraison_affaire_id,lot_id,stock_level_id,stock_batch_id,source_scope,created_by,updated_by
+        ) SELECT $2::uuid,article_id,location_id,$3,$4,source_type,source_id,status,
+          commande_ligne_affaire_allocation_id,livraison_affaire_id,$5::uuid,stock_level_id,$6::uuid,source_scope,created_by,updated_by
+          FROM public.stock_reservations WHERE id=$1::uuid`, [ids.reservation, ids.secondReservation, quantities[1], prepared[1], ids.secondLot, ids.secondStockBatch]);
+      }
       const delivery = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison(
         numero,client_id,commande_id,adresse_livraison_id,statut,created_by,updated_by
       ) VALUES('BL-V2-1369',$1::uuid,42,$2::uuid,'READY',7,7) RETURNING id::text AS id`, [ids.client, ids.deliveryAddress]);
@@ -1715,34 +1747,47 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
       if (!deliveryId) throw new Error("Missing V2 delivery fixture");
       const line = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne(
         bon_livraison_id,ordre,designation,code_piece,quantite,unite,commande_ligne_id,created_by,updated_by
-      ) VALUES($1::uuid,1,'Pièce intégration','PT-INT',10,'u',43,7,7) RETURNING id::text AS id`, [deliveryId]);
+      ) VALUES($1::uuid,1,'Pièce intégration','PT-INT',$2,'u',43,7,7) RETURNING id::text AS id`, [deliveryId, total]);
       const lineId = line.rows[0]?.id;
       if (!lineId) throw new Error("Missing V2 delivery line fixture");
-      const allocation = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne_allocations(
+      for (const [index, quantity] of quantities.entries()) {
+        const allocation = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne_allocations(
         bon_livraison_ligne_id,article_id,lot_id,quantite,unite,reservation_id,magasin_id,emplacement_id,location_id,stock_level_id,stock_batch_id,commande_ligne_affaire_allocation_id,verified_at,verified_by,verification_snapshot,created_by,updated_by
-      ) VALUES($1::uuid,$2::uuid,$3::uuid,10,'u',$4::uuid,$5::uuid,1,$6::uuid,$7::uuid,$8::uuid,900,now(),7,'{}'::jsonb,7,7) RETURNING id::text AS id`, [lineId, ids.article, ids.lot, ids.reservation, ids.magasin, ids.location, ids.stockLevel, ids.stockBatch]);
-      const allocationId = allocation.rows[0]?.id;
-      if (!allocationId) throw new Error("Missing V2 allocation fixture");
-      await harnessPool.query(`INSERT INTO public.bon_livraison_event_log(bon_livraison_id,event_type,new_values,user_id)
-        VALUES($1::uuid,'PICK_CONFIRMED',jsonb_build_object('allocation_id',$2::text),7)`, [deliveryId, allocationId]);
+        ) VALUES($1::uuid,$2::uuid,$3::uuid,$9,'u',$4::uuid,$5::uuid,1,$6::uuid,$7::uuid,$8::uuid,900,now(),7,'{}'::jsonb,7,7) RETURNING id::text AS id`, [lineId, ids.article, lotIds[index], reservationIds[index], ids.magasin, ids.location, ids.stockLevel, batchIds[index], quantity]);
+        const allocationId = allocation.rows[0]?.id;
+        if (!allocationId) throw new Error("Missing V2 allocation fixture");
+        await harnessPool.query(`INSERT INTO public.bon_livraison_event_log(bon_livraison_id,event_type,new_values,user_id)
+          VALUES($1::uuid,'PICK_CONFIRMED',jsonb_build_object('allocation_id',$2::text),7)`, [deliveryId, allocationId]);
+      }
       await harnessPool.query(`INSERT INTO public.bon_livraison_pack_versions(
         bon_livraison_id,version,status,checksum_sha256,quality_release_state,quality_release_preview_sha256,quality_policy_sha256
       ) VALUES($1,1,'GENERATED','pg-1369-pack','READY','pg-1369-quality','pg-1369-policy')`, [deliveryId]);
       const preview = await shipmentRepository.repoGetLivraisonShipmentPreview(deliveryId);
+      expect(preview.can_ship).toBe(true);
       const body = { expected_version: preview.row_version, preview_hash: preview.preview_hash };
-      const first = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, "v2-1369-ship");
-      const replay = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, "v2-1369-ship");
-      expect(replay).toMatchObject({ idempotent_replay: true, stock_movement_ids: first.stock_movement_ids });
-      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1`, [ids.reservation])).rows)
-        .toEqual([{ consumed: 10, prepared: 0, status: "CONSUMED" }]);
-      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed FROM public.bon_livraison_ligne_allocations`)).rows).toEqual([{ consumed: 10 }]);
+      if (refuses) {
+        await expect(shipmentRepository.repoShipLivraison(deliveryId, body, 7, `v2-1369-${caseId}`))
+          .rejects.toMatchObject({ status: 409, code: "RESERVATION_CONSUME_FAILED" });
+      } else {
+        const first = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, `v2-1369-${caseId}`);
+        const replay = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, `v2-1369-${caseId}`);
+        expect(replay).toMatchObject({ idempotent_replay: true, stock_movement_ids: first.stock_movement_ids });
+      }
+      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations ORDER BY id`)).rows)
+        .toEqual(quantities.map((quantity, index) => ({ consumed: refuses ? 0 : quantity, prepared: refuses ? prepared[index] : 0, status: refuses ? "ACTIVE" : "CONSUMED" })));
+      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed FROM public.bon_livraison_ligne_allocations ORDER BY quantite`)).rows)
+        .toEqual([...quantities].sort((a, b) => a - b).map(quantity => ({ consumed: refuses ? 0 : quantity })));
       expect((await harnessPool.query(`SELECT qty_delivered::float8 AS delivered,qty_reserved::float8 AS reserved,qty_remaining::float8 AS remaining,delivery_status FROM public.commande_ligne_affaire_allocation WHERE id=900`)).rows)
-        .toEqual([{ delivered: 10, reserved: 0, remaining: 0, delivery_status: "LIVREE" }]);
+        .toEqual([{ delivered: refuses ? 0 : total, reserved: refuses ? total : 0, remaining: refuses ? total : 0, delivery_status: refuses ? "A_PREPARER" : "LIVREE" }]);
       expect((await harnessPool.query(`SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels WHERE id=$1`, [ids.stockLevel])).rows)
-        .toEqual([{ total: 0, reserved: 0 }]);
-      expect((await harnessPool.query(`SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches WHERE id=$1`, [ids.stockBatch])).rows)
-        .toEqual([{ total: 0, reserved: 0 }]);
-      expect((await harnessPool.query(`SELECT COUNT(*)::int AS count FROM public.stock_movements`)).rows).toEqual([{ count: 1 }]);
+        .toEqual([{ total: refuses ? total : 0, reserved: refuses ? total : 0 }]);
+      expect((await harnessPool.query(`SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches ORDER BY id`)).rows)
+        .toEqual(quantities.map(quantity => ({ total: refuses ? quantity : 0, reserved: refuses ? quantity : 0 })));
+      expect((await harnessPool.query(`SELECT statut,row_version FROM public.bon_livraison WHERE id=$1`, [deliveryId])).rows)
+        .toEqual([{ statut: refuses ? "READY" : "SHIPPED", row_version: refuses ? preview.row_version : preview.row_version + 1 }]);
+      expect((await harnessPool.query(`SELECT COUNT(*)::int AS count FROM public.stock_movements`)).rows).toEqual([{ count: refuses ? 0 : quantities.length }]);
+      expect((await harnessPool.query(`SELECT COUNT(*)::int AS count FROM public.stock_movement_lines`)).rows).toEqual([{ count: refuses ? 0 : quantities.length }]);
+      expect((await harnessPool.query(`SELECT COUNT(*)::int AS count FROM public.bon_livraison_command_receipts`)).rows).toEqual([{ count: refuses ? 0 : 1 }]);
     } finally {
       mocks.reverse().forEach((mock) => mock.mockRestore());
     }
