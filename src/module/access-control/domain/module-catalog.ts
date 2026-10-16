@@ -158,14 +158,12 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
   {
     module_key: "production",
     label: "Production",
-    description: "Ordres de fabrication, planning, pointages et poste opérateur.",
+    description: "Ordres de fabrication, pointages et poste opérateur.",
     category: "Production",
-    api_prefixes: ["/production", "/planning", "/programmations"],
+    api_prefixes: ["/production", "/programmations"],
     nav_page_keys: [
       "production-dashboard",
       "machines-postes",
-      "production-planning",
-      "production-calendars",
       "production-readiness",
       "production-execution",
       "atelier-station",
@@ -174,6 +172,16 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     ],
     is_protected: false,
     sort_order: 110,
+  },
+  {
+    module_key: "planning",
+    label: "Planning",
+    description: "Ordonnancement des OF et calendriers de capacité.",
+    category: "Production",
+    api_prefixes: ["/planning"],
+    nav_page_keys: ["production-planning", "production-calendars"],
+    is_protected: false,
+    sort_order: 111,
   },
   {
     module_key: "qualite",

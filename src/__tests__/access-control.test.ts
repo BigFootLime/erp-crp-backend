@@ -168,9 +168,9 @@ beforeEach(() => {
 
 describe("Catalogue de modules #326", () => {
   it("expose 24 modules aux clés et préfixes uniques, dont un seul protégé", () => {
-    expect(MODULE_CATALOG).toHaveLength(24);
+    expect(MODULE_CATALOG).toHaveLength(25);
     const keys = MODULE_CATALOG.map((entry) => entry.module_key);
-    expect(new Set(keys).size).toBe(24);
+    expect(new Set(keys).size).toBe(25);
 
     const prefixes = MODULE_CATALOG.flatMap((entry) => entry.api_prefixes);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -180,7 +180,7 @@ describe("Catalogue de modules #326", () => {
 
   it("résout le module par le plus long préfixe, sur une frontière de segment", () => {
     expect(resolveModuleKeyForPath("/production/station/of/42")).toBe("production");
-    expect(resolveModuleKeyForPath("/production")).toBe("production");
+    expect(resolveModuleKeyForPath("/production")).toBe("production");`r`n    expect(resolveModuleKeyForPath("/planning")).toBe("planning");
     expect(resolveModuleKeyForPath("/clients/123/contacts")).toBe("clients");
     // « /commandes » ne doit jamais capter « /commandes-fournisseurs ».
     expect(resolveModuleKeyForPath("/commandes/17")).toBe("commandes-clients");
@@ -202,7 +202,7 @@ describe("Catalogue de modules #326", () => {
     const costCenters = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-centres-frais");
     const machines = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-parc-machines");
     const stock = MODULE_CATALOG.find((entry) => entry.module_key === "stock");
-    const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");
+    const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");`r`n    const planning = MODULE_CATALOG.find((entry) => entry.module_key === "planning");
 
     expect(technicalData?.nav_page_keys).toEqual(["pieces-techniques"]);
     expect(finitions).toMatchObject({ nav_page_keys: ["finitions"], api_prefixes: ["/finitions"] });
