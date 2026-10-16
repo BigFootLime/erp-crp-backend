@@ -7,6 +7,7 @@ const url=db=>`postgresql://cerp_fixture@127.0.0.1:15463/${db}`;let child,source
 let diagnostics='';
 const keys=new Map(['cerp_prod',siteA,siteB].map(site=>[site,crypto.randomBytes(32).toString('hex')]));
 function check(name,ok){if(!ok)throw new Error(`CHECK_FAILED:${name}`);checks.push(name);}
+async function rejects(name,work,code,status){try{await work();check(name,false);}catch(error){const actualCode=typeof error?.code==='string'?error.code:error?.message;check(name,actualCode===code&&(status===undefined||error?.status===status));}}
 async function main(){
  await fs.mkdir(root,{recursive:true,mode:0o700});
  const candidates=await Promise.all((await fs.readdir(runtime)).filter(n=>/^managed-[a-f0-9]{10}$/.test(n)).map(async n=>({n,at:(await fs.stat(path.join(runtime,n))).mtimeMs})));candidates.sort((a,b)=>b.at-a.at);
@@ -48,6 +49,8 @@ async function main(){
  const inviteReplay=await clientA.call('admin-user-create',{directory_session:sessionA.directory_session,input:invitedInput});check('invited creation replays without duplicate profile',invited.profile.profile_id===inviteReplay.profile.profile_id&&inviteReplay.replayed&&invited.profile.is_superadmin&&invited.profile.status==='Inactive');
  const invitation=await clientA.call('admin-user-invite',{directory_session:sessionA.directory_session,input:{profile_id:invited.profile.profile_id,key:crypto.randomUUID()}});
  const activated=await clientB.call('account-activate',{input:{token:invitation.invitation.token,newPassword:secret},meta});check('invitation activates at common credential authority',activated.replayed===false);
+ const invitedChallenge=await clientB.call('login',{input:{username:invitedInput.body.username,password:secret},meta});check('adopted fixture identity requires its own MFA enrollment',invitedChallenge.status==='mfa_enrollment_required'&&!invitedChallenge.directory_session);
+ const invitedSession=await clientB.call('verify-mfa',{input:{challenge_token:invitedChallenge.challenge_token,code:totpForStep(invitedChallenge.totp.secret,Math.floor(Date.now()/30000))},meta});check('adopted fixture identity receives a genuine directory MFA session',!!invitedSession.directory_session&&invitedSession.identity.profile_id===invited.profile.profile_id);
  const avatarBytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3U8AAAAASUVORK5CYII=','base64');
  const avatar=await clientA.call('avatar-upload',{directory_session:sessionA.directory_session,profile_id:sessionA.identity.profile_id,key:crypto.randomUUID(),filename:'fixture.png',mime:'image/png',base64:avatarBytes.toString('base64'),meta});
  const avatarB=await clientB.validate(sessionB.directory_session),download=await clientB.downloadAvatar(sessionB.directory_session,avatar.profile_picture_asset.asset_id);
@@ -75,9 +78,47 @@ async function main(){
  }finally{await projectionPool.end();}
  const secondPool=new Pool({connectionString:url(siteB)});try{
   await site.initializeSharedDirectorySite(secondPool,{CERP_SHARED_DIRECTORY_ENABLED:'true',CERP_SHARED_DIRECTORY_SITE:siteB,CERP_SHARED_DIRECTORY_ID:directoryId,CERP_DIRECTORY_SITE_CALL_KEY:keys.get(siteB)});
+  // The source fixture explicitly makes this identity a non-owner. The production
+  // adoption protocol must never use the bootstrap-owner exception for staff.
+  await sourceDb.query("UPDATE cerp_directory_memberships SET is_superadmin=false,version=version+1 WHERE profile_id=$1::uuid AND database_id=$2",[invited.profile.profile_id,siteB]);
+  await rejects('membership version update rejects the prior invited session',()=>clientB.validate(invitedSession.directory_session),'DIRECTORY_SESSION_REJECTED',401);
+  const refreshedInvite=await clientB.call('login',{input:{username:invitedInput.body.username,password:secret},meta});
+  const refreshedSession=await clientB.call('verify-mfa',{input:{challenge_token:refreshedInvite.challenge_token,code:invitedSession.recovery_codes[0]},meta});
+  const legacyIdentity=await clientB.validate(refreshedSession.directory_session);
+  check('fresh invited session follows the authoritative company version',legacyIdentity.profile_id===invited.profile.profile_id);
+  check('legacy adoption fixture is non-superadmin in its target site',legacyIdentity.is_superadmin===false&&legacyIdentity.mfa_factor_id!==null);
+  const legacyLocal=(await secondPool.query(`INSERT INTO users(username,password,name,surname,email,role,status,is_superadmin,mfa_reenrollment_required)
+   VALUES($1,'legacy-unusable','LEGACY','MEMBER',$2,'Employee','Active',false,false) RETURNING id`,[legacyIdentity.username,legacyIdentity.email])).rows[0];
+  await secondPool.query(`INSERT INTO erp_audit_logs(user_id,event_type,action,page_key,entity_type,entity_id,path)
+   VALUES($1::integer,'ACTION','LEGACY_HISTORY','fixture','user',$1::integer::text,'/fixture')`,[legacyLocal.id]);
+  const bindingCommand=crypto.randomUUID(),beforeFactors=(await secondPool.query('SELECT count(*)::int AS n FROM user_mfa_factors WHERE user_id=$1',[legacyLocal.id])).rows[0].n;
+  await secondPool.query(`INSERT INTO cerp_directory_approved_actor_bindings(profile_id,user_id,directory_id,expected_username,expected_email,approved_command_id)
+   VALUES($1::uuid,$2,$3::uuid,$4,$5,$6::uuid)`,[legacyIdentity.profile_id,legacyLocal.id,directoryId,legacyIdentity.username,legacyIdentity.email,bindingCommand]);
+  check('fixture privileged explicit binding is present',(await secondPool.query('SELECT count(*)::int AS n FROM cerp_directory_approved_actor_bindings WHERE user_id=$1',[legacyLocal.id])).rows[0].n===1);
+  const preservedUserCount=(await secondPool.query('SELECT count(*)::int AS n FROM users')).rows[0].n;
+  const preservedActor=(await secondPool.query('SELECT to_jsonb(u) AS value FROM users u WHERE id=$1',[legacyLocal.id])).rows[0].value;
+  const bindingRemainsUnprojected=async()=>{
+   const state=(await secondPool.query('SELECT directory_profile_id,to_jsonb(users) AS value FROM users WHERE id=$1',[legacyLocal.id])).rows[0];
+   return state?.directory_profile_id===null&&JSON.stringify(state.value)===JSON.stringify(preservedActor)&&(await secondPool.query('SELECT count(*)::int AS n FROM users')).rows[0].n===preservedUserCount;
+  };
+  await secondPool.query('UPDATE cerp_directory_approved_actor_bindings SET expected_username=$2 WHERE user_id=$1',[legacyLocal.id,'WRONG_USERNAME']);
+  await rejects('projection rejects altered approved username',()=>site.directoryAuthenticationResult(secondPool,{directory_session:refreshedSession.directory_session,identity:legacyIdentity}),'DIRECTORY_APPROVED_ACTOR_MISMATCH');
+  check('altered approved username preserves the local actor and account count',await bindingRemainsUnprojected());
+  await secondPool.query('UPDATE cerp_directory_approved_actor_bindings SET expected_username=$2 WHERE user_id=$1',[legacyLocal.id,legacyIdentity.username]);
+  await secondPool.query('UPDATE cerp_directory_approved_actor_bindings SET directory_id=$2::uuid WHERE user_id=$1',[legacyLocal.id,crypto.randomUUID()]);
+  await rejects('projection rejects altered approved authority',()=>site.directoryAuthenticationResult(secondPool,{directory_session:refreshedSession.directory_session,identity:legacyIdentity}),'DIRECTORY_APPROVED_ACTOR_MISMATCH');
+  check('altered approved authority preserves the local actor and account count',await bindingRemainsUnprojected());
+  await secondPool.query('UPDATE cerp_directory_approved_actor_bindings SET directory_id=$2::uuid WHERE user_id=$1',[legacyLocal.id,directoryId]);
+  const adopted=await site.directoryAuthenticationResult(secondPool,{directory_session:refreshedSession.directory_session,identity:legacyIdentity});
+  check('non-owner legacy binding preserves local ID and historical foreign key',adopted.user.id===legacyLocal.id&&(await secondPool.query("SELECT count(*)::int AS n FROM erp_audit_logs WHERE action='LEGACY_HISTORY' AND user_id=$1",[legacyLocal.id])).rows[0].n===1);
+  check('non-owner legacy binding copies no MFA factor',(await secondPool.query('SELECT count(*)::int AS n FROM user_mfa_factors WHERE user_id=$1',[legacyLocal.id])).rows[0].n===beforeFactors);
+  const restrictedPool=new Pool({connectionString:url(siteB),options:'-c role=cerp_app'});try{
+   await restrictedPool.query(`INSERT INTO cerp_directory_approved_actor_bindings(profile_id,user_id,directory_id,expected_username,expected_email,approved_command_id)
+    VALUES($1::uuid,$2,$3::uuid,'NOPE','nope@example.invalid',$4::uuid)`,[crypto.randomUUID(),legacyLocal.id,directoryId,crypto.randomUUID()]).then(()=>check('business role cannot write privileged legacy binding',false),error=>check('business role cannot write privileged legacy binding',/permission denied/i.test(String(error.message))));
+  }finally{await restrictedPool.end();}
   await secondPool.query(`INSERT INTO cerp_directory_approved_actor_bindings(profile_id,user_id,directory_id,expected_username,expected_email,approved_command_id) VALUES($1::uuid,1,$2::uuid,$3,$4,$5::uuid)`,[sessionA.identity.profile_id,directoryId,seed.profile.username,seed.profile.email,seed.command_id]);
   const bound=await site.directoryAuthenticationResult(secondPool,{directory_session:sessionB.directory_session,identity:await clientB.validate(sessionB.directory_session)});
-  check('only privileged explicit owner binding preserves historical actor',bound.user.id===1&&(await secondPool.query('SELECT count(*) n FROM users')).rows[0].n==='1');
+  check('both privileged explicit bindings preserve their historical actors',bound.user.id===1&&adopted.user.id===legacyLocal.id&&(await secondPool.query('SELECT count(*) n FROM users')).rows[0].n==='2');
   const {synchronizeDirectoryActor}=require('../../src/shared-directory/actor.runtime'),before=await synchronizeDirectoryActor(secondPool,1);
   check('PIN actor validated without a web MFA prompt',before.status==='Active'&&before.reenrollment_required===false);
   await sourceDb.query("UPDATE cerp_directory_memberships SET status='Inactive',version=version+1 WHERE profile_id=$1::uuid AND database_id=$2",[sessionA.identity.profile_id,siteB]);
