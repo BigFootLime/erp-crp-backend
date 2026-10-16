@@ -1,5 +1,5 @@
 import type { RequestHandler } from "express";
-import { parseUuidRouteParam } from "../../../utils/routeParams";
+import { crmClientIdSchema } from "../../client/validators/client-crm.validators";
 import {
   getDevisClientReference,
   listDevisBillerReferences,
@@ -21,9 +21,11 @@ function respond(operation: (req: Parameters<RequestHandler>[0]) => Promise<unkn
 }
 
 export const listDevisReferenceClients = respond((req) => listDevisClientReferences(req.query));
-export const getDevisReferenceClient = respond((req) => getDevisClientReference(parseUuidRouteParam(req.params, "clientId")));
-export const listDevisReferenceClientContacts = respond((req) => listDevisClientContacts(parseUuidRouteParam(req.params, "clientId")));
-export const listDevisReferenceClientAddresses = respond((req) => listDevisClientAddresses(parseUuidRouteParam(req.params, "clientId")));
+const clientId = (req: Parameters<RequestHandler>[0]) => crmClientIdSchema.parse(req.params.clientId);
+
+export const getDevisReferenceClient = respond((req) => getDevisClientReference(clientId(req)));
+export const listDevisReferenceClientContacts = respond((req) => listDevisClientContacts(clientId(req)));
+export const listDevisReferenceClientAddresses = respond((req) => listDevisClientAddresses(clientId(req)));
 export const listDevisReferencePieceTechniques = respond((req) => listDevisPieceTechniqueReferences(req.query));
 export const listDevisReferenceBillers = respond((req) => listDevisBillerReferences(req.query));
 export const listDevisReferencePaymentModes = respond((req) => listDevisPaymentModeReferences(req.query));
