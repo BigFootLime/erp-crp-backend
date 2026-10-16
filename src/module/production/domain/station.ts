@@ -143,6 +143,16 @@ export function listStationCapabilities(role: string | null | undefined, isSuper
   );
 }
 
+/** Capacités affichées par un parcours HTTP après résolution du profil réel. */
+export function listStationCapabilitiesForAccess(
+  hasStationAccess: boolean,
+  isSuperadmin: boolean
+): StationCapability[] {
+  return STATION_CAPABILITIES.filter((capability) =>
+    isStationSensitiveCapability(capability) ? isSuperadmin : hasStationAccess || isSuperadmin
+  );
+}
+
 export function assertStationCapability(
   role: string | null | undefined,
   capability: StationCapability,
@@ -1001,7 +1011,9 @@ export function parseStationRoom(room: string): StationRoom | null {
 export function canSubscribeStationRoom(params: {
   room: StationRoom;
   actorUserId: number;
-  actorRole: string | null | undefined;
+  /** Décision module Production résolue côté serveur pour ce compte. */
+  actorHasStationAccess: boolean;
+  /** SuperAdmin avec MFA active, résolu côté serveur. */
   actorIsSuperadmin: boolean;
   /** Machines confirmées par une session vivante de cet utilisateur. */
   ownMachineIds: readonly string[];
@@ -1010,20 +1022,21 @@ export function canSubscribeStationRoom(params: {
   /** Appareils sur lesquels cet utilisateur a une session vivante. */
   ownDeviceIds: readonly string[];
 }): boolean {
-  const { room, actorUserId, actorRole, actorIsSuperadmin } = params;
+  const { room, actorUserId, actorHasStationAccess, actorIsSuperadmin } = params;
 
   switch (room.kind) {
     case "USER":
       return room.userId === actorUserId;
     case "MACHINE":
-      if (!roleHasStationCapability(actorRole, "read_own_station")) return false;
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownMachineIds.includes(room.machineId)) return true;
       return actorIsSuperadmin;
     case "OF":
-      if (!roleHasStationCapability(actorRole, "read_own_station")) return false;
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownOfIds.includes(room.ofId)) return true;
       return actorIsSuperadmin;
     case "STATION":
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownDeviceIds.includes(room.deviceId)) return true;
       return actorIsSuperadmin;
     default:

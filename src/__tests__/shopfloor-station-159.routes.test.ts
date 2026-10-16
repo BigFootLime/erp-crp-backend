@@ -60,6 +60,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
       id: typeof requestedId === "string" ? Number(requestedId) : 1,
       role: typeof requestedRole === "string" ? requestedRole : "Administrateur Systeme et Reseau",
       mfa: req.headers?.["x-test-mfa"] === "1",
+      amr: req.headers?.["x-test-mfa"] === "1" ? ["totp"] : [],
     };
     next();
   },
@@ -548,8 +549,8 @@ describe("#159 — capacités appliquées côté serveur", () => {
   it("refuse le journal d'audit sans preuve MFA même au SuperAdmin", async () => {
     mocks.superadmin.value = true;
     const res = await erp(request(app).get(`${BASE}/audit`), OPERATOR, 1, false);
-    expect(res.status).toBe(401);
-    expect(String(res.body.code ?? res.body.error)).toContain("MFA_REQUIRED");
+    expect(res.status).toBe(428);
+    expect(String(res.body.code ?? res.body.error)).toContain("MFA_STEP_UP_REQUIRED");
   });
 });
 

@@ -65,7 +65,13 @@ import {
 function jwtActor(req: Request): Actor | null {
   const user = req.user;
   if (!user || typeof user.id !== "number") return null;
-  return { id: user.id, role: user.role ?? null, mfa: user.mfa === true, session_epoch: user.session_epoch };
+  return {
+    id: user.id,
+    role: user.role ?? null,
+    mfa: user.mfa === true,
+    mfaAssured: user.mfa === true && user.amr?.some((method) => method === "totp" || method === "recovery_code") === true,
+    session_epoch: user.session_epoch,
+  };
 }
 
 /** Acteur de poste. C'est la SEULE identité acceptée par les routes tablette. */
@@ -177,7 +183,7 @@ export const confirmMachine = asyncHandler(async (req: Request, res: Response) =
 
 export const worklist = asyncHandler(async (req: Request, res: Response) => {
   const query = stationWorklistQuerySchema.parse(req.query);
-  res.json(await svcWorklist({ station: requireStation(req), query }));
+  res.json(await svcWorklist({ station: requireStation(req), query, jwtActor: jwtActor(req) }));
 });
 
 export const scan = asyncHandler(async (req: Request, res: Response) => {
@@ -192,6 +198,7 @@ export const dossier = asyncHandler(async (req: Request, res: Response) => {
       station: requireStation(req),
       ofId: params.ofId,
       operationId: params.operationId,
+      jwtActor: jwtActor(req),
     })
   );
 });

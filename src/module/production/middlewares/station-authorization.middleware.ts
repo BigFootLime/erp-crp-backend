@@ -1,12 +1,12 @@
 import type { RequestHandler, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
-import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
-import { isSuperadmin } from "../../access-control/services/access-control.service";
+import { grantAccountModuleAccessToRequest } from "../../access-control/context/account-module-access.context";
+import { isSuperadmin, resolveAccessProfile } from "../../access-control/services/access-control.service";
+import { hasActiveSensitiveMfaAssurance } from "../../access-control/middlewares/sensitive-capability.middleware";
 import {
   evaluateSession,
   isStationSensitiveCapability,
-  roleHasStationCapability,
   type StationCapability,
 } from "../domain/station";
 import {
@@ -269,7 +269,6 @@ export const loadStationSessionIfAny: RequestHandler = (req, _res, next) => {
  */
 export function requireStationCapability(capability: StationCapability): RequestHandler {
   return (req, _res, next) => {
-    const role = req.station?.user.role ?? req.user?.role ?? null;
     const userId = req.station?.user.id ?? req.user?.id ?? null;
 
     if (!userId) {
@@ -278,8 +277,8 @@ export function requireStationCapability(capability: StationCapability): Request
     }
     if (isStationSensitiveCapability(capability)) {
       const jwtActor = req.user;
-      if (!jwtActor || jwtActor.mfa !== true) {
-        next(new HttpError(401, "MFA_REQUIRED", "Une connexion avec double authentification est requise pour cette action."));
+      if (!jwtActor || !hasActiveSensitiveMfaAssurance(req)) {
+        next(new HttpError(428, "MFA_STEP_UP_REQUIRED", "Confirmez votre facteur MFA pour cette action sensible."));
         return;
       }
       if (req.station && req.station.user.id !== jwtActor.id) {
@@ -293,29 +292,34 @@ export function requireStationCapability(capability: StationCapability): Request
       return;
     }
 
-    if (
-      !requestHasGrantedAccountModuleAccess(req) &&
-      !roleHasStationCapability(role, capability)
-    ) {
-      void repoStationAudit({
-        event_type: "AUTHORIZATION_DENIED",
-        outcome: "DENIED",
-        reason_code: capability,
-        device_id: req.station?.device_id ?? null,
-        session_id: req.station?.session_id ?? null,
-        user_id: userId,
-        detail: { capability, path: req.path },
-      });
-      next(
-        new HttpError(
+    void resolveAccessProfile(userId).then((profile) => {
+      if (profile === null) {
+        throw new HttpError(503, "ACCESS_PROFILE_UNAVAILABLE", "Les habilitations sont temporairement indisponibles.");
+      }
+      const production = profile.is_superadmin ||
+        profile.modules.some((module) => module.module_key === "production" && module.allowed === true);
+      if (!production) {
+        void repoStationAudit({
+          event_type: "AUTHORIZATION_DENIED",
+          outcome: "DENIED",
+          reason_code: capability,
+          device_id: req.station?.device_id ?? null,
+          session_id: req.station?.session_id ?? null,
+          user_id: userId,
+          detail: { capability, path: req.path },
+        });
+        throw new HttpError(
           403,
           "STATION_CAPABILITY_REQUIRED",
           `La capacité de poste '${capability}' est requise.`
-        )
+        );
+      }
+      grantAccountModuleAccessToRequest(
+        req,
+        { userId, moduleKey: "production", elevated: profile.is_superadmin },
+        next
       );
-      return;
-    }
-    next();
+    }).catch(next);
   };
 }
 

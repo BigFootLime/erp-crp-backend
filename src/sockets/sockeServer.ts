@@ -302,14 +302,18 @@ async function defaultAuthorizeStationSubscription(
 }
 
 async function authorizeStationRoom(room: StationRoom, user: JwtUser): Promise<boolean> {
-  const [scope, sensitive] = await Promise.all([
+  const [scope, sensitive, profile] = await Promise.all([
     repoUserRealtimeScope(user.id),
     repoAccountSensitiveCapabilities(user.id),
+    resolveAccessProfile(user.id),
   ]);
+  // Une indisponibilité de l'infrastructure d'accès ferme les salons métier.
+  const actorHasStationAccess = profile?.is_superadmin === true ||
+    profile?.modules.some((module) => module.module_key === "production" && module.allowed === true) === true;
   const allowed = canSubscribeStationRoom({
     room,
     actorUserId: user.id,
-    actorRole: user.role ?? null,
+    actorHasStationAccess,
     actorIsSuperadmin: user.mfa === true && sensitive.isSuperadmin,
     ownMachineIds: scope.machineIds,
     ownOfIds: scope.ofIds,
