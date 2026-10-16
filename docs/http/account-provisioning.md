@@ -7,6 +7,8 @@
 - `POST /api/v1/admin/users/:id/invitations`: same guard and idempotency; returns a one-use activation token once for controlled delivery
 - `POST /api/v1/auth/activate`: public token redemption with strong password; signed token, 24-hour expiry, hashed-at-rest evidence and safe replay
 - `PATCH /api/v1/admin/users/:id`: audited modification/status transition; superadmin lifecycle immutable
+- `GET /api/v1/admin/users/:id`: `Cache-Control: no-store` and explicit `administrative_level_authority` (`DIRECTORY` or `LOCAL_READ_ONLY`); an unavailable directory remains an error, never a local authority
+- `PATCH /api/v1/admin/users/:id/administrative-level`: shared-directory-only mutation guarded by the existing SuperAdmin and recent-MFA checks; unavailable/local authority returns `409 DIRECTORY_AUTHORITY_REQUIRED`
 - `DELETE /api/v1/admin/users/:id`: absent (`404`)
 - `POST /api/v1/admin/users/:id/password-reset-token`: superadmin and idempotency protected
 - `PATCH /api/v1/admin/users/:id/password`: superadmin, one-use token, audited transaction
@@ -19,7 +21,7 @@ Business mutations and their ERP audit event share a transaction. Audit details 
 
 ## First administrator and recovery
 
-`db/seeds/access-tower-superadmin-keenan.sql` is the only supported bootstrap path. Production requires the explicit session setting `cerp.access_tower_superadmin_approved='KEENAN'`. HTTP routes cannot grant superadmin. Public password recovery and the KEENAN console reset are retained.
+`db/seeds/access-tower-superadmin-keenan.sql` is the only supported bootstrap path. Production requires the explicit session setting `cerp.access_tower_superadmin_approved='KEENAN'`. The bootstrap cannot grant superadmin. The reviewed administrative-level route can only act through the shared directory after the existing SuperAdmin and recent-MFA checks. Public password recovery and the KEENAN console reset are retained.
 
 ## Tenant scope
 
