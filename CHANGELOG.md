@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Accès aux référentiels et administration (#1341)
+
+- Les deux lecteurs historiques de conditions de paiement et comptes de vente sont accessibles depuis un module Clients ou Devis explicitement accordé. Cette exception porte sur les deux GET exacts ; elle n'accorde ni les autres routes Devis ni des écritures supplémentaires.
+- Le centre de données de référence exige le statut SuperAdmin confirmé en base, y compris pour lire ses capacités. Un intitulé de poste ne suffit plus à atteindre ce routeur d'administration.
+- Qualification et livraison coordonnées avec le frontend ; aucun changement de flux métier, de données ou de schéma dans ces compléments.
+
 ## Préparé — Réponses MFA de l'annuaire partagé (#1341)
 
 - Renvoyer les erreurs MFA connues avec leur statut et un message public constant : code invalide (401), facteur temporairement verrouillé (423), défi expiré ou périmé (400). Une erreur annuaire inconnue reste une erreur serveur sans détail interne.

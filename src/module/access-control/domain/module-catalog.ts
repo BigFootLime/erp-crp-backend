@@ -350,3 +350,29 @@ export function resolveModuleKeyForPath(path: string | null | undefined): string
   }
   return null;
 }
+
+const SHARED_COMMERCIAL_REFERENCE_READS: Readonly<Record<string, readonly string[]>> = {
+  "/conditions-paiement": ["clients", "devis"],
+  "/compte-vente": ["clients", "devis"],
+};
+
+/**
+ * Resolves the only two commercial reference readers shared by Clients and
+ * Devis. This is exact-path GET handling: nested paths, mutations and every
+ * other Devis route keep their ordinary single-module resolution.
+ */
+export function resolveModuleAccessKeysForRequest(
+  path: string | null | undefined,
+  method: string | null | undefined
+): readonly string[] | null {
+  if (typeof path !== "string" || path.length === 0) return null;
+
+  const normalized = normalizePath(path);
+  if (method?.toUpperCase() === "GET") {
+    const shared = SHARED_COMMERCIAL_REFERENCE_READS[normalized];
+    if (shared) return shared;
+  }
+
+  const moduleKey = resolveModuleKeyForPath(normalized);
+  return moduleKey ? [moduleKey] : null;
+}

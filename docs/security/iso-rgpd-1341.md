@@ -1,11 +1,13 @@
 # Correctifs de sécurité ISO/RGPD — #1341
 
-État du 16 octobre 2026 : intégration préparée sur une branche isolée après 2.0.4. Cette fiche ne vaut ni certification ni attestation de mise en production.
+État du 16 octobre 2026 : intégration préparée sur une branche isolée pour le lot 2.0.4. Cette fiche ne vaut ni certification ni attestation de mise en production.
 
 ## Changements
 
 - Une capacité nominative et MFA sont nécessaires aux actions Finance sensibles, à la lecture du journal global et aux données RH privées. Le module ouvert ne suffit plus. Les fonctions de poste restent descriptives.
 - L'absence du catalogue ou de l'infrastructure d'accès produit une indisponibilité explicite. Elle ne donne plus accès par défaut à une ressource inconnue.
+- Les GET exacts `/conditions-paiement` et `/compte-vente` sont les deux lecteurs de référence partagés par Clients et Devis. Le gate retient le module réellement accordé dans le contexte de requête ; les chemins imbriqués, les écritures et le reste de Devis restent rattachés à leur module initial. Le lecteur refuse un contexte absent ou issu d'un autre module, sans repli sur un intitulé de rôle.
+- Le routeur `/admin/reference-data` vérifie le marqueur SuperAdmin en base avant toutes ses opérations, capacités comprises. Sa position avant le routeur d'administration général ne doit pas lui permettre de contourner cette vérification. Les autres validations métier des changements de référentiel restent en place.
 - Les événements envoyés par le client sont séparés des preuves serveur ; action, entité et identité serveur ne proviennent pas du navigateur. Chaque lecture du journal global produit une trace serveur avant de retourner les résultats, sans recopier le texte recherché.
 - Les DTO de compte ordinaires masquent salaire, naissance, pièce d'identité et NIR. Les anciens formulaires vides n'effacent pas ces valeurs. Les chemins `/admin/users/:id/private-profile` exigent les capacités RH et tracent les accès.
 - Le superAdmin reste soumis à l'autorité Directory et aux contrôles MFA durables. Cette intégration ne raccourcit pas la durée des JWT ni n'ajoute de renouvellement de session : ce chantier reste explicitement séparé.

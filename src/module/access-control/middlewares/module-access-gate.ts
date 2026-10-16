@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
-import { isProtectedModuleKey, resolveModuleKeyForPath } from "../domain/module-catalog";
+import { isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -72,10 +72,10 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     return;
   }
 
-  const moduleKey =
-    resolveModuleKeyForPath(req.originalUrl) ??
-    resolveModuleKeyForPath(req.path);
-  if (!moduleKey) {
+  const moduleKeys =
+    resolveModuleAccessKeysForRequest(req.originalUrl, req.method) ??
+    resolveModuleAccessKeysForRequest(req.path, req.method);
+  if (!moduleKeys) {
     // The module gate never turns a shared dependency into an authorization.
     // Its route-specific guard remains the only authority for these paths.
     next();
@@ -84,7 +84,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
 
   // Protected administration retains its own SuperAdmin and recent-MFA guards.
   // Do not install a grant here: legacy guards must not read it as a bypass.
-  if (isProtectedModuleKey(moduleKey)) {
+  if (moduleKeys.some(isProtectedModuleKey)) {
     next();
     return;
   }
@@ -92,34 +92,37 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     warnKillSwitchOnce();
     // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
     // jamais réactiver les anciens refus par rôle dans la suite de la requête.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: moduleKeys[0]!, elevated: true }, next);
     return;
   }
 
   resolveAccessProfile(userId)
     .then((profile) => {
       if (profile === null) {
-        warnMissingInfrastructure("access_tables_missing", moduleKey);
+        warnMissingInfrastructure("access_tables_missing", moduleKeys.join(","));
         res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
       if (profile.is_superadmin) {
-        grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey: moduleKeys[0]!, elevated: true }, next);
         return;
       }
 
-      const decision = profile.modules.find((entry) => entry.module_key === moduleKey);
-      if (!decision) {
+      const decisions = moduleKeys.map((moduleKey) =>
+        profile.modules.find((entry) => entry.module_key === moduleKey)
+      );
+      if (decisions.some((decision) => !decision)) {
         // A new path is never implicitly opened while its catalogue decision is
         // absent.  Protected surfaces remain reachable only to superadmins.
-        warnMissingInfrastructure("module_absent_from_catalog", moduleKey);
+        warnMissingInfrastructure("module_absent_from_catalog", moduleKeys.join(","));
         res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
-      if (decision.allowed) {
+      const decision = decisions.find((candidate) => candidate?.allowed === true);
+      if (decision?.allowed) {
         grantAccountModuleAccessToRequest(req, {
           userId,
-          moduleKey,
+          moduleKey: decision.module_key,
           elevated: decision.source === "OVERRIDE" || decision.source === "SUPERADMIN",
         }, next);
         return;
@@ -128,7 +131,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
       console.warn(
         JSON.stringify({
           type: "auth_forbidden",
-          module: moduleKey,
+          module: moduleKeys.join(","),
           reason: "module_access_denied",
           userId,
           requestId: req.requestId ?? null,
