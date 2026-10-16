@@ -168,12 +168,13 @@ async function normalizeSensitiveCapabilities(client, actorId) {
   )).rows[0];
   if (!accountant) throw new Error("access-scope fixture requires active E2E_ACCOUNTANT");
   // seed-mfa-sol32 predates the narrow fixture contract and grants broad
-  // finance rights.  The immediate second invocation restores only the two
-  // powers exercised by the real invoice validation and issuance journey.
+  // finance plus audit rights. The immediate second invocation restores only
+  // the two powers exercised by the real invoice validation and issuance
+  // journey.
   await client.query(
     `UPDATE public.app_user_sensitive_capabilities
         SET granted=false,updated_by=$2,updated_at=now()
-      WHERE user_id=$1 AND capability LIKE 'finance.%'`,
+      WHERE user_id=$1`,
     [accountant.id, actorId]
   );
   for (const capability of FINANCE_CAPABILITIES) {
@@ -188,19 +189,34 @@ async function normalizeSensitiveCapabilities(client, actorId) {
     await client.query(
       `UPDATE public.app_user_sensitive_capabilities
           SET granted=false,updated_by=$2,updated_at=now()
-        WHERE user_id=(SELECT id FROM public.users WHERE username=$1) AND capability LIKE 'finance.%'`,
+        WHERE user_id=(SELECT id FROM public.users WHERE username=$1)`,
       [username, actorId]
     );
+    const residual = await client.query(
+      `SELECT capability
+         FROM public.app_user_sensitive_capabilities
+        WHERE user_id=(SELECT id FROM public.users WHERE username=$1)
+          AND granted=true
+        ORDER BY capability`,
+      [username]
+    );
+    if (residual.rowCount !== 0) {
+      throw new Error(`${username} retains unexpected sensitive capabilities: ${residual.rows.map((row) => row.capability).join(", ")}`);
+    }
   }
   const granted = await client.query(
     `SELECT capability
        FROM public.app_user_sensitive_capabilities
-      WHERE user_id=$1 AND capability LIKE 'finance.%' AND granted=true
+      WHERE user_id=$1 AND granted=true
       ORDER BY capability`,
     [accountant.id]
   );
-  if (JSON.stringify(granted.rows.map((row) => row.capability)) !== JSON.stringify(FINANCE_CAPABILITIES)) {
-    throw new Error("E2E_ACCOUNTANT sensitive capabilities are not limited to invoice validation and issuance");
+  const actualCapabilities = granted.rows.map((row) => row.capability).sort();
+  const expectedCapabilities = [...FINANCE_CAPABILITIES].sort();
+  if (JSON.stringify(actualCapabilities) !== JSON.stringify(expectedCapabilities)) {
+    throw new Error(
+      `E2E_ACCOUNTANT sensitive capabilities are not limited to invoice validation and issuance: ${actualCapabilities.join(", ") || "(none)"}`
+    );
   }
 }
 
