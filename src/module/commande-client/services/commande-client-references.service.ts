@@ -52,7 +52,10 @@ export async function listCommandeClientReferences(value: unknown) {
 export async function getCommandeClientReference(clientId: string) {
   const client = await getClientQuoteReferenceById(clientId);
   if (!client) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
-  return client;
+  const detail = await svcGetClientById(clientId, { includeSensitiveFinance: false });
+  if (!detail) throw new HttpError(404, "CLIENT_NOT_FOUND", "Client introuvable.");
+  return { client, biller: detail.biller ? { id: detail.biller.id, name: detail.biller.name } : null,
+    bill_address: detail.bill_address, delivery_address: detail.delivery_address };
 }
 
 export async function listCommandeClientContacts(clientId: string) {
@@ -72,7 +75,7 @@ function contractLine(line: { id: string; article_id: string; root_article_id: s
 export async function getCommandeClientContract(clientId: string, contractId: string, value: unknown) {
   const result = await getClientContract(clientId, contractId, page(value));
   const { contract } = result;
-  return { contract: { id: contract.id, client_id: contract.client_id, reference: contract.reference, title: contract.title, status: contract.status, valid_from: contract.valid_from, valid_until: contract.valid_until, version: contract.version, updated_at: contract.updated_at, lines: contract.lines.map(contractLine) } };
+  return { contract: { id: contract.id, client_id: contract.client_id, reference: contract.reference, title: contract.title, status: contract.status, valid_from: contract.valid_from, valid_until: contract.valid_until, version: contract.version, updated_at: contract.updated_at, lines: contract.lines.map(contractLine) }, client_active: result.client_active };
 }
 export async function listCommandeClientContractCalls(clientId: string, contractId: string, value: unknown) {
   const result = await getClientContractCalls(clientId, contractId, page(value));
