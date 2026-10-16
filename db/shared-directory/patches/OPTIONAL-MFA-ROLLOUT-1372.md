@@ -28,6 +28,22 @@ immutable patch SHA-256 and verification result in the deployment evidence.
    business-admin MFA enrollment, denied unselected modules and the request
    approval/rejection/retry paths pass.
 
+The authority has its own systemd service and physical runtime identity; upgrading
+only the fixed Production/Test APIs does not upgrade it. Record and verify its
+actual executable separately. Preserve its private working directory and secret
+configuration when selecting the new immutable executable.
+
+Managed Test instances also need the site migrations and matching site binary.
+Inventory the active managed instances and configured template before activation;
+do not modify archived/reset databases or assume all names beginning with
+`cerp_test_` are active instances. Prepare a new blank canonical template from the
+migrated common Test schema, using the new immutable release and a new template
+version. Verify its MFA column, null-assurance projection, technical metadata and
+absence of business/account data before atomically selecting the new host
+configuration. Retain the previous template/configuration for recovery. Do not
+rewrite a previous template's identity or grant site applications access to the
+credential authority.
+
 For a new empty authority, the template/source must first have the additive
 account-MFA column. `installEmptyDirectory` then creates the schema with optional
 global policy and a durable MFA requirement for the seed owner. Apply the two
