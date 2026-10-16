@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,9 +18,9 @@ import { HttpError } from "../utils/httpError";
 
 const id = "10000000-0000-4000-8000-000000000001";
 const body = { client_id: "CUSTOMER", affairs: [{ allocation_id: 12, billing_parts: [{ billed_client_id: "COMPANY-A", quantity: "100" }] }] };
-function app(role = "Comptable", authenticated = true) {
+function app(role = "Comptable", authenticated = true, rights: ReadonlyArray<(typeof ALL_FIXTURE_SENSITIVE_RIGHTS)[number]> = ALL_FIXTURE_SENSITIVE_RIGHTS) {
   const application = express(); application.use(express.json());
-  application.use(((req,_res,next) => { if(authenticated) req.user = { id: 7, username: "finance-recette", email: "recette@test.invalid", role }; req.requestId = "recipe-request"; next(); }) as RequestHandler);
+  application.use(((req,_res,next) => { if(authenticated) req.user = { id: 7, username: "finance-recette", email: "recette@test.invalid", role }; attachSensitiveAccountFixture(req, rights); req.requestId = "recipe-request"; next(); }) as RequestHandler);
   application.use("/proformas", router); application.use(validationErrorMiddleware); application.use(errorHandler); return application;
 }
 beforeEach(() => { for(const mock of Object.values(mocks)) mock.mockReset(); vi.spyOn(console,"error").mockImplementation(() => undefined); });
@@ -59,7 +61,7 @@ describe("proforma HTTP workflow permissions and typed boundaries", () => {
   });
   it("keeps issuance on the existing qualified Finance capability", async () => {
     const confirmation = { expected_version: 1, preview_hash: "a".repeat(64), confirm: true };
-    expect((await request(app("Secretaire")).post(`/proformas/${id}/issue`).send(confirmation)).status).toBe(403);
+    expect((await request(app("Secretaire", true, [])).post(`/proformas/${id}/issue`).send(confirmation)).status).toBe(403);
     mocks.issue.mockResolvedValue({ id, status: "ISSUED" });
     expect((await request(app()).post(`/proformas/${id}/issue`).set("Idempotency-Key","recipe-proforma-issue").send(confirmation)).status).toBe(200);
   });
@@ -87,7 +89,7 @@ describe("proforma HTTP workflow permissions and typed boundaries", () => {
   });
   it("keeps cancellation on qualified Finance rights and requires its reason", async () => {
     const input = { expected_version: 2, reason: "Commande annulée", confirm: true };
-    expect((await request(app("Secretaire")).post(`/proformas/${id}/cancel`).send(input)).status).toBe(403);
+    expect((await request(app("Secretaire", true, [])).post(`/proformas/${id}/cancel`).send(input)).status).toBe(403);
     expect((await request(app()).post(`/proformas/${id}/cancel`).send({ ...input, reason: "" })).status).toBe(400);
     mocks.cancel.mockResolvedValue({ id, status: "CANCELLED", row_version: 3 });
     expect((await request(app()).post(`/proformas/${id}/cancel`).set("Idempotency-Key","qualification-cancel").send(input)).status).toBe(200);
@@ -95,7 +97,7 @@ describe("proforma HTTP workflow permissions and typed boundaries", () => {
   });
   it("keeps receipt assignments on existing payment-allocation rights", async () => {
     const input = { payment_allocation_id:id,assignments:[{proforma_billing_part_id:id,deposit_source_id:id,amount:"10.00"}] };
-    expect((await request(app("Secretaire")).post(`/proformas/${id}/receipts`).send(input)).status).toBe(403);
+    expect((await request(app("Secretaire", true, [])).post(`/proformas/${id}/receipts`).send(input)).status).toBe(403);
     mocks.assign.mockResolvedValue({id,status:"ISSUED",assignments:[]});
     expect((await request(app()).post(`/proformas/${id}/receipts`).set("Idempotency-Key","qualification-assign").send(input)).status).toBe(200);
     expect(mocks.assign).toHaveBeenCalledWith(expect.objectContaining({id,input,idempotencyKey:"qualification-assign"}));

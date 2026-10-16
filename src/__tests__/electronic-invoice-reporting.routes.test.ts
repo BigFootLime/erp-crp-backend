@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,11 +22,12 @@ import reportingRoutes from "../module/facturation/electronic-invoicing/electron
 
 const supplierInvoiceId = "11111111-1111-4111-8111-111111111111";
 
-function appFor(role = "Comptable") {
+function appFor(role = "Comptable", rights: ReadonlyArray<(typeof ALL_FIXTURE_SENSITIVE_RIGHTS)[number]> = ALL_FIXTURE_SENSITIVE_RIGHTS) {
   const app = express();
   app.use(express.json());
   app.use(((req, _res, next) => {
     req.user = { id: 7, username: "finance", email: "finance@test.invalid", role };
+    attachSensitiveAccountFixture(req, rights);
     req.requestId = "ereporting-request";
     req.correlationId = "ereporting-correlation";
     next();
@@ -48,7 +51,7 @@ describe("e-reporting HTTP boundary", () => {
     expect(response.headers["cache-control"]).toBe("no-store, private");
     expect(mocks.list).toHaveBeenCalledWith({ kind: "TRANSACTION", role: "SELLER", limit: 100 });
 
-    const forbidden = await request(appFor("Secretaire")).get("/electronic-invoicing/reporting-periods");
+    const forbidden = await request(appFor("Secretaire", [])).get("/electronic-invoicing/reporting-periods");
     expect(forbidden.status).toBe(403);
   });
 
