@@ -2,8 +2,10 @@ import type { RequestHandler, Request, Response } from "express";
 
 import { HttpError } from "../../../utils/httpError";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { isSuperadmin } from "../../access-control/services/access-control.service";
 import {
   evaluateSession,
+  isStationSensitiveCapability,
   roleHasStationCapability,
   type StationCapability,
 } from "../domain/station";
@@ -274,6 +276,23 @@ export function requireStationCapability(capability: StationCapability): Request
       next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."));
       return;
     }
+    if (isStationSensitiveCapability(capability)) {
+      const jwtActor = req.user;
+      if (!jwtActor || jwtActor.mfa !== true) {
+        next(new HttpError(401, "MFA_REQUIRED", "Une connexion avec double authentification est requise pour cette action."));
+        return;
+      }
+      if (req.station && req.station.user.id !== jwtActor.id) {
+        next(new HttpError(403, "STATION_SENSITIVE_ACTOR_MISMATCH", "Cette action sensible doit être confirmée par l'opérateur identifié."));
+        return;
+      }
+      void isSuperadmin(jwtActor.id).then((allowed) => {
+        if (!allowed) throw new HttpError(403, "STATION_SENSITIVE_CAPABILITY_REQUIRED", "Une habilitation administrateur est requise pour cette action.");
+        next();
+      }).catch(next);
+      return;
+    }
+
     if (
       !requestHasGrantedAccountModuleAccess(req) &&
       !roleHasStationCapability(role, capability)

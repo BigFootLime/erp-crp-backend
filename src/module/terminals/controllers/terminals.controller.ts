@@ -39,7 +39,7 @@ const handle =
   (req, res, next) => {
     void fn(req, res).catch(next);
   };
-const actor = (req: Request) => ({ id: req.user!.id, role: req.user!.role });
+const actor = (req: Request) => ({ id: req.user!.id, role: req.user!.role, mfa: req.user!.mfa === true });
 const audit = (req: Request) => ({
   user_id: req.user!.id,
   user_role: req.user!.role,

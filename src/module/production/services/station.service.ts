@@ -21,6 +21,7 @@ async function resolveClientLogoAsset(storageKey: string | null | undefined) {
   return assetId ? { asset_id: assetId, status: "AVAILABLE" as const } : null;
 }
 import { evaluateInstrumentUsage, type InstrumentState } from "../../qualite/domain/quality-release";
+import { isSuperadmin } from "../../access-control/services/access-control.service";
 
 import {
   assertDeviceUsable,
@@ -37,7 +38,6 @@ import {
   listStationCapabilities,
   resolvePlanForSnapshot,
   roleHasStationCapability,
-  roleHasIntrinsicStationCapability,
   stripCostFields,
   WORKLIST_ORDERING_EXPLANATION,
   type IdentificationMethod,
@@ -95,7 +95,23 @@ import type {
   UpdateDeviceDTO,
 } from "../validators/station.validators";
 
-export type Actor = { id: number; role: string | null; session_epoch?: number };
+export type Actor = { id: number; role: string | null; mfa: boolean; session_epoch?: number };
+
+/**
+ * Les exceptions sensibles du poste exigent la même identité dans le JWT ERP
+ * et dans la session tablette, une MFA attestée dans ce JWT, puis le marqueur
+ * SuperAdmin lu en base. Un badge ou un mot de passe de poste ne suffit pas.
+ */
+async function hasStationSensitiveAuthority(
+  station: StationContext,
+  jwtActor: Actor | null | undefined
+): Promise<boolean> {
+  return Boolean(
+    jwtActor?.mfa === true &&
+      jwtActor.id === station.user.id &&
+      (await isSuperadmin(jwtActor.id))
+  );
+}
 
 /**
  * Chemin de téléchargement d'un document de pièce technique.
@@ -223,7 +239,7 @@ export async function svcBootstrap(params: {
           ...("is_available" in machine ? { is_available: machine.is_available } : {}),
         }
       : null,
-    capabilities: listStationCapabilities(role),
+    capabilities: listStationCapabilities(role, params.station ? await hasStationSensitiveAuthority(params.station, params.jwtActor) : false),
     active_execution: activeExecution,
     pending_handovers: pendingHandovers,
     /** Modes d'identification réellement exploitables sur ce serveur. */
@@ -328,11 +344,15 @@ export async function svcIdentify(params: {
     !!liveExecutionOnMachine?.active_operator_user_id &&
     liveExecutionOnMachine.active_operator_user_id !== userId;
 
-  const actorRole = params.jwtActor?.role ?? null;
+  const actorIsSuperadmin = Boolean(
+    params.jwtActor?.mfa === true &&
+      params.jwtActor.id === userId &&
+      (await isSuperadmin(params.jwtActor.id))
+  );
   assertOperatorSwitchDecided({
     hasActiveExecution: busyByOther,
     decision: params.body.switch_decision as OperatorSwitchDecision | undefined,
-    actorRole,
+    actorIsSuperadmin,
   });
 
   const machineId =
@@ -485,7 +505,9 @@ export async function svcHeartbeat(params: {
 
 export async function svcListMachines(params: {
   station: StationContext;
+  jwtActor?: Actor | null;
 }): Promise<Record<string, unknown>> {
+  const canSupervise = await hasStationSensitiveAuthority(params.station, params.jwtActor);
   const machines = await repoListSelectableMachines({
     workshop_zone: params.station.device_zone,
     limit: 200,
@@ -508,7 +530,7 @@ export async function svcListMachines(params: {
       reason_code: verdict.reason_code,
       busy_by_other: verdict.busy_by_other,
       // On montre QUI occupe la machine seulement à qui a le droit de superviser.
-      occupied_by: roleHasIntrinsicStationCapability(params.station.user.role, "supervise_stations")
+      occupied_by: canSupervise
         ? machine.active_operator_label
         : machine.active_operator_user_id
           ? "un autre opérateur"
@@ -530,6 +552,7 @@ export async function svcListMachines(params: {
 export async function svcConfirmMachine(params: {
   station: StationContext;
   body: StationConfirmMachineDTO;
+  jwtActor?: Actor | null;
 }): Promise<Record<string, unknown>> {
   if (params.station.device_assignment_mode === "FIXED") {
     throw new HttpError(
@@ -575,7 +598,7 @@ export async function svcConfirmMachine(params: {
       assertOperatorSwitchDecided({
         hasActiveExecution: true,
         decision: "SUPERVISOR_OVERRIDE",
-        actorRole: params.station.user.role,
+        actorIsSuperadmin: await hasStationSensitiveAuthority(params.station, params.jwtActor),
       });
     } else {
       await repoStationAudit({
@@ -630,7 +653,7 @@ export async function svcWorklist(params: {
     limit: params.query.limit,
   });
 
-  const canViewCosts = roleHasStationCapability(params.station.user.role, "view_costs");
+  const canViewCosts = false;
 
   const items = rows.map((row) => {
     const remaining = row.quantite_lancee - row.quantite_bonne - row.quantite_rebut;
@@ -784,7 +807,7 @@ export async function svcDossier(params: {
   const core = r.of_core ?? {};
   const piece = r.piece ?? null;
   const pieceVersion = r.piece_version ?? null;
-  const canViewCosts = roleHasStationCapability(params.station.user.role, "view_costs");
+  const canViewCosts = false;
 
   // --- Plan : le snapshot FIGÉ fait foi, jamais « la dernière version ». -----
   const documents: PlanDocumentRef[] = (r.plan_documents ?? []).map((d: any) => ({
@@ -1198,6 +1221,7 @@ export async function svcListHandovers(params: {
 export async function svcAcknowledgeHandover(params: {
   station: StationContext;
   id: string;
+  jwtActor?: Actor | null;
 }): Promise<Record<string, unknown>> {
   const existing = await repoGetHandover(params.id);
   if (!existing) throw new HttpError(404, "STATION_HANDOVER_UNKNOWN", "Transmission introuvable.");
@@ -1205,7 +1229,7 @@ export async function svcAcknowledgeHandover(params: {
   assertHandoverAcknowledgeable({
     incomingUserId: existing.incoming_user.id,
     actorUserId: params.station.user.id,
-    actorRole: params.station.user.role,
+    actorIsSuperadmin: await hasStationSensitiveAuthority(params.station, params.jwtActor),
     alreadyAcknowledgedAt: existing.acknowledged_at ? new Date(existing.acknowledged_at) : null,
   });
 
@@ -1305,7 +1329,7 @@ export async function svcListCredentials(params: {
   // Anti-IDOR : on ne liste les supports d'un tiers qu'avec la capacité
   // d'administration.
   if (params.actor.id !== params.userId) {
-    if (!roleHasStationCapability(params.actor.role, "administer_credentials")) {
+    if (!params.actor.mfa || !(await isSuperadmin(params.actor.id))) {
       throw new HttpError(
         403,
         "STATION_CAPABILITY_REQUIRED",
@@ -1337,7 +1361,7 @@ export async function svcSessionOwnershipGuard(params: {
 }): Promise<void> {
   assertOwnSessionOrSupervision({
     actorUserId: params.actor.id,
-    actorRole: params.actor.role,
+    actorIsSuperadmin: params.actor.mfa && await isSuperadmin(params.actor.id),
     sessionUserId: params.sessionUserId,
     action: params.action,
   });

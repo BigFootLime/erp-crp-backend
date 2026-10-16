@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   moduleAllowed: { value: true },
+  superadmin: { value: false },
   poolQuery: vi.fn(),
   poolConnect: vi.fn(),
   clientQuery: vi.fn(),
@@ -37,9 +38,10 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 
 vi.mock("../module/access-control/services/access-control.service", () => ({
   resolveAccessProfile: vi.fn(() => Promise.resolve({
-    is_superadmin: false,
+    is_superadmin: mocks.superadmin.value,
     modules: [{ module_key: "production", label: "production", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
   })),
+  isSuperadmin: vi.fn(() => Promise.resolve(mocks.superadmin.value)),
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -57,6 +59,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
     req.user = {
       id: typeof requestedId === "string" ? Number(requestedId) : 1,
       role: typeof requestedRole === "string" ? requestedRole : "Administrateur Systeme et Reseau",
+      mfa: req.headers?.["x-test-mfa"] === "1",
     };
     next();
   },
@@ -175,12 +178,24 @@ function withLiveSession(sessionOverrides: Record<string, unknown> = {}, deviceO
   on(/FROM public\.production_devices d[\s\S]*WHERE d\.id = \$1/i, [deviceRow(deviceOverrides)]);
 }
 
-function station(req: request.Test, role = OPERATOR, userId = 7) {
-  return req.set("x-station-session", SESSION_TOKEN).set("x-test-role", role).set("x-test-user-id", String(userId));
+function station(req: request.Test, role = OPERATOR, userId = 7, mfa = false) {
+  return req
+    .set("x-station-session", SESSION_TOKEN)
+    .set("x-test-role", role)
+    .set("x-test-user-id", String(userId))
+    .set("x-test-mfa", mfa ? "1" : "0");
+}
+
+function erp(req: request.Test, role = OPERATOR, userId = 1, mfa = false) {
+  return req
+    .set("x-test-role", role)
+    .set("x-test-user-id", String(userId))
+    .set("x-test-mfa", mfa ? "1" : "0");
 }
 
 beforeEach(() => {
   mocks.moduleAllowed.value = true;
+  mocks.superadmin.value = false;
   vi.clearAllMocks();
   handlers = [];
   executedSql = [];
@@ -513,24 +528,28 @@ describe("#159 — capacités appliquées côté serveur", () => {
   });
 
   it("refuse l'enrôlement d'une tablette à un opérateur", async () => {
-    const res = await request(app)
-      .post(`${BASE}/devices`)
-      .set("x-test-role", OPERATOR)
+    const res = await erp(request(app)
+      .post(`${BASE}/devices`), "Directeur", 1, true)
       .send({ label: "Tablette", assignment_mode: "MOBILE" });
     expect(res.status).toBe(403);
   });
 
   it("refuse l'émission d'un support d'identification au chef d'atelier", async () => {
-    const res = await request(app)
-      .post(`${BASE}/credentials`)
-      .set("x-test-role", CHEF)
+    const res = await erp(request(app)
+      .post(`${BASE}/credentials`), "Directeur", 1, true)
       .send({ user_id: 7, credential: "04A1B2C3D4" });
     expect(res.status).toBe(403);
   });
 
   it("refuse le journal d'audit à un opérateur", async () => {
-    const res = await request(app).get(`${BASE}/audit`).set("x-test-role", OPERATOR);
+    const res = await erp(request(app).get(`${BASE}/audit`), "Directeur", 1, true);
     expect(res.status).toBe(403);
+  });
+  it("refuse le journal d'audit sans preuve MFA même au SuperAdmin", async () => {
+    mocks.superadmin.value = true;
+    const res = await erp(request(app).get(`${BASE}/audit`), OPERATOR, 1, false);
+    expect(res.status).toBe(401);
+    expect(String(res.body.code ?? res.body.error)).toContain("MFA_REQUIRED");
   });
 });
 
@@ -601,8 +620,34 @@ describe("#159 — machines", () => {
       },
     ]);
 
-    const res = await station(request(app).get(`${BASE}/machines`), CHEF);
+    mocks.superadmin.value = true;
+    const res = await station(request(app).get(`${BASE}/machines`), OPERATOR, 7, true);
+    expect(res.status).toBe(200);
     expect(res.body.machines[0].occupied_by).toBe("Paul Martin");
+  });
+
+  it("ne prête pas l'autorité MFA SuperAdmin du JWT à une autre session de poste", async () => {
+    handlers = [];
+    mocks.superadmin.value = true;
+    withLiveSession({ user_id: 7, role: OPERATOR });
+    on(/UPDATE public\.operator_device_sessions\s*\n\s*SET last_activity_at/i, []);
+    on(/FROM public\.v_station_machine_occupancy/i, [{
+      id: OTHER_MACHINE_ID,
+      code: "FRAISE-02",
+      name: "Fraiseuse",
+      status: "ACTIVE",
+      is_available: true,
+      workshop_zone: "USINAGE",
+      active_operator_user_id: 99,
+      active_operator_label: "Paul Martin",
+      active_of_id: 42,
+      active_of_numero: "OF-2026-0042",
+      active_since: NOW,
+    }]);
+
+    const res = await station(request(app).get(`${BASE}/machines`), OPERATOR, 1, true);
+    expect(res.status).toBe(200);
+    expect(res.body.machines[0].occupied_by).toBe("un autre opérateur");
   });
 
   it("refuse une machine hors périmètre au lieu de la confirmer", async () => {
@@ -1041,6 +1086,10 @@ describe("#159 — frontières inter-modules", () => {
 
 /* -------------------------------------------------------------------------- */
 describe("#159 — administration des tablettes", () => {
+  beforeEach(() => {
+    mocks.superadmin.value = true;
+  });
+
   it("enrôle une tablette avec un code généré par la BASE", async () => {
     on(/SELECT public\.fn_production_device_next_public_code/i, [{ code: "TAB-0007" }]);
     on(/INSERT INTO public\.production_devices/i, [{ id: DEVICE_ID }]);
@@ -1049,7 +1098,7 @@ describe("#159 — administration des tablettes", () => {
 
     const res = await request(app)
       .post(`${BASE}/devices`)
-      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1")
       .send({ label: "Tablette tour 1", assignment_mode: "MOBILE" });
 
     expect(res.status).toBe(201);
@@ -1062,7 +1111,7 @@ describe("#159 — administration des tablettes", () => {
   it("refuse une tablette fixe sans machine", async () => {
     const res = await request(app)
       .post(`${BASE}/devices`)
-      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1")
       .send({ label: "Tablette", assignment_mode: "FIXED" });
     expect(res.status).toBe(400);
   });
@@ -1070,7 +1119,7 @@ describe("#159 — administration des tablettes", () => {
   it("borne le verrouillage automatique demandé", async () => {
     const res = await request(app)
       .post(`${BASE}/devices`)
-      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1")
       .send({ label: "Tablette", assignment_mode: "MOBILE", auto_lock_seconds: 99999 });
     expect(res.status).toBe(400);
   });
@@ -1085,7 +1134,7 @@ describe("#159 — administration des tablettes", () => {
 
     const res = await request(app)
       .post(`${BASE}/devices/${DEVICE_ID}/revoke`)
-      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1")
       .send({ reason: "Tablette perdue en atelier" });
 
     expect(res.status).toBe(200);
@@ -1099,7 +1148,7 @@ describe("#159 — administration des tablettes", () => {
   it("exige un motif pour révoquer", async () => {
     const res = await request(app)
       .post(`${BASE}/devices/${DEVICE_ID}/revoke`)
-      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1")
       .send({});
     expect(res.status).toBe(400);
   });
@@ -1116,17 +1165,15 @@ describe("#159 — administration des tablettes", () => {
     ]);
     const res = await request(app)
       .get(`${BASE}/credentials/7`)
-      .set("x-test-role", "Administrateur Systeme et Reseau");
+      .set("x-test-role", OPERATOR).set("x-test-mfa", "1");
     expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toContain("credential_hash");
   });
 
   it("refuse à un opérateur de lister les supports d'un tiers", async () => {
-    mocks.moduleAllowed.value = false;
-    const res = await request(app)
-      .get(`${BASE}/credentials/9`)
-      .set("x-test-role", OPERATOR)
-      .set("x-test-user-id", "7");
+    mocks.superadmin.value = false;
+    const res = await erp(request(app)
+      .get(`${BASE}/credentials/9`), "Directeur", 7, true);
     expect(res.status).toBe(403);
   });
 });

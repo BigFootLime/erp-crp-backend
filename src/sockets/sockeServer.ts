@@ -302,11 +302,15 @@ async function defaultAuthorizeStationSubscription(
 }
 
 async function authorizeStationRoom(room: StationRoom, user: JwtUser): Promise<boolean> {
-  const scope = await repoUserRealtimeScope(user.id);
+  const [scope, sensitive] = await Promise.all([
+    repoUserRealtimeScope(user.id),
+    repoAccountSensitiveCapabilities(user.id),
+  ]);
   const allowed = canSubscribeStationRoom({
     room,
     actorUserId: user.id,
     actorRole: user.role ?? null,
+    actorIsSuperadmin: user.mfa === true && sensitive.isSuperadmin,
     ownMachineIds: scope.machineIds,
     ownOfIds: scope.ofIds,
     ownDeviceIds: scope.deviceIds,
