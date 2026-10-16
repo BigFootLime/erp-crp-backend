@@ -6,6 +6,7 @@ import { directoryProfileSchema } from '../../shared-directory/model';
 import { withTransaction, repoListCatalogModules, repoUpsertUserModuleAccess } from '../access-control/repository/access-control.repository';
 import { repoGrantSensitiveCapabilities } from '../access-control/repository/sensitive-capabilities.repository';
 import type { SensitiveCapability } from '../access-control/domain/sensitive-capabilities';
+import { repoInsertAuditLog } from '../audit-logs/repository/audit-logs.repository';
 
 const BUSINESS_ADMIN_BASE_CAPABILITIES: readonly SensitiveCapability[] = ['audit.read'];
 const BUSINESS_ADMIN_FACTURATION_CAPABILITIES: readonly SensitiveCapability[] = [
@@ -106,10 +107,32 @@ async function applyClosedModuleSelection(
     const selectable = new Set(modules.filter(module => module.is_active && !module.is_protected).map(module => module.module_key));
     for (const key of selected) if (!selectable.has(key)) throw new HttpError(422, 'ACCOUNT_REQUEST_MODULE_INVALID', 'Un module sélectionné est indisponible.');
     for (const key of selectable) await repoUpsertUserModuleAccess(tx, { userId: localUserId, moduleKey: key, access: selected.includes(key) ? 'GRANTED' : 'DENIED', updatedBy: actorUserId });
+    const capabilities = sensitiveCapabilitiesForApproval(administrativeKind, selected);
     await repoGrantSensitiveCapabilities(tx, {
       userId: localUserId,
-      capabilities: sensitiveCapabilitiesForApproval(administrativeKind, selected),
+      capabilities,
       updatedBy: actorUserId,
+    });
+    await repoInsertAuditLog({
+      user_id: actorUserId,
+      tx,
+      ip: null,
+      user_agent: null,
+      device_type: null,
+      os: null,
+      browser: null,
+      body: {
+        event_type: 'ACTION',
+        action: 'ACCOUNT_REQUEST_SENSITIVE_CAPABILITIES_APPLIED',
+        page_key: 'administration',
+        entity_type: 'user',
+        entity_id: String(localUserId),
+        path: '/admin/account-requests',
+        details: {
+          granted_capabilities: capabilities,
+          source: 'account_request_approval',
+        },
+      },
     });
   });
 }
