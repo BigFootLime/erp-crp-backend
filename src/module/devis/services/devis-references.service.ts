@@ -9,15 +9,16 @@ import {
 import { svcListPaymentModes } from "../../payment-mode/services/payment-modes.service";
 import { listPieceTechniquesSVC } from "../../pieces-techniques/services/pieces-techniques.service";
 
-const REFERENCE_LIMIT = 100;
+const REFERENCE_LIMIT = 200;
+const CLIENT_REFERENCE_LIMIT = 2000;
 
-function referenceQuery(value: unknown): { q: string; limit: number } {
+function referenceQuery(value: unknown, max = REFERENCE_LIMIT): { q: string; limit: number } {
   const q = typeof value === "object" && value !== null && typeof (value as { q?: unknown }).q === "string"
     ? (value as { q: string }).q.trim()
     : "";
   const rawLimit = typeof value === "object" && value !== null ? (value as { limit?: unknown }).limit : undefined;
   const parsedLimit = typeof rawLimit === "string" ? Number.parseInt(rawLimit, 10) : Number(rawLimit);
-  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), REFERENCE_LIMIT) : 25;
+  const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), max) : 25;
   return { q, limit };
 }
 
@@ -47,7 +48,7 @@ export async function getDevisClientReference(clientId: string) {
 
   return {
     client,
-    biller: detail.biller ? { biller_id: detail.biller.id, biller_name: detail.biller.name } : null,
+    biller: detail.biller ? { id: detail.biller.id, name: detail.biller.name } : null,
     bill_address: detail.bill_address,
     delivery_address: detail.delivery_address,
     payment_modes: detail.payment_modes.map((mode) => ({ value: mode.id, label: mode.type })),

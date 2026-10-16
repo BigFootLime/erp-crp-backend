@@ -66,7 +66,7 @@ describe("quote reference projections", () => {
   it("uses the bounded reference limit", async () => {
     dependencies.listClients.mockResolvedValue([]);
     await listDevisClientReferences({ limit: "999" });
-    expect(dependencies.listClients).toHaveBeenCalledWith("", 100);
+    expect(dependencies.listClients).toHaveBeenCalledWith("", 200);
   });
 
   it("returns 404 when the selected client no longer exists", async () => {
