@@ -256,7 +256,7 @@ async function resetPlanningOf(client, actorId) {
      ) VALUES(
        $1,$2,10,'Usinage dédié accès #1592','24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
        50,0.1,0.25,1,1,0.35,'TODO'
-     ) ON CONFLICT(of_id,phase) DO UPDATE SET
+      ) ON CONFLICT(id) DO UPDATE SET
        designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,machine_id=EXCLUDED.machine_id,
        hourly_rate_applied=EXCLUDED.hourly_rate_applied,tp=EXCLUDED.tp,tf_unit=EXCLUDED.tf_unit,qte=1,coef=1,
        temps_total_planned=EXCLUDED.temps_total_planned,temps_total_real=0,status='TODO',started_at=NULL,ended_at=NULL,updated_at=now()`,
