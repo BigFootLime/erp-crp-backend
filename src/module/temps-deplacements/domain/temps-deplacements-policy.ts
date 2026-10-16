@@ -1,16 +1,19 @@
-import { getAccountModuleAccessContext } from "../../access-control/context/account-module-access.context";
 import { HttpError } from "../../../utils/httpError";
 import { repoFindActivePeriodClosure } from "../repository/temps-deplacements-operations.repository";
 
-export type HrActor = { id: number; role: string };
+export type HrActor = {
+  id: number;
+  role: string;
+  /** Set only from the live sensitive-capability middleware on an HR route. */
+  hrSensitiveRead?: boolean;
+  hrSensitiveWrite?: boolean;
+};
 
-export function isHrPrivileged(role: string): boolean {
-  if (getAccountModuleAccessContext()?.elevated === true) return true;
-  const normalized = role.toLowerCase();
-  return normalized.includes("rh")
-    || normalized.includes("directeur")
-    || normalized.includes("direction")
-    || normalized.includes("administrateur");
+export function isHrPrivileged(actor: HrActor): boolean {
+  // Job titles and module grants remain descriptive/access-scoping only. A
+  // sensitive HR action is available solely after its route has loaded a live
+  // nominative capability for the authenticated account.
+  return actor.hrSensitiveRead === true || actor.hrSensitiveWrite === true;
 }
 
 export async function assertPeriodOpen(employeeId: string, from: string, to = from): Promise<void> {

@@ -28,7 +28,7 @@ import { isHrPrivileged, type Actor } from "./temps-deplacements-corrections.ser
 // Toute l'administration RH est réservée aux rôles privilégiés (RH/Direction/Admin) — anti-IDOR :
 // un salarié n'a AUCUN accès à ces endpoints (403), et ne peut pas cibler un autre employé.
 function assertPrivileged(actor: Actor): void {
-  if (!isHrPrivileged(actor.role)) throw new HttpError(403, "HR_FORBIDDEN", "Administration RH réservée.");
+  if (!isHrPrivileged(actor)) throw new HttpError(403, "HR_FORBIDDEN", "Administration RH réservée.");
 }
 
 async function audit(actor: Actor, ctx: AuditContext, action: string, entityType: string, entityId: string | null, details: Record<string, unknown>) {

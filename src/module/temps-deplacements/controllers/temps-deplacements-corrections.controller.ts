@@ -6,12 +6,23 @@ import {
   teamAnomaliesQuerySchema,
   uuidParamsSchema,
 } from "../validators/temps-deplacements.validators";
+import { repoResolveTargetEmployeeId } from "../repository/temps-deplacements-corrections.repository";
+import { repoGetEmployeeById } from "../repository/temps-deplacements.repository";
+import { assertHrSensitiveAction } from "../middlewares/hr-sensitive-authorization.middleware";
 import { buildAuditContext, requireUser } from "./temps-deplacements.controller";
 
 // ------------------------------------------------------------------ Corrections (salarié + responsable)
 export const postAdjustment = asyncHandler(async (req: Request, res: Response) => {
-  const actor = requireUser(req);
+  let actor = requireUser(req);
   const body = createAdjustmentSchema.parse(req.body);
+  const targetEmployeeId = await repoResolveTargetEmployeeId(body.target_type, body.target_id);
+  if (targetEmployeeId) {
+    const target = await repoGetEmployeeById(targetEmployeeId);
+    if (target && target.user_id !== actor.id) {
+      await assertHrSensitiveAction(req, "write");
+      actor = requireUser(req);
+    }
+  }
   const adj = await svc.createAdjustment(actor, body, buildAuditContext(req));
   res.status(201).json(adj);
 });

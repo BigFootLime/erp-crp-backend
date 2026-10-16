@@ -72,11 +72,10 @@ describe("T4 — validateurs corrections", () => {
 });
 
 describe("T4 — isHrPrivileged", () => {
-  it("RH / Direction / Admin privilégiés ; salarié non", () => {
-    expect(svc.isHrPrivileged("Responsable RH")).toBe(true);
-    expect(svc.isHrPrivileged("Direction")).toBe(true);
-    expect(svc.isHrPrivileged("Administrateur")).toBe(true);
-    expect(svc.isHrPrivileged("Employee")).toBe(false);
+  it("utilise uniquement les capacités RH déjà résolues", () => {
+    expect(svc.isHrPrivileged({ id: 5, role: "Responsable RH" })).toBe(false);
+    expect(svc.isHrPrivileged({ id: 5, role: "Employee", hrSensitiveWrite: true })).toBe(true);
+    expect(svc.isHrPrivileged({ id: 5, role: "Employee" })).toBe(false);
   });
 });
 
@@ -105,17 +104,17 @@ describe("T4 — createAdjustment (anti-IDOR, motif tracé)", () => {
 describe("T4 — decideAdjustment (pas d'auto-validation, RBAC, idempotence)", () => {
   it("demande inexistante → 404", async () => {
     cor.repoGetAdjustmentById.mockResolvedValue(null);
-    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH" }, UUID, "APPROVED", AUDIT))
+    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, "APPROVED", AUDIT))
       .rejects.toMatchObject({ status: 404, code: "HR_ADJUSTMENT_NOT_FOUND" });
   });
   it("demande déjà traitée → 409", async () => {
     cor.repoGetAdjustmentById.mockResolvedValue(adj({ status: "APPROVED" }));
-    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH" }, UUID, "APPROVED", AUDIT))
+    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, "APPROVED", AUDIT))
       .rejects.toMatchObject({ status: 409, code: "HR_ADJUSTMENT_NOT_PENDING" });
   });
   it("AUTO-VALIDATION interdite : le demandeur ne peut approuver sa propre demande → 403", async () => {
     cor.repoGetAdjustmentById.mockResolvedValue(adj({ requested_by: 7 }));
-    await expect(svc.decideAdjustment({ id: 7, role: "Responsable RH" }, UUID, "APPROVED", AUDIT))
+    await expect(svc.decideAdjustment({ id: 7, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, "APPROVED", AUDIT))
       .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
   });
   it("hors périmètre (ni manager ni RH) → 403", async () => {
@@ -129,7 +128,7 @@ describe("T4 — decideAdjustment (pas d'auto-validation, RBAC, idempotence)", (
     cor.repoGetAdjustmentById.mockResolvedValue(adj({ requested_by: 1 }));
     cor.repoResolveTargetEmployeeId.mockResolvedValue("emp-x");
     cor.repoDecideAdjustment.mockResolvedValue(adj({ status: "APPROVED", requested_by: 1, approved_by: 5 }));
-    const r = await svc.decideAdjustment({ id: 5, role: "Responsable RH" }, UUID, "APPROVED", AUDIT);
+    const r = await svc.decideAdjustment({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, "APPROVED", AUDIT);
     expect(r.status).toBe("APPROVED");
     expect(base.insertAuditLog).toHaveBeenCalledWith(expect.anything(), AUDIT, expect.objectContaining({ action: "temps-deplacements.adjustment.approved" }));
   });
@@ -137,7 +136,7 @@ describe("T4 — decideAdjustment (pas d'auto-validation, RBAC, idempotence)", (
     cor.repoGetAdjustmentById.mockResolvedValue(adj({ requested_by: 1 }));
     cor.repoResolveTargetEmployeeId.mockResolvedValue("emp-x");
     cor.repoDecideAdjustment.mockResolvedValue(null);
-    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH" }, UUID, "APPROVED", AUDIT))
+    await expect(svc.decideAdjustment({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, "APPROVED", AUDIT))
       .rejects.toMatchObject({ status: 409, code: "HR_ADJUSTMENT_NOT_PENDING" });
   });
 });
@@ -145,25 +144,25 @@ describe("T4 — decideAdjustment (pas d'auto-validation, RBAC, idempotence)", (
 describe("T4 — validateTimesheetDay", () => {
   it("journée inexistante → 404", async () => {
     cor.repoGetTimesheetDayById.mockResolvedValue(null);
-    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT))
+    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, AUDIT))
       .rejects.toMatchObject({ status: 404, code: "HR_TIMESHEET_NOT_FOUND" });
   });
   it("journée déjà validée → 409 (non rejouable)", async () => {
     cor.repoGetTimesheetDayById.mockResolvedValue({ id: UUID, employee_id: "emp-x", validation_status: "VALIDATED" });
-    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT))
+    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, AUDIT))
       .rejects.toMatchObject({ status: 409, code: "HR_ALREADY_VALIDATED" });
   });
   it("interdit à un responsable de valider sa propre journée", async () => {
     cor.repoGetTimesheetDayById.mockResolvedValue({ id: UUID, employee_id: "emp-self", validation_status: "DRAFT" });
     base.repoGetEmployeeById.mockResolvedValue(emp({ user_id: 5 }));
-    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT))
+    await expect(svc.validateTimesheetDay({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, AUDIT))
       .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
   });
   it("DRAFT → VALIDATED + audit 'day.validated'", async () => {
     cor.repoGetTimesheetDayById.mockResolvedValue({ id: UUID, employee_id: "emp-x", validation_status: "DRAFT" });
     base.repoGetEmployeeById.mockResolvedValue(emp({ user_id: 1 }));
     cor.repoSetDayValidation.mockResolvedValue({ id: UUID, employee_id: "emp-x", validation_status: "VALIDATED" });
-    const r = await svc.validateTimesheetDay({ id: 5, role: "Responsable RH" }, UUID, AUDIT);
+    const r = await svc.validateTimesheetDay({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, UUID, AUDIT);
     expect(r.validation_status).toBe("VALIDATED");
     expect(base.insertAuditLog).toHaveBeenCalledWith(expect.anything(), AUDIT, expect.objectContaining({ action: "temps-deplacements.day.validated" }));
   });

@@ -29,14 +29,14 @@ import type {
 import { resolveEmployeeFromUser } from "./temps-deplacements.service";
 
 async function assertCanManageEmployee(actor: Actor, employeeId: string): Promise<void> {
-  if (isHrPrivileged(actor.role)) return;
+  if (isHrPrivileged(actor)) return;
   const employee = await repoGetEmployeeById(employeeId);
   if (employee?.manager_user_id === actor.id) return;
   throw new HttpError(403, "HR_FORBIDDEN", "Hors de votre périmètre de gestion.");
 }
 
 function assertPrivileged(actor: Actor): void {
-  if (!isHrPrivileged(actor.role)) throw new HttpError(403, "HR_ADMIN_REQUIRED", "Action réservée à l'administration RH.");
+  if (!isHrPrivileged(actor)) throw new HttpError(403, "HR_ADMIN_REQUIRED", "Action réservée à l'administration RH.");
 }
 
 export async function createMyAbsence(actor: Actor, input: CreateAbsenceBody, audit: AuditContext) {
@@ -69,7 +69,7 @@ export async function listMyAbsences(actor: Actor) {
 }
 
 export async function listTeamAbsences(actor: Actor, status?: "REQUESTED" | "APPROVED" | "REJECTED" | "CANCELLED") {
-  return repoListAbsences({ manager_user_id: actor.id, privileged: isHrPrivileged(actor.role), status });
+  return repoListAbsences({ manager_user_id: actor.id, privileged: isHrPrivileged(actor), status });
 }
 
 export async function decideAbsence(
@@ -164,5 +164,5 @@ export async function listKilometerRates(actor: Actor) {
 }
 
 export async function getOperationsQueue(actor: Actor) {
-  return repoGetTeamOperationsQueue({ manager_user_id: actor.id, privileged: isHrPrivileged(actor.role) });
+  return repoGetTeamOperationsQueue({ manager_user_id: actor.id, privileged: isHrPrivileged(actor) });
 }

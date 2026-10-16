@@ -6,7 +6,9 @@ import { isHrPrivileged } from "../domain/temps-deplacements-policy";
 import type { AuditContext } from "../repository/temps-deplacements.repository";
 import * as repo from "../repository/temps-deplacements.repository";
 import * as svc from "../services/temps-deplacements.service";
+import { assertHrSensitiveAction, getHrSensitivePermissions } from "../middlewares/hr-sensitive-authorization.middleware";
 import type { HrEmployeeLite } from "../types/temps-deplacements.types";
+import type { HrActor } from "../domain/temps-deplacements-policy";
 import {
   createTimeEventSchema,
   deviceEventSchema,
@@ -55,21 +57,27 @@ function buildRequestAuditContext(req: Request, userId: number | null): AuditCon
   };
 }
 
-export function requireUser(req: Request): { id: number; role: string } {
+export function requireUser(req: Request): HrActor {
   const user = req.user;
   if (!user || typeof user.id !== "number") throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
-  return { id: user.id, role: typeof user.role === "string" ? user.role : "" };
+  return {
+    id: user.id,
+    role: typeof user.role === "string" ? user.role : "",
+    hrSensitiveRead: req.sensitiveCapabilities?.includes("hr.sensitive.read") === true,
+    hrSensitiveWrite: req.sensitiveCapabilities?.includes("hr.sensitive.write") === true,
+  };
 }
 
-// RBAC lecture d'un employé : soi-même, OU son manager, OU un rôle RH/Direction/Admin.
+// Un salarié accède à ses propres relevés. Les données d'un tiers passent par
+// l'habilitation RH nominative chargée par le middleware, jamais par le titre.
 export { isHrPrivileged };
-export function validateManagerScope(reqUser: { id: number; role: string }, target: HrEmployeeLite): boolean {
+export function validateManagerScope(reqUser: HrActor, target: HrEmployeeLite): boolean {
   return target.manager_user_id !== null && target.manager_user_id === reqUser.id;
 }
 // Lève 403 si l'appelant n'a pas le droit de lire cet employé (anti-IDOR).
-export function validateEmployeeAccess(reqUser: { id: number; role: string }, target: HrEmployeeLite): void {
+export function validateEmployeeAccess(reqUser: HrActor, target: HrEmployeeLite): void {
   const self = target.user_id === reqUser.id;
-  if (self || validateManagerScope(reqUser, target) || isHrPrivileged(reqUser.role)) return;
+  if (self || isHrPrivileged(reqUser)) return;
   throw new HttpError(403, "HR_FORBIDDEN", "Accès refusé aux données de cet employé.");
 }
 const assertCanReadEmployee = validateEmployeeAccess;
@@ -122,7 +130,8 @@ export const getEmployeeToday = asyncHandler(async (req: Request, res: Response)
   const { date } = meTodayQuerySchema.parse(req.query);
   const target = await repo.repoGetEmployeeById(id);
   if (!target) throw new HttpError(404, "HR_EMPLOYEE_NOT_FOUND", "Employé introuvable.");
-  assertCanReadEmployee(reqUser, target);
+  if (target.user_id !== reqUser.id) await assertHrSensitiveAction(req, "read");
+  assertCanReadEmployee(requireUser(req), target);
   res.json(await svc.computeDailyTimesheet(target.id, date ?? svc.todayParis()));
 });
 
@@ -132,7 +141,8 @@ export const getEmployeeWeek = asyncHandler(async (req: Request, res: Response) 
   const { week_start } = meWeekQuerySchema.parse(req.query);
   const target = await repo.repoGetEmployeeById(id);
   if (!target) throw new HttpError(404, "HR_EMPLOYEE_NOT_FOUND", "Employé introuvable.");
-  assertCanReadEmployee(reqUser, target);
+  if (target.user_id !== reqUser.id) await assertHrSensitiveAction(req, "read");
+  assertCanReadEmployee(requireUser(req), target);
   res.json(await svc.computeWeeklyTimesheet(target.id, week_start ?? mondayOf(svc.todayParis())));
 });
 
@@ -202,4 +212,10 @@ export const getDeviceConfig = asyncHandler(async (req: Request, res: Response) 
     event_types: ["AUTO"],
     heartbeat_interval_seconds: 60,
   });
+});
+
+/** Exposes only effective RH permissions for the authenticated UI. */
+export const getPermissions = asyncHandler(async (req: Request, res: Response) => {
+  res.set("Cache-Control", "no-store");
+  res.json(await getHrSensitivePermissions(req));
 });

@@ -1,5 +1,15 @@
 import type { RequestHandler } from "express";
 
+export function hasRecentMfaAssurance(
+  user: Express.Request["user"] | undefined,
+  maxAgeSeconds = 5 * 60,
+): boolean {
+  if (user?.mfa !== true) return true;
+  const verifiedAt = user.mfa_verified_at;
+  const age = typeof verifiedAt === "number" ? Math.floor(Date.now() / 1000) - verifiedAt : Number.POSITIVE_INFINITY;
+  return age >= 0 && age <= maxAgeSeconds;
+}
+
 export const requireRecentMfa = (maxAgeSeconds = 5 * 60): RequestHandler => (req, res, next) => {
   // The global authenticateToken middleware rejects a privileged token with no
   // MFA claim. Keeping this compatibility branch lets isolated route tests and
@@ -8,9 +18,7 @@ export const requireRecentMfa = (maxAgeSeconds = 5 * 60): RequestHandler => (req
     next();
     return;
   }
-  const verifiedAt = req.user.mfa_verified_at;
-  const age = typeof verifiedAt === "number" ? Math.floor(Date.now() / 1000) - verifiedAt : Number.POSITIVE_INFINITY;
-  if (age >= 0 && age <= maxAgeSeconds) {
+  if (hasRecentMfaAssurance(req.user, maxAgeSeconds)) {
     next();
     return;
   }

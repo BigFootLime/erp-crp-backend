@@ -10,7 +10,7 @@ import { isHrPrivileged, type Actor } from "./temps-deplacements-corrections.ser
 import { buildPayrollCsv, buildPayrollPdf, sha256Hex, type PayrollWeekRow } from "./temps-deplacements-exports";
 
 function assertPrivileged(actor: Actor): void {
-  if (!isHrPrivileged(actor.role)) throw new HttpError(403, "HR_FORBIDDEN", "Export réservé aux responsables RH / direction.");
+  if (!isHrPrivileged(actor)) throw new HttpError(403, "HR_FORBIDDEN", "Export réservé aux responsables RH / direction.");
 }
 
 export interface ExportFile {

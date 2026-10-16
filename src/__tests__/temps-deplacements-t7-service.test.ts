@@ -23,7 +23,7 @@ import * as svc from "../module/temps-deplacements/services/temps-deplacements-e
 const repo = vi.mocked(expRepo);
 const base = vi.mocked(baseRepo);
 const AUDIT = { user_id: 9, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: null, client_session_id: null };
-const RH = { id: 9, role: "Responsable RH" };
+const RH = { id: 9, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true };
 const SALARIE = { id: 2, role: "Employee" };
 const WEEK: PayrollWeekRow = {
   matricule: "TD001", name: "Jean", surname: "Dupont", week_start: "2026-03-02", week_end: "2026-03-08",

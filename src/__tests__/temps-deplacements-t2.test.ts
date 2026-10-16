@@ -118,15 +118,13 @@ describe("T2 — RBAC / anti-IDOR", () => {
   it("un salarié NE PEUT PAS lire un autre salarié (403)", () => {
     expect(() => validateEmployeeAccess({ id: 2, role: "Employee" }, emp({ user_id: 1, manager_user_id: null }))).toThrow();
   });
-  it("un manager accède à son subordonné", () => {
-    expect(() => validateEmployeeAccess({ id: 5, role: "Employee" }, emp({ user_id: 1, manager_user_id: 5 }))).not.toThrow();
+  it("un manager n'accède pas aux données d'un subordonné sans habilitation sensible", () => {
+    expect(() => validateEmployeeAccess({ id: 5, role: "Employee" }, emp({ user_id: 1, manager_user_id: 5 }))).toThrow();
     expect(validateManagerScope({ id: 5, role: "Employee" }, emp({ manager_user_id: 5 }))).toBe(true);
   });
-  it("Responsable RH / Direction / Admin accèdent globalement", () => {
-    expect(isHrPrivileged("Responsable RH")).toBe(true);
-    expect(isHrPrivileged("Directeur")).toBe(true);
-    expect(isHrPrivileged("Administrateur Systeme et Reseau")).toBe(true);
-    expect(isHrPrivileged("Employee")).toBe(false);
-    expect(() => validateEmployeeAccess({ id: 9, role: "Responsable RH" }, emp({ user_id: 1 }))).not.toThrow();
+  it("une capacité RH nominative, jamais le titre, ouvre les données tierces", () => {
+    expect(isHrPrivileged({ id: 9, role: "Responsable RH" })).toBe(false);
+    expect(isHrPrivileged({ id: 9, role: "Employee", hrSensitiveRead: true })).toBe(true);
+    expect(() => validateEmployeeAccess({ id: 9, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, emp({ user_id: 1 }))).not.toThrow();
   });
 });

@@ -27,19 +27,18 @@ import { repoResolveAdjustmentPeriod } from "../repository/temps-deplacements-op
 import { computeDailyTimesheet, todayParis } from "./temps-deplacements.service";
 export type Actor = HrActor;
 
-// Miroir de isHrPrivileged du contrôleur T2 (rôle RH/Direction/Admin). Pur ⇒ testable directement.
+// Miroir du contrôle de capacité RH déjà résolu par le contrôleur.
 export { isHrPrivileged };
 
-// Lève 403 si l'appelant n'est ni le manager de l'employé ni un rôle privilégié (anti-IDOR périmètre).
-async function assertCanManageEmployee(actor: Actor, employeeId: string): Promise<void> {
-  if (isHrPrivileged(actor.role)) return;
-  const emp = await repoGetEmployeeById(employeeId);
-  if (emp && emp.manager_user_id !== null && emp.manager_user_id === actor.id) return;
+// Les actions sur un tiers exigent la capacité RH nominative installée par la
+// route; le statut de manager et le titre ne sont pas des autorités sensibles.
+async function assertCanManageEmployee(actor: Actor, _employeeId: string): Promise<void> {
+  if (isHrPrivileged(actor)) return;
   throw new HttpError(403, "HR_FORBIDDEN", "Hors de votre périmètre de gestion.");
 }
 
 // -------------------------------------------------------------- Corrections (tracées, motif obligatoire)
-// Le salarié demande une correction sur SES données (ou son manager / RH sur le périmètre). L'application
+// Le salarié demande une correction sur SES données. L'application
 // numérique d'une correction approuvée (override dans le relevé) relève de T5 : ici on trace la DÉCISION
 // (append-only events ⇒ jamais mutés). L'enregistrement approuvé est la preuve légale de la correction.
 export async function createAdjustment(
@@ -55,8 +54,7 @@ export async function createAdjustment(
 
   const emp = await repoGetEmployeeById(targetEmployeeId);
   const isSelf = emp?.user_id === actor.id;
-  const isManager = emp?.manager_user_id !== null && emp?.manager_user_id === actor.id;
-  if (!isSelf && !isManager && !isHrPrivileged(actor.role)) {
+  if (!isSelf && !isHrPrivileged(actor)) {
     throw new HttpError(403, "HR_FORBIDDEN", "Vous ne pouvez demander une correction que sur vos données.");
   }
 
@@ -113,7 +111,7 @@ export async function decideAdjustment(
 }
 
 export async function listTeamAdjustments(actor: Actor): Promise<HrAdjustmentWithEmployee[]> {
-  return repoListTeamAdjustments({ managerUserId: actor.id, isPrivileged: isHrPrivileged(actor.role) });
+  return repoListTeamAdjustments({ managerUserId: actor.id, isPrivileged: isHrPrivileged(actor) });
 }
 
 // -------------------------------------------------------------- Validation jour / semaine
@@ -176,7 +174,7 @@ export async function teamToday(actor: Actor): Promise<{
   date: string;
   employees: Array<{ employee: { id: string; matricule: string; service: string | null }; timesheet: Awaited<ReturnType<typeof computeDailyTimesheet>> }>;
 }> {
-  const isPriv = isHrPrivileged(actor.role);
+  const isPriv = isHrPrivileged(actor);
   const employees = await repoListTeamEmployees({ managerUserId: actor.id, isPrivileged: isPriv });
   const date = todayParis();
   const rows = await Promise.all(
@@ -189,7 +187,7 @@ export async function teamToday(actor: Actor): Promise<{
 }
 
 export async function teamAnomalies(actor: Actor, date?: string) {
-  const isPriv = isHrPrivileged(actor.role);
+  const isPriv = isHrPrivileged(actor);
   const d = date ?? todayParis();
   const anomalies = await repoListTeamAnomaliesForDate({ managerUserId: actor.id, isPrivileged: isPriv, date: d });
   return { date: d, anomalies };
