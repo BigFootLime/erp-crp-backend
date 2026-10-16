@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "017f64337aa611798584d5273aedb052ad2e274869d351499b6de9299f06acb3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "65b503fdd274d07fa174809706aaea6e572fbe10a467211a431c01be68f25b87";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -1983,23 +1983,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/audit-logs",
-    "source": "src/module/audit-logs/routes/audit-logs.routes.ts:8",
+    "source": "src/module/audit-logs/routes/audit-logs.routes.ts:9",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireSensitiveCapability(audit.read)",
       "listAuditLogs"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireSensitiveCapability(audit.read)"
     ]
   },
   {
     "method": "post",
     "path": "/audit-logs",
-    "source": "src/module/audit-logs/routes/audit-logs.routes.ts:7",
+    "source": "src/module/audit-logs/routes/audit-logs.routes.ts:8",
     "middleware": [
       "anonymous",
       "authenticateToken",
