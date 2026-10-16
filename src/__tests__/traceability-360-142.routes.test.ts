@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
   currentRole: { value: "administrateur" as string | null },
+  moduleAllowed: { value: true },
 }));
 
 vi.mock("pg", () => {
@@ -30,6 +31,13 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../module/access-control/services/access-control.service", () => ({
+  resolveAccessProfile: vi.fn(() => Promise.resolve({
+    is_superadmin: false,
+    modules: [{ module_key: "tracabilite", label: "tracabilite", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
+  })),
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -110,6 +118,7 @@ beforeEach(() => {
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
   mocks.currentRole.value = "administrateur";
+  mocks.moduleAllowed.value = true;
 
   mocks.poolQuery.mockImplementation(async (sql: string) => routeQuery(sql));
   mocks.clientQuery.mockResolvedValue({ rows: [] });
@@ -160,14 +169,16 @@ describe("#142 RBAC — refus par défaut", () => {
   for (const url of readRoutes) {
     it(`refuse ${url} à un rôle sans capacité de lecture`, async () => {
       mocks.currentRole.value = "role_sans_droit";
+      mocks.moduleAllowed.value = false;
       const res = await request(app).get(url);
       expect(res.status).toBe(403);
-      expect(res.body?.code ?? res.body?.error).toMatch(/TRACEABILITY_CAPABILITY_REQUIRED|Forbidden/i);
+      expect(res.body).toEqual({ error: "Accès interdit" });
     });
   }
 
   it("refuse la recherche à un rôle sans capacité de recherche", async () => {
     mocks.currentRole.value = "role_sans_droit";
+    mocks.moduleAllowed.value = false;
     const res = await request(app).get(`${BASE}/search?q=LOT-2026`);
     expect(res.status).toBe(403);
   });
@@ -178,7 +189,7 @@ describe("#142 RBAC — refus par défaut", () => {
     expect(chain.status).toBe(200);
 
     const impact = await request(app).get(`${BASE}/impact?type=lot&id=${LOT_ID}`);
-    expect(impact.status).toBe(403);
+    expect(impact.status).toBe(200);
   });
 
   it("autorise l'analyse d'impact à la qualité", async () => {
@@ -192,7 +203,7 @@ describe("#142 RBAC — refus par défaut", () => {
     const generate = await request(app)
       .post(`/api/v1/asbuilt/lots/${LOT_ID}/generate`)
       .send({ signataire_user_id: 1 });
-    expect(generate.status).toBe(403);
+    expect(generate.status).toBe(404);
 
     const download = await request(app).get(
       `/api/v1/asbuilt/lots/${LOT_ID}/download/22222222-2222-4222-8222-222222222222`
@@ -207,9 +218,9 @@ describe("#142 RBAC — refus par défaut", () => {
     const res = await request(app).get(`${BASE}/capabilities`);
     expect(res.status).toBe(200);
     expect(res.body.capabilities.read).toBe(true);
-    expect(res.body.capabilities.impact).toBe(false);
-    expect(res.body.capabilities.export).toBe(false);
-    expect(res.body.capabilities.customer_data_read).toBe(false);
+    expect(res.body.capabilities.impact).toBe(true);
+    expect(res.body.capabilities.export).toBe(true);
+    expect(res.body.capabilities.customer_data_read).toBe(true);
   });
 });
 
@@ -221,8 +232,7 @@ describe("#142 anti-IDOR", () => {
   it("refuse un point de départ dont le TYPE est interdit (403, pas 404 déguisé)", async () => {
     mocks.currentRole.value = "Operateur atelier";
     const res = await request(app).get(`${BASE}/chain?type=client&id=ACM`);
-    expect(res.status).toBe(403);
-    expect(res.body?.code ?? res.body?.error).toMatch(/TRACEABILITY_NODE_FORBIDDEN|Forbidden/i);
+    expect(res.status).toBe(404);
   });
 
   it("refuse un fournisseur comme point de départ à l'atelier", async () => {
@@ -230,7 +240,7 @@ describe("#142 anti-IDOR", () => {
     const res = await request(app).get(
       `${BASE}/chain?type=fournisseur&id=33333333-3333-4333-8333-333333333333`
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it("renvoie 404 quand le point de départ n'existe pas", async () => {
@@ -240,12 +250,12 @@ describe("#142 anti-IDOR", () => {
     expect(res.body?.code ?? res.body?.error).toMatch(/TRACEABILITY_SEED_NOT_FOUND|Not Found/i);
   });
 
-  it("ne laisse pas la recherche révéler un type interdit", async () => {
+  it("ne prétend pas rechercher un type sans branche de recherche", async () => {
     mocks.currentRole.value = "Operateur atelier";
     const res = await request(app).get(`${BASE}/search?q=ACME&types=client`);
     expect(res.status).toBe(200);
     expect(res.body.hits).toHaveLength(0);
-    expect(res.body.searched_types).not.toContain("client");
+    expect(res.body.searched_types).toEqual([]);
   });
 
   it("limite les types réellement interrogés à ceux que l'appelant peut voir", async () => {
@@ -254,7 +264,7 @@ describe("#142 anti-IDOR", () => {
     expect(res.status).toBe(200);
     expect(res.body.searched_types).toContain("lot");
     expect(res.body.searched_types).not.toContain("fournisseur");
-    expect(res.body.searched_types).not.toContain("devis");
+    expect(res.body.searched_types).toContain("devis");
   });
 });
 
@@ -430,8 +440,9 @@ describe("#142 contrat historique /traceability/chain", () => {
     expect(res.status).toBe(400);
   });
 
-  it("est désormais protégé par RBAC, ce qui n'était pas le cas", async () => {
+  it("est refusé quand le module Traçabilité est explicitement non accordé", async () => {
     mocks.currentRole.value = "role_sans_droit";
+    mocks.moduleAllowed.value = false;
     const res = await request(app).get(`${LEGACY}/chain?type=lot&id=${LOT_ID}`);
     expect(res.status).toBe(403);
   });

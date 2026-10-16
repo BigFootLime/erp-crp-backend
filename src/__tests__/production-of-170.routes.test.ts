@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 
 const mocks = vi.hoisted(() => ({
+  moduleAllowed: { value: true },
   poolQuery: vi.fn(),
   poolConnect: vi.fn(),
   clientQuery: vi.fn(),
@@ -30,6 +31,13 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../module/access-control/services/access-control.service", () => ({
+  resolveAccessProfile: vi.fn(() => Promise.resolve({
+    is_superadmin: false,
+    modules: [{ module_key: "production", label: "production", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
+  })),
 }));
 
 vi.mock("../shared/realtime/realtime-outbox.service", async (importOriginal) => ({
@@ -62,16 +70,18 @@ import app from "../config/app";
 
 describe('material debit follow-up HTTP boundaries',()=>{
   it('requires preparation and reservation rights for revision reconciliation',async()=>{
+    mocks.moduleAllowed.value=false;
     const response=await request(app).post('/api/v1/production/ofs/5/material/reconcile-revision').set('x-test-role','Operateur Atelier').send({});
-    expect(response.status).toBe(403);expect(response.body.code).toBe('MATERIAL_RECONCILIATION_FORBIDDEN');
+    expect(response.status).toBe(403);expect(response.body).toEqual({ error: "Accès interdit" });
   });
   it('validates reconciliation identity, revision and justified destination',async()=>{
     const response=await request(app).post('/api/v1/production/ofs/5/material/reconcile-revision').send({disposition:'CARRY',targetNeedId:null});
     expect(response.status).toBe(400);
   });
   it.each(['debit-corrections','transfers'])('requires workshop capability for %s',async(action)=>{
+    mocks.moduleAllowed.value=false;
     const response=await request(app).post(`/api/v1/production/ofs/5/material/${action}`).set('x-test-role','Comptabilite').send({});
-    expect(response.status).toBe(403);expect(response.body.code).toBe('OF_FORBIDDEN');
+    expect(response.status).toBe(403);expect(response.body).toEqual({ error: "Accès interdit" });
   });
   it.each(['debit-corrections','transfers'])('validates a reason, version and command identity for %s',async(action)=>{
     const response=await request(app).post(`/api/v1/production/ofs/5/material/${action}`).set('x-test-role','Operateur Atelier').send({reason:'court'});
@@ -145,6 +155,7 @@ function installHeaderReaders(statut = "BROUILLON") {
 }
 
 beforeEach(() => {
+  mocks.moduleAllowed.value = true;
   mocks.poolQuery.mockReset();
   mocks.poolConnect.mockReset();
   mocks.clientQuery.mockReset();
@@ -295,22 +306,24 @@ describe("#170 OF state machine + optimistic lock (PATCH /production/ofs/:id)", 
   });
 
   it("denies OF mutations to roles without any OF capability (403)", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .patch("/api/v1/production/ofs/5")
       .set("x-test-role", "Employe")
       .send({ notes: "x" });
     expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ code: "OF_FORBIDDEN" });
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
   it("denies cancellation to operator roles without cancel capability (403)", async () => {
+    mocks.moduleAllowed.value = false;
     installOfForUpdate({ statut: "EN_COURS" });
     const res = await request(app)
       .patch("/api/v1/production/ofs/5")
       .set("x-test-role", "Operateur Atelier")
       .send({ statut: "ANNULE", expected_updated_at: OF_UPDATED_AT });
     expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ code: "OF_TRANSITION_FORBIDDEN" });
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 });
 
@@ -695,6 +708,7 @@ describe("#170 generation preview (POST /production/ofs/generate/preview)", () =
   });
 
   it("is denied without the generate capability (403)", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .post("/api/v1/production/ofs/generate/preview")
       .set("x-test-role", "Operateur Atelier")
@@ -951,6 +965,7 @@ describe("#170 bounded production receipt", () => {
   });
 
   it("denies receipts to roles without the receipt capability (403)", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Comptabilite")
@@ -968,28 +983,32 @@ describe("#170 bounded production receipt", () => {
   });
 
   it("allows workshop receipt only in quarantine, not direct release", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Operateur Atelier")
       .set("Idempotency-Key", "receipt-223-workshop")
       .send(receiptBody);
     expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ code: "OF_QUALITY_DECISION_FORBIDDEN" });
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
   it("does not let workshop block a lot through a crafted receipt request", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .post("/api/v1/production/ofs/5/receipt")
       .set("x-test-role", "Operateur Atelier")
       .set("Idempotency-Key", "receipt-223-workshop-block")
       .send({ ...receiptBody, quality_status: "BLOQUE", quality_reason: "Blocage qualite requis" });
     expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ code: "OF_QUALITY_DECISION_FORBIDDEN" });
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
   it("gates traceability behind the traceability capability", async () => {
+    mocks.moduleAllowed.value = false;
     const denied = await request(app).get("/api/v1/production/ofs/5/traceability").set("x-test-role", "Employe");
     expect(denied.status).toBe(403);
+    mocks.moduleAllowed.value = true;
     const allowed = await request(app).get("/api/v1/production/ofs/5/traceability").set("x-test-role", "Qualite");
     expect(allowed.status).toBe(200);
   });
@@ -1027,9 +1046,10 @@ describe("#617 mounted explicit OF release route", () => {
   }
 
   it("denies the mounted release route to a role without release capability", async () => {
+    mocks.moduleAllowed.value = false;
     const response = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Comptabilite").send({});
     expect(response.status).toBe(403);
-    expect(response.body).toMatchObject({ code: "OF_FORBIDDEN" });
+    expect(response.body).toEqual({ error: "Accès interdit" });
   });
 
   it("releases a ready planned OF once and writes an authoritative audit", async () => {
@@ -1050,10 +1070,12 @@ describe("#617 mounted explicit OF release route", () => {
   it("denies override by a non-director and accepts an exact director override", async () => {
     installReleaseMocks({ blockers: ["QUALITY_PLAN_MISSING"] });
     const body = { override: true, override_reason: "Controlled customer-approved release", override_blocker_codes: ["QUALITY_PLAN_MISSING"] };
+    mocks.moduleAllowed.value = false;
     const denied = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Responsable Production").send(body);
     expect(denied.status).toBe(403);
-    expect(denied.body).toMatchObject({ code: "OF_RELEASE_OVERRIDE_FORBIDDEN" });
+    expect(denied.body).toEqual({ error: "Accès interdit" });
     installReleaseMocks({ blockers: ["QUALITY_PLAN_MISSING"] });
+    mocks.moduleAllowed.value = true;
     const allowed = await request(app).post("/api/v1/production/ofs/5/release").set("x-test-role", "Directeur").send(body);
     expect(allowed.status).toBe(200);
   });

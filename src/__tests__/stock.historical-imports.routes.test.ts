@@ -1,14 +1,20 @@
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ createHistorical: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  createHistorical: vi.fn(),
+  moduleAllowed: { value: true },
+}));
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("../module/access-control/services/access-control.service", () => ({
-  resolveAccessProfile: vi.fn(() => Promise.resolve(null)),
+  resolveAccessProfile: vi.fn(() => Promise.resolve({
+    is_superadmin: false,
+    modules: [{ module_key: "stock", label: "stock", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
+  })),
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -36,7 +42,10 @@ const result = {
 };
 
 describe("POST /api/v1/stock/historical-imports", () => {
-  beforeEach(() => mocks.createHistorical.mockReset());
+  beforeEach(() => {
+    mocks.createHistorical.mockReset();
+    mocks.moduleAllowed.value = true;
+  });
 
   it("validates and creates one explicit OLD import with the Idempotency-Key", async () => {
     mocks.createHistorical.mockResolvedValue(result);

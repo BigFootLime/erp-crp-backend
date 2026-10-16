@@ -214,10 +214,13 @@ export function assertTraceabilityCapability(
 
 export type TraceabilityCapabilitySet = Readonly<Record<TraceabilityCapability, boolean>>;
 
-export function capabilitiesForRole(role: string | null | undefined): TraceabilityCapabilitySet {
+export function capabilitiesForRole(
+  role: string | null | undefined,
+  moduleGranted = hasGrantedAccountModuleAccess()
+): TraceabilityCapabilitySet {
   const out = {} as Record<TraceabilityCapability, boolean>;
   for (const cap of TRACEABILITY_CAPABILITIES) {
-    out[cap] = roleHasTraceabilityCapability(role, cap);
+    out[cap] = moduleGranted || roleHasTraceabilityCapability(role, cap);
   }
   return out;
 }
