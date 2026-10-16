@@ -58,7 +58,9 @@ function uniqueConstraint(error: unknown, fragment: string) {
   return database.code === '23505' && typeof database.constraint === 'string' && database.constraint.toLowerCase().includes(fragment);
 }
 async function replayMutation<T>(tx: PoolClient, requestId: string, operation: 'APPROVE' | 'REJECT' | 'DELETE', key: string, payloadHash: string): Promise<T | null> {
-  const row = (await tx.query<{ payload_hash: string; response: T }>('SELECT payload_hash,response FROM public.cerp_directory_account_request_mutations WHERE request_id=$1::uuid AND operation=$2 AND idempotency_key=$3::uuid FOR UPDATE', [requestId, operation, key])).rows[0];
+  // The parent request is locked before this lookup. The append-only mutation
+  // ledger stays SELECT/INSERT-only for the Directory application role.
+  const row = (await tx.query<{ payload_hash: string; response: T }>('SELECT payload_hash,response FROM public.cerp_directory_account_request_mutations WHERE request_id=$1::uuid AND operation=$2 AND idempotency_key=$3::uuid', [requestId, operation, key])).rows[0];
   if (!row) return null;
   if (row.payload_hash !== payloadHash) throw new HttpError(409, 'ACCOUNT_REQUEST_IDEMPOTENCY_CONFLICT', 'Cette clé d’idempotence a déjà été utilisée avec une autre décision.');
   return row.response;
@@ -173,9 +175,9 @@ export async function rejectDirectoryAccountRequest(db: Pool, actor: DirectorySe
   const tx = await db.connect(); await tx.query('BEGIN');
   try {
     const payloadHash = mutationHash({ expected_version: input.expected_version, reason: input.reason ?? null });
+    const row = await locked(tx, input.id);
     const replay = await replayMutation<{ request_id: string; status: 'REJECTED' }>(tx, input.id, 'REJECT', input.key, payloadHash);
     if (replay) { await tx.query('COMMIT'); return replay; }
-    const row = await locked(tx, input.id);
     if (row.status !== 'PENDING' || row.version !== input.expected_version) throw new HttpError(409, 'ACCOUNT_REQUEST_VERSION_CONFLICT', 'La demande a été modifiée.');
     await tx.query("UPDATE public.cerp_directory_account_requests SET status='REJECTED',version=version+1,password_hash=NULL,rejection_reason=$2,reviewed_by_profile_id=$3::uuid,reviewed_at=now() WHERE id=$1::uuid", [row.id, input.reason ?? null, actor.profile_id]);
     const result = { request_id: row.id, status: 'REJECTED' as const };
@@ -186,9 +188,9 @@ export async function deleteDirectoryAccountRequest(db: Pool, actor: DirectorySe
   const tx = await db.connect(); await tx.query('BEGIN');
   try {
     const payloadHash = mutationHash({ expected_version: input.expected_version });
+    const row = await locked(tx, input.id);
     const replay = await replayMutation<{ deleted: true }>(tx, input.id, 'DELETE', input.key, payloadHash);
     if (replay) { await tx.query('COMMIT'); return replay; }
-    const row = await locked(tx, input.id);
     if (!['REJECTED', 'EXPIRED'].includes(row.status) || row.version !== input.expected_version) throw new HttpError(409, 'ACCOUNT_REQUEST_DELETE_CONFLICT', 'Seule une demande terminale peut être supprimée.');
     const redactedEmail = `deleted-${row.id}@identity.cerp.invalid`;
     await tx.query(`UPDATE public.cerp_directory_account_requests SET password_hash=NULL,name='SUPPRIME',surname='SUPPRIME',email=$2,avatar_key='default',username_base='REDACTED',rejection_reason=NULL,receipt_hash=$3,redacted_at=now(),version=version+1 WHERE id=$1::uuid`, [row.id, redactedEmail, receiptHash(randomBytes(32).toString('base64url'))]);
