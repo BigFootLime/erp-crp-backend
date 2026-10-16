@@ -3,7 +3,7 @@
 ## Préparé — Accès aux référentiels et administration (#1341)
 
 - Les deux lecteurs historiques de conditions de paiement et comptes de vente sont accessibles depuis un module Clients ou Devis explicitement accordé. Cette exception porte sur les deux GET exacts ; elle n'accorde ni les autres routes Devis ni des écritures supplémentaires.
-- Le centre de données de référence exige le statut SuperAdmin confirmé en base, y compris pour lire ses capacités. Un intitulé de poste ne suffit plus à atteindre ce routeur d'administration.
+- Le centre de données de référence exige le statut SuperAdmin confirmé en base, y compris pour lire ses capacités. Le SuperAdmin conserve toutes les capacités sans dépendre de son intitulé de poste ; les mutations suivent la même exigence de MFA récente que l'administration.
 - Qualification et livraison coordonnées avec le frontend ; aucun changement de flux métier, de données ou de schéma dans ces compléments.
 
 ## Préparé — Réponses MFA de l'annuaire partagé (#1341)

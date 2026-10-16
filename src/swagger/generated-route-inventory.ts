@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "1d9378aa312320207b10c80fe6eaa77ac8dbfb415c1927fd6f4dbf8deba05ee3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "0cd278917f427cf53fbcb8bfa3c822cb4176f93f0b86035fb0d674304a62bd14";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -828,43 +828,56 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/reference-data/capabilities",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:31",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "readCapabilities"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
     ]
   },
   {
     "method": "get",
     "path": "/admin/reference-data/catalog",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:32",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(view)",
       "readCatalog"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(view)"
     ]
   },
   {
     "method": "get",
     "path": "/admin/reference-data/changes",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:39",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(view)",
       "validate(listReferenceChangesQuerySchema,query)",
       "listChangeSets"
@@ -872,17 +885,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(view)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/changes",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:37",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(propose)",
       "validate(createReferenceChangeSetSchema,body)",
       "createChangeSet"
@@ -890,17 +908,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(propose)"
     ]
   },
   {
     "method": "get",
     "path": "/admin/reference-data/changes/{changeSetId}",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:40",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(view)",
       "validate(changeSetIdParamSchema,params)",
       "getChangeSet"
@@ -908,17 +931,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(view)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/changes/{changeSetId}/apply",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:42",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(apply)",
       "validate(changeSetIdParamSchema,params)",
       "validate(referenceApplySchema,body)",
@@ -927,17 +955,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(apply)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/changes/{changeSetId}/decision",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:41",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(approve)",
       "validate(changeSetIdParamSchema,params)",
       "validate(referenceDecisionSchema,body)",
@@ -946,17 +979,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(approve)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/changes/preview",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:35",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(propose)",
       "validate(referencePreviewSchema,body)",
       "previewChanges"
@@ -964,17 +1002,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(propose)"
     ]
   },
   {
     "method": "get",
     "path": "/admin/reference-data/datasets/{datasetCode}",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:34",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(view)",
       "validate(datasetCodeParamSchema,params)",
       "validate(listReferenceRecordsQuerySchema,query)",
@@ -983,17 +1026,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(view)"
     ]
   },
   {
     "method": "get",
     "path": "/admin/reference-data/export",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:33",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(export)",
       "validate(referenceExportQuerySchema,query)",
       "exportReferenceData"
@@ -1001,17 +1049,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(export)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/imports",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:38",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(import)",
       "validate(createReferenceChangeSetSchema,body)",
       "createChangeSet"
@@ -1019,17 +1072,22 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(import)"
     ]
   },
   {
     "method": "post",
     "path": "/admin/reference-data/imports/preview",
-    "source": "src/module/reference-data/routes/reference-data.routes.ts:36",
+    "source": "src/module/reference-data/routes/reference-data.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "anonymous",
       "requireReferenceDataCapability(import)",
       "validate(referencePreviewSchema,body)",
       "previewChanges"
@@ -1037,6 +1095,8 @@ export const GENERATED_ROUTE_INVENTORY = [
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
       "requireReferenceDataCapability(import)"
     ]
   },
@@ -5427,35 +5487,35 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/compte-vente",
-    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:20",
+    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
-      "requireDevisRead",
+      "requireCommercialReferenceRead",
       "listComptesVente"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireDevisRead"
+      "requireCommercialReferenceRead"
     ]
   },
   {
     "method": "get",
     "path": "/conditions-paiement",
-    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:19",
+    "source": "src/module/commercial-references/routes/commercial-references.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
-      "requireDevisRead",
+      "requireCommercialReferenceRead",
       "listConditionsPaiement"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireDevisRead"
+      "requireCommercialReferenceRead"
     ]
   },
   {

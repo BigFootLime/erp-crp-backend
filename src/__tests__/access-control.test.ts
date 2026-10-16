@@ -48,7 +48,19 @@ vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => 
       }
       const rawId = req.headers["x-test-user-id"];
       const id = typeof rawId === "string" ? Number(rawId) : 1;
-      req.user = { id, username: "t", email: "t@t.t", role };
+      const rawMfa = req.headers["x-test-mfa"];
+      const rawMfaVerifiedAt = req.headers["x-test-mfa-verified-at"];
+      const mfaVerifiedAt = typeof rawMfaVerifiedAt === "string" ? Number(rawMfaVerifiedAt) : undefined;
+      req.user = {
+        id,
+        username: "t",
+        email: "t@t.t",
+        role,
+        ...(rawMfa === "true" ? {
+          mfa: true,
+          ...(Number.isFinite(mfaVerifiedAt) ? { mfa_verified_at: mfaVerifiedAt } : {}),
+        } : {}),
+      };
       next();
     },
   };
@@ -585,6 +597,71 @@ describe("Surface HTTP /admin/access", () => {
 
     expect(res.status).toBe(400);
     expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("Surface HTTP /admin/reference-data", () => {
+  it("refuse un Directeur non SuperAdmin, y compris la lecture des capacités", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(false);
+
+    const res = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Directeur")
+      .set("x-test-user-id", String(OPERATEUR_ID));
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Accès interdit" });
+  });
+
+  it("autorise la lecture des capacités à un SuperAdmin confirmé par la base", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(true);
+
+    const res = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      view: true,
+      export: true,
+      propose: true,
+      import: true,
+      approve: true,
+      apply: true,
+    });
+  });
+
+  it("conserve les lectures SuperAdmin et impose une MFA récente avant toute mutation", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(true);
+
+    const staleRead = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", "1");
+    expect(staleRead.status).toBe(200);
+
+    const staleMutation = await request(app)
+      .post("/api/v1/admin/reference-data/changes/preview")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", "1")
+      .send({});
+    expect(staleMutation.status).toBe(428);
+    expect(staleMutation.body).toMatchObject({ code: "MFA_STEP_UP_REQUIRED" });
+
+    const freshMutation = await request(app)
+      .post("/api/v1/admin/reference-data/changes/preview")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", String(Math.floor(Date.now() / 1000)))
+      .send({});
+    expect(freshMutation.status).toBe(400);
+    expect(freshMutation.body).toMatchObject({ error: "VALIDATION_ERROR" });
   });
 });
 
