@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { repoPath } from "./helpers/repo-paths";
 import { Pool } from "pg";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { deliveryRemainderQuantitySql, remainingReservedQuantitySql } from "../module/livraisons/repository/delivery-quantity-projections.sql";
 
 /**
@@ -193,6 +193,7 @@ async function installMinimalSchema(db: Pool) {
       reason_code TEXT NULL,
       notes TEXT NULL,
       idempotency_key TEXT NULL,
+      correlation_id UUID NULL,
       user_id INTEGER NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -225,6 +226,7 @@ async function installMinimalSchema(db: Pool) {
       old_values JSONB NULL,
       new_values JSONB NULL,
       user_id INTEGER NULL,
+      correlation_id UUID NULL,
       created_by INTEGER NULL,
       updated_by INTEGER NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -322,6 +324,8 @@ async function installMinimalSchema(db: Pool) {
       source_scope TEXT NULL DEFAULT 'NEW',
       version INTEGER NOT NULL DEFAULT 1,
       consumed_at TIMESTAMPTZ NULL,
+      consumed_by INTEGER NULL,
+      consumed_stock_movement_id UUID NULL,
       released_at TIMESTAMPTZ NULL,
       release_reason TEXT NULL,
       idempotency_key TEXT NULL,
@@ -500,6 +504,19 @@ async function installMinimalSchema(db: Pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (actor_user_id, idempotency_key)
     );
+    CREATE TABLE public.bon_livraison_command_receipts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      actor_user_id INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      command_type TEXT NOT NULL,
+      bon_livraison_id UUID NOT NULL,
+      request_payload JSONB NOT NULL,
+      result_payload JSONB NOT NULL,
+      correlation_id UUID NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (actor_user_id, idempotency_key)
+    );
     CREATE TABLE public.delivery_promise_roots (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), allocation_id BIGINT NOT NULL UNIQUE);
     CREATE TABLE public.delivery_promise_parts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),root_id UUID NOT NULL,quantity NUMERIC NOT NULL,due_date DATE NOT NULL,retired_at TIMESTAMPTZ,created_at TIMESTAMPTZ DEFAULT now());
     CREATE TABLE public.delivery_promise_shipments (id UUID PRIMARY KEY DEFAULT gen_random_uuid(),part_id UUID NOT NULL,bl_allocation_id UUID NOT NULL,quantity NUMERIC NOT NULL,due_date_at_shipment DATE NOT NULL,UNIQUE(part_id,bl_allocation_id));
@@ -551,8 +568,8 @@ async function installMinimalSchema(db: Pool) {
       event_type TEXT NOT NULL,
       payload JSONB NOT NULL,
       correlation_id UUID NOT NULL,
-      status TEXT NOT NULL,
-      available_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       realtime_stream_id TEXT NULL,
       realtime_stream_ordinal BIGINT NULL
     );
@@ -1658,6 +1675,77 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
     await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'ANNULE','2026-10-11T01:00:01Z')");
     await expect(recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise test',idempotencyKey:'history-cancelled-recovery',audit:recoveryAudit})).rejects.toMatchObject({status:409,code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
     expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+  });
+
+
+  it("ships V2 consumption exactly once and persists stock, reservation and canonical allocation counters (#1369)", async () => {
+    if (!harnessPool) throw new Error("Harness pool not initialized");
+    await seedDeliveryScenario(harnessPool);
+
+    const quality = await import("../module/livraisons/repository/quality-release.repository");
+    const operational = await import("../module/qualite/repository/quality-operational-gate.repository");
+    const contract = await import("../module/livraisons/repository/delivery-contract-boundary.repository");
+    const prepayment = await import("../module/livraisons/repository/delivery-prepayment-boundary.repository");
+    const acknowledgements = await import("../module/livraisons/repository/delivery-customer-acknowledgement.repository");
+    const promises = await import("../module/affaire/repository/delivery-promises.repository");
+    const authoritative = await import("../shared/authoritative-documents/authoritative-document.service");
+    const artifact = await import("../module/livraisons/services/delivery-authoritative-document");
+    const fulfilment = await import("../module/commande-client/repository/commande-fulfillment.repository");
+    const mocks = [
+      vi.spyOn(quality, "repoGetDeliveryQualityRelease").mockResolvedValue({ state: "READY", preview_sha256: "pg-1369-quality", policy: { rules_sha256: "pg-1369-policy" }, derogation_ids: [], targets: [], reasons: [] } as never),
+      vi.spyOn(operational, "assertOperationalLotQualityEligibility").mockResolvedValue(undefined),
+      vi.spyOn(contract, "readDeliveryContractBoundary").mockResolvedValue({ blocker: null, groupKey: null } as never),
+      vi.spyOn(prepayment, "lockDeliveryPrepaymentRead").mockResolvedValue(undefined),
+      vi.spyOn(prepayment, "lockDeliveryPrepaymentSources").mockResolvedValue(undefined),
+      vi.spyOn(prepayment, "readDeliveryPrepaymentBoundary").mockResolvedValue({ blockers: [] } as never),
+      vi.spyOn(acknowledgements, "readDeliveryCustomerAcknowledgementSources").mockResolvedValue([]),
+      vi.spyOn(acknowledgements, "hasMissingCustomerAcknowledgement").mockReturnValue(false),
+      vi.spyOn(promises, "captureShipmentPromises").mockResolvedValue(undefined),
+      vi.spyOn(authoritative, "queueCreationPdfArchive").mockResolvedValue(undefined),
+      vi.spyOn(artifact, "buildShippedDeliveryArtifactInput").mockResolvedValue({} as never),
+      vi.spyOn(fulfilment, "syncCommandesAfterShipment").mockResolvedValue(undefined),
+    ];
+    try {
+      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1`, [ids.reservation])).rows)
+        .toEqual([{ consumed: 0, prepared: 0, status: "ACTIVE" }]);
+      const delivery = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison(
+        numero,client_id,commande_id,adresse_livraison_id,statut,created_by,updated_by
+      ) VALUES('BL-V2-1369',$1::uuid,42,$2::uuid,'READY',7,7) RETURNING id::text AS id`, [ids.client, ids.deliveryAddress]);
+      const deliveryId = delivery.rows[0]?.id;
+      if (!deliveryId) throw new Error("Missing V2 delivery fixture");
+      const line = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne(
+        bon_livraison_id,ordre,designation,code_piece,quantite,unite,commande_ligne_id,created_by,updated_by
+      ) VALUES($1::uuid,1,'Pièce intégration','PT-INT',10,'u',43,7,7) RETURNING id::text AS id`, [deliveryId]);
+      const lineId = line.rows[0]?.id;
+      if (!lineId) throw new Error("Missing V2 delivery line fixture");
+      const allocation = await harnessPool.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne_allocations(
+        bon_livraison_ligne_id,article_id,lot_id,quantite,unite,reservation_id,magasin_id,emplacement_id,location_id,stock_level_id,stock_batch_id,commande_ligne_affaire_allocation_id,verified_at,verified_by,verification_snapshot,created_by,updated_by
+      ) VALUES($1::uuid,$2::uuid,$3::uuid,10,'u',$4::uuid,$5::uuid,1,$6::uuid,$7::uuid,$8::uuid,900,now(),7,'{}'::jsonb,7,7) RETURNING id::text AS id`, [lineId, ids.article, ids.lot, ids.reservation, ids.magasin, ids.location, ids.stockLevel, ids.stockBatch]);
+      const allocationId = allocation.rows[0]?.id;
+      if (!allocationId) throw new Error("Missing V2 allocation fixture");
+      await harnessPool.query(`INSERT INTO public.bon_livraison_event_log(bon_livraison_id,event_type,new_values,user_id)
+        VALUES($1::uuid,'PICK_CONFIRMED',jsonb_build_object('allocation_id',$2::text),7)`, [deliveryId, allocationId]);
+      await harnessPool.query(`INSERT INTO public.bon_livraison_pack_versions(
+        bon_livraison_id,version,status,checksum_sha256,quality_release_state,quality_release_preview_sha256,quality_policy_sha256
+      ) VALUES($1,1,'GENERATED','pg-1369-pack','READY','pg-1369-quality','pg-1369-policy')`, [deliveryId]);
+      const preview = await shipmentRepository.repoGetLivraisonShipmentPreview(deliveryId);
+      const body = { expected_version: preview.row_version, preview_hash: preview.preview_hash };
+      const first = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, "v2-1369-ship");
+      const replay = await shipmentRepository.repoShipLivraison(deliveryId, body, 7, "v2-1369-ship");
+      expect(replay).toMatchObject({ idempotent_replay: true, stock_movement_ids: first.stock_movement_ids });
+      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed,qty_prepared::float8 AS prepared,status FROM public.stock_reservations WHERE id=$1`, [ids.reservation])).rows)
+        .toEqual([{ consumed: 10, prepared: 0, status: "CONSUMED" }]);
+      expect((await harnessPool.query(`SELECT qty_consumed::float8 AS consumed FROM public.bon_livraison_ligne_allocations`)).rows).toEqual([{ consumed: 10 }]);
+      expect((await harnessPool.query(`SELECT qty_delivered::float8 AS delivered,qty_reserved::float8 AS reserved,qty_remaining::float8 AS remaining,delivery_status FROM public.commande_ligne_affaire_allocation WHERE id=900`)).rows)
+        .toEqual([{ delivered: 10, reserved: 0, remaining: 0, delivery_status: "LIVREE" }]);
+      expect((await harnessPool.query(`SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_levels WHERE id=$1`, [ids.stockLevel])).rows)
+        .toEqual([{ total: 0, reserved: 0 }]);
+      expect((await harnessPool.query(`SELECT qty_total::float8 AS total,qty_reserved::float8 AS reserved FROM public.stock_batches WHERE id=$1`, [ids.stockBatch])).rows)
+        .toEqual([{ total: 0, reserved: 0 }]);
+      expect((await harnessPool.query(`SELECT COUNT(*)::int AS count FROM public.stock_movements`)).rows).toEqual([{ count: 1 }]);
+    } finally {
+      mocks.reverse().forEach((mock) => mock.mockRestore());
+    }
   });
 
 });
