@@ -23,7 +23,10 @@ async function main(){
   check('starts without any imported users or company',(await db.query('SELECT (SELECT count(*) FROM users)+(SELECT count(*) FROM factureur) n')).rows[0].n==='0');
   await db.query(await fs.readFile(path.join(__dirname,'../../db/patches/20261016_account_mfa_requirement_1372.sql'),'utf8'));
   const installed=await installEmptyDirectory(db,directoryId,seed);await db.query(await fs.readFile(path.join(__dirname,'../../db/shared-directory/patches/20261016_self_service_account_requests_1372.sql'),'utf8'));check('private owner installed once',!installed.replayed);
+  check('new directory defaults MFA policy to optional',(await db.query("SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy'")).rows[0]?.value_text==='optional');
+  await db.query("UPDATE public.erp_settings SET value_text='required_for_all' WHERE key='security.mfa_policy'");
   check('same owner command replays without duplicate',(await installEmptyDirectory(db,directoryId,seed)).replayed);
+  check('directory replay preserves the configured MFA policy',(await db.query("SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy'")).rows[0]?.value_text==='required_for_all');
   const profile=(await db.query('SELECT p.weekly_hours_target,p.employment_type,p.job_title,u.avatar_key,u.mfa_reenrollment_required FROM cerp_directory_profiles p JOIN users u ON u.id=p.user_id')).rows[0];
   check('39h CDI and requested job, without invented avatar',Number(profile.weekly_hours_target)===39&&profile.employment_type==='CDI'&&profile.job_title===seed.profile.job_title&&profile.avatar_key===null&&profile.mfa_reenrollment_required===true);
   check('only requested owner has active Prod and common Test administration',(await db.query("SELECT count(*) n FROM cerp_directory_memberships WHERE database_id IN ('cerp_prod','cerp_test') AND is_superadmin AND status='Active'")).rows[0].n==='2');
