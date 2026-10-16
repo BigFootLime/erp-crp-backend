@@ -13,6 +13,8 @@ const router = Router();
 router.use(authenticateToken, requireSuperadmin, requireRecentMfaForMutations);
 
 router.get("/overview", controller.getOverview);
+router.get("/users/:userId/sensitive-capabilities", controller.getSensitiveCapabilities);
+router.put("/users/:userId/sensitive-capabilities/:capability", controller.putSensitiveCapability);
 router.get("/events", controller.getAccessEvents);
 router.get("/reviews", controller.getAccessReviews);
 router.post("/reviews", controller.postAccessReview);

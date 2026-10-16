@@ -6,6 +6,7 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as service from "../services/access-control.service";
 import * as reviewService from "../services/access-review.service";
+import { getSensitiveCapabilityOverview, setSensitiveCapability, sensitiveCapabilityMutationSchema } from "../services/sensitive-capabilities.service";
 import type { AccessAuditContext } from "../types/access-control.types";
 import {
   listAccessEventsQuerySchema,
@@ -56,6 +57,16 @@ export const getAccessProfile: RequestHandler = asyncHandler(async (req, res) =>
 
 export const getOverview: RequestHandler = asyncHandler(async (_req, res) => {
   res.json(await service.buildOverview());
+});
+
+export const getSensitiveCapabilities: RequestHandler = asyncHandler(async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new HttpError(400, "INVALID_USER_ID", "Compte invalide.");
+  res.json(await getSensitiveCapabilityOverview(userId));
+});
+export const putSensitiveCapability: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = sensitiveCapabilityMutationSchema.parse({ params: req.params, body: req.body });
+  res.json(await setSensitiveCapability(dto, buildAuditContext(req)));
 });
 
 export const putModuleDefault: RequestHandler = asyncHandler(async (req, res) => {

@@ -46,9 +46,13 @@ function authenticatedUserId(req: Request): number {
 
 async function sharedOperation(req:Request,operation:string,input:unknown){
   const directory=sharedDirectoryClient();if(!directory)return null;
-  if(!req.user?.directory_session)throw new Error('DIRECTORY_SESSION_REQUIRED');
+  if(!req.user?.directory_session)throw new HttpError(401,'DIRECTORY_SESSION_REQUIRED','Une nouvelle connexion est requise.');
   const {path:_path,request_id:_request,...clientMeta}=meta(req);
-  return {value:await directory.call(operation,{directory_session:req.user.directory_session,input,meta:clientMeta}),meta:clientMeta};
+  try {
+    return {value:await directory.call(operation,{directory_session:req.user.directory_session,input,meta:clientMeta}),meta:clientMeta};
+  } catch (error) {
+    mapDirectoryMfaManagementFailure(error);
+  }
 }
 
 const directoryMfaFailures = new Map<string, { status: number; message: string }>([
@@ -66,6 +70,26 @@ function mapDirectoryMfaFailure(error: unknown): never {
   const candidate = error as { code?: unknown } | null;
   const code = typeof candidate?.code === "string" ? candidate.code : null;
   const failure = code ? directoryMfaFailures.get(code) : undefined;
+  if (failure && code !== null) throw new HttpError(failure.status, code, failure.message);
+  throw error;
+}
+
+const directoryMfaManagementFailures = new Map<string, { status: number; message: string }>([
+  ...directoryMfaFailures,
+  ["AUTH_INVALID", { status: 401, message: "Identifiants invalides" }],
+  ["MFA_NOT_ENROLLED", { status: 409, message: "Aucun facteur MFA actif." }],
+  ["MFA_DISABLED", { status: 409, message: "L'enrôlement MFA est désactivé par la politique de l'organisation." }],
+  ["MFA_ALREADY_ENROLLED", { status: 409, message: "Un facteur MFA est déjà actif." }],
+  ["MFA_REQUIRED_BY_POLICY", { status: 409, message: "Révocation refusée : la politique MFA exige un facteur actif pour ce compte." }],
+  ["DIRECTORY_OWNER_REQUIRED", { status: 403, message: "La politique commune exige un administrateur de Production." }],
+  ["DIRECTORY_MFA_REQUIRED", { status: 409, message: "La double authentification reste obligatoire pour l'annuaire commun." }],
+  ["DIRECTORY_UNAVAILABLE", { status: 503, message: "L'annuaire commun est momentanément indisponible." }],
+]);
+
+function mapDirectoryMfaManagementFailure(error: unknown): never {
+  const candidate = error as { code?: unknown } | null;
+  const code = typeof candidate?.code === "string" ? candidate.code : null;
+  const failure = code ? directoryMfaManagementFailures.get(code) : undefined;
   if (failure && code !== null) throw new HttpError(failure.status, code, failure.message);
   throw error;
 }
