@@ -11,6 +11,7 @@
  */
 
 const bcrypt = require("bcryptjs");
+const crypto = require("node:crypto");
 const { Client } = require("pg");
 
 const FIXTURE_FLAG = "CERP_E2E_ACCESS_SCOPE_FIXTURE";
@@ -21,6 +22,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const ACCESS_SCOPE_OF_ID = 9201592;
 const ACCESS_SCOPE_OF_NUMBER = "OF-E2E-SCOPE-1592";
 const ACCESS_SCOPE_OF_OPERATION_ID = "92000000-0000-4000-8000-000000001592";
+const ACCESS_SCOPE_OF_REVISION_ID = "92000000-0000-4000-8000-000000001593";
 const FINANCE_CAPABILITIES = ["finance.issue", "finance.validate"];
 
 const FIXTURE_USERS = [
@@ -233,34 +235,56 @@ async function assertAccountantMfaWhenRequested(client) {
 }
 
 async function resetPlanningOf(client, actorId) {
+  const snapshot = JSON.stringify({
+    schema_version: 1,
+    piece_technique_id: "21000000-0000-4000-8000-000000000001",
+    piece_technique_version_id: "23000000-0000-4000-8000-000000000001",
+    indice: "A",
+    source: "Fixture isolée accès #1592",
+  });
+  const snapshotSha256 = crypto.createHash("sha256").update(snapshot).digest("hex");
   await client.query(
     `INSERT INTO public.ordres_fabrication(
        id,numero,client_id,piece_technique_id,piece_technique_version_id,quantite_lancee,quantite_bonne,quantite_rebut,
-       statut,priority,date_lancement_prevue,date_fin_prevue,technical_readiness,created_by,updated_by
+       statut,priority,date_lancement_prevue,date_fin_prevue,technical_readiness,created_by,updated_by,
+       technical_snapshot,technical_snapshot_sha256,technical_snapshot_at,technical_validated_at,technical_validated_by
      ) VALUES(
        $1,$2,'901','21000000-0000-4000-8000-000000000001','23000000-0000-4000-8000-000000000001',1,0,0,
-       'PLANIFIE','NORMAL',current_date,current_date + 14,'VALIDATED',$3,$3
+        'PLANIFIE','NORMAL',current_date,current_date + 14,'VALIDATED',$3,$3,$4::jsonb,$5,now(),now(),$3
      ) ON CONFLICT(id) DO UPDATE SET
        numero=EXCLUDED.numero,client_id=EXCLUDED.client_id,piece_technique_id=EXCLUDED.piece_technique_id,
        piece_technique_version_id=EXCLUDED.piece_technique_version_id,quantite_lancee=1,quantite_bonne=0,quantite_rebut=0,
        statut='PLANIFIE',priority='NORMAL',date_lancement_prevue=current_date,date_fin_prevue=current_date + 14,
-       technical_readiness='VALIDATED',updated_by=EXCLUDED.updated_by,updated_at=now()`,
-    [ACCESS_SCOPE_OF_ID, ACCESS_SCOPE_OF_NUMBER, actorId]
+        technical_readiness='VALIDATED',updated_by=EXCLUDED.updated_by,updated_at=now()`,
+    [ACCESS_SCOPE_OF_ID, ACCESS_SCOPE_OF_NUMBER, actorId, snapshot, snapshotSha256]
+  );
+  await client.query(
+    `INSERT INTO public.of_technical_snapshots(of_id,piece_technique_version_id,snapshot,snapshot_sha256,created_by)
+     VALUES($1,'23000000-0000-4000-8000-000000000001',$2::jsonb,$3,$4)
+     ON CONFLICT(of_id) DO NOTHING`,
+    [ACCESS_SCOPE_OF_ID, snapshot, snapshotSha256, actorId]
+  );
+  await client.query(
+    `INSERT INTO public.of_revisions(
+       id,of_id,revision_rank,revision_code,statut,snapshot,snapshot_sha256,author_user_id,activated_at
+     ) VALUES($1,$2,0,'R00','ACTIVE',$3::jsonb,$4,$5,now())
+     ON CONFLICT(id) DO NOTHING`,
+    [ACCESS_SCOPE_OF_REVISION_ID, ACCESS_SCOPE_OF_ID, snapshot, snapshotSha256, actorId]
   );
   // The post-primary reset owns this OF.  Removing only its events makes the
   // Planning backlog visible again without affecting the primary suite data.
   await client.query("DELETE FROM public.planning_events WHERE of_id=$1", [ACCESS_SCOPE_OF_ID]);
   await client.query(
     `INSERT INTO public.of_operations(
-       id,of_id,phase,designation,poste_id,machine_id,hourly_rate_applied,tp,tf_unit,qte,coef,temps_total_planned,status
+       id,of_id,revision_id,phase,designation,poste_id,machine_id,hourly_rate_applied,tp,tf_unit,qte,coef,temps_total_planned,status
      ) VALUES(
-       $1,$2,10,'Usinage dédié accès #1592','24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
+        $1,$2,$3,10,'Usinage dédié accès #1592','24000000-0000-4000-8000-000000000001','27000000-0000-4000-8000-000000000001',
        50,0.1,0.25,1,1,0.35,'TODO'
       ) ON CONFLICT(id) DO UPDATE SET
        designation=EXCLUDED.designation,poste_id=EXCLUDED.poste_id,machine_id=EXCLUDED.machine_id,
        hourly_rate_applied=EXCLUDED.hourly_rate_applied,tp=EXCLUDED.tp,tf_unit=EXCLUDED.tf_unit,qte=1,coef=1,
        temps_total_planned=EXCLUDED.temps_total_planned,temps_total_real=0,status='TODO',started_at=NULL,ended_at=NULL,updated_at=now()`,
-    [ACCESS_SCOPE_OF_OPERATION_ID, ACCESS_SCOPE_OF_ID]
+    [ACCESS_SCOPE_OF_OPERATION_ID, ACCESS_SCOPE_OF_ID, ACCESS_SCOPE_OF_REVISION_ID]
   );
 }
 
