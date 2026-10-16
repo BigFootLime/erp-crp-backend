@@ -207,7 +207,7 @@ async function serveBrowserFixture(app, owner, ownerPassword, moduleKey) {
       res.set('Access-Control-Allow-Origin', corsOrigin);
       res.set('Vary', 'Origin');
       res.set('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-      res.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,Idempotency-Key,X-CERP-Database,Account-Request-Receipt');
+      res.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,Idempotency-Key,X-CERP-Database,Account-Request-Receipt,X-Request-Id,X-Correlation-Id');
       if (req.method === 'OPTIONS') return res.sendStatus(204);
     }
     return next();
