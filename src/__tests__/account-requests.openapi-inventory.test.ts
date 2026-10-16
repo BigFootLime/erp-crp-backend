@@ -52,5 +52,10 @@ describe("account request OpenAPI inventory", () => {
 
     expect(approve.security).toEqual([{ bearerAuth: [] }]);
     expect(approve["x-cerp-rbac"]).toEqual(expect.arrayContaining(["requireSuperadmin", "requireRecentMfaForMutations"]));
+
+    const schemas = swaggerSpec.components!.schemas as Record<string, { properties: Record<string, Record<string, unknown>> }>;
+    expect(schemas.AccountRequestSubmit.properties.password).toMatchObject({ minLength: 10, writeOnly: true });
+    expect(schemas.AccountRequestReceipt.properties.receipt.readOnly).toBe(true);
+    expect(schemas.AccountRequestReceipt.properties.receipt.writeOnly).toBeUndefined();
   });
 });

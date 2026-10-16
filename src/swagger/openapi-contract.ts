@@ -436,7 +436,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
           name: { type: "string", minLength: 2, maxLength: 80, description: "Nom." },
           surname: { type: "string", minLength: 2, maxLength: 80, description: "Prénom ; le serveur dérive l'identifiant immuable lors de l'approbation." },
           email: { type: "string", format: "email" },
-          password: { type: "string", format: "password", minLength: 12, maxLength: 72, writeOnly: true },
+          password: { type: "string", format: "password", minLength: 10, maxLength: 72, writeOnly: true },
           avatar_key: { type: "string", description: "Clé d'avatar prédéfinie ; aucun fichier n'est accepté avant authentification." },
         },
         additionalProperties: false,
@@ -447,7 +447,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
         properties: {
           request_id: { type: "string", format: "uuid" },
           status: { type: "string", enum: ["PENDING"] },
-          receipt: { type: "string", writeOnly: true, pattern: "^[A-Za-z0-9_-]{43}$", description: "Affiché une seule fois ; le serveur ne conserve que son empreinte." },
+          receipt: { type: "string", readOnly: true, pattern: "^[A-Za-z0-9_-]{43}$", description: "Affiché une seule fois ; le serveur ne conserve que son empreinte." },
         },
         additionalProperties: false,
       },
