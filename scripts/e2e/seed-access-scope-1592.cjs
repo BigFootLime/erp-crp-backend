@@ -40,6 +40,13 @@ const FIXTURE_USERS = [
     email: "planning-only.e2e@invalid.example",
     grants: ["planning"],
   },
+  {
+    username: "E2E_SCOPE_HR",
+    name: "RH Personnel",
+    surname: "E2E",
+    email: "rh-personnel.e2e@invalid.example",
+    grants: ["temps-deplacements"],
+  },
 ];
 
 // This is an E2E fixture matrix, deliberately keyed by account rather than by
@@ -187,7 +194,7 @@ async function normalizeSensitiveCapabilities(client, actorId) {
       [accountant.id, capability, actorId]
     );
   }
-  for (const username of ["E2E_SALES", "E2E_PURCHASING"]) {
+  for (const username of ["E2E_SALES", "E2E_PURCHASING", ...FIXTURE_USERS.map((user) => user.username)]) {
     await client.query(
       `UPDATE public.app_user_sensitive_capabilities
           SET granted=false,updated_by=$2,updated_at=now()
