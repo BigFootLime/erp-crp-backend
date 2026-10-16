@@ -42,6 +42,12 @@ import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildShippedDeliveryArtifactInput } from "../services/delivery-authoritative-document"
 import { readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import {
+  customerAcknowledgementBlocker,
+  hasMissingCustomerAcknowledgement,
+  readDeliveryCustomerAcknowledgementSources,
+  type DeliveryAcknowledgementSource,
+} from "./delivery-customer-acknowledgement.repository"
 import { lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary } from "./delivery-prepayment-boundary.repository"
 import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
 
@@ -105,22 +111,12 @@ type ShipmentSnapshot = {
   lines: LineRow[]
   allocations: AllocationRow[]
   document_pack: ShipmentPreviewPack | null
-  acknowledgement_sources: AcknowledgementSource[]
+  acknowledgement_sources: DeliveryAcknowledgementSource[]
   contract_boundary: Awaited<ReturnType<typeof readDeliveryContractBoundary>>
   prepayment: Awaited<ReturnType<typeof readDeliveryPrepaymentBoundary>>
 }
 
-type AcknowledgementSource = {
-  commande_id: string
-  order_type: string | null
-  ar_sent_at: string | null
-}
-
-export function hasMissingCustomerAcknowledgement(sources: readonly AcknowledgementSource[]): boolean {
-  return sources.some(
-    (source) => String(source.order_type ?? "").toUpperCase() !== "INTERNE" && !source.ar_sent_at
-  )
-}
+export { hasMissingCustomerAcknowledgement } from "./delivery-customer-acknowledgement.repository"
 
 type AllocationGroup = {
   key: string
@@ -262,49 +258,14 @@ async function loadShipmentSnapshot(
   // With forUpdate, Finance/source rows and then the BL are already locked by
   // lockDeliveryPrepaymentSources; this is the transaction-local re-read used
   // by the shipping gate.
-  const acknowledgementSources = await client.query<AcknowledgementSource>(
-    `
-      WITH canonical_source_orders AS (
-        SELECT DISTINCT source.commande_id
-        FROM public.bon_livraison_ligne line
-        JOIN public.bon_livraison_ligne_allocations allocated
-          ON allocated.bon_livraison_ligne_id = line.id
-        LEFT JOIN public.stock_reservations reservation
-          ON reservation.id = allocated.reservation_id
-        JOIN public.commande_ligne_affaire_allocation source
-          ON source.id = COALESCE(
-            allocated.commande_ligne_affaire_allocation_id,
-            reservation.commande_ligne_affaire_allocation_id
-          )
-        WHERE line.bon_livraison_id = $1::uuid
-      ), source_orders AS (
-        SELECT commande_id FROM canonical_source_orders
-        UNION ALL
-        -- Legacy BLs can predate canonical allocation sources.  Only then is
-        -- the header command a backward-compatible fallback; it can never
-        -- widen a mixed canonical BL with an unrelated command.
-        SELECT delivery.commande_id
-        FROM public.bon_livraison delivery
-        WHERE delivery.id = $1::uuid
-          AND delivery.commande_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM canonical_source_orders)
-      )
-      SELECT command.id::text AS commande_id,
-        command.order_type,
-        command.ar_sent_at::text AS ar_sent_at
-      FROM source_orders source
-      JOIN public.commande_client command ON command.id = source.commande_id
-      ORDER BY command.id
-    `,
-    [bonLivraisonId]
-  )
+  const acknowledgementSources = await readDeliveryCustomerAcknowledgementSources(client, bonLivraisonId)
 
   return {
     header: row,
     lines: lines.rows,
     allocations: allocations.rows,
     document_pack: pack.rows[0] ?? null,
-    acknowledgement_sources: acknowledgementSources.rows,
+    acknowledgement_sources: acknowledgementSources,
     contract_boundary: await readDeliveryContractBoundary(client, bonLivraisonId),
     prepayment: await readDeliveryPrepaymentBoundary(client, bonLivraisonId),
   }
@@ -371,10 +332,7 @@ function buildPreview(
     })
   }
   if (enforceAcknowledgement && hasMissingCustomerAcknowledgement(snapshot.acknowledgement_sources)) {
-    blockers.push({
-      code: "CUSTOMER_ACKNOWLEDGEMENT_REQUIRED",
-      message: "L’AR client doit être envoyé avant la livraison et la sortie physique du stock.",
-    })
+    blockers.push(customerAcknowledgementBlocker)
   }
   if (!snapshot.lines.length) {
     blockers.push({ code: "LINES_REQUIRED", message: "Le bon de livraison ne contient aucune ligne." })

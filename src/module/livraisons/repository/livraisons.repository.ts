@@ -29,6 +29,12 @@ import { isLivraisonTransitionAllowed } from "../domain/livraisons-policy"
 import { deliveryContractBoundary, deliveryContractGroupKey } from "../domain/delivery-contract-boundary"
 import { assertDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
 import { readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
+import {
+  assertDeliveryCustomerAcknowledgement,
+  customerAcknowledgementBlocker,
+  hasMissingCustomerAcknowledgement,
+  readDeliveryCustomerAcknowledgementSources,
+} from "./delivery-customer-acknowledgement.repository"
 import { assertDeliveryPrepaymentBoundary, lockDeliveryPrepaymentRead, lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary, type DeliveryPrepaymentControl } from "./delivery-prepayment-boundary.repository"
 import { readProformaOrderSources } from "../../facturation/repository/proforma-source.repository"
 import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
@@ -5582,7 +5588,12 @@ export async function repoGetLivraisonPreparationPreview(bonLivraisonId: string,
   if (!current) return null
   const contract = await readDeliveryContractBoundary(queryable, bonLivraisonId)
   const prepayment = await readDeliveryPrepaymentBoundary(queryable, bonLivraisonId)
-  const blockers = [...(contract.blocker ? [contract.blocker] : []), ...prepayment.blockers]
+  const acknowledgementSources = await readDeliveryCustomerAcknowledgementSources(queryable, bonLivraisonId)
+  const blockers = [
+    ...(contract.blocker ? [contract.blocker] : []),
+    ...prepayment.blockers,
+    ...(hasMissingCustomerAcknowledgement(acknowledgementSources) ? [customerAcknowledgementBlocker] : []),
+  ]
   const rows = await queryable.query<{
     allocation_id: string
     reservation_id: string | null
@@ -5737,6 +5748,7 @@ export async function repoShipLivraison(params: {
     if (!bl) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
     if (bl.statut !== "READY") throw new HttpError(409, "INVALID_STATUS", "Only a READY BL can be shipped")
     await assertDeliveryContractBoundary(db, params.bon_livraison_id)
+    await assertDeliveryCustomerAcknowledgement(db, params.bon_livraison_id)
     const prepayment = await assertDeliveryPrepaymentBoundary(db, params.bon_livraison_id)
     if (Number(bl.shipping_version) !== params.body.expected_shipping_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "The BL version changed since the preview")
