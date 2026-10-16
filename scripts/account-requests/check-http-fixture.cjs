@@ -11,6 +11,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const express = require('express');
+const jwt = require('jsonwebtoken');
 
 process.env.NODE_ENV = 'test';
 require('ts-node/register/transpile-only');
@@ -401,6 +402,9 @@ async function main() {
 
   const owner = await loginWithMfa(app, seed.profile.username, ownerPassword);
   const ownerAuth = { ...productionHeaders, Authorization: `Bearer ${owner.token}` };
+  const ownerClaims = jwt.verify(owner.token, process.env.JWT_SECRET);
+  const ownerDirectorySession = typeof ownerClaims.directory_session === 'string' ? ownerClaims.directory_session : null;
+  check('owner MFA session contains a verified Directory session for signed authority operations', typeof ownerDirectorySession === 'string' && /^dir_[a-f0-9]{64}$/.test(ownerDirectorySession));
   const authenticatedRegister = await request(app).post('/api/v1/auth/register').set(ownerAuth).send({});
   check('legacy register route is absent after authentication', authenticatedRegister.status === 404);
   const module = (await sitePool.query("SELECT module_key FROM public.app_modules WHERE is_active AND NOT is_protected ORDER BY module_key LIMIT 1")).rows[0]?.module_key;
@@ -417,8 +421,9 @@ async function main() {
   const approvalReplay = await request(app).post(`/api/v1/admin/account-requests/${submitted.body.request_id}/approve`).set(ownerAuth).set('Idempotency-Key', approvalKey).send(approval);
   check('approval is idempotent', approvalReplay.status === 201 && approvalReplay.body.request_id === approved.body.request_id);
   const identity = await sitePool.query('SELECT id,status,is_superadmin,directory_profile_id FROM public.users WHERE directory_username=$1', [approved.body.username]);
-  const initiallySelectedModule = identity.rows[0] && (await sitePool.query('SELECT access_status FROM public.app_module_user_access WHERE user_id=$1 AND module_key=$2', [identity.rows[0].id, module])).rows[0]?.access_status;
-  check('approval activates a non-superadmin projection with its explicit module selection', identity.rows.length === 1 && identity.rows[0].status === 'Active' && identity.rows[0].is_superadmin === false && identity.rows[0].directory_profile_id && initiallySelectedModule === 'GRANTED');
+  const initiallySelectedModule = identity.rows[0] && (await sitePool.query('SELECT access FROM public.app_module_user_access WHERE user_id=$1 AND module_key=$2', [identity.rows[0].id, module])).rows[0]?.access;
+  const membership = identity.rows[0] && await sourceClient.query('SELECT status FROM public.cerp_directory_memberships WHERE profile_id=$1::uuid', [identity.rows[0].directory_profile_id]);
+  check('approval activates the canonical membership and applies its explicit local module selection', identity.rows.length === 1 && identity.rows[0].status === 'Inactive' && identity.rows[0].is_superadmin === false && identity.rows[0].directory_profile_id && initiallySelectedModule === 'GRANTED' && membership?.rows.length === 1 && membership.rows[0].status === 'Active');
   const statusApproved = await request(app).get('/api/v1/auth/account-requests/status').set(productionHeaders).set('Authorization', `Account-Request-Receipt ${receipt}`);
   check('approved status reveals only the allocated username', statusApproved.status === 200 && statusApproved.body.status === 'APPROVED' && statusApproved.body.username === 'ALIX' && !statusApproved.body.email);
 
@@ -427,13 +432,33 @@ async function main() {
   const standardSession = userLogin.body;
   const standardMe = await request(app).get('/api/v1/auth/me').set(productionHeaders).set('Authorization', `Bearer ${standardSession.token}`);
   check('approved standard account receives a real site session without inherited MFA bypass state', standardMe.status === 200 && standardMe.body.user?.username === approved.body.username);
+  const activatedIdentity = await sitePool.query('SELECT status FROM public.users WHERE directory_profile_id=$1::uuid', [identity.rows[0].directory_profile_id]);
+  check('first real standard login reconciles the active canonical membership into the local projection', activatedIdentity.rows.length === 1 && activatedIdentity.rows[0].status === 'Active');
   const standardAudit = await request(app).get('/api/v1/audit-logs').set(productionHeaders).set('Authorization', `Bearer ${standardSession.token}`);
   const ownerAudit = await request(app).get('/api/v1/audit-logs').set(ownerAuth);
   check('standard account cannot read global audit logs while the owner remains authorized', standardAudit.status === 403 && ownerAudit.status === 200);
-  await sitePool.query("UPDATE public.app_module_user_access SET access_status='DENIED' WHERE user_id=$1 AND module_key=$2", [identity.rows[0].id, module]);
+  await sitePool.query("UPDATE public.app_module_user_access SET access='DENIED' WHERE user_id=$1 AND module_key=$2", [identity.rows[0].id, module]);
   const staleApprovalReplay = await request(app).post(`/api/v1/admin/account-requests/${submitted.body.request_id}/approve`).set(ownerAuth).set('Idempotency-Key', approvalKey).send(approval);
-  const revokedModule = (await sitePool.query('SELECT access_status FROM public.app_module_user_access WHERE user_id=$1 AND module_key=$2', [identity.rows[0].id, module])).rows[0]?.access_status;
+  const revokedModule = (await sitePool.query('SELECT access FROM public.app_module_user_access WHERE user_id=$1 AND module_key=$2', [identity.rows[0].id, module])).rows[0]?.access;
   check('approved replay cannot restore a subsequently revoked module access', staleApprovalReplay.status === 201 && revokedModule === 'DENIED');
+
+  const resumeBody = publicRequestBody('REPRISE', 'PROJECTION', `resume.${nonce}@example.invalid`);
+  const resumeSubmit = await submitPublic(app, resumeBody);
+  const preparedApproval = { ...approval, expected_version: 0 };
+  const prepared = await authority.call('account-request-approve', {
+    directory_session: ownerDirectorySession,
+    input: { id: resumeSubmit.body.request_id, key: crypto.randomUUID(), approval: preparedApproval },
+  });
+  check('signed Directory approval can stop after canonical preparation without a local projection', prepared.status === 'PROJECTION_PENDING' && typeof prepared.profile_id === 'string' && prepared.version === 1);
+  const preparedLogin = await request(app).post('/api/v1/auth/login').set(productionHeaders).send({ username: prepared.username, password: resumeBody.password });
+  check('prepared account cannot log in before the site projection is activated', preparedLogin.status === 401 && !preparedLogin.body.token);
+  const resumable = await request(app).get('/api/v1/admin/account-requests?status=PROJECTION_PENDING&limit=10').set(ownerAuth);
+  const preparedRow = resumable.body.requests?.find((row) => row.id === resumeSubmit.body.request_id);
+  check('administrator reload exposes saved projection choices for the prepared request', resumable.status === 200 && preparedRow?.version === prepared.version && preparedRow?.primary_role === approval.primary_role && JSON.stringify(preparedRow?.roles) === JSON.stringify(approval.roles) && preparedRow?.administrative_kind === approval.administrative_kind && JSON.stringify(preparedRow?.module_keys) === JSON.stringify(approval.module_keys));
+  const resumed = await request(app).post(`/api/v1/admin/account-requests/${resumeSubmit.body.request_id}/approve`).set(ownerAuth).set('Idempotency-Key', crypto.randomUUID()).send({ ...preparedApproval, expected_version: prepared.version });
+  check('HTTP approval resumes the prepared decision and activates it without changing its saved choices', resumed.status === 201 && resumed.body.status === 'APPROVED' && resumed.body.username === prepared.username);
+  const resumedLogin = await request(app).post('/api/v1/auth/login').set(productionHeaders).send({ username: resumed.body.username, password: resumeBody.password });
+  check('resumed approval permits a real standard password session', resumedLogin.status === 200 && typeof resumedLogin.body.token === 'string' && !resumedLogin.body.challenge_token);
 
   const businessBody = publicRequestBody('NORA', 'BUSINESS', `business.${nonce}@example.invalid`);
   const businessSubmit = await submitPublic(app, businessBody);
@@ -461,7 +486,7 @@ async function main() {
   const rejectedList = await request(app).get('/api/v1/admin/account-requests?status=REJECTED&limit=10').set(ownerAuth);
   check('redacted rejected request no longer appears in the administrator list', rejectedList.status === 200 && !rejectedList.body.requests.some((row) => row.id === rejectedSubmit.body.request_id));
 
-  check('approved account remains a non-superadmin Directory projection', identity.rows.length === 1 && identity.rows[0].status === 'Active' && identity.rows[0].is_superadmin === false && identity.rows[0].directory_profile_id);
+  check('approved account remains a non-superadmin Directory projection', identity.rows.length === 1 && activatedIdentity.rows[0]?.status === 'Active' && identity.rows[0].is_superadmin === false && identity.rows[0].directory_profile_id);
   check('pending request cannot log in or create a session', pendingRequestLoginRejected);
   check('status hides an unknown opaque receipt with generic not-found', unknownReceiptReturnsGenericNotFound);
   return { result: 'PASS', checks: checks.length };
