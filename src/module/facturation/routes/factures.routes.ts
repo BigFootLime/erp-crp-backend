@@ -6,6 +6,7 @@ import {
   generateFacturePdf,
   getFacture,
   getFacturePdf,
+  getFinancePermissions,
   listFactures,
   updateFacture,
 } from "../controllers/factures.controller";
@@ -36,6 +37,10 @@ import {
 } from "../electronic-invoicing/electronic-invoice.controller";
 
 const router = Router();
+
+// Must precede `/:id`: this endpoint contains no Finance data, only the
+// server-resolved capabilities for the authenticated account.
+router.get("/permissions", getFinancePermissions);
 
 router.get(
   "/electronic-invoicing/provider-configuration",

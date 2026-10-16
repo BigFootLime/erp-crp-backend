@@ -130,6 +130,20 @@ export type FinanceCapability =
   | "accounting_export_admin"
   | "settings_manage";
 
+/** Complete Finance surface exposed by the self-permission endpoint. */
+export const FINANCE_CAPABILITIES: readonly FinanceCapability[] = [
+  "read", "draft_write", "request_validation", "validate", "issue",
+  "credit_write", "credit_issue", "payment_register", "payment_allocate",
+  "documents_read", "audit_read", "reporting_read", "reporting_financial",
+  "reporting_client_detail", "reporting_export", "reminder_read",
+  "reminder_policy_manage", "reminder_approve", "reminder_send", "reminder_retry",
+  "reminder_job_run", "reminder_opt_out_manage", "einvoice_read", "einvoice_submit",
+  "einvoice_reconcile", "einvoice_admin", "supplier_invoice_read",
+  "supplier_invoice_match", "supplier_invoice_approve", "supplier_invoice_dispute",
+  "ereporting_read", "ereporting_submit", "accounting_export_read",
+  "accounting_export_execute", "accounting_export_admin", "settings_manage",
+];
+
 const ROLES = {
   director: "Directeur",
   administrator: "Administrateur Systeme et Reseau",
