@@ -1360,17 +1360,22 @@ export async function repoShipLivraison(
         )
         const movementLineId = movementLine.rows[0]?.id
         if (!movementLineId) throw new Error("Failed to create delivery stock movement line")
-        await client.query(
+        const allocationUpdated = await client.query(
           `
             UPDATE public.bon_livraison_ligne_allocations
             SET stock_movement_line_id = $2::uuid,
+                qty_consumed = qty_consumed + $3,
                 updated_at = now(),
-                updated_by = $3
+                updated_by = $5
             WHERE id = $1::uuid
               AND stock_movement_line_id IS NULL
+              AND qty_consumed + $3 <= quantite + $4
           `,
-          [allocation.id, movementLineId, userId]
+          [allocation.id, movementLineId, allocation.quantite, EPSILON, userId]
         )
+        if ((allocationUpdated.rowCount ?? 0) !== 1) {
+          throw new HttpError(409, "ALLOCATION_CONSUME_FAILED", "L’allocation du BL a changé avant sa consommation.")
+        }
         lineNumber += 1
       }
 
@@ -1396,46 +1401,119 @@ export async function repoShipLivraison(
         correlation_id: correlationId,
       })
 
-      await client.query(
+      const levelUpdated = await client.query<{ id: string }>(
         `
           UPDATE public.stock_levels
           SET qty_reserved = qty_reserved - $2,
               updated_at = now(),
               updated_by = $3
           WHERE id = $1::uuid
+            AND qty_reserved + $4 >= $2
+          RETURNING id::text AS id
         `,
-        [group.stock_level_id, group.own_reserved, userId]
+        [group.stock_level_id, group.quantity, userId, EPSILON]
       )
-      if (group.stock_batch_id) {
-        await client.query(
-          `UPDATE public.stock_batches SET qty_reserved = qty_reserved - $2 WHERE id = $1::uuid`,
-          [group.stock_batch_id, group.own_reserved]
-        )
+      if ((levelUpdated.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "Le compteur de réservation du niveau a changé pendant l’expédition.")
       }
-      await client.query(
-        `
-          UPDATE public.stock_reservations
-          SET status = 'CONSUMED',
-              reason = 'Consommée par expédition du BL ' || $2,
-              consumed_at = now(),
-              consumed_by = $3,
-              consumed_stock_movement_id = $4::uuid,
-              correlation_id = $5::uuid,
-              updated_at = now(),
-              updated_by = $3
-          WHERE id = ANY($1::uuid[])
-            AND status = 'ACTIVE'
-        `,
-        [
-          group.allocations.map((allocation) => allocation.reservation_id),
-          snapshot.header.numero,
-          userId,
-          movementId,
-          correlationId,
-        ]
-      )
+      if (group.stock_batch_id) {
+        const batchUpdated = await client.query<{ id: string }>(
+          `
+            UPDATE public.stock_batches
+            SET qty_reserved = qty_reserved - $2
+            WHERE id = $1::uuid
+              AND qty_reserved + $3 >= $2
+            RETURNING id::text AS id
+          `,
+          [group.stock_batch_id, group.quantity, EPSILON]
+        )
+        if ((batchUpdated.rowCount ?? 0) !== 1) {
+          throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "Le compteur de réservation du lot a changé pendant l’expédition.")
+        }
+      }
+      const consumedByReservation = new Map<string, { qty: number; canonicalAllocationId: number | null }>()
+      for (const allocation of group.allocations) {
+        if (!allocation.reservation_id) {
+          throw new HttpError(409, "ACTIVE_RESERVATION_REQUIRED", "Chaque allocation expédiée doit conserver sa réservation active.")
+        }
+        const canonicalAllocationId = allocation.commande_ligne_affaire_allocation_id
+          ?? allocation.reservation_commande_ligne_affaire_allocation_id
+        const current = consumedByReservation.get(allocation.reservation_id)
+        if (current && current.canonicalAllocationId !== canonicalAllocationId) {
+          throw new HttpError(409, "DELIVERY_RESERVATION_SOURCE_MISMATCH", "La réservation ne peut pas alimenter deux allocations canoniques pendant la même expédition.")
+        }
+        consumedByReservation.set(allocation.reservation_id, {
+          qty: (current?.qty ?? 0) + allocation.quantite,
+          canonicalAllocationId,
+        })
+      }
+      for (const [reservationId, consumption] of consumedByReservation) {
+        const consumedQty = consumption.qty
+        const reservationUpdated = await client.query<{ id: string }>(
+          `
+            UPDATE public.stock_reservations
+            SET qty_consumed = qty_consumed + $2,
+                qty_prepared = CASE WHEN qty_prepared = 0 THEN 0 ELSE qty_prepared - $2 END,
+                status = CASE WHEN qty_consumed + $2 + $8 >= qty_reserved THEN 'CONSUMED' ELSE 'ACTIVE' END,
+                reason = 'Consommée par expédition du BL ' || $3,
+                consumed_at = CASE WHEN qty_consumed + $2 + $8 >= qty_reserved THEN now() ELSE consumed_at END,
+                consumed_by = $4,
+                consumed_stock_movement_id = $5::uuid,
+                correlation_id = $6::uuid,
+                updated_at = now(),
+                updated_by = $4
+            WHERE id = $1::uuid
+              AND status = 'ACTIVE'
+              AND qty_consumed + $2 <= qty_reserved + $8
+              AND (qty_prepared = 0 OR qty_prepared + $8 >= $2)
+              AND (
+                commande_ligne_affaire_allocation_id IS NULL
+                OR commande_ligne_affaire_allocation_id = $7::bigint
+              )
+            RETURNING id::text AS id
+          `,
+          [reservationId, consumedQty, snapshot.header.numero, userId, movementId, correlationId, consumption.canonicalAllocationId, EPSILON]
+        )
+        if ((reservationUpdated.rowCount ?? 0) !== 1) {
+          throw new HttpError(409, "RESERVATION_CONSUME_FAILED", "La réservation du BL a changé avant sa consommation.")
+        }
+      }
     }
 
+    const deliveredByCanonicalAllocation = new Map<number, number>()
+    for (const allocation of snapshot.allocations) {
+      const canonicalAllocationId = allocation.commande_ligne_affaire_allocation_id
+        ?? allocation.reservation_commande_ligne_affaire_allocation_id
+      if (canonicalAllocationId === null) continue
+      deliveredByCanonicalAllocation.set(
+        canonicalAllocationId,
+        (deliveredByCanonicalAllocation.get(canonicalAllocationId) ?? 0) + allocation.quantite
+      )
+    }
+    for (const [canonicalAllocationId, deliveredQty] of deliveredByCanonicalAllocation) {
+      const canonicalUpdated = await client.query<{ id: number }>(
+        `
+          UPDATE public.commande_ligne_affaire_allocation
+          SET qty_delivered = qty_delivered + $2,
+              qty_reserved = GREATEST(0, qty_reserved - $2),
+              qty_remaining = GREATEST(0, qty_ordered - qty_delivered - $2),
+              delivery_status = CASE
+                WHEN qty_delivered + $2 + $3 >= qty_ordered THEN 'LIVREE'
+                WHEN qty_delivered + $2 > 0 THEN 'PARTIELLEMENT_LIVREE'
+                ELSE 'A_PREPARER'
+              END,
+              allocation_version = allocation_version + 1,
+              updated_at = now()
+          WHERE id = $1
+            AND qty_delivered + $2 <= qty_ordered + $3
+          RETURNING id
+        `,
+        [canonicalAllocationId, deliveredQty, EPSILON]
+      )
+      if ((canonicalUpdated.rowCount ?? 0) !== 1) {
+        throw new HttpError(409, "CANONICAL_ALLOCATION_CONSUME_FAILED", "L’allocation canonique a changé avant la confirmation d’expédition.")
+      }
+    }
     const updated = await client.query<{ row_version: number }>(
       `
         UPDATE public.bon_livraison
