@@ -96,5 +96,3 @@ export async function listDevisPaymentModeReferences(query: unknown) {
   const modes = await svcListPaymentModes(q);
   return modes.map((mode) => ({ value: mode.value, label: mode.label }));
 }
-
-

@@ -12,4 +12,3 @@ SELECT count(*) AS planning_grants_seeded
 FROM public.app_module_user_access a
 JOIN public.app_modules m ON m.id = a.module_id
 WHERE m.module_key = 'planning';
-

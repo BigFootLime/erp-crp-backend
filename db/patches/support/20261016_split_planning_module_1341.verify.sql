@@ -34,5 +34,3 @@ BEGIN
     RAISE EXCEPTION 'Planning split must not seed or copy account grants';
   END IF;
 END $$;
-
-

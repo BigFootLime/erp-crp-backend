@@ -27,4 +27,3 @@ export const listDevisReferenceClientAddresses = respond((req) => listDevisClien
 export const listDevisReferencePieceTechniques = respond((req) => listDevisPieceTechniqueReferences(req.query));
 export const listDevisReferenceBillers = respond((req) => listDevisBillerReferences(req.query));
 export const listDevisReferencePaymentModes = respond((req) => listDevisPaymentModeReferences(req.query));
-

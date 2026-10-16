@@ -74,5 +74,3 @@ describe("quote reference projections", () => {
     await expect(getDevisClientReference("missing")).rejects.toMatchObject({ status: 404, code: "CLIENT_NOT_FOUND" });
   });
 });
-
-
