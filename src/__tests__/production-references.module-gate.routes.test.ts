@@ -24,7 +24,7 @@ vi.mock("../module/access-control/repository/access-control.repository", async (
 import * as accessRepository from "../module/access-control/repository/access-control.repository";
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate";
 import { invalidateAccessCache } from "../module/access-control/services/access-control.service";
-import { listProductionReferenceClients } from "../module/production/controllers/production-references.controller";
+import { listProductionReferenceClients, listProductionReferencePieces } from "../module/production/controllers/production-references.controller";
 
 function profile(moduleKey: string, access: "GRANTED" | "DENIED") {
   return {
@@ -41,6 +41,7 @@ function app() {
   });
   server.use(moduleAccessGate);
   server.get("/production/references/clients", listProductionReferenceClients);
+  server.get("/production/references/pieces", listProductionReferencePieces);
   server.get("/clients", (_req, res) => res.json({ should_not_be_reached: true }));
   return server;
 }
@@ -55,6 +56,7 @@ describe("Production reference projections — module-only HTTP boundary", () =>
       profile("clients", "DENIED"),
     ]);
     mocks.clients.mockResolvedValue({ items: [{ value: "client-1", label: "Client 1 (C1)" }] });
+    mocks.pieces.mockResolvedValue({ items: [] });
   });
 
   it("serves the limited production projection for a non-superadmin with Production only", async () => {
@@ -69,6 +71,12 @@ describe("Production reference projections — module-only HTTP boundary", () =>
     const response = await request(app()).get("/production/references/clients?limit=200");
     expect(response.status).toBe(200);
     expect(mocks.clients).toHaveBeenCalledWith({ limit: 200 });
+  });
+
+  it("accepts the canonical textual client identifier", async () => {
+    const response = await request(app()).get("/production/references/pieces?client_id=042");
+    expect(response.status).toBe(200);
+    expect(mocks.pieces).toHaveBeenCalledWith({ client_id: "042", limit: 50 });
   });
 
   it("refuses the global Clients route for that same module-only account", async () => {
