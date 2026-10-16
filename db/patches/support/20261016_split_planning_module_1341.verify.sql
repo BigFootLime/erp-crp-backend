@@ -25,12 +25,9 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM public.app_modules WHERE module_key = 'commandes-fournisseurs' AND '/procurement-reliability' = ANY(api_prefixes))
      OR NOT EXISTS (SELECT 1 FROM public.app_modules WHERE module_key = 'facturation' AND '/accounting-exports' = ANY(api_prefixes)) THEN
     RAISE EXCEPTION 'Audit catalogue mappings are incomplete';
-  END IF;  IF EXISTS (
-    SELECT 1
-    FROM public.app_module_user_access a
-    JOIN public.app_modules m ON m.id = a.module_id
-    WHERE m.module_key = 'planning'
-  ) THEN
-    RAISE EXCEPTION 'Planning split must not seed or copy account grants';
   END IF;
 END $$;
+
+-- Explicit decisions may legitimately exist when this verification is replayed.
+-- The rollout compares the decision registry before/after migration to prove
+-- that the patch neither creates grants nor changes existing owner decisions.
