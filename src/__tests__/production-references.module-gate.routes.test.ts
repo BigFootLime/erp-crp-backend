@@ -65,6 +65,12 @@ describe("Production reference projections — module-only HTTP boundary", () =>
     expect(mocks.clients).toHaveBeenCalledWith({ limit: 50 });
   });
 
+  it("accepts the historical client selector limit of 200", async () => {
+    const response = await request(app()).get("/production/references/clients?limit=200");
+    expect(response.status).toBe(200);
+    expect(mocks.clients).toHaveBeenCalledWith({ limit: 200 });
+  });
+
   it("refuses the global Clients route for that same module-only account", async () => {
     const response = await request(app()).get("/clients");
     expect(response.status).toBe(403);

@@ -1,5 +1,6 @@
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { listConsolidatedInventorySVC } from "../../stock/services/stock.service";
 import type { ProductionReferenceListQuery } from "../validators/production-references.validators";
 
 export type ReferenceOption = { value: string; label: string };
@@ -90,22 +91,42 @@ export type ReceiptStockReference = {
 };
 
 export async function repoGetReceiptStockReference(params: { ofId: number; movementId: string }): Promise<ReceiptStockReference> {
-  const result = await pool.query<ReceiptStockReference>(
-    `SELECT r.lot_id::text AS lot_id, l.lot_code, pt.code_client,
-        v.plan_reference AS article_reference, v.indice AS piece_indice,
-        pt.designation AS article_designation,
-        ARRAY[o.numero]::text[] AS of_references,
-        ARRAY[]::text[] AS mp_references, ARRAY[]::text[] AS tr_references
-     FROM public.of_receipts r
-     JOIN public.ordres_fabrication o ON o.id = r.of_id
-     JOIN public.lots l ON l.id = r.lot_id
-     JOIN public.pieces_techniques pt ON pt.id = o.piece_technique_id
-     LEFT JOIN public.piece_technique_versions v ON v.id = o.piece_technique_version_id
-     WHERE r.stock_movement_id = $1::uuid AND r.of_id = $2::bigint
+  // Prove the production boundary before reading Stock: a caller cannot obtain
+  // a general lot projection by supplying an unrelated movement identifier.
+  const receipt = await pool.query<{ lot_id: string; lot_code: string }>(
+    `SELECT receipt.lot_id::text AS lot_id, lot.lot_code
+     FROM public.of_receipts receipt
+     JOIN public.lots lot ON lot.id = receipt.lot_id
+     WHERE receipt.stock_movement_id = $1::uuid
+       AND receipt.of_id = $2::bigint
      LIMIT 1`,
     [params.movementId, params.ofId],
   );
-  const row = result.rows[0];
-  if (!row) throw new HttpError(404, "OF_RECEIPT_NOT_FOUND", "Réception introuvable pour cet OF.");
-  return row;
+  const linked = receipt.rows[0];
+  if (!linked) throw new HttpError(404, "OF_RECEIPT_NOT_FOUND", "Réception introuvable pour cet OF.");
+
+  // The stock read model remains the source of truth for article/customer and
+  // traceability references. Match the immutable lot UUID afterwards; the lot
+  // code is only the bounded search criterion accepted by that existing API.
+  const inventory = await listConsolidatedInventorySVC({
+    lot: linked.lot_code,
+    page: 1,
+    pageSize: 200,
+    sortBy: "article_code",
+    sortDir: "asc",
+  });
+  const row = inventory.items.find((item) => item.lot_id === linked.lot_id);
+  if (!row) throw new HttpError(404, "OF_RECEIPT_STOCK_REFERENCE_NOT_FOUND", "Référence stock indisponible pour cette réception.");
+
+  return {
+    lot_id: linked.lot_id,
+    lot_code: linked.lot_code,
+    client_code: row.client_code,
+    article_reference: row.article_reference,
+    piece_indice: row.piece_indice,
+    article_designation: row.article_designation,
+    of_references: row.of_references,
+    mp_references: row.mp_references,
+    tr_references: row.tr_references,
+  };
 }
