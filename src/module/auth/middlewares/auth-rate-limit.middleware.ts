@@ -59,6 +59,18 @@ function subjectsFor(endpoint: AuthRateLimitEndpoint, req: Request): AuthRateLim
         { dimension: "email", value: email === null ? null : canonicalizeAuthEmail(email) },
       ];
     }
+    case "accountRequest": {
+      const email = bodyString(req, "email");
+      return [
+        ip,
+        { dimension: "email", value: email === null ? null : canonicalizeAuthEmail(email) },
+      ];
+    }
+    case "accountRequestStatus": {
+      const authorization = req.get("Authorization") ?? "";
+      const receipt = /^Account-Request-Receipt ([A-Za-z0-9_-]{43})$/.exec(authorization)?.[1] ?? null;
+      return [ip, { dimension: "token", value: receipt }];
+    }
     case "forgotPassword": {
       const identifier = bodyString(req, "usernameOrEmail");
       const candidates = identifier === null
@@ -154,6 +166,8 @@ export function createAuthRateLimitMiddleware(
 }
 
 export const registerRateLimit = createAuthRateLimitMiddleware("register");
+export const accountRequestRateLimit = createAuthRateLimitMiddleware("accountRequest");
+export const accountRequestStatusRateLimit = createAuthRateLimitMiddleware("accountRequestStatus");
 export const loginRateLimit = createAuthRateLimitMiddleware("login");
 export const forgotPasswordRateLimit = createAuthRateLimitMiddleware("forgotPassword");
 export const resetPasswordRateLimit = createAuthRateLimitMiddleware("resetPassword");

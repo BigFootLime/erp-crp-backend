@@ -129,6 +129,7 @@ export const findAuthenticatedAccountState = async (
     mfa_factor_version: number | null;
     mfa_policy: string | null;
     mfa_reenrollment_required: boolean;
+    mfa_required: boolean;
     role: string;
     roles: string[];
   }>(
@@ -137,6 +138,7 @@ export const findAuthenticatedAccountState = async (
         users.status,
         users.is_superadmin,
         users.mfa_reenrollment_required,
+        users.mfa_required,
         users.role,
         COALESCE((SELECT array_agg(ura.role_key ORDER BY ura.role_key)
                     FROM public.user_role_assignments ura WHERE ura.user_id=users.id), ARRAY[users.role]::text[]) AS roles,
@@ -166,6 +168,7 @@ export const findAuthenticatedAccountState = async (
       role: row.role,
       roles: row.roles,
       hasActiveFactor: Boolean(row.mfa_factor_id),
+      mfaRequired: row.mfa_required === true,
     }),
     mfa_factor_id: row.mfa_factor_id ?? null,
     mfa_factor_version: row.mfa_factor_version ?? null,

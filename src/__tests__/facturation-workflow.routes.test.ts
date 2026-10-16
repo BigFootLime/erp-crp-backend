@@ -1,6 +1,8 @@
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 
 const mocks = vi.hoisted(() => ({
   listSources: vi.fn(),
@@ -78,6 +80,7 @@ function testApp(options: { granted?: boolean; authenticated?: boolean } = {}) {
       req.accountModuleAccess = { userId: 7, moduleKey: "facturation", granted: true };
     }
     req.requestId = "request-test-001";
+    attachSensitiveAccountFixture(req, ALL_FIXTURE_SENSITIVE_RIGHTS);
     next();
   }) as RequestHandler);
   app.use("/factures", factureRoutes);

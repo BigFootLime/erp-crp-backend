@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,11 +42,12 @@ const webReferenceDataContract = z.object({
   transaction_scopes: z.array(z.enum(EINVOICE_TRANSACTION_SCOPES)),
 });
 
-function app(role?: string) {
+function app(role?: string, rights: ReadonlyArray<(typeof ALL_FIXTURE_SENSITIVE_RIGHTS)[number]> = []) {
   const server = express();
   server.use(express.json());
   server.use(((req, _res, next) => {
     if (role) req.user = { id: 7, username: "recipe", email: "recipe@test.invalid", role };
+    attachSensitiveAccountFixture(req, rights);
     next();
   }) as RequestHandler);
   server.use("/electronic-invoicing", electronicInvoiceDirectoryRoutes);
@@ -69,12 +72,12 @@ describe("issuer routing qualification permissions", () => {
   });
   it("qualifies only through the service with the authenticated administrator and replay key", async () => {
     directory.verify.mockResolvedValue({ idempotent_replay: false, resource_type: "ISSUER" });
-    const response = await request(app("Administrateur Systeme et Reseau")).post(route).set("Idempotency-Key", "issuer-test-1219").send(body);
+    const response = await request(app("Administrateur Systeme et Reseau", ALL_FIXTURE_SENSITIVE_RIGHTS)).post(route).set("Idempotency-Key", "issuer-test-1219").send(body);
     expect(response.status).toBe(201);
     expect(directory.verify).toHaveBeenCalledWith(expect.objectContaining({ resourceType: "ISSUER", identifier: body.identifier, idempotencyKey: "issuer-test-1219", audit: expect.objectContaining({ user_id: 7 }) }));
   });
   it("refuses a missing replay key before querying the directory", async () => {
-    const response = await request(app("Directeur")).post(route).send(body);
+    const response = await request(app("Directeur", ALL_FIXTURE_SENSITIVE_RIGHTS)).post(route).send(body);
     expect(response.status).toBe(400); expect(directory.verify).not.toHaveBeenCalled();
   });
 });
@@ -99,7 +102,7 @@ describe("electronic invoice reference-data HTTP contract (OBS059)", () => {
   });
 
   it("allows the existing technical-administrator read capability without directory lookup", async () => {
-    const response = await request(app("Administrateur Systeme et Reseau"))
+    const response = await request(app("Administrateur Systeme et Reseau", ALL_FIXTURE_SENSITIVE_RIGHTS))
       .get("/electronic-invoicing/reference-data");
     expect(response.status).toBe(200);
     expect(webReferenceDataContract.safeParse(response.body).success).toBe(true);

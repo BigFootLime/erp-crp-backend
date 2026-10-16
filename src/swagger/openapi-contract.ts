@@ -38,6 +38,8 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/login": "Échange d’identifiants contre une session avec limitation de débit distribuée.",
   "post /auth/mfa/verify": "Vérification d’un challenge MFA signé, court, à usage unique et limité en débit avant émission de session.",
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
+  "post /auth/account-requests": "Demande d'accès Production soumise sans session ERP, limitée par IP et par adresse e-mail ; aucun compte ni jeton n'est créé avant l'approbation SuperAdmin.",
+  "get /auth/account-requests/status": "Suivi minimal d'une demande par reçu opaque présenté exclusivement dans l'en-tête Authorization ; aucune identité, rôle ou donnée du formulaire n'est exposé.",
   "post /electronic-invoicing/webhooks/{providerCode}": "Webhook prestataire authentifié par signature sur le corps brut et limité en débit.",
   "post /time-clock/device-events": "Ingestion de badge authentifiée par le token opaque aléatoire de 192 bits d’une borne active ; UID haché côté serveur et commande idempotente.",
   "post /time-clock/device-heartbeat": "Présence d’une borne authentifiée par son token opaque aléatoire de 192 bits ; aucune donnée RH n’est retournée.",
@@ -226,7 +228,57 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     };
   }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))));
+  return accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched)))))))));
+}
+
+function accountRequestOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
+  const existingParameters = Array.isArray(operation.parameters) ? operation.parameters : [];
+  const productionDatabase = {
+    name: "X-CERP-Database",
+    in: "header",
+    required: true,
+    schema: { type: "string", enum: ["cerp_prod"] },
+    description: "La demande et son suivi sont exclusivement rattachés au site Production.",
+  };
+  if (key === "post /auth/account-requests") {
+    return {
+      ...operation,
+      parameters: [...existingParameters, productionDatabase],
+      requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/AccountRequestSubmit" } } } },
+      responses: {
+        ...operation.responses as OpenApiObject,
+        "202": jsonSchemaResponse("Demande placée en attente ; conserver le reçu opaque hors ligne.", "#/components/schemas/AccountRequestReceipt"),
+      },
+    };
+  }
+  if (key === "get /auth/account-requests/status") {
+    return {
+      ...operation,
+      parameters: [...existingParameters, productionDatabase, {
+        name: "Authorization",
+        in: "header",
+        required: true,
+        schema: { type: "string", pattern: "^Account-Request-Receipt [A-Za-z0-9_-]{43}$" },
+        description: "Reçu opaque retourné lors de la soumission. Ce n'est pas un jeton Bearer ni une session ERP.",
+      }],
+      responses: { ...operation.responses as OpenApiObject, "200": jsonSchemaResponse("État minimal de la demande.", "#/components/schemas/AccountRequestStatus") },
+    };
+  }
+  if (key === "get /admin/account-requests") {
+    return { ...operation, responses: { ...operation.responses as OpenApiObject, "200": jsonSchemaResponse("Demandes administrables non expurgées.", "#/components/schemas/AccountRequestList") } };
+  }
+  if (key === "post /admin/account-requests/{id}/approve") {
+    return {
+      ...operation,
+      parameters: [...existingParameters, { $ref: "#/components/parameters/IdempotencyKey" }],
+      requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/AccountRequestApproval" } } } },
+      responses: { ...operation.responses as OpenApiObject, "201": jsonSchemaResponse("Approbation et activation locale terminées, ou résultat terminal d'un rejeu.", "#/components/schemas/AccountRequestDecision") },
+    };
+  }
+  if (key === "post /admin/account-requests/{id}/reject" || key === "delete /admin/account-requests/{id}") {
+    return { ...operation, parameters: [...existingParameters, { $ref: "#/components/parameters/IdempotencyKey" }] };
+  }
+  return operation;
 }
 
 function jsonSchemaResponse(description: string, schemaRef: string): OpenApiObject {
@@ -376,6 +428,70 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
           { type: "array", items: {} },
           { type: "string" },
         ],
+      },
+      AccountRequestSubmit: {
+        type: "object",
+        required: ["name", "surname", "email", "password", "avatar_key"],
+        properties: {
+          name: { type: "string", minLength: 2, maxLength: 80, description: "Nom." },
+          surname: { type: "string", minLength: 2, maxLength: 80, description: "Prénom ; le serveur dérive l'identifiant immuable lors de l'approbation." },
+          email: { type: "string", format: "email" },
+          password: { type: "string", format: "password", minLength: 10, maxLength: 72, writeOnly: true },
+          avatar_key: { type: "string", description: "Clé d'avatar prédéfinie ; aucun fichier n'est accepté avant authentification." },
+        },
+        additionalProperties: false,
+      },
+      AccountRequestReceipt: {
+        type: "object",
+        required: ["request_id", "status", "receipt"],
+        properties: {
+          request_id: { type: "string", format: "uuid" },
+          status: { type: "string", enum: ["PENDING"] },
+          receipt: { type: "string", readOnly: true, pattern: "^[A-Za-z0-9_-]{43}$", description: "Affiché une seule fois ; le serveur ne conserve que son empreinte." },
+        },
+        additionalProperties: false,
+      },
+      AccountRequestStatus: {
+        type: "object",
+        required: ["status"],
+        properties: {
+          status: { type: "string", enum: ["PENDING", "PROJECTION_PENDING", "APPROVED", "REJECTED", "EXPIRED"] },
+          username: { type: "string", nullable: true, description: "Présent seulement après approbation." },
+        },
+        additionalProperties: false,
+      },
+      AccountRequestApproval: {
+        type: "object",
+        required: ["expected_version", "primary_role", "roles", "administrative_kind", "module_keys"],
+        properties: {
+          expected_version: { type: "integer", minimum: 0 },
+          primary_role: { type: "string" },
+          roles: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" } },
+          administrative_kind: { type: "string", enum: ["STANDARD", "BUSINESS_ADMIN"] },
+          module_keys: { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: { type: "string", pattern: "^[a-z0-9-]+$" } },
+          link_historical_user_id: { type: "integer", minimum: 1, nullable: true, description: "Réservé à une opération propriétaire distincte ; la route retourne 422 si fourni." },
+        },
+        additionalProperties: false,
+      },
+      AccountRequestDecision: {
+        type: "object",
+        required: ["request_id", "status", "username"],
+        properties: {
+          request_id: { type: "string", format: "uuid" },
+          status: { type: "string", enum: ["APPROVED"] },
+          username: { type: "string" },
+        },
+        additionalProperties: true,
+      },
+      AccountRequestList: {
+        type: "object",
+        required: ["requests", "next_cursor", "historical_link_supported"],
+        properties: {
+          requests: { type: "array", items: { type: "object", additionalProperties: true } },
+          next_cursor: { type: "string", format: "uuid", nullable: true },
+          historical_link_supported: { type: "boolean", enum: [false] },
+        },
+        additionalProperties: false,
       },
       ErrorResponse: {
         type: "object",

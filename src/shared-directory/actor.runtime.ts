@@ -3,7 +3,8 @@ import type {Pool} from 'pg';
 import {directoryProfileSchema} from './model';
 import {sharedDirectoryClient,projectDirectoryProfile} from './site-runtime';
 import {bumpRealtimeSessionEpoch} from '../shared/realtime/realtime-control-plane';
-const actorSchema=z.object({profile:directoryProfileSchema,global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),mfa_factor_id:z.string().uuid().nullable(),mfa_factor_version:z.number().int().positive().nullable()}).strict();
+import {HttpError} from '../utils/httpError';
+const actorSchema=z.object({profile:directoryProfileSchema,global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),mfa_factor_id:z.string().uuid().nullable(),mfa_factor_version:z.number().int().positive().nullable(),mfa_required:z.boolean()}).strict().refine(value=>(value.mfa_factor_id===null)===(value.mfa_factor_version===null),'Incomplete actor MFA factor');
 /** Native PIN remains local. Its actor lifecycle and base permissions are common. */
 export async function synchronizeDirectoryActor(db:Pool,userId:number){
  const directory=sharedDirectoryClient();if(!directory)return null;
@@ -11,7 +12,12 @@ export async function synchronizeDirectoryActor(db:Pool,userId:number){
   LEFT JOIN public.cerp_directory_approved_actor_bindings b ON b.user_id=u.id WHERE u.id=$1`,[userId])).rows[0];
  if(!mapping?.profile_id)return null;
  let actor:z.infer<typeof actorSchema>;
- try{actor=actorSchema.parse(await directory.call('validate-actor',{profile_id:mapping.profile_id}));}catch(error){if([401,403,404].includes((error as {status?:number}).status??0))return null;throw error;}
+ try{actor=actorSchema.parse(await directory.call('validate-actor-v2',{profile_id:mapping.profile_id}));}catch(error){
+  const failure=error as {status?:number;code?:string};
+  if([401,403].includes(failure.status??0)||(failure.status===404&&failure.code==='USER_NOT_FOUND'))return null;
+  if(failure.status===404)throw new HttpError(503,'DIRECTORY_UNAVAILABLE','L’annuaire doit être mis à jour avant cette opération.');
+  throw error;
+ }
  const local=await projectDirectoryProfile(db,actor.profile);if(local.id!==userId)throw new Error('DIRECTORY_ACTOR_ID_CHANGED');
  const tx=await db.connect();await tx.query('BEGIN');
  try{
@@ -21,6 +27,6 @@ export async function synchronizeDirectoryActor(db:Pool,userId:number){
   await tx.query(`INSERT INTO public.cerp_directory_actor_state(profile_id,user_id,global_session_epoch,membership_version) VALUES($1::uuid,$2,$3,$4)
    ON CONFLICT(profile_id) DO UPDATE SET global_session_epoch=excluded.global_session_epoch,membership_version=excluded.membership_version,updated_at=now()`,[actor.profile.profile_id,userId,actor.global_session_epoch,actor.membership_version]);
   const epoch=(await tx.query('SELECT coalesce((SELECT session_epoch FROM public.realtime_session_epochs WHERE user_id=$1),0)::text AS epoch',[userId])).rows[0].epoch;
-  await tx.query('COMMIT');return {status:actor.profile.status,session_epoch:Number(epoch),is_superadmin:actor.profile.is_superadmin,mfa_required:true,mfa_factor_id:actor.mfa_factor_id,mfa_factor_version:actor.mfa_factor_version,directory_global_epoch:actor.global_session_epoch,directory_membership_version:actor.membership_version,reenrollment_required:actor.profile.mfa_reenrollment_required};
+  await tx.query('COMMIT');return {status:actor.profile.status,session_epoch:Number(epoch),is_superadmin:actor.profile.is_superadmin,mfa_required:actor.mfa_required,mfa_factor_id:actor.mfa_factor_id,mfa_factor_version:actor.mfa_factor_version,directory_global_epoch:actor.global_session_epoch,directory_membership_version:actor.membership_version,reenrollment_required:actor.profile.mfa_reenrollment_required};
  }catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}
 }

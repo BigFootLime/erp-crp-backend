@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Request } from "express";
+import type { SensitiveCapability } from "../domain/sensitive-capabilities";
 
 export type AccountModuleAccessContext = {
   userId: number | null;
@@ -7,6 +8,7 @@ export type AccountModuleAccessContext = {
   granted: boolean;
   /** Explicit override/superadmin/kill-switch, as opposed to ordinary default access. */
   elevated: boolean;
+  sensitiveCapabilities?: readonly SensitiveCapability[];
 };
 
 const accountModuleAccessStorage = new AsyncLocalStorage<AccountModuleAccessContext>();
@@ -81,4 +83,14 @@ export function hasGrantedAccountModuleAccess(): boolean {
 
 export function getAccountModuleAccessContext(): AccountModuleAccessContext | undefined {
   return accountModuleAccessStorage.getStore();
+}
+
+export function installSensitiveCapabilities(req: Request, capabilities: readonly SensitiveCapability[]): void {
+  req.sensitiveCapabilities = capabilities;
+  const context = accountModuleAccessStorage.getStore();
+  if (context && context.userId === req.user?.id) context.sensitiveCapabilities = capabilities;
+}
+
+export function hasSensitiveAccountCapability(capability: SensitiveCapability): boolean {
+  return accountModuleAccessStorage.getStore()?.sensitiveCapabilities?.includes(capability) === true;
 }

@@ -15,8 +15,8 @@ describe("MFA policy", () => {
   });
 
   it.each([
-    ["disabled", true, false],
-    ["optional", true, false],
+    ["disabled", true, true],
+    ["optional", true, true],
     ["required_for_admins", false, false],
     ["required_for_admins", true, true],
     ["required_for_all", false, true],
@@ -29,6 +29,15 @@ describe("MFA policy", () => {
     expect(accountRequiresMfa({ policy: "disabled", isSuperadmin: false, hasActiveFactor: true })).toBe(true);
     expect(accountRequiresMfa({ policy: "optional", isSuperadmin: false, hasActiveFactor: false })).toBe(false);
   });
+
+  it.each(["disabled", "optional", "required_for_admins", "required_for_all"] as const)(
+    "keeps an explicit account MFA requirement under %s without relying on its job title",
+    (policy) => {
+      expect(policyRequiresMfa(policy, false, "Employee", [], true)).toBe(true);
+      expect(accountRequiresMfa({ policy, isSuperadmin: false, role: "Employee", roles: [], hasActiveFactor: false, mfaRequired: true })).toBe(true);
+      expect(policyAllowsFactorRevocation(policy, false, "Employee", [], true)).toBe(false);
+    },
+  );
 
   it.each(["Directeur", "Gérant", "Administrateur Systeme et Reseau"])(
     "requires MFA for the canonical privileged role %s without the superadmin flag",
@@ -47,7 +56,7 @@ describe("MFA policy", () => {
 
   it.each([
     ["disabled", false, true],
-    ["optional", true, true],
+    ["optional", true, false],
     ["required_for_admins", false, true],
     ["required_for_admins", true, false],
     ["required_for_all", false, false],

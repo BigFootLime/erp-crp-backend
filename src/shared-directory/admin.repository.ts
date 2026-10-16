@@ -28,6 +28,7 @@ export async function bindProvisionedProfile(db:Pool,userId:number,site:string,w
    VALUES($1::uuid,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET user_id=excluded.user_id RETURNING profile_id`,[randomUUID(),userId,weeklyHours??null,weeklyHours==null]);
   const profile=result.rows[0].profile_id;
   await tx.query('UPDATE public.users SET mfa_reenrollment_required=true WHERE id=$1 AND NOT mfa_reenrollment_required',[userId]);
+  if(site!=='cerp_prod')await tx.query('UPDATE public.users SET mfa_required=true WHERE id=$1 AND NOT mfa_required',[userId]);
   await tx.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
    SELECT $1::uuid,$2,CASE WHEN $2='cerp_prod' THEN role ELSE 'Administrateur Systeme et Reseau' END,
     CASE WHEN $2='cerp_prod' THEN coalesce((SELECT array_agg(role_key ORDER BY role_key) FROM public.user_role_assignments WHERE user_id=$3),ARRAY[role]) ELSE ARRAY['Administrateur Systeme et Reseau'] END,
