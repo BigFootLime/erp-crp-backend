@@ -71,10 +71,10 @@ export async function projectDirectoryProfile(db:Pool,raw:DirectoryProfile,assur
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`directory-profile:${identity.profile_id}`]);
   let row=(await tx.query<{id:number}>('SELECT id FROM public.users WHERE directory_profile_id=$1::uuid',[identity.profile_id])).rows[0];
   if(!row){
-   const approved=(await tx.query<{id:number;directory_id:string;expected_username:string;expected_email:string}>(`SELECT u.id,b.directory_id,b.expected_username,b.expected_email FROM public.cerp_directory_approved_actor_bindings b JOIN public.users u ON u.id=b.user_id
-    WHERE b.profile_id=$1::uuid AND u.directory_profile_id IS NULL AND upper(u.username)=upper(b.expected_username) AND lower(u.email)=lower(b.expected_email) FOR UPDATE OF u`,[identity.profile_id])).rows[0];
+   const approved=(await tx.query<{id:number;directory_id:string;expected_username:string;expected_email:string;directory_profile_id:string|null;username:string;email:string|null}>(`SELECT u.id,u.directory_profile_id,u.username,u.email,b.directory_id,b.expected_username,b.expected_email FROM public.cerp_directory_approved_actor_bindings b JOIN public.users u ON u.id=b.user_id
+    WHERE b.profile_id=$1::uuid FOR UPDATE OF u`,[identity.profile_id])).rows[0];
    if(approved){
-    if(approved.directory_id!==authorityId||approved.expected_username!==identity.username||approved.expected_email.toLowerCase()!==identity.email?.toLowerCase())throw new Error('DIRECTORY_APPROVED_ACTOR_MISMATCH');
+    if(approved.directory_id!==authorityId||approved.directory_profile_id!==null||approved.username.toUpperCase()!==approved.expected_username.toUpperCase()||approved.email?.toLowerCase()!==approved.expected_email.toLowerCase()||approved.expected_username!==identity.username||approved.expected_email.toLowerCase()!==identity.email?.toLowerCase())throw new Error('DIRECTORY_APPROVED_ACTOR_MISMATCH');
     await tx.query('UPDATE public.users SET directory_profile_id=$2::uuid,password=$3,mfa_reenrollment_required=false WHERE id=$1',[approved.id,identity.profile_id,await bcrypt.hash(randomBytes(48).toString('hex'),12)]);row={id:approved.id};
    }
   }
