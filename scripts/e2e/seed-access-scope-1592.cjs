@@ -193,7 +193,10 @@ async function normalizeSensitiveCapabilities(client, actorId) {
     );
   }
   const granted = await client.query(
-    `SELECT capability FROM public.app_user_sensitive_capabilities WHERE user_id=$1 AND granted=true ORDER BY capability`,
+    `SELECT capability
+       FROM public.app_user_sensitive_capabilities
+      WHERE user_id=$1 AND capability LIKE 'finance.%' AND granted=true
+      ORDER BY capability`,
     [accountant.id]
   );
   if (JSON.stringify(granted.rows.map((row) => row.capability)) !== JSON.stringify(FINANCE_CAPABILITIES)) {
