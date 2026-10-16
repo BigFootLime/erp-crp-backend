@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "829a226990d30f2495acc2badf69286aa33f4dbbde9f99909ef74723664f8c08";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "017f64337aa611798584d5273aedb052ad2e274869d351499b6de9299f06acb3";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -392,6 +392,86 @@ export const GENERATED_ROUTE_INVENTORY = [
       "requireSuperadmin",
       "requireRecentMfaForMutations",
       "controller.putUserModuleAccess"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/account-requests",
+    "source": "src/module/account-requests/account-requests.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.list"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "delete",
+    "path": "/admin/account-requests/{id}",
+    "source": "src/module/account-requests/account-requests.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.purge"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/account-requests/{id}/approve",
+    "source": "src/module/account-requests/account-requests.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.approve"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/account-requests/{id}/reject",
+    "source": "src/module/account-requests/account-requests.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.reject"
     ],
     "authenticated": true,
     "rbac": [
@@ -1938,11 +2018,34 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:54",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "getAccessProfile"
     ],
     "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/auth/account-requests",
+    "source": "src/module/account-requests/account-requests.routes.ts:7",
+    "middleware": [
+      "anonymous",
+      "accountRequestRateLimit",
+      "controller.submit"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/auth/account-requests/status",
+    "source": "src/module/account-requests/account-requests.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "accountRequestStatusRateLimit",
+      "controller.status"
+    ],
+    "authenticated": false,
     "rbac": []
   },
   {
@@ -1987,7 +2090,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:46",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "getProfile"
     ],
@@ -2000,7 +2102,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:57",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "avatarUpload.single(avatar)",
       "uploadOwnAvatar"
@@ -2014,7 +2115,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:58",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "getNavigationPreferences"
     ],
@@ -2027,7 +2127,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:59",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "putNavigationPreferences"
     ],
@@ -2040,7 +2139,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:55",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "getSelfProfile"
     ],
@@ -2053,7 +2151,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:56",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "patchSelfProfile"
     ],
@@ -2066,7 +2163,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:62",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "mfaRateLimit",
       "startEnrollment"
@@ -2080,7 +2176,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:66",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "requireSuperadmin",
       "policy"
@@ -2096,7 +2191,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:67",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "requireSuperadmin",
       "mfaRateLimit",
@@ -2113,7 +2207,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:64",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "mfaRateLimit",
       "recoveryCodes"
@@ -2127,7 +2220,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:63",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "mfaRateLimit",
       "startReplacement"
@@ -2141,7 +2233,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:65",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "mfaRateLimit",
       "revoke"
@@ -2155,7 +2246,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:60",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "status"
     ],
@@ -2168,7 +2258,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "source": "src/module/auth/routes/auth.routes.ts:61",
     "middleware": [
       "anonymous",
-      "publicAccountRequestRouter",
       "authenticateToken",
       "mfaRateLimit",
       "stepUp"
