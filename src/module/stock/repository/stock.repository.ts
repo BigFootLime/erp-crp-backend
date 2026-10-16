@@ -5331,7 +5331,7 @@ export async function repoGetLot(id: string): Promise<StockLotDetail | null> {
         l.expiry_at::text AS expiry_at,
         NULLIF(to_jsonb(l) ->> 'quantite_lineaire_totale_mm', '')::float8 AS quantite_lineaire_totale_mm,
         l.notes,
-        l.updated_at::text AS updated_at,
+        to_char(l.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at,
         l.created_at::text AS created_at
       FROM public.lots l
       JOIN public.articles a ON a.id = l.article_id
@@ -6019,7 +6019,7 @@ export async function repoListConsolidatedInventory(
 
 async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP", shelf: string, audit: AuditContext) {
   const magasinCode = `OLD-${kind}`;
-  const magasin = await client.query<{ id: string; warehouse_id: string | null; code: string }>(`SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code FROM public.magasins WHERE code = $1::citext FOR UPDATE`, [magasinCode]);
+  const magasin = await client.query<{ id: string; warehouse_id: string | null; code: string }>(`SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code FROM public.magasins WHERE code = $1 FOR UPDATE`, [magasinCode]);
   const magasinId = magasin.rows[0]?.id;
   if (!magasinId) throw new HttpError(503, "STOCK_SCHEMA_UPGRADE_REQUIRED", "Les magasins OLD-PF et OLD-MP doivent être créés par le patch #446.");
   let emplacement = await client.query<{ id: number }>(`SELECT id::int AS id FROM public.emplacements WHERE magasin_id = $1::uuid AND code = $2 FOR UPDATE`, [magasinId, shelf]);
@@ -6036,9 +6036,9 @@ async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP",
   const warehouseId = magasin.rows[0]?.warehouse_id;
   if (!warehouseId) throw new HttpError(503, "STOCK_SCHEMA_UPGRADE_REQUIRED", "Le magasin OLD doit être lié à son entrepôt.");
   const locationCode = `${magasin.rows[0]?.code}-${shelf}`;
-  let locationId = (await client.query<{ id: string }>(`SELECT id::text AS id FROM public.locations WHERE warehouse_id=$1::uuid AND code=$2::citext LIMIT 1`, [warehouseId, locationCode])).rows[0]?.id;
+  let locationId = (await client.query<{ id: string }>(`SELECT id::text AS id FROM public.locations WHERE warehouse_id=$1::uuid AND code=$2 LIMIT 1`, [warehouseId, locationCode])).rows[0]?.id;
   if (!locationId) {
-    locationId = (await client.query<{ id: string }>(`INSERT INTO public.locations (warehouse_id, code, description) VALUES ($1::uuid,$2::citext,$3) RETURNING id::text AS id`, [warehouseId, locationCode, `Emplacement ${shelf}`])).rows[0]?.id;
+    locationId = (await client.query<{ id: string }>(`INSERT INTO public.locations (warehouse_id, code, description) VALUES ($1::uuid,$2,$3) RETURNING id::text AS id`, [warehouseId, locationCode, `Emplacement ${shelf}`])).rows[0]?.id;
   }
   if (!locationId) throw new Error("Unable to create historical stock location");
   await client.query(`UPDATE public.emplacements SET location_id=$2::uuid, updated_at=now(), updated_by=$3 WHERE id=$1::bigint AND location_id IS NULL`, [emplacementId, locationId, audit.user_id]);
@@ -6065,7 +6065,7 @@ async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { cli
   const id = crypto.randomUUID();
   await client.query(
     `INSERT INTO public.pieces_techniques (id, root_piece_technique_id, version_number, client_id, created_by, updated_by, famille_id, name_piece, code_piece, designation, prix_unitaire, statut, en_fabrication, code_client, client_name)
-     VALUES ($1::uuid,$1::uuid,1,$2,$3,$3,NULL,$4,$5,$4,0,'DRAFT',0,$6,$7)`,
+     VALUES ($1::uuid,$1::uuid,1,$2,$3,$3,NULL,$4,$5,$4,0,'DRAFT',false,$6,$7)`,
     [id, c.client_id, audit.user_id, input.designation, code, c.client_code, c.company_name]
   );
   await client.query(
@@ -6153,7 +6153,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
     const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
-    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, piece_technique_version_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD',$7::uuid,$8,$8) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, historicalTechnicalVersionId, audit.user_id]);
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, lot_status, piece_technique_version_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD','EN_ATTENTE',$7::uuid,$8,$8) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, historicalTechnicalVersionId, audit.user_id]);
     const lotId = lot.rows[0]?.id;
     if (!lotId) throw new Error("Unable to create historical lot");
     const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"

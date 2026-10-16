@@ -143,6 +143,31 @@ export type DeliveryQualityRelease = {
   derogation_ids: string[]
 }
 
+export function isHistoricalOldDeliveryQualityTarget(
+  target: Pick<DeliveryQualityTargetObservation, "historical_provenance" | "control_count"> | null | undefined
+): boolean {
+  return target?.historical_provenance?.scope === "OLD"
+    && target.control_count === 0
+    && !target.historical_provenance.has_current_lot_control
+}
+
+/**
+ * Shipping may rely on the signed aggregate instead of the operational control
+ * ledger only when every exact allocation has the required OLD evidence.
+ */
+export function isStrictHistoricalOldDeliveryGroup(
+  allocationIds: readonly string[],
+  release: Pick<DeliveryQualityRelease, "targets"> | null | undefined
+): boolean {
+  if (!release || allocationIds.length === 0) return false
+  const byAllocationId = new Map(release.targets.map((target) => [target.allocation_id, target]))
+  return allocationIds.every((allocationId) => {
+    const target = byAllocationId.get(allocationId)
+    return isHistoricalOldDeliveryQualityTarget(target)
+      && Boolean(target?.historical_provenance?.documents.length)
+  })
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -412,7 +437,7 @@ export function evaluateDeliveryQualityRelease(input: DeliveryQualityReleaseInpu
   for (const observation of [...input.targets].sort((a, b) => a.key.localeCompare(b.key))) {
     // OLD has no retrospective CERP control ledger. Preserve real quality holds
     // and customer evidence requirements; never fabricate a release decision.
-    const historical=observation.historical_provenance?.scope==="OLD"&&observation.control_count===0&&!observation.historical_provenance.has_current_lot_control;
+    const historical = isHistoricalOldDeliveryQualityTarget(observation);
     if(historical&&!observation.historical_provenance?.documents.length)reasons.push(blockingReason({code:"OLD_DOCUMENT_REFERENCE_REQUIRED",message:"Le lot OLD nécessite son lien documentaire serveur.",expected_action:"Renseigner une référence historique dans le dossier de lot.",object_type:observation.target.object_type,object_id:observation.target.object_id}));
     if (rules.required_control_triggers.includes("LOT_RELEASE")&&!historical) {
       if (!observation.plan) {

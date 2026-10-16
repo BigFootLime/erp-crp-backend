@@ -32,4 +32,18 @@ describe("ACCOUNTING-EXPORT-677 migration guards", () => {
     expect(rollback).toContain("allowed only on an isolated/test database");
     expect(rollback).toContain("rollback refused because supplier accounting evidence exists");
   });
+
+  it("recognizes only the validated, table-bound exact Finance #1268 successor", () => {
+    expect(verify).toContain("accounting_batch_sources_1268_ck");
+    expect(verify).toContain("accounting_batch_source_type_1268_ck");
+    expect(verify).toContain("accounting_entry_source_type_1268_ck");
+    expect(verify).toContain("accounting_claim_source_type_1268_ck");
+    expect(verify).toContain("c.convalidated");
+    expect(verify).toContain("SUPPLIER_INVOICE");
+    expect(verify).toContain("SUPPLIER_CREDIT_NOTE");
+    expect(verify).toContain("ADVANCE_VAT");
+    expect(verify).toContain("CUSTOMER_REFUND");
+    expect(verify).toContain("CUSTOMER_REFUND_REVERSAL");
+    expect(verify).toContain("regexp_replace(pg_get_constraintdef(c.oid), '\\s+', '', 'g') = e.definition");
+  });
 });

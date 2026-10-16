@@ -112,6 +112,24 @@ describe("delivery quality release gate", () => {
     old.target.open_nc_without_disposition=1;expect(evaluateDeliveryQualityRelease(input({targets:[old]})).state).toBe('BLOCKED');
   });
   it('does not apply the historical path to a new lot without quality release',()=>expect(evaluateDeliveryQualityRelease(input({targets:[target({qty_released:0})]})).state).toBe('BLOCKED'));
+  it.each([
+    ["an open non-conformity", { open_nc_without_disposition: 1 }, "OPEN_NON_CONFORMITY"],
+    ["a held lot", { lot_status: "QUARANTAINE" as const }, "LOT_QUARANTINE"],
+    ["an expired lot", { expiry_at: "2026-08-04T00:00:00.000Z" }, "LOT_EXPIRED"],
+  ])("keeps %s blocking for documented historical OLD stock", (_label, targetOverrides, expectedCode) => {
+    const old = target({ qty_released: 0, ...targetOverrides })
+    old.control_count = 0
+    old.latest_decision = null
+    old.historical_provenance = {
+      scope: "OLD",
+      documents: [{ id: "legacy-1", type: "CERTIFICAT_MP", label: "Historical certificate", location: "vault", created_by: 1 }],
+    }
+
+    const result = evaluateDeliveryQualityRelease(input({ targets: [old] }))
+
+    expect(result.state).toBe("BLOCKED")
+    expect(result.reasons.map((reason) => reason.code)).toContain(expectedCode)
+  })
   it("fails closed when no signed policy exists and keeps a deterministic preview hash", () => {
     const first = evaluateDeliveryQualityRelease(input({ policy_candidates: [] }))
     const later = evaluateDeliveryQualityRelease(
