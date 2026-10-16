@@ -63,10 +63,17 @@ export const getAdminAnalytics: RequestHandler = asyncHandler(async (req, res) =
 
 export const getUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
-  if(sharedDirectoryClient()){res.json(await directoryAdminUser(pool,req,'admin-user',{profile_id:await directoryTargetId(pool,Number(dto.params.id))}));return;}
+  res.setHeader("Cache-Control", "no-store");
+  if (sharedDirectoryClient()) {
+    const result = await directoryAdminUser(pool, req, "admin-user", {
+      profile_id: await directoryTargetId(pool, Number(dto.params.id)),
+    });
+    res.json({ ...result, administrative_level_authority: "DIRECTORY" });
+    return;
+  }
   const user = await adminService.getUser(Number(dto.params.id));
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
-  res.json({ user });
+  res.json({ user, administrative_level_authority: "LOCAL_READ_ONLY" });
 });
 
 export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
