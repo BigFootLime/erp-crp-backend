@@ -1,4 +1,5 @@
 import { effectiveRoleHasAny } from "../../auth/domain/roles";
+import { hasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import type { CommandeResponsibleRole } from "../workflow/commande-client-workflow.definition";
 
 export const INTERNAL_ORDER_LAUNCH_ROLES = [
@@ -16,7 +17,7 @@ export const INTERNAL_ORDER_LAUNCH_ROLES = [
 ] as const;
 
 export function canLaunchInternalOrder(role: string | null | undefined): boolean {
-  return effectiveRoleHasAny(role, INTERNAL_ORDER_LAUNCH_ROLES);
+  return hasGrantedAccountModuleAccess() || effectiveRoleHasAny(role, INTERNAL_ORDER_LAUNCH_ROLES);
 }
 
 const WORKFLOW_OVERRIDE_ROLES = [
@@ -41,6 +42,7 @@ export function canActOnCommandeWorkflowCheckpoint(params: {
   responsible_role: string;
   assigned_user_id?: number | null;
 }): boolean {
+  if (hasGrantedAccountModuleAccess()) return true;
   if (effectiveRoleHasAny(params.user_role, WORKFLOW_OVERRIDE_ROLES)) return true;
   if (params.assigned_user_id !== null && params.assigned_user_id !== undefined) {
     return params.assigned_user_id === params.user_id;

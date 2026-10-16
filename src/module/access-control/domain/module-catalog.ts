@@ -72,7 +72,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Facturation",
     description: "Factures, avoirs, règlements, relances et tarification.",
     category: "Commerce",
-    api_prefixes: ["/electronic-invoicing", "/supplier-invoices", "/factures", "/proformas", "/avoirs", "/paiements", "/tarification", "/adv-reminders"],
+    api_prefixes: ["/electronic-invoicing", "/supplier-invoices", "/factures", "/proformas", "/avoirs", "/paiements", "/tarification", "/adv-reminders", "/accounting-exports"],
     nav_page_keys: ["factures", "relances"],
     is_protected: false,
     sort_order: 60,
@@ -105,7 +105,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     // The work-package ledger is part of procurement custody, not a shared
     // endpoint.  Keeping this prefix here makes the account module gate deny it
     // when the purchasing module is disabled.
-    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals", "/subcontract-work-packages"],
+    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals", "/subcontract-work-packages", "/procurement-reliability"],
     nav_page_keys: ["commandes-fournisseurs"],
     is_protected: false,
     sort_order: 90,
@@ -118,6 +118,8 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     api_prefixes: [
       "/pieces-techniques",
       "/piece-technique-versions",
+      "/pieces-families",
+      "/methodes",
       "/gammes",
       "/dossiers",
     ],
@@ -333,7 +335,8 @@ function normalizePath(path: string): string {
 /**
  * Résout la clé de module d'un chemin d'API. Le plus long préfixe gagne, et un
  * préfixe ne correspond que sur une frontière de segment : « /commandes » ne doit
- * jamais capter « /commandes-fournisseurs ». Retourne `null` pour les surfaces
+ * jamais capter « /commandes-fournisseurs ». Retourne
+ull` pour les surfaces
  * d'infrastructure partagée (/auth, /users, /codes, /notifications…), qui ne sont
  * rattachées à aucun module et ne sont donc jamais filtrées.
  */

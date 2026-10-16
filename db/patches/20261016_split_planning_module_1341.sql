@@ -19,6 +19,19 @@ SET
   updated_at = now()
 WHERE module_key = 'production';
 
+-- Keep the persisted catalogue aligned with the API prefix resolver.  These are
+-- existing modules only; no account decision is copied or manufactured.
+UPDATE public.app_modules
+SET api_prefixes = ARRAY['/pieces-techniques', '/piece-technique-versions', '/pieces-families', '/methodes', '/gammes', '/dossiers'], updated_at = now()
+WHERE module_key = 'pieces-techniques';
+
+UPDATE public.app_modules
+SET api_prefixes = ARRAY['/commandes-fournisseurs', '/replenishment-proposals', '/subcontract-work-packages', '/procurement-reliability'], updated_at = now()
+WHERE module_key = 'commandes-fournisseurs';
+
+UPDATE public.app_modules
+SET api_prefixes = ARRAY['/electronic-invoicing', '/supplier-invoices', '/factures', '/proformas', '/avoirs', '/paiements', '/tarification', '/adv-reminders', '/accounting-exports'], updated_at = now()
+WHERE module_key = 'facturation';
 INSERT INTO public.app_modules (
   module_key, label, description, category, api_prefixes, nav_page_keys,
   is_protected, sort_order

@@ -31,6 +31,15 @@ import {
   updateDevis,
 } from "../controllers/devis.controller";
 import { createDevisBodySchema, updateDevisBodySchema } from "../validators/devis.validators";
+import {
+  getDevisReferenceClient,
+  listDevisReferenceBillers,
+  listDevisReferenceClientAddresses,
+  listDevisReferenceClientContacts,
+  listDevisReferenceClients,
+  listDevisReferencePaymentModes,
+  listDevisReferencePieceTechniques,
+} from "../controllers/devis-references.controller";
 
 declare global {
   namespace Express {
@@ -94,6 +103,7 @@ function requireCapability(capability: DevisCapability): RequestHandler {
 const requireUpdateOrTransitionCapability: RequestHandler = (req, _res, next) => {
   const role = req.user?.role;
   if (
+    requestHasGrantedAccountModuleAccess(req) ||
     roleHasDevisCapability(role, "update_draft") ||
     DEVIS_TRANSITION_CAPABILITIES.some((cap) => roleHasDevisCapability(role, cap))
   ) {
@@ -105,6 +115,15 @@ const requireUpdateOrTransitionCapability: RequestHandler = (req, _res, next) =>
 
 const router = Router();
 const generalTerms = generalTermsHandlers("devis", "CUSTOMER_QUOTE");
+// References stay inside the quote module: they allow composing a quote without
+// opening the general Clients/Pièces techniques workspaces or their write actions.
+router.get("/references/clients", requireCapability("read"), listDevisReferenceClients);
+router.get("/references/clients/:clientId", requireCapability("read"), getDevisReferenceClient);
+router.get("/references/clients/:clientId/contacts", requireCapability("read"), listDevisReferenceClientContacts);
+router.get("/references/clients/:clientId/addresses", requireCapability("read"), listDevisReferenceClientAddresses);
+router.get("/references/pieces-techniques", requireCapability("read"), listDevisReferencePieceTechniques);
+router.get("/references/billers", requireCapability("read"), listDevisReferenceBillers);
+router.get("/references/payment-modes", requireCapability("read"), listDevisReferencePaymentModes);
 router.get("/:id/general-terms", requireCapability("read"), generalTerms.read);
 router.put("/:id/general-terms", requireCapability("update_draft"), generalTerms.select);
 router.get("/:id/official-documents/:documentId/general-terms", requireCapability("export"), generalTerms.download);

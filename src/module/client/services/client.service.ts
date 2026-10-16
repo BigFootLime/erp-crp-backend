@@ -319,3 +319,44 @@ export type CreateClientContactInput = {
 // La création de contact (avec promotion set_primary éventuelle) est désormais
 // transactionnelle et auditée : voir repoCreateClientContact dans le repository.
 
+
+/**
+ * Minimal identity used by a quote. It deliberately excludes generic client
+ * contact and finance fields while keeping the safe operational-media asset id
+ * required to render an already selected quote customer in generated documents.
+ */
+export async function getClientQuoteReferenceById(id: string): Promise<{
+  client_id: string;
+  client_code: string | null;
+  company_name: string;
+  status: string;
+  blocked: boolean;
+  logo_asset: { asset_id: string; status: "AVAILABLE" } | null;
+} | null> {
+  const { rows } = await pool.query<{
+    client_id: string;
+    client_code: string | null;
+    company_name: string;
+    status: string;
+    blocked: boolean | null;
+    logo_path: string | null;
+  }>(`
+    SELECT c.client_id::text,
+      COALESCE(NULLIF(btrim(to_jsonb(c)->>'client_code'), ''), NULLIF(btrim(to_jsonb(c)->>'code_client'), '')) AS client_code,
+      c.company_name, c.status, c.blocked, c.logo_path
+    FROM clients c
+    WHERE c.client_id = $1
+  `, [id]);
+  const row = rows[0];
+  if (!row) return null;
+  const assets = await findAssetIdsByStorageKeys([row.logo_path]);
+  const assetId = assets.get(normalizeStoredImagePath(row.logo_path) ?? "") ?? null;
+  return {
+    client_id: row.client_id,
+    client_code: row.client_code,
+    company_name: row.company_name,
+    status: row.status,
+    blocked: Boolean(row.blocked),
+    logo_asset: assetId ? { asset_id: assetId, status: "AVAILABLE" } : null,
+  };
+}

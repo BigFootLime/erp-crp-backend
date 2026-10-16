@@ -37,6 +37,7 @@ import {
   previewCommandeCreationSnapshot,
   printCommandeCreationSnapshot,
 } from "../controllers/commande-client.controller"
+import { getCommandeReferenceClient, getCommandeReferencePiece, listCommandeReferenceArticleVersions, listCommandeReferenceClientContacts, listCommandeReferenceClientContracts, listCommandeReferenceClients } from "../controllers/commande-client-references.controller"
 import { createAcknowledgement, downloadAcknowledgement, generateCommandeAr, getAcknowledgement, listAcknowledgements, listCommandeArVersions, previewAcknowledgement, printAcknowledgement, sendAcknowledgement, sendCommandeAr } from "../controllers/commande-ar.controller"
 import {
   generateCommandeArSchema,
@@ -108,6 +109,14 @@ const rejectLegacyCommandeLaunch: RequestHandler = (_req, _res, next) => {
 }
 
 const generalTerms = generalTermsHandlers("commande-client", "CUSTOMER_ORDER_ACKNOWLEDGEMENT")
+// Quote-like, read-only references required to compose a customer order. They do
+// not grant the Clients workspace or any client/contact write operation.
+router.get("/references/clients", listCommandeReferenceClients)
+router.get("/references/clients/:clientId", getCommandeReferenceClient)
+router.get("/references/clients/:clientId/contacts", listCommandeReferenceClientContacts)
+router.get("/references/clients/:clientId/contracts", listCommandeReferenceClientContracts)
+router.get("/references/pieces/:pieceId", getCommandeReferencePiece)
+router.get("/references/articles/:articleId/versions", listCommandeReferenceArticleVersions)
 router.get("/:id/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.read)
 router.put("/:id/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.select)
 router.get("/:id/acknowledgements/:documentId/general-terms", authenticateToken, requireAcknowledgementExport, generalTerms.download)

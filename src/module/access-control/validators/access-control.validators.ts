@@ -13,8 +13,8 @@ const userIdParam = z
   .trim()
   .regex(/^\d+$/, "ID utilisateur invalide");
 
-const accessDecision = z.enum(["GRANTED", "DENIED", "INHERIT"], {
-  errorMap: () => ({ message: "Décision d'accès invalide (GRANTED, DENIED ou INHERIT)" }),
+const accessDecision = z.enum(["GRANTED", "DENIED"], {
+  errorMap: () => ({ message: "Décision d'accès invalide (GRANTED ou DENIED)" }),
 });
 
 export const setModuleDefaultSchema = z.object({

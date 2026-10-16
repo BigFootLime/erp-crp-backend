@@ -15,6 +15,7 @@ import {
 } from "../module/commande-client/workflow/commande-client-workflow.definition"
 import { repoEnsureCommandeWorkflowStatus } from "../module/commande-client/repository/commande-client.repository"
 import { canActOnCommandeWorkflowCheckpoint } from "../module/commande-client/domain/commande-client-rbac"
+import { runWithAccountModuleAccess } from "../module/access-control/context/account-module-access.context"
 
 describe("commande workflow canonical state machine", () => {
   it("accepts only the declared pair for every static cause/status combination", () => {
@@ -258,6 +259,13 @@ describe("commande workflow canonical state machine", () => {
     })).toBe(true)
   })
 
+  it("lets an explicit commandes-clients grant pass a workflow checkpoint", () => {
+    let allowed = false;
+    runWithAccountModuleAccess({ userId: 3, moduleKey: "commandes-clients" }, () => {
+      allowed = canActOnCommandeWorkflowCheckpoint({ user_id: 3, user_role: "Planification", responsible_role: "secretariat" });
+    });
+    expect(allowed).toBe(true);
+  })
   it("uses the checkpoint policy for both AR generation and sending", () => {
     for (const role of ["Secretaire", "Commercial", "Comptabilite", "Directeur", "Administrateur Systeme et Reseau"]) {
       expect(canActOnCommandeWorkflowCheckpoint({

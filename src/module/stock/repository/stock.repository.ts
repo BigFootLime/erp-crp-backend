@@ -4300,7 +4300,9 @@ export async function repoListArticleVersions(
        indice,
        statut,
        plan_reference,
-       date_application::text AS date_application
+       date_application::text AS date_application,
+       manufacturing_mode,
+       assembly_supply_strategy
      FROM public.piece_technique_versions
      WHERE piece_technique_id = $1::uuid
      ORDER BY date_application DESC NULLS LAST, created_at DESC, id DESC

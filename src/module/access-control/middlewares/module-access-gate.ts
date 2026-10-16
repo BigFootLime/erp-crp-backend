@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
-import { resolveModuleKeyForPath } from "../domain/module-catalog";
+import { isProtectedModuleKey, resolveModuleKeyForPath } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -38,8 +38,8 @@ function warnKillSwitchOnce(): void {
 
 if (isGateDisabled()) warnKillSwitchOnce();
 
-// Une base sans le patch #326 ne doit pas briquer l'ERP entier : on laisse passer
-// et on le dit, une seule fois par processus pour ne pas noyer les journaux.
+// L'infrastructure d'accès est une dépendance d'autorisation : son indisponibilité
+// ne doit jamais ouvrir une surface métier.
 let infrastructureWarned = false;
 
 function warnMissingInfrastructure(reason: string, moduleKey: string | null): void {
@@ -47,7 +47,7 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
   infrastructureWarned = true;
   console.warn(
     JSON.stringify({
-      type: "module_access_gate_open",
+      type: "module_access_gate_unavailable",
       reason,
       module: moduleKey,
     })
@@ -76,12 +76,18 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     resolveModuleKeyForPath(req.originalUrl) ??
     resolveModuleKeyForPath(req.path);
   if (!moduleKey) {
-    // Les surfaces partagées authentifiées (utilisateurs, codes,
-    // notifications, capabilities…) ne sont pas restrictibles par module.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared", elevated: true }, next);
+    // The module gate never turns a shared dependency into an authorization.
+    // Its route-specific guard remains the only authority for these paths.
+    next();
     return;
   }
 
+  // Protected administration retains its own SuperAdmin and recent-MFA guards.
+  // Do not install a grant here: legacy guards must not read it as a bypass.
+  if (isProtectedModuleKey(moduleKey)) {
+    next();
+    return;
+  }
   if (isGateDisabled()) {
     warnKillSwitchOnce();
     // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
@@ -94,7 +100,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     .then((profile) => {
       if (profile === null) {
         warnMissingInfrastructure("access_tables_missing", moduleKey);
-        next();
+        res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
       if (profile.is_superadmin) {
@@ -104,10 +110,10 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
 
       const decision = profile.modules.find((entry) => entry.module_key === moduleKey);
       if (!decision) {
-        // Le module existe dans le code mais pas dans le catalogue de la base :
-        // même famille que l'absence de tables, on ne fabrique pas un refus.
+        // A new path is never implicitly opened while its catalogue decision is
+        // absent.  Protected surfaces remain reachable only to superadmins.
         warnMissingInfrastructure("module_absent_from_catalog", moduleKey);
-        next();
+        res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
       if (decision.allowed) {
