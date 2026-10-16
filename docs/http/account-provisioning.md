@@ -26,3 +26,14 @@ Business mutations and their ERP audit event share a transaction. Audit details 
 ## Tenant scope
 
 The current `users` schema has no company, tenant or site key. No tenant isolation claim is made. Introducing it requires a separate schema/RBAC migration and horizontal-access tests.
+
+## MFA deployment boundary
+
+The new authority migration `20261016_directory_optional_mfa_1372.sql` prepares
+nullable session assurance and durable privileged-account requirements without
+changing the current MFA policy. The existing policy must remain effective
+until the compatible Directory binary is active and verified. A separate,
+audited deployment operation then changes the authority and site policies;
+schema verification and replay must not weaken a subsequently stricter policy.
+
+This preparation does not reset enrolled factors, credentials or sessions.

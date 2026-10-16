@@ -1,6 +1,6 @@
 DO $$ BEGIN
   IF current_database() !~ '^cerp_directory_[a-f0-9]{32}$'
-     OR NOT EXISTS (SELECT 1 FROM public.erp_settings WHERE key='security.mfa_policy' AND value_text='optional')
+     OR NOT EXISTS (SELECT 1 FROM public.erp_settings WHERE key='security.mfa_policy' AND value_text IN ('required_for_all','optional'))
      OR EXISTS (SELECT 1 FROM public.users u WHERE NOT u.mfa_required AND (u.is_superadmin OR EXISTS (
        SELECT 1 FROM public.cerp_directory_profiles p JOIN public.cerp_directory_memberships m USING(profile_id)
        WHERE p.user_id=u.id AND m.is_superadmin)))

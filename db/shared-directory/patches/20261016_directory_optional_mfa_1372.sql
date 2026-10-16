@@ -1,5 +1,8 @@
 -- Explicit product decision: ordinary employees may opt into MFA. Owner and
 -- business-admin account requirements and every enrolled factor remain binding.
+-- Schema preparation does not activate that policy. Keep the current value
+-- until the compatible Directory binary has been verified, then use the audited
+-- deployment operation to switch the authority and both sites together.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
@@ -30,5 +33,4 @@ UPDATE public.users u SET mfa_required=true
     SELECT 1 FROM public.cerp_directory_profiles p JOIN public.cerp_directory_memberships m USING(profile_id)
     WHERE p.user_id=u.id AND m.is_superadmin
   ));
-UPDATE public.erp_settings SET value_text='optional' WHERE key='security.mfa_policy';
 COMMIT;
