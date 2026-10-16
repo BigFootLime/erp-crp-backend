@@ -103,7 +103,7 @@ export async function expireDirectoryAccountRequests(db: Pool, limit = 100) {
 export async function listDirectoryAccountRequests(db: Pool, status: AccountRequestStatus, limit: number, cursor?: string) {
   const requests = (await db.query(`SELECT id::text,status,version,name,surname,email,avatar_key,created_at::text,expires_at::text,
     primary_role,roles,administrative_kind,module_keys FROM public.cerp_directory_account_requests
-    WHERE status=$1 AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $3`, [status, cursor ?? null, limit])).rows;
+    WHERE status=$1 AND redacted_at IS NULL AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $3`, [status, cursor ?? null, limit])).rows;
   return { requests, next_cursor: requests.length === limit ? requests.at(-1)?.id ?? null : null };
 }
 export async function approveDirectoryAccountRequest(db: Pool, actor: DirectorySession, id: string, input: AccountRequestApproval, idempotencyKey: string) {
