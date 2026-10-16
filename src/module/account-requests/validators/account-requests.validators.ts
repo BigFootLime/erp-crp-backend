@@ -13,7 +13,9 @@ const moduleKey = z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/);
 export const submitAccountRequestSchema = z.object({
   body: z.object({
     name: personName,
-    surname: personName,
+    surname: personName.refine((value) => {
+      try { usernameBaseFromGivenName(value); return true; } catch { return false; }
+    }, "Le prénom doit permettre un identifiant de 2 à 50 caractères."),
     email: strictEmail.transform(canonicalizeAuthEmail),
     password: strongPasswordReset.refine((value) => Buffer.byteLength(value, "utf8") <= 72, "Mot de passe trop long"),
     avatar_key: z.enum(AVATAR_KEYS),
