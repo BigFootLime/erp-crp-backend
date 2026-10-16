@@ -37,7 +37,7 @@ import {
   shipmentBillingBoundary,
   shipmentReceiptDecision,
 } from "../domain/livraisons-policy"
-import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
+import { isStrictHistoricalOldDeliveryGroup, type DeliveryQualityRelease } from "../domain/quality-release-gate"
 import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildShippedDeliveryArtifactInput } from "../services/delivery-authoritative-document"
@@ -1217,7 +1217,11 @@ export async function repoShipLivraison(
     // gate validates current Quality state without spending that entitlement a
     // second time.
     for (const group of groups) {
-      if (group.lot_id) {
+      const historicalOldGroup = isStrictHistoricalOldDeliveryGroup(
+        group.allocations.map((allocation) => allocation.id),
+        qualityRelease
+      )
+      if (group.lot_id && !historicalOldGroup) {
         await assertOperationalLotQualityEligibility({
           client,
           lotId: group.lot_id,
