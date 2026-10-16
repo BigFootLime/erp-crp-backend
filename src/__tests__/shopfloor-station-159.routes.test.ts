@@ -10,6 +10,7 @@ import { EventEmitter } from "events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  moduleAllowed: { value: true },
   poolQuery: vi.fn(),
   poolConnect: vi.fn(),
   clientQuery: vi.fn(),
@@ -32,6 +33,13 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../module/access-control/services/access-control.service", () => ({
+  resolveAccessProfile: vi.fn(() => Promise.resolve({
+    is_superadmin: false,
+    modules: [{ module_key: "production", label: "production", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
+  })),
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -172,6 +180,7 @@ function station(req: request.Test, role = OPERATOR, userId = 7) {
 }
 
 beforeEach(() => {
+  mocks.moduleAllowed.value = true;
   vi.clearAllMocks();
   handlers = [];
   executedSql = [];
@@ -486,6 +495,7 @@ describe("#159 — garde de session", () => {
 /* -------------------------------------------------------------------------- */
 describe("#159 — capacités appliquées côté serveur", () => {
   beforeEach(() => {
+    mocks.moduleAllowed.value = false;
     withLiveSession({ role: VISITEUR });
     on(/UPDATE public\.operator_device_sessions\s*\n\s*SET last_activity_at/i, []);
     on(/INSERT INTO public\.station_audit_events/i, []);
@@ -494,7 +504,7 @@ describe("#159 — capacités appliquées côté serveur", () => {
   it("refuse la file de travail à un rôle sans capacité", async () => {
     const res = await station(request(app).get(`${BASE}/worklist`), VISITEUR);
     expect(res.status).toBe(403);
-    expect(String(res.body.code ?? res.body.error)).toContain("STATION_CAPABILITY_REQUIRED");
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
   it("refuse le dossier opérateur à un rôle sans capacité", async () => {
@@ -1112,6 +1122,7 @@ describe("#159 — administration des tablettes", () => {
   });
 
   it("refuse à un opérateur de lister les supports d'un tiers", async () => {
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .get(`${BASE}/credentials/9`)
       .set("x-test-role", OPERATOR)

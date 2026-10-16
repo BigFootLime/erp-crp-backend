@@ -107,16 +107,32 @@ export const FORBIDDEN_STATION_CAPABILITY_FRAGMENTS = [
   "salaire",
 ] as const;
 
-export function roleHasStationCapability(
+/**
+ * Capacité portée par le rôle de poste lui-même. Elle sert exclusivement aux
+ * exceptions nominatives : superviser un tiers ne peut pas être acquis en
+ * cochant le module Production.
+ */
+export function roleHasIntrinsicStationCapability(
   role: string | null | undefined,
   capability: StationCapability
 ): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
   const normalized = (role ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const needles = CAPABILITY_NEEDLES[capability];
   if (!needles) return false;
   return needles.some((needle) => normalized.includes(needle));
+}
+
+/**
+ * Autorisation fonctionnelle du module Production. Un grant explicite ouvre
+ * les opérations ordinaires du module, mais jamais les exceptions nominatives
+ * qui utilisent `roleHasIntrinsicStationCapability`.
+ */
+export function roleHasStationCapability(
+  role: string | null | undefined,
+  capability: StationCapability
+): boolean {
+  return hasGrantedAccountModuleAccess() || roleHasIntrinsicStationCapability(role, capability);
 }
 
 export function listStationCapabilities(role: string | null | undefined): StationCapability[] {
@@ -910,7 +926,7 @@ export function assertHandoverAcknowledgeable(params: {
     );
   }
   if (params.actorUserId === params.incomingUserId) return;
-  if (roleHasStationCapability(params.actorRole, "supervise_stations")) return;
+  if (roleHasIntrinsicStationCapability(params.actorRole, "supervise_stations")) return;
   throw new HttpError(
     403,
     "STATION_HANDOVER_NOT_ADDRESSEE",
@@ -934,7 +950,7 @@ export function assertOwnSessionOrSupervision(params: {
   action: string;
 }): void {
   if (params.actorUserId === params.sessionUserId) return;
-  if (roleHasStationCapability(params.actorRole, "supervise_stations")) return;
+  if (roleHasIntrinsicStationCapability(params.actorRole, "supervise_stations")) return;
   throw new HttpError(
     403,
     "STATION_FOREIGN_SESSION",

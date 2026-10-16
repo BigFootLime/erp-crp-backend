@@ -37,6 +37,7 @@ import {
   listStationCapabilities,
   resolvePlanForSnapshot,
   roleHasStationCapability,
+  roleHasIntrinsicStationCapability,
   stripCostFields,
   WORKLIST_ORDERING_EXPLANATION,
   type IdentificationMethod,
@@ -507,7 +508,7 @@ export async function svcListMachines(params: {
       reason_code: verdict.reason_code,
       busy_by_other: verdict.busy_by_other,
       // On montre QUI occupe la machine seulement à qui a le droit de superviser.
-      occupied_by: roleHasStationCapability(params.station.user.role, "supervise_stations")
+      occupied_by: roleHasIntrinsicStationCapability(params.station.user.role, "supervise_stations")
         ? machine.active_operator_label
         : machine.active_operator_user_id
           ? "un autre opérateur"
