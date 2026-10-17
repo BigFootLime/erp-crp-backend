@@ -252,14 +252,14 @@ describe("#159 — changement d'opérateur", () => {
       assertOperatorSwitchDecided({
         hasActiveExecution: true,
         decision: "SUPERVISOR_OVERRIDE",
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
       })
     ).toThrowError(/superviseur/i);
     expect(() =>
       assertOperatorSwitchDecided({
         hasActiveExecution: true,
         decision: "SUPERVISOR_OVERRIDE",
-        actorRole: "Chef d'atelier",
+        actorHasStationAccess: true, actorIsSuperadmin: true,
       })
     ).not.toThrow();
   });
@@ -599,7 +599,7 @@ describe("#159 — transmission de poste", () => {
       assertHandoverAcknowledgeable({
         incomingUserId: 5,
         actorUserId: 5,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
         alreadyAcknowledgedAt: null,
       })
     ).not.toThrow();
@@ -610,7 +610,7 @@ describe("#159 — transmission de poste", () => {
       assertHandoverAcknowledgeable({
         incomingUserId: 5,
         actorUserId: 6,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
         alreadyAcknowledgedAt: null,
       })
     ).toThrowError(/autre opérateur/i);
@@ -621,7 +621,7 @@ describe("#159 — transmission de poste", () => {
       assertHandoverAcknowledgeable({
         incomingUserId: 5,
         actorUserId: 6,
-        actorRole: "Chef d'atelier",
+        actorHasStationAccess: true, actorIsSuperadmin: true,
         alreadyAcknowledgedAt: null,
       })
     ).not.toThrow();
@@ -629,7 +629,7 @@ describe("#159 — transmission de poste", () => {
       assertHandoverAcknowledgeable({
         incomingUserId: 5,
         actorUserId: 5,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
         alreadyAcknowledgedAt: new Date(),
       })
     ).toThrowError(/déjà été accusée/i);
@@ -642,7 +642,7 @@ describe("#159 — anti-IDOR sur les sessions", () => {
     expect(() =>
       assertOwnSessionOrSupervision({
         actorUserId: 5,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
         sessionUserId: 5,
         action: "lock",
       })
@@ -653,7 +653,7 @@ describe("#159 — anti-IDOR sur les sessions", () => {
     expect(() =>
       assertOwnSessionOrSupervision({
         actorUserId: 5,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
         sessionUserId: 9,
         action: "close",
       })
@@ -664,7 +664,7 @@ describe("#159 — anti-IDOR sur les sessions", () => {
     expect(() =>
       assertOwnSessionOrSupervision({
         actorUserId: 5,
-        actorRole: "Chef d'atelier",
+        actorHasStationAccess: true, actorIsSuperadmin: true,
         sessionUserId: 9,
         action: "close",
       })
@@ -694,7 +694,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "USER", userId: 7 },
         actorUserId: 7,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(true);
@@ -702,7 +703,7 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "USER", userId: 8 },
         actorUserId: 7,
-        actorRole: "Chef d'atelier",
+        actorHasStationAccess: true, actorIsSuperadmin: true,
         ...scope,
       })
     ).toBe(false);
@@ -713,7 +714,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "MACHINE", machineId: MACHINE },
         actorUserId: 7,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(true);
@@ -721,7 +723,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "MACHINE", machineId: "55555555-5555-5555-5555-555555555555" },
         actorUserId: 7,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(false);
@@ -729,7 +732,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "OF", ofId: 99 },
         actorUserId: 7,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(false);
@@ -740,7 +744,7 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "OF", ofId: 99 },
         actorUserId: 7,
-        actorRole: "Chef d'atelier",
+        actorHasStationAccess: true, actorIsSuperadmin: true,
         ...scope,
       })
     ).toBe(true);
@@ -748,7 +752,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "STATION", deviceId: "66666666-6666-6666-6666-666666666666" },
         actorUserId: 7,
-        actorRole: "Operateur CN",
+        actorHasStationAccess: true,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(false);
@@ -759,7 +764,8 @@ describe("#159 — salons temps réel", () => {
       canSubscribeStationRoom({
         room: { kind: "MACHINE", machineId: MACHINE },
         actorUserId: 7,
-        actorRole: "Visiteur externe",
+        actorHasStationAccess: false,
+        actorIsSuperadmin: false,
         ...scope,
       })
     ).toBe(false);

@@ -2,6 +2,9 @@ import type { RequestHandler } from "express";
 import fs from "node:fs/promises";
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { accountHasSensitiveCapability, financeSensitiveCapability } from "../../access-control/domain/sensitive-capabilities";
+import { hasActiveSensitiveMfaAssurance } from "../../access-control/middlewares/sensitive-capability.middleware";
+import { repoAccountSensitiveCapabilities } from "../../access-control/repository/sensitive-capabilities.repository";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import { readLatestFinanceLegalArchive } from "../services/finance-legal-archive.service";
@@ -25,6 +28,44 @@ import {
   svcGetLatestFacturePdfDocumentId,
   svcGetPdfFilePath,
 } from "../services/pdf.service";
+import { FINANCE_CAPABILITIES, type FinanceCapability } from "../domain/finance-policy";
+
+/**
+ * Self-service read model for the Finance UI.  Its decisions deliberately use
+ * the live module context and nominative sensitive-capability register; the
+ * descriptive business role is never an authorization source here.
+ */
+export const getFinancePermissions: RequestHandler = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    if (typeof userId !== "number" || !Number.isSafeInteger(userId) || userId <= 0) {
+      throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+    }
+    if (
+      req.accountModuleAccess?.granted !== true
+      || req.accountModuleAccess.moduleKey !== "facturation"
+      || req.accountModuleAccess.userId !== userId
+    ) {
+      throw new HttpError(403, "FINANCE_MODULE_REQUIRED", "Accès Finance non autorisé.");
+    }
+
+    const state = await repoAccountSensitiveCapabilities(userId);
+    if (!state.active) throw new HttpError(403, "ACCOUNT_INACTIVE", "Accès interdit.");
+
+    const capabilities = Object.fromEntries(FINANCE_CAPABILITIES.map((capability) => {
+      const sensitive = financeSensitiveCapability(capability);
+      const allowed = sensitive === null
+        ? true
+        : accountHasSensitiveCapability(state, sensitive) && hasActiveSensitiveMfaAssurance(req);
+      return [capability, allowed];
+    })) as Record<FinanceCapability, boolean>;
+    // Nominative grants can be changed while a session is still valid.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ capabilities });
+  } catch (error) {
+    next(error);
+  }
+};
 
 function coerceBool(value: unknown): boolean {
   if (typeof value === "boolean") return value;

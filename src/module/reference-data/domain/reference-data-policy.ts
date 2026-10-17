@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { getAccountModuleAccessContext } from "../../access-control/context/account-module-access.context";
 import { effectiveRoleParts } from "../../auth/domain/roles";
 import { HttpError } from "../../../utils/httpError";
 import type {
@@ -100,6 +101,10 @@ export function roleHasReferenceDataCapability(
   role: string | null | undefined,
   capability: ReferenceDataCapability
 ): boolean {
+  const access = getAccountModuleAccessContext();
+  if (access?.granted === true && access.elevated === true && access.moduleKey === "administration") {
+    return true;
+  }
   const parts = effectiveRoleParts(role).map(normalizeRole);
   const allowed = capability === "approve" || capability === "apply"
     ? APPROVE_ROLES

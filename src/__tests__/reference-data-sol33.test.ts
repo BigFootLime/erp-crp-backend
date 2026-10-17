@@ -10,6 +10,7 @@ import {
   referenceDataCapabilitiesFor,
   referencePayloadHash,
 } from "../module/reference-data/domain/reference-data-policy";
+import { runWithAccountModuleAccess } from "../module/access-control/context/account-module-access.context";
 import {
   createReferenceChangeSetSchema,
   referencePreviewSchema,
@@ -38,6 +39,39 @@ describe("SOL-33 reference-data policy", () => {
     expect(referenceDataCapabilitiesFor("Opérateur atelier")).toEqual({
       view: false, export: false, propose: false, import: false, approve: false, apply: false,
     });
+  });
+
+  it("grants every reference-data capability only inside a confirmed Administration context", () => {
+    let capabilities: ReturnType<typeof referenceDataCapabilitiesFor> | undefined;
+    runWithAccountModuleAccess(
+      { userId: 4, moduleKey: "administration", elevated: true },
+      () => { capabilities = referenceDataCapabilitiesFor("Employee"); },
+    );
+    expect(capabilities).toEqual({
+      view: true,
+      export: true,
+      propose: true,
+      import: true,
+      approve: true,
+      apply: true,
+    });
+  });
+
+  it("does not grant reference-data authority from a non-elevated or unrelated context", () => {
+    const capabilities: Array<ReturnType<typeof referenceDataCapabilitiesFor>> = [];
+    runWithAccountModuleAccess(
+      { userId: 4, moduleKey: "administration", elevated: false },
+      () => { capabilities.push(referenceDataCapabilitiesFor("Employee")); },
+    );
+    runWithAccountModuleAccess(
+      { userId: 4, moduleKey: "stock", elevated: true },
+      () => { capabilities.push(referenceDataCapabilitiesFor("Employee")); },
+    );
+
+    expect(capabilities).toEqual([
+      { view: false, export: false, propose: false, import: false, approve: false, apply: false },
+      { view: false, export: false, propose: false, import: false, approve: false, apply: false },
+    ]);
   });
 });
 

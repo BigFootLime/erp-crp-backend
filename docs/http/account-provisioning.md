@@ -7,6 +7,8 @@
 - `POST /api/v1/admin/users/:id/invitations`: same guard and idempotency; returns a one-use activation token once for controlled delivery
 - `POST /api/v1/auth/activate`: public token redemption with strong password; signed token, 24-hour expiry, hashed-at-rest evidence and safe replay
 - `PATCH /api/v1/admin/users/:id`: audited modification/status transition; superadmin lifecycle immutable
+- `GET /api/v1/admin/users/:id`: `Cache-Control: no-store` and explicit `administrative_level_authority` (`DIRECTORY` or `LOCAL_READ_ONLY`); an unavailable configured directory remains an error, never a local authority
+- `PATCH /api/v1/admin/users/:id/administrative-level`: shared-directory-only mutation guarded by SuperAdmin and recent-MFA checks; an absent local directory returns `409 DIRECTORY_AUTHORITY_REQUIRED`, while a configured directory failure is preserved without local fallback
 - `DELETE /api/v1/admin/users/:id`: absent (`404`)
 - `POST /api/v1/admin/users/:id/password-reset-token`: superadmin and idempotency protected
 - `PATCH /api/v1/admin/users/:id/password`: superadmin, one-use token, audited transaction
@@ -19,8 +21,19 @@ Business mutations and their ERP audit event share a transaction. Audit details 
 
 ## First administrator and recovery
 
-`db/seeds/access-tower-superadmin-keenan.sql` is the only supported bootstrap path. Production requires the explicit session setting `cerp.access_tower_superadmin_approved='KEENAN'`. HTTP routes cannot grant superadmin. Public password recovery and the KEENAN console reset are retained.
+`db/seeds/access-tower-superadmin-keenan.sql` is the only supported bootstrap path. Production requires the explicit session setting `cerp.access_tower_superadmin_approved='KEENAN'`. The protected initial bootstrap establishes the first SuperAdmin. Afterwards, the reviewed administrative-level route can only act through the shared directory after the existing SuperAdmin and recent-MFA checks. Public password recovery and the KEENAN console reset are retained.
 
 ## Tenant scope
 
 The current `users` schema has no company, tenant or site key. No tenant isolation claim is made. Introducing it requires a separate schema/RBAC migration and horizontal-access tests.
+
+## MFA deployment boundary
+
+The new authority migration `20261016_directory_optional_mfa_1372.sql` prepares
+nullable session assurance and durable privileged-account requirements without
+changing the current MFA policy. The existing policy must remain effective
+until the compatible Directory binary is active and verified. A separate,
+audited deployment operation then changes the authority and site policies;
+schema verification and replay must not weaken a subsequently stricter policy.
+
+This preparation does not reset enrolled factors, credentials or sessions.

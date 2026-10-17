@@ -18,10 +18,8 @@ import { resolveEmployeeFromUser } from "./temps-deplacements.service";
 import { assertPeriodOpen } from "../domain/temps-deplacements-policy";
 import { repoGetEffectiveKilometerRate } from "../repository/temps-deplacements-operations.repository";
 
-async function assertCanManageEmployee(actor: Actor, employeeId: string): Promise<void> {
-  if (isHrPrivileged(actor.role)) return;
-  const emp = await repoGetEmployeeById(employeeId);
-  if (emp && emp.manager_user_id !== null && emp.manager_user_id === actor.id) return;
+async function assertCanManageEmployee(actor: Actor, _employeeId: string): Promise<void> {
+  if (isHrPrivileged(actor)) return;
   throw new HttpError(403, "HR_FORBIDDEN", "Hors de votre périmètre de gestion.");
 }
 
@@ -134,14 +132,14 @@ export async function decideKmEntry(actor: Actor, id: string, decision: "VALIDAT
 }
 
 export async function listTeamKmEntries(actor: Actor, status?: HrKmStatus) {
-  return repoListTeamKmEntries({ managerUserId: actor.id, isPrivileged: isHrPrivileged(actor.role), status });
+  return repoListTeamKmEntries({ managerUserId: actor.id, isPrivileged: isHrPrivileged(actor), status });
 }
 
 export async function listVehicles() {
   return repoListVehicles();
 }
 export async function createVehicle(actor: Actor, input: { label: string; plate: string | null; owner_type: "COMPANY" | "PERSONAL" }, audit: AuditContext) {
-  if (!isHrPrivileged(actor.role)) throw new HttpError(403, "HR_FORBIDDEN", "Gestion des véhicules réservée.");
+  if (!isHrPrivileged(actor)) throw new HttpError(403, "HR_FORBIDDEN", "Gestion des véhicules réservée.");
   return withTransaction(async (client) => {
     const v = await repoCreateVehicle(client, input);
     await insertAuditLog(client, audit, { action: "temps-deplacements.vehicle.create", entity_type: "hr_vehicles", entity_id: v.id, details: { label: input.label } });

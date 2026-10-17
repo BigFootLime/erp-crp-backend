@@ -11,6 +11,12 @@ declare global {
   }
 }
 
+/** The active MFA claim required for sensitive read surfaces, without a step-up. */
+export function hasActiveSensitiveMfaAssurance(req: Request): boolean {
+  return req.user?.mfa === true
+    && req.user.amr?.some((method) => method === "totp" || method === "recovery_code") === true;
+}
+
 export async function loadSensitiveCapabilities(req: Request): Promise<void> {
   const id = req.user?.id;
   if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) {
@@ -32,7 +38,7 @@ export function requireSensitiveCapability(capability: SensitiveCapability): Req
       if (!accountHasSensitiveCapability(state, capability)) {
         throw new HttpError(403, "SENSITIVE_CAPABILITY_REQUIRED", "Une habilitation sensible est requise pour cette action.");
       }
-      if (req.user?.mfa !== true || !req.user.amr?.some(method => method === "totp" || method === "recovery_code")) {
+      if (!hasActiveSensitiveMfaAssurance(req)) {
         throw new HttpError(401, "MFA_REQUIRED", "Une connexion avec double authentification est requise pour cette action.");
       }
       installSensitiveCapabilities(req, state.capabilities);

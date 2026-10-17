@@ -1,5 +1,8 @@
 import type { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
+import { createOriginPolicy } from "../config/origins";
+import { repoAccountSensitiveCapabilities } from "../module/access-control/repository/sensitive-capabilities.repository";
+import { accountHasSensitiveCapability } from "../module/access-control/domain/sensitive-capabilities";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 
 import {
@@ -65,6 +68,8 @@ type JwtUser = {
   directory_membership_version?:number;
   mfa_factor_id?:string;
   mfa_factor_version?:number;
+  mfa?: boolean;
+  amr?: string[];
 };
 
 type RoomAck = {
@@ -88,6 +93,7 @@ type ResumeAck = {
 export type SocketAuthorizationDependencies = {
   loadAccountAuthorization: (userId: number) => Promise<RealtimeAccountAuthorization | null>;
   resolveAccountAccessProfile: typeof resolveAccessProfile;
+  resolveSensitiveCapabilities: typeof repoAccountSensitiveCapabilities;
   authorizeStationSubscription: (
     subscription: Extract<ClientRealtimeSubscription, { scope: "station" }>,
     user: JwtUser
@@ -153,20 +159,7 @@ const MAX_DELIVERED_EVENT_IDS = 2_048;
 const MAX_REPLAY_EVENTS = 2_000;
 const EVENT_READ_BATCH = 500;
 
-const staticAllowedOrigins = new Set<string>([
-  "https://cerp.croix-rousse-precision.fr",
-  "http://cerp.croix-rousse-precision.fr",
-  "http://localhost:5173",
-  "http://localhost:5137",
-  "http://localhost:4173",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5137",
-  "http://127.0.0.1:4173",
-]);
-
-for (const origin of (process.env.CORS_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean)) {
-  staticAllowedOrigins.add(origin);
-}
+const isAllowedOrigin = createOriginPolicy();
 
 function createMetrics(): RealtimeSecurityMetrics {
   return {
@@ -203,10 +196,6 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function isAllowedOrigin(origin: string): boolean {
-  return staticAllowedOrigins.has(origin) || /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(origin);
-}
-
 function extractBearerToken(authorization: unknown): string | null {
   if (typeof authorization !== "string") return null;
   const value = authorization.trim();
@@ -237,6 +226,10 @@ function tokenMatchesAccount(user: JwtUser, account: RealtimeAccountAuthorizatio
   // Rolling compatibility: legacy tokens are accepted only before the first
   // durable epoch bump. Every post-migration token carries a signed UUID jti.
   if (account.sessionEpoch > 0 && (typeof user.jti !== "string" || !/^[0-9a-f-]{36}$/i.test(user.jti))) return false;
+  if (account.mfaRequired && (
+    user.mfa !== true || !user.amr?.some(method => method === "totp" || method === "recovery_code")
+    || !account.mfaFactorId || user.mfa_factor_id !== account.mfaFactorId || user.mfa_factor_version !== account.mfaFactorVersion
+  )) return false;
   return true;
 }
 
@@ -309,11 +302,19 @@ async function defaultAuthorizeStationSubscription(
 }
 
 async function authorizeStationRoom(room: StationRoom, user: JwtUser): Promise<boolean> {
-  const scope = await repoUserRealtimeScope(user.id);
+  const [scope, sensitive, profile] = await Promise.all([
+    repoUserRealtimeScope(user.id),
+    repoAccountSensitiveCapabilities(user.id),
+    resolveAccessProfile(user.id),
+  ]);
+  // Une indisponibilité de l'infrastructure d'accès ferme les salons métier.
+  const actorHasStationAccess = profile?.is_superadmin === true ||
+    profile?.modules.some((module) => module.module_key === "production" && module.allowed === true) === true;
   const allowed = canSubscribeStationRoom({
     room,
     actorUserId: user.id,
-    actorRole: user.role ?? null,
+    actorHasStationAccess,
+    actorIsSuperadmin: user.mfa === true && sensitive.isSuperadmin,
     ownMachineIds: scope.machineIds,
     ownOfIds: scope.ofIds,
     ownDeviceIds: scope.deviceIds,
@@ -378,6 +379,7 @@ export class RealtimeSocketRuntime {
     this.dependencies = {
       loadAccountAuthorization: repoRealtimeAccountAuthorization,
       resolveAccountAccessProfile: resolveAccessProfile,
+      resolveSensitiveCapabilities: repoAccountSensitiveCapabilities,
       authorizeStationSubscription: defaultAuthorizeStationSubscription,
       ...overrides,
     };
@@ -732,10 +734,14 @@ export class RealtimeSocketRuntime {
   }
 
   private async loadLiveAccount(user:JwtUser):Promise<RealtimeAccountAuthorization|null>{
+    let directoryAssurance: Awaited<ReturnType<typeof validateSiteDirectoryToken>> | null = null;
     if(sharedDirectoryClient()){
-      try{await validateSiteDirectoryToken(pool,user);}catch{return null;}
+      try{directoryAssurance=await validateSiteDirectoryToken(pool,user);}catch{return null;}
     }
-    return this.dependencies.loadAccountAuthorization(user.id);
+    const account = await this.dependencies.loadAccountAuthorization(user.id);
+    return account && directoryAssurance
+      ? { ...account, mfaFactorId: directoryAssurance.mfa_factor_id, mfaFactorVersion: directoryAssurance.mfa_factor_version }
+      : account;
   }
   private installSocketHandlers(): void {
     this.io.use((socket, next) => {
@@ -968,7 +974,12 @@ export class RealtimeSocketRuntime {
       if (subscription.capability === REALTIME_CAPABILITIES.AUDIT_READ) {
         const profile = await this.dependencies.resolveAccountAccessProfile(user.id);
         this.assertAuthorizationHealth(healthGeneration);
-        return profile?.is_superadmin === true;
+        if (profile?.is_superadmin === true) return true;
+        try {
+          const permissions = await this.dependencies.resolveSensitiveCapabilities(user.id);
+          this.assertAuthorizationHealth(healthGeneration);
+          return accountHasSensitiveCapability(permissions, "audit.read");
+        } catch { return false; }
       }
       return false;
     }
@@ -1028,7 +1039,7 @@ export class RealtimeSocketRuntime {
     }
     if (signal.kind === "authorization_changed") {
       invalidateAccessCache();
-      void this.revalidateConnectedRoomAuthorization();
+      void this.revalidateConnectedSessions().then(() => this.revalidateConnectedRoomAuthorization());
       return;
     }
     if (signal.kind === "presence_changed") {

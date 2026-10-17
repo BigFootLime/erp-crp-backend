@@ -14,6 +14,7 @@ import { roleHasMachineCapability } from "../module/production/domain/machine-rb
 import { ARTICLE_WRITE_ROLES } from "../module/stock/stock-article.permissions";
 import { canApprovePieceTechniqueVersion } from "../module/pieces-techniques/domain/pieces-techniques-rbac";
 import { canLaunchInternalOrder } from "../module/commande-client/domain/commande-client-rbac";
+import { runWithAccountModuleAccess } from "../module/access-control/context/account-module-access.context";
 import {
   CLIENT_FINANCE_ROLES,
   CLIENT_WRITE_ROLES,

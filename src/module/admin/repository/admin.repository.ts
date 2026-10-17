@@ -24,6 +24,34 @@ import {
 } from "../../auth/domain/auth-identity";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
+import { sharedDirectoryClient } from "../../../shared-directory/site-runtime";
+
+/**
+ * Protect the global account lifecycle when this database is the directory
+ * authority. The owner mutation takes the same lock order: global →
+ * membership → user. A local installation without the directory tables keeps
+ * its existing lifecycle path; an enabled but incomplete directory never does.
+ */
+export async function lockDirectoryOwnerStatusMutation(tx: Pick<PoolClient, "query">, userId: number, nextStatus: string | null | undefined) {
+  if (nextStatus === undefined || nextStatus === "Active") return;
+  const installed = (await tx.query<{ installed: boolean }>("SELECT to_regclass('public.cerp_directory_memberships') IS NOT NULL AS installed")).rows[0]?.installed === true;
+  if (!installed) {
+    if (sharedDirectoryClient()) throw new HttpError(503, "DIRECTORY_AUTHORITY_REQUIRED", "L'autorité annuaire est indisponible.");
+    return;
+  }
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('directory-production-superadmin',0))");
+  const owner = (await tx.query(
+    `SELECT 1 FROM public.cerp_directory_memberships m
+     JOIN public.cerp_directory_profiles p ON p.profile_id=m.profile_id
+     JOIN public.users u ON u.id=p.user_id
+     WHERE p.user_id=$1 AND m.database_id='cerp_prod' AND m.status='Active' AND m.is_superadmin AND u.status='Active'
+     FOR UPDATE OF m,u`,
+    [userId],
+  )).rows.length > 0;
+  if (owner) {
+    throw new HttpError(409, "DIRECTORY_OWNER_STATUS_MANAGED", "La désactivation d’un propriétaire Production exige le parcours sécurisé dédié.");
+  }
+}
 
 export type AdminUserListRow = {
   id: number;
@@ -387,10 +415,10 @@ export async function repoListUsers(): Promise<AdminUserListRow[]> {
         u.status,
         u.last_login::text AS last_login,
         (
-          u.tel_no IS NULL
-          OR u.address IS NULL
-          OR u.date_of_birth IS NULL
-          OR u.social_security_number IS NULL
+          NULLIF(btrim(u.username), '') IS NULL
+          OR NULLIF(btrim(u.name), '') IS NULL
+          OR NULLIF(btrim(u.surname), '') IS NULL
+          OR NULLIF(btrim(u.email), '') IS NULL
         ) AS profile_incomplete
       FROM public.users u
       LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
@@ -405,7 +433,7 @@ type AdminUserDetailDbRow = Omit<AdminUserDetailRow, "profile_picture" | "profil
   profile_picture: string | null;
 };
 
-export async function repoGetUserById(userId: number): Promise<AdminUserDetailRow | null> {
+export async function repoGetUserById(userId: number, includePrivateProfile = false): Promise<AdminUserDetailRow | null> {
   const superadminIds = await readSuperadminIds();
   const { rows } = await pool.query<AdminUserDetailDbRow>(
     `
@@ -431,27 +459,27 @@ export async function repoGetUserById(userId: number): Promise<AdminUserDetailRo
         u.house_no,
         u.postcode,
         u.country,
-        u.salary::float AS salary,
-        u.date_of_birth::text AS date_of_birth,
+        CASE WHEN $2::boolean THEN u.salary::float ELSE NULL END AS salary,
+        CASE WHEN $2::boolean THEN u.date_of_birth::text ELSE NULL END AS date_of_birth,
         u.employment_date::text AS employment_date,
         u.employment_end_date::text AS employment_end_date,
-        u.national_id,
+        CASE WHEN $2::boolean THEN u.national_id ELSE NULL END AS national_id,
         u.profile_picture,
         u.last_login::text AS last_login,
         u.status,
         u.created_at::text AS created_at,
-        u.social_security_number,
+        CASE WHEN $2::boolean THEN u.social_security_number ELSE NULL END AS social_security_number,
         (
-          u.tel_no IS NULL
-          OR u.address IS NULL
-          OR u.date_of_birth IS NULL
-          OR u.social_security_number IS NULL
+          NULLIF(btrim(u.username), '') IS NULL
+          OR NULLIF(btrim(u.name), '') IS NULL
+          OR NULLIF(btrim(u.surname), '') IS NULL
+          OR NULLIF(btrim(u.email), '') IS NULL
         ) AS profile_incomplete
       FROM public.users u
       WHERE u.id = $1
       LIMIT 1
     `,
-    [userId]
+    [userId, includePrivateProfile]
   );
   const row = rows[0];
   if (!row) return null;
@@ -903,6 +931,7 @@ export async function repoUpdateUser(
   const client = await pool.connect();
   try {
     const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
+    await lockDirectoryOwnerStatusMutation(tx, userId, patch.status);
     const current = await tx.query<{ role: string; status: string | null; is_superadmin: boolean }>(
       `SELECT role, status, is_superadmin FROM public.users WHERE id = $1 FOR UPDATE`,
       [userId]

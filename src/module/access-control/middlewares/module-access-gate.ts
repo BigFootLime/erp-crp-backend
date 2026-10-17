@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
-import { resolveModuleKeyForPath } from "../domain/module-catalog";
+import { isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -38,8 +38,8 @@ function warnKillSwitchOnce(): void {
 
 if (isGateDisabled()) warnKillSwitchOnce();
 
-// Une base sans le patch #326 ne doit pas briquer l'ERP entier : on laisse passer
-// et on le dit, une seule fois par processus pour ne pas noyer les journaux.
+// L'infrastructure d'accès est une dépendance d'autorisation : son indisponibilité
+// ne doit jamais ouvrir une surface métier.
 let infrastructureWarned = false;
 
 function warnMissingInfrastructure(reason: string, moduleKey: string | null): void {
@@ -47,7 +47,7 @@ function warnMissingInfrastructure(reason: string, moduleKey: string | null): vo
   infrastructureWarned = true;
   console.warn(
     JSON.stringify({
-      type: "module_access_gate_open",
+      type: "module_access_gate_unavailable",
       reason,
       module: moduleKey,
     })
@@ -72,48 +72,57 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     return;
   }
 
-  const moduleKey =
-    resolveModuleKeyForPath(req.originalUrl) ??
-    resolveModuleKeyForPath(req.path);
-  if (!moduleKey) {
-    // Les surfaces partagées authentifiées (utilisateurs, codes,
-    // notifications, capabilities…) ne sont pas restrictibles par module.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey: "shared", elevated: true }, next);
+  const moduleKeys =
+    resolveModuleAccessKeysForRequest(req.originalUrl, req.method) ??
+    resolveModuleAccessKeysForRequest(req.path, req.method);
+  if (!moduleKeys) {
+    // The module gate never turns a shared dependency into an authorization.
+    // Its route-specific guard remains the only authority for these paths.
+    next();
     return;
   }
 
+  // Protected administration retains its own SuperAdmin and recent-MFA guards.
+  // Do not install a grant here: legacy guards must not read it as a bypass.
+  if (moduleKeys.some(isProtectedModuleKey)) {
+    next();
+    return;
+  }
   if (isGateDisabled()) {
     warnKillSwitchOnce();
     // Le kill-switch désactive seulement les refus nominatifs. Il ne doit
     // jamais réactiver les anciens refus par rôle dans la suite de la requête.
-    grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
+    grantAccountModuleAccessToRequest(req, { userId, moduleKey: moduleKeys[0]!, elevated: true }, next);
     return;
   }
 
   resolveAccessProfile(userId)
     .then((profile) => {
       if (profile === null) {
-        warnMissingInfrastructure("access_tables_missing", moduleKey);
-        next();
+        warnMissingInfrastructure("access_tables_missing", moduleKeys.join(","));
+        res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
       if (profile.is_superadmin) {
-        grantAccountModuleAccessToRequest(req, { userId, moduleKey, elevated: true }, next);
+        grantAccountModuleAccessToRequest(req, { userId, moduleKey: moduleKeys[0]!, elevated: true }, next);
         return;
       }
 
-      const decision = profile.modules.find((entry) => entry.module_key === moduleKey);
-      if (!decision) {
-        // Le module existe dans le code mais pas dans le catalogue de la base :
-        // même famille que l'absence de tables, on ne fabrique pas un refus.
-        warnMissingInfrastructure("module_absent_from_catalog", moduleKey);
-        next();
+      const decisions = moduleKeys.map((moduleKey) =>
+        profile.modules.find((entry) => entry.module_key === moduleKey)
+      );
+      if (decisions.some((decision) => !decision)) {
+        // A new path is never implicitly opened while its catalogue decision is
+        // absent.  Protected surfaces remain reachable only to superadmins.
+        warnMissingInfrastructure("module_absent_from_catalog", moduleKeys.join(","));
+        res.status(503).json({ error: "Contrôle d'accès indisponible" });
         return;
       }
-      if (decision.allowed) {
+      const decision = decisions.find((candidate) => candidate?.allowed === true);
+      if (decision?.allowed) {
         grantAccountModuleAccessToRequest(req, {
           userId,
-          moduleKey,
+          moduleKey: decision.module_key,
           elevated: decision.source === "OVERRIDE" || decision.source === "SUPERADMIN",
         }, next);
         return;
@@ -122,7 +131,7 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
       console.warn(
         JSON.stringify({
           type: "auth_forbidden",
-          module: moduleKey,
+          module: moduleKeys.join(","),
           reason: "module_access_denied",
           userId,
           requestId: req.requestId ?? null,

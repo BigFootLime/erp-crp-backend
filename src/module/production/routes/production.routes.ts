@@ -6,6 +6,7 @@ import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCal
 import {readLosses,createComplement} from '../controllers/production-loss.controller';
 import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
 import { Router, type RequestHandler } from "express";
+import { getReceiptStockReference, listProductionReferenceClients, listProductionReferencePieces, listProductionReferencePieceVersions } from "../controllers/production-references.controller";
 import {synchronizePreparationChildren} from '../controllers/production-workbench.controller';
 import {reusePreparationStock} from '../controllers/production-workbench.controller';
 import {saveProgrammingTask,importPreparationPurchases} from '../controllers/production-workbench.controller';
@@ -199,6 +200,10 @@ router.post('/maintenance-calendar/publish',requireMachineCapability('availabili
 router.get('/ofs/:id/loss-complements',requireOfCapability('read'),readLosses);
 router.post('/ofs/:id/loss-complements',requireOfCapability('create'),createComplement);
 
+router.get("/references/clients", requireOfCapability("read"), listProductionReferenceClients);
+router.get("/references/pieces", requireOfCapability("read"), listProductionReferencePieces);
+router.get("/references/pieces/:pieceId/versions", requireOfCapability("read"), listProductionReferencePieceVersions);
+
 // Machines
 router.get("/machine-models", requireMachineCapability("read"), listMachineModels);
 router.get("/machine-models/:id", requireMachineCapability("read"), getMachineModel);
@@ -310,6 +315,7 @@ router.post("/ofs/:id/operations/:opId/time-logs/start", requireOfCapability("op
 router.post("/ofs/:id/operations/:opId/time-logs/stop", requireOfCapability("operate"), stopOfOperationTimeLog);
 
 // Phase 5 - Fin de production -> Entree en stock
+router.get("/ofs/:id/stock-movements/:movementId/stock-reference", requireOfCapability("receipt"), getReceiptStockReference);
 router.get("/ofs/:id/receipt-context", requireOfCapability("receipt"), getOfReceiptContext);
 router.post("/ofs/:id/receipt", requireOfCapability("receipt"), createOfReceipt);
 router.get("/ofs/:id/traceability", requireOfCapability("traceability"), getOfTraceability);

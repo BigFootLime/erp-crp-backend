@@ -45,15 +45,20 @@ function decide(params: {
   override: ModuleAccessOverride | null;
 }): { allowed: boolean; source: ModuleAccessSource } {
   if (params.isSuperadmin) return { allowed: true, source: "SUPERADMIN" };
-  if (params.isProtected) return { allowed: true, source: "DEFAULT" };
+  // Administration remains a superadmin surface.  A protected catalogue entry
+  // must not turn into an implicit grant for an ordinary account.
+  if (params.isProtected) return { allowed: false, source: "DEFAULT" };
   if (!params.isActive) return { allowed: false, source: "DEFAULT" };
   if (params.override === "DENIED") return { allowed: false, source: "OVERRIDE" };
-  return { allowed: true, source: params.override === "GRANTED" ? "OVERRIDE" : "DEFAULT" };
+  if (params.override === "GRANTED") return { allowed: true, source: "OVERRIDE" };
+  // A module is usable only after an owner has chosen it for this account.
+  // This also keeps a module added after an account was provisioned closed.
+  return { allowed: false, source: "DEFAULT" };
 }
 
 /**
  * Profil d'accès d'un compte. `null` signifie « infrastructure d'accès absente »
- * (42P01) : l'appelant décide alors de laisser passer, il ne reçoit pas un refus.
+ * (42P01) : la garde HTTP refuse alors l'accès avec une erreur de disponibilité.
  */
 export async function resolveAccessProfile(userId: number): Promise<ResolvedAccessProfile | null> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -122,13 +127,16 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
   };
 }
 
-/** Réponse versionnée de `GET /auth/access-profile`. Infrastructure absente ⇒ aucun filtrage. */
+/** Réponse versionnée de `GET /auth/access-profile`. Infrastructure absente ⇒ indisponible. */
 export async function getAccessProfile(userId: number): Promise<AccessProfileResponse> {
   const profile = await resolveAccessProfile(userId);
+  if (profile === null) {
+    throw new HttpError(503, "ACCESS_CONTROL_UNAVAILABLE", "Contrôle d'accès indisponible.");
+  }
   return {
     contract_version: ACCESS_PROFILE_CONTRACT_VERSION,
     cache_ttl_seconds: ACCESS_CACHE_TTL_MS / 1000,
-    ...(profile ?? { is_superadmin: false, modules: [] }),
+    ...profile,
   };
 }
 
@@ -188,7 +196,7 @@ export async function buildOverview(tx?: DbQueryer): Promise<AccessOverview> {
       label: module.label,
       description: module.description,
       category: module.category,
-      enabled_by_default: module.enabled_by_default,
+      enabled_by_default: false,
       is_protected: module.is_protected,
       sort_order: module.sort_order,
       denied_count: deniedByModule.get(module.module_key) ?? 0,
@@ -213,7 +221,7 @@ export async function buildOverview(tx?: DbQueryer): Promise<AccessOverview> {
       users_total: users.length,
       superadmins: users.filter((user) => user.is_superadmin).length,
       modules_total: modules.length,
-      modules_restricted_by_default: modules.filter((module) => !module.enabled_by_default).length,
+      modules_restricted_by_default: modules.length,
       active_restrictions: overrides.filter((row) => row.access === "DENIED").length,
     },
   };
@@ -256,44 +264,12 @@ export async function setModuleDefault(params: {
   enabled: boolean;
   audit: AccessAuditContext;
 }): Promise<AccessOverview> {
-  if (!params.enabled) {
-    throw new HttpError(
-      409,
-      "ACCOUNT_ONLY_ACCESS_POLICY",
-      "Le défaut global est toujours ouvert. Restreignez un compte sur un module."
-    );
-  }
-  const overview = await repo.withTransaction(async (tx) => {
-    const module = await loadModuleOrThrow(tx, params.moduleKey);
-    if (module.is_protected && !params.enabled) {
-      throw new HttpError(409, "MODULE_PROTECTED", "Ce module ne peut pas être restreint.");
-    }
-    if (module.enabled_by_default !== params.enabled) {
-      await repo.repoSetModuleDefault(tx, { moduleKey: module.module_key, enabled: params.enabled });
-      await repo.repoInsertAccessEvent(tx, {
-        userId: null,
-        moduleKey: module.module_key,
-        eventType: "DEFAULT_CHANGED",
-        previousState: module.enabled_by_default ? "ENABLED" : "DISABLED",
-        nextState: params.enabled ? "ENABLED" : "DISABLED",
-        actorUserId: params.audit.user_id,
-      });
-      await writeAuditLog(tx, params.audit, {
-        action: "ACCESS_MODULE_DEFAULT_SET",
-        entityId: module.module_key,
-        details: {
-          module_key: module.module_key,
-          previous_state: module.enabled_by_default,
-          next_state: params.enabled,
-        },
-      });
-    }
-    return buildOverview(tx);
-  });
-
-  // Un défaut catalogue change la résolution de TOUS les comptes sans override.
-  invalidateAccessCache();
-  return overview;
+  void params;
+  throw new HttpError(
+    409,
+    "ACCOUNT_ONLY_ACCESS_POLICY",
+    "Les accès sont définis explicitement pour chaque compte et chaque module."
+  );
 }
 
 /** Applique une décision unitaire. Retourne `null` si l'état est déjà celui demandé. */
@@ -307,40 +283,32 @@ async function applyUserModuleDecision(
     targetIsSuperadmin: boolean;
   }
 ): Promise<{ previous: ModuleAccessOverride | null; next: ModuleAccessDecision } | null> {
-  const decision: ModuleAccessDecision =
-    params.decision === "GRANTED" ? "INHERIT" : params.decision;
+  const decision = params.decision;
+
+  if (params.module.is_protected) {
+    throw new HttpError(409, "MODULE_PROTECTED", "Ce module n'est pas administrable par matrice de compte.");
+  }
 
   if (decision === "DENIED") {
-    if (params.module.is_protected) {
-      throw new HttpError(409, "MODULE_PROTECTED", "Ce module ne peut pas être restreint.");
-    }
     if (params.targetIsSuperadmin) {
       throw new HttpError(409, "SUPERADMIN_IMMUTABLE", "Ce compte ne peut pas être restreint.");
     }
   }
 
   const previous = await repo.repoGetUserModuleAccess(params.userId, params.module.module_key, tx);
-  if (decision === "INHERIT") {
-    if (previous === null) return null;
-    await repo.repoDeleteUserModuleAccess(tx, {
-      userId: params.userId,
-      moduleKey: params.module.module_key,
-    });
-  } else {
-    if (previous === decision) return null;
-    await repo.repoUpsertUserModuleAccess(tx, {
-      userId: params.userId,
-      moduleKey: params.module.module_key,
-      access: decision,
-      updatedBy: params.actorUserId,
-    });
-  }
+  if (previous === decision) return null;
+  await repo.repoUpsertUserModuleAccess(tx, {
+    userId: params.userId,
+    moduleKey: params.module.module_key,
+    access: decision,
+    updatedBy: params.actorUserId,
+  });
 
   await repo.repoInsertAccessEvent(tx, {
     userId: params.userId,
     moduleKey: params.module.module_key,
-    eventType: decision === "INHERIT" ? "INHERITED" : decision,
-    previousState: previous ?? "INHERIT",
+    eventType: decision,
+    previousState: previous ?? "UNSET",
     nextState: decision,
     actorUserId: params.actorUserId,
   });
@@ -435,49 +403,12 @@ export async function unlockAll(params: {
   confirm: string;
   audit: AccessAuditContext;
 }): Promise<AccessOverview> {
-  if (params.confirm !== UNLOCK_ALL_CONFIRMATION) {
-    throw new HttpError(400, "CONFIRMATION_REQUIRED", "Confirmation exacte requise.");
-  }
-
-  const overview = await repo.withTransaction(async (tx) => {
-    const removed = await repo.repoDeleteAllDenials(tx);
-    const restored = await repo.repoRestoreAllDefaults(tx);
-
-    for (const row of removed) {
-      await repo.repoInsertAccessEvent(tx, {
-        userId: row.user_id,
-        moduleKey: row.module_key,
-        eventType: "UNLOCK_ALL",
-        previousState: "DENIED",
-        nextState: "INHERIT",
-        actorUserId: params.audit.user_id,
-      });
-    }
-    for (const moduleKey of restored) {
-      await repo.repoInsertAccessEvent(tx, {
-        userId: null,
-        moduleKey,
-        eventType: "UNLOCK_ALL",
-        previousState: "DISABLED",
-        nextState: "ENABLED",
-        actorUserId: params.audit.user_id,
-      });
-    }
-
-    await writeAuditLog(tx, params.audit, {
-      action: "ACCESS_UNLOCK_ALL",
-      entityId: "*",
-      details: {
-        removed_denials: removed.length,
-        restored_defaults: restored.length,
-        modules_restored: restored,
-      },
-    });
-    return buildOverview(tx);
-  });
-
-  invalidateAccessCache();
-  return overview;
+  void params;
+  throw new HttpError(
+    409,
+    "ACCOUNT_ONLY_ACCESS_POLICY",
+    "Les accès doivent être choisis explicitement pour chaque compte."
+  );
 }
 
 export async function listAccessEvents(filters: {

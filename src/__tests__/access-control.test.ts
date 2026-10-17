@@ -48,7 +48,19 @@ vi.mock("../module/auth/middlewares/auth.middleware", async (importOriginal) => 
       }
       const rawId = req.headers["x-test-user-id"];
       const id = typeof rawId === "string" ? Number(rawId) : 1;
-      req.user = { id, username: "t", email: "t@t.t", role };
+      const rawMfa = req.headers["x-test-mfa"];
+      const rawMfaVerifiedAt = req.headers["x-test-mfa-verified-at"];
+      const mfaVerifiedAt = typeof rawMfaVerifiedAt === "string" ? Number(rawMfaVerifiedAt) : undefined;
+      req.user = {
+        id,
+        username: "t",
+        email: "t@t.t",
+        role,
+        ...(rawMfa === "true" ? {
+          mfa: true,
+          ...(Number.isFinite(mfaVerifiedAt) ? { mfa_verified_at: mfaVerifiedAt } : {}),
+        } : {}),
+      };
       next();
     },
   };
@@ -167,10 +179,10 @@ beforeEach(() => {
 });
 
 describe("Catalogue de modules #326", () => {
-  it("expose 24 modules aux clés et préfixes uniques, dont un seul protégé", () => {
-    expect(MODULE_CATALOG).toHaveLength(24);
+  it("expose 25 modules aux clés et préfixes uniques, dont un seul protégé", () => {
+    expect(MODULE_CATALOG).toHaveLength(25);
     const keys = MODULE_CATALOG.map((entry) => entry.module_key);
-    expect(new Set(keys).size).toBe(24);
+    expect(new Set(keys).size).toBe(25);
 
     const prefixes = MODULE_CATALOG.flatMap((entry) => entry.api_prefixes);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -181,6 +193,8 @@ describe("Catalogue de modules #326", () => {
   it("résout le module par le plus long préfixe, sur une frontière de segment", () => {
     expect(resolveModuleKeyForPath("/production/station/of/42")).toBe("production");
     expect(resolveModuleKeyForPath("/production")).toBe("production");
+    expect(resolveModuleKeyForPath("/planning")).toBe("planning");
+    expect(resolveModuleKeyForPath("/programmations/42/reschedule/preview")).toBe("production");
     expect(resolveModuleKeyForPath("/clients/123/contacts")).toBe("clients");
     // « /commandes » ne doit jamais capter « /commandes-fournisseurs ».
     expect(resolveModuleKeyForPath("/commandes/17")).toBe("commandes-clients");
@@ -203,6 +217,7 @@ describe("Catalogue de modules #326", () => {
     const machines = MODULE_CATALOG.find((entry) => entry.module_key === "methodes-parc-machines");
     const stock = MODULE_CATALOG.find((entry) => entry.module_key === "stock");
     const ged = MODULE_CATALOG.find((entry) => entry.module_key === "ged");
+    const planning = MODULE_CATALOG.find((entry) => entry.module_key === "planning");
 
     expect(technicalData?.nav_page_keys).toEqual(["pieces-techniques"]);
     expect(finitions).toMatchObject({ nav_page_keys: ["finitions"], api_prefixes: ["/finitions"] });
@@ -213,6 +228,10 @@ describe("Catalogue de modules #326", () => {
       is_protected: false,
       api_prefixes: ["/ged"],
       nav_page_keys: ["ged"],
+    });
+    expect(planning).toMatchObject({
+      api_prefixes: ["/planning"],
+      nav_page_keys: ["production-planning", "production-calendars"],
     });
   });
 
@@ -231,11 +250,14 @@ describe("Catalogue de modules #326", () => {
       "/chat/threads",
       "/users/4",
       "/locks",
-      "/pieces-families",
       "/environment",
     ]) {
       expect(resolveModuleKeyForPath(path)).toBeNull();
     }
+    expect(resolveModuleKeyForPath("/pieces-families")).toBe("pieces-techniques");
+    expect(resolveModuleKeyForPath("/methodes/capabilities")).toBe("pieces-techniques");
+    expect(resolveModuleKeyForPath("/procurement-reliability/summary")).toBe("commandes-fournisseurs");
+    expect(resolveModuleKeyForPath("/accounting-exports/latest")).toBe("facturation");
     expect(resolveModuleKeyForPath("")).toBeNull();
     expect(resolveModuleKeyForPath(undefined)).toBeNull();
   });
@@ -262,14 +284,11 @@ describe("Règles métier de la tour de contrôle", () => {
     expect(repo.repoSetModuleDefault).not.toHaveBeenCalled();
   });
 
-  it("normalise un ancien GRANTED explicite en ouverture par défaut", async () => {
+  it("refuse les décisions nominatives sur administration", async () => {
     repo.repoGetCatalogModule.mockResolvedValue(PROTECTED_ROW);
-    await service.setUserModuleAccess({
-      userId: OPERATEUR_ID,
-      moduleKey: "administration",
-      decision: "GRANTED",
-      audit: AUDIT,
-    });
+    await expect(service.setUserModuleAccess({
+      userId: OPERATEUR_ID, moduleKey: "administration", decision: "GRANTED", audit: AUDIT,
+    })).rejects.toMatchObject({ status: 409, code: "MODULE_PROTECTED" });
     expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
   });
 
@@ -286,25 +305,11 @@ describe("Règles métier de la tour de contrôle", () => {
     expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
   });
 
-  it("INHERIT supprime la ligne d'override et journalise INHERITED", async () => {
-    repo.repoGetUserModuleAccess.mockResolvedValue("DENIED");
-
-    await service.setUserModuleAccess({
-      userId: OPERATEUR_ID,
-      moduleKey: "clients",
-      decision: "INHERIT",
-      audit: AUDIT,
-    });
-
-    expect(repo.repoDeleteUserModuleAccess).toHaveBeenCalledWith(expect.anything(), {
-      userId: OPERATEUR_ID,
-      moduleKey: "clients",
-    });
-    expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
-    expect(repo.repoInsertAccessEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ eventType: "INHERITED", previousState: "DENIED", nextState: "INHERIT" })
-    );
+  it("conserve GRANTED comme décision explicite", async () => {
+    repo.repoGetUserModuleAccess.mockResolvedValue(null);
+    await service.setUserModuleAccess({ userId: OPERATEUR_ID, moduleKey: "clients", decision: "GRANTED", audit: AUDIT });
+    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ access: "GRANTED" }));
+    expect(repo.repoDeleteUserModuleAccess).not.toHaveBeenCalled();
   });
 
   it("n'écrit rien quand la décision demandée est déjà l'état courant", async () => {
@@ -353,34 +358,25 @@ describe("Règles métier de la tour de contrôle", () => {
       audit: AUDIT,
     });
 
-    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledTimes(1);
+    expect(repo.repoUpsertUserModuleAccess).toHaveBeenCalledTimes(2);
     const auditActions = mocks.txQuery.mock.calls
       .filter((call) => String(call[0]).includes("INSERT INTO erp_audit_logs"))
       .map((call) => (call[1] as unknown[])[2]);
     expect(auditActions).toEqual(["ACCESS_USER_BULK_SET"]);
   });
 
-  it("« tout débloquer » exige la confirmation exacte", async () => {
+  it("refuse « tout débloquer » pour conserver les choix explicites", async () => {
     await expect(service.unlockAll({ confirm: "debloquer tout", audit: AUDIT })).rejects.toMatchObject({
-      status: 400,
-      code: "CONFIRMATION_REQUIRED",
+      status: 409,
+      code: "ACCOUNT_ONLY_ACCESS_POLICY",
     });
     expect(repo.repoDeleteAllDenials).not.toHaveBeenCalled();
-
-    repo.repoDeleteAllDenials.mockResolvedValue([{ user_id: OPERATEUR_ID, module_key: "clients" }]);
-    repo.repoRestoreAllDefaults.mockResolvedValue(["stock"]);
-    await service.unlockAll({ confirm: "DEBLOQUER TOUT", audit: AUDIT });
-
-    expect(repo.repoDeleteAllDenials).toHaveBeenCalledOnce();
-    expect(repo.repoRestoreAllDefaults).toHaveBeenCalledOnce();
-    expect(repo.repoInsertAccessEvent).toHaveBeenCalledTimes(2);
   });
 
   it("404 explicite sur un module ou un compte inconnu", async () => {
     repo.repoGetCatalogModule.mockResolvedValue(null);
-    await expect(
-      service.setModuleDefault({ moduleKey: "inconnu", enabled: true, audit: AUDIT })
-    ).rejects.toMatchObject({ status: 404, code: "MODULE_NOT_FOUND" });
+    await expect(service.setUserModuleAccess({ userId: OPERATEUR_ID, moduleKey: "inconnu", decision: "DENIED", audit: AUDIT }))
+      .rejects.toMatchObject({ status: 404, code: "MODULE_NOT_FOUND" });
 
     repo.repoGetAccessUser.mockResolvedValue(null);
     await expect(
@@ -403,10 +399,10 @@ describe("Résolution du profil d'accès", () => {
     },
   ];
 
-  it("reste ouvert même si une ancienne valeur catalogue vaut false", async () => {
+  it("reste fermé sans décision explicite, même si une ancienne valeur catalogue vaut true", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(profileRows({ enabled: false }));
     const profile = await service.getAccessProfile(OPERATEUR_ID);
-    expect(profile.modules[0]).toMatchObject({ allowed: true, source: "DEFAULT" });
+    expect(profile.modules[0]).toMatchObject({ allowed: false, source: "DEFAULT" });
   });
 
   it("l'override explicite prime sur le défaut catalogue", async () => {
@@ -424,13 +420,10 @@ describe("Résolution du profil d'accès", () => {
     expect(profile.modules[0]).toMatchObject({ allowed: true, source: "SUPERADMIN" });
   });
 
-  it("infrastructure absente (42P01) : profil vide en 200, jamais un refus", async () => {
+  it("infrastructure absente (42P01) : profil indisponible en 503", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(null);
-    expect(await service.getAccessProfile(OPERATEUR_ID)).toEqual({
-      contract_version: 1,
-      cache_ttl_seconds: 10,
-      is_superadmin: false,
-      modules: [],
+    await expect(service.getAccessProfile(OPERATEUR_ID)).rejects.toMatchObject({
+      status: 503, code: "ACCESS_CONTROL_UNAVAILABLE",
     });
   });
 
@@ -485,7 +478,7 @@ describe("Vue d'ensemble /admin/access/overview", () => {
       users_total: 2,
       superadmins: 1,
       modules_total: 2,
-      modules_restricted_by_default: 0,
+      modules_restricted_by_default: 2,
       active_restrictions: 1,
     });
     expect(overview.modules.find((m) => m.module_key === "clients")?.denied_count).toBe(1);
@@ -495,11 +488,11 @@ describe("Vue d'ensemble /admin/access/overview", () => {
     );
     expect(cell).toMatchObject({ access: "DENIED", effective: false, source: "OVERRIDE" });
 
-    // Hérité : la cellule ne porte AUCUN override, mais reste effectivement lisible.
-    const inherited = overview.matrix.find(
+    // Sans override, aucun module métier n'est implicitement accessible.
+    const absent = overview.matrix.find(
       (entry) => entry.user_id === OPERATEUR_ID && entry.module_key === "administration"
     );
-    expect(inherited).toMatchObject({ access: null, effective: true, source: "DEFAULT" });
+    expect(absent).toMatchObject({ access: null, effective: false, source: "DEFAULT" });
 
     // Le superadmin traverse tout, y compris le module refusé au reste.
     const superadminCell = overview.matrix.find(
@@ -508,7 +501,7 @@ describe("Vue d'ensemble /admin/access/overview", () => {
     expect(superadminCell).toMatchObject({ effective: true, source: "SUPERADMIN" });
     expect(overview.users.find((u) => u.id === OPERATEUR_ID)).toMatchObject({
       denied_count: 1,
-      allowed_count: 1,
+      allowed_count: 0,
     });
   });
 });
@@ -582,7 +575,7 @@ describe("Surface HTTP /admin/access", () => {
     expect(res.body).toMatchObject({ code: "ACCOUNT_ONLY_ACCESS_POLICY" });
   });
 
-  it("400 CONFIRMATION_REQUIRED sur « tout débloquer » sans la phrase exacte", async () => {
+  it("409 ACCOUNT_ONLY_ACCESS_POLICY sur « tout débloquer »", async () => {
     repo.repoIsSuperadmin.mockResolvedValue(true);
     const res = await request(app)
       .post("/api/v1/admin/access/unlock-all")
@@ -590,8 +583,8 @@ describe("Surface HTTP /admin/access", () => {
       .set("x-test-user-id", String(SUPERADMIN_ID))
       .send({ confirm: "oui" });
 
-    expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "ACCOUNT_ONLY_ACCESS_POLICY" });
   });
 
   it("rejette une décision d'accès hors GRANTED/DENIED/INHERIT", async () => {
@@ -604,6 +597,71 @@ describe("Surface HTTP /admin/access", () => {
 
     expect(res.status).toBe(400);
     expect(repo.repoUpsertUserModuleAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("Surface HTTP /admin/reference-data", () => {
+  it("refuse un Directeur non SuperAdmin, y compris la lecture des capacités", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(false);
+
+    const res = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Directeur")
+      .set("x-test-user-id", String(OPERATEUR_ID));
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Accès interdit" });
+  });
+
+  it("autorise la lecture des capacités à un SuperAdmin confirmé par la base", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(true);
+
+    const res = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      view: true,
+      export: true,
+      propose: true,
+      import: true,
+      approve: true,
+      apply: true,
+    });
+  });
+
+  it("conserve les lectures SuperAdmin et impose une MFA récente avant toute mutation", async () => {
+    repo.repoIsSuperadmin.mockResolvedValue(true);
+
+    const staleRead = await request(app)
+      .get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", "1");
+    expect(staleRead.status).toBe(200);
+
+    const staleMutation = await request(app)
+      .post("/api/v1/admin/reference-data/changes/preview")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", "1")
+      .send({});
+    expect(staleMutation.status).toBe(428);
+    expect(staleMutation.body).toMatchObject({ code: "MFA_STEP_UP_REQUIRED" });
+
+    const freshMutation = await request(app)
+      .post("/api/v1/admin/reference-data/changes/preview")
+      .set("x-test-role", "Employee")
+      .set("x-test-user-id", String(SUPERADMIN_ID))
+      .set("x-test-mfa", "true")
+      .set("x-test-mfa-verified-at", String(Math.floor(Date.now() / 1000)))
+      .send({});
+    expect(freshMutation.status).toBe(400);
+    expect(freshMutation.body).toMatchObject({ error: "VALIDATION_ERROR" });
   });
 });
 
@@ -637,7 +695,7 @@ describe("Profil d'accès et exposition du marqueur superadmin", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ contract_version: 1, cache_ttl_seconds: 10 });
     expect(res.body.is_superadmin).toBe(false);
-    expect(res.body.modules[0]).toMatchObject({ module_key: "clients", allowed: true, source: "DEFAULT" });
+    expect(res.body.modules[0]).toMatchObject({ module_key: "clients", allowed: false, source: "DEFAULT" });
   });
 
   it("PATCH /admin/users/:id refuse explicitement is_superadmin (aucune ignorance silencieuse)", async () => {

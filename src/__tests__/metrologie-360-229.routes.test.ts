@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   clientQuery: vi.fn(),
   clientRelease: vi.fn(),
   currentRole: { value: "administrateur" as string | null },
+  moduleAllowed: { value: true },
 }));
 
 vi.mock("pg", () => {
@@ -29,6 +30,13 @@ vi.mock("pg", () => {
 
 vi.mock("../utils/checkNetworkDrive", () => ({
   checkNetworkDrive: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../module/access-control/services/access-control.service", () => ({
+  resolveAccessProfile: vi.fn(() => Promise.resolve({
+    is_superadmin: false,
+    modules: [{ module_key: "metrologie", label: "metrologie", nav_page_keys: [], allowed: mocks.moduleAllowed.value, source: "DEFAULT" }],
+  })),
 }));
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
@@ -64,6 +72,7 @@ beforeEach(() => {
   mocks.clientQuery.mockReset();
   mocks.clientRelease.mockReset();
   mocks.currentRole.value = "administrateur";
+  mocks.moduleAllowed.value = true;
 
   mocks.poolQuery.mockResolvedValue({ rows: [] });
   mocks.clientQuery.mockResolvedValue({ rows: [] });
@@ -108,11 +117,12 @@ describe("#229 RBAC — refus par défaut", () => {
 
   it.each(readRoutes)("refuse %s %s à un rôle sans droit", async (method, url) => {
     mocks.currentRole.value = "commercial";
+    mocks.moduleAllowed.value = false;
     const res = await (request(app) as unknown as Record<string, (u: string) => Promise<{ status: number; body: Record<string, unknown> }>>)[
       method
     ](url);
     expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({ code: "METROLOGY_CAPABILITY_REQUIRED" });
+    expect(res.body).toEqual({ error: "Accès interdit" });
   });
 
   it("autorise la lecture à l'atelier mais refuse la validation de verdict", async () => {
@@ -120,15 +130,17 @@ describe("#229 RBAC — refus par défaut", () => {
     const read = await request(app).get(`${BASE}/units`);
     expect(read.status).toBe(200);
 
+    mocks.moduleAllowed.value = false;
     const validate = await request(app)
       .post(`${BASE}/executions/${EQUIP_ID}/validate`)
       .send({});
     expect(validate.status).toBe(403);
-    expect(validate.body).toMatchObject({ code: "METROLOGY_CAPABILITY_REQUIRED" });
+    expect(validate.body).toEqual({ error: "Accès interdit" });
   });
 
   it("refuse au métrologue la décision d'impact, réservée à la qualité", async () => {
     mocks.currentRole.value = "metrologue";
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .post(`${BASE}/impacts/${EQUIP_ID}/items/${CHILD_ID}/decision`)
       .send({ decision: "NO_IMPACT", reason: "Aucun impact." });
@@ -137,12 +149,14 @@ describe("#229 RBAC — refus par défaut", () => {
 
   it("refuse au magasin toute écriture sur le registre", async () => {
     mocks.currentRole.value = "magasinier";
+    mocks.moduleAllowed.value = false;
     const res = await request(app).post(`${BASE}/equipements`).send({ designation: "X" });
     expect(res.status).toBe(403);
   });
 
   it("refuse la gestion des catégories hors qualité/métrologie/direction", async () => {
     mocks.currentRole.value = "methodes";
+    mocks.moduleAllowed.value = false;
     const res = await request(app)
       .put(`${BASE}/categories`)
       .send({ code: "TEST", label: "Test" });

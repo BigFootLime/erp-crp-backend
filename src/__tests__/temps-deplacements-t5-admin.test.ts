@@ -35,7 +35,7 @@ import * as admin from "../module/temps-deplacements/services/temps-deplacements
 const rules = vi.mocked(rulesRepo);
 const base = vi.mocked(baseRepo);
 const AUDIT = { user_id: 9, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: null, client_session_id: null };
-const RH = { id: 9, role: "Responsable RH" };
+const RH = { id: 9, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true };
 const SALARIE = { id: 2, role: "Employee" };
 const RULE = {
   name: "Cadre 35h", weekly_target_minutes: 2100, daily_target_minutes: 420,

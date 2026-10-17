@@ -58,7 +58,7 @@ export async function installEmptyDirectory(client:Client,expectedDirectoryId:st
   await client.query('REVOKE INSERT,UPDATE,DELETE ON public.app_roles,public.app_modules,public.cerp_schema_migrations FROM cerp_directory_app');
   await client.query('GRANT SELECT,UPDATE ON public.planning_central_settings TO cerp_directory_app');
   await client.query('GRANT SELECT,INSERT,UPDATE ON public.planning_recalculation_jobs TO cerp_directory_app');
-  await client.query("INSERT INTO public.erp_settings(key,value_text) VALUES('security.mfa_policy','optional') ON CONFLICT(key) DO UPDATE SET value_text=excluded.value_text");
+  await client.query("INSERT INTO public.erp_settings(key,value_text) VALUES('security.mfa_policy','optional') ON CONFLICT(key) DO NOTHING");
   await client.query("INSERT INTO public.cerp_shared_directory(directory_id,schema_version,import_mode) VALUES($1::uuid,1,'EMPTY_NO_LEGACY_IMPORT')",[directoryId]);
   const {profile,authentication}=seed;
   const user=(await client.query<{id:number}>(`INSERT INTO public.users(username,password,name,surname,email,role,status,is_superadmin,mfa_reenrollment_required,mfa_required,avatar_key,country)

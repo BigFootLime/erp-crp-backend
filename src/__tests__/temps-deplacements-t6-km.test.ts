@@ -86,22 +86,22 @@ describe("T6 — soumission & validation (ownership + périmètre + transitions)
     vi.mocked(baseRepo.repoGetEmployeeById).mockResolvedValue(emp({ manager_user_id: 99 }));
     await expect(svc.decideKmEntry({ id: 5, role: "Employee" }, "k1", "VALIDATED", AUDIT)).rejects.toMatchObject({ status: 403 });
     km.repoDecideKmEntry.mockResolvedValue({ id: "k1", status: "VALIDATED" } as never);
-    expect((await svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT)).status).toBe("VALIDATED");
+    expect((await svc.decideKmEntry({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, "k1", "VALIDATED", AUDIT)).status).toBe("VALIDATED");
   });
   it("interdit l'auto-validation et exige un taux daté", async () => {
     km.repoGetKmEntryById.mockResolvedValue({ id: "k1", employee_id: "E", status: "SUBMITTED", vehicle_id: "v1", date: "2026-03-02" } as never);
     vi.mocked(baseRepo.repoGetEmployeeById).mockResolvedValue(emp({ user_id: 5 }));
-    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT))
+    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, "k1", "VALIDATED", AUDIT))
       .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
 
     vi.mocked(baseRepo.repoGetEmployeeById).mockResolvedValue(emp({ user_id: 1 }));
     vi.mocked(operationsRepo.repoGetEffectiveKilometerRate).mockResolvedValueOnce(null);
-    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT))
+    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, "k1", "VALIDATED", AUDIT))
       .rejects.toMatchObject({ status: 409, code: "HR_KM_RATE_MISSING" });
   });
   it("valider une déclaration non soumise → 409", async () => {
     km.repoGetKmEntryById.mockResolvedValue({ id: "k1", employee_id: "E", status: "DRAFT" } as never);
     km.repoDecideKmEntry.mockResolvedValue(null);
-    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH" }, "k1", "VALIDATED", AUDIT)).rejects.toMatchObject({ status: 409, code: "HR_KM_NOT_SUBMITTED" });
+    await expect(svc.decideKmEntry({ id: 5, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, "k1", "VALIDATED", AUDIT)).rejects.toMatchObject({ status: 409, code: "HR_KM_NOT_SUBMITTED" });
   });
 });
