@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createBudget: vi.fn(),
   createAbsence: vi.fn(),
   createClosure: vi.fn(),
+  sensitiveWriteAllowed: { value: true },
 }));
 
 vi.mock("pg", () => {
@@ -22,6 +23,16 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 }));
 vi.mock("../module/project-office/middlewares/require-project-office-access", () => ({
   requireProjectOfficeAccess: (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+vi.mock("../module/temps-deplacements/middlewares/hr-sensitive-authorization.middleware", () => ({
+  requireHrSensitiveRead: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireHrSensitiveWrite: (_req: unknown, _res: unknown, next: (error?: Error) => void) => {
+    if (!mocks.sensitiveWriteAllowed.value) {
+      next(new HttpError(403, "SENSITIVE_CAPABILITY_REQUIRED", "Une habilitation RH sensible est requise pour cette action."));
+      return;
+    }
+    next();
+  },
 }));
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
@@ -71,6 +82,7 @@ const PROJECT = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.currentRole.value = "Responsable RH";
+  mocks.sensitiveWriteAllowed.value = true;
   mocks.projectOperations.mockResolvedValue({ generated_at: "2026-08-14T08:00:00.000Z", data_quality: [] });
   mocks.createBudget.mockResolvedValue({ id: "22222222-2222-4222-8222-222222222222" });
   mocks.createAbsence.mockResolvedValue({ id: "33333333-3333-4333-8333-333333333333", status: "REQUESTED" });
@@ -122,8 +134,9 @@ describe("SOL-24 route contracts and RBAC", () => {
     );
   });
 
-  it("réserve la clôture de période à l'administration RH", async () => {
+  it("refuse la clôture sans l'habilitation RH nominative et ne contacte pas le service", async () => {
     mocks.currentRole.value = "Employee";
+    mocks.sensitiveWriteAllowed.value = false;
     const response = await request(app).post("/api/v1/time-clock/admin/period-closures").send({
       period_start: "2026-08-01",
       period_end: "2026-08-31",
@@ -131,6 +144,7 @@ describe("SOL-24 route contracts and RBAC", () => {
       reason: "Clôture mensuelle validée",
     });
     expect(response.status).toBe(403);
-    expect(response.body.code).toBe("HR_ADMIN_REQUIRED");
+    expect(response.body.code).toBe("SENSITIVE_CAPABILITY_REQUIRED");
+    expect(mocks.createClosure).not.toHaveBeenCalled();
   });
 });

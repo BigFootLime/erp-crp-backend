@@ -18,7 +18,9 @@ async function main(){
   }catch(error){originalFailure=error.code==='42501'&&error.message==='permission denied for table app_roles';}finally{await db.query('ROLLBACK');}
   if(!originalFailure)throw Error('ORIGINAL_ACL_FAILURE_NOT_REPRODUCED');
   const seed=await prepareOwnerBootstrap({username:'ACL_FIXTURE',name:'FIXTURE',surname:'OWNER',email:'acl@example.invalid',password:`SyntheticA1+${crypto.randomBytes(16).toString('hex')}`,weekly_hours:39,employment_type:'CDI',job_title:'Synthetic ACL qualification'});
+  await db.query(await fs.readFile(path.join(__dirname,'../../db/patches/20261016_account_mfa_requirement_1372.sql'),'utf8'));
   await installEmptyDirectory(db,id,seed);
+  await db.query(await fs.readFile(path.join(__dirname,'../../db/shared-directory/patches/20261016_self_service_account_requests_1372.sql'),'utf8'));
   const state=(await db.query(`SELECT has_database_privilege('cerp_app',current_database(),'CONNECT') AS business_connect,
    (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.app_roles'::regclass) AS role_table_owner,
    (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid='public.cerp_directory_definer_fixture_1568()'::regprocedure) AS definer_owner,

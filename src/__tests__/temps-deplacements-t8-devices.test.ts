@@ -27,7 +27,7 @@ import { hashBadgeUid, hashDeviceToken } from "../module/temps-deplacements/serv
 const dev = vi.mocked(devRepo);
 const base = vi.mocked(baseRepo);
 const AUDIT = { user_id: 9, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: null, client_session_id: null };
-const RH = { id: 9, role: "Responsable RH" };
+const RH = { id: 9, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true };
 const SALARIE = { id: 2, role: "Employee" };
 const EMP_ID = "11111111-1111-4111-8111-111111111111";
 

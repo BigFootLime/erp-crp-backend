@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { getPlanningReferenceOf, listPlanningReferenceOfs } from "../controllers/planning-references.controller";
 import centralRouter from "./planning-central.routes";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
@@ -62,6 +63,9 @@ router.get("/governance/metrics", requireSuperadmin, getPlanningUsageMetrics);
 router.get("/execution-intelligence", requirePlanningCapability("read_capacity"), getPlanningExecutionIntelligence);
 router.get("/preferences", requirePlanningCapability("manage_preferences"), getPlanningPreferences);
 router.put("/preferences", requirePlanningCapability("manage_preferences"), putPlanningPreferences);
+
+router.get("/references/ofs", requirePlanningCapability("read"), listPlanningReferenceOfs);
+router.get("/references/ofs/:id", requirePlanningCapability("read"), getPlanningReferenceOf);
 
 router.get("/resources", requirePlanningCapability("read"), listPlanningResources);
 router.get("/events", requirePlanningCapability("read"), listPlanningEvents);

@@ -13,6 +13,9 @@ import {testRegistrationSchema,AVATAR_KEYS} from '../module/auth/validators/test
 import {mountDirectoryMfa} from './mfa.operations';
 import {mountDirectoryPasswords} from './password.operations';
 import {mountDirectoryAdmin} from './admin.operations';
+import {mountDirectoryAccountRequests} from './account-request.operations';
+import {expireDirectoryAccountRequests} from './account-request.repository';
+import {accountRequiresMfa,normalizeMfaPolicy} from '../module/auth/domain/mfa-policy';
 import {mountDirectoryCompany} from './company.operations';
 import {mountDirectoryAvatars} from './avatar.operations';
 import {mountDirectorySelfProfile} from './self-profile.operations';
@@ -48,13 +51,17 @@ export function createDirectoryServer(options:Options){
  app.post('/internal/directory/validate-session',wrap(async(req,res)=>{
   const body=sessionInput.parse(req.body);res.json(await validateDirectorySession(options.db,req.directoryCaller!,body.directory_session));
  }));
- app.post('/internal/directory/validate-actor',wrap(async(req,res)=>{
+ app.post(['/internal/directory/validate-actor','/internal/directory/validate-actor-v2'],wrap(async(req,res)=>{
   const body=z.object({profile_id:z.string().uuid()}).strict().parse(req.body),profile=await directoryProfileForSite(options.db,req.directoryCaller!,body.profile_id);
-  const row=(await options.db.query(`SELECT coalesce(e.session_epoch,0)::text AS epoch,coalesce(m.version,0) AS version,f.id AS factor_id,f.version AS factor_version
-   FROM public.cerp_directory_profiles p LEFT JOIN public.realtime_session_epochs e ON e.user_id=p.user_id
+  const row=(await options.db.query(`SELECT coalesce(e.session_epoch,0)::text AS epoch,coalesce(m.version,0) AS version,f.id AS factor_id,f.version AS factor_version,
+   u.is_superadmin,u.mfa_required,u.mfa_reenrollment_required,u.role,
+   coalesce((SELECT array_agg(ura.role_key) FROM public.user_role_assignments ura WHERE ura.user_id=u.id),ARRAY[u.role]) AS roles,
+   (SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy') AS mfa_policy
+   FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id LEFT JOIN public.realtime_session_epochs e ON e.user_id=p.user_id
    LEFT JOIN public.cerp_directory_memberships m ON m.profile_id=p.profile_id AND m.database_id=$2
    LEFT JOIN public.user_mfa_factors f ON f.user_id=p.user_id AND f.state='ACTIVE' WHERE p.profile_id=$1::uuid`,[body.profile_id,req.directoryCaller!])).rows[0];
-  res.json({profile,global_session_epoch:Number(row.epoch),membership_version:row.version,mfa_factor_id:row.factor_id??null,mfa_factor_version:row.factor_version??null});
+  const mfaRequired=row.mfa_reenrollment_required||accountRequiresMfa({policy:normalizeMfaPolicy(row.mfa_policy),isSuperadmin:row.is_superadmin||profile.is_superadmin,role:row.role,roles:row.roles,hasActiveFactor:!!row.factor_id,mfaRequired:row.mfa_required});
+  res.json({profile,global_session_epoch:Number(row.epoch),membership_version:row.version,mfa_factor_id:row.factor_id??null,mfa_factor_version:row.factor_version??null,...(req.path.endsWith('-v2')?{mfa_required:mfaRequired}:{})});
  }));
  app.post('/internal/directory/profile-roster',wrap(async(req,res)=>{
   const body=sessionInput.parse(req.body),actor=await validateDirectorySession(options.db,req.directoryCaller!,body.directory_session);
@@ -92,6 +99,7 @@ export function createDirectoryServer(options:Options){
  mountDirectoryMfa(app,options.db,options.sourceJwtSecret,wrap);
  mountDirectoryPasswords(app,wrap);
  mountDirectoryAdmin(app,options.db,wrap);
+ mountDirectoryAccountRequests(app,options.db,wrap);
  mountDirectoryCompany(app,options.db,wrap);
  mountDirectoryAvatars(app,options.db,wrap);
  mountDirectorySelfProfile(app,options.db,wrap);
@@ -102,5 +110,18 @@ export function createDirectoryServer(options:Options){
   const reject=e.message?.startsWith('DIRECTORY_');
   res.status(error instanceof z.ZodError?400:reject?401:e.status??503).json({code:reject?e.message:e.code??'DIRECTORY_UNAVAILABLE',message:reject?'Votre accès doit être vérifié à nouveau.':e.status===401?'Identifiants invalides':'L’annuaire est momentanément indisponible.'});
  });
- return {app,initialize:async()=>{await assertDirectoryIdentity(options.db,options.directoryId);if(process.env.NODE_ENV!=='test')await assertDirectoryApplicationRole(options.db);}};
+ let cleanupTimer:ReturnType<typeof setInterval>|undefined;
+ let cleanupRunning=false;
+ const cleanup=async()=>{
+  if(cleanupRunning)return;
+  cleanupRunning=true;
+  try{await expireDirectoryAccountRequests(options.db,500);}
+  finally{cleanupRunning=false;}
+ };
+ return {app,initialize:async()=>{
+  await assertDirectoryIdentity(options.db,options.directoryId);
+  if(process.env.NODE_ENV!=='test')await assertDirectoryApplicationRole(options.db);
+  await cleanup();
+  if(!cleanupTimer){cleanupTimer=setInterval(()=>{void cleanup().catch(()=>console.error(JSON.stringify({type:'directory_account_request_cleanup_failed'})));},60_000);cleanupTimer.unref();}
+ },close:()=>{if(cleanupTimer)clearInterval(cleanupTimer);cleanupTimer=undefined;}};
 }

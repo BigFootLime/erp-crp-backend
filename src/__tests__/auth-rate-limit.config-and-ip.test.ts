@@ -5,6 +5,25 @@ import { resolveTrustProxySetting } from "../config/trust-proxy";
 import { canonicalizeRateLimitClientAddress } from "../utils/requestMeta";
 
 describe("auth rate limit configuration and client addressing", () => {
+  it("has independent request and tracking budgets for a shared workshop connection", () => {
+    const config = loadAuthRateLimitConfig({ NODE_ENV: "test" });
+    expect(config.endpoints.accountRequest).toEqual({
+      failurePolicy: "closed-error",
+      dimensions: {
+        ip: { limit: 40, windowMs: 3_600_000 },
+        email: { limit: 3, windowMs: 3_600_000 },
+      },
+    });
+    expect(config.endpoints.accountRequestStatus.dimensions).toEqual({
+      ip: { limit: 240, windowMs: 900_000 }, token: { limit: 20, windowMs: 900_000 },
+    });
+    expect(config.endpoints.login.dimensions.username?.limit).toBe(10);
+    expect(config.endpoints.mfa.dimensions.token?.limit).toBe(10);
+    expect(() => loadAuthRateLimitConfig({
+      NODE_ENV: "test", AUTH_RATE_LIMIT_ACCOUNT_REQUEST_IP_LIMIT: "0",
+    })).toThrow("AUTH_RATE_LIMIT_ACCOUNT_REQUEST_IP_LIMIT");
+  });
+
   it("requires a dedicated pseudonymization key in production", () => {
     expect(() => loadAuthRateLimitConfig({ NODE_ENV: "production" })).toThrow(
       "AUTH_RATE_LIMIT_HASH_KEY"

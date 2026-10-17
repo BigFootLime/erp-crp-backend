@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,11 +24,12 @@ vi.mock("../module/adv-reliability/repository/adv-reliability.repository", () =>
 
 import routes from "../module/adv-reliability/routes/adv-reliability.routes";
 
-function app(role: string | null) {
+function app(role: string | null, rights: ReadonlyArray<(typeof ALL_FIXTURE_SENSITIVE_RIGHTS)[number]> = []) {
   const server = express();
   server.use(express.json());
   server.use((req, _res, next) => {
     if (role) req.user = { id: 7, username: "tester", role };
+    attachSensitiveAccountFixture(req, rights);
     next();
   });
   server.use("/adv", routes);
@@ -47,8 +50,8 @@ describe("SOL-23 ADV RBAC and idempotency HTTP boundary", () => {
 
   it("allows accounting to read and requires idempotency on writes", async () => {
     repoAdvOverview.mockResolvedValue({ contract_version: "CERP-ADV-1.0.0" });
-    expect((await request(app("Comptable")).get("/adv/overview?period=custom&from=2026-08-01&to=2026-08-31")).status).toBe(200);
-    const missingKey = await request(app("Comptable")).post("/adv/invoices/1/payment-promises").send({
+    expect((await request(app("Comptable", ALL_FIXTURE_SENSITIVE_RIGHTS)).get("/adv/overview?period=custom&from=2026-08-01&to=2026-08-31")).status).toBe(200);
+    const missingKey = await request(app("Comptable", ALL_FIXTURE_SENSITIVE_RIGHTS)).post("/adv/invoices/1/payment-promises").send({
       amount_ttc: "10.00", currency: "EUR", promised_date: "2026-08-20", owner_user_id: 7, next_action: "Relancer le client", due_date: "2026-08-21",
     });
     expect(missingKey.status).toBe(400);
@@ -64,7 +67,7 @@ describe("SOL-23 ADV RBAC and idempotency HTTP boundary", () => {
   });
 
   it("validates that a delivery block points to a structured category", async () => {
-    const response = await request(app("Comptable")).post("/adv/deliveries/2ecb92c3-3994-4cec-9f2d-68d0fefb2eb6/blocks").set("Idempotency-Key", "block-0001").send({
+    const response = await request(app("Comptable", ALL_FIXTURE_SENSITIVE_RIGHTS)).post("/adv/deliveries/2ecb92c3-3994-4cec-9f2d-68d0fefb2eb6/blocks").set("Idempotency-Key", "block-0001").send({
       order_id: 12, category: "UNKNOWN", detail: "Blocage", owner_user_id: null, next_action: "Décider", due_date: "2026-08-20",
     });
     expect(response.status).toBe(422);

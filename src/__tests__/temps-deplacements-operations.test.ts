@@ -44,8 +44,9 @@ beforeEach(() => {
 
 describe("SOL-24 absences, clôture et RBAC", () => {
   it("un accès module ordinaire ne transforme pas un employé en administrateur RH", () => {
-    expect(isHrPrivileged("Employee")).toBe(false);
-    expect(isHrPrivileged("Responsable RH")).toBe(true);
+    expect(isHrPrivileged({ id: 1, role: "Employee" })).toBe(false);
+    expect(isHrPrivileged({ id: 1, role: "Responsable RH" })).toBe(false);
+    expect(isHrPrivileged({ id: 1, role: "Employee", hrSensitiveWrite: true })).toBe(true);
   });
 
   it("crée une absence uniquement pour l'employé du token et audite", async () => {
@@ -67,13 +68,13 @@ describe("SOL-24 absences, clôture et RBAC", () => {
 
   it("refuse l'auto-validation d'une absence", async () => {
     repo.repoGetAbsence.mockResolvedValue(absence);
-    await expect(service.decideAbsence({ id: 1, role: "Responsable RH" }, "a", "APPROVED", AUDIT))
+    await expect(service.decideAbsence({ id: 1, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, "a", "APPROVED", AUDIT))
       .rejects.toMatchObject({ status: 403, code: "HR_SELF_APPROVAL_FORBIDDEN" });
   });
 
   it("bloque la clôture tant que le preflight contient des exceptions", async () => {
     repo.repoGetClosurePreflight.mockResolvedValue({ unvalidated_days: 2, unvalidated_weeks: 0, unresolved_anomalies: 1, pending_adjustments: 0, pending_kilometers: 0, pending_absences: 0 });
-    await expect(service.createPeriodClosure({ id: 7, role: "Responsable RH" }, {
+    await expect(service.createPeriodClosure({ id: 7, role: "Responsable RH", hrSensitiveRead: true, hrSensitiveWrite: true }, {
       period_start: "2026-08-01", period_end: "2026-08-31", employee_id: null, timezone: "Europe/Paris", reason: "Clôture mensuelle",
     }, AUDIT)).rejects.toMatchObject({ status: 409, code: "HR_PERIOD_PREFLIGHT_FAILED" });
   });

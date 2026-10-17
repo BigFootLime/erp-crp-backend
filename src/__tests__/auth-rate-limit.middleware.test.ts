@@ -30,6 +30,36 @@ function appWithDecision(endpoint: Parameters<typeof createAuthRateLimitMiddlewa
 afterEach(() => vi.restoreAllMocks());
 
 describe("auth rate limit middleware", () => {
+  it("separates account submission from credentials and canonicalizes only its email", async () => {
+    const { app, checkedSubjects } = appWithDecision("accountRequest", {
+      status: "allowed", endpoint: "accountRequest", disabled: false,
+    });
+    await request(app).post("/auth").send({
+      email: " Person@Example.Test ",
+      password: "must-not-become-a-counter",
+      username: "must-not-become-a-counter",
+    }).expect(200);
+    expect(checkedSubjects).toEqual([[
+      { dimension: "ip", value: "ipv4:127.0.0.1" },
+      { dimension: "email", value: "person@example.test" },
+    ]]);
+  });
+
+  it("counts a tracking receipt without consuming a Bearer session counter", async () => {
+    const { app, checkedSubjects } = appWithDecision("accountRequestStatus", {
+      status: "allowed", endpoint: "accountRequestStatus", disabled: false,
+    });
+    const receipt = "A".repeat(42) + "b";
+    await request(app).post("/auth")
+      .set("Authorization", `Account-Request-Receipt ${receipt}`).send({}).expect(200);
+    await request(app).post("/auth")
+      .set("Authorization", "Bearer existing-session-must-not-be-counted").send({}).expect(200);
+    expect(checkedSubjects).toEqual([
+      [{ dimension: "ip", value: "ipv4:127.0.0.1" }, { dimension: "token", value: receipt }],
+      [{ dimension: "ip", value: "ipv4:127.0.0.1" }, { dimension: "token", value: null }],
+    ]);
+  });
+
   it("limits electronic-invoice webhooks by client address without reading signed payload fields", async () => {
     const { app, checkedSubjects } = appWithDecision("einvoiceWebhook", {
       status: "allowed",

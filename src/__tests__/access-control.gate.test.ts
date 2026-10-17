@@ -1,8 +1,8 @@
 /**
  * #326 / back #200 — gate d'accès module monté globalement dans v1.routes.ts.
  * Le frontend masque, le backend refuse : ce fichier éprouve le refus réel, le
- * passage du superadmin, l'immunité du module protégé, le fail-open documenté sur
- * absence d'infrastructure (42P01) et le kill-switch d'exploitation.
+ * passage du superadmin, l'immunité du module protégé, et le refus de
+ * disponibilité lorsque la décision nominative ne peut pas être résolue.
  */
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -172,14 +172,15 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
     const { next, accountPolicyInstalled } = await run("/users/4");
     expect(next).toHaveBeenCalledOnce();
     expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
-    expect(accountPolicyInstalled).toBe(true);
+    expect(accountPolicyInstalled).toBe(false);
   });
 
-  it("laisse passer le module protégé après résolution du compte", async () => {
-    const { res, next } = await run("/admin/users");
+  it("laisse passer le module protégé vers son garde SuperAdmin, sans matrice ordinaire", async () => {
+    const { res, next, accountPolicyInstalled } = await run("/admin/users");
     expect(next).toHaveBeenCalledOnce();
     expect(res.statusCode).toBe(0);
-    expect(repo.repoResolveAccessProfile).toHaveBeenCalledOnce();
+    expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+    expect(accountPolicyInstalled).toBe(false);
   });
 
   it("laisse passer quand aucun utilisateur n'est attaché à la requête", async () => {
@@ -214,13 +215,13 @@ describe("Gate d'accès module — décisions", () => {
     expect(JSON.stringify(res.body)).not.toMatch(/module|superadmin|catalogue|interdit au module/i);
   });
 
-  it("un ancien défaut catalogue désactivé n'a plus aucun effet", async () => {
+  it("une absence de choix explicite refuse le module", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", enabled_by_default: false }),
     ]);
     const { res, next } = await run("/clients/1");
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.statusCode).toBe(0);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
   });
 
   it("module désactivé au catalogue ⇒ 403", async () => {
@@ -242,7 +243,7 @@ describe("Gate d'accès module — décisions", () => {
 
   it("normalise un identifiant de compte numérique issu du JWT", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
-      profileRow({ module_key: "production" }),
+      profileRow({ module_key: "production", access: "GRANTED" }),
     ]);
 
     const { next, accountPolicyInstalled } = await run("/production/pointages/kpis", {
@@ -257,7 +258,7 @@ describe("Gate d'accès module — décisions", () => {
   it("le refus d'un module n'en refuse aucun autre", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "clients", access: "DENIED" }),
-      profileRow({ module_key: "stock" }),
+      profileRow({ module_key: "stock", access: "GRANTED" }),
     ]);
     expect((await run("/clients/1")).res.statusCode).toBe(403);
     expect((await run("/stock/articles")).next).toHaveBeenCalledOnce();
@@ -285,7 +286,7 @@ describe("Gate d'accès module — décisions", () => {
   it("applique des décisions distinctes aux nouveaux modules techniques", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
       profileRow({ module_key: "finitions", access: "DENIED" }),
-      profileRow({ module_key: "methodes-centres-frais" }),
+      profileRow({ module_key: "methodes-centres-frais", access: "GRANTED" }),
       profileRow({ module_key: "methodes-parc-machines", access: "DENIED" }),
     ]);
 
@@ -302,18 +303,18 @@ describe("Gate d'accès module — décisions", () => {
 });
 
 describe("Gate d'accès module — absence d'infrastructure", () => {
-  it("tables absentes (42P01) ⇒ fail-open documenté, jamais un ERP briqué", async () => {
+  it("tables absentes (42P01) ⇒ 503, sans ouvrir le module", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue(null);
     const { res, next } = await run("/clients/1");
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.statusCode).toBe(0);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
   });
 
-  it("module absent du catalogue en base ⇒ fail-open, aucun refus fabriqué", async () => {
+  it("module absent du catalogue en base ⇒ 503, sans refus d'identité", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([profileRow({ module_key: "stock" })]);
     const { res, next } = await run("/clients/1");
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.statusCode).toBe(0);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(503);
   });
 
   it("erreur de base non liée à l'infrastructure ⇒ remontée à la chaîne d'erreurs", async () => {
@@ -326,7 +327,17 @@ describe("Gate d'accès module — absence d'infrastructure", () => {
 });
 
 describe("Gate d'accès module — application réelle", () => {
-  it("ouvre les capacités partagées Méthodes sans revenir au rôle", async () => {
+  it("does not let the protected administration context bypass its SuperAdmin guard", async () => {
+    const res = await request(app)
+      .get("/api/v1/admin/users")
+      .set("x-test-role", "Employee");
+
+    expect(res.status).toBe(403);
+  });
+  it("rattache Méthodes génériques aux données techniques", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([
+      profileRow({ module_key: "pieces-techniques", access: "GRANTED" }),
+    ]);
     const res = await request(app)
       .get("/api/v1/methodes/capabilities")
       .set("x-test-role", "Employee");
@@ -339,10 +350,9 @@ describe("Gate d'accès module — application réelle", () => {
       tarif_write: true,
     });
   });
-
   it("ouvre les KPI de pointage à un compte authentifié sans rôle production", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
-      profileRow({ module_key: "production" }),
+      profileRow({ module_key: "production", access: "GRANTED" }),
     ]);
 
     const res = await request(app)
@@ -355,7 +365,7 @@ describe("Gate d'accès module — application réelle", () => {
 
   it("ouvre Métrologie 360 à un compte autorisé sans rôle Métrologie", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
-      profileRow({ module_key: "metrologie" }),
+      profileRow({ module_key: "metrologie", access: "GRANTED" }),
     ]);
 
     const res = await request(app)
@@ -368,7 +378,7 @@ describe("Gate d'accès module — application réelle", () => {
 
   it("ouvre le dashboard Qualité à un compte autorisé sans rôle Qualité", async () => {
     repo.repoResolveAccessProfile.mockResolvedValue([
-      profileRow({ module_key: "qualite" }),
+      profileRow({ module_key: "qualite", access: "GRANTED" }),
     ]);
 
     const res = await request(app)

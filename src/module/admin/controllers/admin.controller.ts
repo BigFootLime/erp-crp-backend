@@ -2,10 +2,14 @@ import type { RequestHandler } from "express";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
+import { ordinaryAccountInput, privateAccountPatchSchema } from "../domain/private-account-data";
+import { repoGetUserById } from "../repository/admin.repository";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as adminService from "../services/admin.service";
 import pool from '../../../config/database';
 import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
-import {directoryAdminList,directoryAdminUser,directoryAdminToken,directoryAdminCall,directoryTargetId} from '../../../shared-directory/admin.facade';
+import {directoryAdminList,directoryAdminUser,directoryAdminToken,directoryAdminCall,directoryTargetId,directoryAdminSuperadmin} from '../../../shared-directory/admin.facade';
 import { recoverAccountBySuperadmin } from "../services/account-recovery.service";
 import {
   adminCreateUserSchema,
@@ -13,6 +17,7 @@ import {
   adminCreatePasswordResetSchema,
   adminRecoverAccountSchema,
   adminUpdateUserSchema,
+  adminAdministrativeLevelSchema,
   adminUserIdParamSchema,
   adminErpSettingKeySchema,
   adminUpsertErpSettingSchema,
@@ -58,16 +63,23 @@ export const getAdminAnalytics: RequestHandler = asyncHandler(async (req, res) =
 
 export const getUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminUserIdParamSchema.parse({ params: req.params });
-  if(sharedDirectoryClient()){res.json(await directoryAdminUser(pool,req,'admin-user',{profile_id:await directoryTargetId(pool,Number(dto.params.id))}));return;}
+  res.setHeader("Cache-Control", "no-store");
+  if (sharedDirectoryClient()) {
+    const result = await directoryAdminUser(pool, req, "admin-user", {
+      profile_id: await directoryTargetId(pool, Number(dto.params.id)),
+    });
+    res.json({ ...result, administrative_level_authority: "DIRECTORY" });
+    return;
+  }
   const user = await adminService.getUser(Number(dto.params.id));
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
-  res.json({ user });
+  res.json({ user, administrative_level_authority: "LOCAL_READ_ONLY" });
 });
 
 export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
   const dto = adminCreateUserSchema.parse({
     headers: { idempotencyKey: req.get("Idempotency-Key") },
-    body: req.body,
+    body: ordinaryAccountInput(req.body),
   });
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
 
@@ -81,13 +93,45 @@ export const createUserAdmin: RequestHandler = asyncHandler(async (req, res) => 
 });
 
 export const patchUserAdmin: RequestHandler = asyncHandler(async (req, res) => {
-  const dto = adminUpdateUserSchema.parse({ params: req.params, body: req.body });
+  const dto = adminUpdateUserSchema.parse({ params: req.params, body: ordinaryAccountInput(req.body) });
   const userId = Number(dto.params.id);
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
   if(sharedDirectoryClient()){res.json(await directoryAdminUser(pool,req,'admin-user-update',{profile_id:await directoryTargetId(pool,userId),input:dto.body}));return;}
   const user = await adminService.updateUserByAdmin(userId, dto.body, req.user.id);
   if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User not found");
   res.json({ user });
+});
+
+export const patchAdministrativeLevelAdmin: RequestHandler = asyncHandler(async (req, res) => {
+  const dto=adminAdministrativeLevelSchema.parse({params:req.params,body:req.body});
+  if(!sharedDirectoryClient())throw new HttpError(409,'DIRECTORY_AUTHORITY_REQUIRED','Cette modification exige l’annuaire commun.');
+  res.setHeader('Cache-Control','no-store');
+  res.json(await directoryAdminSuperadmin(pool,req,Number(dto.params.id),dto.body));
+});
+
+export const getPrivateUserProfile: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminUserIdParamSchema.parse({ params: req.params });
+  // Private HR attributes remain local to the business instance; they are never
+  // copied into the common authentication directory.
+  const user = await repoGetUserById(Number(dto.params.id), true);
+  if (!user) throw new HttpError(404, "USER_NOT_FOUND", "Compte introuvable.");
+  const userAgent = req.get("User-Agent") ?? null;
+  await repoInsertAuditLog({
+    user_id: req.user!.id, ip: getClientIp(req), user_agent: userAgent, ...parseDevice(userAgent),
+    body: { event_type: "ACTION", action: "PRIVATE_PROFILE_READ", page_key: "administration", entity_type: "user", entity_id: String(user.id), path: req.path, details: { source: "server" } },
+  });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ user_id: user.id, private_profile: { salary: user.salary, date_of_birth: user.date_of_birth, national_id: user.national_id, social_security_number: user.social_security_number } });
+});
+
+export const patchPrivateUserProfile: RequestHandler = asyncHandler(async (req, res) => {
+  const dto = adminUserIdParamSchema.parse({ params: req.params });
+  const patch = privateAccountPatchSchema.parse(req.body);
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
+  const user = await adminService.updateUserByAdmin(Number(dto.params.id), patch, req.user.id);
+  if (!user) throw new HttpError(404, "USER_NOT_FOUND", "Compte introuvable.");
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ user_id: user.id, updated: true });
 });
 
 export const createAccountInvitationAdmin: RequestHandler = asyncHandler(async (req, res) => {

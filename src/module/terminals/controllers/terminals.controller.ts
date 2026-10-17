@@ -39,7 +39,7 @@ const handle =
   (req, res, next) => {
     void fn(req, res).catch(next);
   };
-const actor = (req: Request) => ({ id: req.user!.id, role: req.user!.role });
+const actor = (req: Request) => ({ id: req.user!.id, role: req.user!.role, mfa: req.user!.mfa === true, mfaAssured: req.user!.mfa === true && req.user!.amr?.some((method) => method === "totp" || method === "recovery_code") === true });
 const audit = (req: Request) => ({
   user_id: req.user!.id,
   user_role: req.user!.role,

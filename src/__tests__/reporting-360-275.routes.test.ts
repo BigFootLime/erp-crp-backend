@@ -1,3 +1,5 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 // Reporting commercial 360 (#275) — surface HTTP.
 // Refus par défaut, cloisonnement des capacités, enveloppe complète, export gouverné,
 // non-fuite de données personnelles, bornes de requête.
@@ -7,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 
 const mocks = vi.hoisted(() => ({
+  currentRights: { value: [] as readonly import("../module/access-control/domain/sensitive-capabilities").SensitiveCapability[] },
   poolQuery: vi.fn(),
   poolConnect: vi.fn(),
   currentRole: { value: "Comptabilite" as string | null },
@@ -46,6 +49,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
       email: "tester@example.test",
       role: mocks.currentRole.value,
     };
+    attachSensitiveAccountFixture(req as import("express").Request, mocks.currentRights.value);
     next();
   },
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -60,6 +64,7 @@ beforeEach(() => {
   mocks.poolQuery.mockReset();
   mocks.poolConnect.mockReset();
   mocks.currentRole.value = "Comptabilite";
+    mocks.currentRights.value = ALL_FIXTURE_SENSITIVE_RIGHTS;
   mocks.poolQuery.mockResolvedValue({ rows: [] });
 });
 
@@ -84,6 +89,7 @@ describe("#275 RBAC — refus par défaut", () => {
   for (const route of [...READ_ONLY_ROUTES, ...FINANCIAL_ROUTES, "/clients", "/drilldown", "/export"]) {
     it(`refuse ${route} à un rôle sans capacité Finance`, async () => {
       mocks.currentRole.value = "Operateur";
+    mocks.currentRights.value = [];
       const res = await request(app).get(`${BASE}${route}`).query({ entity: "quotes", section: "overview" });
       expect(res.status).toBe(403);
       expect(res.body?.code ?? res.body?.error).toBeTruthy();
@@ -93,6 +99,7 @@ describe("#275 RBAC — refus par défaut", () => {
   for (const route of READ_ONLY_ROUTES) {
     it(`autorise ${route} à la Secrétaire`, async () => {
       mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
       const res = await request(app).get(`${BASE}${route}`);
       expect(res.status).toBe(200);
     });
@@ -101,6 +108,7 @@ describe("#275 RBAC — refus par défaut", () => {
   for (const route of FINANCIAL_ROUTES) {
     it(`refuse ${route} à la Secrétaire (données financières)`, async () => {
       mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
       const res = await request(app).get(`${BASE}${route}`);
       expect(res.status).toBe(403);
     });
@@ -108,12 +116,14 @@ describe("#275 RBAC — refus par défaut", () => {
 
   it("refuse le détail client à la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/clients`);
     expect(res.status).toBe(403);
   });
 
   it("refuse l'export à la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/export`).query({ section: "quotes" });
     expect(res.status).toBe(403);
   });
@@ -127,6 +137,7 @@ describe("#275 RBAC — refus par défaut", () => {
 
   it("autorise tout au Directeur", async () => {
     mocks.currentRole.value = "Directeur";
+    mocks.currentRights.value = ALL_FIXTURE_SENSITIVE_RIGHTS;
     const res = await request(app).get(`${BASE}/receivables`);
     expect(res.status).toBe(200);
   });
@@ -135,6 +146,7 @@ describe("#275 RBAC — refus par défaut", () => {
 describe("#275 synthèse — cloisonnement des blocs", () => {
   it("masque facturation, encours et clients pour la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/overview`);
     expect(res.status).toBe(200);
     expect(res.body.data.invoicing).toBeNull();
@@ -147,6 +159,7 @@ describe("#275 synthèse — cloisonnement des blocs", () => {
 
   it("explique pourquoi un bloc est masqué au lieu de l'effacer en silence", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/overview`);
     const notes: string[] = res.body.envelope.coverage.notes;
     expect(notes.join(" ")).toContain("reporting_financial");
@@ -217,6 +230,7 @@ describe("#275 enveloppe de réponse", () => {
 
   it("reflète les permissions réelles de l'appelant", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/overview`);
     expect(res.body.envelope.permissions).toEqual({
       reporting_read: true,
@@ -344,18 +358,21 @@ describe("#275 drill-down", () => {
 
   it("refuse le drill-down sur les factures à la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/drilldown`).query({ entity: "invoices" });
     expect(res.status).toBe(403);
   });
 
   it("refuse le drill-down sur les clients à la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/drilldown`).query({ entity: "clients" });
     expect(res.status).toBe(403);
   });
 
   it("autorise le drill-down devis à la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/drilldown`).query({ entity: "quotes" });
     expect(res.status).toBe(200);
   });
@@ -437,6 +454,7 @@ describe("#275 export gouverné", () => {
 
   it("refuse l'export d'une section financière sans la capacité correspondante", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/export`).query({ section: "receivables" });
     expect(res.status).toBe(403);
   });
@@ -527,6 +545,7 @@ describe("#275 définitions", () => {
 
   it("est lisible par la Secrétaire", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${BASE}/definitions`);
     expect(res.status).toBe(200);
   });
@@ -588,12 +607,14 @@ describe("#275 endpoints historiques préservés", () => {
 
   it("les endpoints historiques restent ouverts à reporting_read", async () => {
     mocks.currentRole.value = "Secretaire";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${LEGACY}/outstanding`);
     expect(res.status).toBe(200);
   });
 
   it("les endpoints historiques refusent un rôle sans capacité", async () => {
     mocks.currentRole.value = "Operateur";
+    mocks.currentRights.value = [];
     const res = await request(app).get(`${LEGACY}/outstanding`);
     expect(res.status).toBe(403);
   });

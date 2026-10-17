@@ -13,8 +13,23 @@ import {
 } from "../services/auth.service";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
+import { HttpError } from "../../../utils/httpError";
 import pool from '../../../config/database';
 import {sharedDirectoryClient,directoryAuthenticationResult} from '../../../shared-directory/site-runtime';
+
+function mapDirectoryLoginFailure(error: unknown): never {
+  const candidate = error as { code?: unknown; status?: unknown } | null;
+  if (candidate?.code === "AUTH_INVALID") {
+    throw new HttpError(401, "AUTH_INVALID", "Identifiants invalides");
+  }
+  if (candidate?.status === 429) {
+    throw new HttpError(429, "TOO_MANY_ATTEMPTS", "Trop de tentatives. Réessayez plus tard.");
+  }
+  // A configured Directory remains authoritative. Any other Directory response,
+  // transport failure, or malformed response must not become a local login path
+  // or disclose the upstream error to the caller.
+  throw new HttpError(503, "DIRECTORY_UNAVAILABLE", "L’annuaire est momentanément indisponible.");
+}
 
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { username, password } = loginSchema.parse(req.body);
@@ -32,7 +47,13 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     browser: device.browser,
   };
   const directory=sharedDirectoryClient();
-  const data=directory ? await directoryAuthenticationResult(pool,await directory.call('login',{input:{username,password},meta}),meta):await loginUser(username,password,meta);
+  let data;
+  try {
+    data=directory ? await directoryAuthenticationResult(pool,await directory.call('login',{input:{username,password},meta}),meta):await loginUser(username,password,meta);
+  } catch (error) {
+    if (directory) mapDirectoryLoginFailure(error);
+    throw error;
+  }
 
   return res.status(200).json({
     message: "Connexion réussie",

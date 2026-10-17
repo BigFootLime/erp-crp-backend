@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request, Response } from "express";
 
-const mocks = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn(), release: vi.fn(), audit: vi.fn(), event: vi.fn(), receipt: vi.fn(), acquire: vi.fn() }));
+const mocks = vi.hoisted(() => ({ capabilities: vi.fn(), query: vi.fn(), connect: vi.fn(), release: vi.fn(), audit: vi.fn(), event: vi.fn(), receipt: vi.fn(), acquire: vi.fn() }));
+vi.mock("../../access-control/repository/sensitive-capabilities.repository", () => ({ repoAccountSensitiveCapabilities: mocks.capabilities }));
 vi.mock("../../../config/database", () => ({ default: { connect: mocks.connect } }));
 vi.mock("./workflow.repository.shared", async () => ({
   ...await vi.importActual<typeof import("./workflow.repository.shared")>("./workflow.repository.shared"),
@@ -52,9 +53,10 @@ describe.each(["facture", "avoir"] as const)("%s: explicit approval by the autho
 });
 
 describe("Finance capabilities remain required", () => {
-  it.each(["validate", "issue", "credit_issue"] as const)("refuses an unqualified operator for %s", capability => {
+  it.each(["validate", "issue", "credit_issue"] as const)("refuses an unqualified operator for %s", async capability => {
+    mocks.capabilities.mockResolvedValue({ active: true, isSuperadmin: false, capabilities: [] });
     const next = vi.fn();
     requireFinanceCapability(capability)({ user: { id: 7, role: "Operateur" } } as Request, {} as Response, next);
-    expect(next).toHaveBeenCalledWith(expect.objectContaining({ status: 403, code: "FINANCE_CAPABILITY_REQUIRED" }));
+    await vi.waitFor(() => expect(next).toHaveBeenCalledWith(expect.objectContaining({ status: 403, code: "SENSITIVE_CAPABILITY_REQUIRED" })));
   });
 });

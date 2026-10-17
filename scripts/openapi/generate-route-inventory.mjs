@@ -58,6 +58,14 @@ function literalPath(node) {
 
 const moduleCache = new Map();
 
+function importedRouter(imported) {
+  if (!imported) return null;
+  const moduleInfo = analyzeModule(imported.file);
+  return imported.exportName === "default"
+    ? moduleInfo.defaultRouter
+    : moduleInfo.exportedRouters.get(imported.exportName) ?? null;
+}
+
 function analyzeModule(filePath) {
   const absolute = path.resolve(filePath);
   const cached = moduleCache.get(absolute);
@@ -67,13 +75,25 @@ function analyzeModule(filePath) {
   const imports = new Map();
   const routers = new Set();
   const actions = new Map();
+  const exportedRouters = new Map();
   let defaultRouter = null;
 
   for (const statement of sf.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       const resolved = resolveImport(absolute, statement.moduleSpecifier.text);
       const clause = statement.importClause;
-      if (resolved && clause?.name) imports.set(clause.name.text, resolved);
+      if (!resolved || !clause) continue;
+      if (clause.name) {
+        imports.set(clause.name.text, { file: resolved, exportName: "default" });
+      }
+      if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const binding of clause.namedBindings.elements) {
+          imports.set(binding.name.text, {
+            file: resolved,
+            exportName: binding.propertyName?.text ?? binding.name.text,
+          });
+        }
+      }
     }
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
@@ -82,11 +102,20 @@ function analyzeModule(filePath) {
         if (callee === "Router" || callee === "express.Router") {
           routers.add(declaration.name.text);
           actions.set(declaration.name.text, []);
+          if (statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+            exportedRouters.set(declaration.name.text, declaration.name.text);
+          }
         }
       }
     }
     if (ts.isExportAssignment(statement) && !statement.isExportEquals && ts.isIdentifier(statement.expression)) {
       defaultRouter = statement.expression.text;
+    }
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause) && !statement.moduleSpecifier) {
+      for (const binding of statement.exportClause.elements) {
+        const localName = binding.propertyName?.text ?? binding.name.text;
+        if (routers.has(localName)) exportedRouters.set(binding.name.text, localName);
+      }
     }
   }
 
@@ -122,7 +151,7 @@ function analyzeModule(filePath) {
     {
       const candidates = literalMountPath !== null ? call.arguments.slice(1) : call.arguments;
       const childIndex = candidates.findIndex((candidate) =>
-        ts.isIdentifier(candidate) && (routers.has(candidate.text) || imports.has(candidate.text))
+        ts.isIdentifier(candidate) && (routers.has(candidate.text) || importedRouter(imports.get(candidate.text)))
       );
       if (childIndex >= 0) {
         const child = candidates[childIndex];
@@ -145,10 +174,10 @@ function analyzeModule(filePath) {
   }
 
   for (const statement of sf.statements) visitStatement(statement);
-  if (!defaultRouter || !routers.has(defaultRouter)) {
-    throw new Error(`${path.relative(root, absolute)} does not export a Router as default`);
+  if (defaultRouter && !routers.has(defaultRouter)) {
+    throw new Error(`${path.relative(root, absolute)} default export is not a Router`);
   }
-  const analyzed = { absolute, imports, routers, actions, defaultRouter };
+  const analyzed = { absolute, imports, routers, actions, defaultRouter, exportedRouters };
   moduleCache.set(absolute, analyzed);
   return analyzed;
 }
@@ -194,15 +223,20 @@ function expandRouter(moduleInfo, routerName, prefix, inheritedMiddleware, stack
       expandRouter(moduleInfo, action.child, childPrefix, childMiddleware, nextStack, output);
       continue;
     }
-    const childFile = moduleInfo.imports.get(action.child);
-    if (!childFile) throw new Error(`unresolved mounted router ${action.child} in ${moduleInfo.absolute}:${action.line}`);
-    const childModule = analyzeModule(childFile);
-    expandRouter(childModule, childModule.defaultRouter, childPrefix, childMiddleware, nextStack, output);
+    const childImport = moduleInfo.imports.get(action.child);
+    if (!childImport) throw new Error(`unresolved mounted router ${action.child} in ${moduleInfo.absolute}:${action.line}`);
+    const childModule = analyzeModule(childImport.file);
+    const childRouter = importedRouter(childImport);
+    if (!childRouter) {
+      throw new Error(`unresolved exported router ${childImport.exportName} in ${childImport.file}`);
+    }
+    expandRouter(childModule, childRouter, childPrefix, childMiddleware, nextStack, output);
   }
 }
 
 function generatedInventory() {
   const entry = analyzeModule(entryFile);
+  if (!entry.defaultRouter) throw new Error(`${path.relative(root, entryFile)} does not export a Router as default`);
   const routes = [];
   expandRouter(entry, entry.defaultRouter, "", [], [], routes);
   routes.push(

@@ -137,6 +137,8 @@ export type ArticleTechnicalVersion = {
   statut: string;
   plan_reference: string | null;
   date_application: string | null;
+  manufacturing_mode: "SIMPLE" | "ASSEMBLY" | null;
+  assembly_supply_strategy: "MAKE_TO_ORDER" | "INTERNAL_CONTRACT" | null;
 };
 
 export type ArticleProcurementProfile = {

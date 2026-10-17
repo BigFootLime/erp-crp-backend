@@ -107,6 +107,24 @@ export const FORBIDDEN_STATION_CAPABILITY_FRAGMENTS = [
   "salaire",
 ] as const;
 
+/**
+ * Ces opérations dépassent l'usage ordinaire du module : elles exposent un
+ * tiers, administrent ses supports ou ses journaux, ou donnent accès aux coûts.
+ * Elles ne sont jamais inférées du rôle descriptif ni d'un grant Production.
+ */
+export const STATION_SENSITIVE_CAPABILITIES = [
+  "supervise_stations",
+  "administer_devices",
+  "administer_credentials",
+  "audit_stations",
+  "view_costs",
+] as const satisfies readonly StationCapability[];
+
+export function isStationSensitiveCapability(capability: StationCapability): boolean {
+  return (STATION_SENSITIVE_CAPABILITIES as readonly StationCapability[]).includes(capability);
+}
+
+/** Autorisation fonctionnelle des opérations ordinaires du module Production. */
 export function roleHasStationCapability(
   role: string | null | undefined,
   capability: StationCapability
@@ -119,15 +137,28 @@ export function roleHasStationCapability(
   return needles.some((needle) => normalized.includes(needle));
 }
 
-export function listStationCapabilities(role: string | null | undefined): StationCapability[] {
-  return STATION_CAPABILITIES.filter((capability) => roleHasStationCapability(role, capability));
+export function listStationCapabilities(role: string | null | undefined, isSuperadmin = false): StationCapability[] {
+  return STATION_CAPABILITIES.filter((capability) =>
+    isStationSensitiveCapability(capability) ? isSuperadmin : roleHasStationCapability(role, capability)
+  );
+}
+
+/** Capacités affichées par un parcours HTTP après résolution du profil réel. */
+export function listStationCapabilitiesForAccess(
+  hasStationAccess: boolean,
+  isSuperadmin: boolean
+): StationCapability[] {
+  return STATION_CAPABILITIES.filter((capability) =>
+    isStationSensitiveCapability(capability) ? isSuperadmin : hasStationAccess || isSuperadmin
+  );
 }
 
 export function assertStationCapability(
   role: string | null | undefined,
-  capability: StationCapability
+  capability: StationCapability,
+  isSuperadmin = false
 ): void {
-  if (!roleHasStationCapability(role, capability)) {
+  if (isStationSensitiveCapability(capability) ? !isSuperadmin : !roleHasStationCapability(role, capability)) {
     throw new HttpError(
       403,
       "STATION_CAPABILITY_REQUIRED",
@@ -334,7 +365,7 @@ export type OperatorSwitchDecision = "HANDOVER" | "PAUSE" | "SUPERVISOR_OVERRIDE
 export function assertOperatorSwitchDecided(params: {
   hasActiveExecution: boolean;
   decision: OperatorSwitchDecision | null | undefined;
-  actorRole: string | null | undefined;
+  actorIsSuperadmin: boolean;
 }): void {
   if (!params.hasActiveExecution) return;
 
@@ -347,7 +378,7 @@ export function assertOperatorSwitchDecided(params: {
   }
   if (
     params.decision === "SUPERVISOR_OVERRIDE" &&
-    !roleHasStationCapability(params.actorRole, "supervise_stations")
+    !params.actorIsSuperadmin
   ) {
     throw new HttpError(
       403,
@@ -899,7 +930,7 @@ export function assertHandoverParties(params: {
 export function assertHandoverAcknowledgeable(params: {
   incomingUserId: number;
   actorUserId: number;
-  actorRole: string | null | undefined;
+  actorIsSuperadmin: boolean;
   alreadyAcknowledgedAt: Date | null;
 }): void {
   if (params.alreadyAcknowledgedAt) {
@@ -910,7 +941,7 @@ export function assertHandoverAcknowledgeable(params: {
     );
   }
   if (params.actorUserId === params.incomingUserId) return;
-  if (roleHasStationCapability(params.actorRole, "supervise_stations")) return;
+  if (params.actorIsSuperadmin) return;
   throw new HttpError(
     403,
     "STATION_HANDOVER_NOT_ADDRESSEE",
@@ -929,12 +960,12 @@ export function assertHandoverAcknowledgeable(params: {
  */
 export function assertOwnSessionOrSupervision(params: {
   actorUserId: number;
-  actorRole: string | null | undefined;
+  actorIsSuperadmin: boolean;
   sessionUserId: number;
   action: string;
 }): void {
   if (params.actorUserId === params.sessionUserId) return;
-  if (roleHasStationCapability(params.actorRole, "supervise_stations")) return;
+  if (params.actorIsSuperadmin) return;
   throw new HttpError(
     403,
     "STATION_FOREIGN_SESSION",
@@ -980,7 +1011,10 @@ export function parseStationRoom(room: string): StationRoom | null {
 export function canSubscribeStationRoom(params: {
   room: StationRoom;
   actorUserId: number;
-  actorRole: string | null | undefined;
+  /** Décision module Production résolue côté serveur pour ce compte. */
+  actorHasStationAccess: boolean;
+  /** SuperAdmin avec MFA active, résolu côté serveur. */
+  actorIsSuperadmin: boolean;
   /** Machines confirmées par une session vivante de cet utilisateur. */
   ownMachineIds: readonly string[];
   /** OF sur lesquels cet utilisateur a un segment actif. */
@@ -988,22 +1022,23 @@ export function canSubscribeStationRoom(params: {
   /** Appareils sur lesquels cet utilisateur a une session vivante. */
   ownDeviceIds: readonly string[];
 }): boolean {
-  const { room, actorUserId, actorRole } = params;
+  const { room, actorUserId, actorHasStationAccess, actorIsSuperadmin } = params;
 
   switch (room.kind) {
     case "USER":
       return room.userId === actorUserId;
     case "MACHINE":
-      if (!roleHasStationCapability(actorRole, "read_own_station")) return false;
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownMachineIds.includes(room.machineId)) return true;
-      return roleHasStationCapability(actorRole, "supervise_stations");
+      return actorIsSuperadmin;
     case "OF":
-      if (!roleHasStationCapability(actorRole, "read_own_station")) return false;
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownOfIds.includes(room.ofId)) return true;
-      return roleHasStationCapability(actorRole, "supervise_stations");
+      return actorIsSuperadmin;
     case "STATION":
+      if (!actorHasStationAccess && !actorIsSuperadmin) return false;
       if (params.ownDeviceIds.includes(room.deviceId)) return true;
-      return roleHasStationCapability(actorRole, "supervise_stations");
+      return actorIsSuperadmin;
     default:
       return false;
   }

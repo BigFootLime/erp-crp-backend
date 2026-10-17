@@ -8,7 +8,7 @@ import {
 import { MFA_POLICIES } from "../domain/mfa-policy";
 
 export const loginSchema = z.object({
-  username: trimString(3, "Nom d'utilisateur requis (min 3 caractères)")
+  username: trimString(2, "Nom d'utilisateur requis (min 2 caractères)")
     .transform(canonicalizeAuthUsername),
   password: z
     .string({ required_error: "Mot de passe requis" })

@@ -7,6 +7,7 @@
 import type { Request, RequestHandler } from "express";
 
 import { HttpError } from "../../../utils/httpError";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 
 import {
@@ -85,6 +86,7 @@ export const searchTraceability: RequestHandler = async (req, res, next) => {
     const out = await svcSearchTraceability({
       term: query.q,
       role: user.role,
+      moduleGranted: requestHasGrantedAccountModuleAccess(req),
       types: query.types ?? null,
       limit: query.limit,
       offset: query.offset,
@@ -106,6 +108,7 @@ export const getChain: RequestHandler = async (req, res, next) => {
     const out = await svcGetTraceabilityChain({
       seed: { type: query.type, id: query.id },
       role: user.role,
+      moduleGranted: requestHasGrantedAccountModuleAccess(req),
       direction: query.direction,
       asOf: query.as_of ?? null,
       maxDepth: query.maxDepth,
@@ -136,6 +139,7 @@ export const expandNode: RequestHandler = async (req, res, next) => {
     const out = await svcExpandTraceabilityNode({
       node: { type: query.type, id: query.id },
       role: user.role,
+      moduleGranted: requestHasGrantedAccountModuleAccess(req),
       direction: query.direction,
       asOf: query.as_of ?? null,
       maxNodes: query.maxNodes,
@@ -158,6 +162,7 @@ export const previewImpact: RequestHandler = async (req, res, next) => {
     const out = await svcPreviewTraceabilityImpact({
       seed: { type: query.type, id: query.id },
       role: user.role,
+      moduleGranted: requestHasGrantedAccountModuleAccess(req),
       since: query.since ?? null,
       asOf: query.as_of ?? null,
       maxDepth: query.maxDepth,
@@ -185,7 +190,7 @@ export const previewImpact: RequestHandler = async (req, res, next) => {
 export const getCapabilities: RequestHandler = async (req, res, next) => {
   try {
     const user = requireUser(req);
-    res.json({ capabilities: capabilitiesForRole(user.role) });
+    res.json({ capabilities: capabilitiesForRole(user.role, requestHasGrantedAccountModuleAccess(req)) });
   } catch (e) {
     next(e);
   }
@@ -207,6 +212,7 @@ export const getLegacyChain: RequestHandler = async (req, res, next) => {
     const out = await svcGetTraceabilityChain({
       seed: { type: query.type, id: query.id },
       role: user.role,
+      moduleGranted: requestHasGrantedAccountModuleAccess(req),
       direction: "both",
       maxDepth: query.maxDepth ?? 4,
       maxNodes: query.maxNodes ?? 120,

@@ -20,11 +20,16 @@ RUN npm run build
 FROM node:24.18.0-alpine3.24@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS runtime
 ARG SOURCE_COMMIT=unknown
 WORKDIR /app
+# Keep the fixed v3.24 security patches below. The digest-pinned Node base
+# still contains the older OpenSSL and zlib builds.
 RUN printf '%s\n' \
       "https://dl-cdn.alpinelinux.org/alpine/v3.24/main" \
       "https://dl-cdn.alpinelinux.org/alpine/v3.24/community" \
       > /etc/apk/repositories \
   && apk add --no-cache \
+    "libcrypto3=3.5.9-r0" \
+    "libssl3=3.5.9-r0" \
+    "zlib=1.3.2-r1" \
     "curl=8.22.0-r0" \
     "tini=0.19.0-r3" \
     "su-exec=0.3-r0" \
@@ -52,6 +57,20 @@ RUN sed -i 's/\r$//' \
 # ne force PAS NODE_ENV ici: laisse Coolify le définir côté runtime
 COPY package*.json ./
 RUN npm ci --omit=dev
+
+# The final image executes `node dist/index.js`; it never invokes npm or
+# Corepack. They remain available in the builder stage for reproducible
+# installs, but removing their global dependency graph prevents package-manager
+# CVEs from becoming runtime attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  && rm -f \
+    /usr/local/bin/npm \
+    /usr/local/bin/npx \
+    /usr/local/bin/corepack \
+    /usr/local/bin/pnpm \
+    /usr/local/bin/pnpx \
+    /usr/local/bin/yarn \
+    /usr/local/bin/yarnpkg
 
 # Ship the exact migration inventory and runner with the release image. This
 # keeps operator-driven preflight/apply/status commands pinned to SOURCE_COMMIT

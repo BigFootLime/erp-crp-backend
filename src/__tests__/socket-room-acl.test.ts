@@ -200,6 +200,9 @@ describe("Socket.IO shared room ACL", () => {
   const activeUsers = new Set<number>();
   const moduleAccess = new Map<number, Set<string>>();
   const superadmins = new Set<number>();
+  const mfaRequiredUsers = new Set<number>();
+  const factorVersions = new Map<number, number>();
+  const auditRights = new Set<number>();
   const currentRoles = new Map<number, string>();
   const authorizationFailures = new Set<number>();
   const profileFailures = new Set<number>();
@@ -212,6 +215,7 @@ describe("Socket.IO shared room ACL", () => {
     activeUsers.clear();
     moduleAccess.clear();
     superadmins.clear();
+    mfaRequiredUsers.clear(); factorVersions.clear(); auditRights.clear();
     currentRoles.clear();
     authorizationFailures.clear();
     profileFailures.clear();
@@ -234,6 +238,7 @@ describe("Socket.IO shared room ACL", () => {
 
   function dependencies(): Partial<SocketAuthorizationDependencies> {
     return {
+      resolveSensitiveCapabilities: async (userId) => ({ active: activeUsers.has(userId), isSuperadmin: superadmins.has(userId), capabilities: auditRights.has(userId) ? ["audit.read"] : [] }),
       loadAccountAuthorization: async (userId) => {
         controlPlane.knownUsers.add(userId);
         if (authorizationFailures.has(userId)) throw new Error("synthetic authorization failure");
@@ -245,6 +250,9 @@ describe("Socket.IO shared room ACL", () => {
               primaryRole: role,
               roles: [role],
               sessionEpoch: controlPlane.epochs.get(userId) ?? 0,
+              mfaRequired: superadmins.has(userId) || mfaRequiredUsers.has(userId),
+              mfaFactorId: `factor-${userId}`,
+              mfaFactorVersion: factorVersions.get(userId) ?? 1,
             }
           : null;
       },
@@ -303,6 +311,7 @@ describe("Socket.IO shared room ACL", () => {
       payload.session_epoch = options.epoch ?? controlPlane.epochs.get(userId) ?? 0;
       payload.jti = `00000000-0000-4000-8000-${String(userId).padStart(12, "0")}`;
     }
+    if (superadmins.has(userId) || mfaRequiredUsers.has(userId)) Object.assign(payload, { mfa: true, amr: ["pwd", "totp"], mfa_factor_id: `factor-${userId}`, mfa_factor_version: factorVersions.get(userId) ?? 1 });
     return jwt.sign(payload, JWT_SECRET, {
       expiresIn: (options.expiresIn ?? "5m") as jwt.SignOptions["expiresIn"],
     });
@@ -530,6 +539,24 @@ describe("Socket.IO shared room ACL", () => {
     profileFailures.delete(31);
     await eventually(() => expect(transientEvents.map((event) => event.marker)).toEqual([1, 2]));
     await eventually(() => expect(healthyEvents.map((event) => event.marker)).toEqual([1, 2]));
+  });
+
+  it("rejects an otherwise valid privileged JWT without MFA or with a stale factor", async () => {
+    const server = await startServer();
+    superadmins.add(5);
+    const base = { id: 5, role: "Employee", session_epoch: 0, jti: "00000000-0000-4000-8000-000000000005" };
+    await expectRejected(server, 5, jwt.sign(base, JWT_SECRET, { expiresIn: "5m" }));
+    await expectRejected(server, 5, jwt.sign({ ...base, mfa: true, amr: ["pwd", "totp"], mfa_factor_id: "factor-5", mfa_factor_version: 0 }, JWT_SECRET, { expiresIn: "5m" }));
+  });
+
+  it("allows a nominated MFA audit reader and disconnects after factor replacement", async () => {
+    const server = await startServer();
+    mfaRequiredUsers.add(6); auditRights.add(6);
+    const reader = await connect(server, 6);
+    await eventually(() => expect([...server.runtime.io.sockets.sockets.values()].some(socket => socket.rooms.has("rt:capability:audit:read"))).toBe(true));
+    factorVersions.set(6, 2);
+    controlPlane.signal({ kind: "authorization_changed" });
+    await eventually(() => expect(reader.connected).toBe(false));
   });
 
   it("keeps user and audit events in server-assigned rooms", async () => {

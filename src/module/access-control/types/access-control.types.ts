@@ -1,13 +1,12 @@
 // Types partagés de la tour de contrôle des accès (#326 / back #200).
 
 export type ModuleAccessOverride = "GRANTED" | "DENIED";
-export type ModuleAccessDecision = ModuleAccessOverride | "INHERIT";
+export type ModuleAccessDecision = ModuleAccessOverride;
 export type ModuleAccessSource = "SUPERADMIN" | "OVERRIDE" | "DEFAULT";
 
 export type AccessEventType =
   | "GRANTED"
   | "DENIED"
-  | "INHERITED"
   | "DEFAULT_CHANGED"
   | "UNLOCK_ALL";
 

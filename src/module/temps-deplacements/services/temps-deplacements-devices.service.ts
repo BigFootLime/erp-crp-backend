@@ -15,7 +15,7 @@ import { isHrPrivileged, type Actor } from "./temps-deplacements-corrections.ser
 import { hashBadgeUid, hashDeviceToken } from "./temps-deplacements.service";
 
 function assertPrivileged(actor: Actor): void {
-  if (!isHrPrivileged(actor.role)) throw new HttpError(403, "HR_FORBIDDEN", "Gestion des bornes/badges réservée.");
+  if (!isHrPrivileged(actor)) throw new HttpError(403, "HR_FORBIDDEN", "Gestion des bornes/badges réservée.");
 }
 
 // Token opaque, imprévisible. Stocké HACHÉ ; renvoyé en clair UNE seule fois (pour configurer la borne).

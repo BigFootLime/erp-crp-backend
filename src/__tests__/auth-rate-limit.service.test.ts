@@ -77,6 +77,18 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
           ip: { limit: 2, windowMs },
         },
       },
+      accountRequest: {
+        failurePolicy: "closed-error",
+        dimensions: { email: { limit: 3, windowMs }, ip: { limit: 40, windowMs } },
+      },
+      accountRequestStatus: {
+        failurePolicy: "closed-error",
+        dimensions: { token: { limit: 20, windowMs }, ip: { limit: 240, windowMs } },
+      },
+      mfa: {
+        failurePolicy: "closed-error",
+        dimensions: { token: { limit: 10, windowMs }, ip: { limit: 30, windowMs } },
+      },
       forgotPassword: {
         failurePolicy: "closed-generic",
         dimensions: {
@@ -99,6 +111,32 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
 }
 
 describe("distributed auth rate limiter", () => {
+  it("admits twenty different employees behind one IP while keeping receipt and submission scopes separate", async () => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const limiter = new AuthRateLimiter(store, testConfig());
+    for (let employee = 0; employee < 20; employee += 1) {
+      await expect(limiter.check("accountRequest", [
+        { dimension: "ip", value: "ipv4:198.51.100.42" },
+        { dimension: "email", value: `employee-${employee}@example.test` },
+      ])).resolves.toMatchObject({ status: "allowed" });
+    }
+    const submissionIp = store.lastInputs.find((input) => input.scope.endsWith(":ip"));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await expect(limiter.check("accountRequestStatus", [
+        { dimension: "ip", value: "ipv4:198.51.100.42" },
+        { dimension: "token", value: "receipt-test-only" },
+      ])).resolves.toMatchObject({ status: "allowed" });
+    }
+    expect(store.lastInputs[0]?.scope).not.toBe(submissionIp?.scope);
+    await expect(limiter.check("accountRequestStatus", [
+      { dimension: "ip", value: "ipv4:198.51.100.42" },
+      { dimension: "token", value: "receipt-test-only" },
+    ])).resolves.toMatchObject({ status: "blocked" });
+    await expect(limiter.check("login", [
+      { dimension: "username", value: "OWNER" },
+    ])).resolves.toMatchObject({ status: "allowed" });
+  });
+
   it("shares counters across instances and survives an application restart", async () => {
     let now = Date.parse("2026-08-04T10:00:00.000Z");
     const sharedState = new Map<string, SharedCounter>();

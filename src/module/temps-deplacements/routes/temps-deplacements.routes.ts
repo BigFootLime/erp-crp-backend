@@ -6,10 +6,11 @@ import * as exp from "../controllers/temps-deplacements-exports.controller";
 import * as km from "../controllers/temps-deplacements-km.controller";
 import * as c from "../controllers/temps-deplacements.controller";
 import * as ops from "../controllers/temps-deplacements-operations.controller";
+import { requireHrSensitiveRead, requireHrSensitiveWrite } from "../middlewares/hr-sensitive-authorization.middleware";
 
 // Monté après le socle authenticateToken (v1.routes.ts) → JWT requis d'office.
-// Anti-IDOR : les routes salarié dérivent l'employé de req.user ; /employees/:id/* est gardé
-// (soi-même / manager / RH-Direction-Admin). Les deux commandes de borne autonomes
+// Anti-IDOR : les routes salarié dérivent l'employé de req.user ; /employees/:id/* conserve
+// le self-service et exige une habilitation RH pour un tiers. Les deux commandes de borne autonomes
 // sont isolées dans temps-deplacements-device.routes.ts avant ce socle.
 const router = Router();
 
@@ -18,76 +19,77 @@ router.post("/events", c.postEvent);
 router.get("/me/today", c.getMeToday);
 router.get("/me/week", c.getMeWeek);
 router.get("/me/anomalies", c.getMeAnomalies);
+router.get("/permissions", c.getPermissions);
 
-// Lecture périmètre (manager / RH) + anti-IDOR
+// Lecture d'un tiers avec habilitation RH nominative + anti-IDOR.
 router.get("/employees/:id/today", c.getEmployeeToday);
 router.get("/employees/:id/week", c.getEmployeeWeek);
 
 // Borne / device
 router.get("/device-config", c.getDeviceConfig);
 
-// T4 — corrections tracées (motif obligatoire, pas d'auto-validation) + validation responsable
+// T4 — corrections tracées (motif obligatoire, pas d'auto-validation).
 router.post("/adjustments", cor.postAdjustment); // salarié : demande sur ses données
-router.patch("/adjustments/:id/approve", cor.approveAdjustment); // responsable/RH
-router.patch("/adjustments/:id/reject", cor.rejectAdjustment); // responsable/RH
-router.get("/team/adjustments", cor.getTeamAdjustments); // demandes en attente (périmètre)
-router.get("/team/today", cor.getTeamToday); // relevé du jour de l'équipe
-router.get("/team/anomalies", cor.getTeamAnomalies); // anomalies équipe du jour
-router.patch("/days/:id/validate", cor.validateDay); // valide une journée
-router.patch("/weeks/:id/validate", cor.validateWeek); // valide une semaine
+router.patch("/adjustments/:id/approve", requireHrSensitiveWrite, cor.approveAdjustment);
+router.patch("/adjustments/:id/reject", requireHrSensitiveWrite, cor.rejectAdjustment);
+router.get("/team/adjustments", requireHrSensitiveRead, cor.getTeamAdjustments);
+router.get("/team/today", requireHrSensitiveRead, cor.getTeamToday);
+router.get("/team/anomalies", requireHrSensitiveRead, cor.getTeamAnomalies);
+router.patch("/days/:id/validate", requireHrSensitiveWrite, cor.validateDay);
+router.patch("/weeks/:id/validate", requireHrSensitiveWrite, cor.validateWeek);
 
 // SOL-24 — absences explicites et file d'actions responsable.
 router.post("/absences", ops.postAbsence);
 router.get("/absences/me", ops.getMyAbsences);
-router.get("/team/absences", ops.getTeamAbsences);
-router.patch("/absences/:id/approve", ops.approveAbsence);
-router.patch("/absences/:id/reject", ops.rejectAbsence);
-router.get("/team/operations-queue", ops.getOperationsQueue);
+router.get("/team/absences", requireHrSensitiveRead, ops.getTeamAbsences);
+router.patch("/absences/:id/approve", requireHrSensitiveWrite, ops.approveAbsence);
+router.patch("/absences/:id/reject", requireHrSensitiveWrite, ops.rejectAbsence);
+router.get("/team/operations-queue", requireHrSensitiveRead, ops.getOperationsQueue);
 
-// T5 — administration RH (règles / contrats / horaires). Réservé aux rôles privilégiés (service).
-router.get("/admin/employees", adm.getEmployees);
-router.get("/admin/employee-candidates", adm.getEmployeeCandidates);
-router.post("/admin/employees", adm.postEmployee);
-router.get("/admin/rule-sets", adm.getRuleSets);
-router.post("/admin/rule-sets", adm.postRuleSet);
-router.put("/admin/rule-sets/:id", adm.putRuleSet);
-router.patch("/admin/rule-sets/:id/active", adm.patchRuleSetActive);
-router.get("/admin/contracts", adm.getContracts);
-router.post("/admin/contracts", adm.postContract);
-router.put("/admin/contracts/:id", adm.putContract);
-router.patch("/admin/contracts/:id/active", adm.patchContractActive);
-router.get("/admin/schedules", adm.getSchedules);
-router.post("/admin/schedules", adm.postSchedule);
-router.put("/admin/schedules/:id", adm.putSchedule);
-router.delete("/admin/schedules/:id", adm.deleteScheduleHandler);
+// T5 — administration RH (règles / contrats / horaires), habilitation sensible obligatoire.
+router.get("/admin/employees", requireHrSensitiveRead, adm.getEmployees);
+router.get("/admin/employee-candidates", requireHrSensitiveRead, adm.getEmployeeCandidates);
+router.post("/admin/employees", requireHrSensitiveWrite, adm.postEmployee);
+router.get("/admin/rule-sets", requireHrSensitiveRead, adm.getRuleSets);
+router.post("/admin/rule-sets", requireHrSensitiveWrite, adm.postRuleSet);
+router.put("/admin/rule-sets/:id", requireHrSensitiveWrite, adm.putRuleSet);
+router.patch("/admin/rule-sets/:id/active", requireHrSensitiveWrite, adm.patchRuleSetActive);
+router.get("/admin/contracts", requireHrSensitiveRead, adm.getContracts);
+router.post("/admin/contracts", requireHrSensitiveWrite, adm.postContract);
+router.put("/admin/contracts/:id", requireHrSensitiveWrite, adm.putContract);
+router.patch("/admin/contracts/:id/active", requireHrSensitiveWrite, adm.patchContractActive);
+router.get("/admin/schedules", requireHrSensitiveRead, adm.getSchedules);
+router.post("/admin/schedules", requireHrSensitiveWrite, adm.postSchedule);
+router.put("/admin/schedules/:id", requireHrSensitiveWrite, adm.putSchedule);
+router.delete("/admin/schedules/:id", requireHrSensitiveWrite, adm.deleteScheduleHandler);
 
-// T7 — exports paie figés (CSV `;`+BOM / PDF) + checksum. Réservé aux rôles privilégiés (service).
-router.get("/admin/exports", exp.getExports);
-router.post("/admin/exports", exp.postExport);
-router.get("/admin/exports/:id/download", exp.downloadExport);
+// T7 — exports paie figés (CSV `;`+BOM / PDF) + checksum.
+router.get("/admin/exports", requireHrSensitiveRead, exp.getExports);
+router.post("/admin/exports", requireHrSensitiveWrite, exp.postExport);
+router.get("/admin/exports/:id/download", requireHrSensitiveRead, exp.downloadExport);
 
-// T6 — kilomètres. Salarié : déclare/soumet SES km (anti-IDOR). Responsable : périmètre + validation.
+// T6 — kilomètres. Salarié : déclare/soumet SES km (anti-IDOR); décisions sensibles dédiées.
 router.get("/kilometers/vehicles", km.getVehicles);
 router.post("/kilometers", km.postKm);
 router.get("/kilometers/me", km.getMyKm);
 router.patch("/kilometers/:id/submit", km.submitKm);
-router.get("/kilometers/team", km.getTeamKm);
-router.patch("/kilometers/:id/validate", km.validateKm);
-router.patch("/kilometers/:id/reject", km.rejectKm);
-router.post("/admin/vehicles", km.postVehicle);
-router.get("/admin/period-closures", ops.getClosures);
-router.post("/admin/period-closures", ops.postClosure);
-router.patch("/admin/period-closures/:id/reopen", ops.reopenClosure);
-router.get("/admin/kilometer-rates", ops.getKilometerRates);
-router.post("/admin/kilometer-rates", ops.postKilometerRate);
+router.get("/kilometers/team", requireHrSensitiveRead, km.getTeamKm);
+router.patch("/kilometers/:id/validate", requireHrSensitiveWrite, km.validateKm);
+router.patch("/kilometers/:id/reject", requireHrSensitiveWrite, km.rejectKm);
+router.post("/admin/vehicles", requireHrSensitiveWrite, km.postVehicle);
+router.get("/admin/period-closures", requireHrSensitiveRead, ops.getClosures);
+router.post("/admin/period-closures", requireHrSensitiveWrite, ops.postClosure);
+router.patch("/admin/period-closures/:id/reopen", requireHrSensitiveWrite, ops.reopenClosure);
+router.get("/admin/kilometer-rates", requireHrSensitiveRead, ops.getKilometerRates);
+router.post("/admin/kilometer-rates", requireHrSensitiveWrite, ops.postKilometerRate);
 
-// T8 — bornes & badges (provisioning). Réservé aux rôles privilégiés (service). Token borne renvoyé 1× à la création.
-router.get("/admin/devices", dev.getDevices);
-router.post("/admin/devices", dev.postDevice);
-router.patch("/admin/devices/:id/status", dev.patchDeviceStatus);
-router.post("/admin/devices/:id/rotate-token", dev.postDeviceRotate);
-router.get("/admin/badges", dev.getBadges);
-router.post("/admin/badges", dev.postBadge);
-router.patch("/admin/badges/:id/revoke", dev.revokeBadgeHandler);
+// T8 — bornes & badges (provisioning), habilitation sensible obligatoire. Token borne renvoyé 1× à la création.
+router.get("/admin/devices", requireHrSensitiveRead, dev.getDevices);
+router.post("/admin/devices", requireHrSensitiveWrite, dev.postDevice);
+router.patch("/admin/devices/:id/status", requireHrSensitiveWrite, dev.patchDeviceStatus);
+router.post("/admin/devices/:id/rotate-token", requireHrSensitiveWrite, dev.postDeviceRotate);
+router.get("/admin/badges", requireHrSensitiveRead, dev.getBadges);
+router.post("/admin/badges", requireHrSensitiveWrite, dev.postBadge);
+router.patch("/admin/badges/:id/revoke", requireHrSensitiveWrite, dev.revokeBadgeHandler);
 
 export default router;

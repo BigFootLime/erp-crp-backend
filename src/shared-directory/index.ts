@@ -16,6 +16,6 @@ async function start(){
  const keys=()=>readDirectoryCallerKeys(file);
  const server=createDirectoryServer({db:pool,directoryId:directoryIdSchema.parse(process.env.CERP_SHARED_DIRECTORY_ID),sourceJwtSecret:process.env.JWT_SECRET,keys,registrationOpen:process.env.CERP_DIRECTORY_TEST_REGISTRATION_OPEN==='true',registrationHashKey:process.env.AUTH_RATE_LIMIT_HASH_KEY});
  await server.initialize();const listener=server.app.listen(8085,'127.0.0.1');
- const stop=()=>listener.close(()=>{void pool.end().finally(()=>process.exit(0));});process.once('SIGTERM',stop);process.once('SIGINT',stop);
+ const stop=()=>{server.close();listener.close(()=>{void pool.end().finally(()=>process.exit(0));});};process.once('SIGTERM',stop);process.once('SIGINT',stop);
 }
 void start().catch(()=>{console.error('DIRECTORY_STARTUP_FAILED');void pool.end().finally(()=>{process.exitCode=1;});});

@@ -72,7 +72,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Facturation",
     description: "Factures, avoirs, règlements, relances et tarification.",
     category: "Commerce",
-    api_prefixes: ["/electronic-invoicing", "/supplier-invoices", "/factures", "/proformas", "/avoirs", "/paiements", "/tarification", "/adv-reminders"],
+    api_prefixes: ["/electronic-invoicing", "/supplier-invoices", "/factures", "/proformas", "/avoirs", "/paiements", "/tarification", "/adv-reminders", "/accounting-exports"],
     nav_page_keys: ["factures", "relances"],
     is_protected: false,
     sort_order: 60,
@@ -105,7 +105,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     // The work-package ledger is part of procurement custody, not a shared
     // endpoint.  Keeping this prefix here makes the account module gate deny it
     // when the purchasing module is disabled.
-    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals", "/subcontract-work-packages"],
+    api_prefixes: ["/commandes-fournisseurs", "/replenishment-proposals", "/subcontract-work-packages", "/procurement-reliability"],
     nav_page_keys: ["commandes-fournisseurs"],
     is_protected: false,
     sort_order: 90,
@@ -118,6 +118,8 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     api_prefixes: [
       "/pieces-techniques",
       "/piece-technique-versions",
+      "/pieces-families",
+      "/methodes",
       "/gammes",
       "/dossiers",
     ],
@@ -158,14 +160,12 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
   {
     module_key: "production",
     label: "Production",
-    description: "Ordres de fabrication, planning, pointages et poste opérateur.",
+    description: "Ordres de fabrication, pointages et poste opérateur.",
     category: "Production",
-    api_prefixes: ["/production", "/planning", "/programmations"],
+    api_prefixes: ["/production", "/programmations"],
     nav_page_keys: [
       "production-dashboard",
       "machines-postes",
-      "production-planning",
-      "production-calendars",
       "production-readiness",
       "production-execution",
       "atelier-station",
@@ -174,6 +174,16 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     ],
     is_protected: false,
     sort_order: 110,
+  },
+  {
+    module_key: "planning",
+    label: "Planning",
+    description: "Ordonnancement des OF et calendriers de capacité.",
+    category: "Production",
+    api_prefixes: ["/planning"],
+    nav_page_keys: ["production-planning", "production-calendars"],
+    is_protected: false,
+    sort_order: 111,
   },
   {
     module_key: "qualite",
@@ -325,7 +335,8 @@ function normalizePath(path: string): string {
 /**
  * Résout la clé de module d'un chemin d'API. Le plus long préfixe gagne, et un
  * préfixe ne correspond que sur une frontière de segment : « /commandes » ne doit
- * jamais capter « /commandes-fournisseurs ». Retourne `null` pour les surfaces
+ * jamais capter « /commandes-fournisseurs ». Retourne
+ull` pour les surfaces
  * d'infrastructure partagée (/auth, /users, /codes, /notifications…), qui ne sont
  * rattachées à aucun module et ne sont donc jamais filtrées.
  */
@@ -338,4 +349,30 @@ export function resolveModuleKeyForPath(path: string | null | undefined): string
     }
   }
   return null;
+}
+
+const SHARED_COMMERCIAL_REFERENCE_READS: Readonly<Record<string, readonly string[]>> = {
+  "/conditions-paiement": ["clients", "devis"],
+  "/compte-vente": ["clients", "devis"],
+};
+
+/**
+ * Resolves the only two commercial reference readers shared by Clients and
+ * Devis. This is exact-path GET handling: nested paths, mutations and every
+ * other Devis route keep their ordinary single-module resolution.
+ */
+export function resolveModuleAccessKeysForRequest(
+  path: string | null | undefined,
+  method: string | null | undefined
+): readonly string[] | null {
+  if (typeof path !== "string" || path.length === 0) return null;
+
+  const normalized = normalizePath(path);
+  if (method?.toUpperCase() === "GET") {
+    const shared = SHARED_COMMERCIAL_REFERENCE_READS[normalized];
+    if (shared) return shared;
+  }
+
+  const moduleKey = resolveModuleKeyForPath(normalized);
+  return moduleKey ? [moduleKey] : null;
 }

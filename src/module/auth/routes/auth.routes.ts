@@ -29,6 +29,7 @@ import { testRegistration, testRegistrationOptions } from '../controllers/test-r
 import { uploadOwnAvatar } from '../controllers/avatar.controller';
 import { createSecureUpload } from '../../../shared/uploads/secure-upload';
 import {getSelfProfile,patchSelfProfile} from '../controllers/self-profile.controller';
+import { publicAccountRequestRouter } from '../../account-requests/account-requests.routes';
 
 const router: Router = Router();
 const avatarUpload = createSecureUpload('image', {maxFiles:1});
@@ -41,6 +42,7 @@ router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);
 router.post('/activate', resetPasswordRateLimit, activateAccount);
+router.use(publicAccountRequestRouter);
 router.get(
   '/me',
   authenticateToken,

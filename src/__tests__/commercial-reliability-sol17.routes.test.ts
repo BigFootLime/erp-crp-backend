@@ -1,8 +1,11 @@
+import { ALL_FIXTURE_SENSITIVE_RIGHTS, attachSensitiveAccountFixture } from "./helpers/sensitive-account-fixture";
+vi.mock("../module/access-control/repository/sensitive-capabilities.repository", async () => ({ repoAccountSensitiveCapabilities: (await import("./helpers/sensitive-account-fixture")).readSensitiveAccountFixture }));
 import { EventEmitter } from "events";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  currentRights: { value: [] as readonly import("../module/access-control/domain/sensitive-capabilities").SensitiveCapability[] },
   currentRole: { value: "Directeur" as string | null },
   overview: vi.fn(),
   timeline: vi.fn(),
@@ -42,6 +45,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
       primary_role: mocks.currentRole.value,
       roles: [mocks.currentRole.value],
     };
+    attachSensitiveAccountFixture(req as import("express").Request, mocks.currentRights.value);
     next();
   },
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -65,6 +69,7 @@ const BASE = "/api/v1/reporting/commercial/reliability";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.currentRole.value = "Directeur";
+    mocks.currentRights.value = ALL_FIXTURE_SENSITIVE_RIGHTS;
   mocks.overview.mockResolvedValue({ envelope: { contract_version: "CERP-COMMERCIAL-1.0.0" }, exceptions: [] });
   mocks.timeline.mockResolvedValue({ commande_id: 9, events: [] });
   mocks.reminder.mockResolvedValue({ event_id: "evt", devis_id: 4, idempotent_replay: false });
@@ -80,6 +85,7 @@ describe("SOL-17 commercial reliability RBAC and contracts", () => {
     mocks.currentRole.value = null;
     expect((await request(app).get(`${BASE}/overview`).query({ from: "2026-01-01", to: "2026-08-12" })).status).toBe(401);
     mocks.currentRole.value = "Operateur";
+    mocks.currentRights.value = [];
     expect((await request(app).get(`${BASE}/overview`).query({ from: "2026-01-01", to: "2026-08-12" })).status).toBe(403);
   });
 
@@ -93,6 +99,7 @@ describe("SOL-17 commercial reliability RBAC and contracts", () => {
 
   it("requires an idempotency key for reminders", async () => {
     mocks.currentRole.value = "Commercial";
+    mocks.currentRights.value = [];
     const missing = await request(app).post(`${BASE}/quotes/4/reminders`).send({ channel: "EMAIL" });
     expect(missing.status).toBe(400);
     expect(mocks.reminder).not.toHaveBeenCalled();
@@ -107,6 +114,7 @@ describe("SOL-17 commercial reliability RBAC and contracts", () => {
 
   it("prevents a standard user from recording a loss", async () => {
     mocks.currentRole.value = "Operateur";
+    mocks.currentRights.value = [];
     const response = await request(app)
       .post(`${BASE}/quotes/4/loss`)
       .set("Idempotency-Key", "sol17-loss-0001")
@@ -117,6 +125,7 @@ describe("SOL-17 commercial reliability RBAC and contracts", () => {
 
   it("reserves discount decisions and order cancellation to Direction/Admin", async () => {
     mocks.currentRole.value = "Commercial";
+    mocks.currentRights.value = [];
     const forbidden = await request(app)
       .post(`${BASE}/quotes/4/discount-decisions`)
       .set("Idempotency-Key", "sol17-decision-0001")
@@ -124,6 +133,7 @@ describe("SOL-17 commercial reliability RBAC and contracts", () => {
     expect(forbidden.status).toBe(403);
 
     mocks.currentRole.value = "Directeur";
+    mocks.currentRights.value = ALL_FIXTURE_SENSITIVE_RIGHTS;
     const cancel = await request(app)
       .post(`${BASE}/orders/9/cancel`)
       .set("Idempotency-Key", "sol17-cancel-0001")

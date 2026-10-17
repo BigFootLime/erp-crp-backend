@@ -109,6 +109,7 @@ const AUTHORITATIVE_SOURCES = [
 export type ChainParams = {
   seed: TraceabilityNodeRef;
   role: string | null | undefined;
+  moduleGranted?: boolean;
   direction?: TraceabilityDirection;
   asOf?: string | null;
   maxDepth?: number;
@@ -186,7 +187,7 @@ const COVERAGE_STATE_LABELS: Record<TraceabilityCoverage["state"], string> = {
 export async function svcGetTraceabilityChain(
   params: ChainParams
 ): Promise<TraceabilityChainResponse> {
-  const caps = capabilitiesForRole(params.role);
+  const caps = capabilitiesForRole(params.role, params.moduleGranted);
 
   if (!nodeIdShapeIsValid(params.seed)) {
     throw new HttpError(
@@ -332,6 +333,7 @@ export async function svcGetTraceabilityChain(
 export async function svcExpandTraceabilityNode(params: {
   node: TraceabilityNodeRef;
   role: string | null | undefined;
+  moduleGranted?: boolean;
   direction: TraceabilityDirection;
   asOf?: string | null;
   maxNodes?: number;
@@ -340,6 +342,7 @@ export async function svcExpandTraceabilityNode(params: {
   return svcGetTraceabilityChain({
     seed: params.node,
     role: params.role,
+    moduleGranted: params.moduleGranted,
     direction: params.direction,
     asOf: params.asOf,
     maxDepth: 1,
@@ -356,11 +359,12 @@ export async function svcExpandTraceabilityNode(params: {
 export async function svcSearchTraceability(params: {
   term: string;
   role: string | null | undefined;
+  moduleGranted?: boolean;
   types?: TraceabilityNodeType[] | null;
   limit?: number;
   offset?: number;
 }): Promise<TraceabilitySearchResponse> {
-  const caps = capabilitiesForRole(params.role);
+  const caps = capabilitiesForRole(params.role, params.moduleGranted);
   const limit = clampSearchLimit(params.limit);
   const offset = Math.max(0, Math.trunc(params.offset ?? 0));
   const term = params.term.trim();
@@ -411,6 +415,7 @@ const IMPACT_TARGET_TYPES: ReadonlySet<TraceabilityNodeType> = new Set<Traceabil
 export async function svcPreviewTraceabilityImpact(params: {
   seed: TraceabilityNodeRef;
   role: string | null | undefined;
+  moduleGranted?: boolean;
   since?: string | null;
   asOf?: string | null;
   maxDepth?: number;
@@ -419,6 +424,7 @@ export async function svcPreviewTraceabilityImpact(params: {
   const chain = await svcGetTraceabilityChain({
     seed: params.seed,
     role: params.role,
+    moduleGranted: params.moduleGranted,
     direction: "downstream",
     asOf: params.asOf,
     maxDepth: clampDepth(params.maxDepth ?? 6),
