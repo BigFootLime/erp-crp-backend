@@ -10,6 +10,7 @@ import { getRealtimeReadiness } from "../../sockets/sockeServer";
 import { checkOperationalMediaStorage } from "../../module/operational-media/services/operational-media-health.service";
 import { setDependencyState, setGedCapacity, setGedQuarantineMetrics } from "./metrics";
 import { runtimeMetadata } from "./runtime";
+import { getBackgroundRuntimeReadiness, type BackgroundRuntimeReadiness } from "../runtime/background-runtime";
 
 export type HealthStatus = "up" | "down" | "degraded";
 export type HealthDependency = "database" | "ged_storage" | "operational_media_storage" | "antivirus" | "realtime";
@@ -33,6 +34,7 @@ export type ReadinessReport = Readonly<{
   environment: string;
   observed_at: string;
   checks: Record<HealthDependency, HealthCheck>;
+  background_runtime?: BackgroundRuntimeReadiness;
 }>;
 
 type HealthProbeDependencies = Readonly<{
@@ -233,11 +235,14 @@ export async function collectReadiness(
     setDependencyState(name, checks[name].status === "up", checks[name].latency_ms);
   }
 
-  const ready = ALL_DEPENDENCIES.every((name) => !checks[name].required || checks[name].status === "up");
+  const backgroundRuntime = getBackgroundRuntimeReadiness();
+  const ready = ALL_DEPENDENCIES.every((name) => !checks[name].required || checks[name].status === "up")
+    && backgroundRuntime.ready;
   return {
     status: ready ? "ready" : "not_ready",
     ...runtimeMetadata,
     observed_at: new Date().toISOString(),
     checks,
+    background_runtime: backgroundRuntime,
   };
 }
