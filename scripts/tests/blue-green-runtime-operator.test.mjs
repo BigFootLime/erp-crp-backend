@@ -1,17 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ApacheRouteAdapter, TraefikFileRouteAdapter, promoteTwoHosts, sha256 } from "../blue-green-runtime-operator.mjs";
+import { ApacheRouteAdapter, RemoteRouteAdapter, TraefikFileRouteAdapter, promoteTwoHosts, sha256 } from "../blue-green-runtime-operator.mjs";
 
 const traefik = (name) => "http:\n  routers:\n    api:\n      rule: PathPrefix(\"/api\")\n      service: " + name + "\n    ws:\n      rule: PathPrefix(\"/socket.io\")\n      service: " + name + "\n  services:\n    old: {}\n    green: {}\n";
 const apache = (url) => "ProxyPass /api/ " + url + "/api/\nProxyPassReverse /api/ " + url + "/api/\nProxyPass /socket.io/ " + url + "/socket.io/\nProxyPassReverse /socket.io/ " + url + "/socket.io/\n";
 const VERSION = "b".repeat(40);
 const makePlan = (baseUrl, vps = traefik("old"), hyper = apache("http://127.0.0.1:8080")) => ({ schema: "cerp-blue-green-v1", waitMs: 5000, capacity: { vpsFreeGiB: 20 }, hosts: { vps: { endpoint: "vps" }, hyper: { endpoint: "hyper" } }, baseline: { hosts: { vps: { sha256: sha256(vps) }, hyper: { sha256: sha256(hyper) } } }, legacyWorkerDrain: { required: true }, routes: { http: { host: "erp", target: "old" }, websocket: { host: "erp", target: "old" } }, candidate: { id: "green", baseUrl, version: VERSION, role: "api", imageDigest: "sha256:" + "a".repeat(64), publicLabels: false, routes: { vps: "green", hyper: { http: "http://127.0.0.1:8082", websocket: "http://127.0.0.1:8082" } } } });
+const fixture = (name) => readFile(new URL(`./fixtures/blue-green-runtime/${name}`, import.meta.url), "utf8");
 async function backend(identity) {
   const open = new Set(), server = http.createServer((req, res) => {
     if (req.url === "/health/ready") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ version: VERSION, background_runtime: { role: "api", ready: true } }));
@@ -46,6 +47,35 @@ test("concrete Traefik route file makes HTTP and WebSocket move old to new to ol
   const old = await backend("old"), green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), path = join(root, "dynamic.yml");
   await writeFile(path, traefik("old")); const adapter = new TraefikFileRouteAdapter(path, { httpRouter: "api", websocketRouter: "ws" }), proxy = await frontDoor(path, adapter, { old, green });
   try { await prove(proxy.baseUrl, "old"); let before = await adapter.read(); await adapter.replace(before.hash, adapter.plan(before.text, "green")); await prove(proxy.baseUrl, "green"); before = await adapter.read(); await adapter.replace(before.hash, adapter.plan(before.text, "old")); await prove(proxy.baseUrl, "old"); } finally { await proxy.close(); await old.close(); await green.close(); }
+});
+test("sanitized live provider fixtures retain unrelated Traefik and Apache GED/test mappings", async () => {
+  const [vpsText, hyperText] = await Promise.all([fixture("vps-cerp-web-same-origin-routing.sanitized.yaml"), fixture("hyper-cerp-local.sanitized.conf")]);
+  const vps = new TraefikFileRouteAdapter("/data/coolify/proxy/dynamic/cerp-web-same-origin-routing.yaml", { httpRouter: "cerp-web-api", websocketRouter: "cerp-web-socket" });
+  const hyper = new ApacheRouteAdapter("/etc/apache2/sites-enabled/cerp-local.conf");
+  assert.deepEqual(vps.targets(vpsText), { http: "https-0-rcccokw0wgcw0ck44g0wk0ck@docker", websocket: "https-0-rcccokw0wgcw0ck44g0wk0ck@docker" });
+  const vpsPlanned = vps.plan(vpsText, "cerp-api-candidate@file");
+  assert.match(vpsPlanned, /cerp-web-ui@docker/);
+  const target = { http: "http://127.0.0.1:8086/api/", websocket: "ws://127.0.0.1:8086/socket.io/" };
+  const hyperPlanned = hyper.plan(hyperText, target);
+  assert.deepEqual(hyper.targets(hyperPlanned), target);
+  for (const retained of ["http://127.0.0.1:8082/api/", "http://127.0.0.1:8084/api/", "ws://127.0.0.1:8082/socket.io/", "ws://127.0.0.1:8084/socket.io/", "retry=0"]) assert.match(hyperPlanned, new RegExp(retained.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")));
+});
+test("remote adapter requires lock, hash CAS, and confirmed reload verification", async () => {
+  const text = await fixture("vps-cerp-web-same-origin-routing.sanitized.yaml"); let stored = text, lock = false;
+  const transport = {
+    acquireRouteLock: async () => { assert.equal(lock, false); lock = true; return "lease"; },
+    releaseRouteLock: async ({ token }) => { assert.equal(token, "lease"); lock = false; return { released: true }; },
+    readRoute: async () => ({ text: stored, sha256: sha256(stored) }),
+    compareAndSwapRoute: async ({ expectedHash, text: next, sha256: nextHash }) => { assert.equal(sha256(stored), expectedHash); stored = next; return { applied: true, sha256: nextHash }; },
+    reloadAndVerifyRoute: async ({ target }) => ({ reloaded: true, providerReadable: true, verified: target === "cerp-api-candidate@file" }),
+  };
+  const adapter = new RemoteRouteAdapter({ endpoint: "vps", path: "/data/coolify/proxy/dynamic/cerp-web-same-origin-routing.yaml", format: new TraefikFileRouteAdapter("/unused", { httpRouter: "cerp-web-api", websocketRouter: "cerp-web-socket" }), transport });
+  const release = await adapter.acquireLock(); const baseline = await adapter.read(); await adapter.replace(baseline.sha256, adapter.plan(baseline.text, "cerp-api-candidate@file")); await adapter.verify("cerp-api-candidate@file"); await release(); assert.equal(lock, false);
+});
+test("route replacement retains the original file mode", { skip: process.platform !== "linux" }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "cerp-bg-")), path = join(root, "dynamic.yml"), adapter = new TraefikFileRouteAdapter(path, { httpRouter: "api", websocketRouter: "ws" });
+  await writeFile(path, traefik("old")); await chmod(path, 0o640); const before = await adapter.read(); await adapter.replace(before.hash, adapter.plan(before.text, "green"));
+  assert.equal((await stat(path)).mode & 0o777, 0o640);
 });
 test("failed HYPER switch CAS-restores VPS and proves old HTTP and WebSocket identity", async () => {
   const old = await backend("old"), green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");

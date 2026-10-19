@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 const MAX_WAIT_MS = 30_000;
@@ -26,12 +26,21 @@ async function acquireExternalLock(path) {
 }
 async function withRouteLocks(adapters, fn) {
   assert.ok(Object.values(adapters).every((adapter) => typeof adapter.path === "string" && adapter.path.length > 0), "each route adapter requires a lock path");
-  const paths = [...new Set(Object.values(adapters).map((adapter) => adapter.path))].sort();
+  const paths = Object.entries(adapters).map(([name, adapter]) => ({ name, adapter })).sort((a, b) => `${a.name}:${a.adapter.path}`.localeCompare(`${b.name}:${b.adapter.path}`));
   const releases = [];
-  try { for (const path of paths) releases.push(await acquireExternalLock(path)); return await fn(); }
+  try { for (const { adapter } of paths) releases.push(await (adapter.acquireLock?.() ?? acquireExternalLock(adapter.path))); return await fn(); }
   finally { for (const release of releases.reverse()) await release(); }
 }
 export const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+function sameUpstreamOrigin(left, right) {
+  if (left === right) return true;
+  try {
+    const a = new URL(left), b = new URL(right);
+    assert.equal(a.username + a.password + b.username + b.password, "", "upstream credentials are not allowed");
+    return a.hostname.toLowerCase() === b.hostname.toLowerCase() && a.port === b.port;
+  } catch { return false; }
+}
+function assertSameUpstreamOrigin(left, right, message) { assert.equal(sameUpstreamOrigin(left, right), true, message); }
 
 export function validatePlan(plan) {
   assert.equal(plan.schema, "cerp-blue-green-v1");
@@ -40,7 +49,7 @@ export function validatePlan(plan) {
   assert.match(plan.candidate.imageDigest, DIGEST, "candidate image must be digest pinned");
   assert.equal(plan.candidate.publicLabels, false, "candidate must not have public labels");
   assert.equal(plan.capacity.vpsFreeGiB >= 20, true, "VPS disk reserve is below 20 GiB");
-  assert.equal(plan.routes.http.target, plan.routes.websocket.target, "HTTP and WebSocket targets must match");
+  assertSameUpstreamOrigin(plan.routes.http.target, plan.routes.websocket.target, "HTTP and WebSocket targets must use the same upstream host and port");
   assert.equal(plan.routes.http.host, plan.routes.websocket.host, "HTTP and WebSocket hosts must match");
   assert.ok(["vps", "hyper"].every((name) => plan.hosts[name]?.endpoint), "VPS and HYPER endpoints are required");
   assert.equal(plan.legacyWorkerDrain.required, true, "legacy worker drain must be explicit");
@@ -84,9 +93,10 @@ export class FileRouteAdapter {
   }
   async replace(expectedHash, text) {
     return this.locked(async () => {
+      const info = await lstat(this.path); assert.ok(info.isFile() && !info.isSymbolicLink(), "route file must be a regular non-symlink");
       const current = await this.read(); assert.equal(current.hash, expectedHash, "route baseline changed");
       const temporary = this.path + "." + randomUUID() + ".next"; let handle;
-      try { handle = await open(temporary, "wx", 0o600); await handle.writeFile(text); await handle.sync(); await handle.close(); handle = undefined; await rename(temporary, this.path); await syncParent(this.path); assert.equal((await this.read()).hash, sha256(text), "route write verification failed"); return current; }
+      try { handle = await open(temporary, "wx", info.mode & 0o777); await handle.writeFile(text); await handle.sync(); await handle.close(); handle = undefined; await chmod(temporary, info.mode & 0o777); await rename(temporary, this.path); await syncParent(this.path); assert.equal((await this.read()).hash, sha256(text), "route write verification failed"); return current; }
       finally { await handle?.close(); await unlink(temporary).catch(() => {}); }
     });
   }
@@ -121,31 +131,85 @@ export class TraefikFileRouteAdapter extends FileRouteAdapter {
     return result;
   }
 }
-/** Edits only API and Socket.IO ProxyPass/ProxyPassReverse upstreams. */
+/**
+ * Edits the primary API and Socket.IO ProxyPass upstreams and only their
+ * matching ProxyPassReverse directives.  Additional reverse mappings are
+ * application exceptions (for example GED/test listeners) and are retained.
+ */
 export class ApacheRouteAdapter extends FileRouteAdapter {
   constructor(path, { apiPath = "/api/", websocketPath = "/socket.io/" } = {}) { super(path); this.apiPath = apiPath; this.websocketPath = websocketPath; }
   targets(text) {
-    const result = {};
+    const result = {}, reverses = {};
     for (const line of text.split(/\r?\n/)) {
-      const match = line.match(/^\s*ProxyPass(?:Reverse)?\s+(\/[^\s]+)\s+(\S+)\s*$/i);
-      if (!match || ![this.apiPath, this.websocketPath].includes(match[1])) continue;
-      const key = match[1] === this.apiPath ? "http" : "websocket";
-      if (result[key] && result[key] !== match[2]) throw new Error("Apache directives disagree");
-      result[key] = match[2];
+      const match = line.match(/^\s*(ProxyPass(?:Reverse)?)\s+(\/[^\s]+)\s+(\S+)(?:\s+.*)?$/i);
+      if (!match || ![this.apiPath, this.websocketPath].includes(match[2])) continue;
+      const key = match[2] === this.apiPath ? "http" : "websocket";
+      if (match[1].toLowerCase() === "proxypass") {
+        assert.equal(result[key], undefined, `Apache ${key} has multiple primary ProxyPass directives`);
+        result[key] = match[3];
+      } else (reverses[key] ??= []).push(match[3]);
     }
     assert.ok(result.http, "Apache API ProxyPass is missing"); assert.ok(result.websocket, "Apache Socket.IO ProxyPass is missing");
+    for (const key of ["http", "websocket"]) assert.equal(reverses[key]?.filter((upstream) => upstream === result[key]).length, 1, `Apache ${key} primary ProxyPassReverse is missing or ambiguous`);
     return result;
   }
   plan(text, target) {
-    this.targets(text); let api = 0, websocket = 0;
+    assertSameUpstreamOrigin(target.http, target.websocket, "Apache API and WebSocket targets must use the same upstream host and port");
+    const prior = this.targets(text); let api = 0, websocket = 0, apiReverse = 0, websocketReverse = 0;
     const result = text.split(/(\r?\n)/).map((line) => {
-      const match = line.match(/^(\s*ProxyPass(?:Reverse)?\s+)(\/[^\s]+)(\s+)\S+(\s*)$/i); if (!match) return line;
-      if (match[2] === this.apiPath) { api += 1; return match[1] + match[2] + match[3] + target.http + match[4]; }
-      if (match[2] === this.websocketPath) { websocket += 1; return match[1] + match[2] + match[3] + target.websocket + match[4]; }
-      return line;
+      const match = line.match(/^(\s*)(ProxyPass(?:Reverse)?)(\s+)(\/[^\s]+)(\s+)(\S+)(.*)$/i); if (!match) return line;
+      const key = match[4] === this.apiPath ? "http" : match[4] === this.websocketPath ? "websocket" : undefined;
+      if (!key) return line;
+      const reverse = match[2].toLowerCase() === "proxypassreverse";
+      if (!reverse) {
+        if (key === "http") api += 1; else websocket += 1;
+        return match[1] + match[2] + match[3] + match[4] + match[5] + target[key] + match[7];
+      }
+      if (match[6] !== prior[key]) return line;
+      if (key === "http") apiReverse += 1; else websocketReverse += 1;
+      return match[1] + match[2] + match[3] + match[4] + match[5] + target[key] + match[7];
     }).join("");
-    assert.ok(api >= 1 && websocket >= 1, "Apache route edit did not update HTTP and WebSocket");
+    assert.equal(api, 1, "Apache route edit did not update API exactly once"); assert.equal(websocket, 1, "Apache route edit did not update Socket.IO exactly once");
+    assert.equal(apiReverse, 1, "Apache route edit did not update primary API reverse exactly once"); assert.equal(websocketReverse, 1, "Apache route edit did not update primary Socket.IO reverse exactly once");
     assert.deepEqual(this.targets(result), target, "Apache route readback differs"); return result;
+  }
+}
+/**
+ * Host-aware adapter boundary. Its transport owns the remote SSH execution;
+ * it must implement remote locking, hash CAS, and reload-plus-front-door
+ * verification. This module intentionally supplies no shell fallback.
+ */
+export class RemoteRouteAdapter {
+  constructor({ endpoint, path, format, transport }) {
+    assert.ok(typeof endpoint === "string" && endpoint.length > 0, "remote endpoint is required");
+    assert.ok(typeof path === "string" && path.startsWith("/"), "remote route path is required");
+    assert.ok(format && typeof format.targets === "function" && typeof format.plan === "function", "remote route format is required");
+    for (const method of ["acquireRouteLock", "releaseRouteLock", "readRoute", "compareAndSwapRoute", "reloadAndVerifyRoute"]) assert.equal(typeof transport?.[method], "function", `remote transport.${method} is required`);
+    this.endpoint = endpoint; this.path = path; this.format = format; this.transport = transport;
+    this.targetKind = format instanceof ApacheRouteAdapter ? "apache" : "traefik";
+  }
+  async acquireLock() {
+    const token = await this.transport.acquireRouteLock({ endpoint: this.endpoint, path: this.path });
+    assert.ok(typeof token === "string" && token.length > 0, "remote route lock token is required");
+    return async () => { const result = await this.transport.releaseRouteLock({ endpoint: this.endpoint, path: this.path, token }); assert.equal(result?.released, true, "remote route lock release failed"); };
+  }
+  async read() {
+    const result = await this.transport.readRoute({ endpoint: this.endpoint, path: this.path });
+    assert.equal(typeof result?.text, "string", "remote route read text is required");
+    assert.equal(result.sha256, sha256(result.text), "remote route read hash is invalid");
+    return result;
+  }
+  targets(text) { return this.format.targets(text); }
+  plan(text, target) { return this.format.plan(text, target); }
+  async replace(expectedHash, text) {
+    const result = await this.transport.compareAndSwapRoute({ endpoint: this.endpoint, path: this.path, expectedHash, text, sha256: sha256(text) });
+    assert.equal(result?.applied, true, "remote route CAS was not applied"); assert.equal(result.sha256, sha256(text), "remote route CAS hash is invalid");
+    const readback = await this.read();
+    assert.equal(readback.sha256, sha256(text), "remote route CAS readback failed");
+  }
+  async verify(target) {
+    const result = await this.transport.reloadAndVerifyRoute({ endpoint: this.endpoint, path: this.path, target });
+    assert.equal(result?.reloaded, true, "remote route reload was not confirmed"); assert.equal(result?.providerReadable, true, "remote routing provider did not confirm the route file is readable"); assert.equal(result?.verified, true, "remote route front-door verification was not confirmed");
   }
 }
 async function restore(adapter, snapshot, changedHash, priorTarget) {
@@ -161,9 +225,9 @@ async function reconcile(adapter, snapshot, candidateText) {
 }
 function hostTarget(plan, name, adapter) {
   const target = plan.candidate.routes?.[name] ?? plan.candidate.id;
-  if (adapter instanceof ApacheRouteAdapter) {
+  if (adapter instanceof ApacheRouteAdapter || adapter.targetKind === "apache") {
     assert.equal(typeof target, "object", "Apache candidate target must specify API and WebSocket upstreams");
-    assert.equal(target.http, target.websocket, "Apache API and WebSocket target must match");
+    assertSameUpstreamOrigin(target.http, target.websocket, "Apache API and WebSocket targets must use the same upstream host and port");
   }
   return target;
 }
