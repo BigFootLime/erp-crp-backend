@@ -2,6 +2,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { retiredAccountPredicate } from "../domain/account-retirement";
 import { ensureImagesSubdir, getImagesRootPath } from "../../../utils/imageStorage";
 import { promoteSecureUpload } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
@@ -42,7 +43,7 @@ export async function uploadUserAvatar(input: {userId:number;actorId:number;key:
       if(current?.profile_picture_asset?.asset_id!==row.asset_id) throw new HttpError(409,"AVATAR_REPLACED","Une autre image a été enregistrée depuis. Rechargez le profil.");
       return {profile_picture_asset:current.profile_picture_asset,replayed:true};
     }
-    const target=await tx.query("SELECT id FROM public.users WHERE id=$1 FOR UPDATE",[input.userId]);
+    const target=await tx.query(`SELECT id FROM public.users WHERE id=$1 AND ${retiredAccountPredicate("users")} FOR UPDATE`,[input.userId]);
     if(!target.rows[0]) throw new HttpError(404,"USER_NOT_FOUND","Utilisateur introuvable.");
     const durable=await promoteSecureUpload(input.file,ensureImagesSubdir("avatars"));
     const key=path.relative(getImagesRootPath(),durable).split(path.sep).join("/");

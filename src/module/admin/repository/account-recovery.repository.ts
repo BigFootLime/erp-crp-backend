@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { retiredAccountPredicate } from "../../auth/domain/account-retirement";
 export async function isAccountRecoveryEnabled(tx: PoolClient): Promise<boolean> {
     const result = await tx.query<{ enabled: boolean }>(`SELECT value_text='true' AS enabled
       FROM public.erp_settings WHERE key='security.account_recovery_enabled' FOR SHARE`);
@@ -33,7 +34,8 @@ export async function lockRecoveryAccounts(tx: PoolClient, actorId: number, user
              f.id::text AS factor_id,f.version AS factor_version
         FROM public.users u LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
         LEFT JOIN public.user_mfa_factors f ON f.user_id=u.id AND f.state='ACTIVE'
-       WHERE u.id=ANY($1::int[])`, [[actorId, userId]])).rows;
+       WHERE u.id=ANY($1::int[])
+         AND ${retiredAccountPredicate("u")}`, [[actorId, userId]])).rows;
 }
 export async function findRecoveryReplay(tx: PoolClient, actorId: number, key: string) {
     return (await tx.query<RecoveryRow>(`SELECT r.*,EXISTS(SELECT 1 FROM public.password_resets p WHERE p.id=r.reset_id

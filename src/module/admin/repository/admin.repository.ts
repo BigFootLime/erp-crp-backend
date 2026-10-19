@@ -25,6 +25,7 @@ import {
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { sharedDirectoryClient } from "../../../shared-directory/site-runtime";
+import { retiredAccountPredicate } from "../../auth/domain/account-retirement";
 
 /**
  * Protect the global account lifecycle when this database is the directory
@@ -422,6 +423,7 @@ export async function repoListUsers(): Promise<AdminUserListRow[]> {
         ) AS profile_incomplete
       FROM public.users u
       LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
+      WHERE ${retiredAccountPredicate("u")}
       GROUP BY u.id
       ORDER BY u.created_at DESC NULLS LAST, u.id DESC
     `
@@ -477,6 +479,7 @@ export async function repoGetUserById(userId: number, includePrivateProfile = fa
         ) AS profile_incomplete
       FROM public.users u
       WHERE u.id = $1
+        AND ${retiredAccountPredicate("u")}
       LIMIT 1
     `,
     [userId, includePrivateProfile]
@@ -732,6 +735,7 @@ export async function repoCreateAccountInvitation(input: {
         SELECT id::int AS id, username, status
         FROM public.users
         WHERE id = $1
+          AND ${retiredAccountPredicate("users")}
         FOR UPDATE
       `,
       [input.userId],
@@ -933,7 +937,7 @@ export async function repoUpdateUser(
     const mutation = await withRealtimeOutboxTransaction(client, async (tx) => {
     await lockDirectoryOwnerStatusMutation(tx, userId, patch.status);
     const current = await tx.query<{ role: string; status: string | null; is_superadmin: boolean }>(
-      `SELECT role, status, is_superadmin FROM public.users WHERE id = $1 FOR UPDATE`,
+      `SELECT role, status, is_superadmin FROM public.users WHERE id = $1 AND ${retiredAccountPredicate("users")} FOR UPDATE`,
       [userId]
     );
     const currentRole = current.rows[0]?.role;
@@ -945,7 +949,7 @@ export async function repoUpdateUser(
     if (sets.length) {
       values.push(userId);
       await tx.query(
-        `UPDATE public.users SET ${sets.join(", ")} WHERE id = $${values.length}`,
+        `UPDATE public.users SET ${sets.join(", ")} WHERE id = $${values.length} AND ${retiredAccountPredicate("users")}`,
         values
       );
     }
@@ -1119,7 +1123,7 @@ export async function repoCreatePasswordResetToken(params: {
     }
 
     const userRes = await tx.query<{ id: number; username: string }>(
-      `SELECT id::int AS id, username FROM public.users WHERE id = $1 FOR UPDATE`,
+      `SELECT id::int AS id, username FROM public.users WHERE id = $1 AND ${retiredAccountPredicate("users")} FOR UPDATE`,
       [params.userId],
     );
     const user = userRes.rows[0];
@@ -1260,6 +1264,7 @@ export async function repoResetUserPasswordWithToken(params: {
         JOIN public.users users ON users.id = reset.user_id
         WHERE reset.user_id = $1
           AND reset.token_hash = $2
+          AND ${retiredAccountPredicate("users")}
         ORDER BY reset.created_at DESC
         LIMIT 1
         FOR UPDATE OF reset, users
