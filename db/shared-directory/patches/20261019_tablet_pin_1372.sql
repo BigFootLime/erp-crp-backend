@@ -42,4 +42,7 @@ CREATE INDEX IF NOT EXISTS cerp_directory_tablet_devices_active_idx ON public.ce
 CREATE INDEX IF NOT EXISTS cerp_directory_sessions_tablet_device_idx ON public.cerp_directory_sessions(tablet_device_id) WHERE tablet_device_id IS NOT NULL;
 REVOKE ALL ON public.cerp_directory_tablet_pins,public.cerp_directory_tablet_devices,public.cerp_directory_tablet_rate_limits FROM PUBLIC,cerp_app;
 GRANT SELECT,INSERT,UPDATE,DELETE ON public.cerp_directory_tablet_pins,public.cerp_directory_tablet_devices,public.cerp_directory_tablet_rate_limits TO cerp_directory_app;
+-- MFA completion consumes a challenge by updating its expiry.  Existing
+-- authorities receive this grant through the idempotent release patch too.
+GRANT UPDATE ON public.cerp_directory_challenges TO cerp_directory_app;
 COMMIT;

@@ -13,7 +13,8 @@ CREATE TABLE public.cerp_directory_call_nonces(nonce uuid PRIMARY KEY,expires_at
 REVOKE ALL ON public.cerp_shared_directory,public.cerp_directory_bootstrap_commands FROM PUBLIC,cerp_app;
 GRANT SELECT ON public.cerp_shared_directory TO cerp_directory_app;
 GRANT SELECT,INSERT,UPDATE ON public.cerp_directory_profiles,public.cerp_directory_memberships TO cerp_directory_app;
-GRANT SELECT,INSERT,DELETE ON public.cerp_directory_sessions,public.cerp_directory_challenges,public.cerp_directory_call_nonces TO cerp_directory_app;
+GRANT SELECT,INSERT,DELETE ON public.cerp_directory_sessions,public.cerp_directory_call_nonces TO cerp_directory_app;
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.cerp_directory_challenges TO cerp_directory_app;
 `;
 /** Installs a NEW isolated authority. Never runs against existing Prod/Test. */
 export async function installEmptyDirectory(client:Client,expectedDirectoryId:string,rawSeed:unknown){
