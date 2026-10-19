@@ -6,14 +6,15 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ApacheRouteAdapter, TraefikFileRouteAdapter, promoteTwoHosts } from "../blue-green-runtime-operator.mjs";
+import { ApacheRouteAdapter, TraefikFileRouteAdapter, promoteTwoHosts, sha256 } from "../blue-green-runtime-operator.mjs";
 
 const traefik = (name) => "http:\n  routers:\n    api:\n      rule: PathPrefix(\"/api\")\n      service: " + name + "\n    ws:\n      rule: PathPrefix(\"/socket.io\")\n      service: " + name + "\n  services:\n    old: {}\n    green: {}\n";
 const apache = (url) => "ProxyPass /api/ " + url + "/api/\nProxyPassReverse /api/ " + url + "/api/\nProxyPass /socket.io/ " + url + "/socket.io/\nProxyPassReverse /socket.io/ " + url + "/socket.io/\n";
-const makePlan = (baseUrl) => ({ schema: "cerp-blue-green-v1", waitMs: 5000, capacity: { vpsFreeGiB: 20 }, hosts: { vps: { endpoint: "vps" }, hyper: { endpoint: "hyper" } }, legacyWorkerDrain: { required: true }, routes: { http: { host: "erp", target: "old" }, websocket: { host: "erp", target: "old" } }, candidate: { id: "green", baseUrl, role: "api", imageDigest: "sha256:" + "a".repeat(64), publicLabels: false, routes: { vps: "green", hyper: { http: "http://127.0.0.1:8082", websocket: "http://127.0.0.1:8082" } } } });
+const VERSION = "b".repeat(40);
+const makePlan = (baseUrl, vps = traefik("old"), hyper = apache("http://127.0.0.1:8080")) => ({ schema: "cerp-blue-green-v1", waitMs: 5000, capacity: { vpsFreeGiB: 20 }, hosts: { vps: { endpoint: "vps" }, hyper: { endpoint: "hyper" } }, baseline: { hosts: { vps: { sha256: sha256(vps) }, hyper: { sha256: sha256(hyper) } } }, legacyWorkerDrain: { required: true }, routes: { http: { host: "erp", target: "old" }, websocket: { host: "erp", target: "old" } }, candidate: { id: "green", baseUrl, version: VERSION, role: "api", imageDigest: "sha256:" + "a".repeat(64), publicLabels: false, routes: { vps: "green", hyper: { http: "http://127.0.0.1:8082", websocket: "http://127.0.0.1:8082" } } } });
 async function backend(identity) {
   const open = new Set(), server = http.createServer((req, res) => {
-    if (req.url === "/health/ready") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ background_runtime: { role: "api", ready: true } }));
+    if (req.url === "/health/ready") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ version: VERSION, background_runtime: { role: "api", ready: true } }));
     if (req.url === "/api/v1/auth/me") return res.writeHead(401).end();
     if (req.url === "/identity") return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ identity }));
     res.writeHead(404).end();

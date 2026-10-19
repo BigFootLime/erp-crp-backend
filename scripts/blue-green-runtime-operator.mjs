@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { open, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 
 const MAX_WAIT_MS = 30_000;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const ROLE = "api";
+const locks = new Map();
 export const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 export function validatePlan(plan) {
@@ -18,6 +19,8 @@ export function validatePlan(plan) {
   assert.equal(plan.routes.http.host, plan.routes.websocket.host, "HTTP and WebSocket hosts must match");
   assert.ok(["vps", "hyper"].every((name) => plan.hosts[name]?.endpoint), "VPS and HYPER endpoints are required");
   assert.equal(plan.legacyWorkerDrain.required, true, "legacy worker drain must be explicit");
+  assert.match(plan.candidate.version, /^[a-f0-9]{40}$/, "candidate version must be an exact commit SHA");
+  assert.ok(["vps", "hyper"].every((name) => /^[a-f0-9]{64}$/.test(plan.baseline?.hosts?.[name]?.sha256)), "host baseline hashes are required");
   return plan;
 }
 export async function probeCandidate(candidate, waitMs) {
@@ -28,8 +31,9 @@ export async function probeCandidate(candidate, waitMs) {
     const body = await health.json();
     assert.equal(body.background_runtime?.role, ROLE, "candidate role is not api");
     assert.equal(body.background_runtime?.ready, true, "candidate is not ready");
+    assert.equal(body.version, candidate.version, "candidate version differs");
     const api = await fetch(candidate.baseUrl + "/api/v1/auth/me", { signal: controller.signal });
-    assert.ok([200, 401].includes(api.status), "candidate API probe failed");
+    assert.equal(api.status, 401, "candidate API probe must be unauthorized");
     await probeWebSocket(candidate.baseUrl, controller.signal);
   } finally { clearTimeout(timer); }
 }
@@ -47,14 +51,19 @@ function probeWebSocket(baseUrl, signal) {
 }
 export class FileRouteAdapter {
   constructor(path) { this.path = path; }
-  async read() { const text = await readFile(this.path, "utf8"); return { text, hash: sha256(text) }; }
+  async read() { const info = await lstat(this.path); assert.ok(info.isFile() && !info.isSymbolicLink(), "route file must be a regular non-symlink"); const text = await readFile(this.path, "utf8"); return { text, hash: sha256(text) }; }
+  async locked(fn) {
+    const prior = locks.get(this.path) ?? Promise.resolve(); let release;
+    const next = new Promise((resolve) => { release = resolve; }); locks.set(this.path, prior.then(() => next));
+    await prior; try { return await fn(); } finally { release(); if (locks.get(this.path) === next) locks.delete(this.path); }
+  }
   async replace(expectedHash, text) {
-    const current = await this.read(); assert.equal(current.hash, expectedHash, "route baseline changed");
-    const temporary = this.path + ".next", handle = await open(temporary, "w", 0o600);
-    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
-    await rename(temporary, this.path);
-    assert.equal((await this.read()).hash, sha256(text), "route write verification failed");
-    return current;
+    return this.locked(async () => {
+      const current = await this.read(); assert.equal(current.hash, expectedHash, "route baseline changed");
+      const temporary = this.path + "." + randomUUID() + ".next"; let handle;
+      try { handle = await open(temporary, "wx", 0o600); await handle.writeFile(text); await handle.sync(); await handle.close(); handle = undefined; await rename(temporary, this.path); assert.equal((await this.read()).hash, sha256(text), "route write verification failed"); return current; }
+      finally { await handle?.close(); await unlink(temporary).catch(() => {}); }
+    });
   }
 }
 function quoted(value) { return value.replace(/^['"]|['"]$/g, ""); }
@@ -132,6 +141,8 @@ export async function promoteTwoHosts(plan, adapters) {
   assert.equal(typeof adapters.vps.verify, "function", "VPS routed service verification is required");
   assert.equal(typeof adapters.hyper.verify, "function", "HYPER routed service verification is required");
   const vps = await adapters.vps.read(), hyper = await adapters.hyper.read();
+  assert.equal(vps.hash, plan.baseline.hosts.vps.sha256, "VPS route baseline changed");
+  assert.equal(hyper.hash, plan.baseline.hosts.hyper.sha256, "HYPER route baseline changed");
   const vpsTarget = hostTarget(plan, "vps", adapters.vps), hyperTarget = hostTarget(plan, "hyper", adapters.hyper);
   const observedVpsPrior = adapters.vps.targets?.(vps.text);
   const vpsPrior = typeof observedVpsPrior === "object" ? observedVpsPrior.http : (observedVpsPrior ?? plan.routes.http.target);
