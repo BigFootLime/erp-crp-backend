@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_pins (
 );
 CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_devices (
   device_id uuid PRIMARY KEY,
-  database_id text NOT NULL CHECK(database_id IN ('cerp_prod','cerp_test')),
+  database_id text NOT NULL,
   label text NOT NULL CHECK(length(label) BETWEEN 1 AND 80),
   device_secret_hash text,
   pairing_code_hash text,
@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_rate_limits (
 );
 ALTER TABLE public.cerp_directory_sessions ADD COLUMN IF NOT EXISTS tablet_device_id uuid REFERENCES public.cerp_directory_tablet_devices(device_id);
 ALTER TABLE public.cerp_directory_challenges ADD COLUMN IF NOT EXISTS tablet_device_id uuid REFERENCES public.cerp_directory_tablet_devices(device_id);
+ALTER TABLE public.cerp_directory_sessions ADD COLUMN IF NOT EXISTS tablet_pin_version integer;
+ALTER TABLE public.cerp_directory_challenges ADD COLUMN IF NOT EXISTS tablet_pin_version integer;
+ALTER TABLE public.cerp_directory_challenges ADD COLUMN IF NOT EXISTS tablet_pin_profile_id uuid REFERENCES public.cerp_directory_profiles(profile_id);
 CREATE INDEX IF NOT EXISTS cerp_directory_tablet_devices_active_idx ON public.cerp_directory_tablet_devices(device_id) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS cerp_directory_sessions_tablet_device_idx ON public.cerp_directory_sessions(tablet_device_id) WHERE tablet_device_id IS NOT NULL;
 REVOKE ALL ON public.cerp_directory_tablet_pins,public.cerp_directory_tablet_devices,public.cerp_directory_tablet_rate_limits FROM PUBLIC,cerp_app;

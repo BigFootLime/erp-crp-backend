@@ -66,7 +66,7 @@ function tabletMeta(req:Request){const user_agent=req.headers['user-agent']?.toS
 function directorySession(req:Request){if(!req.user?.directory_session)throw new HttpError(401,'DIRECTORY_SESSION_REQUIRED','Une nouvelle connexion est requise.');return req.user.directory_session;}
 function tabletDirectory(){const directory=sharedDirectoryClient();if(!directory)throw new HttpError(503,'DIRECTORY_UNAVAILABLE','La connexion tablette requiert l’annuaire commun.');return directory;}
 export const tabletPinStatus=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-status',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
-export const tabletPinSet=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-set',{directory_session:directorySession(req),input:tabletPinSetSchema.parse(req.body),meta:tabletMeta(req)})));
+export const tabletPinSet=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-set',{directory_session:directorySession(req),input:tabletPinSetSchema.parse(req.body),meta:tabletMeta(req)});res.status(204).end();});
 export const tabletPinRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-revoke',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)});res.status(204).end();});
 export const tabletPinPair=asyncHandler(async(req,res)=>{const input=tabletPinPairSchema.parse(req.body);res.json(await tabletDirectory().call('tablet-pin-pair',{input:{pairing_code:input.pairingCode},meta:tabletMeta(req)}));});
 export const tabletPinLogin=asyncHandler(async(req,res)=>{
