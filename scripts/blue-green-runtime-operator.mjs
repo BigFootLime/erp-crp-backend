@@ -128,6 +128,12 @@ async function restore(adapter, snapshot, changedHash, priorTarget) {
   assert.equal((await adapter.read()).hash, snapshot.hash, "compensation route readback failed");
   await adapter.verify(priorTarget);
 }
+async function reconcile(adapter, snapshot, candidateText) {
+  const current = await adapter.read();
+  if (current.hash === snapshot.hash) return { state: "old", hash: current.hash };
+  if (current.hash === sha256(candidateText)) return { state: "new", hash: current.hash };
+  return { state: "foreign", hash: current.hash };
+}
 function hostTarget(plan, name, adapter) {
   const target = plan.candidate.routes?.[name] ?? plan.candidate.id;
   if (adapter instanceof ApacheRouteAdapter) {
@@ -147,20 +153,24 @@ export async function promoteTwoHosts(plan, adapters) {
   const observedVpsPrior = adapters.vps.targets?.(vps.text);
   const vpsPrior = typeof observedVpsPrior === "object" ? observedVpsPrior.http : (observedVpsPrior ?? plan.routes.http.target);
   await probeCandidate(plan.candidate, plan.waitMs);
-  let vpsChanged, hyperChanged;
+  const vpsText = adapters.vps.plan(vps.text, vpsTarget);
+  const hyperText = adapters.hyper.plan(hyper.text, hyperTarget);
   try {
-    await adapters.vps.replace(vps.hash, adapters.vps.plan(vps.text, vpsTarget));
-    vpsChanged = await adapters.vps.read(); await adapters.vps.verify(vpsTarget);
-    await adapters.hyper.replace(hyper.hash, adapters.hyper.plan(hyper.text, hyperTarget));
-    hyperChanged = await adapters.hyper.read(); await adapters.hyper.verify(hyperTarget);
+    await adapters.vps.replace(vps.hash, vpsText);
+    await adapters.vps.verify(vpsTarget);
+    await adapters.hyper.replace(hyper.hash, hyperText);
+    await adapters.hyper.verify(hyperTarget);
     return { phase: "promoted", vps: vpsTarget, hyper: hyperTarget };
   } catch (error) {
-    try {
-      if (hyperChanged) await restore(adapters.hyper, hyper, hyperChanged.hash, adapters.hyper.targets(hyper.text));
-      if (vpsChanged) await restore(adapters.vps, vps, vpsChanged.hash, vpsPrior);
-      return { phase: "blocked", reason: "HYPER_PROMOTION_FAILED", compensation: "VPS_RESTORED", error: error.constructor.name };
+    const states = { vps: await reconcile(adapters.vps, vps, vpsText), hyper: await reconcile(adapters.hyper, hyper, hyperText) };
+    const failures = [];
+    if (states.hyper.state === "new") await restore(adapters.hyper, hyper, states.hyper.hash, adapters.hyper.targets(hyper.text)).catch((cause) => failures.push({ host: "hyper", cause }));
+    if (states.vps.state === "new") await restore(adapters.vps, vps, states.vps.hash, vpsPrior).catch((cause) => failures.push({ host: "vps", cause }));
+    const finalStates = { vps: await reconcile(adapters.vps, vps, vpsText), hyper: await reconcile(adapters.hyper, hyper, hyperText) };
+    if (failures.length || Object.values(finalStates).some((item) => item.state !== "old")) {
+      throw Object.assign(new Error("COMPENSATION_FAILED"), { promotionError: error, failures, states: finalStates });
     }
-    catch (compensationError) { throw Object.assign(new Error("COMPENSATION_FAILED"), { cause: compensationError, promotionError: error }); }
+    return { phase: "blocked", reason: "HOST_PROMOTION_FAILED", compensation: "BOTH_HOSTS_RESTORED", error: error.constructor.name, states: finalStates };
   }
 }
 export async function prepare(plan, baselineText) {
