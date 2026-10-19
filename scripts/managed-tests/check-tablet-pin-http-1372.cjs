@@ -1,6 +1,7 @@
 /* Disposable Docker PostgreSQL fixture only.  It never addresses a managed template or production/Test database. */
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto'),{spawn}=require('node:child_process');
 process.env.NODE_ENV='test';require('ts-node/register/transpile-only');
+if(process.env.CERP_E2E_ISOLATED!=='1')throw Error('Explicit disposable fixture isolation is required');
 const {Client}=require('pg'),bcrypt=require('bcryptjs');
 const fixturePassword=process.env.CERP_TABLET_PIN_FIXTURE_PASSWORD;if(!fixturePassword)throw Error('CERP_TABLET_PIN_FIXTURE_PASSWORD is required for the owned disposable database');
 const root=path.resolve(__dirname,'../..'),port=Number(process.env.CERP_TABLET_PIN_FIXTURE_PORT||28642),nonce=crypto.randomBytes(5).toString('hex'),directoryId=crypto.randomUUID(),authority=`cerp_directory_${directoryId.replace(/-/g,'')}`,siteA=`cerp_test_${crypto.randomBytes(16).toString('hex')}`,siteB=`cerp_test_${crypto.randomBytes(16).toString('hex')}`,url=(db,user='cerp_fixture')=>{const u=new URL(`postgresql://127.0.0.1:${port}/${db}`);u.username=user;u.password=fixturePassword;return u.toString()},checks=[];let child,db;
