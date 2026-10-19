@@ -13,12 +13,16 @@ import { getProcurement,postProcurement,postDemands } from './subcontract-procur
 import { appendSubcontractAudit } from './subcontract-audit.repository';
 import { ACTIVE_SUBCONTRACT_ORDER_STATES, isSubcontractPackageEligible } from "./subcontract-package-policy";
 import { syncClosedSubcontractOperationTx } from "./subcontract-operation-completion.repository";
+import {
+  createSubcontractWorkPackageSchema,
+  finaliseSubcontractWorkPackageSchema,
+  subcontractLedgerSchema,
+} from "./subcontract-input.validators";
 
 const router = Router();
 const activeOrderStates = ACTIVE_SUBCONTRACT_ORDER_STATES;
 const id = (v: unknown) => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v) ? v : null;
 const unit = (v: unknown) => String(v ?? "").trim().toUpperCase();
-const qty = (v: unknown) => Number(v);
 const positiveOfId = (v: unknown) => typeof v === "string" && /^[1-9]\d*$/.test(v) && Number.isSafeInteger(Number(v)) ? Number(v) : null;
 function required(ok: unknown, message: string): asserts ok { if (!ok) throw new HttpError(422, "SUBCONTRACT_INPUT_INVALID", message); }
 const access = (write: boolean): RequestHandler => (req, _res, next) => {
@@ -60,8 +64,9 @@ router.get("/:id", access(false), async (req, res, next) => { try {
 } catch (e) { next(e); } });
 
 router.post("/", access(true), async (req: any, res, next) => { try {
-  const line = id(req.body?.supplier_order_line_id), operation = id(req.body?.of_operation_id), evidence = id(req.body?.ged_evidence_document_id), packageUnit = unit(req.body?.unit), planned = qty(req.body?.qty_planned);
-  required(line && operation && evidence && packageUnit && Number.isFinite(planned) && planned > 0, "Ligne PO, opération OF, unité, quantité et preuve GED sont obligatoires.");
+  const input = createSubcontractWorkPackageSchema.safeParse(req.body);
+  if (!input.success) throw new HttpError(422, "SUBCONTRACT_INPUT_INVALID", "Ligne PO, opération OF, unité, quantité et preuve GED sont obligatoires.");
+  const { supplier_order_line_id: line, of_operation_id: operation, ged_evidence_document_id: evidence, unit: packageUnit, qty_planned: planned } = input.data;
   const c = await pool.connect(); try { await c.query("BEGIN"); await lockRevision(c);
     await c.query("SELECT pg_advisory_xact_lock(hashtext($1)),pg_advisory_xact_lock(hashtext($2))", [line, operation]);
     // A retry returns the immutable dossier for this line. Distinct material
@@ -87,8 +92,9 @@ router.post("/", access(true), async (req: any, res, next) => { try {
 } catch (e) { next(e); } });
 
 async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: any) { try {
-  const packageId=id(req.params.id), lot=id(req.body?.lot_id), eventUnit=unit(req.body?.unit), amount=qty(req.body?.qty), key=String(req.header("Idempotency-Key") ?? "").trim();
-  required(packageId&&lot&&eventUnit&&Number.isFinite(amount)&&amount>0&&key.length>=8&&key.length<=128,"Lot, quantité, unité et Idempotency-Key (8–128 caractères) sont obligatoires.");
+  const input=subcontractLedgerSchema.safeParse(req.body), packageId=id(req.params.id), key=String(req.header("Idempotency-Key") ?? "").trim();
+  if(!input.success||!packageId||key.length<8||key.length>128) throw new HttpError(422,"SUBCONTRACT_INPUT_INVALID","Lot, quantité, unité et Idempotency-Key (8–128 caractères) sont obligatoires.");
+  const { lot_id: lot, unit: eventUnit, qty: amount }=input.data;
   const c=await pool.connect(); try { await c.query("BEGIN");
     const flowInstalled=await subcontractFlowInstalled(c);
     if(flowInstalled)await c.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE');
@@ -127,8 +133,9 @@ router.post("/:id/issues",access(true),(req,res,next)=>ledger("ISSUE",req,res,ne
 router.post("/:id/returns",access(true),(req,res,next)=>ledger("RETURN",req,res,next));
 async function finalise(status:"CLOSED"|"CANCELLED",req:any,res:any,next:any){
   try{
-    const packageId=id(req.params.id),expected=qty(req.body?.expected_row_version),reason=String(req.body?.reason??"").trim();
-    required(packageId&&Number.isInteger(expected)&&expected>0&&reason,"expected_row_version et motif sont obligatoires.");
+    const input=finaliseSubcontractWorkPackageSchema.safeParse(req.body),packageId=id(req.params.id);
+    if(!input.success||!packageId) throw new HttpError(422,"SUBCONTRACT_INPUT_INVALID","expected_row_version et motif sont obligatoires.");
+    const { expected_row_version: expected, reason }=input.data;
     const c=await pool.connect();
     try{
       await c.query("BEGIN");await lockRevision(c);

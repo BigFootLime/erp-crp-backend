@@ -11,6 +11,7 @@ import {
 import {
   createPieceFamilySchema,
   idParamSchema,
+  updatePieceFamilySchema,
   validate,
 } from "../validators/pieces-families.validators"
 
@@ -19,7 +20,7 @@ const router = Router()
 router.post("/", validate(createPieceFamilySchema), createPieceFamily)
 router.get("/", listPieceFamilies)
 router.get("/:id", validate(idParamSchema), getPieceFamily)
-router.patch("/:id", validate(idParamSchema), updatePieceFamily)
+router.patch("/:id", validate(idParamSchema), validate(updatePieceFamilySchema), updatePieceFamily)
 router.delete("/:id", validate(idParamSchema), deletePieceFamily)
 
 export default router
