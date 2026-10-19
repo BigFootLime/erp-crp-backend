@@ -411,10 +411,10 @@ export async function repoEnsureDirectoryTabletDevice(params: {
         client
       );
     }
-    await client.query("COMMIT");
-    const device = await repoFindDeviceById(params.directoryTabletDeviceId);
+    const device = await repoFindDeviceById(params.directoryTabletDeviceId, client);
     if (!device) throw new HttpError(503, "STATION_DEVICE_UNAVAILABLE", "Le registre des tablettes est indisponible.");
     if (device.status !== "ACTIVE") throw new HttpError(403, "STATION_DEVICE_UNAVAILABLE", "Cette tablette n'est plus autorisée.");
+    await client.query("COMMIT");
     return device;
   } catch (error) {
     await client?.query("ROLLBACK").catch(() => undefined);
