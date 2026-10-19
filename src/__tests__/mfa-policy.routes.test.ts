@@ -31,6 +31,8 @@ vi.mock("../module/auth/middlewares/auth-rate-limit.middleware", () => ({
   accountRequestRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   accountRequestStatusRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   loginRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
+  tabletPinLoginRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
+  tabletPinPairRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   mfaRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   forgotPasswordRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   resetPasswordRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),

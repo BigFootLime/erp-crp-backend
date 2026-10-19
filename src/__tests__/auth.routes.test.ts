@@ -13,6 +13,16 @@ vi.mock('../module/auth/controllers/auth.controller', () => ({
   ),
   resetPassword: vi.fn((req, res) => res.status(200).json({ message: 'Mot de passe réinitialisé' })),
   activateAccount: vi.fn((req, res) => res.status(200).json({ message: 'Compte activé', replayed: false })),
+  tabletPinLogin: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinPair: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinRevoke: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinSet: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinStatus: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinAdminCreate: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinAdminList: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinAdminRename: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinAdminRepair: vi.fn((_req, res) => res.status(200).json({})),
+  tabletPinAdminRevoke: vi.fn((_req, res) => res.status(200).json({})),
 }))
 
 vi.mock('../module/auth/services/auth-rate-limit.service', () => ({
