@@ -12,6 +12,8 @@
 //   * envoyer quoi que ce soit vers une commande numérique.
 
 import { HttpError } from "../../../utils/httpError";
+import pool from "../../../config/database";
+import { sharedDirectoryClient, validateSiteDirectoryToken } from "../../../shared-directory/site-runtime";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 
@@ -52,6 +54,7 @@ import {
   repoCreateHandover,
   repoDossier,
   repoEnrollDevice,
+  repoEnsureDirectoryTabletDevice,
   repoFindDeviceByCode,
   repoFindDeviceById,
   repoGetHandover,
@@ -96,6 +99,34 @@ import type {
 } from "../validators/station.validators";
 
 export type Actor = { id: number; role: string | null; mfa: boolean; mfaAssured: boolean; session_epoch?: number };
+
+type DirectoryClaims = {
+  id: number;
+  directory_session?: string;
+  directory_profile_id?: string;
+  directory_global_epoch?: number;
+  directory_membership_version?: number;
+  mfa_factor_id?: string;
+  mfa_factor_version?: number;
+};
+
+/** Resolves only a Directory PIN-backed tablet into the legacy station registry. */
+export async function svcTabletContext(params: { claims: DirectoryClaims }): Promise<{ available: boolean; deviceCode?: string }> {
+  if (!sharedDirectoryClient()) return { available: false };
+  let identity;
+  try {
+    identity = await validateSiteDirectoryToken(pool, params.claims);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, "DIRECTORY_UNAVAILABLE", "L’annuaire commun est momentanément indisponible.");
+  }
+  if (!identity.tablet_device_id) return { available: false };
+  const device = await repoEnsureDirectoryTabletDevice({
+    directoryTabletDeviceId: identity.tablet_device_id,
+    actorUserId: params.claims.id,
+  });
+  return { available: true, deviceCode: device.public_code };
+}
 
 /**
  * Les exceptions sensibles du poste exigent la même identité dans le JWT ERP

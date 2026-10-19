@@ -1,5 +1,18 @@
 # Changelog
 
+## Préparé — Disponibilité du temps réel avec annuaire partagé (#1388)
+
+- Le canal Socket.IO applique la même frontière que l’authentification HTTP : une session explicitement refusée ou périmée par l’annuaire est révoquée ; une indisponibilité technique ferme seulement le transport avec une demande de reconnexion.
+- Les erreurs transitoires de l’annuaire ou de la lecture d’autorisation ne déclenchent plus l’événement de révocation de session consommé par les clients web et Electron. Les raisons de déconnexion sont journalisées dans une liste fixe, sans jeton ni donnée personnelle.
+- Correctif sans migration, modification MFA, durée de session, habilitation ou changement de flux métier. La qualification locale ne permet pas d’attribuer rétrospectivement un incident utilisateur à l’annuaire.
+
+## Préparé — Retrait des comptes locaux historiques (#1378)
+
+- Les comptes locaux historiques marqués explicitement comme retirés n'apparaissent plus dans les listes Administration et contrôle d'accès. Le marqueur est versionné et strict : seul `cerp_account_retirement.schema_version` numérique à `1` s'applique.
+- Les indicateurs de comptes et les nouvelles revues d'habilitation excluent les identités retirées, en conservant les revues et statistiques de connexion historiques.
+- Les consultations et mutations administratives ordinaires refusent un compte retiré, y compris invitation, réinitialisation de mot de passe, récupération et avatar. Les identités, journaux et relations métier historiques restent conservés.
+- Aucun schéma, secret, paramètre CORS ou déploiement n'est modifié par ce lot. L'opération de retrait sur les comptes non liés à l'annuaire reste séparée et soumise à son contrôle opérateur documenté.
+
 ## Préparé — Accès aux référentiels et administration (#1341)
 
 - Les deux lecteurs historiques de conditions de paiement et comptes de vente sont accessibles depuis un module Clients ou Devis explicitement accordé. Cette exception porte sur les deux GET exacts ; elle n'accorde ni les autres routes Devis ni des écritures supplémentaires.

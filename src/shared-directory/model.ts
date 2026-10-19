@@ -24,10 +24,12 @@ export const directorySessionSchema=directoryProfileSchema.extend({
  status:z.literal('Active'),
  global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),
  mfa_factor_id:z.string().uuid().nullable(),mfa_factor_version:z.number().int().positive().nullable(),mfa_verified_at:z.string().datetime().nullable(),mfa_method:z.enum(['totp','recovery_code']).nullable(),
+  tablet_device_id:z.string().uuid().nullable().optional(),tablet_pin_version:z.number().int().positive().nullable().optional(),
 }).strict().superRefine((value,context)=>{
  const fields=[value.mfa_factor_id,value.mfa_factor_version,value.mfa_verified_at,value.mfa_method];
  if(!fields.every(field=>field===null)&&!fields.every(field=>field!==null))context.addIssue({code:z.ZodIssueCode.custom,message:'Incomplete directory MFA assurance'});
  if(value.is_superadmin&&value.mfa_factor_id===null)context.addIssue({code:z.ZodIssueCode.custom,message:'Directory administrator MFA is mandatory'});
+ if((value.tablet_device_id===undefined)!==(value.tablet_pin_version===undefined)||((value.tablet_device_id===null)!==(value.tablet_pin_version===null)))context.addIssue({code:z.ZodIssueCode.custom,message:'Incomplete tablet PIN assurance'});
 });
 export type DirectorySession=z.infer<typeof directorySessionSchema>;
 export type MfaDirectorySession=DirectorySession&{mfa_factor_id:string;mfa_factor_version:number;mfa_verified_at:string;mfa_method:'totp'|'recovery_code'};
