@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_pins (
 );
 CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_devices (
   device_id uuid PRIMARY KEY,
+  database_id text NOT NULL CHECK(database_id IN ('cerp_prod','cerp_test')),
   label text NOT NULL CHECK(length(label) BETWEEN 1 AND 80),
   device_secret_hash text,
   pairing_code_hash text,
@@ -21,7 +22,7 @@ CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_devices (
   locked_until timestamptz,
   last_used_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT cerp_directory_tablet_devices_pairing_ck CHECK ((device_secret_hash IS NOT NULL AND pairing_code_hash IS NULL AND pairing_expires_at IS NULL) OR (device_secret_hash IS NULL AND pairing_code_hash IS NOT NULL AND pairing_expires_at IS NOT NULL))
+  CONSTRAINT cerp_directory_tablet_devices_pairing_ck CHECK ((revoked_at IS NOT NULL AND device_secret_hash IS NULL AND pairing_code_hash IS NULL AND pairing_expires_at IS NULL) OR (revoked_at IS NULL AND device_secret_hash IS NOT NULL AND pairing_code_hash IS NULL AND pairing_expires_at IS NULL) OR (revoked_at IS NULL AND device_secret_hash IS NULL AND pairing_code_hash IS NOT NULL AND pairing_expires_at IS NOT NULL))
 );
 CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_rate_limits (
   scope text NOT NULL CHECK(scope IN ('ip','account_device')),
