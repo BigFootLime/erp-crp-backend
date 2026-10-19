@@ -74,8 +74,13 @@ def parse_dynamic(file):
   if heading: item=heading.group(1); continue
   field=re.match(r'^      (rule|service|priority):\s*(.+?)\s*$',line)
   if field and item and section=='routers' and field.group(1) in ('rule','service','priority'): routers.setdefault(item,{})[field.group(1)]=field.group(2).strip("'\\\"")
-  url=re.match(r'^\s+url:\s*(.+?)\s*$',line)
-  if url and item and section=='services': services.setdefault(item,[]).append(url.group(1).strip("'\\\""))
+  url=re.match(r'^\s*-\s*url:\s*(.+?)\s*$',line)
+  if url and item and section=='services':
+   from urllib.parse import urlsplit,urlunsplit
+   raw=url.group(1).strip("'\\\""); u=urlsplit(raw)
+   if u.scheme and u.hostname:
+    host=u.hostname + ((':'+str(u.port)) if u.port else '')
+    services.setdefault(item,[]).append(urlunsplit((u.scheme,host,u.path,'','')))
  wanted={n:v for n,v in routers.items() if 'erp-backend.croix-rousse-precision.fr' in v.get('rule','') or any(x in v.get('rule','').lower() for x in ('desktop-updates','ged','test'))}
  return {'name':file.name,'sha256':hashlib.sha256(text.encode()).hexdigest(),'routers':wanted,'services':{v['service']:services.get(v['service'],[]) for v in wanted.values() if v.get('service')},'caddy_routes':[]}
 dynamic_files=[]; dynamic_routes=[]; caddy_routes=[]
@@ -87,8 +92,12 @@ for file in sorted(dynamic.iterdir(),key=lambda x:x.name):
 def all_router_labels(labels):
  rows={}
  for k,v in labels.items():
-  m=re.match(r'^traefik\\.http\\.routers\\.([^.]*)\\.(rule|priority|service)$',k)
-  if m: rows.setdefault(m.group(1),{})[m.group(2)]=v
+  prefix='traefik.http.routers.'
+  if not k.startswith(prefix): continue
+  suffix=k[len(prefix):]
+  if '.' not in suffix: continue
+  name,field=suffix.rsplit('.',1)
+  if name and field in ('rule','priority','service'): rows.setdefault(name,{})[field]=v
  return rows
 def relevant_router_labels(labels):
  rows=all_router_labels(labels)
