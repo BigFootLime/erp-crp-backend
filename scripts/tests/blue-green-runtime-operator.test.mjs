@@ -93,18 +93,10 @@ test("failed HYPER restoration still restores VPS and reports the partial failur
 test("two operators contend on the same files without mixing routes, then release locks after a known failure", async () => {
   const green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");
   await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
-  let releaseVerify; const waiting = new Promise((resolve) => { releaseVerify = resolve; });
-  const vps = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); vps.verify = async () => waiting;
+  let releaseVerify, enteredVerify; const waiting = new Promise((resolve) => { releaseVerify = resolve; }); const entered = new Promise((resolve) => { enteredVerify = resolve; });
+  const vps = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); vps.verify = async () => { enteredVerify(); return waiting; };
   const rawHyper = new ApacheRouteAdapter(hyperPath), hyper = { path: hyperPath, read: rawHyper.read.bind(rawHyper), plan: rawHyper.plan.bind(rawHyper), targets: rawHyper.targets.bind(rawHyper), verify: async () => {}, replace: async () => { throw new Error("known HYPER failure"); } };
   const first = promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  await assert.rejects(promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }), /ROUTE_LOCKED/);
-  assert.equal(await readFile(hyperPath, "utf8"), apache("http://127.0.0.1:8080"));
-  releaseVerify(); const result = await first;
-  assert.equal(result.compensation, "BOTH_HOSTS_RESTORED");
-  assert.equal(await readFile(vpsPath, "utf8"), traefik("old"));
-  vps.verify = async () => {};
-  const after = await promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper });
-  assert.equal(after.compensation, "BOTH_HOSTS_RESTORED");
-  await green.close();
+  try { await entered; await assert.rejects(promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }), /ROUTE_LOCKED/); assert.equal(await readFile(hyperPath, "utf8"), apache("http://127.0.0.1:8080")); releaseVerify(); const result = await first; assert.equal(result.compensation, "BOTH_HOSTS_RESTORED"); assert.equal(await readFile(vpsPath, "utf8"), traefik("old")); vps.verify = async () => {}; const after = await promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }); assert.equal(after.compensation, "BOTH_HOSTS_RESTORED"); }
+  finally { releaseVerify(); await first.catch(() => {}); await green.close(); }
 });
