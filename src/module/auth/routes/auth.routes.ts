@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { activateAccount, login, forgotPassword, resetPassword } from '../controllers/auth.controller';
+import { activateAccount, login, forgotPassword, resetPassword, tabletPinLogin, tabletPinPair, tabletPinRevoke, tabletPinSet, tabletPinStatus, tabletPinAdminCreate, tabletPinAdminList, tabletPinAdminRename, tabletPinAdminRepair, tabletPinAdminRevoke } from '../controllers/auth.controller';
 import {
     authenticateToken,
   } from '../middlewares/auth.middleware';
@@ -9,6 +9,8 @@ import { getAccessProfile } from '../../access-control/controllers/access-contro
 import {
   forgotPasswordRateLimit,
   loginRateLimit,
+  tabletPinLoginRateLimit,
+  tabletPinPairRateLimit,
   mfaRateLimit,
   resetPasswordRateLimit,
   registerRateLimit,
@@ -38,6 +40,8 @@ router.get('/test-registration', testRegistrationOptions);
 router.post('/test-registration', registerRateLimit, testRegistration);
 
 router.post('/login', loginRateLimit, login);
+router.post('/tablet-pin/login', tabletPinLoginRateLimit, tabletPinLogin);
+router.post('/tablet-pin/pair', tabletPinPairRateLimit, tabletPinPair);
 router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);
@@ -56,6 +60,14 @@ router.get('/me/profile', authenticateToken, getSelfProfile);
 router.patch('/me/profile', authenticateToken, patchSelfProfile);
 router.put('/me/avatar', authenticateToken, avatarUpload.single('avatar'), uploadOwnAvatar);
 router.get('/me/navigation-preferences', authenticateToken, getNavigationPreferences);
+router.get('/me/tablet-pin',authenticateToken,tabletPinStatus);
+router.put('/me/tablet-pin',authenticateToken,tabletPinSet);
+router.delete('/me/tablet-pin',authenticateToken,tabletPinRevoke);
+router.get('/tablet-pin/devices',authenticateToken,requireSuperadmin,tabletPinAdminList);
+router.post('/tablet-pin/devices',authenticateToken,requireSuperadmin,tabletPinAdminCreate);
+router.post('/tablet-pin/devices/:deviceId/pairing',authenticateToken,requireSuperadmin,tabletPinAdminRepair);
+router.patch('/tablet-pin/devices/:deviceId',authenticateToken,requireSuperadmin,tabletPinAdminRename);
+router.delete('/tablet-pin/devices/:deviceId',authenticateToken,requireSuperadmin,tabletPinAdminRevoke);
 router.put('/me/navigation-preferences', authenticateToken, putNavigationPreferences);
 router.get('/mfa/status', authenticateToken, status);
 router.post('/mfa/step-up', authenticateToken, mfaRateLimit, stepUp);

@@ -13,7 +13,8 @@ CREATE TABLE public.cerp_directory_call_nonces(nonce uuid PRIMARY KEY,expires_at
 REVOKE ALL ON public.cerp_shared_directory,public.cerp_directory_bootstrap_commands FROM PUBLIC,cerp_app;
 GRANT SELECT ON public.cerp_shared_directory TO cerp_directory_app;
 GRANT SELECT,INSERT,UPDATE ON public.cerp_directory_profiles,public.cerp_directory_memberships TO cerp_directory_app;
-GRANT SELECT,INSERT,DELETE ON public.cerp_directory_sessions,public.cerp_directory_challenges,public.cerp_directory_call_nonces TO cerp_directory_app;
+GRANT SELECT,INSERT,DELETE ON public.cerp_directory_sessions,public.cerp_directory_call_nonces TO cerp_directory_app;
+GRANT SELECT,INSERT,UPDATE,DELETE ON public.cerp_directory_challenges TO cerp_directory_app;
 `;
 /** Installs a NEW isolated authority. Never runs against existing Prod/Test. */
 export async function installEmptyDirectory(client:Client,expectedDirectoryId:string,rawSeed:unknown){
@@ -49,7 +50,7 @@ export async function installEmptyDirectory(client:Client,expectedDirectoryId:st
   // cerp_app. Database CONNECT above is the business-role isolation boundary.
   // New private authority tables retain the explicit revocations in schema.
   const privateTables=(await client.query<{tablename:string}>(`SELECT tablename FROM pg_tables WHERE schemaname='public' AND
-   (tablename IN ('users','app_roles','app_modules','cerp_schema_migrations','user_role_assignments','user_role_assignment_events','auth_login_logs','auth_mfa_challenges','erp_audit_logs','erp_outbox_events','password_resets','password_reset_tokens','factureur','finance_legal_mentions','erp_settings','erp_setup_company_commands','test_account_registrations','user_avatar_commands','cerp_terminal_pins','operator_badge_credentials','operator_device_sessions','cerp_terminal_audit')
+   (tablename IN ('users','app_roles','app_modules','cerp_schema_migrations','user_role_assignments','user_role_assignment_events','auth_login_logs','auth_mfa_challenges','erp_audit_logs','erp_outbox_events','password_resets','password_reset_tokens','factureur','finance_legal_mentions','erp_settings','erp_setup_company_commands','test_account_registrations','user_avatar_commands','cerp_terminal_pins','operator_badge_credentials','operator_device_sessions','cerp_terminal_audit','cerp_directory_tablet_pins','cerp_directory_tablet_devices')
     OR tablename LIKE 'user_mfa_%' OR tablename LIKE 'auth_rate_limit_%' OR tablename LIKE 'admin_%' OR tablename LIKE 'hr_%' OR tablename LIKE 'realtime_%' OR tablename LIKE 'operational_media_%')`)).rows;
   for(const {tablename} of privateTables)await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON public."${tablename.replace(/"/g,'""')}" TO cerp_directory_app`);
   await client.query('GRANT USAGE ON SCHEMA public TO cerp_directory_app; GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO cerp_directory_app');

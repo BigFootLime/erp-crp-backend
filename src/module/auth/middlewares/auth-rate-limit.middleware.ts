@@ -50,6 +50,9 @@ function subjectsFor(endpoint: AuthRateLimitEndpoint, req: Request): AuthRateLim
         { dimension: "username", value: username === null ? null : canonicalizeAuthUsername(username) },
       ];
     }
+    case "tabletPinLogin":
+    case "tabletPinPair":
+      return [ip];
     case "register": {
       const username = bodyString(req, "username");
       const email = bodyString(req, "email");
@@ -169,6 +172,8 @@ export const registerRateLimit = createAuthRateLimitMiddleware("register");
 export const accountRequestRateLimit = createAuthRateLimitMiddleware("accountRequest");
 export const accountRequestStatusRateLimit = createAuthRateLimitMiddleware("accountRequestStatus");
 export const loginRateLimit = createAuthRateLimitMiddleware("login");
+export const tabletPinLoginRateLimit = createAuthRateLimitMiddleware("tabletPinLogin");
+export const tabletPinPairRateLimit = createAuthRateLimitMiddleware("tabletPinPair");
 export const forgotPasswordRateLimit = createAuthRateLimitMiddleware("forgotPassword");
 export const resetPasswordRateLimit = createAuthRateLimitMiddleware("resetPassword");
 export const mfaRateLimit = createAuthRateLimitMiddleware("mfa");
