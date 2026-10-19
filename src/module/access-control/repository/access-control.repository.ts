@@ -2,6 +2,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { retiredAccountPredicate } from "../../auth/domain/account-retirement";
 import { bumpRealtimeAuthorizationEpoch } from "../../../shared/realtime/realtime-control-plane";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import type {
@@ -197,6 +198,7 @@ export async function repoListAccessUsers(tx?: DbQueryer): Promise<AccessUserRow
         u.last_login::text AS last_login
       FROM public.users u
       LEFT JOIN public.user_role_assignments ura ON ura.user_id = u.id
+      WHERE ${retiredAccountPredicate("u")}
       GROUP BY u.id
       ORDER BY u.username
     `
@@ -228,6 +230,7 @@ export async function repoGetAccessUser(userId: number, tx?: DbQueryer): Promise
         u.last_login::text AS last_login
       FROM public.users u
       WHERE u.id = $1
+        AND ${retiredAccountPredicate("u")}
       LIMIT 1
     `,
     [userId]
@@ -239,8 +242,10 @@ export async function repoListAccessOverrides(tx?: DbQueryer): Promise<AccessOve
   const q = tx ?? pool;
   const { rows } = await q.query<AccessOverrideRow>(
     `
-      SELECT user_id::int AS user_id, module_key, access
-      FROM public.app_module_user_access
+      SELECT a.user_id::int AS user_id, a.module_key, a.access
+      FROM public.app_module_user_access a
+      JOIN public.users u ON u.id = a.user_id
+      WHERE ${retiredAccountPredicate("u")}
       ORDER BY user_id, module_key
     `
   );
