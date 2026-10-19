@@ -202,6 +202,7 @@ beforeEach(() => {
   executedSql = [];
   installDb();
   process.env.STATION_BADGE_PEPPER = "poivre-de-test-suffisamment-long";
+  delete process.env.CERP_INSTALLATION_ID;
 });
 
 /* -------------------------------------------------------------------------- */
@@ -219,6 +220,16 @@ describe("#159 — écran verrouillé et bootstrap", () => {
     expect(typeof res.body.server_time).toBe("string");
   });
 
+  it("returns an opaque offline scope only from the verified device and connected database", async () => {
+    process.env.CERP_INSTALLATION_ID = "11111111-1111-4111-8111-111111111111";
+    on(/FROM public\.production_devices d[\s\S]*WHERE d\.public_code/i, [deviceRow()]);
+    on(/UPDATE public\.production_devices/i, []);
+    on(/SELECT current_database\(\) AS database/i, [{ database: "cerp_test" }]);
+    const res = await request(app).get(`${BASE}/bootstrap?device_code=TAB-0001`).set("x-test-role", OPERATOR);
+    expect(res.status).toBe(200);
+    expect(res.body.offline_scope).toMatch(/^v2\.[A-Za-z0-9_-]{43}$/);
+    expect(res.body.offline_scope).not.toContain("cerp_test");
+  });
   it("refuse une tablette inconnue avec un code métier distinct", async () => {
     const res = await request(app).get(`${BASE}/bootstrap?device_code=TAB-9999`).set("x-test-role", OPERATOR);
     expect(res.status).toBe(404);

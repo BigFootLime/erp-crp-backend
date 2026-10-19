@@ -12,6 +12,8 @@
 //   * envoyer quoi que ce soit vers une commande numérique.
 
 import { HttpError } from "../../../utils/httpError";
+import pool from "../../../config/database";
+import { resolveStationOfflineScope } from "../../../config/station-offline-scope";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 
@@ -204,6 +206,7 @@ export async function svcBootstrap(params: {
 
   return {
     server_time: now.toISOString(),
+    offline_scope: device ? await resolveStationOfflineScope(pool, device.id) : null,
     device: device
       ? {
           id: device.id,
