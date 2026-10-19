@@ -39,7 +39,7 @@ export const repoQueueTechnicalSheet = (
     entityType: "piece-technique-version",
     entityId: versionId,
     documentKind: "TECHNICAL_SHEET",
-    renderVersion: "technical-sheet-v1",
+    renderVersion: "technical-sheet-v1+style-20261019",
     title: "Fiche technique",
     filenamePrefix: "Fiche-technique",
     idempotencyKey,

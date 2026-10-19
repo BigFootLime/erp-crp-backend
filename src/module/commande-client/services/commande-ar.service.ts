@@ -1,3 +1,4 @@
+import { hasModuleAppearance } from "../../../shared/pdf/document-appearance";
 import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
@@ -183,6 +184,8 @@ async function waitForCommandeArOfficialArchiveId(
 }
 
 export async function buildCommandeArPdfBuffer(params: {
+  /** Server-side archive replay only. */
+  legacyAppearance?: boolean;
   general_terms?: GeneralTermsSnapshot | null;
   /** Versioned acknowledgement reference, for example AR-00000042-v1. */
   reference: string;
@@ -246,6 +249,7 @@ export async function buildCommandeArPdfBuffer(params: {
 
   return renderCerpDocument(
     {
+      category: params.legacyAppearance ? undefined : "commerce",
       documentType: "Accusé de réception",
       name: clientName,
       code: reference,
@@ -332,6 +336,7 @@ export async function renderCommandeArOfficialPdf({ archive }: { archive: Author
   const archivedAt = new Date(archive.createdAt);
   if (Number.isNaN(archivedAt.getTime())) throw new Error("COMMANDE_AR_ARCHIVE_CREATED_AT_INVALID");
   return buildCommandeArPdfBuffer({
+    legacyAppearance: !hasModuleAppearance(archive.renderVersion),
     general_terms: source.general_terms,
     issuer: source.issuer, reference: source.acknowledgement_number, orderNumber: source.order_number,
     companyName: source.customer_name ?? null,

@@ -12,6 +12,12 @@
 - Les erreurs transitoires de l’annuaire ou de la lecture d’autorisation ne déclenchent plus l’événement de révocation de session consommé par les clients web et Electron. Les raisons de déconnexion sont journalisées dans une liste fixe, sans jeton ni donnée personnelle.
 - Correctif sans migration, modification MFA, durée de session, habilitation ou changement de flux métier. La qualification locale ne permet pas d’attribuer rétrospectivement un incident utilisateur à l’annuaire.
 
+## Préparé — Harmonisation PDF par module (19 octobre 2026)
+
+- Couleurs Production, Commerce, Qualité, Stock et Système appliquées aux PDF et rapports, avec logo CRP conservé. Encadrés et bandeaux légèrement arrondis ; dimensions, informations, positions, polices et sauts de page conservés.
+- Gabarit OF 1.8 et habillage des nouvelles archives versionnés ; les éditions historiques gardent leur rendu. Aucun changement de données, de schéma ou de règles métier.
+- Inventaire, comparaisons de géométrie, contrôles couleur/gris et limites de qualification : `docs/pdf-module-style-20261019.md`. Lot local à intégrer avec le frontend, sans déploiement direct.
+
 ## Préparé — Retrait des comptes locaux historiques (#1378)
 
 - Les comptes locaux historiques marqués explicitement comme retirés n'apparaissent plus dans les listes Administration et contrôle d'accès. Le marqueur est versionné et strict : seul `cerp_account_retirement.schema_version` numérique à `1` s'applique.

@@ -12,7 +12,7 @@ import { buildInternalCreationSnapshot } from "../shared/authoritative-documents
 
 const archive = (sourceSnapshot: Record<string, unknown>) => ({
   id: "11111111-1111-4111-8111-111111111111", entityType: "fixture", entityId: "42", documentKind: "FIXTURE",
-  documentVersion: 7, renderVersion: "qa-render-v1", idempotencyKey: "fixture:42:creation:v1", title: "Fixture", originalName: "fixture.pdf",
+  documentVersion: 7, renderVersion: "qa-render-v1+style-20261019", idempotencyKey: "fixture:42:creation:v1", title: "Fixture", originalName: "fixture.pdf",
   sourceRevision: "2026-08-23 10:00:00+00", createdAt: "2026-08-23T10:00:00.000Z",
   sourceSnapshot, snapshotSha256: "a".repeat(64), pdfSha256: null, pdfSizeBytes: null, gedDocumentId: null,
   gedVersionId: null, archivedAt: null, actorUserId: 1,

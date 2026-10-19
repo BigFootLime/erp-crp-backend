@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit"
+import { documentPanelPath } from "./document-shapes"
 
 export type DocumentRaster = {
   bytes: Buffer
@@ -6,7 +7,7 @@ export type DocumentRaster = {
   reference?: string | null
 }
 
-type Colors = { ink: string; graphite: string; steel: string; hairline: string; wash: string; paper: string; brand: string }
+type Colors = { ink: string; graphite: string; steel: string; hairline: string; wash: string; paper: string; brand: string; cornerRadius?: number }
 type Geometry = { x: number; width: number; colors: Colors }
 type SafeText = (text: string) => string
 
@@ -35,8 +36,8 @@ export function sectionHeight(doc: PDFKit.PDFDocument, title: string, width: num
 export function drawSectionBand(doc: PDFKit.PDFDocument, title: string, index: number, y: number, geometry: Geometry, safe: SafeText): number {
   const { x, width, colors: c } = geometry
   const height = sectionHeight(doc, title, width, safe)
-  doc.save().rect(x, y, width, height).fill(c.wash).restore()
-  doc.save().rect(x, y, 3, height).fill(c.brand).restore()
+  documentPanelPath(doc.save(), x, y, width, height, c).fill(c.wash).restore()
+  documentPanelPath(doc.save(), x, y, 3, height, c).fill(c.brand).restore()
   doc.font("Helvetica-Bold").fontSize(9).fillColor(c.steel)
   doc.text(String(index).padStart(2, "0"), x + 13, y + 9, { width: 25, lineBreak: false })
   doc.font("Helvetica-Bold").fontSize(10.5).fillColor(c.ink)
@@ -56,8 +57,8 @@ export function operationHeadingHeight(doc: PDFKit.PDFDocument, title: string, w
 export function drawOperationHeading(doc: PDFKit.PDFDocument, operation: { number: string; title: string }, y: number, geometry: Geometry, safe: SafeText): number {
   const { x, width, colors: c } = geometry
   const height = operationHeadingHeight(doc, operation.title, width, safe, operation.number)
-  doc.save().rect(x, y, width, height).fill(c.wash).restore()
-  doc.save().rect(x, y, 92, height).fill(c.ink).restore()
+  documentPanelPath(doc.save(), x, y, width, height, c).fill(c.wash).restore()
+  documentPanelPath(doc.save(), x, y, 92, height, c, "left").fill(c.ink).restore()
   doc.font("Helvetica-Bold").fontSize(8).fillColor(c.paper)
   doc.text("OPÉRATION", x + 10, y + 8, { width: 72, align: "center", lineBreak: false })
   const number = safe(operation.number)
@@ -82,7 +83,7 @@ export function visualPanelHeight(doc: PDFKit.PDFDocument, visual: DocumentRaste
 export function drawVisualPanel(doc: PDFKit.PDFDocument, visual: DocumentRaster, y: number, geometry: Geometry, imageHeight: number, safe: SafeText): number {
   const { x, width, colors: c } = geometry
   const height = visualPanelHeight(doc, visual, width, imageHeight, safe)
-  doc.save().lineWidth(0.7).strokeColor(c.hairline).rect(x, y, width, height).stroke().restore()
+  documentPanelPath(doc.save().lineWidth(0.7).strokeColor(c.hairline), x, y, width, height, c).stroke().restore()
   doc.image(visual.bytes, x + 12, y + 12, { fit: [width - 24, imageHeight], align: "center", valign: "center" })
   let textY = y + 12 + imageHeight + 10
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(c.ink)

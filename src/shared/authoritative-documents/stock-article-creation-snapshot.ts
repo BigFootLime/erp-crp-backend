@@ -28,7 +28,7 @@ export function buildStockArticleCreationSnapshotInput(
     entityId: input.id,
     documentKind: "STOCK_ARTICLE_CREATION_SNAPSHOT",
     documentVersion: 1,
-    renderVersion: "internal-creation-snapshot-v1",
+    renderVersion: "internal-creation-snapshot-v1+style-20261019",
     idempotencyKey: `stock-article:${input.id}:creation:v1`,
     title: `Instantané de création — article ${input.code}`,
     originalName: authoritativePdfFilename(["article", input.code, "creation"]),

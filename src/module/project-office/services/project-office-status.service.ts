@@ -1,3 +1,5 @@
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("systeme");
 import PDFDocument from "pdfkit";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetProjectById, repoListActivity } from "../repository/project-office.repository";
@@ -106,9 +108,9 @@ export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc.fontSize(18).text(`Rapport de statut — ${r.project.name}`, { continued: false });
+    doc.fillColor(C.brand).fontSize(18).text(`Rapport de statut — ${r.project.name}`, { continued: false });
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor("#555")
+    doc.fontSize(10).fillColor(C.steel)
       .text(`${r.project.code} · généré le ${r.generated_at.slice(0, 16).replace("T", " ")} · santé : ${r.health}`);
     doc.moveDown();
 
@@ -121,17 +123,17 @@ export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
       ["Risques ouverts", String(r.stats.risks_open)],
       ["Actions ouvertes", String(r.stats.actions_open)],
     ];
-    doc.fillColor("#000").fontSize(13).text("Synthèse");
+    doc.fillColor(C.brand).fontSize(13).text("Synthèse");
     doc.moveDown(0.3);
-    doc.fontSize(10);
+    doc.fillColor(C.ink).fontSize(10);
     for (const [k, v] of kv) doc.text(`${k} : ${v}`);
     doc.moveDown();
 
     const section = (title: string, lines: string[], empty: string) => {
-      doc.fontSize(13).text(title);
+      doc.fillColor(C.brand).fontSize(13).text(title);
       doc.moveDown(0.3);
-      doc.fontSize(10);
-      if (!lines.length) doc.fillColor("#777").text(empty).fillColor("#000");
+      doc.fillColor(C.ink).fontSize(10);
+      if (!lines.length) doc.fillColor(C.steel).text(empty).fillColor(C.ink);
       for (const line of lines) doc.text(`• ${line}`);
       doc.moveDown();
     };

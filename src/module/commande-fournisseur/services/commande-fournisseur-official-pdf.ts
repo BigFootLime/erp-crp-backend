@@ -1,3 +1,4 @@
+import { archiveDocumentCategory } from "../../../shared/pdf/document-appearance";
 import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document";
 import { formatDateFR, money, percent, quantity, unitPrice } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";
@@ -87,6 +88,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
     metaColumn: "designation",
   }));
   return renderCerpDocument({
+      category: archiveDocumentCategory(input.archive.renderVersion, "commerce"),
     documentType: "Bon de commande fournisseur", name: source.code, code: source.code,
     subtitle: `Version ${input.archive.documentVersion} · ${draft ? "Instantané de création" : `Émis le ${formatDateFR(source.issued_at)}`}`,
     status: source.status, monogramName: supplierName, generatedAt: formatDateFR(archivedAt.toISOString()),

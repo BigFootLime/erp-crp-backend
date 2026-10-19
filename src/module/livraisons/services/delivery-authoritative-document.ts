@@ -1,3 +1,4 @@
+import { hasModuleAppearance } from "../../../shared/pdf/document-appearance";
 import type { PoolClient } from "pg";
 
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
@@ -128,7 +129,7 @@ export async function buildDeliveryCreationSnapshotInput(tx: Queryable, input: {
   const affaireReferences = Array.isArray(snapshot.affaire_references) ? snapshot.affaire_references : [];
   return {
     entityType: "bon-livraison", entityId: input.deliveryId, documentKind: "DELIVERY_NOTE_CREATION_SNAPSHOT", documentVersion: 1,
-    renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `delivery:${input.deliveryId}:creation:v1`,
+    renderVersion: "internal-creation-snapshot-v1+style-20261019", idempotencyKey: `delivery:${input.deliveryId}:creation:v1`,
     title: `Instantané de création — bon de livraison ${snapshot.numero}`,
     originalName: authoritativePdfFilename(["bon-livraison", snapshot.numero, "creation"]), sourceRevision: snapshot.updated_at,
     sourceSnapshot: buildInternalCreationSnapshot({
@@ -148,7 +149,7 @@ export async function buildShippedDeliveryArtifactInput(tx: Queryable, input: { 
   if (snapshot.statut !== "SHIPPED") throw new Error("DELIVERY_SHIPPED_ARTIFACT_INVALID_STATE");
   return {
     entityType: "bon-livraison", entityId: input.deliveryId, documentKind: "DELIVERY_NOTE_SHIPPED", documentVersion: 1,
-    renderVersion: "delivery-note-shipped-v1", idempotencyKey: `delivery:${input.deliveryId}:shipped:v1`,
+    renderVersion: "delivery-note-shipped-v1+style-20261019", idempotencyKey: `delivery:${input.deliveryId}:shipped:v1`,
     title: `Bon de livraison expédié — ${snapshot.numero}`,
     originalName: authoritativePdfFilename(["bon-livraison", snapshot.numero, "expedie"]), sourceRevision: input.sourceRevision,
     sourceSnapshot: { type: "DELIVERY_NOTE_SHIPPED_SNAPSHOT", ...snapshot }, actorUserId: input.actorUserId,
@@ -162,6 +163,7 @@ export async function renderShippedDeliveryOfficialPdf({ archive }: { archive: A
     throw new Error("DELIVERY_SHIPPED_ARTIFACT_SNAPSHOT_INVALID");
   }
   return renderBonLivraisonDocument({
+    legacyAppearance: !hasModuleAppearance(archive.renderVersion),
     version: archive.documentVersion, company: source.issuer && typeof source.issuer === "object" ? pickMention(source.issuer, "company_name") : null,
     issuer: source.issuer && typeof source.issuer === "object" ? source.issuer : {},
     header: {

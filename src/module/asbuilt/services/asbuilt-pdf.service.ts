@@ -1,3 +1,5 @@
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("qualite");
 import PDFDocument from "pdfkit"
 
 import type { AsBuiltPreview } from "../types/asbuilt.types"
@@ -44,8 +46,8 @@ function drawKeyValue(doc: PDFKit.PDFDocument, key: string, value: string) {
 
 function section(doc: PDFKit.PDFDocument, title: string) {
   doc.moveDown(0.7)
-  doc.fontSize(12).font("Helvetica-Bold").text(title)
-  doc.fontSize(10).font("Helvetica")
+  doc.fillColor(C.brand).fontSize(12).font("Helvetica-Bold").text(title)
+  doc.fillColor(C.ink).fontSize(10).font("Helvetica")
 }
 
 /**
@@ -71,10 +73,10 @@ export async function svcRenderAsbuiltPdf(args: {
   return renderPdfToBuffer({
     creationDate: args.generatedAt,
     render: (doc) => {
-      doc.fontSize(18).font("Helvetica-Bold").text("Dossier de lot (as-built)")
+      doc.fillColor(C.brand).fontSize(18).font("Helvetica-Bold").text("Dossier de lot (as-built)")
       doc.moveDown(0.6)
 
-      doc.fontSize(10).font("Helvetica")
+      doc.fillColor(C.ink).fontSize(10).font("Helvetica")
       drawKeyValue(doc, "Lot :", p.lot.lot_code)
       drawKeyValue(doc, "Article :", `${p.lot.article_code} - ${p.lot.article_designation}`)
       if (p.lot.supplier_lot_code) drawKeyValue(doc, "Lot fournisseur :", p.lot.supplier_lot_code)
@@ -103,7 +105,7 @@ export async function svcRenderAsbuiltPdf(args: {
           doc.fillColor(w.level === "danger" ? "#b91c1c" : "#92400e")
           doc.text(`- [${w.level.toUpperCase()}] ${w.message}`)
         }
-        doc.fillColor("#111111")
+        doc.fillColor(C.ink)
       } else {
         section(doc, "Avertissements de couverture")
         doc.text("- Aucune lacune detectee sur le perimetre analyse.")
@@ -291,11 +293,11 @@ export async function svcRenderAsbuiltPdf(args: {
       doc.moveDown(1)
       doc
         .fontSize(8)
-        .fillColor("#6b7280")
+        .fillColor(C.steel)
         .text(
           "Document genere automatiquement par CERP. Les elements marques MANQUANTE ou SANS ... signalent une lacune de donnees reelle, non une erreur de generation."
         )
-      doc.fillColor("#111111")
+      doc.fillColor(C.ink)
     },
   })
 }

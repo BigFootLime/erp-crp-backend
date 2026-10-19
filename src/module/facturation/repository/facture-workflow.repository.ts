@@ -1540,7 +1540,7 @@ export async function repoIssueFacture(params: {
       entityId: facture.uuid,
       documentKind: "FINANCE_INVOICE_LEGAL_PDF",
       documentVersion: 1,
-      renderVersion: "finance-legal-issued-v1",
+      renderVersion: "finance-legal-issued-v1+style-20261019",
       idempotencyKey: `finance:facture:${facture.uuid}:legal:${legal.legalNumber}:v1`,
       title: `Facture légale ${legal.legalNumber}`,
       originalName: artifact.fileName,

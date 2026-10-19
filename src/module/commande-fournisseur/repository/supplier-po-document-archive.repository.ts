@@ -30,7 +30,7 @@ export async function queueFrozenSupplierDocumentTx(tx:Db,orderId:string,documen
       AND document_kind='SUPPLIER_PURCHASE_ORDER'`,[orderId])).rows[0]?.version);
   return queueFrozenCommercialPdfArchive(tx,{
     entityType:'commande-fournisseur',entityId:orderId,documentKind:'SUPPLIER_PURCHASE_ORDER',
-    documentVersion:edition,renderVersion:'supplier-po-pdf-v1',idempotencyKey:key,
+    documentVersion:edition,renderVersion:'supplier-po-pdf-v1+style-20261019',idempotencyKey:key,
     title:'Bon de commande fournisseur '+snapshot.code,
     originalName:authoritativePdfFilename(['BCF',snapshot.code,'v'+edition]),
     sourceRevision:revision,sourceSnapshot:{...snapshot,frozen_document:{id:document.id,version:document.version}},

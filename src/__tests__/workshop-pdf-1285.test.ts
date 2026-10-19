@@ -22,6 +22,10 @@ function content(bytes: Buffer): string {
 }
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps the saved 1.7 rendering byte-identical", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7" }));
+    expect((await renderOfDocument(payload)).sha256).toBe("1a216613415712dd5763a97ed02aa3d6d87f5f5cffbaba8c938ef2647cff99aa");
+  });
   it("keeps the saved 1.6 rendering unchanged", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.6" }));
     expect((await renderOfDocument(payload)).sha256).toBe("cf0e5a8ad3e9199d09d4799e6f28f37c1a0a308fd9733ceb748b9ec22a95f0e3");

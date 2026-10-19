@@ -25,6 +25,7 @@ const preparation = [
 export function renderWorkshopSupportPaper(payload: OfDocumentPayload, kind: WorkshopSupportKind): Promise<Buffer> {
   const improvement = kind === "IMPROVEMENT", source = improvement ? "MD61-A" : "MD38-D";
   return renderCerpDocument({
+      category: "production",
     designVersion: "structured-v5", documentType: improvement ? "Informations techniques et suivi" : "Préparation de fabrication",
     name: payload.ofNumero, code: payload.revisionCode,
     status: improvement ? "Fiche à compléter" : kind === "PREPARATION_INDEX" ? "Changement d’indice" : "Création de pièce",

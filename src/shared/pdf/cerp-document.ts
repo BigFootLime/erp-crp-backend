@@ -1,4 +1,6 @@
 import PDFDocument from "pdfkit"
+import { documentColors, LEGACY_DOCUMENT_COLORS, type DocumentCategory, type DocumentColors } from "./document-appearance"
+import { documentPanelPath } from "./document-shapes"
 
 import { CERP_LOGO_PNG, CERP_LOGO_RATIO } from "./cerp-logo"
 import { trimEntityImageForRender } from "./trim-entity-image"
@@ -19,17 +21,7 @@ import { drawOperationHeading, drawSectionBand, drawVisualPanel, operationHeadin
  */
 
 /** Palette : identique a `crpDocumentPdfTokens` cote frontend. */
-export const CERP_DOC_COLORS = {
-  /** Rouge officiel preleve sur le logo, unique accent du document. */
-  brand: "#B90101",
-  ink: "#101418",
-  graphite: "#3D444C",
-  steel: "#6E7681",
-  hairline: "#D5DAE0",
-  hairlineSoft: "#E7EAEE",
-  wash: "#F5F6F8",
-  paper: "#FFFFFF",
-} as const
+export const CERP_DOC_COLORS = LEGACY_DOCUMENT_COLORS
 
 const MARGIN_X = 38
 const MARGIN_TOP = 34
@@ -226,6 +218,8 @@ export function monogramFromName(name: string | null | undefined): string {
 }
 
 export type CerpDocumentHeader = {
+  /** Presentation only; omitted for historical renderers. */
+  category?: DocumentCategory
   /** Explicit visual contract. Legacy/pending archives keep the classic renderer by default. */
   designVersion?: CerpDocumentDesign
   /** Type de document, en capitales dans l'en-tete et le rappel d'identite. */
@@ -334,7 +328,7 @@ export class CerpDocumentContext {
     return Math.max(this.fieldOffset, this.doc.heightOfString(toPdfSafeText(label.toUpperCase()), { width, characterSpacing: 0.75 }) + 4)
   }
 
-  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP) {
+  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP, readonly colors: DocumentColors = CERP_DOC_COLORS) {
     this.doc = doc
     this.cursor = startY
     this.reserve = reserve
@@ -414,35 +408,35 @@ export class CerpDocumentContext {
     this.ensureSpace(height)
 
     this.doc.save()
-    this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).fill(CERP_DOC_COLORS.wash)
+    this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).fill(this.colors.wash)
     this.doc.restore()
-    this.rule(this.cursor, CERP_DOC_COLORS.hairline)
-    this.rule(this.cursor + height, CERP_DOC_COLORS.hairline)
+    this.rule(this.cursor, this.colors.hairline)
+    this.rule(this.cursor + height, this.colors.hairline)
 
     cells.forEach((cell, index) => {
       const x = MARGIN_X + paddingH + cellWidth * index
       if (index > 0) {
         this.doc.save()
-        this.doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
+        this.doc.lineWidth(0.8).strokeColor(this.colors.hairline)
         this.doc.moveTo(x - 6, this.cursor + 6).lineTo(x - 6, this.cursor + height - 6).stroke()
         this.doc.restore()
       }
 
-      this.doc.font("Helvetica").fontSize(this.labelSize).fillColor(CERP_DOC_COLORS.steel)
+      this.doc.font("Helvetica").fontSize(this.labelSize).fillColor(this.colors.steel)
       this.text(cell.label.toUpperCase(), x, this.cursor + paddingV, { width: cellWidth - 12, characterSpacing: 0.75 })
 
       const filled = Boolean(cell.value && cell.value.trim())
       this.doc
         .font(filled ? "Helvetica-Bold" : "Helvetica")
         .fontSize(this.design.body)
-        .fillColor(filled ? CERP_DOC_COLORS.ink : CERP_DOC_COLORS.steel)
+        .fillColor(filled ? this.colors.ink : this.colors.steel)
       this.doc.text(toPdfSafeText(filled ? (cell.value as string) : "Non renseigné"), x, this.cursor + paddingV + valueOffset, {
         width: cellWidth - 12,
       })
     })
 
     this.cursor += height
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
+    this.doc.fillColor(this.colors.ink)
   }
 
   /** Titre de section : capitales espacees suivies d'un filet. */
@@ -452,19 +446,19 @@ export class CerpDocumentContext {
       this.cursor += 16
       const height = sectionHeight(this.doc, title, CONTENT_WIDTH, toPdfSafeText)
       this.ensureSpace(height + 10 + cohesion)
-      this.cursor = drawSectionBand(this.doc, title, ++this.sectionIndex, this.cursor, { x: MARGIN_X, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
+      this.cursor = drawSectionBand(this.doc, title, ++this.sectionIndex, this.cursor, { x: MARGIN_X, width: CONTENT_WIDTH, colors: this.colors }, toPdfSafeText)
       return
     }
     this.cursor += 17
     this.ensureSpace(20 + cohesion)
 
-    this.doc.font("Helvetica-Bold").fontSize(8.5).fillColor(CERP_DOC_COLORS.ink)
+    this.doc.font("Helvetica-Bold").fontSize(8.5).fillColor(this.colors.ink)
     const label = toPdfSafeText(title.toUpperCase())
     const width = this.doc.widthOfString(label, { characterSpacing: 1.3 })
     this.doc.text(label, MARGIN_X, this.cursor, { lineBreak: false, characterSpacing: 1.3 })
 
     this.doc.save()
-    this.doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
+    this.doc.lineWidth(0.8).strokeColor(this.colors.hairline)
     this.doc
       .moveTo(MARGIN_X + width + 10, this.cursor + 5)
       .lineTo(MARGIN_X + CONTENT_WIDTH, this.cursor + 5)
@@ -496,7 +490,7 @@ export class CerpDocumentContext {
     }
     const keepTogether = headingHeight + 9 + fieldsHeight + (operation.instructions?.trim() ? 36 : 0)
     this.ensureSpace(keepTogether <= this.bottomLimit - this.pageTop ? keepTogether : headingHeight + 60)
-    this.cursor = drawOperationHeading(this.doc, operation, this.cursor, { x: MARGIN_X, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
+    this.cursor = drawOperationHeading(this.doc, operation, this.cursor, { x: MARGIN_X, width: CONTENT_WIDTH, colors: this.colors }, toPdfSafeText)
     this.fieldsGrid(operation.fields)
     if (operation.instructions?.trim()) this.notes(operation.instructions)
     if (operation.visuals?.length) this.visuals(operation.visuals, { imageHeight: 96 })
@@ -517,7 +511,7 @@ export class CerpDocumentContext {
       const chunk = visuals.slice(offset, offset + count)
       const height = Math.max(...chunk.map((visual) => visualPanelHeight(this.doc, visual, width, imageHeight, toPdfSafeText)))
       this.ensureSpace(height + 10)
-      chunk.forEach((visual, index) => drawVisualPanel(this.doc, visual, this.cursor, { x: MARGIN_X + index * (width + gap), width, colors: CERP_DOC_COLORS }, imageHeight, toPdfSafeText))
+      chunk.forEach((visual, index) => drawVisualPanel(this.doc, visual, this.cursor, { x: MARGIN_X + index * (width + gap), width, colors: this.colors }, imageHeight, toPdfSafeText))
       this.cursor += height + 10
     }
   }
@@ -547,18 +541,18 @@ export class CerpDocumentContext {
 
       this.doc.save()
       if (accent) {
-        this.doc.rect(x, top, cardWidth, height).fill(CERP_DOC_COLORS.wash)
-        this.doc.rect(x, top, 1.6, height).fill(CERP_DOC_COLORS.brand)
+        documentPanelPath(this.doc, x, top, cardWidth, height, this.colors).fill(this.colors.wash)
+        documentPanelPath(this.doc, x, top, 1.6, height, this.colors).fill(this.colors.brand)
       } else {
-        this.doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
-        this.doc.rect(x, top, cardWidth, height).stroke()
+        this.doc.lineWidth(0.8).strokeColor(this.colors.hairline)
+        documentPanelPath(this.doc, x, top, cardWidth, height, this.colors).stroke()
       }
       this.doc.restore()
 
       this.doc
         .font("Helvetica-Bold")
           .fontSize(this.labelSize)
-        .fillColor(accent ? CERP_DOC_COLORS.brand : CERP_DOC_COLORS.steel)
+        .fillColor(accent ? this.colors.brand : this.colors.steel)
       this.text(card.caption.toUpperCase(), x + 11, top + 11, { width: inner, characterSpacing: 0.9 })
 
       let lineY = top + 11 + 16
@@ -568,14 +562,14 @@ export class CerpDocumentContext {
         this.doc
           .font(isFirst ? "Helvetica-Bold" : "Helvetica")
           .fontSize(this.design.body)
-          .fillColor(card.lines?.length ? CERP_DOC_COLORS.ink : CERP_DOC_COLORS.steel)
+          .fillColor(card.lines?.length ? this.colors.ink : this.colors.steel)
         this.doc.text(toPdfSafeText(line), x + 11, lineY, { width: inner })
         lineY = this.doc.y
       })
     })
 
     this.cursor = top + height
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
+    this.doc.fillColor(this.colors.ink)
   }
 
   /**
@@ -587,10 +581,10 @@ export class CerpDocumentContext {
 
     if (!rows.length) {
       this.ensureSpace(16)
-      this.doc.font("Helvetica").fontSize(this.design.body).fillColor(CERP_DOC_COLORS.steel)
+      this.doc.font("Helvetica").fontSize(this.design.body).fillColor(this.colors.steel)
       this.doc.text(toPdfSafeText(emptyLabel), MARGIN_X, this.cursor, { width: CONTENT_WIDTH })
       this.cursor = this.doc.y
-      this.doc.fillColor(CERP_DOC_COLORS.ink)
+      this.doc.fillColor(this.colors.ink)
       return
     }
 
@@ -605,8 +599,8 @@ export class CerpDocumentContext {
     )) : this.design.tableHeadHeight
 
     const drawHead = () => {
-      if (this.editorial) this.doc.save().rect(MARGIN_X - 5, this.cursor - 5, CONTENT_WIDTH + 10, headerHeight).fill(CERP_DOC_COLORS.wash).restore()
-      this.doc.font(this.editorial ? "Helvetica-Bold" : "Helvetica").fontSize(this.design.tableHeading).fillColor(this.editorial ? CERP_DOC_COLORS.graphite : CERP_DOC_COLORS.steel)
+      if (this.editorial) documentPanelPath(this.doc.save(), MARGIN_X - 5, this.cursor - 5, CONTENT_WIDTH + 10, headerHeight, this.colors).fill(this.colors.wash).restore()
+      this.doc.font(this.editorial ? "Helvetica-Bold" : "Helvetica").fontSize(this.design.tableHeading).fillColor(this.editorial ? this.colors.graphite : this.colors.steel)
       columns.forEach((column, index) => {
         this.doc.text(toPdfSafeText(column.label.toUpperCase()), xOf(index), this.cursor, {
           width: widthOf(column),
@@ -615,7 +609,7 @@ export class CerpDocumentContext {
           lineBreak: this.editorial,
         })
       })
-      this.rule(this.cursor + headerHeight - 5, this.editorial ? CERP_DOC_COLORS.hairline : CERP_DOC_COLORS.ink)
+      this.rule(this.cursor + headerHeight - 5, this.editorial ? this.colors.hairline : this.colors.ink)
       this.cursor += headerHeight
     }
 
@@ -660,7 +654,7 @@ export class CerpDocumentContext {
         this.doc
           .font(isMeta ? "Helvetica-Bold" : "Helvetica")
           .fontSize(this.design.body)
-          .fillColor(row.cells[column.key]?.trim() ? CERP_DOC_COLORS.ink : CERP_DOC_COLORS.steel)
+          .fillColor(row.cells[column.key]?.trim() ? this.colors.ink : this.colors.steel)
         this.doc.text(toPdfSafeText(row.cells[column.key] ?? "—"), xOf(index), top, {
           width: widthOf(column),
           align: column.align ?? "left",
@@ -670,7 +664,7 @@ export class CerpDocumentContext {
       let bottom = top + Math.max(12, ...heights)
       if (row.meta) {
         const metaIndex = columns.findIndex((column) => column.key === metaColumn)
-        this.doc.font("Helvetica").fontSize(this.design.tableMeta).fillColor(CERP_DOC_COLORS.steel)
+        this.doc.font("Helvetica").fontSize(this.design.tableMeta).fillColor(this.colors.steel)
         this.doc.text(toPdfSafeText(row.meta), xOf(metaIndex < 0 ? 0 : metaIndex), bottom + 1, {
           width: widthOf(columns[metaIndex < 0 ? 0 : metaIndex]),
         })
@@ -678,10 +672,10 @@ export class CerpDocumentContext {
       }
 
       this.cursor = bottom + 6
-      this.rule(this.cursor, CERP_DOC_COLORS.hairlineSoft, 0.6)
+      this.rule(this.cursor, this.colors.hairlineSoft, 0.6)
     }
 
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
+    this.doc.fillColor(this.colors.ink)
   }
 
   /**
@@ -721,9 +715,9 @@ export class CerpDocumentContext {
       const height = padding * 2 + chunk.length * lineHeight
 
       this.doc.save()
-      this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).fill(CERP_DOC_COLORS.wash)
+      documentPanelPath(this.doc, MARGIN_X, this.cursor, CONTENT_WIDTH, height, this.colors).fill(this.colors.wash)
       this.doc.restore()
-      this.doc.font("Helvetica").fontSize(9.2).fillColor(CERP_DOC_COLORS.ink)
+      this.doc.font("Helvetica").fontSize(9.2).fillColor(this.colors.ink)
       chunk.forEach((line, index) => {
         this.doc.text(line, MARGIN_X + 13, this.cursor + padding + index * lineHeight, { width: inner, lineBreak: false })
       })
@@ -739,14 +733,14 @@ export class CerpDocumentContext {
   /** Paire libelle / valeur, alignee sur la grille des champs. */
   field(label: string, value: string | null, x: number, width: number): number {
     const offset = this.fieldValueOffset(label, width)
-    this.doc.font("Helvetica").fontSize(this.labelSize).fillColor(CERP_DOC_COLORS.steel)
+    this.doc.font("Helvetica").fontSize(this.labelSize).fillColor(this.colors.steel)
     this.text(label.toUpperCase(), x, this.cursor, { width, characterSpacing: 0.75 })
 
     const filled = Boolean(value && value.trim())
     this.doc
       .font(filled ? "Helvetica-Bold" : "Helvetica")
       .fontSize(this.design.body)
-      .fillColor(filled ? CERP_DOC_COLORS.ink : CERP_DOC_COLORS.steel)
+      .fillColor(filled ? this.colors.ink : this.colors.steel)
     this.doc.text(toPdfSafeText(filled ? (value as string) : "Non renseigné"), x, this.cursor + offset, { width })
     return this.doc.y
   }
@@ -781,7 +775,7 @@ export class CerpDocumentContext {
       this.cursor = Math.max(top + measuredHeight, bottom + 8)
     }
 
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
+    this.doc.fillColor(this.colors.ink)
   }
 
   /** Cadre de reception : nom, signature, date. Reste solidaire, jamais coupe. */
@@ -791,19 +785,19 @@ export class CerpDocumentContext {
     this.ensureSpace(height)
 
     this.doc.save()
-    this.doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
-    this.doc.rect(MARGIN_X, this.cursor, CONTENT_WIDTH, height).stroke()
+    this.doc.lineWidth(0.8).strokeColor(this.colors.hairline)
+    documentPanelPath(this.doc, MARGIN_X, this.cursor, CONTENT_WIDTH, height, this.colors).stroke()
     this.doc.restore()
 
-    this.doc.font("Helvetica-Bold").fontSize(this.labelSize).fillColor(CERP_DOC_COLORS.steel)
+    this.doc.font("Helvetica-Bold").fontSize(this.labelSize).fillColor(this.colors.steel)
     this.text(title.toUpperCase(), MARGIN_X + 11, this.cursor + 10, { width: CONTENT_WIDTH - 22, characterSpacing: 0.9 })
 
     fields.forEach((label, index) => {
       const y = this.cursor + 30 + index * 26
-      this.doc.font("Helvetica").fontSize(this.design.body).fillColor(CERP_DOC_COLORS.graphite)
+      this.doc.font("Helvetica").fontSize(this.design.body).fillColor(this.colors.graphite)
       this.text(label, MARGIN_X + 11, y, { width: 140 })
       this.doc.save()
-      this.doc.lineWidth(0.6).strokeColor(CERP_DOC_COLORS.hairline)
+      this.doc.lineWidth(0.6).strokeColor(this.colors.hairline)
       this.doc
         .moveTo(MARGIN_X + 160, y + 11)
         .lineTo(MARGIN_X + CONTENT_WIDTH - 11, y + 11)
@@ -812,16 +806,17 @@ export class CerpDocumentContext {
     })
 
     this.cursor += height
-    this.doc.fillColor(CERP_DOC_COLORS.ink)
+    this.doc.fillColor(this.colors.ink)
   }
 
 }
 
 function drawMasthead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): number {
+  const colors = documentColors(header.category)
   const logoHeight = LOGO_WIDTH / CERP_LOGO_RATIO
   doc.image(CERP_LOGO_PNG, MARGIN_X, MARGIN_TOP, { width: LOGO_WIDTH })
 
-  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(CERP_DOC_COLORS.brand)
+  doc.font("Helvetica-Bold").fontSize(9.5).fillColor(colors.brand)
   const type = toPdfSafeText(header.documentType.toUpperCase())
   const typeWidth = doc.widthOfString(type, { characterSpacing: 2.4 })
   doc.text(type, MARGIN_X + CONTENT_WIDTH - typeWidth, MARGIN_TOP + logoHeight - 12, {
@@ -832,31 +827,32 @@ function drawMasthead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): numb
   // Filet bicolore : amorce rouge, puis encre. Rappel du reperage du logo.
   const ruleY = MARGIN_TOP + logoHeight + 9
   doc.save()
-  doc.rect(MARGIN_X, ruleY, 66, 1.6).fill(CERP_DOC_COLORS.brand)
-  doc.rect(MARGIN_X + 66, ruleY, CONTENT_WIDTH - 66, 1.6).fill(CERP_DOC_COLORS.ink)
+  doc.rect(MARGIN_X, ruleY, 66, 1.6).fill(colors.brand)
+  doc.rect(MARGIN_X + 66, ruleY, CONTENT_WIDTH - 66, 1.6).fill(colors.ink)
   doc.restore()
 
   return ruleY + 1.6 + 15
 }
 
 function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: number): number {
+  const colors = documentColors(header.category)
   const slotWidth = 92
   const slotHeight = 58
   const mainWidth = CONTENT_WIDTH - slotWidth - 16
 
-  doc.font("Helvetica-Bold").fontSize(20).fillColor(CERP_DOC_COLORS.ink)
+  doc.font("Helvetica-Bold").fontSize(20).fillColor(colors.ink)
   doc.text(toPdfSafeText(header.name), MARGIN_X, top, { width: mainWidth })
   let y = doc.y + 6
 
-  doc.font("Helvetica-Bold").fontSize(10).fillColor(CERP_DOC_COLORS.ink)
+  doc.font("Helvetica-Bold").fontSize(10).fillColor(colors.ink)
   const code = toPdfSafeText(header.code ?? "Code non attribué")
   doc.text(code, MARGIN_X, y, { lineBreak: false, characterSpacing: 0.8 })
   const codeWidth = doc.widthOfString(code, { characterSpacing: 0.8 })
 
-  doc.font("Helvetica").fontSize(10).fillColor(CERP_DOC_COLORS.hairline)
+  doc.font("Helvetica").fontSize(10).fillColor(colors.hairline)
   doc.text("|", MARGIN_X + codeWidth + 7, y, { lineBreak: false })
 
-  doc.font("Helvetica").fontSize(10).fillColor(CERP_DOC_COLORS.graphite)
+  doc.font("Helvetica").fontSize(10).fillColor(colors.graphite)
   const status = toPdfSafeText(header.status)
   doc.text(status, MARGIN_X + codeWidth + 18, y, { lineBreak: false })
   const statusWidth = doc.widthOfString(status)
@@ -867,14 +863,14 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
     const flagWidth = doc.widthOfString(flag, { characterSpacing: 1.1 })
     const flagX = MARGIN_X + codeWidth + 18 + statusWidth + 10
     doc.save()
-    doc.rect(flagX, y - 1, flagWidth + 14, 14).fill(CERP_DOC_COLORS.brand)
+    documentPanelPath(doc, flagX, y - 1, flagWidth + 14, 14, colors).fill(colors.danger)
     doc.restore()
-    doc.fillColor(CERP_DOC_COLORS.paper).text(flag, flagX + 7, y + 2.5, { lineBreak: false, characterSpacing: 1.1 })
+    doc.fillColor(colors.paper).text(flag, flagX + 7, y + 2.5, { lineBreak: false, characterSpacing: 1.1 })
   }
 
   y += 16
   if (header.subtitle && header.subtitle.trim()) {
-    doc.font("Helvetica").fontSize(9).fillColor(CERP_DOC_COLORS.steel)
+    doc.font("Helvetica").fontSize(9).fillColor(colors.steel)
     doc.text(toPdfSafeText(header.subtitle), MARGIN_X, y, { width: mainWidth })
     y = doc.y
   }
@@ -883,8 +879,8 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
   // geometrie de l'en-tete ne depend donc pas de la presence d'un logo tiers.
   const slotX = MARGIN_X + CONTENT_WIDTH - slotWidth
   doc.save()
-  doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
-  doc.rect(slotX, top, slotWidth, slotHeight).stroke()
+  doc.lineWidth(0.8).strokeColor(colors.hairline)
+  documentPanelPath(doc, slotX, top, slotWidth, slotHeight, colors).stroke()
   doc.restore()
 
   let imageRendered = false
@@ -903,7 +899,7 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
 
   if (!imageRendered) {
     const monogram = monogramFromName(header.monogramName ?? header.name)
-    doc.font("Helvetica-Bold").fontSize(20).fillColor(CERP_DOC_COLORS.steel)
+    doc.font("Helvetica-Bold").fontSize(20).fillColor(colors.steel)
     const monogramWidth = doc.widthOfString(monogram, { characterSpacing: 1.8 })
     doc.text(monogram, slotX + (slotWidth - monogramWidth) / 2, top + slotHeight / 2 - 9, {
       lineBreak: false,
@@ -911,30 +907,31 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
     })
   }
 
-  doc.fillColor(CERP_DOC_COLORS.ink)
+  doc.fillColor(colors.ink)
   return Math.max(y, top + slotHeight)
 }
 
 function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): void {
+  const colors = documentColors(header.category)
   if (header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")) {
-    drawEditorialRunningHead(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
+    drawEditorialRunningHead(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors }, toPdfSafeText)
     return
   }
   const headline = header.code ? `${header.name} — ${header.code}` : header.name
 
-  doc.font("Helvetica-Bold").fontSize(7).fillColor(CERP_DOC_COLORS.brand)
+  doc.font("Helvetica-Bold").fontSize(7).fillColor(colors.brand)
   doc.text(toPdfSafeText(header.documentType.toUpperCase()), MARGIN_X, 13, { lineBreak: false, characterSpacing: 1.5 })
 
-  doc.font("Helvetica").fontSize(7.5).fillColor(CERP_DOC_COLORS.steel)
+  doc.font("Helvetica").fontSize(7.5).fillColor(colors.steel)
   const right = toPdfSafeText(headline)
   const rightWidth = doc.widthOfString(right)
   doc.text(right, MARGIN_X + CONTENT_WIDTH - rightWidth, 13, { lineBreak: false })
 
   doc.save()
-  doc.lineWidth(0.6).strokeColor(CERP_DOC_COLORS.hairline)
+  doc.lineWidth(0.6).strokeColor(colors.hairline)
   doc.moveTo(MARGIN_X, 27).lineTo(MARGIN_X + CONTENT_WIDTH, 27).stroke()
   doc.restore()
-  doc.fillColor(CERP_DOC_COLORS.ink)
+  doc.fillColor(colors.ink)
 }
 
 /**
@@ -980,6 +977,7 @@ function drawFooter(
   pageNumber: number,
   totalPages: number
 ): void {
+  const colors = documentColors(header.category)
   const y = FOOTER_BASELINE
 
   // Le pied vit **sous** la marge basse : c'est sa raison d'etre. pdfkit, lui, ouvre une
@@ -992,7 +990,7 @@ function drawFooter(
 
   // Mentions de reglement et clauses, au-dessus de l'identite legale.
   if (geometry.mentions) {
-    doc.font("Helvetica").fontSize(LEGAL_MENTIONS_SIZE).fillColor(CERP_DOC_COLORS.steel)
+    doc.font("Helvetica").fontSize(LEGAL_MENTIONS_SIZE).fillColor(colors.steel)
     // Fer a gauche, jamais justifie : pdfkit justifie en **positionnant** les mots plutot
     // qu'en ecrivant les espaces, et le texte extrait du PDF revient alors colle
     // (« Penalitesderetard:12,5% »). Une mention legale doit rester lisible par une
@@ -1006,7 +1004,7 @@ function drawFooter(
   // Identite legale : mention obligatoire, placee au plus pres du filet de pied et repetee
   // sur chaque page.
   if (geometry.identity) {
-    doc.font("Helvetica").fontSize(LEGAL_IDENTITY_SIZE).fillColor(CERP_DOC_COLORS.graphite)
+    doc.font("Helvetica").fontSize(LEGAL_IDENTITY_SIZE).fillColor(colors.graphite)
     const legalWidth = doc.widthOfString(geometry.identity)
     // Une identite trop longue pour une ligne est laissee au retour a la ligne plutot que
     // rognee : une mention obligatoire tronquee ne vaut pas mieux qu'une mention absente.
@@ -1019,32 +1017,32 @@ function drawFooter(
 
   const note = header.footerNote && header.footerNote.trim() ? toPdfSafeText(header.footerNote.trim()) : null
   if (note) {
-    doc.font("Helvetica").fontSize(6.5).fillColor(CERP_DOC_COLORS.steel)
+    doc.font("Helvetica").fontSize(6.5).fillColor(colors.steel)
     const noteWidth = doc.widthOfString(note)
     doc.text(note, MARGIN_X + (CONTENT_WIDTH - noteWidth) / 2, geometry.noteY, { lineBreak: false })
   }
 
   doc.save()
-  doc.lineWidth(0.8).strokeColor(CERP_DOC_COLORS.hairline)
+  doc.lineWidth(0.8).strokeColor(colors.hairline)
   doc.moveTo(MARGIN_X, y - 6).lineTo(MARGIN_X + CONTENT_WIDTH, y - 6).stroke()
   doc.restore()
 
-  doc.font("Helvetica").fontSize(7).fillColor(CERP_DOC_COLORS.graphite)
+  doc.font("Helvetica").fontSize(7).fillColor(colors.graphite)
   doc.text("CROIX ROUSSE PRECISION", MARGIN_X, y, { lineBreak: false, characterSpacing: 0.7 })
 
   const author = header.generatedBy && header.generatedBy.trim() ? ` par ${header.generatedBy.trim()}` : ""
   const middle = toPdfSafeText(`Généré le ${header.generatedAt}${author}`)
-  doc.fillColor(CERP_DOC_COLORS.steel)
+  doc.fillColor(colors.steel)
   const middleWidth = doc.widthOfString(middle)
   doc.text(middle, MARGIN_X + (CONTENT_WIDTH - middleWidth) / 2, y, { lineBreak: false })
 
-  doc.font("Helvetica-Bold").fillColor(CERP_DOC_COLORS.graphite)
+  doc.font("Helvetica-Bold").fillColor(colors.graphite)
   const page = `Page ${pageNumber} / ${totalPages}`
   const pageWidth = doc.widthOfString(page)
   doc.text(page, MARGIN_X + CONTENT_WIDTH - pageWidth, y, { lineBreak: false })
 
   doc.page.margins.bottom = savedBottomMargin
-  doc.fillColor(CERP_DOC_COLORS.ink)
+  doc.fillColor(colors.ink)
 }
 
 /**
@@ -1058,6 +1056,7 @@ export async function renderCerpDocument(
   render: (ctx: CerpDocumentContext) => void
 ): Promise<Buffer> {
   const geometry = measureFooter(header)
+  const colors = documentColors(header.category)
   const doc = new PDFDocument({
     size: "A4",
     bufferPages: true,
@@ -1076,13 +1075,13 @@ export async function renderCerpDocument(
   doc.on("data", (chunk) => chunks.push(chunk as Buffer))
 
   const afterIdentity = (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")
-    ? drawWorkshopDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH }, toPdfSafeText)
+    ? drawWorkshopDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors }, toPdfSafeText)
     : header.designVersion === "editorial-v2"
-    ? drawEditorialDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors: CERP_DOC_COLORS }, toPdfSafeText)
+    ? drawEditorialDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors }, toPdfSafeText)
     : drawIdentity(doc, header, drawMasthead(doc, header))
 
   const pageTop = header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5") ? editorialPageTop(doc, header, CONTENT_WIDTH, toPdfSafeText) : MARGIN_TOP
-  render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve, header.designVersion, pageTop))
+  render(new CerpDocumentContext(doc, afterIdentity, geometry.reserve, header.designVersion, pageTop, colors))
 
   const watermark = header.watermark && header.watermark.trim() ? header.watermark.trim() : null
 

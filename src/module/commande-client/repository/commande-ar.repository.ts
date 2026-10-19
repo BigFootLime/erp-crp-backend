@@ -701,7 +701,7 @@ export async function repoCreateCommandeArDraft(params: {
         entityId: String(params.commande_id),
         documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT",
         documentVersion,
-        renderVersion: "customer-ar-pdf-v1",
+        renderVersion: "customer-ar-pdf-v1+style-20261019",
         idempotencyKey: params.official_request_idempotency_key ?? `commande-client:${params.commande_id}:acknowledgement:${documentVersion}:${arId}`,
         title: `Accusé de réception ${version.reference}`,
         originalName: authoritativePdfFilename([version.reference]),

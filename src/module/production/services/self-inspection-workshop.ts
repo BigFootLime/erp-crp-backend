@@ -52,6 +52,7 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
   const createdAt = snapshot.generated_at ? new Date(snapshot.generated_at) : new Date();
   if (!Number.isFinite(createdAt.getTime())) throw new Error("INSPECTION_PDF_DATE_INVALID");
   return renderCerpDocument({
+      category: "qualite",
     designVersion: "structured-v5",
     documentType: "Fiche d’autocontrôle",
     name: snapshot.of.numero,

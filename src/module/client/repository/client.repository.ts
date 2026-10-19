@@ -545,7 +545,7 @@ export async function repoQueueClientProfileOfficialDocument(
     const version = existingCount + 1;
     const archive = await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: version,
-      renderVersion: "client-profile-pdf-v2", idempotencyKey,
+      renderVersion: "client-profile-pdf-v2+style-20261019", idempotencyKey,
       title: `Fiche client ${profile.code}`, originalName: authoritativePdfFilename(["Fiche-client", profile.code, `v${version}`]),
       sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
@@ -698,7 +698,7 @@ export async function repoCreateClient(
     if (!sourceRevision) throw new Error("CLIENT_CREATION_SNAPSHOT_REVISION_MISSING");
     await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_CREATION_SNAPSHOT", documentVersion: 1,
-      renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `client:${clientId}:creation-snapshot:v1`,
+      renderVersion: "internal-creation-snapshot-v1+style-20261019", idempotencyKey: `client:${clientId}:creation-snapshot:v1`,
       title: `Création fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Client", clientCode, "creation"]), sourceRevision,
       sourceSnapshot: buildInternalCreationSnapshot({
         entityLabel: "Fiche client", reference: clientCode,
@@ -719,7 +719,7 @@ export async function repoCreateClient(
     const profile = await buildClientProfileSnapshot(db, clientId);
     await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_PROFILE", documentVersion: 1,
-      renderVersion: "client-profile-pdf-v2", idempotencyKey: `client:${clientId}:profile:v1`,
+      renderVersion: "client-profile-pdf-v2+style-20261019", idempotencyKey: `client:${clientId}:profile:v1`,
       title: `Fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Fiche-client", clientCode, "v1"]),
       sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
