@@ -3,13 +3,14 @@ import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const directory = vi.hoisted(() => ({
+  available: true,
   call: vi.fn(),
   authenticate: vi.fn(),
 }));
 
 vi.mock("../../../config/database", () => ({ default: {} }));
 vi.mock("../../../shared-directory/site-runtime", () => ({
-  sharedDirectoryClient: () => ({ call: directory.call }),
+  sharedDirectoryClient: () => directory.available ? { call: directory.call } : null,
   directoryAuthenticationResult: directory.authenticate,
 }));
 
@@ -21,13 +22,14 @@ import {
   tabletPinLogin,
   tabletPinPair,
   tabletPinSet,
+  tabletPinStatus,
 } from "./auth.controller";
 
 const deviceId = "00000000-0000-4000-8000-000000000010";
 const deviceSecret = "a".repeat(64);
 const pairingCode = "b".repeat(32);
 
-function app() {
+function app(withDirectorySession = true) {
   const instance = express();
   instance.use(express.json());
   instance.use((req, _res, next) => {
@@ -38,11 +40,13 @@ function app() {
       role: "Operateur",
       directory_session: "dir_" + "a".repeat(64),
     };
+    if (!withDirectorySession) delete req.user.directory_session;
     next();
   });
   instance.post("/tablet-pin/pair", tabletPinPair);
   instance.post("/tablet-pin/login", tabletPinLogin);
   instance.put("/me/tablet-pin", tabletPinSet);
+  instance.get("/me/tablet-pin", tabletPinStatus);
   instance.get("/tablet-pin/devices", tabletPinAdminList);
   instance.delete("/tablet-pin/devices/:deviceId", tabletPinAdminRevoke);
   instance.use(validationErrorMiddleware);
@@ -57,6 +61,33 @@ function directoryFailure(status: number, code: string, message = "directory sec
 describe("tablet PIN public HTTP contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    directory.available = true;
+  });
+
+  it("reports an unavailable PIN feature without rejecting a valid local password session", async () => {
+    directory.available = false;
+    const response = await request(app(false)).get("/me/tablet-pin").expect(200);
+    expect(response.body).toEqual({ available: false, configured: false });
+    expect(directory.call).not.toHaveBeenCalled();
+  });
+
+  it("rejects PIN writes as unavailable rather than expiring a local password session", async () => {
+    directory.available = false;
+    const response = await request(app(false)).put("/me/tablet-pin").send({ pin: "0123" }).expect(503);
+    expect(response.body.code).toBe("DIRECTORY_UNAVAILABLE");
+    expect(directory.call).not.toHaveBeenCalled();
+  });
+
+  it("still requires a Directory session when the authority is configured", async () => {
+    const response = await request(app(false)).get("/me/tablet-pin").expect(401);
+    expect(response.body.code).toBe("DIRECTORY_SESSION_REQUIRED");
+    expect(directory.call).not.toHaveBeenCalled();
+  });
+
+  it("keeps a PIN status dependency failure retryable", async () => {
+    directory.call.mockRejectedValueOnce(new Error("fixture authority timeout"));
+    const response = await request(app()).get("/me/tablet-pin").expect(503);
+    expect(response.body.code).toBe("DIRECTORY_UNAVAILABLE");
   });
 
   it("rejects malformed bodies before calling the Directory", async () => {

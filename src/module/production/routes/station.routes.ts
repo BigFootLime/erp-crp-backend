@@ -11,6 +11,7 @@ import {
 import {
   acknowledgeHandover,
   bootstrap,
+  tabletContext,
   closeSession,
   confirmMachine,
   createHandover,
@@ -61,6 +62,7 @@ const router = Router();
 // ouverte sans échouer quand il n'y en a pas.
 
 router.get("/bootstrap", loadStationSessionIfAny, bootstrap);
+router.post("/tablet-context", requireStationCapability("read_own_station"), tabletContext);
 router.post("/identify", identify);
 router.post("/sessions/unlock", unlock);
 

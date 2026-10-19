@@ -46,6 +46,9 @@ export const stationBootstrapQuerySchema = z.object({
 });
 export type StationBootstrapQueryDTO = z.infer<typeof stationBootstrapQuerySchema>;
 
+/** The Directory tablet proof is carried exclusively by the authenticated JWT. */
+export const stationTabletContextSchema = z.object({}).strict();
+
 export const stationIdentifySchema = z
   .object({
     device_code: devicePublicCode,

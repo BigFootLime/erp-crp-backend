@@ -82,10 +82,15 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
 });
 
 function tabletMeta(req:Request){const user_agent=req.headers['user-agent']?.toString()??null,device=parseDevice(user_agent);return {ip:getClientIp(req),user_agent,device_type:device.device_type,os:device.os,browser:device.browser};}
-function directorySession(req:Request){if(!req.user?.directory_session)throw new HttpError(401,'DIRECTORY_SESSION_REQUIRED','Une nouvelle connexion est requise.');return req.user.directory_session;}
+function directorySession(req:Request){tabletDirectory();if(!req.user?.directory_session)throw new HttpError(401,'DIRECTORY_SESSION_REQUIRED','Une nouvelle connexion est requise.');return req.user.directory_session;}
 function tabletDirectory(){const directory=sharedDirectoryClient();if(!directory)throw new HttpError(503,'DIRECTORY_UNAVAILABLE','La connexion tablette requiert l’annuaire commun.');return directory;}
 async function tabletDirectoryCall(operation:string,payload:unknown){try{return await tabletDirectory().call(operation,payload);}catch(error){mapTabletDirectoryFailure(error);}}
-export const tabletPinStatus=asyncHandler(async(req,res)=>res.json(await tabletDirectoryCall('tablet-pin-status',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
+export const tabletPinStatus=asyncHandler(async(req,res)=>{
+ // Local installations keep their password session when the optional tablet
+ // authority is not configured. A missing feature is not a rejected session.
+ if(!sharedDirectoryClient()){res.json({available:false,configured:false});return;}
+ res.json(await tabletDirectoryCall('tablet-pin-status',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)}));
+});
 export const tabletPinSet=asyncHandler(async(req,res)=>{await tabletDirectoryCall('tablet-pin-set',{directory_session:directorySession(req),input:tabletPinSetSchema.parse(req.body),meta:tabletMeta(req)});res.status(204).end();});
 export const tabletPinRevoke=asyncHandler(async(req,res)=>{await tabletDirectoryCall('tablet-pin-revoke',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)});res.status(204).end();});
 export const tabletPinPair=asyncHandler(async(req,res)=>{const input=tabletPinPairSchema.parse(req.body);res.json(await tabletDirectoryCall('tablet-pin-pair',{input:{pairing_code:input.pairingCode},meta:tabletMeta(req)}));});
