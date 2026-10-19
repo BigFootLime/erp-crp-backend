@@ -4,7 +4,7 @@ import {
   forgotPasswordSchema,
   loginSchema,
   resetPasswordSchema,
-  tabletPinDeviceSchema, tabletPinLoginSchema, tabletPinSetSchema,
+  tabletPinDeviceSchema, tabletPinDeviceNameSchema, tabletPinLoginSchema, tabletPinPairSchema, tabletPinSetSchema,
 } from "../validators/auth.validator";
 import {
   activateAccountWithInvitation,
@@ -68,12 +68,15 @@ function tabletDirectory(){const directory=sharedDirectoryClient();if(!directory
 export const tabletPinStatus=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-status',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
 export const tabletPinSet=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-set',{directory_session:directorySession(req),input:tabletPinSetSchema.parse(req.body),meta:tabletMeta(req)})));
 export const tabletPinRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-revoke',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)});res.status(204).end();});
-export const tabletPinRevokeDevice=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-revoke-device',{directory_session:directorySession(req),input:tabletPinDeviceSchema.parse(req.body),meta:tabletMeta(req)});res.status(204).end();});
+export const tabletPinPair=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-pair',{input:tabletPinPairSchema.parse(req.body),meta:tabletMeta(req)})));
 export const tabletPinLogin=asyncHandler(async(req,res)=>{
  const directory=tabletDirectory(),meta=tabletMeta(req);try{const result=await directory.call('tablet-pin-login',{input:tabletPinLoginSchema.parse(req.body),meta});res.json({message:'Connexion réussie',...await directoryAuthenticationResult(pool,result,meta)});}catch(error){mapDirectoryLoginFailure(error);}
 });
 export const tabletPinAdminList=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-admin-list',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
-export const tabletPinAdminRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-admin-revoke',{directory_session:directorySession(req),input:tabletPinDeviceSchema.parse(req.body),meta:tabletMeta(req)});res.status(204).end();});
+export const tabletPinAdminRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-admin-revoke',{directory_session:directorySession(req),input:{device_id:req.params.deviceId},meta:tabletMeta(req)});res.status(204).end();});
+export const tabletPinAdminCreate=asyncHandler(async(req,res)=>res.status(201).json(await tabletDirectory().call('tablet-pin-admin-create-device',{directory_session:directorySession(req),input:tabletPinDeviceNameSchema.parse(req.body),meta:tabletMeta(req)})));
+export const tabletPinAdminRepair=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-admin-repair',{directory_session:directorySession(req),input:{device_id:req.params.deviceId},meta:tabletMeta(req)})));
+export const tabletPinAdminRename=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-admin-rename',{directory_session:directorySession(req),input:{device_id:req.params.deviceId,...tabletPinDeviceNameSchema.parse(req.body)},meta:tabletMeta(req)});res.status(204).end();});
 
 const FORGOT_PASSWORD_GENERIC_MESSAGE = "Si ce compte existe, un lien de réinitialisation a été envoyé.";
 const FORGOT_PASSWORD_MIN_RESPONSE_MS = 600;

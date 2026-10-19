@@ -92,9 +92,9 @@ export function createDirectoryServer(options:Options){
   {dimension:'token',value:typeof req.body?.input?.challenge_token==='string'?req.body.input.challenge_token:null},
  ]),wrap(async(req,res)=>{
   const body=z.object({input:verifyMfaChallengeSchema,meta:authMeta}).strict().parse(req.body),site=req.directoryCaller!;
-  await assertChallengeSite(options.db,site,body.input.challenge_token);
+   const tabletDeviceId=await assertChallengeSite(options.db,site,body.input.challenge_token);
   const result=await verifyMfaChallenge(body.input.challenge_token,body.input.code,{...body.meta,path:`/directory/${site}/auth/mfa/verify`});
-  const session=await createDirectorySession(options.db,site,result.token,options.sourceJwtSecret);
+   const session=await createDirectorySession(options.db,site,result.token,options.sourceJwtSecret,tabletDeviceId??undefined);
   res.json({...session,...('recovery_codes' in result?{recovery_codes:result.recovery_codes}:{})});
  }));
  mountDirectoryMfa(app,options.db,options.sourceJwtSecret,wrap);

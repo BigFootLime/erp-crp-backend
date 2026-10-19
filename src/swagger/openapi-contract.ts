@@ -37,6 +37,7 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/forgot-password": "Demande de récupération non révélatrice avec limitation de débit.",
   "post /auth/login": "Échange d’identifiants contre une session avec limitation de débit distribuée.",
   "post /auth/tablet-pin/login": "Connexion PIN limitée en débit, liée à un appareil Directory révocable par un secret aléatoire et verrouillée après des échecs répétés ; la MFA reste requise quand la politique du compte l’impose.",
+  "post /auth/tablet-pin/pair": "Échange unique d’un code d’appairage aléatoire de 128 bits valable quinze minutes contre le secret d’une tablette neutre ; aucune identité ERP n’est exposée.",
   "post /auth/mfa/verify": "Vérification d’un challenge MFA signé, court, à usage unique et limité en débit avant émission de session.",
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
   "post /auth/account-requests": "Demande d'accès Production soumise sans session ERP, limitée par IP et par adresse e-mail ; aucun compte ni jeton n'est créé avant l'approbation SuperAdmin.",

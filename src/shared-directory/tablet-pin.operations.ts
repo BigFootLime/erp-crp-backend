@@ -1,70 +1,81 @@
 import bcrypt from 'bcryptjs';
+import {createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {z} from 'zod';
 import type {Express,RequestHandler} from 'express';
-import type {Pool} from 'pg';
-import {randomUUID} from 'node:crypto';
-import {randomBytes,createHash} from 'node:crypto';
-import {validateDirectorySession,createDirectorySession} from './session.repository';
+import type {Pool,PoolClient} from 'pg';
+import {validateDirectorySession,createDirectorySession,bindChallenge} from './session.repository';
 import {directoryAuthMetaSchema} from './mfa.operations';
-import {directoryProfileForSite} from './admin.repository';
+import {canonicalizeAuthUsername} from '../module/auth/domain/auth-identity';
 import {accountRequiresMfa,normalizeMfaPolicy} from '../module/auth/domain/mfa-policy';
 import {issueSessionToken} from '../module/auth/domain/session-token';
 import {beginMfaAfterPassword} from '../module/auth/services/mfa.service';
-import {bindChallenge} from './session.repository';
 
 const session=z.string().regex(/^dir_[a-f0-9]{64}$/);
 const pin=z.string().regex(/^\d{4}$/);
-const deviceId=z.string().uuid(); const deviceSecret=z.string().regex(/^[a-f0-9]{64}$/);
-const secretHash=(value:string)=>createHash('sha256').update(value).digest('hex');
+const deviceId=z.string().uuid();
+const deviceSecret=z.string().regex(/^[a-f0-9]{64}$/);
+const pairingCode=z.string().regex(/^[a-f0-9]{32}$/);
+const deviceName=z.string().trim().min(1).max(80);
+const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+const equalHash=(expected:string,actual:string)=>{const a=Buffer.from(expected,'hex'),b=Buffer.from(actual,'hex');return a.length===b.length&&timingSafeEqual(a,b);};
 const envelope=z.object({directory_session:session,meta:directoryAuthMetaSchema}).strict();
-const PIN_LOCK_ATTEMPTS=5;
-const PIN_LOCK_MINUTES=15;
-/** Tablet PIN authentication is deliberately independent of terminal PINs. */
+const PIN_LOCK_ATTEMPTS=5, PIN_LOCK_MINUTES=15, PAIRING_MINUTES=15;
+const authError=()=>Object.assign(new Error('AUTH_INVALID'),{status:401,code:'AUTH_INVALID'});
+const directoryAdminError=()=>Object.assign(new Error('DIRECTORY_ADMIN_REQUIRED'),{status:403,code:'DIRECTORY_ADMIN_REQUIRED'});
+const rawPairingCode=()=>randomBytes(16).toString('hex');
+
+type LoginRow={device_secret_hash:string|null;revoked_at:string|null;locked_until:string|null;failed_attempts:number;pin_hash:string|null;profile_id:string;id:number;password:string;mfa_required:boolean;is_superadmin:boolean;mfa_reenrollment_required:boolean;role:string;roles:string[];member_superadmin:boolean;status:string;session_epoch:number|string;mfa_policy:string|null;has_factor:boolean};
+
+/** Credentials are Directory-only. A tablet is a neutral facility asset, not a user credential. */
 export function mountDirectoryTabletPins(app:Express,db:Pool,sourceJwtSecret:string,wrap:(work:any)=>RequestHandler){
- const requireAdmin=async(actor:any,site:string)=>{const allowed=(await db.query('SELECT 1 FROM public.cerp_directory_memberships WHERE profile_id=$1::uuid AND database_id=$2 AND status=\'Active\' AND is_superadmin=true',[actor.profile_id,site])).rows.length>0;if(!allowed)throw Object.assign(new Error('DIRECTORY_ADMIN_REQUIRED'),{status:403,code:'DIRECTORY_ADMIN_REQUIRED'});};
+ const requireAdmin=async(actor:any,site:string)=>{const allowed=(await db.query(`SELECT 1 FROM public.cerp_directory_memberships m JOIN public.cerp_directory_profiles p ON p.profile_id=m.profile_id JOIN public.users u ON u.id=p.user_id WHERE m.profile_id=$1::uuid AND m.database_id=$2 AND m.status='Active' AND (m.is_superadmin OR u.is_superadmin OR u.mfa_required OR EXISTS(SELECT 1 FROM public.user_role_assignments r WHERE r.user_id=u.id AND lower(r.role_key) IN ('administrateur','administrateur systeme et reseau','superadmin')))`,[actor.profile_id,site])).rows.length>0;if(!allowed)throw directoryAdminError();};
+ const status=(row:any)=>row.revoked_at?'revoked':row.device_secret_hash?'paired':'pending_pairing';
+ const rateLimit=async(client:PoolClient,scope:'ip'|'account_device',value:string)=>{
+  const key=hash(value);const row=(await client.query<{attempts:number;locked_until:string|null}>(`INSERT INTO public.cerp_directory_tablet_rate_limits(scope,key_hash,attempts,window_started_at) VALUES($1,$2,1,now()) ON CONFLICT(scope,key_hash) DO UPDATE SET attempts=CASE WHEN public.cerp_directory_tablet_rate_limits.window_started_at<now()-interval '15 minutes' THEN 1 ELSE public.cerp_directory_tablet_rate_limits.attempts+1 END,window_started_at=CASE WHEN public.cerp_directory_tablet_rate_limits.window_started_at<now()-interval '15 minutes' THEN now() ELSE public.cerp_directory_tablet_rate_limits.window_started_at END,locked_until=CASE WHEN public.cerp_directory_tablet_rate_limits.window_started_at>=now()-interval '15 minutes' AND public.cerp_directory_tablet_rate_limits.attempts+1>=${PIN_LOCK_ATTEMPTS} THEN now()+interval '${PIN_LOCK_MINUTES} minutes' ELSE public.cerp_directory_tablet_rate_limits.locked_until END RETURNING attempts,locked_until`,[scope,key])).rows[0];
+  return !!row?.locked_until&&new Date(row.locked_until)>new Date();
+ };
+ const isRateLimited=async(client:PoolClient,scope:'ip'|'account_device',value:string)=>{const row=(await client.query<{locked_until:string|null}>(`SELECT locked_until FROM public.cerp_directory_tablet_rate_limits WHERE scope=$1 AND key_hash=$2 AND window_started_at>=now()-interval '15 minutes'`,[scope,hash(value)])).rows[0];return !!row?.locked_until&&new Date(row.locked_until)>new Date();};
  app.post('/internal/directory/tablet-pin-status',wrap(async(req:any,res:any)=>{
   const body=envelope.extend({input:z.object({}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);
-  const rows=(await db.query(`SELECT device_id::text,label,created_at::text,last_used_at::text FROM public.cerp_directory_tablet_devices WHERE profile_id=$1::uuid AND revoked_at IS NULL ORDER BY created_at`,[actor.profile_id])).rows;
-  const configured=(await db.query('SELECT 1 FROM public.cerp_directory_tablet_pins WHERE profile_id=$1::uuid',[actor.profile_id])).rows.length>0;
-  res.json({configured,devices:rows});
+  const configured=(await db.query('SELECT 1 FROM public.cerp_directory_tablet_pins WHERE profile_id=$1::uuid',[actor.profile_id])).rows.length>0;res.json({configured});
  }));
  app.post('/internal/directory/tablet-pin-set',wrap(async(req:any,res:any)=>{
-  const body=envelope.extend({input:z.object({pin,device_id:deviceId.optional(),device_label:z.string().trim().min(1).max(80)}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);
-  const hash=await bcrypt.hash(body.input.pin,12); const id=body.input.device_id??randomUUID(); const rawDeviceSecret=randomBytes(32).toString('hex');
-  await db.query('BEGIN'); try {
-   await db.query(`INSERT INTO public.cerp_directory_tablet_pins(profile_id,pin_hash,version) VALUES($1::uuid,$2,1) ON CONFLICT(profile_id) DO UPDATE SET pin_hash=excluded.pin_hash,version=public.cerp_directory_tablet_pins.version+1,changed_at=now()`,[actor.profile_id,hash]);
-   await db.query(`INSERT INTO public.cerp_directory_tablet_devices(device_id,profile_id,label,device_secret_hash) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(device_id) DO UPDATE SET label=excluded.label,device_secret_hash=excluded.device_secret_hash,revoked_at=NULL,failed_attempts=0,locked_until=NULL`,[id,actor.profile_id,body.input.device_label,secretHash(rawDeviceSecret)]);
-   await db.query('COMMIT'); res.json({device_id:id,device_secret:rawDeviceSecret,configured:true});
-  }catch(e){await db.query('ROLLBACK');throw e;}
- }));
- app.post('/internal/directory/tablet-pin-revoke-device',wrap(async(req:any,res:any)=>{
-  const body=envelope.extend({input:z.object({device_id:deviceId}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);
-  await db.query('UPDATE public.cerp_directory_tablet_devices SET revoked_at=now() WHERE device_id=$1::uuid AND profile_id=$2::uuid AND revoked_at IS NULL',[body.input.device_id,actor.profile_id]);res.status(204).end();
+  const body=envelope.extend({input:z.object({pin}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session),client=await db.connect();
+  try{await client.query('BEGIN');await client.query(`INSERT INTO public.cerp_directory_tablet_pins(profile_id,pin_hash,version) VALUES($1::uuid,$2,1) ON CONFLICT(profile_id) DO UPDATE SET pin_hash=excluded.pin_hash,version=public.cerp_directory_tablet_pins.version+1,changed_at=now()`,[actor.profile_id,await bcrypt.hash(body.input.pin,12)]);await client.query('COMMIT');res.status(204).end();}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
  }));
  app.post('/internal/directory/tablet-pin-revoke',wrap(async(req:any,res:any)=>{
-  const body=envelope.extend({input:z.object({}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);
-  await db.query('DELETE FROM public.cerp_directory_tablet_pins WHERE profile_id=$1::uuid',[actor.profile_id]);await db.query('UPDATE public.cerp_directory_tablet_devices SET revoked_at=now() WHERE profile_id=$1::uuid AND revoked_at IS NULL',[actor.profile_id]);res.status(204).end();
+  const body=envelope.extend({input:z.object({}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session),client=await db.connect();try{await client.query('BEGIN');await client.query('DELETE FROM public.cerp_directory_tablet_pins WHERE profile_id=$1::uuid',[actor.profile_id]);await client.query('DELETE FROM public.cerp_directory_sessions WHERE profile_id=$1::uuid AND tablet_device_id IS NOT NULL',[actor.profile_id]);await client.query('COMMIT');res.status(204).end();}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
  }));
  app.post('/internal/directory/tablet-pin-admin-list',wrap(async(req:any,res:any)=>{
   const body=envelope.extend({input:z.object({}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);
-  const devices=(await db.query(`SELECT d.device_id::text,d.label,d.profile_id::text,p.user_id,u.username,d.created_at::text,d.last_used_at::text,d.revoked_at::text FROM public.cerp_directory_tablet_devices d JOIN public.cerp_directory_profiles p ON p.profile_id=d.profile_id JOIN public.users u ON u.id=p.user_id JOIN public.cerp_directory_memberships m ON m.profile_id=d.profile_id AND m.database_id=$1 AND m.status='Active' ORDER BY d.created_at DESC`,[req.directoryCaller!])).rows;res.json({devices});
+  const devices=(await db.query(`SELECT device_id::text AS "deviceId",label AS name,created_at::text AS "createdAt",last_used_at::text AS "lastUsedAt",revoked_at,device_secret_hash FROM public.cerp_directory_tablet_devices ORDER BY created_at DESC`)).rows.map(row=>({deviceId:row.deviceId,name:row.name,status:status(row),createdAt:row.createdAt,lastUsedAt:row.lastUsedAt}));res.json({devices});
+ }));
+ const createPairing=async(client:PoolClient,id:string,name?:string)=>{const code=rawPairingCode();if(name===undefined)await client.query(`UPDATE public.cerp_directory_tablet_devices SET pairing_code_hash=$2,pairing_expires_at=now()+$3::int*interval '1 minute',device_secret_hash=NULL,paired_at=NULL,revoked_at=NULL,failed_attempts=0,locked_until=NULL WHERE device_id=$1::uuid`,[id,hash(code),PAIRING_MINUTES]);else await client.query(`INSERT INTO public.cerp_directory_tablet_devices(device_id,label,pairing_code_hash,pairing_expires_at) VALUES($1::uuid,$2,$3,now()+$4::int*interval '1 minute')`,[id,name,hash(code),PAIRING_MINUTES]);return {pairingCode:code,expiresAt:new Date(Date.now()+PAIRING_MINUTES*60000).toISOString()};};
+ app.post('/internal/directory/tablet-pin-admin-create-device',wrap(async(req:any,res:any)=>{
+  const body=envelope.extend({input:z.object({name:deviceName}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);const client=await db.connect(),id=randomUUID();try{await client.query('BEGIN');const pairing=await createPairing(client,id,body.input.name);await client.query('COMMIT');res.status(201).json({device:{deviceId:id,name:body.input.name,status:'pending_pairing',createdAt:new Date().toISOString(),lastUsedAt:null},...pairing});}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+ }));
+ app.post('/internal/directory/tablet-pin-admin-repair',wrap(async(req:any,res:any)=>{
+  const body=envelope.extend({input:z.object({device_id:deviceId}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);const client=await db.connect();try{await client.query('BEGIN');const pairing=await createPairing(client,body.input.device_id);if(!(await client.query('SELECT 1 FROM public.cerp_directory_tablet_devices WHERE device_id=$1::uuid',[body.input.device_id])).rows.length)throw authError();await client.query('COMMIT');res.json(pairing);}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+ }));
+ app.post('/internal/directory/tablet-pin-admin-rename',wrap(async(req:any,res:any)=>{
+  const body=envelope.extend({input:z.object({device_id:deviceId,name:deviceName}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);await db.query('UPDATE public.cerp_directory_tablet_devices SET label=$2 WHERE device_id=$1::uuid AND revoked_at IS NULL',[body.input.device_id,body.input.name]);res.status(204).end();
  }));
  app.post('/internal/directory/tablet-pin-admin-revoke',wrap(async(req:any,res:any)=>{
-  const body=envelope.extend({input:z.object({device_id:deviceId}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);await db.query(`UPDATE public.cerp_directory_tablet_devices d SET revoked_at=now() FROM public.cerp_directory_memberships m WHERE d.device_id=$1::uuid AND d.profile_id=m.profile_id AND m.database_id=$2 AND m.status='Active' AND d.revoked_at IS NULL`,[body.input.device_id,req.directoryCaller!]);res.status(204).end();
+  const body=envelope.extend({input:z.object({device_id:deviceId}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireAdmin(actor,req.directoryCaller!);const client=await db.connect();try{await client.query('BEGIN');await client.query('UPDATE public.cerp_directory_tablet_devices SET revoked_at=now(),device_secret_hash=NULL,pairing_code_hash=NULL,pairing_expires_at=NULL WHERE device_id=$1::uuid',[body.input.device_id]);await client.query('DELETE FROM public.cerp_directory_sessions WHERE tablet_device_id=$1::uuid',[body.input.device_id]);await client.query('UPDATE public.cerp_directory_challenges SET expires_at=now() WHERE tablet_device_id=$1::uuid',[body.input.device_id]);await client.query('COMMIT');res.status(204).end();}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+ }));
+ app.post('/internal/directory/tablet-pin-pair',wrap(async(req:any,res:any)=>{
+  const body=z.object({input:z.object({pairing_code:pairingCode}).strict(),meta:directoryAuthMetaSchema}).strict().parse(req.body),client=await db.connect();try{await client.query('BEGIN');const row=(await client.query<any>('SELECT device_id::text,revoked_at,pairing_code_hash,pairing_expires_at,label FROM public.cerp_directory_tablet_devices WHERE pairing_code_hash=$1 FOR UPDATE',[hash(body.input.pairing_code)])).rows[0];if(!row||row.revoked_at||!row.pairing_expires_at||new Date(row.pairing_expires_at)<=new Date())throw authError();const secret=randomBytes(32).toString('hex');await client.query('UPDATE public.cerp_directory_tablet_devices SET device_secret_hash=$2,pairing_code_hash=NULL,pairing_expires_at=NULL,paired_at=now(),failed_attempts=0,locked_until=NULL WHERE device_id=$1::uuid',[row.device_id,hash(secret)]);await client.query('COMMIT');res.json({deviceId:row.device_id,deviceSecret:secret});}catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
  }));
  app.post('/internal/directory/tablet-pin-login',wrap(async(req:any,res:any)=>{
-  const body=z.object({input:z.object({device_id:deviceId,device_secret:deviceSecret,pin}).strict(),meta:directoryAuthMetaSchema}).strict().parse(req.body),site=req.directoryCaller!;
-  const client=await db.connect();try{await client.query('BEGIN');const row=(await client.query<any>(`SELECT d.profile_id,d.failed_attempts,d.locked_until,d.revoked_at,d.device_secret_hash,(d.locked_until IS NOT NULL AND d.locked_until>now()) AS is_locked,p.pin_hash,u.id,u.password,u.mfa_required,u.is_superadmin,u.mfa_reenrollment_required,u.role,m.is_superadmin AS member_superadmin,m.status,coalesce(e.session_epoch,0) AS session_epoch,
-   (SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy') AS mfa_policy,EXISTS(SELECT 1 FROM public.user_mfa_factors f WHERE f.user_id=u.id AND f.state='ACTIVE') AS has_factor
-   FROM public.cerp_directory_tablet_devices d LEFT JOIN public.cerp_directory_tablet_pins p ON p.profile_id=d.profile_id JOIN public.cerp_directory_profiles dp ON dp.profile_id=d.profile_id JOIN public.users u ON u.id=dp.user_id JOIN public.cerp_directory_memberships m ON m.profile_id=d.profile_id AND m.database_id=$2 LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id WHERE d.device_id=$1::uuid FOR UPDATE`,[body.input.device_id,site])).rows[0];
-   const valid=!!row&&!row.revoked_at&&row.status==='Active'&&!row.mfa_reenrollment_required&&!row.is_locked&&row.device_secret_hash===secretHash(body.input.device_secret)&&typeof row.pin_hash==='string'?await bcrypt.compare(body.input.pin,row.pin_hash):false;
-   if(!valid){if(row&&!row.revoked_at){const attempts=Number(row.failed_attempts)+1;await client.query('UPDATE public.cerp_directory_tablet_devices SET failed_attempts=$2,locked_until=CASE WHEN $2>=$3 THEN now()+$4::int*interval \'1 minute\' ELSE locked_until END WHERE device_id=$1::uuid',[body.input.device_id,attempts,PIN_LOCK_ATTEMPTS,PIN_LOCK_MINUTES]);}await client.query('COMMIT');res.status(401).json({code:'AUTH_INVALID',message:'Identifiants invalides'});return;}
-   const required=accountRequiresMfa({policy:normalizeMfaPolicy(row.mfa_policy),isSuperadmin:row.is_superadmin||row.member_superadmin,role:row.role,roles:[row.role],hasActiveFactor:row.has_factor,mfaRequired:row.mfa_required});
-   if(required){await client.query('COMMIT');const challenge=await beginMfaAfterPassword({id:row.id,password:row.password} as any,{...body.meta,path:`/directory/${site}/auth/tablet-pin`});if(!challenge)throw new Error('DIRECTORY_MFA_REQUIRED');await bindChallenge(db,site,challenge.challenge_token);res.json(challenge);return;}
+  const body=z.object({input:z.object({username:z.string().trim().min(2).max(254).transform(canonicalizeAuthUsername),device_id:deviceId,device_secret:deviceSecret,pin}).strict(),meta:directoryAuthMetaSchema}).strict().parse(req.body),site=req.directoryCaller!,client=await db.connect();
+  try{await client.query('BEGIN');const row=(await client.query<LoginRow>(`SELECT d.device_secret_hash,d.revoked_at,d.locked_until,d.failed_attempts,p.pin_hash,p.profile_id,u.id,u.password,u.mfa_required,u.is_superadmin,u.mfa_reenrollment_required,u.role,coalesce((SELECT array_agg(ura.role_key) FROM public.user_role_assignments ura WHERE ura.user_id=u.id),ARRAY[u.role]) AS roles,m.is_superadmin AS member_superadmin,m.status,coalesce(e.session_epoch,0) AS session_epoch,(SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy') AS mfa_policy,EXISTS(SELECT 1 FROM public.user_mfa_factors f WHERE f.user_id=u.id AND f.state='ACTIVE') AS has_factor FROM public.cerp_directory_tablet_devices d JOIN public.cerp_directory_profiles dp ON true JOIN public.users u ON u.id=dp.user_id JOIN public.cerp_directory_memberships m ON m.profile_id=dp.profile_id AND m.database_id=$2 LEFT JOIN public.cerp_directory_tablet_pins p ON p.profile_id=dp.profile_id LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id WHERE d.device_id=$1::uuid AND upper(u.username)=upper($3) FOR UPDATE OF d`,[body.input.device_id,site,body.input.username])).rows[0];
+   const throttled=await isRateLimited(client,'ip',body.meta.ip??'unknown')||await isRateLimited(client,'account_device',`${body.input.username}:${body.input.device_id}`);
+   const valid=!!row&&!throttled&&!row.revoked_at&&!row.mfa_reenrollment_required&&row.status==='Active'&&(!row.locked_until||new Date(row.locked_until)<=new Date())&&!!row.device_secret_hash&&equalHash(row.device_secret_hash,hash(body.input.device_secret))&&typeof row.pin_hash==='string'&&await bcrypt.compare(body.input.pin,row.pin_hash);
+   if(!valid){await rateLimit(client,'ip',body.meta.ip??'unknown');await rateLimit(client,'account_device',`${body.input.username}:${body.input.device_id}`);if(row&&!row.revoked_at&&!throttled){const attempts=Number(row.failed_attempts)+1;await client.query(`UPDATE public.cerp_directory_tablet_devices SET failed_attempts=$2,locked_until=CASE WHEN $2>=$3 THEN now()+$4::int*interval '1 minute' ELSE locked_until END WHERE device_id=$1::uuid`,[body.input.device_id,attempts,PIN_LOCK_ATTEMPTS,PIN_LOCK_MINUTES]);}await client.query('COMMIT');throw authError();}
+   const required=accountRequiresMfa({policy:normalizeMfaPolicy(row.mfa_policy),isSuperadmin:row.is_superadmin||row.member_superadmin,role:row.role,roles:row.roles,hasActiveFactor:row.has_factor,mfaRequired:row.mfa_required});
    await client.query('UPDATE public.cerp_directory_tablet_devices SET failed_attempts=0,locked_until=NULL,last_used_at=now() WHERE device_id=$1::uuid',[body.input.device_id]);await client.query('COMMIT');
-   // Pin is an allowed primary factor only for accounts whose normal policy permits it.
-   const source=issueSessionToken({id:row.id,username:'tablet-pin',email:null,role:row.role,realtime_session_epoch:row.session_epoch}).token;
-   res.json({...await createDirectorySession(db,site,source,sourceJwtSecret),pin_authenticated:true});
-  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+   if(required){const challenge=await beginMfaAfterPassword({id:row.id,password:row.password} as any,{...body.meta,path:`/directory/${site}/auth/tablet-pin`});if(!challenge)throw new Error('DIRECTORY_MFA_REQUIRED');await bindChallenge(db,site,challenge.challenge_token,900,body.input.device_id);res.json(challenge);return;}
+   const source=issueSessionToken({id:row.id,username:body.input.username,email:null,role:row.role,realtime_session_epoch:Number(row.session_epoch)}).token;res.json({...await createDirectorySession(db,site,source,sourceJwtSecret,body.input.device_id),pin_authenticated:true});
+  }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
  }));
 }
