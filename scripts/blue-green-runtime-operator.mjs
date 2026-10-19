@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { open, readFile, rename, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 
@@ -28,11 +28,11 @@ export async function probeCandidate(candidate, waitMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), waitMs);
   try {
-    const health = await fetch(`${candidate.baseUrl}/health/live`, { signal: controller.signal });
-    assert.equal(health.status, 200, "candidate liveness failed");
+    const health = await fetch(`${candidate.baseUrl}/health/ready`, { signal: controller.signal });
+    assert.equal(health.status, 200, "candidate readiness failed");
     const body = await health.json();
-    assert.equal(body.role, ROLE, "candidate role is not api");
-    assert.equal(body.version, candidate.version, "candidate version differs from plan");
+    assert.equal(body.background_runtime?.role, ROLE, "candidate role is not api");
+    assert.equal(body.background_runtime?.ready, true, "candidate is not ready");
     const api = await fetch(`${candidate.baseUrl}/api/v1/auth/me`, { signal: controller.signal });
     assert.ok([200, 401].includes(api.status), "candidate API probe failed");
     await probeWebSocket(candidate.baseUrl, controller.signal);
@@ -44,17 +44,48 @@ export async function probeCandidate(candidate, waitMs) {
 function probeWebSocket(baseUrl, signal) {
   return new Promise((resolve, reject) => {
     const url = new URL("/socket.io/?EIO=4&transport=websocket", baseUrl);
-    const socket = net.connect(Number(url.port || 80), url.hostname);
-    const abort = () => socket.destroy(new Error("candidate WebSocket timed out"));
-    signal.addEventListener("abort", abort, { once: true });
-    socket.once("error", reject);
-    socket.once("connect", () => socket.write(`GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: Y2VycC1vcGVyYXRvcg==\r\nSec-WebSocket-Version: 13\r\n\r\n`));
-    socket.once("data", (data) => {
-      socket.destroy();
-      signal.removeEventListener("abort", abort);
-      data.toString("utf8").startsWith("HTTP/1.1 101") ? resolve() : reject(new Error("candidate WebSocket probe failed"));
-    });
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(url, { signal });
+    socket.addEventListener("open", () => { socket.close(); resolve(); }, { once: true });
+    socket.addEventListener("error", () => reject(new Error("candidate WebSocket probe failed")), { once: true });
   });
+}
+
+export class FileRouteAdapter {
+  constructor(path) { this.path = path; }
+  async read() { const text = await readFile(this.path, "utf8"); return { text, hash: sha256(text) }; }
+  async replace(expectedHash, text) {
+    const current = await this.read();
+    assert.equal(current.hash, expectedHash, "route baseline changed");
+    const temporary = `${this.path}.next`;
+    const handle = await open(temporary, "w", 0o600);
+    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
+    await rename(temporary, this.path);
+    assert.equal((await this.read()).hash, sha256(text), "route write verification failed");
+    return current;
+  }
+}
+
+export async function promoteTwoHosts(plan, adapters) {
+  validatePlan(plan);
+  const vps = await adapters.vps.read();
+  const hyper = await adapters.hyper.read();
+  await probeCandidate(plan.candidate, plan.waitMs);
+  const candidateRoutes = JSON.stringify({ http: plan.candidate.id, websocket: plan.candidate.id });
+  await adapters.vps.replace(vps.hash, candidateRoutes);
+  try {
+    await adapters.hyper.replace(hyper.hash, candidateRoutes);
+    return { phase: "promoted", vps: plan.candidate.id, hyper: plan.candidate.id };
+  } catch (error) {
+    try {
+      const changed = await adapters.vps.read();
+      await adapters.vps.replace(changed.hash, vps.text);
+      assert.equal((await adapters.vps.read()).hash, vps.hash, "VPS compensation verification failed");
+      return { phase: "blocked", reason: "HYPER_PROMOTION_FAILED", compensation: "VPS_RESTORED", error: error.constructor.name };
+    } catch (compensationError) {
+      throw Object.assign(new Error("COMPENSATION_FAILED"), { cause: compensationError, promotionError: error });
+    }
+  }
 }
 
 export async function prepare(plan, baselineText) {
@@ -63,7 +94,8 @@ export async function prepare(plan, baselineText) {
   return { phase: "prepared", priorTarget: plan.routes.http.target, baseline: plan.baseline.routeFileSha256 };
 }
 
-export async function promote(plan, baselineText, state, applyRoute = async (next) => next) {
+export async function promote(plan, baselineText, state, applyRoute) {
+  if (typeof applyRoute !== "function") throw Object.assign(new Error("ROUTE_ADAPTER_UNSUPPORTED"), { code: "ROUTE_ADAPTER_UNSUPPORTED" });
   assert.equal(state.phase, "prepared", "candidate was not prepared");
   assert.equal(sha256(baselineText), state.baseline, "route baseline changed");
   await probeCandidate(plan.candidate, plan.waitMs);
