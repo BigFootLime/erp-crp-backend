@@ -22,6 +22,14 @@ PostgreSQL. Les claims, leases, clés d'idempotence et délais déjà présents 
 les files restent nécessaires : un verrou de leader ne rend pas un appel réseau
 exactly-once.
 
+L'arrêt attend aussi toute tentative de connexion, d'acquisition du verrou ou
+de construction des maintenances déjà commencée. Une tentative qui termine
+pendant cet arrêt ne devient jamais leader : les maintenances nouvellement
+créées sont drainées et la session est déverrouillée puis libérée. Si une
+construction échoue après acquisition, les maintenances déjà créées sont
+drainées et la session est détruite afin qu'aucun verrou sessionnel ne retourne
+dans le pool.
+
 La disponibilité HTTP ne dépend pas du leadership en rôle `api`. En `all`, la
 readiness inclut l'état concret du worker et reste négative tant que le
 leadership requis n'est pas acquis. Un worker seul ne publie aucun gateway

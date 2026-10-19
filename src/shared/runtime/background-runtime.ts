@@ -6,7 +6,9 @@ export type RuntimeRole = "api" | "worker" | "all";
 type WorkerState = "disabled" | "waiting" | "leader" | "lost" | "stopped" | "not_started";
 type Stop = () => void | Promise<void>;
 
-type LeaderClient = Pick<PoolClient, "query" | "release" | "on">;
+type LeaderClient = Pick<PoolClient, "query" | "on"> & {
+  release: (destroy?: boolean | Error) => void;
+};
 type LeaderPool = Pick<Pool, "connect">;
 
 const LEADER_KEY = "cerp:background-worker:v1";
@@ -50,7 +52,7 @@ export function getBackgroundRuntimeReadiness(): BackgroundRuntimeReadiness {
 
 export type BackgroundRuntimeOptions = Readonly<{
   pool: LeaderPool;
-  startMaintenance: () => readonly Stop[];
+  startMaintenance: () => readonly Stop[] | Promise<readonly Stop[]>;
   environment?: NodeJS.ProcessEnv;
   onLeadershipLost?: () => void;
 }>;
@@ -89,12 +91,25 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
   let leaderClient: LeaderClient | null = null;
   let maintenance: readonly Stop[] = [];
   let retryTimer: NodeJS.Timeout | null = null;
+  let activeAttempt: Promise<void> | null = null;
+  let stopPromise: Promise<void> | null = null;
+
+  const unlockAndRelease = async (client: LeaderClient): Promise<void> => {
+    try {
+      await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [LEADER_KEY]);
+      client.release();
+    } catch {
+      // Destroy a session if unlock cannot be confirmed so a session-level lock
+      // is never handed back to the pool.
+      client.release(true);
+    }
+  };
 
   const scheduleRetry = (): void => {
     if (stopped || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      void attemptLeadership();
+      beginAttempt();
     }, retryMs);
   };
 
@@ -106,7 +121,7 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
     const lostClient = leaderClient;
     leaderClient = null;
     try {
-      lostClient?.release();
+      lostClient?.release(true);
     } catch {
       // The broken PostgreSQL session will be discarded by the pool.
     }
@@ -122,60 +137,88 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
     let client: LeaderClient | null = null;
     try {
       client = await options.pool.connect();
+      if (stopped) {
+        client.release();
+        return;
+      }
       const result = await client.query<{ acquired: boolean }>(
         "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
         [LEADER_KEY]
       );
       if (!result.rows[0]?.acquired) {
         client.release();
+        if (stopped) return;
         current = { role, state: "waiting", started: true };
         scheduleRetry();
         return;
       }
-      maintenance = options.startMaintenance();
+      if (stopped) {
+        await unlockAndRelease(client);
+        return;
+      }
+      const startedMaintenance = await options.startMaintenance();
+      if (stopped) {
+        try {
+          await stopAll(startedMaintenance);
+        } finally {
+          await unlockAndRelease(client);
+        }
+        return;
+      }
+      maintenance = startedMaintenance;
       leaderClient = client;
       client.on("error", handleLeadershipLoss);
       current = { role, state: "leader", started: true };
       logger.info("background_worker_leadership_acquired", { runtime_role: role });
     } catch (error) {
-      if (client && client !== leaderClient) client.release();
-      current = { role, state: "waiting", started: true };
-      logger.warn("background_worker_leadership_waiting", { runtime_role: role });
-      scheduleRetry();
+      if (client && client !== leaderClient) client.release(true);
+      if (!stopped) {
+        current = { role, state: "waiting", started: true };
+        logger.warn("background_worker_leadership_waiting", { runtime_role: role });
+        scheduleRetry();
+      }
     } finally {
       attempting = false;
     }
   };
 
-  void attemptLeadership();
+  const beginAttempt = (): void => {
+    if (stopped || activeAttempt) return;
+    const attempt = attemptLeadership();
+    activeAttempt = attempt;
+    void attempt.finally(() => {
+      if (activeAttempt === attempt) activeAttempt = null;
+    }).catch(() => undefined);
+  };
+
+  beginAttempt();
 
   return {
     role,
-    stop: async () => {
-      if (stopped) return;
-      stopped = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      retryTimer = null;
-      const client = leaderClient;
-      leaderClient = null;
-      const priorMaintenance = maintenance;
-      maintenance = [];
-      current = { role, state: "stopped", started: true };
-      let maintenanceFailure: unknown = null;
-      try {
-        await stopAll(priorMaintenance);
-      } catch (error) {
-        maintenanceFailure = error;
-      } finally {
-        if (client) {
-          try {
-            await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [LEADER_KEY]);
-          } finally {
-            client.release();
-          }
+    stop: () => {
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        stopped = true;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = null;
+        current = { role, state: "stopped", started: true };
+        const pendingAttempt = activeAttempt;
+        if (pendingAttempt) await pendingAttempt;
+        const client = leaderClient;
+        leaderClient = null;
+        const priorMaintenance = maintenance;
+        maintenance = [];
+        let maintenanceFailure: unknown = null;
+        try {
+          await stopAll(priorMaintenance);
+        } catch (error) {
+          maintenanceFailure = error;
+        } finally {
+          if (client) await unlockAndRelease(client);
         }
-      }
-      if (maintenanceFailure) throw maintenanceFailure;
+        if (maintenanceFailure) throw maintenanceFailure;
+      })();
+      return stopPromise;
     },
   };
 }

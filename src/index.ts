@@ -22,6 +22,7 @@ import { startDurationLearningMaintenance } from "./module/planning/services/dur
 import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { resolveRuntimeRole, startBackgroundRuntime } from "./shared/runtime/background-runtime";
+import { startMaintenanceGroup } from "./shared/runtime/drainable-maintenance";
 import { startWorkerHealthServer } from "./shared/runtime/worker-health-server";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
@@ -62,29 +63,20 @@ async function start(): Promise<void> {
     });
   }
 
-  const startMaintenance = () => {
-    const stops: Array<() => void | Promise<void>> = [];
-    try {
-      stops.push(startAuthRateLimitMaintenance());
-      stops.push(startMfaArtifactMaintenance());
-      stops.push(startExpiredLockMaintenance());
-      stops.push(startReminderMaintenance());
-      stops.push(startElectronicInvoiceMaintenance());
-      stops.push(startSupplierInvoiceMaintenance());
-      stops.push(startEReportingMaintenance());
-      stops.push(startWebhookDeliveryMaintenance());
-      stops.push(startAuthoritativePdfArchiveMaintenance());
-      stops.push(startPlanningForecastMaintenance());
-      stops.push(startDurationLearningMaintenance());
-      stops.push(startCumpProjectionMaintenance());
-      return stops;
-    } catch (error) {
-      for (const stop of stops.reverse()) {
-        try { void stop(); } catch { /* startup will fail below */ }
-      }
-      throw error;
-    }
-  };
+  const startMaintenance = () => startMaintenanceGroup([
+    startAuthRateLimitMaintenance,
+    startMfaArtifactMaintenance,
+    startExpiredLockMaintenance,
+    startReminderMaintenance,
+    startElectronicInvoiceMaintenance,
+    startSupplierInvoiceMaintenance,
+    startEReportingMaintenance,
+    startWebhookDeliveryMaintenance,
+    startAuthoritativePdfArchiveMaintenance,
+    startPlanningForecastMaintenance,
+    startDurationLearningMaintenance,
+    startCumpProjectionMaintenance,
+  ]);
   const backgroundRuntime = startBackgroundRuntime({ pool, startMaintenance });
   const workerHealth = runtimeRole === "worker" ? await startWorkerHealthServer() : null;
   const port = Number.parseInt(process.env.PORT || "5000", 10);
