@@ -22,6 +22,7 @@ import {
   revokeDeviceSchema,
   stationAuditQuerySchema,
   stationBootstrapQuerySchema,
+  stationTabletContextSchema,
   stationCloseSchema,
   stationConfirmMachineSchema,
   stationDossierParamsSchema,
@@ -55,6 +56,7 @@ import {
   svcRevokeDevice,
   svcScan,
   svcStationAudit,
+  svcTabletContext,
   svcUnlock,
   svcUpdateDevice,
   svcWorklist,
@@ -112,6 +114,12 @@ export const bootstrap = asyncHandler(async (req: Request, res: Response) => {
     jwtActor: jwtActor(req),
   });
   res.json(payload);
+});
+
+export const tabletContext = asyncHandler(async (req: Request, res: Response) => {
+  stationTabletContextSchema.parse(req.body ?? {});
+  if (!req.user) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
+  res.json(await svcTabletContext({ claims: req.user }));
 });
 
 export const identify = asyncHandler(async (req: Request, res: Response) => {

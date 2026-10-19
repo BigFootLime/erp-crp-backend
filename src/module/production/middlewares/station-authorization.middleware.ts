@@ -218,7 +218,7 @@ export const requireStationSession: RequestHandler = (req, _res, next) => {
  * qu'elle soit vivante. Utilisée par le bootstrap, qui doit pouvoir afficher
  * l'écran verrouillé sans être lui-même refusé.
  */
-export const loadStationSessionIfAny: RequestHandler = (req, _res, next) => {
+export const loadStationSessionIfAny: RequestHandler = (req, res, next) => {
   void (async () => {
     const token = readStationToken(req);
     if (!token) {
@@ -231,6 +231,13 @@ export const loadStationSessionIfAny: RequestHandler = (req, _res, next) => {
       return;
     }
     const { session, device, user } = found;
+    // A browser can retain its httpOnly station cookie after the ERP user has
+    // changed. Never project that previous operator into the new ERP session.
+    if (req.user?.id !== user.id) {
+      clearStationSessionCookie(res);
+      next();
+      return;
+    }
     if (device.status !== "ACTIVE") {
       next();
       return;
