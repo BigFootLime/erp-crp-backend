@@ -77,7 +77,7 @@ export async function createDirectorySession(db:Queryable,site:string,canonicalT
   WHERE u.id=$7 AND u.status='Active' AND m.status='Active' AND NOT u.mfa_reenrollment_required AND coalesce(e.session_epoch,0)=$3
   AND (($9::boolean AND f.id IS NOT NULL) OR (NOT $9::boolean AND NOT u.mfa_required AND NOT u.is_superadmin AND NOT m.is_superadmin
     AND NOT EXISTS(SELECT 1 FROM public.user_mfa_factors active_factor WHERE active_factor.user_id=u.id AND active_factor.state='ACTIVE')))
-  AND ($10::uuid IS NULL OR EXISTS(SELECT 1 FROM public.cerp_directory_tablet_devices td2 JOIN public.cerp_directory_tablet_pins pin ON pin.profile_id=p.profile_id WHERE td2.device_id=$10::uuid AND td2.revoked_at IS NULL AND td2.device_secret_hash IS NOT NULL AND pin.version=$11))
+  AND ($10::uuid IS NULL OR EXISTS(SELECT 1 FROM public.cerp_directory_tablet_devices td2 JOIN public.cerp_directory_tablet_pins pin ON pin.profile_id=p.profile_id WHERE td2.device_id=$10::uuid AND td2.revoked_at IS NULL AND td2.device_secret_hash IS NOT NULL AND pin.pin_hash IS NOT NULL AND pin.version=$11))
   RETURNING token_hash`,
  [hash(token),site,claims.session_epoch,hasMfa?claims.mfa_factor_id:null,hasMfa?claims.mfa_factor_version:null,hasMfa?claims.mfa_verified_at:null,claims.id,method,hasMfa,tabletDeviceId??null,tabletPinVersion??null]);
  if(inserted.rows.length!==1)throw new Error('DIRECTORY_SESSION_REJECTED');
@@ -97,11 +97,11 @@ export async function validateDirectorySession(db:Queryable,site:string,token:st
   LEFT JOIN public.user_mfa_factors f ON f.id=s.mfa_factor_id AND f.user_id=u.id
   LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id LEFT JOIN public.cerp_directory_tablet_devices td ON td.device_id=s.tablet_device_id LEFT JOIN public.cerp_directory_tablet_pins pin ON pin.profile_id=s.profile_id AND pin.version=s.tablet_pin_version
   WHERE s.token_hash=$1 AND s.database_id=$2 AND s.expires_at>now() AND u.status='Active' AND NOT u.mfa_reenrollment_required AND m.status='Active'
-  AND m.version=s.membership_version AND coalesce(e.session_epoch,0)=s.global_session_epoch AND (s.tablet_device_id IS NULL OR (td.revoked_at IS NULL AND td.device_secret_hash IS NOT NULL AND pin.profile_id IS NOT NULL))
+  AND m.version=s.membership_version AND coalesce(e.session_epoch,0)=s.global_session_epoch AND (s.tablet_device_id IS NULL OR (td.revoked_at IS NULL AND td.device_secret_hash IS NOT NULL AND pin.profile_id IS NOT NULL AND pin.pin_hash IS NOT NULL))
   AND ((s.mfa_factor_id IS NULL AND NOT EXISTS(SELECT 1 FROM public.user_mfa_factors active_factor WHERE active_factor.user_id=u.id AND active_factor.state='ACTIVE'))
     OR (s.mfa_factor_id IS NOT NULL AND f.state='ACTIVE' AND f.version=s.mfa_factor_version))`,[hash(token),site])).rows[0];
  if(!row)throw new Error('DIRECTORY_SESSION_REJECTED');
- const {canonical_is_superadmin,durable_mfa_required,canonical_role,canonical_roles,mfa_policy,has_active_factor,...profile}=row;
+ const {canonical_is_superadmin,durable_mfa_required,canonical_role,canonical_roles,mfa_policy,has_active_factor,tablet_device_id,tablet_pin_version,...profile}=row;
  if(row.mfa_factor_id===null&&accountRequiresMfa({policy:normalizeMfaPolicy(mfa_policy),isSuperadmin:canonical_is_superadmin||row.is_superadmin,role:canonical_role,roles:canonical_roles,hasActiveFactor:has_active_factor,mfaRequired:durable_mfa_required}))throw new Error('DIRECTORY_SESSION_REJECTED');
- return directorySessionSchema.parse({...profile,...await directoryWorkProfile(db,row.source_user_id),global_session_epoch:Number(row.global_session_epoch),mfa_verified_at:row.mfa_verified_at===null?null:new Date(row.mfa_verified_at).toISOString()});
+ return directorySessionSchema.parse({...profile,...await directoryWorkProfile(db,row.source_user_id),global_session_epoch:Number(row.global_session_epoch),mfa_verified_at:row.mfa_verified_at===null?null:new Date(row.mfa_verified_at).toISOString(),...(tablet_device_id===null?{}:{tablet_device_id,tablet_pin_version})});
 }

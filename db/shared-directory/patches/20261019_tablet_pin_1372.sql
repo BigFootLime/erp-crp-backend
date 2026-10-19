@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_pins (
   version integer NOT NULL DEFAULT 1 CHECK(version > 0),
   changed_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.cerp_directory_tablet_pins ALTER COLUMN pin_hash DROP NOT NULL;
 CREATE TABLE IF NOT EXISTS public.cerp_directory_tablet_devices (
   device_id uuid PRIMARY KEY,
   database_id text NOT NULL,
