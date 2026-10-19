@@ -5,7 +5,7 @@ const unit = z.string().trim().min(1).max(32).transform((value) => value.toUpper
 const numericInput = z.union([
   z.number(),
   z.string().trim().min(1).refine((value) => Number.isFinite(Number(value)), "Nombre invalide"),
-]).transform((value) => Number(value));
+]).transform((value) => Number(value)).refine(Number.isFinite, "Nombre fini requis");
 const quantity = numericInput.refine((value) => value > 0, "Quantité positive requise");
 
 export const createSubcontractWorkPackageSchema = z.object({
