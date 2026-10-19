@@ -60,19 +60,25 @@ RPO 1h and RTO 4h are recovery objectives, not hardware high availability.
 
 ## Local operator and fixture qualification
 
-`scripts/blue-green-runtime-operator.mjs` accepts only a versioned JSON plan;
-it executes no shell command and therefore cannot interpolate plan content into
-a host command. It requires a SHA-256 route baseline, an image digest, a role
-of `api`, two matching HTTP/WebSocket targets, explicit VPS/HYPER endpoints,
-the 20 GiB VPS reserve and an explicit legacy-worker drain. Candidate health is
-bounded to 30 seconds and requires JSON `version` plus `role=api`, a valid API
-response, and a WebSocket upgrade.
+`scripts/blue-green-runtime-operator.mjs` is a library for an approved
+operator, not a deployment CLI. It executes no shell command. Its concrete
+`TraefikFileRouteAdapter` changes only the named API and Socket.IO router
+service fields, and `ApacheRouteAdapter` changes only their `ProxyPass` and
+`ProxyPassReverse` upstreams. Each write is compare-and-swap, fsynced,
+renamed, and read back. A caller must provide HTTP-and-WebSocket front-door
+verification for **both** hosts; promotion refuses an adapter without it.
 
-The operator records `prepared`, `promoted`, or `rolled_back` state by atomic
-local-file replacement. A route-write failure compensates to the captured old
-target. Its rollback is routes-only and deliberately has no database action.
-VPS and HYPER remain two phases: success on VPS never claims a simultaneous
-HYPER change; a later HYPER failure requires the documented VPS compensation.
+The plan requires a digest-pinned API candidate, matching HTTP/WebSocket
+routes, explicit VPS/HYPER endpoints, the 20 GiB VPS reserve and an explicit
+legacy-worker drain. Candidate health is bounded to 30 seconds and requires
+`role=api`, ready state, an API response, and a WebSocket upgrade.
+
+VPS and HYPER remain two phases. If HYPER write or service verification fails,
+the operator restores any HYPER change and the VPS route using the exact
+post-write hashes, reads both files back, and reruns the old front-door service
+verification. It raises `COMPENSATION_FAILED` if any restoration cannot be
+proved. The library has no database rollback and has not been connected to
+production credentials or route files.
 
 Run local fixtures only:
 
