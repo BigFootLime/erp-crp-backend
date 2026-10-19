@@ -27,6 +27,9 @@ d'administration et de contrôle d'accès. Les entrées d'audit et historiques
 restent consultables. Les lectures de comptes d'administration et les mutations
 couvertes (édition/statut, invitation, récupération, reset et avatar) traitent
 la cible comme introuvable ; les listes et cibles d'habilitation l'excluent.
+Les indicateurs de comptes et les nouvelles revues d'habilitation excluent
+aussi ces identités. Les revues existantes et les statistiques historiques de
+connexion restent conservées.
 Cela ne retire pas les références de cette identité dans les historiques.
 
 Avant l'opération, l'opérateur vérifie la sauvegarde restaurable, la liste
@@ -37,7 +40,7 @@ demande peut utiliser les identifiants libérés.
 
 ## Qualification du 19 octobre 2026
 
-Les 45 tests ciblés et TypeScript passent. Le prédicat réel a aussi été exécuté
+Les tests ciblés et TypeScript passent. Le prédicat réel a aussi été exécuté
 sur PostgreSQL 18 isolé, avec socket Unix privé et sans écoute réseau : seule
 la version JSON numérique `1` retire une ligne, les métadonnées absentes, la
 chaîne `"1"` et les autres versions restent visibles. Les références de ligne

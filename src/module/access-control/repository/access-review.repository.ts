@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { retiredAccountPredicate } from "../../auth/domain/account-retirement";
 import type {
   AccessReview,
   AccessReviewCandidate,
@@ -237,6 +238,7 @@ export async function repoListReviewCandidates(
      LEFT JOIN role_summary r ON r.user_id = u.id
      LEFT JOIN access_summary a ON a.user_id = u.id
      LEFT JOIN failure_summary f ON f.user_id = u.id
+     WHERE ${retiredAccountPredicate("u")}
      ORDER BY u.username, u.id`,
     [params.inactivity_cutoff, params.login_failure_cutoff]
   );

@@ -1338,7 +1338,8 @@ export async function repoGetAdminAnalytics(filters: {
        COUNT(*)::int AS total,
        COUNT(*) FILTER (WHERE status = 'Active')::int AS active,
        COUNT(*) FILTER (WHERE status = 'Blocked')::int AS blocked
-     FROM users`
+     FROM users
+     WHERE ${retiredAccountPredicate("users")}`
   );
 
   // Login logs (30d)
