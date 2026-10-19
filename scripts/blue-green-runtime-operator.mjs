@@ -1,11 +1,36 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 const MAX_WAIT_MS = 30_000;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const ROLE = "api";
 const locks = new Map();
+async function syncParent(path) {
+  if (process.platform !== "linux") return;
+  const directory = await open(dirname(path), "r");
+  try { await directory.sync(); } finally { await directory.close(); }
+}
+async function acquireExternalLock(path) {
+  const lockPath = path + ".cerp-blue-green.lock", nonce = randomUUID();
+  let handle;
+  try { handle = await open(lockPath, "wx", 0o600); await handle.writeFile(nonce); await handle.sync(); }
+  catch (error) { throw Object.assign(new Error("ROUTE_LOCKED"), { cause: error, path }); }
+  await handle.close(); await syncParent(lockPath);
+  return async () => {
+    const held = await readFile(lockPath, "utf8").catch(() => undefined);
+    assert.equal(held, nonce, "route lock ownership changed");
+    await unlink(lockPath); await syncParent(lockPath);
+  };
+}
+async function withRouteLocks(adapters, fn) {
+  assert.ok(Object.values(adapters).every((adapter) => typeof adapter.path === "string" && adapter.path.length > 0), "each route adapter requires a lock path");
+  const paths = [...new Set(Object.values(adapters).map((adapter) => adapter.path))].sort();
+  const releases = [];
+  try { for (const path of paths) releases.push(await acquireExternalLock(path)); return await fn(); }
+  finally { for (const release of releases.reverse()) await release(); }
+}
 export const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
 export function validatePlan(plan) {
@@ -61,7 +86,7 @@ export class FileRouteAdapter {
     return this.locked(async () => {
       const current = await this.read(); assert.equal(current.hash, expectedHash, "route baseline changed");
       const temporary = this.path + "." + randomUUID() + ".next"; let handle;
-      try { handle = await open(temporary, "wx", 0o600); await handle.writeFile(text); await handle.sync(); await handle.close(); handle = undefined; await rename(temporary, this.path); assert.equal((await this.read()).hash, sha256(text), "route write verification failed"); return current; }
+      try { handle = await open(temporary, "wx", 0o600); await handle.writeFile(text); await handle.sync(); await handle.close(); handle = undefined; await rename(temporary, this.path); await syncParent(this.path); assert.equal((await this.read()).hash, sha256(text), "route write verification failed"); return current; }
       finally { await handle?.close(); await unlink(temporary).catch(() => {}); }
     });
   }
@@ -143,6 +168,7 @@ function hostTarget(plan, name, adapter) {
   return target;
 }
 export async function promoteTwoHosts(plan, adapters) {
+  return withRouteLocks(adapters, async () => {
   validatePlan(plan);
   assert.equal(typeof adapters.vps.verify, "function", "VPS routed service verification is required");
   assert.equal(typeof adapters.hyper.verify, "function", "HYPER routed service verification is required");
@@ -172,6 +198,7 @@ export async function promoteTwoHosts(plan, adapters) {
     }
     return { phase: "blocked", reason: "HOST_PROMOTION_FAILED", compensation: "BOTH_HOSTS_RESTORED", error: error.constructor.name, states: finalStates };
   }
+  });
 }
 export async function prepare(plan, baselineText) {
   validatePlan(plan); assert.equal(sha256(baselineText), plan.baseline.routeFileSha256, "route baseline changed");

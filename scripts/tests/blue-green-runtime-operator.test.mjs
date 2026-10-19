@@ -52,28 +52,41 @@ test("failed HYPER switch CAS-restores VPS and proves old HTTP and WebSocket ide
   await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
   const vps = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }), proxy = await frontDoor(vpsPath, vps, { old, green });
   vps.verify = async (target) => prove(proxy.baseUrl, target);
-  const rawHyper = new ApacheRouteAdapter(hyperPath); const hyper = { read: rawHyper.read.bind(rawHyper), plan: rawHyper.plan.bind(rawHyper), targets: rawHyper.targets.bind(rawHyper), verify: async () => {}, replace: async () => { throw new Error("HYPER unavailable"); } };
+  const rawHyper = new ApacheRouteAdapter(hyperPath); const hyper = { path: hyperPath, read: rawHyper.read.bind(rawHyper), plan: rawHyper.plan.bind(rawHyper), targets: rawHyper.targets.bind(rawHyper), verify: async () => {}, replace: async () => { throw new Error("HYPER unavailable"); } };
   try { const result = await promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }); assert.equal(result.compensation, "BOTH_HOSTS_RESTORED"); assert.equal(await readFile(vpsPath, "utf8"), traefik("old")); await prove(proxy.baseUrl, "old"); } finally { await proxy.close(); await old.close(); await green.close(); }
 });
 test("unrestorable VPS reports COMPENSATION_FAILED", async () => {
   const green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");
   await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
   const raw = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); let writes = 0;
-  const vps = { read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), verify: async () => {}, replace: async (...args) => { writes += 1; if (writes > 1) throw new Error("restore unavailable"); return raw.replace(...args); } };
-  const h = new ApacheRouteAdapter(hyperPath), hyper = { read: h.read.bind(h), plan: h.plan.bind(h), targets: h.targets.bind(h), verify: async () => {}, replace: async () => { throw new Error("HYPER unavailable"); } };
+  const vps = { path: vpsPath, read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), verify: async () => {}, replace: async (...args) => { writes += 1; if (writes > 1) throw new Error("restore unavailable"); return raw.replace(...args); } };
+  const h = new ApacheRouteAdapter(hyperPath), hyper = { path: hyperPath, read: h.read.bind(h), plan: h.plan.bind(h), targets: h.targets.bind(h), verify: async () => {}, replace: async () => { throw new Error("HYPER unavailable"); } };
   try { await assert.rejects(promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }), /COMPENSATION_FAILED/); } finally { await green.close(); }
 });
 test("HYPER write then verification failure restores both concrete files", async () => {
   const green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");
   await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
   const vps = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); vps.verify = async () => {};
-  const raw = new ApacheRouteAdapter(hyperPath); let failVerify = true; const hyper = { read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), replace: raw.replace.bind(raw), verify: async () => { if (failVerify) { failVerify = false; throw new Error("front door failed"); } } };
+  const raw = new ApacheRouteAdapter(hyperPath); let failVerify = true; const hyper = { path: hyperPath, read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), replace: raw.replace.bind(raw), verify: async () => { if (failVerify) { failVerify = false; throw new Error("front door failed"); } } };
   try { const result = await promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }); assert.equal(result.compensation, "BOTH_HOSTS_RESTORED"); assert.equal(await readFile(vpsPath, "utf8"), traefik("old")); assert.equal(await readFile(hyperPath, "utf8"), apache("http://127.0.0.1:8080")); } finally { await green.close(); }
 });
 test("write that throws after rename is reconciled and restored", async () => {
   const green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");
   await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
-  const raw = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); let first = true; const vps = { read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), verify: async () => {}, replace: async (...args) => { const result = await raw.replace(...args); if (first) { first = false; throw new Error("lost reply"); } return result; } };
-  const h = new ApacheRouteAdapter(hyperPath), hyper = { read: h.read.bind(h), plan: h.plan.bind(h), targets: h.targets.bind(h), verify: async () => {}, replace: h.replace.bind(h) };
+  const raw = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); let first = true; const vps = { path: vpsPath, read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), verify: async () => {}, replace: async (...args) => { const result = await raw.replace(...args); if (first) { first = false; throw new Error("lost reply"); } return result; } };
+  const h = new ApacheRouteAdapter(hyperPath), hyper = { path: hyperPath, read: h.read.bind(h), plan: h.plan.bind(h), targets: h.targets.bind(h), verify: async () => {}, replace: h.replace.bind(h) };
   try { const result = await promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }); assert.equal(result.compensation, "BOTH_HOSTS_RESTORED"); assert.equal(await readFile(vpsPath, "utf8"), traefik("old")); } finally { await green.close(); }
+});
+test("foreign CAS change is never overwritten", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cerp-bg-")), path = join(root, "dynamic.yml"), adapter = new TraefikFileRouteAdapter(path, { httpRouter: "api", websocketRouter: "ws" });
+  await writeFile(path, traefik("old")); const baseline = await adapter.read(); await writeFile(path, traefik("foreign"));
+  await assert.rejects(adapter.replace(baseline.hash, traefik("green")), /route baseline changed/);
+  assert.equal(await readFile(path, "utf8"), traefik("foreign"));
+});
+test("failed HYPER restoration still restores VPS and reports the partial failure", async () => {
+  const green = await backend("green"), root = await mkdtemp(join(tmpdir(), "cerp-bg-")), vpsPath = join(root, "dynamic.yml"), hyperPath = join(root, "cerp-local.conf");
+  await writeFile(vpsPath, traefik("old")); await writeFile(hyperPath, apache("http://127.0.0.1:8080"));
+  const vps = new TraefikFileRouteAdapter(vpsPath, { httpRouter: "api", websocketRouter: "ws" }); vps.verify = async () => {};
+  const raw = new ApacheRouteAdapter(hyperPath); let writes = 0; const hyper = { path: hyperPath, read: raw.read.bind(raw), plan: raw.plan.bind(raw), targets: raw.targets.bind(raw), verify: async () => { throw new Error("verify"); }, replace: async (...args) => { writes += 1; if (writes > 1) throw new Error("restore unavailable"); return raw.replace(...args); } };
+  try { const failure = await assert.rejects(promoteTwoHosts(makePlan(green.baseUrl), { vps, hyper }), /COMPENSATION_FAILED/); assert.equal(await readFile(vpsPath, "utf8"), traefik("old")); } finally { await green.close(); }
 });
