@@ -18,11 +18,11 @@ export const loginSchema = z.object({
 
 export type LoginDTO = z.infer<typeof loginSchema>;
 
-export const tabletPinLoginSchema=z.object({username:trimString(2,"Nom d'utilisateur requis").transform(canonicalizeAuthUsername),device_id:z.string().uuid(),device_secret:z.string().regex(/^[a-f0-9]{64}$/),pin:z.string().regex(/^\d{4}$/)}).strict();
+export const tabletPinLoginSchema=z.object({username:trimString(2,"Nom d'utilisateur requis").transform(canonicalizeAuthUsername),deviceId:z.string().uuid(),deviceSecret:z.string().regex(/^[a-f0-9]{64}$/),pin:z.string().regex(/^\d{4}$/)}).strict();
 export const tabletPinSetSchema=z.object({pin:z.string().regex(/^\d{4}$/)}).strict();
 export const tabletPinDeviceSchema=z.object({device_id:z.string().uuid()}).strict();
 export const tabletPinDeviceNameSchema=z.object({name:z.string().trim().min(1).max(80)}).strict();
-export const tabletPinPairSchema=z.object({pairing_code:z.string().regex(/^[a-f0-9]{32}$/)}).strict();
+export const tabletPinPairSchema=z.object({pairingCode:z.string().regex(/^[a-f0-9]{32}$/)}).strict();
 
 export const forgotPasswordSchema = z
   .object({

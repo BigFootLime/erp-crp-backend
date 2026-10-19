@@ -68,9 +68,9 @@ function tabletDirectory(){const directory=sharedDirectoryClient();if(!directory
 export const tabletPinStatus=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-status',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
 export const tabletPinSet=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-set',{directory_session:directorySession(req),input:tabletPinSetSchema.parse(req.body),meta:tabletMeta(req)})));
 export const tabletPinRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-revoke',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)});res.status(204).end();});
-export const tabletPinPair=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-pair',{input:tabletPinPairSchema.parse(req.body),meta:tabletMeta(req)})));
+export const tabletPinPair=asyncHandler(async(req,res)=>{const input=tabletPinPairSchema.parse(req.body);res.json(await tabletDirectory().call('tablet-pin-pair',{input:{pairing_code:input.pairingCode},meta:tabletMeta(req)}));});
 export const tabletPinLogin=asyncHandler(async(req,res)=>{
- const directory=tabletDirectory(),meta=tabletMeta(req);try{const result=await directory.call('tablet-pin-login',{input:tabletPinLoginSchema.parse(req.body),meta});res.json({message:'Connexion réussie',...await directoryAuthenticationResult(pool,result,meta)});}catch(error){mapDirectoryLoginFailure(error);}
+ const directory=tabletDirectory(),meta=tabletMeta(req);try{const input=tabletPinLoginSchema.parse(req.body);const result=await directory.call('tablet-pin-login',{input:{username:input.username,pin:input.pin,device_id:input.deviceId,device_secret:input.deviceSecret},meta});res.json({message:'Connexion réussie',...await directoryAuthenticationResult(pool,result,meta)});}catch(error){mapDirectoryLoginFailure(error);}
 });
 export const tabletPinAdminList=asyncHandler(async(req,res)=>res.json(await tabletDirectory().call('tablet-pin-admin-list',{directory_session:directorySession(req),input:{},meta:tabletMeta(req)})));
 export const tabletPinAdminRevoke=asyncHandler(async(req,res)=>{await tabletDirectory().call('tablet-pin-admin-revoke',{directory_session:directorySession(req),input:{device_id:req.params.deviceId},meta:tabletMeta(req)});res.status(204).end();});
