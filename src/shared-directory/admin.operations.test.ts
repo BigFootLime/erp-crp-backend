@@ -9,7 +9,7 @@ import type {DirectorySession} from './model';
 const actorId='11111111-1111-4111-8111-111111111111';
 const targetId='22222222-2222-4222-8222-222222222222';
 const factorId='33333333-3333-4333-8333-333333333333';
-const actor:DirectorySession={profile_id:actorId,source_user_id:10,database:'cerp_prod',username:'owner',name:'OWNER',surname:'ONE',email:'owner@example.test',avatar_key:null,avatar_asset_id:null,tel_no:null,role:'Administrateur Systeme et Reseau',roles:['Administrateur Systeme et Reseau'],is_superadmin:true,status:'Active',job_title:null,employment_type:null,weekly_hours_target:null,work_profile_incomplete:false,mfa_reenrollment_required:false,work_profile:null,work_profile_start_date:null,global_session_epoch:1,membership_version:2,mfa_factor_id:factorId,mfa_factor_version:1,mfa_verified_at:new Date().toISOString(),mfa_method:'totp'};
+const actor:DirectorySession={profile_id:actorId,source_user_id:10,database:'cerp_prod',username:'owner',name:'OWNER',surname:'ONE',email:'owner@example.test',avatar_key:null,avatar_asset_id:null,tel_no:null,role:'Administrateur Systeme et Reseau',roles:['Administrateur Systeme et Reseau'],is_superadmin:true,status:'Active',job_title:null,employment_type:null,weekly_hours_target:null,work_profile_incomplete:false,mfa_reenrollment_required:false,work_profile:null,work_profile_start_date:null,global_session_epoch:1,membership_version:2,mfa_factor_id:factorId,mfa_factor_version:1,mfa_verified_at:new Date().toISOString(),mfa_method:'totp',tablet_device_id:null,tablet_pin_version:null};
 
 function fakeDirectory({targetSuperadmin=false,viable=1,updated=true,afterOwnerLock}:{targetSuperadmin?:boolean;viable?:number;updated?:boolean;afterOwnerLock?:()=>void}={}){
  const calls:string[]=[];

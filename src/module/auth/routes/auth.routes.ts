@@ -9,6 +9,8 @@ import { getAccessProfile } from '../../access-control/controllers/access-contro
 import {
   forgotPasswordRateLimit,
   loginRateLimit,
+  tabletPinLoginRateLimit,
+  tabletPinPairRateLimit,
   mfaRateLimit,
   resetPasswordRateLimit,
   registerRateLimit,
@@ -38,8 +40,8 @@ router.get('/test-registration', testRegistrationOptions);
 router.post('/test-registration', registerRateLimit, testRegistration);
 
 router.post('/login', loginRateLimit, login);
-router.post('/tablet-pin/login', loginRateLimit, tabletPinLogin);
-router.post('/tablet-pin/pair', loginRateLimit, tabletPinPair);
+router.post('/tablet-pin/login', tabletPinLoginRateLimit, tabletPinLogin);
+router.post('/tablet-pin/pair', tabletPinPairRateLimit, tabletPinPair);
 router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);

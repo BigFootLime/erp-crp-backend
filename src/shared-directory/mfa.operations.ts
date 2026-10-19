@@ -19,7 +19,7 @@ export function mountDirectoryMfa(app:Express,db:Pool,sourceJwtSecret:string,wra
  endpoint('mfa-status',z.object({}).strict(),identity=>getMfaStatus(identity.source_user_id));
  endpoint('mfa-step-up',stepUpMfaSchema,async(identity,body,meta)=>{
   const result=await stepUpMfa(identity.source_user_id,body.code,meta);
-  return createDirectorySession(db,identity.database,result.token,sourceJwtSecret);
+  return createDirectorySession(db,identity.database,result.token,sourceJwtSecret,identity.tablet_device_id??undefined,identity.tablet_pin_version??undefined);
  });
  endpoint('mfa-enroll',enrollMfaSchema,async(identity,body,meta)=>{
   const result=await beginOwnMfaEnrollment(identity.source_user_id,body.current_password,body.device_label,meta);
