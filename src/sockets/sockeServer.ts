@@ -192,6 +192,43 @@ function logSecurityEvent(type: string, fields: Record<string, string | number |
   console.warn(JSON.stringify({ type, ...fields }));
 }
 
+type RealtimeAvailabilityReason =
+  | "directory_unavailable"
+  | "account_authorization_unavailable"
+  | "authorization_unavailable";
+
+/**
+ * Authentication rejection and dependency availability are deliberately kept
+ * distinct. A temporary directory/database fault must close the untrusted
+ * transport, but it must not tell the client that its session was revoked.
+ */
+class RealtimeAuthorizationUnavailableError extends Error {
+  constructor(readonly reason: RealtimeAvailabilityReason) {
+    super(reason);
+    this.name = "RealtimeAuthorizationUnavailableError";
+  }
+}
+
+const rejectedDirectorySessionCodes = new Set([
+  "DIRECTORY_SESSION_REQUIRED",
+  "DIRECTORY_SESSION_REJECTED",
+  "DIRECTORY_SESSION_STALE",
+  "DIRECTORY_LOCAL_SESSION_STALE",
+]);
+
+function directorySessionWasRejected(error: unknown): boolean {
+  const failure = error as { code?: unknown; message?: unknown } | null;
+  const code = typeof failure?.code === "string" ? failure.code : "";
+  const message = typeof failure?.message === "string" ? failure.message : "";
+  return rejectedDirectorySessionCodes.has(code) || rejectedDirectorySessionCodes.has(message);
+}
+
+function availabilityReason(error: unknown): RealtimeAvailabilityReason {
+  return error instanceof RealtimeAuthorizationUnavailableError
+    ? error.reason
+    : "authorization_unavailable";
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -736,9 +773,19 @@ export class RealtimeSocketRuntime {
   private async loadLiveAccount(user:JwtUser):Promise<RealtimeAccountAuthorization|null>{
     let directoryAssurance: Awaited<ReturnType<typeof validateSiteDirectoryToken>> | null = null;
     if(sharedDirectoryClient()){
-      try{directoryAssurance=await validateSiteDirectoryToken(pool,user);}catch{return null;}
+      try {
+        directoryAssurance = await validateSiteDirectoryToken(pool, user);
+      } catch (error) {
+        if (directorySessionWasRejected(error)) return null;
+        throw new RealtimeAuthorizationUnavailableError("directory_unavailable");
+      }
     }
-    const account = await this.dependencies.loadAccountAuthorization(user.id);
+    let account: RealtimeAccountAuthorization | null;
+    try {
+      account = await this.dependencies.loadAccountAuthorization(user.id);
+    } catch {
+      throw new RealtimeAuthorizationUnavailableError("account_authorization_unavailable");
+    }
     return account && directoryAssurance
       ? { ...account, mfaFactorId: directoryAssurance.mfa_factor_id, mfaFactorVersion: directoryAssurance.mfa_factor_version }
       : account;
@@ -808,10 +855,8 @@ export class RealtimeSocketRuntime {
       if (!socket.connected) return;
       return this.registerPresence(socket, user.id);
     });
-    void initialRoomsReady.catch(() => {
-      logSecurityEvent("realtime_acl_denied", { reason: "connection_setup_unavailable", scope: "connection" });
-      socket.emit(SERVICE_UNAVAILABLE_EVENT, { retryable: true });
-      socket.disconnect(true);
+    void initialRoomsReady.catch((error: unknown) => {
+      this.disconnectForAvailability(socket, availabilityReason(error));
     });
     let replayQueue: Promise<void> = Promise.resolve();
     // Socket.IO invokes handlers concurrently. Serialize room mutations and
@@ -926,7 +971,12 @@ export class RealtimeSocketRuntime {
           this.assertAuthorizationHealth(healthGeneration);
           callback?.(result);
         })
-        .catch(() => callback?.({ ok: false, error: "replay_failed" }));
+        .catch((error: unknown) => {
+          if (error instanceof RealtimeAuthorizationUnavailableError && socket.connected) {
+            this.disconnectForAvailability(socket, error.reason);
+          }
+          callback?.({ ok: false, error: "replay_failed" });
+        });
     });
 
     socket.on("disconnect", () => {
@@ -1028,8 +1078,20 @@ export class RealtimeSocketRuntime {
     socket: Socket,
     code: "TOKEN_EXPIRED" | "SESSION_REVOKED" | "ACCOUNT_CHANGED"
   ): void {
+    logSecurityEvent("realtime_authorization_disconnected", { reason: code });
     socket.emit(SESSION_REVOKED_EVENT, { code });
     socket.disconnect(true);
+  }
+
+  private disconnectForAvailability(socket: Socket, reason: RealtimeAvailabilityReason): void {
+    logSecurityEvent("realtime_transport_unavailable", { reason });
+    try {
+      socket.emit(SERVICE_UNAVAILABLE_EVENT, { retryable: true });
+    } finally {
+      // The reconnecting transport will re-run the complete authorization
+      // check. Do not emit session-revoked for a dependency outage.
+      socket.disconnect(true);
+    }
   }
 
   private onControlSignal(signal: RealtimeControlSignal): void {
@@ -1096,14 +1158,10 @@ export class RealtimeSocketRuntime {
       if (result.status !== "rejected") return count;
       const socket = sockets[index];
       try {
-        socket?.emit(SERVICE_UNAVAILABLE_EVENT, { retryable: true });
+        if (socket) this.disconnectForAvailability(socket, availabilityReason(result.reason));
       } catch {
-        // Disconnection is the fail-closed backstop even if transport emit fails.
-      }
-      try {
+        // Disconnection is the fail-closed backstop if the transport throws.
         socket?.disconnect(true);
-      } catch {
-        // Socket.IO normally cannot throw here; the socket is no longer trusted.
       }
       return count + 1;
     }, 0);
@@ -1473,7 +1531,14 @@ export class RealtimeSocketRuntime {
       for (const roomName of [...socket.rooms]) {
         const subscription = parseRealtimeRoomName(roomName);
         if (!subscription) continue;
-        if (!(await this.authorizeSubscription(socket, subscription))) {
+        let authorized: boolean;
+        try {
+          authorized = await this.authorizeSubscription(socket, subscription);
+        } catch (error) {
+          this.disconnectForAvailability(socket, availabilityReason(error));
+          return;
+        }
+        if (!authorized) {
           this.metrics.emissionRecipientsDenied += 1;
           await socket.leave(roomName);
         }
@@ -1500,7 +1565,13 @@ export class RealtimeSocketRuntime {
         load = this.loadLiveAccount(user);
         loads.set(sessionKey, load);
       }
-      const account = await load;
+      let account: RealtimeAccountAuthorization | null;
+      try {
+        account = await load;
+      } catch (error) {
+        this.disconnectForAvailability(socket, availabilityReason(error));
+        return;
+      }
       if (!account?.active || !tokenMatchesAccount(user, account)) {
         this.metrics.revokedSessionsDisconnected += 1;
         this.disconnectForAuthorization(socket, "ACCOUNT_CHANGED");

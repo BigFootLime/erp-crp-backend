@@ -3,6 +3,16 @@ import jwt from "jsonwebtoken";
 import { io as connectClient, type Socket as ClientSocket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const directory = vi.hoisted(() => ({
+  enabled: false,
+  validate: vi.fn(),
+}));
+
+vi.mock("../shared-directory/site-runtime", () => ({
+  sharedDirectoryClient: () => directory.enabled ? {} : null,
+  validateSiteDirectoryToken: directory.validate,
+}));
+
 import {
   createRealtimeSocketRuntime,
   type RealtimeSocketRuntime,
@@ -221,6 +231,8 @@ describe("Socket.IO shared room ACL", () => {
     profileFailures.clear();
     profileGate = null;
     profileCalls = 0;
+    directory.enabled = false;
+    directory.validate.mockReset();
     controlPlane = new SharedMemoryControlPlane();
   });
 
@@ -277,13 +289,14 @@ describe("Socket.IO shared room ACL", () => {
 
   async function startServer(options: {
     pollIntervalMs?: number;
+    sessionRevalidationMs?: number;
     privilegedBackstopRevalidationMs?: number;
   } = {}): Promise<RunningServer> {
     const http = createServer();
     const runtime = createRealtimeSocketRuntime(http, dependencies(), {
       controlPlane,
       pollIntervalMs: options.pollIntervalMs ?? 10_000,
-      sessionRevalidationMs: 10_000,
+      sessionRevalidationMs: options.sessionRevalidationMs ?? 10_000,
       pruneIntervalMs: 10_000,
       privilegedBackstopRevalidationMs: options.privilegedBackstopRevalidationMs ?? 10_000,
     });
@@ -300,6 +313,7 @@ describe("Socket.IO shared room ACL", () => {
     expiresIn?: number | string;
     epoch?: number;
     legacy?: boolean;
+    directory?: boolean;
   } = {}): string {
     const payload: Record<string, unknown> = {
       id: userId,
@@ -311,6 +325,16 @@ describe("Socket.IO shared room ACL", () => {
       payload.session_epoch = options.epoch ?? controlPlane.epochs.get(userId) ?? 0;
       payload.jti = `00000000-0000-4000-8000-${String(userId).padStart(12, "0")}`;
     }
+    if (options.directory) {
+      Object.assign(payload, {
+        directory_session: `dir_${"a".repeat(64)}`,
+        directory_profile_id: "00000000-0000-4000-8000-000000000001",
+        directory_global_epoch: 0,
+        directory_membership_version: 1,
+        mfa_factor_id: `factor-${userId}`,
+        mfa_factor_version: factorVersions.get(userId) ?? 1,
+      });
+    }
     if (superadmins.has(userId) || mfaRequiredUsers.has(userId)) Object.assign(payload, { mfa: true, amr: ["pwd", "totp"], mfa_factor_id: `factor-${userId}`, mfa_factor_version: factorVersions.get(userId) ?? 1 });
     return jwt.sign(payload, JWT_SECRET, {
       expiresIn: (options.expiresIn ?? "5m") as jwt.SignOptions["expiresIn"],
@@ -320,14 +344,14 @@ describe("Socket.IO shared room ACL", () => {
   async function connect(
     server: RunningServer,
     userId: number,
-    options: { token?: string; expiresIn?: number | string } = {}
+    options: { token?: string; expiresIn?: number | string; directory?: boolean } = {}
   ): Promise<ClientSocket> {
     activeUsers.add(userId);
     const client = connectClient(server.url, {
       transports: ["websocket"],
       forceNew: true,
       reconnection: false,
-      auth: { token: options.token ?? token(userId, { expiresIn: options.expiresIn }) },
+      auth: { token: options.token ?? token(userId, { expiresIn: options.expiresIn, directory: options.directory }) },
     });
     clients.push(client);
     await new Promise<void>((resolve, reject) => {
@@ -435,6 +459,43 @@ describe("Socket.IO shared room ACL", () => {
     const server = await startServer();
     authorizationFailures.add(71);
     await expect(connectionError(server, 71)).resolves.toMatchObject({ message: "SERVICE_UNAVAILABLE" });
+  });
+
+  it("keeps a directory availability failure out of the session-revocation path", async () => {
+    directory.enabled = true;
+    directory.validate.mockResolvedValue({ mfa_factor_id: "factor-74", mfa_factor_version: 1 });
+    const server = await startServer({ sessionRevalidationMs: 20 });
+    const client = await connect(server, 74, { directory: true });
+    const unavailable = vi.fn();
+    const revoked = vi.fn();
+    client.on("realtime:service-unavailable", unavailable);
+    client.on("realtime:session-revoked", revoked);
+
+    directory.validate.mockRejectedValueOnce(Object.assign(new Error("directory unavailable"), {
+      code: "DIRECTORY_UNAVAILABLE",
+      status: 503,
+    }));
+
+    await eventually(() => expect(unavailable).toHaveBeenCalledWith({ retryable: true }));
+    await eventually(() => expect(client.connected).toBe(false));
+    expect(revoked).not.toHaveBeenCalled();
+  });
+
+  it("still revokes a socket when the directory explicitly rejects its session", async () => {
+    directory.enabled = true;
+    directory.validate.mockResolvedValue({ mfa_factor_id: "factor-75", mfa_factor_version: 1 });
+    const server = await startServer({ sessionRevalidationMs: 20 });
+    const client = await connect(server, 75, { directory: true });
+    const revoked = vi.fn();
+    client.on("realtime:session-revoked", revoked);
+
+    directory.validate.mockRejectedValueOnce(Object.assign(new Error("DIRECTORY_SESSION_STALE"), {
+      code: "DIRECTORY_SESSION_STALE",
+      status: 401,
+    }));
+
+    await eventually(() => expect(revoked).toHaveBeenCalledWith({ code: "ACCOUNT_CHANGED" }));
+    await eventually(() => expect(client.connected).toBe(false));
   });
 
   it("distinguishes a transient room authorization outage from a true deny", async () => {

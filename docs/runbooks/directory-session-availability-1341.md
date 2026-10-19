@@ -25,3 +25,27 @@ The directory client carries plain errors; the final HTTP handler deliberately h
 Before promotion, verify those responses through the controller and final HTTP error handler, including success and unknown-error cases, on the production dependency lock. After promotion, a human verifies a fresh login on each environment using an unused code; do not reuse a successful TOTP in the same time step across environments sharing the directory. Never record the code or fabricate a production session for a smoke test.
 
 MFA response qualification on 2026-10-15: 125 targeted tests across 17 files pass, including 11 HTTP cases using the real final error handler; strict build and the 1,526-operation OpenAPI contract pass. The preceding full-suite result above belongs to the preceding availability patch. Real Production login and GED class/tree/document reads were confirmed after same-site configuration repair; Test login and complete audit qualification remain separate.
+
+## Socket.IO availability boundary (#1388)
+
+The realtime server validates the same directory assurance before joining rooms,
+revalidating an existing connection, replaying events, and delivering a full
+resynchronisation barrier. An explicit directory rejection (`REQUIRED`,
+`REJECTED`, `STALE` or `LOCAL_SESSION_STALE`) still follows the existing
+authorization-revocation path. A directory/database availability failure is
+different: the server emits the retryable realtime availability event and
+closes that Socket.IO transport. A reconnect must validate the complete
+authorization state again; it does not emit the global session-revoked event.
+
+The bounded logs distinguish `directory_unavailable`,
+`account_authorization_unavailable` and `authorization_unavailable` from
+fixed authorization-disconnect reasons. They must never contain a bearer
+token, account identifier, email, raw database error, or directory response.
+
+Before promotion, run the HTTP availability contract and the Socket.IO ACL
+contract on the exact candidate. Confirm a transient directory failure gives
+HTTP 503 and a retryable transport reconnect without a logout, then confirm a
+genuinely stale directory session still yields HTTP 401 and an authorization
+revocation. These tests prove the classification contract only: they do not
+prove the cause of an earlier user report or replace an authenticated Test
+then Production observation.
