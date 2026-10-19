@@ -25,6 +25,7 @@ class AdvisoryClient {
   private readonly listeners = new Set<Listener>();
   released = false;
   destroyed = false;
+  releaseCount = 0;
 
   constructor(private readonly database: AdvisoryDatabase) {}
 
@@ -39,6 +40,7 @@ class AdvisoryClient {
   }
 
   release(destroy = false): void {
+    this.releaseCount += 1;
     this.released = true;
     this.destroyed = Boolean(destroy);
     this.database.locked = false;
@@ -141,6 +143,28 @@ describe("background runtime roles", () => {
 
     expect(stopMaintenance).toHaveBeenCalledOnce();
     expect(database.clients[0].released).toBe(true);
+    expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped" });
+  });
+
+  it("releases the leader session once when the shutdown-time maintenance drain rejects", async () => {
+    const database = new AdvisoryDatabase();
+    let finishStartup!: (stops: readonly (() => Promise<void>)[]) => void;
+    const startup = new Promise<readonly (() => Promise<void>)[]>((resolve) => { finishStartup = resolve; });
+    const stopMaintenance = vi.fn(async () => { throw new Error("drain failed"); });
+    const startMaintenance = vi.fn(() => startup);
+    const runtime = startBackgroundRuntime({
+      pool: database,
+      startMaintenance,
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    await vi.waitFor(() => expect(startMaintenance).toHaveBeenCalledOnce());
+    const stopping = runtime.stop();
+    finishStartup([stopMaintenance]);
+    await expect(stopping).resolves.toBeUndefined();
+
+    expect(stopMaintenance).toHaveBeenCalledOnce();
+    expect(database.clients[0].releaseCount).toBe(1);
     expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped" });
   });
 

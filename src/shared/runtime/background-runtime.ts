@@ -97,11 +97,21 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
   const unlockAndRelease = async (client: LeaderClient): Promise<void> => {
     try {
       await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [LEADER_KEY]);
-      client.release();
     } catch {
       // Destroy a session if unlock cannot be confirmed so a session-level lock
       // is never handed back to the pool.
-      client.release(true);
+      try {
+        client.release(true);
+      } catch {
+        // The release was attempted; never attempt it a second time.
+      }
+      return;
+    }
+    try {
+      client.release();
+    } catch {
+      // The release was attempted; avoid a second release of an indeterminate
+      // pg client state.
     }
   };
 
@@ -154,6 +164,7 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
       }
       if (stopped) {
         await unlockAndRelease(client);
+        client = null;
         return;
       }
       const startedMaintenance = await options.startMaintenance();
@@ -162,6 +173,7 @@ export function startBackgroundRuntime(options: BackgroundRuntimeOptions): Backg
           await stopAll(startedMaintenance);
         } finally {
           await unlockAndRelease(client);
+          client = null;
         }
         return;
       }
