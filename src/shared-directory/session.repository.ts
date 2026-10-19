@@ -36,7 +36,7 @@ export async function bindChallenge(db:Queryable,site:string,challenge:string,ex
 }
 export async function assertChallengeSite(db:Queryable,site:string,challenge:string){
  siteIdSchema.parse(site);
- const row=(await db.query<{tablet_device_id:string|null;tablet_pin_version:number|null}>(`SELECT c.tablet_device_id,c.tablet_pin_version FROM public.cerp_directory_challenges c LEFT JOIN public.cerp_directory_tablet_devices d ON d.device_id=c.tablet_device_id LEFT JOIN public.cerp_directory_tablet_pins p ON p.profile_id=c.profile_id WHERE c.token_hash=$1 AND c.database_id=$2 AND c.expires_at>now() AND (c.tablet_device_id IS NULL OR (d.revoked_at IS NULL AND d.device_secret_hash IS NOT NULL)) AND (c.tablet_pin_version IS NULL OR p.version=c.tablet_pin_version)`,[hash(challenge),site])).rows[0];
+ const row=(await db.query<{tablet_device_id:string|null;tablet_pin_version:number|null}>(`SELECT c.tablet_device_id,c.tablet_pin_version FROM public.cerp_directory_challenges c LEFT JOIN public.cerp_directory_tablet_devices d ON d.device_id=c.tablet_device_id WHERE c.token_hash=$1 AND c.database_id=$2 AND c.expires_at>now() AND (c.tablet_device_id IS NULL OR (d.revoked_at IS NULL AND d.device_secret_hash IS NOT NULL))`,[hash(challenge),site])).rows[0];
  if(!row)throw new Error('DIRECTORY_CHALLENGE_REJECTED');return row.tablet_device_id;
 }
 export async function ensureTestMembership(db:Queryable,site:string,sourceUserId:number){
