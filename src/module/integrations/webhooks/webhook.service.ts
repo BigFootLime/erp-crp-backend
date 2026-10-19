@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import crypto from "node:crypto";
 import http from "node:http";
 import https from "node:https";
@@ -401,13 +402,14 @@ export function startWebhookDeliveryMaintenance(): () => void {
   }
   const configured = Number.parseInt(process.env.CERP_WEBHOOK_JOB_INTERVAL_MS ?? "30000", 10);
   const intervalMs = Number.isSafeInteger(configured) && configured >= 5000 ? configured : 30000;
+  let stopped = false;
   let running = false;
   const cycle = async () => {
-    if (running) return;
+    if (stopped || running) return;
     running = true;
     markJobStarted("webhook_delivery");
     try {
-      for (let processed = 0; processed < 25; processed += 1) {
+      for (let processed = 0; !stopped && processed < 25; processed += 1) {
         if (!(await processNextWebhookDelivery())) break;
       }
       markJobFinished("webhook_delivery", true);
@@ -418,10 +420,8 @@ export function startWebhookDeliveryMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  const drain = startDrainingInterval(cycle, intervalMs, { immediate: true });
+  return async () => { stopped = true; await drain(); };
 }
 
 export async function getWebhookSubscription(id: string) {

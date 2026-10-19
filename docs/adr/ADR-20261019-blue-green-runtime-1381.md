@@ -15,14 +15,19 @@ conserve `all`, pour rester compatible avec l'exploitation actuelle.
 Le leader est un verrou consultatif PostgreSQL **sessionnel**, détenu par un
 client dédié. Sa perte arrête les maintenances et termine le processus : il ne
 continue jamais à envoyer des effets externes après perte de son fencing
-primaire. Les claims, leases, clés d'idempotence et délais déjà présents dans
+primaire. Pendant un arrêt normal, les timers cessent d’accepter de nouveaux
+cycles et le verrou reste détenu jusqu’au drain du cycle en cours ; en cas de
+dépassement de grâce, le processus termine sans fermer prématurément sa session
+PostgreSQL. Les claims, leases, clés d'idempotence et délais déjà présents dans
 les files restent nécessaires : un verrou de leader ne rend pas un appel réseau
 exactly-once.
 
 La disponibilité HTTP ne dépend pas du leadership en rôle `api`. En `all`, la
 readiness inclut l'état concret du worker et reste négative tant que le
 leadership requis n'est pas acquis. Un worker seul ne publie aucun gateway
-métier.
+métier : il expose uniquement `GET /health/live` et `GET /health/ready` sur
+`127.0.0.1:$CERP_WORKER_HEALTH_PORT` (5001 par défaut). Cette dernière route
+retourne 503 tant que le worker attend le leadership ou l’a perdu.
 
 ## Bascule
 

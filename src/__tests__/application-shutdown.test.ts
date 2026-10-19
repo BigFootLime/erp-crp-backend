@@ -108,7 +108,7 @@ describe("application shutdown", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("forces bounded termination and starts database closure when services hang", async () => {
+  it("forces bounded termination without releasing the worker database lock early", async () => {
     const closeAllConnections = vi.fn();
     const closeDatabase = vi.fn(async () => undefined);
     const never = new Promise<void>(() => undefined);
@@ -125,6 +125,6 @@ describe("application shutdown", () => {
 
     await expect(shutdown("SIGINT")).resolves.toEqual({ exitCode: 1, timedOut: true });
     expect(closeAllConnections).toHaveBeenCalledTimes(1);
-    expect(closeDatabase).toHaveBeenCalledTimes(1);
+    expect(closeDatabase).not.toHaveBeenCalled();
   });
 });

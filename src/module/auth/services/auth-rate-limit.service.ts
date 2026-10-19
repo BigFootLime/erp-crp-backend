@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import crypto from "node:crypto";
 
 import {
@@ -136,7 +137,5 @@ export function startAuthRateLimitMaintenance(
     }
   };
 
-  const timer = setInterval(() => void run(), config.cleanupIntervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainingInterval(run, config.cleanupIntervalMs);
 }

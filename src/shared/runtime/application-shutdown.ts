@@ -124,8 +124,10 @@ export function createApplicationShutdown(
         } catch {
           // The process exits with failure below; no payload from the error is logged.
         }
+        // Keep the PostgreSQL session lock until the fatal process exit. Closing
+        // the pool here would let a standby worker start while a non-cancellable
+        // external side effect may still be draining in this process.
         void stopMaintenanceOnce();
-        void closeDatabaseOnce().catch(() => undefined);
         log("application_shutdown_timeout", { signal, timeoutMs: boundedTimeoutMs });
         finish({ exitCode: 1, timedOut: true });
       }, boundedTimeoutMs);

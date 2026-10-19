@@ -6,6 +6,7 @@ import {
   resolveRuntimeRole,
   startBackgroundRuntime,
 } from "../shared/runtime/background-runtime";
+import { workerHealthResponse } from "../shared/runtime/worker-health-server";
 
 type Listener = () => void;
 
@@ -77,6 +78,23 @@ describe("background runtime roles", () => {
     expect(database.clients).toHaveLength(1);
     expect(startMaintenance).toHaveBeenCalledOnce();
     expect(getBackgroundRuntimeReadiness()).toMatchObject({ role: "all", worker_state: "leader", maintenance_enabled: true, ready: true });
+    await runtime.stop();
+  });
+  it("reports worker readiness through the private health surface", async () => {
+    const database = new AdvisoryDatabase();
+    const runtime = startBackgroundRuntime({
+      pool: database,
+      startMaintenance: () => [],
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    expect(workerHealthResponse("GET", "/health/ready").statusCode).toBe(503);
+    await settle();
+    expect(workerHealthResponse("GET", "/health/ready")).toMatchObject({ statusCode: 200 });
+    expect(JSON.parse(workerHealthResponse("GET", "/health/ready").body)).toMatchObject({
+      background_runtime: { worker_state: "leader", ready: true },
+    });
+    expect(workerHealthResponse("GET", "/api/v1/users").statusCode).toBe(404);
     await runtime.stop();
   });
   it("starts no worker database connection or job in api mode", async () => {
