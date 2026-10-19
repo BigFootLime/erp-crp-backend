@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../shared/runtime/drainable-maintenance";
 import crypto from "node:crypto";
 
 import { logger } from "../../shared/observability/logger";
@@ -154,14 +155,15 @@ export function startSupplierInvoiceMaintenance(): () => void {
   const configured = Number.parseInt(process.env.SUPPLIER_INVOICE_SYNC_INTERVAL_MS ?? "300000", 10);
   const syncIntervalMs = Number.isSafeInteger(configured) && configured >= 60_000 ? configured : 300_000;
   let nextSyncAt = 0;
+  let stopped = false;
   let running = false;
   const cycle = async () => {
-    if (running) return;
+    if (stopped || running) return;
     running = true;
     markJobStarted("supplier_invoice_inbound");
     try {
       await flushSupplierInvoiceProviderStatusesOnce();
-      if (Date.now() >= nextSyncAt) {
+      if (!stopped && Date.now() >= nextSyncAt) {
         await syncInboundSupplierInvoicesOnce();
         nextSyncAt = Date.now() + syncIntervalMs;
       }
@@ -173,8 +175,6 @@ export function startSupplierInvoiceMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), Math.min(30_000, syncIntervalMs));
-  timer.unref();
-  return () => clearInterval(timer);
+  const drain = startDrainingInterval(cycle, Math.min(30_000, syncIntervalMs), { immediate: true });
+  return async () => { stopped = true; await drain(); };
 }

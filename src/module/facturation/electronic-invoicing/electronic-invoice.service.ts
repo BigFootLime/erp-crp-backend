@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import { logger } from "../../../shared/observability/logger";
 import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
 import { HttpError } from "../../../utils/httpError";
@@ -512,16 +513,17 @@ export function startElectronicInvoiceMaintenance(): () => void {
     ? configuredReconcile
     : 300_000;
   let nextReconciliationAt = 0;
+  let stopped = false;
   let running = false;
   const cycle = async () => {
-    if (running) return;
+    if (stopped || running) return;
     running = true;
     markJobStarted("electronic_invoicing");
     try {
-      for (let processed = 0; processed < 25; processed += 1) {
+      for (let processed = 0; !stopped && processed < 25; processed += 1) {
         if (!(await svcProcessNextElectronicInvoice())) break;
       }
-      if (Date.now() >= nextReconciliationAt) {
+      if (!stopped && Date.now() >= nextReconciliationAt) {
         await svcReconcileOutstandingElectronicInvoices();
         nextReconciliationAt = Date.now() + reconcileIntervalMs;
       }
@@ -535,8 +537,6 @@ export function startElectronicInvoiceMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  const drain = startDrainingInterval(cycle, intervalMs, { immediate: true });
+  return async () => { stopped = true; await drain(); };
 }

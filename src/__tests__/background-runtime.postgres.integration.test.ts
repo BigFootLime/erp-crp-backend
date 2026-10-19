@@ -46,4 +46,27 @@ describePostgres("background runtime PostgreSQL leadership", () => {
     await vi.waitFor(() => expect(secondMaintenance).toHaveBeenCalledOnce(), { timeout: 15_000 });
     await second.stop();
   }, 15_000);
+
+  it("does not transfer leadership until an active maintenance cycle drains", async () => {
+    const firstPool = new Pool({ connectionString: databaseUrl });
+    const secondPool = new Pool({ connectionString: databaseUrl });
+    pools.push(firstPool, secondPool);
+    let releaseCycle!: () => void;
+    const cycleDrained = new Promise<void>((resolve) => { releaseCycle = resolve; });
+    const firstMaintenance = vi.fn(() => [async () => { await cycleDrained; }]);
+    const secondMaintenance = vi.fn(() => []);
+    const environment = { CERP_RUNTIME_ROLE: "worker", CERP_BACKGROUND_LEADER_RETRY_MS: "1000" };
+    const first = startBackgroundRuntime({ pool: firstPool, startMaintenance: firstMaintenance, environment });
+    const second = startBackgroundRuntime({ pool: secondPool, startMaintenance: secondMaintenance, environment });
+    runtimes.push(first, second);
+
+    await vi.waitFor(() => expect(firstMaintenance).toHaveBeenCalledOnce(), { timeout: 15_000 });
+    const drainingStop = first.stop();
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    expect(secondMaintenance).not.toHaveBeenCalled();
+    releaseCycle();
+    await drainingStop;
+    await vi.waitFor(() => expect(secondMaintenance).toHaveBeenCalledOnce(), { timeout: 15_000 });
+    await second.stop();
+  }, 15_000);
 });

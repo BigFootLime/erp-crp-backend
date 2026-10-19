@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import { logger } from "../../../shared/observability/logger";
 import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
@@ -155,30 +156,25 @@ async function processOne(kind: "TRANSACTION" | "PAYMENT"): Promise<boolean> {
   return true;
 }
 
-export function startEReportingMaintenance(): () => void {
-  if (!enabled()) return () => undefined;
-  let running = false;
+export function startEReportingMaintenance(): () => Promise<void> {
+  if (!enabled()) return async () => undefined;
   let lastPeriodSynchronization = 0;
-  const run = () => {
-    if (running) return;
-    running = true;
-    void (async () => {
-      if (Date.now() - lastPeriodSynchronization >= 5 * 60_000) {
-        await synchronizePeriods();
-        lastPeriodSynchronization = Date.now();
-      }
-      await processOne("TRANSACTION");
-      await processOne("PAYMENT");
-    })().catch((error) => {
-        logger.error("electronic_invoice_ereporting_worker_failed", {
-          failure_code: error instanceof Error ? error.name : "EREPORTING_WORKER_FAILED",
-        });
-      }).finally(() => {
-        running = false;
-      });
+  const cycle = async (): Promise<void> => {
+    if (Date.now() - lastPeriodSynchronization >= 5 * 60_000) {
+      await synchronizePeriods();
+      lastPeriodSynchronization = Date.now();
+    }
+    await processOne("TRANSACTION");
+    await processOne("PAYMENT");
   };
-  const timer = setInterval(run, 30_000);
-  timer.unref();
-  setImmediate(run);
-  return () => clearInterval(timer);
+  const guardedCycle = async (): Promise<void> => {
+    try {
+      await cycle();
+    } catch (error) {
+      logger.error("electronic_invoice_ereporting_worker_failed", {
+        failure_code: error instanceof Error ? error.name : "EREPORTING_WORKER_FAILED",
+      });
+    }
+  };
+  return startDrainingInterval(guardedCycle, 30_000, { immediate: true });
 }
