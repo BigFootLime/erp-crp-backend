@@ -376,9 +376,10 @@ export async function repoEnsureDirectoryTabletDevice(params: {
   directoryTabletDeviceId: string;
   actorUserId: number;
 }): Promise<DeviceRow> {
-  const client = await pool.connect();
   const publicCode = `T${params.directoryTabletDeviceId.replace(/-/g, "").slice(0, 31).toUpperCase()}`;
+  let client: PoolClient | null = null;
   try {
+    client = await pool.connect();
     await client.query("BEGIN");
     const created = await client.query<{ id: string }>(
       `INSERT INTO public.production_devices
@@ -386,13 +387,16 @@ export async function repoEnsureDirectoryTabletDevice(params: {
        VALUES ($1::uuid,$2,$3,'MOBILE','ACTIVE',$4,$4,$4)
        ON CONFLICT (id) DO NOTHING
        RETURNING id`,
-      [params.directoryTabletDeviceId, publicCode, `Tablette Directory ${publicCode}`, params.actorUserId]
+      [params.directoryTabletDeviceId, publicCode, `Tablette partagée ${publicCode.slice(-6)}`, params.actorUserId]
     );
-    const existing = await client.query<{ id: string; status: DeviceStatus }>(
-      "SELECT id,status FROM public.production_devices WHERE id=$1::uuid FOR UPDATE",
+    const existing = await client.query<{ id: string; status: DeviceStatus; public_code: string }>(
+      "SELECT id,status,public_code FROM public.production_devices WHERE id=$1::uuid FOR UPDATE",
       [params.directoryTabletDeviceId]
     );
     if (!existing.rows.length) throw new HttpError(503, "STATION_DEVICE_UNAVAILABLE", "Le registre des tablettes est indisponible.");
+    if (existing.rows[0]!.public_code !== publicCode) {
+      throw new HttpError(409, "STATION_DEVICE_MAPPING_CONFLICT", "Cette tablette est liée à un poste local différent.");
+    }
     if (existing.rows[0]!.status !== "ACTIVE") {
       throw new HttpError(403, "STATION_DEVICE_UNAVAILABLE", "Cette tablette n'est plus autorisée.");
     }
@@ -408,16 +412,17 @@ export async function repoEnsureDirectoryTabletDevice(params: {
       );
     }
     await client.query("COMMIT");
+    const device = await repoFindDeviceById(params.directoryTabletDeviceId);
+    if (!device) throw new HttpError(503, "STATION_DEVICE_UNAVAILABLE", "Le registre des tablettes est indisponible.");
+    if (device.status !== "ACTIVE") throw new HttpError(403, "STATION_DEVICE_UNAVAILABLE", "Cette tablette n'est plus autorisée.");
+    return device;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    throw error;
+    await client?.query("ROLLBACK").catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, "STATION_DEVICE_UNAVAILABLE", "Le registre des tablettes est momentanément indisponible.");
   } finally {
-    client.release();
+    client?.release();
   }
-  const device = await repoFindDeviceById(params.directoryTabletDeviceId);
-  if (!device) throw new HttpError(503, "STATION_DEVICE_UNAVAILABLE", "Le registre des tablettes est indisponible.");
-  if (device.status !== "ACTIVE") throw new HttpError(403, "STATION_DEVICE_UNAVAILABLE", "Cette tablette n'est plus autorisée.");
-  return device;
 }
 
 export async function repoUpdateDevice(params: {

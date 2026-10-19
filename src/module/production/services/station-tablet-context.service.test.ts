@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   validate: vi.fn(),
+  directory: vi.fn(),
   ensure: vi.fn(),
 }));
 
-vi.mock("../../../shared-directory/site-runtime", () => ({ validateSiteDirectoryToken: mocks.validate }));
+vi.mock("../../../shared-directory/site-runtime", () => ({ sharedDirectoryClient: mocks.directory, validateSiteDirectoryToken: mocks.validate }));
 vi.mock("../../../config/database", () => ({ default: {} }));
 vi.mock("../repository/station.repository", () => ({
   repoEnsureDirectoryTabletDevice: mocks.ensure,
@@ -23,7 +24,14 @@ const claims = { id: 17, directory_session: "dir_" + "a".repeat(64) };
 const tabletId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 describe("Directory tablet station context", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); mocks.directory.mockReturnValue({}); });
+
+  it("keeps local installations available without calling Directory", async () => {
+    mocks.directory.mockReturnValue(null);
+    await expect(svcTabletContext({ claims })).resolves.toEqual({ available: false });
+    expect(mocks.validate).not.toHaveBeenCalled();
+    expect(mocks.ensure).not.toHaveBeenCalled();
+  });
 
   it("keeps the normal ERP fallback available without a tablet proof", async () => {
     mocks.validate.mockResolvedValue({ tablet_device_id: undefined });

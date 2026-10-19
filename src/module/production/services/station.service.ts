@@ -13,7 +13,7 @@
 
 import { HttpError } from "../../../utils/httpError";
 import pool from "../../../config/database";
-import { validateSiteDirectoryToken } from "../../../shared-directory/site-runtime";
+import { sharedDirectoryClient, validateSiteDirectoryToken } from "../../../shared-directory/site-runtime";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 
@@ -112,6 +112,7 @@ type DirectoryClaims = {
 
 /** Resolves only a Directory PIN-backed tablet into the legacy station registry. */
 export async function svcTabletContext(params: { claims: DirectoryClaims }): Promise<{ available: boolean; deviceCode?: string }> {
+  if (!sharedDirectoryClient()) return { available: false };
   let identity;
   try {
     identity = await validateSiteDirectoryToken(pool, params.claims);
