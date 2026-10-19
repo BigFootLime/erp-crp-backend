@@ -57,3 +57,25 @@ restart the prior worker only after stopping the candidate worker. Rollback
 never restores or rewrites the database.
 
 RPO 1h and RTO 4h are recovery objectives, not hardware high availability.
+
+## Local operator and fixture qualification
+
+`scripts/blue-green-runtime-operator.mjs` accepts only a versioned JSON plan;
+it executes no shell command and therefore cannot interpolate plan content into
+a host command. It requires a SHA-256 route baseline, an image digest, a role
+of `api`, two matching HTTP/WebSocket targets, explicit VPS/HYPER endpoints,
+the 20 GiB VPS reserve and an explicit legacy-worker drain. Candidate health is
+bounded to 30 seconds and requires JSON `version` plus `role=api`, a valid API
+response, and a WebSocket upgrade.
+
+The operator records `prepared`, `promoted`, or `rolled_back` state by atomic
+local-file replacement. A route-write failure compensates to the captured old
+target. Its rollback is routes-only and deliberately has no database action.
+VPS and HYPER remain two phases: success on VPS never claims a simultaneous
+HYPER change; a later HYPER failure requires the documented VPS compensation.
+
+Run local fixtures only:
+
+```text
+node --test scripts/tests/blue-green-runtime-fixture.test.mjs scripts/tests/blue-green-runtime-operator.test.mjs
+```
