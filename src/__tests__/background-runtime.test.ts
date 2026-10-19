@@ -24,6 +24,7 @@ class AdvisoryDatabase {
 class AdvisoryClient {
   private readonly listeners = new Set<Listener>();
   released = false;
+  destroyed = false;
 
   constructor(private readonly database: AdvisoryDatabase) {}
 
@@ -37,8 +38,9 @@ class AdvisoryClient {
     return { rows: [] };
   }
 
-  release(): void {
+  release(destroy = false): void {
     this.released = true;
+    this.destroyed = Boolean(destroy);
     this.database.locked = false;
   }
 
@@ -66,6 +68,109 @@ describe("background runtime roles", () => {
     expect(resolveRuntimeRole({})).toBe("all");
     expect(resolveRuntimeRole({ CERP_RUNTIME_ROLE: "API" })).toBe("api");
     expect(() => resolveRuntimeRole({ CERP_RUNTIME_ROLE: "sidecar" })).toThrow("CERP_RUNTIME_ROLE_INVALID");
+  });
+
+  it("waits for a pending leadership attempt before shutdown and never starts maintenance", async () => {
+    const database = new AdvisoryDatabase();
+    let resolveConnect!: (client: AdvisoryClient) => void;
+    const connect = vi.fn(() => new Promise<AdvisoryClient>((resolve) => { resolveConnect = resolve; }));
+    const startMaintenance = vi.fn(() => []);
+    const runtime = startBackgroundRuntime({
+      pool: { connect },
+      startMaintenance,
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    const stopping = runtime.stop();
+    await Promise.resolve();
+    expect(startMaintenance).not.toHaveBeenCalled();
+    const client = new AdvisoryClient(database);
+    resolveConnect(client);
+    await stopping;
+
+    expect(client.released).toBe(true);
+    expect(startMaintenance).not.toHaveBeenCalled();
+    expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped" });
+  });
+
+  it("releases an advisory lock acquired while shutdown is waiting", async () => {
+    const database = new AdvisoryDatabase();
+    const client = new AdvisoryClient(database);
+    let resolveLock!: (value: { rows: Array<{ acquired: boolean }> }) => void;
+    const query = vi.fn((sql: string) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        return new Promise<{ rows: Array<{ acquired: boolean }> }>((resolve) => { resolveLock = resolve; });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    client.query = query;
+    const startMaintenance = vi.fn(() => []);
+    const runtime = startBackgroundRuntime({
+      pool: { connect: async () => client },
+      startMaintenance,
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    await Promise.resolve();
+    const stopping = runtime.stop();
+    resolveLock({ rows: [{ acquired: true }] });
+    await stopping;
+
+    expect(startMaintenance).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("pg_advisory_unlock"), expect.any(Array));
+    expect(client.released).toBe(true);
+    expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped" });
+  });
+
+  it("drains maintenance that finishes starting while shutdown is in progress", async () => {
+    const database = new AdvisoryDatabase();
+    let finishStartup!: (stops: readonly (() => Promise<void>)[]) => void;
+    const startup = new Promise<readonly (() => Promise<void>)[]>((resolve) => { finishStartup = resolve; });
+    const stopMaintenance = vi.fn(async () => undefined);
+    const startMaintenance = vi.fn(() => startup);
+    const runtime = startBackgroundRuntime({
+      pool: database,
+      startMaintenance,
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    await vi.waitFor(() => expect(startMaintenance).toHaveBeenCalledOnce());
+    const stopping = runtime.stop();
+    finishStartup([stopMaintenance]);
+    await stopping;
+
+    expect(stopMaintenance).toHaveBeenCalledOnce();
+    expect(database.clients[0].released).toBe(true);
+    expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped" });
+  });
+
+  it("does not replace stopped state when a delayed leadership attempt fails", async () => {
+    let rejectConnect!: (error: Error) => void;
+    const runtime = startBackgroundRuntime({
+      pool: { connect: () => new Promise<AdvisoryClient>((_resolve, reject) => { rejectConnect = reject; }) },
+      startMaintenance: () => [],
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    const stopping = runtime.stop();
+    rejectConnect(new Error("connection unavailable"));
+    await stopping;
+
+    expect(getBackgroundRuntimeReadiness()).toMatchObject({ worker_state: "stopped", ready: false });
+  });
+
+  it("destroys the leader session when maintenance startup fails after lock acquisition", async () => {
+    const database = new AdvisoryDatabase();
+    const startMaintenance = vi.fn(async () => { throw new Error("maintenance startup failed"); });
+    const runtime = startBackgroundRuntime({
+      pool: database,
+      startMaintenance,
+      environment: { CERP_RUNTIME_ROLE: "worker" },
+    });
+
+    await vi.waitFor(() => expect(database.clients[0]?.destroyed).toBe(true));
+    expect(database.locked).toBe(false);
+    await runtime.stop();
   });
 
   it("keeps the historical all role by acquiring leadership and starting maintenance", async () => {
