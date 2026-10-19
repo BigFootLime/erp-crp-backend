@@ -7,6 +7,7 @@ import {
   listPieceFamiliesSVC,
   updatePieceFamilySVC,
 } from "../services/pieces-families.service"
+import { updatePieceFamilySchema } from "../validators/pieces-families.validators"
 
 function routeParam(value: string | string[] | undefined): string | null {
   return typeof value === "string" ? value : null
@@ -55,7 +56,8 @@ export const updatePieceFamily: RequestHandler = async (req, res, next) => {
       res.status(400).json({ error: "id must be a string" })
       return
     }
-    const row = await updatePieceFamilySVC(id, req.body)
+    const patch = updatePieceFamilySchema.parse({ body: req.body }).body
+    const row = await updatePieceFamilySVC(id, patch)
     if (!row) {
       res.status(404).json({ error: "Not found" })
       return
