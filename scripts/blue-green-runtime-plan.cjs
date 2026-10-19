@@ -137,18 +137,30 @@ for c in proxy:
  if routers_api is None: api_status='unavailable'
 print(json.dumps({'host':'vps','read_only':True,'route_file':str(p),'route_sha256':hashlib.sha256(t.encode()).hexdigest(),'routes':{n:routers[n] for n in names},'inventory':inventory,'docker_routes':docker_routes,'dynamic_files':dynamic_files,'dynamic_routes':dynamic_routes,'caddy_routes':caddy_routes,'proxy':proxy_inventory,'internal_api':{'status':api_status,'routers':api_routes,'services':api_services}}))`;
 
-const hyperPython = String.raw`import hashlib,json,pathlib,re,subprocess,shutil
+const hyperPython = String.raw`import hashlib,json,pathlib,re,subprocess,shutil,pwd,grp
 p=pathlib.Path('/etc/apache2/sites-enabled/cerp-local.conf')
 # Debian's sites-enabled entries are conventionally symlinks.  Resolve only
 # inside Apache's configuration tree; the report still identifies the enabled path.
-target=p.resolve(strict=True)
-assert p.is_file() and str(target).startswith('/etc/apache2/')
-t=target.read_text()
+config_target=p.resolve(strict=True)
+assert p.is_file() and str(config_target).startswith('/etc/apache2/')
+t=config_target.read_text()
 routes=[]
 for line in t.splitlines():
  m=re.match(r'^\s*(ProxyPass(?:Reverse)?)\s+(/(?:api|socket\.io)/)\s+(\S+)(.*)$',line,re.I)
  if m: routes.append({'directive':m.group(1),'path':m.group(2),'upstream':m.group(3),'options':m.group(4).strip()})
 assert any(r['path']=='/api/' for r in routes) and any(r['path']=='/socket.io/' for r in routes)
+enabled=pathlib.Path('/etc/apache2/sites-enabled')
+vhosts=[]
+for link in sorted(enabled.iterdir(),key=lambda x:x.name):
+ vhost_target=link.resolve(strict=True)
+ if not vhost_target.is_file() or not str(vhost_target).startswith('/etc/apache2/'): continue
+ text=vhost_target.read_text(); stat=vhost_target.stat(); directives=[]
+ for line in text.splitlines():
+  m=re.match(r'^\s*(ProxyPass(?:Reverse)?)\s+(\S+)\s+(\S+)(.*)$',line,re.I)
+  if m and ('8080' in m.group(3) or '8084' in m.group(3)): directives.append({'directive':m.group(1),'path':m.group(2),'upstream':m.group(3),'options':m.group(4).strip()})
+ if directives: vhosts.append({'enabled_path':str(link),'resolved_path':str(vhost_target),'sha256':hashlib.sha256(text.encode()).hexdigest(),'owner':pwd.getpwuid(stat.st_uid).pw_name,'group':grp.getgrgid(stat.st_gid).gr_name,'mode':oct(stat.st_mode & 0o777),'directives':directives})
+listener=subprocess.run(['ss','-ltnp','sport = :8084'],text=True,capture_output=True,timeout=5)
+lines=[line for line in listener.stdout.splitlines() if ':8084' in line]
 docker=shutil.which('docker')
 ids=subprocess.check_output([docker,'ps','-q'],text=True).split() if docker else []
 raw=json.loads(subprocess.check_output([docker,'inspect',*ids],text=True)) if ids else []
@@ -160,7 +172,7 @@ for c in raw:
  if revision or 'cerp' in name.lower():
   host=c.get('HostConfig',{}) or {}
   inventory.append({'id':c.get('Id','')[:12],'image':c.get('Config',{}).get('Image'),'revision':revision,'caps':{'add':sorted(host.get('CapAdd') or []),'drop':sorted(host.get('CapDrop') or [])},'labels':{'org.opencontainers.image.revision':revision} if revision else {},'networks':sorted((c.get('NetworkSettings',{}).get('Networks') or {}).keys())})
-print(json.dumps({'host':'hyper','read_only':True,'route_file':str(p),'resolved_route_file':str(target),'route_sha256':hashlib.sha256(t.encode()).hexdigest(),'routes':routes,'docker_inventory_available':bool(docker),'inventory':inventory}))`;
+print(json.dumps({'host':'hyper','read_only':True,'route_file':str(p),'resolved_route_file':str(config_target),'route_sha256':hashlib.sha256(t.encode()).hexdigest(),'routes':routes,'vhosts':vhosts,'listener_8084':lines,'docker_inventory_available':bool(docker),'inventory':inventory}))`;
 
 const report = {
   schema: "cerp-blue-green-read-only-v1",
@@ -180,4 +192,4 @@ const report = {
 };
 const file = path.join(__dirname, `blue-green-runtime-plan-${report.collectedAt.replace(/[:.]/g, "-")}.json`);
 fs.writeFileSync(file, JSON.stringify(report, null, 2) + "\n", { flag: "wx", mode: 0o600 });
-console.log(JSON.stringify({ action: report.action, file, vps: { route_sha256: report.vps.route_sha256, routes: report.vps.routes, inventory: report.vps.inventory, docker_routes: report.vps.docker_routes, dynamic_files: report.vps.dynamic_files, dynamic_routes: report.vps.dynamic_routes, caddy_routes: report.vps.caddy_routes, proxy: report.vps.proxy, internal_api: report.vps.internal_api }, hyper: { route_sha256: report.hyper.route_sha256, routes: report.hyper.routes, inventory: report.hyper.inventory } }, null, 2));
+console.log(JSON.stringify({ action: report.action, file, vps: { route_sha256: report.vps.route_sha256, routes: report.vps.routes, inventory: report.vps.inventory, docker_routes: report.vps.docker_routes, dynamic_files: report.vps.dynamic_files, dynamic_routes: report.vps.dynamic_routes, caddy_routes: report.vps.caddy_routes, proxy: report.vps.proxy, internal_api: report.vps.internal_api }, hyper: { route_sha256: report.hyper.route_sha256, routes: report.hyper.routes, vhosts: report.hyper.vhosts, listener_8084: report.hyper.listener_8084, inventory: report.hyper.inventory } }, null, 2));
