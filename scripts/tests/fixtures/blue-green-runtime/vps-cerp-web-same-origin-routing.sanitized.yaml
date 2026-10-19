@@ -1,0 +1,12 @@
+http:
+  routers:
+    cerp-web-api:
+      rule: Host(`cerp.croix-rousse-precision.fr`) && PathPrefix(`/api/`)
+      service: https-0-rcccokw0wgcw0ck44g0wk0ck@docker
+    cerp-web-socket:
+      rule: Host(`cerp.croix-rousse-precision.fr`) && PathPrefix(`/socket.io/`)
+      service: https-0-rcccokw0wgcw0ck44g0wk0ck@docker
+    cerp-web-ui:
+      rule: Host(`cerp.croix-rousse-precision.fr`)
+      service: cerp-web-ui@docker
+  services: {}

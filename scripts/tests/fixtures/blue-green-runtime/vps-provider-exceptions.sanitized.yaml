@@ -1,0 +1,17 @@
+http:
+  routers:
+    cerp-public-ged:
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && PathPrefix(`/api/v1/ged/`)
+      priority: 210
+    cerp-public-test-api:
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && PathPrefix(`/api/`) && Header(`X-CERP-Database`, `cerp_test`)
+      priority: 220
+    cerp-managed-test-api:
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && PathPrefix(`/api/`) && HeaderRegexp(`X-CERP-Database`, `(?i)^cerp_test_`)
+      priority: 230
+    cerp-test-manager:
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && Path(`/api/v1/test-databases`)
+      priority: 240
+    cerp-desktop-updates-https:
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && PathPrefix(`/desktop-updates/win/`)
+      priority: 20000

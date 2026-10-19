@@ -13,5 +13,8 @@
 # Rendus PDF de verification (CERP_PDF_PREVIEW=1), regenerables
 /outputs/
 
+# Read-only live-host inventories are evidence, never source.
+/scripts/blue-green-runtime-plan-*.json
+
 # Local, reproducible QA bundles and synthetic evidence (never application source).
 /.qa/

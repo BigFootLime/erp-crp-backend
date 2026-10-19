@@ -1,0 +1,13 @@
+[
+  {
+    "resolved_path": "/etc/apache2/sites-available/cerp-ged-wireguard.conf",
+    "directives": [
+      {
+        "directive": "ProxyPass",
+        "path": "/api/v1/ged/",
+        "upstream": "http://127.0.0.1:8080/api/v1/ged/",
+        "options": "retry=0"
+      }
+    ]
+  }
+]
