@@ -4,6 +4,13 @@ import { HttpError } from "../../utils/httpError";
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+export type CutoverBusinessNumberScope = "AFFAIRE_LIVRAISON" | "BON_LIVRAISON";
+
+const CUTOVER_BUSINESS_NUMBER_SCOPES = new Set<CutoverBusinessNumberScope>([
+  "AFFAIRE_LIVRAISON",
+  "BON_LIVRAISON",
+]);
+
 const ASCII_SEGMENT = /[^A-Z0-9]+/g;
 const ASCII_PLAN_SEPARATOR = /[^A-Z0-9]+/g;
 
@@ -15,6 +22,109 @@ function yearFromDate(d: Date): number {
   const y = d.getUTCFullYear();
   if (!Number.isFinite(y) || y < 1970) throw new Error("Invalid date for code generation");
   return y;
+}
+
+/**
+ * A delivery/business reference is a business date, not a UTC timestamp.
+ * Formatting it in Paris avoids assigning the prior year's prefix shortly after
+ * midnight in France.
+ */
+export function businessYearInParis(date: Date = new Date()): string {
+  const year = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris",
+    year: "2-digit",
+  }).format(date);
+  if (!/^\d{2}$/.test(year)) throw new Error("Invalid Paris business year");
+  return year;
+}
+
+type CutoverBusinessNumberRow = {
+  next_value: string;
+  active: boolean;
+};
+
+/**
+ * Returns the next configured cutover number only after an explicit activation.
+ * Databases that have not received the cutover patch retain their legacy
+ * generator; every other database failure remains visible to the caller.
+ */
+async function nextActiveCutoverBusinessNumber(
+  tx: DbQueryer,
+  scope: CutoverBusinessNumberScope
+): Promise<number | null> {
+  // `to_regclass` is deliberately checked first: catching 42P01 after an
+  // UPDATE would leave the surrounding PostgreSQL business transaction aborted.
+  const relation = await tx.query<{ relation: string | null }>(
+    "SELECT to_regclass($1)::text AS relation",
+    ["public.cutover_business_number_sequences"]
+  );
+  if (!relation.rows[0]?.relation) return null;
+  const allocated = await tx.query<{ allocated_value: string }>(
+    `
+      UPDATE public.cutover_business_number_sequences
+      SET next_value = next_value + 1,
+          updated_at = now()
+      WHERE scope = $1
+        AND active = TRUE
+      RETURNING (next_value - 1)::text AS allocated_value
+    `,
+    [scope]
+  );
+  const raw = allocated.rows[0]?.allocated_value;
+  if (raw === undefined) return null;
+  if (!/^\d+$/.test(raw)) throw new Error(`Invalid configured ${scope} sequence value`);
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid configured ${scope} sequence value`);
+  return value;
+}
+
+/**
+ * Transactional activation helper for the future SuperAdmin/MFA cutover flow.
+ * It can activate a suggested sequence or replay the same activation, but never
+ * lowers, resets, or silently reconfigures an active business counter.
+ */
+export async function activateCutoverBusinessNumberSequenceTx(
+  tx: DbQueryer,
+  params: { scope: CutoverBusinessNumberScope; nextValue: number; actorId: number }
+): Promise<{ scope: CutoverBusinessNumberScope; nextValue: number; activated: boolean }> {
+  if (!CUTOVER_BUSINESS_NUMBER_SCOPES.has(params.scope)) throw new Error("Invalid cutover business number scope");
+  if (!Number.isSafeInteger(params.nextValue) || params.nextValue <= 0) throw new Error("Invalid cutover business next value");
+  if (!Number.isSafeInteger(params.actorId) || params.actorId <= 0) throw new Error("Invalid cutover business activation actor");
+
+  const row = await tx.query<CutoverBusinessNumberRow>(
+    `SELECT next_value::text AS next_value, active
+       FROM public.cutover_business_number_sequences
+      WHERE scope = $1
+      FOR UPDATE`,
+    [params.scope]
+  );
+  const current = row.rows[0];
+  if (!current) throw new HttpError(503, "CUTOVER_NUMBERING_NOT_PREPARED", "La numérotation de bascule n'est pas préparée.");
+  if (!/^\d+$/.test(current.next_value)) throw new Error(`Invalid configured ${params.scope} sequence value`);
+  const currentNextValue = Number.parseInt(current.next_value, 10);
+  if (!Number.isSafeInteger(currentNextValue) || currentNextValue <= 0) throw new Error(`Invalid configured ${params.scope} sequence value`);
+
+  if (current.active) {
+    if (currentNextValue !== params.nextValue) {
+      throw new HttpError(409, "CUTOVER_NUMBERING_ALREADY_ACTIVE", "Cette numérotation est déjà active et ne peut pas être réinitialisée.");
+    }
+    return { scope: params.scope, nextValue: currentNextValue, activated: false };
+  }
+  if (params.nextValue < currentNextValue) {
+    throw new HttpError(422, "CUTOVER_NUMBERING_CANNOT_DECREASE", "Le prochain numéro ne peut pas être inférieur à la proposition de bascule.");
+  }
+
+  await tx.query(
+    `UPDATE public.cutover_business_number_sequences
+        SET next_value = $2,
+            active = TRUE,
+            activated_at = now(),
+            activated_by = $3,
+            updated_at = now()
+      WHERE scope = $1`,
+    [params.scope, params.nextValue, params.actorId]
+  );
+  return { scope: params.scope, nextValue: params.nextValue, activated: true };
 }
 
 function normalizeSegment(value: string, field: string): string {
@@ -252,6 +362,10 @@ export async function generateAffaireCode(
   tx: DbQueryer,
   params: { type: "LIV"; client_code: string; date?: Date }
 ): Promise<string> {
+  const configured = await nextActiveCutoverBusinessNumber(tx, "AFFAIRE_LIVRAISON");
+  if (configured !== null) {
+    return `AFF-LIV-${businessYearInParis(params.date ?? new Date())}-${pad(configured, 5)}`;
+  }
   return generateTransactionalBusinessCode(tx, { prefix: "AFF", date: params.date });
 }
 
@@ -326,7 +440,11 @@ export async function generateArticleCode(_tx: DbQueryer): Promise<string> {
   throw new HttpError(400, "ARTICLE_FAMILY_REQUIRED", "Use an article family to generate an article code.");
 }
 
-export async function generateBlCode(tx: DbQueryer): Promise<string> {
+export async function generateBlCode(tx: DbQueryer, params?: { date?: Date }): Promise<string> {
+  const configured = await nextActiveCutoverBusinessNumber(tx, "BON_LIVRAISON");
+  if (configured !== null) {
+    return `BL-${businessYearInParis(params?.date ?? new Date())}-${pad(configured, 5)}`;
+  }
   const res = await tx.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`);
   const raw = res.rows[0]?.n;
   const n = raw ? Number(raw) : NaN;

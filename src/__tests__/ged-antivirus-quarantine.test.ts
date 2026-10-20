@@ -23,10 +23,17 @@ const repository = vi.hoisted(() => ({
   repoGetDocumentDetail: vi.fn(),
   repoListQuarantine: vi.fn(),
   repoGetQuarantineSession: vi.fn(),
+  repoIsQuarantineSessionCutoverPrivate: vi.fn(),
   repoGetQuarantineSessionForUpdate: vi.fn(),
   repoMarkQuarantineDeleted: vi.fn(),
   repoInternalGetVersionContentRef: vi.fn(),
   withGedTransaction: vi.fn(),
+}));
+
+const accessControl = vi.hoisted(() => ({ repoIsSuperadmin: vi.fn() }));
+vi.mock("../module/access-control/repository/access-control.repository", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../module/access-control/repository/access-control.repository")>(),
+  ...accessControl,
 }));
 
 vi.mock("../module/ged/repository/ged.repository", async (importOriginal) => ({
@@ -156,6 +163,8 @@ beforeEach(async () => {
   });
   repository.repoGetDocumentDetail.mockResolvedValue(DOCUMENT_DETAIL);
   repository.repoListQuarantine.mockResolvedValue([]);
+  repository.repoIsQuarantineSessionCutoverPrivate.mockResolvedValue(false);
+  accessControl.repoIsSuperadmin.mockResolvedValue(true);
   repository.withGedTransaction.mockImplementation(async (work, hooks) => {
     const result = await work({ query: vi.fn() });
     await hooks?.beforeCommit?.();
@@ -337,6 +346,23 @@ describe("GED antivirus quarantine", () => {
       code: "GED_CAPABILITY_REQUIRED",
     });
     expect(repository.repoListQuarantine).not.toHaveBeenCalled();
+  });
+
+  it("keeps a CUTOVER_ROW quarantine opaque to a GED administrator who is not SuperAdmin", async () => {
+    accessControl.repoIsSuperadmin.mockResolvedValue(false);
+    repository.repoIsQuarantineSessionCutoverPrivate.mockResolvedValue(true);
+
+    await expect(listQuarantine({ id: 11, role: "Administrateur" })).resolves.toEqual([]);
+    expect(repository.repoListQuarantine).toHaveBeenCalledWith({ excludeCutover: true });
+
+    for (const operation of [rescanQuarantine, releaseQuarantine, deleteQuarantine]) {
+      await expect(operation({ id: 11, role: "Administrateur" }, SESSION_ID)).rejects.toMatchObject({
+        status: 404,
+        code: "GED_QUARANTINE_NOT_FOUND",
+      });
+    }
+    expect(repository.repoGetQuarantineSession).not.toHaveBeenCalled();
+    expect(repository.repoGetQuarantineSessionForUpdate).not.toHaveBeenCalled();
   });
 
   it("blocks download before resolving storage when a linked verdict is not clean", async () => {

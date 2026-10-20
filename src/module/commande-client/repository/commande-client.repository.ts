@@ -3202,6 +3202,9 @@ type InsertCommandeLignesOptions = {
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
   existing_line_ids?: ReadonlySet<number>;
+  /** Internal requirements are operational only and must never change the
+   * commercial reference price of an article. */
+  skip_sale_price_reference?: boolean;
 };
 
 const RECONCILIATION_REQUIRED_FIELDS = [
@@ -3631,16 +3634,18 @@ async function insertCommandeLignes(
         );
       }
     }
-    const referencePrice = await applyOrderLineSalePriceTx(client, {
-      article_id: resolved.article_id,
-      proposed_price: l.prix_unitaire_ht,
-      decision: l.reference_price_decision ?? null,
-      source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
-      source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
-      source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
-      actor_user_id: options.actor_user_id,
-      line_index: lineIndex,
-    });
+    const referencePrice = options.skip_sale_price_reference
+      ? { reference_price: null, reference_source: null, decision: "KEEP" as const, history_id: null }
+      : await applyOrderLineSalePriceTx(client, {
+        article_id: resolved.article_id,
+        proposed_price: l.prix_unitaire_ht,
+        decision: l.reference_price_decision ?? null,
+        source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
+        source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
+        source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
+        actor_user_id: options.actor_user_id,
+        line_index: lineIndex,
+      });
 
     const insertRes = await client.query<{ id: string }>(
       `
@@ -4080,6 +4085,43 @@ async function transitionLinkedDevisArticlesToValide(
   );
 
   return updated.rowCount ?? 0;
+}
+
+/**
+ * Cutover-only transaction primitive. It deliberately reuses the same native
+ * header/line/checkpoint writes as order creation, but never emits an AR,
+ * notification or creation PDF. The caller owns BEGIN/COMMIT together with
+ * its durable cutover crosswalk.
+ */
+export async function repoCreateCommandeCutoverDraftTx(
+  client: PoolClient,
+  input: CreateCommandeInput,
+  actorUserId: number
+): Promise<{ id: number; numero: string }> {
+  const contractCall = await prepareContractCall(client, input, actorUserId, []);
+  await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
+  const idRes = await client.query<{ id: string }>("SELECT nextval('public.commande_client_id_seq')::bigint::text AS id");
+  const rawId = idRes.rows[0]?.id;
+  if (!rawId) throw new Error("Failed to allocate commande id");
+  const commandeIdInt = toInt(rawId, "commande_client.id");
+  const numero = await generateCommandeCode(client, { client_code: input.code_client ?? input.client_id ?? "CMD", date: input.date_commande ? new Date(input.date_commande) : undefined });
+  const orderType = input.order_type ?? "FERME";
+  const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+  const inserted = await client.query<{ id: string }>(`
+    INSERT INTO commande_client (id,numero,client_id,contact_id,destinataire_id,adresse_facturation_id,emetteur,code_client,date_commande,arc_edi,arc_date_envoi,compteur_affaire_id,type_affaire,order_type,cadre_start_date,cadre_end_date,dest_stock_magasin_id,dest_stock_emplacement_id,mode_port_id,mode_reglement_id,conditions_paiement_id,biller_id,compte_vente_id,commentaire,remise_globale,total_ht,total_ttc,devis_id,source_devis_version_id,creation_flow_version,delivery_prepayment_requirement)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING id::text AS id`, [
+      commandeIdInt, numero, input.client_id ?? null, input.contact_id ?? null, input.destinataire_id ?? null, input.adresse_facturation_id ?? null, input.emetteur ?? null, input.code_client ?? null, input.date_commande, input.arc_edi ?? false, input.arc_date_envoi ?? null, input.compteur_affaire_id ?? null, "livraison", orderType, input.cadre_start_date ?? null, input.cadre_end_date ?? null, input.dest_stock_magasin_id ?? null, input.dest_stock_emplacement_id ?? null, input.mode_port_id ?? null, input.mode_reglement_id ?? null, input.conditions_paiement_id ?? null, input.biller_id ?? null, input.compte_vente_id ?? null, input.commentaire ?? null, input.remise_globale ?? 0, input.total_ht ?? 0, input.total_ttc ?? 0, input.devis_id ?? null, input.source_devis_version_id ?? input.devis_id ?? null, input.creation_flow_version ?? 1, orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+    ]);
+  const commandeId = inserted.rows[0]?.id;
+  if (!commandeId) throw new Error("Failed to create commande");
+  await insertCommandeLignes(client, commandeId, input.lignes, { officialize_preparatory_data: input.officialize_preparatory_data ?? false, commande_id_int: commandeIdInt, actor_user_id: actorUserId, creation_flow_version: input.creation_flow_version ?? 1, save_intent: "DRAFT", skip_sale_price_reference: orderType === "INTERNE" });
+  await recordContractCall(client, contractCall, commandeId, input);
+  await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
+  await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
+  await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, "Commande de reprise creee - brouillon a verifier"]);
+  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: "technical_analysis", cutover_draft: true }, user_id: actorUserId });
+  return { id: commandeIdInt, numero };
 }
 
 export async function repoCreateCommande(
