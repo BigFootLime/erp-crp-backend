@@ -54,3 +54,5 @@ On any failure or at the end:
 ```
 
 This is a rehearsal rollback only. It does not change live traffic, restart Coolify, touch the live dynamic route, or drop a database. A successful rehearsal does not activate blue/green; promotion still requires the separate live readiness and legacy-worker migration review.
+
+The two database URL password placeholders in `rehearsal.env.example` must be replaced only in the root-owned local rehearsal file with unique clone credentials before preflight. Do not commit that file or reuse production credentials.
