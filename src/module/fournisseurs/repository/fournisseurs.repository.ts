@@ -728,6 +728,47 @@ export async function repoCreateFournisseur(
   }
 }
 
+
+/** Controlled-cutover primitive: caller owns the transaction and durable crosswalk.
+ * It intentionally writes the same supplier, addresses, idempotency and audit data,
+ * but never creates GED/PDF snapshots or asynchronous events. */
+export async function repoCreateFournisseurCutoverTx(
+  client: import("pg").PoolClient,
+  body: CreateFournisseurBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string
+): Promise<{ id: string; code: string; replayed: boolean }> {
+  const requestHash = crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('fournisseur-create'), hashtext($1))", [idempotencyKey]);
+  const replay = await client.query<{ fournisseur_id: string; request_hash: string; code: string }>(
+    `SELECT i.fournisseur_id::text AS fournisseur_id, i.request_hash, COALESCE(f.code, f.code_fournisseur) AS code
+     FROM public.fournisseur_create_idempotence i JOIN public.fournisseurs f ON f.id=i.fournisseur_id
+     WHERE i.idempotency_key=$1 FOR UPDATE`, [idempotencyKey]
+  );
+  if (replay.rows[0]) {
+    if (replay.rows[0].request_hash !== requestHash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette cle d'idempotence correspond deja a un autre fournisseur.");
+    return { id: replay.rows[0].fournisseur_id, code: replay.rows[0].code, replayed: true };
+  }
+  const code = await generateFournisseurCode(client);
+  const ins = await client.query<{ id: string }>(
+    `INSERT INTO public.fournisseurs (code,code_fournisseur,nom,raison_sociale,actif,status,type_principal,tva,siret,siren,compte_tiers,electronic_address_scheme,electronic_address_value,electronic_address_directory_entry_id,electronic_address_verified_at,email,telephone,site_web,nom_commercial,logo,notes,created_by,updated_by)
+     VALUES ($1::text,$1::varchar(30),$2::text,$2::varchar(255),$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,NULL,$12,$13,$14,$15,$16,$17,$18,$18) RETURNING id::text AS id`,
+    [code, body.nom, body.actif ?? true, body.status ?? "actif", body.type_principal ?? null, body.tva ?? null, body.siret ?? null, body.siren ?? null, body.compte_tiers ?? null, body.electronic_address?.scheme ?? null, body.electronic_address?.value ?? null, body.email ?? null, body.telephone ?? null, body.site_web ?? null, body.nom_commercial ?? null, body.logo ?? null, body.notes ?? null, audit.user_id]
+  );
+  const id = ins.rows[0]?.id;
+  if (!id) throw new Error("Failed to create fournisseur");
+  const domaines = (body.domaines ?? []).map((item, index, all) => ({ ...item, is_primary: Boolean(item.is_primary) || (index === 0 && !all.some((candidate) => candidate.is_primary)) }));
+  for (const domaine of domaines) await client.query(
+    `INSERT INTO public.fournisseur_domaine_lien (fournisseur_id,domaine_code,is_primary,notes,created_by,updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$5) ON CONFLICT (fournisseur_id,domaine_code) DO NOTHING`,
+    [id, domaine.domaine_code, domaine.is_primary, domaine.notes ?? null, audit.user_id]
+  );
+  for (const address of body.adresses ?? []) await insertAdresse(client, id, address, audit.user_id);
+  if (body.adresses?.length) await syncPrimaryAddressCache(client, id, audit.user_id);
+  await client.query(`INSERT INTO public.fournisseur_create_idempotence (idempotency_key,request_hash,fournisseur_id) VALUES ($1,$2,$3::uuid)`, [idempotencyKey, requestHash, id]);
+  await insertAuditLog(client, audit, { action: "fournisseurs.create", entity_type: "FOURNISSEUR", entity_id: id, details: { code, nom: body.nom, cutover: true } });
+  return { id, code, replayed: false };
+}
+
 export async function repoUpdateFournisseur(
   id: string,
   patch: UpdateFournisseurBodyDTO,

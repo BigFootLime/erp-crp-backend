@@ -595,21 +595,26 @@ export async function repoQueueClientProfileAfterLogoUpload(
   );
 }
 
+/** Native client creation inside an optional caller-owned transaction.
+ * `sideEffects: "none"` is reserved for the controlled cutover: it retains all
+ * native validation/audit writes but never queues GED creation snapshots. */
 export async function repoCreateClient(
   dto: CreateClientDTO,
   audit: AuditContext,
-  idempotencyKey?: string | null
+  idempotencyKey?: string | null,
+  options: { client?: import("pg").PoolClient; sideEffects?: "normal" | "none" } = {}
 ): Promise<{ client_id: string; client_code: string; replayed: boolean }> {
-  const db = await pool.connect();
+  const ownsTransaction = !options.client;
+  const db = options.client ?? await pool.connect();
   try {
-    await db.query('BEGIN');
+    if (ownsTransaction) await db.query('BEGIN');
 
     // Rejeu : la même Idempotency-Key renvoie la fiche déjà créée, sans double
     // insertion (double clic, retry réseau). Table du patch 20260720.
     if (idempotencyKey) {
       const replay = await findIdempotentReplay(db, idempotencyKey);
       if (replay) {
-        await db.query('ROLLBACK');
+        if (ownsTransaction) await db.query('ROLLBACK');
         return { ...replay, replayed: true };
       }
     }
@@ -685,6 +690,7 @@ export async function repoCreateClient(
 
     // The creation receipt is built from the aggregate just written in this
     // transaction. Bank credentials intentionally never enter this snapshot.
+    if (options.sideEffects !== "none") {
     const revision = await db.query<{ updated_at: string }>(
       `SELECT updated_at::text AS updated_at FROM clients WHERE client_id = $1 FOR UPDATE`, [clientId]
     );
@@ -717,23 +723,29 @@ export async function repoCreateClient(
       title: `Fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Fiche-client", clientCode, "v1"]),
       sourceRevision: profile.sourceRevision, sourceSnapshot: profile.snapshot, actorUserId: audit.user_id,
     });
+    }
 
-    await db.query('COMMIT');
+    if (ownsTransaction) await db.query('COMMIT');
     return { client_id: clientId, client_code: clientCode, replayed: false };
   } catch (e) {
-    await db.query('ROLLBACK');
+    if (ownsTransaction) await db.query('ROLLBACK');
     // Course entre deux soumissions identiques : le perdant du conflit de clé
     // renvoie la fiche créée par le gagnant.
     const { code, constraint } = getPgErrorInfo(e);
-    if (idempotencyKey && code === "23505" && constraint === "client_create_idempotency_pkey") {
+    if (ownsTransaction && idempotencyKey && code === "23505" && constraint === "client_create_idempotency_pkey") {
       const replay = await findIdempotentReplay(db, idempotencyKey);
       if (replay) return { ...replay, replayed: true };
     }
     throw e;
   } finally {
-    db.release();
+    if (ownsTransaction) db.release();
   }
 }
+
+/** Cutover alias making the transaction/side-effect contract explicit. */
+export const repoCreateClientCutoverTx = (
+  client: import("pg").PoolClient, dto: CreateClientDTO, audit: AuditContext, idempotencyKey: string
+) => repoCreateClient(dto, audit, idempotencyKey, { client, sideEffects: "none" });
 
 // EDIT CLIENT 
 

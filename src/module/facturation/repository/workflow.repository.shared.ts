@@ -8,6 +8,7 @@ import {
   financeRequestHash,
   normalizeIdempotencyKey,
 } from "../domain/finance-policy";
+import { assertFinancialCutoverEmissionAllowedTx } from "./financial-cutover-guard";
 
 export type FinanceActorContext = {
   userId: number;
@@ -240,7 +241,24 @@ export async function allocateLegalNumber(params: {
   entityCode: string;
   issueDate: string;
 }): Promise<{ legalNumber: string; periodKey: string; sequenceValue: number }> {
+  // The shared row lock makes the transition to PREPARING wait for an
+  // allocation already in progress, and vice versa.
+  const financialCutover = await assertFinancialCutoverEmissionAllowedTx(params.client);
   const periodKey = params.issueDate.slice(0, 4);
+  const commonSeries = await nextActiveCutoverFinanceSharedSeries({
+    client: params.client,
+    documentType: params.documentType,
+    entityCode: params.entityCode,
+    periodKey,
+  });
+  if (commonSeries) return commonSeries;
+  if (financialCutover.phase === "ACTIVE") {
+    throw new HttpError(
+      409,
+      "FINANCIAL_CUTOVER_SHARED_SERIES_PERIOD_REQUIRED",
+      "La série commune factures, acomptes et avoirs doit être configurée pour cette période avant toute émission."
+    );
+  }
   const sequence = await params.client.query<{
     id: string;
     prefix: string;
@@ -281,6 +299,136 @@ export async function allocateLegalNumber(params: {
     [row.id]
   );
   return { legalNumber, periodKey, sequenceValue };
+}
+
+type CutoverFinanceSharedSeriesRow = {
+  allocated_value: string;
+  facture_prefix: string;
+  avoir_prefix: string;
+  padding: number;
+};
+
+/**
+ * Reads the cutover-only fiscal series when it has been explicitly activated.
+ * Before activation (and on installations that do not have the additive patch),
+ * the existing FACTURE/AVOIR behavior remains authoritative.
+ */
+async function nextActiveCutoverFinanceSharedSeries(params: {
+  client: PoolClient;
+  documentType: "FACTURE" | "AVOIR";
+  entityCode: string;
+  periodKey: string;
+}): Promise<{ legalNumber: string; periodKey: string; sequenceValue: number } | null> {
+  // Never probe a missing relation with UPDATE inside an issuance transaction:
+  // 42P01 would abort that transaction before the legacy allocator can run.
+  const relation = await params.client.query<{ relation: string | null }>(
+    "SELECT to_regclass($1)::text AS relation",
+    ["public.cutover_finance_shared_sequences"]
+  );
+  if (!relation.rows[0]?.relation) return null;
+  const allocated = await params.client.query<CutoverFinanceSharedSeriesRow>(
+    `
+      UPDATE public.cutover_finance_shared_sequences
+      SET next_value = next_value + 1,
+          updated_at = now()
+      WHERE entity_code = $1
+        AND period_key = $2
+        AND active = TRUE
+      RETURNING (next_value - 1)::text AS allocated_value,
+                facture_prefix,
+                avoir_prefix,
+                padding
+    `,
+    [params.entityCode, params.periodKey]
+  );
+  const row = allocated.rows[0];
+  if (!row) return null;
+  if (!/^\d+$/.test(row.allocated_value)) throw new Error("Invalid configured common finance sequence value");
+  const sequenceValue = Number.parseInt(row.allocated_value, 10);
+  if (!Number.isSafeInteger(sequenceValue) || sequenceValue <= 0 || !Number.isInteger(row.padding) || row.padding < 1 || row.padding > 12) {
+    throw new Error("Invalid configured common finance sequence value");
+  }
+  const prefix = params.documentType === "FACTURE" ? row.facture_prefix : row.avoir_prefix;
+  if (!prefix) throw new Error("Invalid configured common finance sequence prefix");
+  return {
+    legalNumber: `${prefix}${String(sequenceValue).padStart(row.padding, "0")}`,
+    periodKey: params.periodKey,
+    sequenceValue,
+  };
+}
+
+/**
+ * Transactional helper for the future SuperAdmin/MFA cutover route. It never
+ * infers consent from legacy FACTURE/AVOIR rows: those rows must be reviewed
+ * outside this helper before the common legal sequence can be activated.
+ */
+export async function activateCutoverFinanceSharedSeriesTx(params: {
+  client: PoolClient;
+  entityCode: string;
+  periodKey: string;
+  nextValue: number;
+  facturePrefix: string;
+  avoirPrefix: string;
+  padding: number;
+  actorId: number;
+  evidenceReference: string;
+}): Promise<{ entityCode: string; periodKey: string; nextValue: number }> {
+  if (!/^[0-9]{4}$/.test(params.periodKey)) throw new Error("Invalid cutover finance period");
+  if (!Number.isSafeInteger(params.nextValue) || params.nextValue <= 0) throw new Error("Invalid cutover finance next value");
+  if (!Number.isInteger(params.padding) || params.padding < 1 || params.padding > 12) throw new Error("Invalid cutover finance padding");
+  if (!Number.isSafeInteger(params.actorId) || params.actorId <= 0) throw new Error("Invalid cutover finance activation actor");
+  if (!/^[A-Za-z0-9._/-]{1,60}$/.test(params.facturePrefix) || !/^[A-Za-z0-9._/-]{1,60}$/.test(params.avoirPrefix)) {
+    throw new Error("Invalid cutover finance prefix");
+  }
+  if (!params.evidenceReference.trim() || params.evidenceReference.trim().length > 200) {
+    throw new Error("Invalid cutover finance evidence reference");
+  }
+
+  const legacy = await params.client.query<{ document_type: string }>(
+    `SELECT document_type
+       FROM public.finance_legal_sequences
+      WHERE entity_code = $1
+        AND period_key = $2
+        AND active = TRUE
+      FOR UPDATE`,
+    [params.entityCode, params.periodKey]
+  );
+  if (legacy.rows.length) {
+    throw new HttpError(
+      409,
+      "CUTOVER_FINANCE_LEGACY_SEQUENCE_REVIEW_REQUIRED",
+      "Des séquences Finance existantes doivent être vérifiées avant l'activation de la série commune."
+    );
+  }
+
+  const existing = await params.client.query<{ active: boolean; next_value: string }>(
+    `SELECT active, next_value::text AS next_value
+       FROM public.cutover_finance_shared_sequences
+      WHERE entity_code = $1 AND period_key = $2
+      FOR UPDATE`,
+    [params.entityCode, params.periodKey]
+  );
+  if (existing.rows[0]?.active) {
+    throw new HttpError(409, "CUTOVER_FINANCE_SHARED_SERIES_ALREADY_ACTIVE", "La série Finance commune est déjà active et ne peut pas être réinitialisée.");
+  }
+  await params.client.query(
+    `INSERT INTO public.cutover_finance_shared_sequences
+       (entity_code, period_key, next_value, facture_prefix, avoir_prefix, padding, active, activated_at, activated_by, activation_evidence_reference, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,TRUE,now(),$7,$8,now())
+     ON CONFLICT (entity_code, period_key) DO UPDATE
+       SET next_value = EXCLUDED.next_value,
+           facture_prefix = EXCLUDED.facture_prefix,
+           avoir_prefix = EXCLUDED.avoir_prefix,
+           padding = EXCLUDED.padding,
+           active = TRUE,
+           activated_at = EXCLUDED.activated_at,
+           activated_by = EXCLUDED.activated_by,
+           activation_evidence_reference = EXCLUDED.activation_evidence_reference,
+           updated_at = now()
+       WHERE public.cutover_finance_shared_sequences.active = FALSE`,
+    [params.entityCode, params.periodKey, params.nextValue, params.facturePrefix, params.avoirPrefix, params.padding, params.actorId, params.evidenceReference.trim()]
+  );
+  return { entityCode: params.entityCode, periodKey: params.periodKey, nextValue: params.nextValue };
 }
 
 /**

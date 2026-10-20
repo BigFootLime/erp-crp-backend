@@ -75,6 +75,7 @@ import surfaceFinishGammeRoutes from "../module/surface-finish/routes/surface-fi
 import pieceTechniqueVersionsRoutes from "../module/gammes/routes/piece-technique-versions.routes"
 import methodesRoutes from "../module/methodes/routes/methodes.routes"
 import importAssistantRoutes from "../module/import-assistant/routes/import-assistant.routes"
+import dataCutoverRoutes from "../module/data-cutover/routes/data-cutover.routes"
 import accessControlRoutes from "../module/access-control/routes/access-control.routes"
 import dashboardGovernanceRoutes from "../module/dashboard-governance/routes/dashboard-governance.routes"
 import referenceDataRoutes from "../module/reference-data/routes/reference-data.routes"
@@ -218,4 +219,5 @@ router.use("/project-office", projectOfficeRoutes) // Module Â« Project Office Â
 // 503 GED_NOT_INSTALLED sans affecter le reste de l'API.
 router.use("/ged", gedRoutes)
 router.use("/import-assistant", importAssistantRoutes) // CLIPPER -> CERP staged import assistant (#167)
+router.use("/data-cutover", dataCutoverRoutes) // Private preparation; business posting remains a separate cutover.
 export default router

@@ -1711,9 +1711,11 @@ export async function repoCreatePieceTechnique(
   audit: AuditContext,
   idempotencyKey?: string | null,
   validatedRequestHash?: string,
-  compatibleRequestHashes: readonly string[] = []
+  compatibleRequestHashes: readonly string[] = [],
+  options: { client?: PoolClient; sideEffects?: "normal" | "none" } = {}
 ): Promise<RepoCreatePieceTechniqueResult> {
-  const client = await db.connect();
+  const ownsTransaction = !options.client;
+  const client = options.client ?? await db.connect();
   // Conserve le hash historique : une clé déjà consommée avant #404 doit
   // continuer à rejouer la même pièce, même si son ancien payload portait une
   // famille choisie dans l'interface.
@@ -1721,7 +1723,7 @@ export async function repoCreatePieceTechnique(
     validatedRequestHash ?? crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
   const acceptedRequestHashes = new Set([requestHash, ...compatibleRequestHashes]);
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     if (idempotencyKey) {
       // Un SELECT FOR UPDATE ne verrouille aucune « ligne absente ». Le verrou consultatif
@@ -1742,7 +1744,7 @@ export async function repoCreatePieceTechnique(
         if (!acceptedRequestHashes.has(replay.rows[0].request_hash)) {
           throw idempotencyKeyReusedError();
         }
-        await client.query("ROLLBACK");
+        if (ownsTransaction) await client.query("ROLLBACK");
         const existing = await repoGetPieceTechnique(replay.rows[0].piece_technique_id, CREATE_REPLAY_INCLUDES);
         if (!existing) throw new Error("Idempotent piece technique no longer exists");
         return { piece: existing, replayed: true };
@@ -1926,7 +1928,7 @@ export async function repoCreatePieceTechnique(
     // This is deliberately an internal creation record, not the controlled
     // technical dossier. Child BOM/operation/purchase mutations are not
     // creation events and therefore never enqueue this document kind.
-    await queueCreationPdfArchive(client, buildTechnicalPieceCreationSnapshotInput({
+    if (options.sideEffects !== "none") await queueCreationPdfArchive(client, buildTechnicalPieceCreationSnapshotInput({
       id: pieceId,
       code: generatedCode,
       designation: core.designation,
@@ -1943,11 +1945,11 @@ export async function repoCreatePieceTechnique(
       internalVersion: body.plan_reference ? 1 : null,
     }));
 
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return { piece, replayed: false };
   } catch (err) {
-    await client.query("ROLLBACK");
-    if (idempotencyKey && isIdempotencyKeyUniqueViolation(err)) {
+    if (ownsTransaction) await client.query("ROLLBACK");
+    if (ownsTransaction && idempotencyKey && isIdempotencyKeyUniqueViolation(err)) {
       const replay = await db.query<{ piece_technique_id: string; request_hash: string }>(
         `SELECT piece_technique_id::text AS piece_technique_id, request_hash
          FROM public.piece_technique_create_idempotence WHERE idempotency_key = $1`,
@@ -1966,9 +1968,20 @@ export async function repoCreatePieceTechnique(
     }
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
+
+
+/** Cutover uses the exact native creator inside its own transaction, without a
+ * creation PDF/GED job. The technical dossier remains DRAFT and has no launch. */
+export const repoCreatePieceTechniqueCutoverTx = (
+  client: PoolClient,
+  body: Parameters<typeof repoCreatePieceTechnique>[0],
+  audit: AuditContext,
+  idempotencyKey: string,
+  validatedRequestHash?: string
+) => repoCreatePieceTechnique(body, audit, idempotencyKey, validatedRequestHash, [], { client, sideEffects: "none" });
 
 async function insertBomLines(client: PoolClient, pieceTechniqueId: string, bom: AddBomLineBodyDTO[]): Promise<BomLine[]> {
   if (!bom.length) return [];

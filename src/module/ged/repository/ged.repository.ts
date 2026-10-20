@@ -827,17 +827,60 @@ const QUARANTINE_SELECT = `
   u.id AS u_id, u.username AS u_username, u.name AS u_name, u.surname AS u_surname
 `;
 
-export async function repoListQuarantine(): Promise<GedUploadSessionInternal[]> {
+export async function repoListQuarantine(options: { excludeCutover?: boolean } = {}): Promise<GedUploadSessionInternal[]> {
   try {
     const result = await pool.query(
       `SELECT ${QUARANTINE_SELECT}
          FROM public.ged_upload_sessions s
          LEFT JOIN public.users u ON u.id = s.created_by
         WHERE s.quarantine_status = 'quarantined'
+          AND (
+            NOT $1::boolean
+            OR (
+              upper(COALESCE(s.request_metadata #>> '{link,entity_type}', '')) <> 'CUTOVER_ROW'
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM public.ged_document_links private_link
+                 WHERE private_link.document_id = s.document_id
+                   AND upper(private_link.entity_type) = 'CUTOVER_ROW'
+              )
+            )
+          )
         ORDER BY s.created_at ASC
-        LIMIT 250`
+        LIMIT 250`,
+      [options.excludeCutover === true]
     );
     return result.rows.map(mapQuarantineRow);
+  } catch (err) {
+    return rethrowGed(err);
+  }
+}
+
+/**
+ * A quarantined upload may already target a private cutover row (new document)
+ * or an existing private document (new version).  This stays server-side so a
+ * GED administrator never learns that such a session exists.
+ */
+export async function repoIsQuarantineSessionCutoverPrivate(sessionId: string): Promise<boolean> {
+  try {
+    const result = await pool.query<{ private: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM public.ged_upload_sessions s
+          WHERE s.id = $1::uuid
+            AND (
+              upper(COALESCE(s.request_metadata #>> '{link,entity_type}', '')) = 'CUTOVER_ROW'
+              OR EXISTS (
+                SELECT 1
+                  FROM public.ged_document_links private_link
+                 WHERE private_link.document_id = s.document_id
+                   AND upper(private_link.entity_type) = 'CUTOVER_ROW'
+              )
+            )
+       ) AS private`,
+      [sessionId]
+    );
+    return result.rows[0]?.private === true;
   } catch (err) {
     return rethrowGed(err);
   }
@@ -995,6 +1038,7 @@ export async function repoListDocuments(filters: GedListFilters): Promise<GedLis
   const push = (value: unknown) => `$${params.push(value)}`;
 
   if (!filters.include_archived) where.push("d.archived_at IS NULL");
+  if (filters.exclude_cutover) where.push("NOT EXISTS (SELECT 1 FROM public.ged_document_links private_link WHERE private_link.document_id=d.id AND upper(private_link.entity_type)='CUTOVER_ROW')");
   if (filters.class_key) where.push(`d.class_key = ${push(filters.class_key)}`);
   if (filters.domain) where.push(`c.domain = ${push(filters.domain)}`);
   if (filters.status) where.push(`cv.status = ${push(filters.status)}`);
@@ -1219,7 +1263,12 @@ export async function repoInternalListDocumentParentLinks(documentId: string): P
 /** Closed, non-dynamic parent existence registry for byte authorization. */
 export async function repoInternalParentLinkExists(entityType: string, entityId: string): Promise<boolean> {
   const key = entityType.trim().toUpperCase();
+  if (key === "CUTOVER_ROW") {
+    const installed = await pool.query<{ installed: boolean }>("SELECT to_regclass('public.data_cutover_rows') IS NOT NULL AS installed");
+    if (!installed.rows[0]?.installed) return false;
+  }
   const statements: Record<string, { sql: string; values: unknown[] }> = {
+    CUTOVER_ROW: { sql: "SELECT 1 FROM public.data_cutover_rows WHERE id=$1::uuid LIMIT 1", values: [entityId] },
     CLIENT: { sql: "SELECT 1 FROM public.clients WHERE client_id = $1 LIMIT 1", values: [entityId] },
     FOURNISSEUR: { sql: "SELECT 1 FROM public.fournisseurs WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     DEVIS: { sql: "SELECT 1 FROM public.devis WHERE id = $1::bigint LIMIT 1", values: [entityId] },
@@ -1274,16 +1323,16 @@ export async function repoIsVersionBlobCommitted(
   }
 }
 
-export async function repoGetTree(): Promise<{ domain: string; class_key: string; class_label: string; documents_count: number }[]> {
+export async function repoGetTree(excludeCutover = false): Promise<{ domain: string; class_key: string; class_label: string; documents_count: number }[]> {
   try {
     const res = await pool.query(
       `SELECT c.domain, c.class_key, c.label AS class_label,
               COUNT(d.id)::int AS documents_count
          FROM public.ged_document_classes c
-         LEFT JOIN public.ged_documents d ON d.class_key = c.class_key AND d.archived_at IS NULL
+         LEFT JOIN public.ged_documents d ON d.class_key = c.class_key AND d.archived_at IS NULL AND (NOT $1::boolean OR NOT EXISTS(SELECT 1 FROM public.ged_document_links private_link WHERE private_link.document_id=d.id AND upper(private_link.entity_type)='CUTOVER_ROW'))
         WHERE c.is_active
         GROUP BY c.domain, c.class_key, c.label
-        ORDER BY c.domain, c.label`
+        ORDER BY c.domain, c.label`, [excludeCutover]
     );
     return res.rows.map((r) => ({
       domain: String(r.domain),
