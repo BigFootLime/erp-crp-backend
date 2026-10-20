@@ -27,7 +27,7 @@ export type CutoverField = {
   max_length?: number;
   pattern?: string;
   format?: "email" | "unit" | "currency" | "siret" | "uuid";
-  lookup_entity?: "CUSTOMER" | "SUPPLIER" | "ARTICLE" | "TECHNICAL_PIECE" | "CONTRACT";
+  lookup_entity?: "CUSTOMER" | "SUPPLIER" | "ARTICLE" | "TECHNICAL_PIECE" | "CONTRACT" | "TECHNICAL_VERSION" | "NATIVE_ORDER" | "NATIVE_ORDER_LINE" | "DELIVERY_AFFAIR";
 };
 export type CutoverIssue = { field: string | null; code: string; message: string };
 export type CutoverSource = { id: string; name: string; sha256: string; snapshot_at: string };

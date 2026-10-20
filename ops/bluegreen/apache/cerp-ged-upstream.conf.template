@@ -1,0 +1,5 @@
+# Included only in the existing WireGuard GED vhost (10.90.0.2:8084).
+# It changes the current production backend target but never broadens Location
+# authorization, listener binding, body size or public reachability.
+ProxyPass        /api/v1/ged/ http://127.0.0.1:__PORT__/api/v1/ged/ retry=0 connectiontimeout=2 timeout=300
+ProxyPassReverse /api/v1/ged/ http://127.0.0.1:__PORT__/api/v1/ged/

@@ -21,7 +21,7 @@ export function applicationSourceReference(row: CutoverRow): string {
   return key && typeof row.values[key] === "string" ? String(row.values[key]).trim() : row.legacy_key;
 }
 export function applicationTargetLink(target: { type: string; id: string; reference: string | null }, batchId?: string): ApplicationTarget {
-  const routes: Record<string, string> = { CUSTOMER: "/clients", SUPPLIER: "/fournisseurs", ARTICLE: "/stock/articles", TECHNICAL_PIECE: "/pieces-techniques", SALES_ORDER: "/commandes", COMMANDE_CLIENT: "/commandes", SUPPLIER_ORDER: "/commandes-fournisseurs", COMMANDE_FOURNISSEUR: "/commandes-fournisseurs", INTERNAL_DEMAND: "/commandes", BESOIN_INTERNE: "/commandes", STOCK_LOT: "/stock/lots", STOCK_MOVEMENT: "/stock/mouvements", METROLOGY: "/metrologie/equipements" };
+  const routes: Record<string, string> = { CUSTOMER: "/clients", SUPPLIER: "/fournisseurs", ARTICLE: "/stock/articles", TECHNICAL_PIECE: "/pieces-techniques", SALES_ORDER: "/commandes", COMMANDE_CLIENT: "/commandes", SUPPLIER_ORDER: "/commandes-fournisseurs", COMMANDE_FOURNISSEUR: "/commandes-fournisseurs", INTERNAL_DEMAND: "/commandes", BESOIN_INTERNE: "/commandes", STOCK_LOT: "/stock/lots", STOCK_MOVEMENT: "/stock/mouvements", METROLOGY: "/metrologie/equipements", ORDRE_FABRICATION: "/production/ordres-fabrication" };
   const root = routes[target.type];
   return { ...target, url: root ? `${root}/${encodeURIComponent(target.id)}` : `/administration/importation${batchId ? `?batch=${encodeURIComponent(batchId)}` : ""}` };
 }

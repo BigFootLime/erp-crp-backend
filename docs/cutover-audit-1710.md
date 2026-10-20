@@ -33,7 +33,14 @@ La revue du 20 octobre couvre le nouveau circuit de préparation et de chargemen
 - Les justificatifs liés à une fiche de reprise restent privés au SuperAdmin, y compris les métadonnées, l'historique, le contenu et la quarantaine antivirus. Les empreintes et versions utilisées sont figées dans la préparation.
 - Le premier dépôt de préparation place un verrou financier persistant en `PREPARING`, dans la même transaction que le dossier. Le client affiche l'avertissement avant dépôt ; le serveur refuse alors les nouvelles émissions jusqu'à l'activation distincte des séries vérifiées. Une nouvelle reprise ne remet jamais une série `ACTIVE` en préparation. Les migrations seules laissent le verrou `IDLE` et ne suspendent pas une installation existante.
 
-Les états d'encours et financiers restent des états à rapprocher : ils ne reprennent pas automatiquement un OF en cours ni une écriture comptable native. Les durées de conservation et le traitement des demandes portant sur les sources de reprise doivent être inclus dans la politique RGPD restant à approuver. Les numéros proposés ne constituent pas des compteurs activés.
+Les états financiers restent des états à rapprocher, sans écriture comptable native automatique. La reprise d'encours désormais en qualification prépare un OF brouillon uniquement après confirmation de la cohorte physique, de sa demande et de la version technique publiée utilisée. Un dossier d'encours à compléter demeure bloqué avant chargement. Les durées de conservation et le traitement des demandes portant sur les sources de reprise doivent être inclus dans la politique RGPD restant à approuver. Les numéros proposés ne constituent pas des compteurs activés.
+
+### Reprise des encours en cours de qualification
+
+- Le contexte technique est borné à une fiche WIP affectée au demandeur. Les autres lots ou domaines sont masqués ; seul le SuperAdmin peut changer la version rapprochée. Les essais HTTP et PostgreSQL isolés couvrent ces frontières et les recherches natives paramétrées.
+- Les phases constatées à l'ouverture, les matières déjà utilisées et leurs justificatifs sont des faits immuables. Ils ne créent aucun ancien pointage, mouvement de stock, débit matière ni réception de production.
+- La reprise native vérifie les cibles commande, ligne et affaire, le plan, l'indice, la quantité encore physique et la preuve atelier. La consommation matière exige un checkpoint validé côté serveur ; un UUID transmis par le client ne vaut pas approbation.
+- Les contrôles transactionnels et de projection ont passé leurs premiers essais unitaires et PostgreSQL isolés. Le parcours complet avec la préparation matière normale, les vues atelier/planning et la recette du candidat figé reste en cours. Cette section ne constitue aucune preuve de publication.
 
 ## Écarts et actions avant de déclarer une conformité
 

@@ -1,0 +1,75 @@
+# This compose file is intentionally not part of Coolify and exposes no host port.
+# CERP_REHEARSAL_IMAGE must be an immutable digest approved by the release owner.
+services:
+  cerp-api-rehearsal-1710:
+    image: ${CERP_REHEARSAL_IMAGE:?pin an immutable release image digest}
+    container_name: cerp-api-rehearsal-1710
+    # The directory sidecar shares this service's network namespace.  The
+    # bounded wait avoids starting the site API before its isolated authority
+    # has bound the only approved loopback endpoint.
+    restart: "on-failure:5"
+    env_file:
+      - /etc/cerp/rehearsal/rehearsal.env
+    environment:
+      CERP_DIRECTORY_ENDPOINT: http://127.0.0.1:8085/internal/directory
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        for attempt in $(seq 1 180); do
+          node -e "const net=require('net');const s=net.connect({host:'127.0.0.1',port:8085});s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),500)" && exec node dist/index.js
+          sleep 1
+        done
+        exit 1
+    expose: ["5000"]
+    mem_limit: 2g
+    cpus: 1.0
+    volumes:
+      # Bind the parent allowlisted mounts, not a nested child: the startup
+      # preflight inventories and secures the complete mount atomically.
+      - ${CERP_REHEARSAL_VAULT_ROOT:?rehearsal vault is required}:/app/data:rw
+      - ${CERP_REHEARSAL_IMAGES_ROOT:?rehearsal images are required}:/app/uploads:rw
+    networks: [coolify]
+  cerp-directory-rehearsal-1710:
+    image: ${CERP_REHEARSAL_DIRECTORY_IMAGE:?pin an immutable directory image digest}
+    container_name: cerp-directory-rehearsal-1710
+    restart: "no"
+    network_mode: "service:cerp-api-rehearsal-1710"
+    env_file:
+      - /etc/cerp/rehearsal/rehearsal.env
+    environment:
+      DATABASE_URL: ${CERP_REHEARSAL_DIRECTORY_DATABASE_URL:?isolated directory database is required}
+      CERP_DIRECTORY_CALLERS_FILE: /run/cerp-directory/callers.json
+      # The shared-directory image uses the same hardened entrypoint as the
+      # site API: every configured writable root must remain below /app/data.
+      CERP_STORAGE_ROOT: /app/data/directory-storage
+      CERP_IMAGES_ROOT: /app/data/directory-images
+      CERP_TMP_ROOT: /app/data/directory-tmp
+    command: ["node", "dist/shared-directory/index.js"]
+    volumes:
+      - ${CERP_REHEARSAL_DIRECTORY_CALLERS_FILE:?private caller file is required}:/run/cerp-directory/callers.json:ro
+      # One isolated parent mount lets the common preflight secure all three
+      # directory subtrees without crossing ownership boundaries.
+      - ${CERP_REHEARSAL_DIRECTORY_STORAGE_ROOT:?directory storage is required}:/app/data:rw
+    depends_on:
+      cerp-api-rehearsal-1710:
+        condition: service_started
+  cerp-rehearsal-proxy-1710:
+    image: ${CERP_REHEARSAL_TRAEFIK_IMAGE:?pin an immutable Traefik image digest}
+    container_name: cerp-rehearsal-proxy-1710
+    restart: "no"
+    command:
+      - --entrypoints.private.address=:8080
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=false
+      - --api=false
+      - --log.level=WARN
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    expose: ["8080"]
+    depends_on: [cerp-api-rehearsal-1710, cerp-directory-rehearsal-1710]
+    networks: [coolify]
+networks:
+  coolify:
+    external: true
+    name: coolify

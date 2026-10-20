@@ -5,6 +5,12 @@ import type { Db, Terminal } from "./terminal-auth.repository";
 import { assertProgramConfirmation } from "../domain/terminal-policy";
 import { audit, transaction } from "./terminal-auth.repository";
 
+async function wipCheckpointTableInstalled(db: Pick<Db, "query">): Promise<boolean> {
+  return (await db.query<{ installed: boolean }>(
+    "SELECT to_regclass('public.data_cutover_wip_operation_checkpoints') IS NOT NULL AS installed",
+  )).rows[0]?.installed === true;
+}
+
 export type OperationContext = {
   of_id: number;
   operation_id: string;
@@ -28,9 +34,16 @@ export async function operationContext(
   operationId: string,
   db: Db = pool,
 ): Promise<OperationContext> {
+  const wipCheckpointsInstalled = await wipCheckpointTableInstalled(db);
+  const effectiveStatus = wipCheckpointsInstalled
+    ? `CASE WHEN EXISTS(SELECT 1 FROM public.data_cutover_wip_operation_checkpoints checkpoint
+          WHERE checkpoint.of_operation_id=op.id AND checkpoint.checkpoint_status='COMPLETED')
+        THEN 'CUTOVER_COMPLETED' ELSE op.status::text END`
+    : "op.status::text";
   const row = (
     await db.query<OperationContext>(
-      `SELECT o.id::int AS of_id,op.id::text AS operation_id,op.phase,op.designation,op.status::text,
+      `SELECT o.id::int AS of_id,op.id::text AS operation_id,op.phase,op.designation,
+    ${effectiveStatus} AS status,
     op.machine_id::text,o.piece_technique_id::text,o.piece_technique_version_id::text,o.technical_snapshot,o.technical_snapshot_sha256,o.technical_preparation,
     o.technical_readiness,o.quantite_lancee::float8,o.numero,o.statut::text
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
@@ -52,15 +65,31 @@ export async function operationContext(
   return row;
 }
 export async function plannedWorklist(terminal: Terminal, offset = 0) {
+  const wipCheckpointsInstalled = await wipCheckpointTableInstalled(pool);
+  const effectiveStatus = wipCheckpointsInstalled
+    ? `CASE WHEN EXISTS(SELECT 1 FROM public.data_cutover_wip_operation_checkpoints checkpoint
+          WHERE checkpoint.of_operation_id=op.id AND checkpoint.checkpoint_status='COMPLETED')
+        THEN 'CUTOVER_COMPLETED' ELSE op.status::text END`
+    : "op.status::text";
+  const completedExclusion = wipCheckpointsInstalled
+    ? `AND NOT EXISTS(SELECT 1 FROM public.data_cutover_wip_operation_checkpoints checkpoint
+          WHERE checkpoint.of_operation_id=op.id AND checkpoint.checkpoint_status='COMPLETED')`
+    : "";
+  const predecessorCompletedExclusion = wipCheckpointsInstalled
+    ? `AND NOT EXISTS(SELECT 1 FROM public.data_cutover_wip_operation_checkpoints checkpoint
+          WHERE checkpoint.of_operation_id=prev.id AND checkpoint.checkpoint_status='COMPLETED')`
+    : "";
   const rows = (
     await pool.query(
-      `SELECT op.id::text AS operation_id,op.phase,op.designation,op.status::text AS operation_status,
+      `SELECT op.id::text AS operation_id,op.phase,op.designation,
+    ${effectiveStatus} AS operation_status,
     o.id::int AS of_id,o.numero,o.statut::text AS of_status,o.priority::text,o.quantite_lancee::float8,
     o.quantite_bonne::float8,o.quantite_rebut::float8,o.technical_readiness,o.technical_snapshot_sha256,
     pt.code_piece,pt.designation AS piece_designation,c.company_name AS client_name,
     e.id::text AS planning_event_id,e.start_ts::text,e.end_ts::text,e.updated_at::text AS planning_version,e.status::text AS planning_status,
     active.id::text AS active_id,active.operator_user_id,active.activity_code,
-    EXISTS(SELECT 1 FROM public.of_operations prev WHERE prev.of_id=o.id AND prev.phase<op.phase AND prev.status NOT IN('DONE','CANCELLED')) AS predecessor_pending,
+    EXISTS(SELECT 1 FROM public.of_operations prev WHERE prev.of_id=o.id AND prev.phase<op.phase AND prev.status NOT IN('DONE','CANCELLED')
+      ${predecessorCompletedExclusion}) AS predecessor_pending,
     count(*) OVER()::int AS total
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
     JOIN LATERAL(SELECT * FROM public.planning_events p WHERE p.of_operation_id=op.id AND p.machine_id=$1
@@ -70,6 +99,7 @@ export async function plannedWorklist(terminal: Terminal, offset = 0) {
     LEFT JOIN LATERAL(SELECT p.id,p.operator_user_id,p.activity_code FROM public.production_pointages p
       WHERE p.operation_id=op.id AND p.machine_id=$1 AND p.status='RUNNING' ORDER BY p.start_ts DESC LIMIT 1) active ON true
     WHERE o.statut::text NOT IN('ANNULE','TERMINE') AND op.status::text NOT IN('DONE','CANCELLED')
+      ${completedExclusion}
       AND (op.machine_id IS NULL OR op.machine_id=$1)
       AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
     ORDER BY (active.id IS NOT NULL) DESC,e.start_ts,op.phase,op.id LIMIT 100 OFFSET $2`,

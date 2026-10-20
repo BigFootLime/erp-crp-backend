@@ -18,6 +18,7 @@ import pool from "../../../config/database";
 import {assertMaintenanceMachineUnblockedTx} from "./operator-maintenance-read.repository";
 import {PLANNED_OPERATION_DURATION_MINUTES_SQL} from '../domain/planned-operation-duration';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx,assertMaterialQuantityTx,syncMaterialOfQuantitiesTx} from "./operation-readiness.repository";
+import {readWipOpeningCheckpointForOperationTx} from "../wip-opening/wip-opening-read.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2610,6 +2611,13 @@ export async function repoCorrectExecution(params: {
     };
 
     if (patch.activity_code) await loadActivity(client, patch.activity_code);
+    const correctedOperationId = patch.operation_id === undefined ? current.operation_id : patch.operation_id;
+    if (correctedOperationId) {
+      const opening = await readWipOpeningCheckpointForOperationTx(client, correctedOperationId);
+      if (opening?.status === "COMPLETED") {
+        throw new HttpError(409, "CUTOVER_WIP_OPERATION_ALREADY_COMPLETED", "Cette opération est déjà attestée comme terminée lors de la reprise. Corrigez le pointage sur une phase réellement exécutée après la bascule.");
+      }
+    }
     const nextStart=patch.start_ts??current.start_ts,nextEnd=patch.end_ts===undefined?current.end_ts:patch.end_ts;
     if(!nextEnd || Date.parse(nextEnd)<=Date.parse(nextStart))throw new HttpError(422,'PRODUCTION_EXECUTION_INVALID_INTERVAL','La correction doit conserver un intervalle terminé et positif.');
     assertPlausibleDuration(computeDurationMinutes(nextStart,nextEnd));

@@ -19,13 +19,17 @@ const handler = (fn: (req: Request, res: Response) => Promise<unknown>): Request
 
 export const capabilities = handler(async (_req, res) => res.json(await getCutoverCapabilities(access(res))));
 export const lookup = handler(async (req, res) => {
-  const entity = z.enum(["CUSTOMER", "SUPPLIER", "ARTICLE", "TECHNICAL_PIECE", "CONTRACT"]).parse(req.params.entity);
+  const entity = z.enum(["CUSTOMER", "SUPPLIER", "ARTICLE", "TECHNICAL_PIECE", "CONTRACT", "TECHNICAL_VERSION", "NATIVE_ORDER", "NATIVE_ORDER_LINE", "DELIVERY_AFFAIR"]).parse(req.params.entity);
   const query = z.object({ search: z.string().trim().min(2).max(80) }).strict().parse(req.query);
   res.json(await repository.repoCutoverLookup(entity, query.search));
 });
 export const list = handler(async (_req, res) => res.json(await repository.repoListCutoverBatches(access(res))));
 export const detail = handler(async (req, res) => res.json(await repository.repoGetCutoverBatch(cutoverUuid.parse(req.params.id), access(res))));
 export const rows = handler(async (req, res) => res.json(await repository.repoGetCutoverRows(cutoverUuid.parse(req.params.id), listCutoverRowsSchema.parse(req.query), access(res))));
+export const wipContext = handler(async (req, res) => {
+  const query = z.object({ versionId: cutoverUuid.optional(), quantity: z.string().regex(/^\d{1,10}(?:\.\d{1,3})?$/).optional(), orderId: z.string().regex(/^[1-9]\d{0,14}$/).optional() }).strict().parse(req.query);
+  res.json(await repository.repoGetCutoverWipContext(cutoverUuid.parse(req.params.id), cutoverUuid.parse(req.params.rowId), query.versionId, access(res), query.quantity, query.orderId));
+});
 export const create = handler(async (req, res) => res.status(201).json(await repository.repoCreateCutoverBatch(createCutoverBatchSchema.parse(req.body), access(res).userId, key(req))));
 export const patchRow = handler(async (req, res) => res.json(await repository.repoPatchCutoverRow(cutoverUuid.parse(req.params.id), cutoverUuid.parse(req.params.rowId), patchCutoverRowSchema.parse(req.body), access(res), key(req))));
 export const preview = handler(async (req, res) => res.json(await repository.repoPreviewCutover(cutoverUuid.parse(req.params.id), previewCutoverSchema.parse(req.body), access(res).userId, key(req))));

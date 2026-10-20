@@ -1,0 +1,3 @@
+# Manual review patch for the existing GED vhost only. Replace its two
+# ProxyPass lines with this include; retain all four existing access barriers.
+IncludeOptional /etc/apache2/conf-enabled/cerp-ged-bluegreen-active.conf

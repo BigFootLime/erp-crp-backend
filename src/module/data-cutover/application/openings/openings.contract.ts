@@ -4,10 +4,11 @@ import { repoCreateHistoricalImportTx, resolveUnitIdForArticle, type AuditContex
 import { historicalImportSchema, type HistoricalImportBodyDTO } from "../../../stock/validators/stock.validators";
 import type { CutoverRow } from "../../types/data-cutover.types";
 import { createFinanceOpeningBalanceTx, createUnbilledLegacyDocumentStateTx, createWipOpeningStateTx } from "./openings.repository";
+import { resumeNativeWipPreparationTx } from "./wip-native.adapter";
 
 export type CutoverTarget = { id: string; reference: string | null; type: string };
 export type CutoverTargets = Map<string, CutoverTarget>;
-export type OpeningEffect = { type: "STOCK_MOVEMENT" | "WIP_OPENING" | "FINANCE_OPENING" | "UNBILLED_LEGACY_DOCUMENT"; id: string };
+export type OpeningEffect = { type: "STOCK_MOVEMENT" | "WIP_OPENING" | "ORDRE_FABRICATION" | "FINANCE_OPENING" | "UNBILLED_LEGACY_DOCUMENT"; id: string };
 export type OpeningTarget = { rowId: string; domain: CutoverRow["domain"]; targetType: string; targetId: string; targetReference: string };
 
 const keyFor = (row: CutoverRow) => `${row.domain}:${row.legacy_key}`;
@@ -166,7 +167,7 @@ export type WipOpeningWriterTx = {
     row: CutoverRow; article: CutoverTarget; affair: CutoverTarget; actorId: number;
   }): Promise<{ id: string; reference: string }>;
 };
-export async function applyWipOpeningTx(params: { client: PoolClient; rows: CutoverRow[]; targets: CutoverTargets; actorId: number; writer?: WipOpeningWriterTx }) {
+export async function applyWipOpeningTx(params: { client: PoolClient; rows: CutoverRow[]; targets: CutoverTargets; actorId: number; sourceSystem?: string; operationKey?: string; writer?: WipOpeningWriterTx }) {
   assertOpeningRowsReady(params.rows, ["WIP"]);
   const targets: OpeningTarget[] = [], effects: OpeningEffect[] = [];
   for (const row of params.rows) {
@@ -177,7 +178,14 @@ export async function applyWipOpeningTx(params: { client: PoolClient; rows: Cuto
       ?? resolvedTarget(params.targets, row, { explicitField: "affairTargetId", domain: "INTERNAL_DEMAND", legacyField: "affairLegacyKey", expectedType: affairTypes });
     if (!article || !affair) throw new HttpError(422, "CUTOVER_WIP_TARGET_UNRESOLVED", "Rapprocher l'article et l'affaire CERP avant de créer l'état d'encours.");
     const opening = await (params.writer?.createOpeningState ?? createWipOpeningStateTx)(params.client, { row, article, affair, actorId: params.actorId });
-    targets.push({ rowId: row.id, domain: row.domain, targetType: "WIP_OPENING", targetId: opening.id, targetReference: opening.reference });
+    if (row.values.resumeMode === "NATIVE_RESUME") {
+      const native = await resumeNativeWipPreparationTx(params.client, {
+        row, article, affair, actorId: params.actorId, openingStateId: opening.id,
+        sourceSystem: params.sourceSystem ?? "CLIPPER_EXCEL", operationKey: params.operationKey ?? `${row.batch_id}:${row.id}`,
+      });
+      targets.push({ rowId: row.id, domain: row.domain, targetType: "ORDRE_FABRICATION", targetId: String(native.ofId), targetReference: native.ofReference });
+      effects.push({ type: "ORDRE_FABRICATION", id: String(native.ofId) });
+    } else targets.push({ rowId: row.id, domain: row.domain, targetType: "WIP_OPENING", targetId: opening.id, targetReference: opening.reference });
     effects.push({ type: "WIP_OPENING", id: opening.id });
   }
   return { targets, effects };

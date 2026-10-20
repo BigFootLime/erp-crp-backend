@@ -33,6 +33,7 @@ router.get("/batches", controller.list);
 router.post("/batches", onlySuperadmin, recentAssurance, controller.create);
 router.get("/batches/:id", controller.detail);
 router.get("/batches/:id/rows", controller.rows);
+router.get("/batches/:id/rows/:rowId/wip-context", controller.wipContext);
 router.patch("/batches/:id/rows/:rowId", recentAssurance, controller.patchRow);
 router.post("/batches/:id/preview", onlySuperadmin, recentAssurance, controller.preview);
 router.post("/batches/:id/validate", onlySuperadmin, recentAssurance, controller.validate);

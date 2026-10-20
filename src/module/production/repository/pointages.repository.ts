@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
 import {assertMaterialOperationStartTx,usesOperationReadiness} from "./operation-readiness.repository";
+import { readWipOpeningCheckpointForOperationTx } from "../wip-opening/wip-opening-read.repository";
 import { HttpError } from "../../../utils/httpError";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
@@ -815,6 +816,10 @@ export async function repoCreatePointageManual(params: {
 
     if (params.body.operation_id) {
       await ensureOperationBelongsToOf(client, { of_id: params.body.of_id, operation_id: params.body.operation_id });
+      const opening = await readWipOpeningCheckpointForOperationTx(client, params.body.operation_id);
+      if (opening?.status === "COMPLETED") {
+        throw new HttpError(409, "CUTOVER_WIP_OPERATION_ALREADY_COMPLETED", "Cette opération est déjà attestée comme terminée lors de la reprise. Saisissez le temps réel sur la première phase restante.");
+      }
     }
 
     if (
@@ -934,6 +939,12 @@ export async function repoStartPointage(params: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (params.body.operation_id) {
+      const opening = await readWipOpeningCheckpointForOperationTx(client, params.body.operation_id);
+      if (opening?.status === "COMPLETED") {
+        throw new HttpError(409, "CUTOVER_WIP_OPERATION_ALREADY_COMPLETED", "Cette opération est déjà attestée comme terminée lors de la reprise. Démarrez la première phase restante.");
+      }
+    }
     const materialAuthorization=await assertMaterialOperationStartTx(client,params.body.of_id,params.body.operation_id,undefined,params.body.machine_id);
 
     const exists = await client.query<{ id: string }>(

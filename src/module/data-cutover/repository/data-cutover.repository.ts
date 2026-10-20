@@ -9,6 +9,7 @@ import type { CreateCutoverBatch, PatchCutoverRow, ValidateCutover } from "../va
 import { linkCutoverEvidenceTx, listEvidenceTx } from "../application/evidence/evidence.repository";
 import { getFinancialCutoverStatusTx, startFinancialCutoverPreparationTx } from "../../facturation/repository/financial-cutover-guard";
 import { listCutoverOpeningStatesTx } from "../application/openings/openings.repository";
+import { readWipPreparationContextTx } from "../application/openings/wip-preparation.contract";
 
 type StoredBatch = Omit<CutoverBatch, "summary"> & { preview_hash: string | null; preview_payload: CutoverPreview | null; validation: unknown };
 type StoredRow = Omit<CutoverRow, "status" | "issues">;
@@ -96,6 +97,10 @@ const lookupQueries = {
   ARTICLE: "SELECT id::text AS id,code,designation AS label FROM public.articles",
   TECHNICAL_PIECE: "SELECT id::text AS id,COALESCE(to_jsonb(p)->>'code',to_jsonb(p)->>'code_piece',name_piece,id::text) AS code,COALESCE(designation,name_piece,'') AS label FROM public.pieces_techniques p WHERE deleted_at IS NULL",
   CONTRACT: "SELECT id::text AS id,reference AS code,title AS label FROM public.client_contracts WHERE status IN ('DRAFT','ACTIVE')",
+  TECHNICAL_VERSION: "SELECT v.id::text AS id,concat_ws(' / ',p.code_piece,v.plan_reference,NULLIF(v.indice,'')) AS code,concat('Version ',v.version_interne,' - ',v.statut) AS label FROM public.piece_technique_versions v JOIN public.pieces_techniques p ON p.id=v.piece_technique_id WHERE v.statut IN ('APPLICABLE','OBSOLETE') AND p.deleted_at IS NULL",
+  NATIVE_ORDER: "SELECT id::text AS id,numero AS code,concat('Commande ',order_type) AS label FROM public.commande_client",
+  NATIVE_ORDER_LINE: "SELECT l.id::text AS id,concat(c.numero,' / ',COALESCE(l.code_piece,l.id::text)) AS code,l.designation AS label FROM public.commande_ligne l JOIN public.commande_client c ON c.id=l.commande_id",
+  DELIVERY_AFFAIR: "SELECT id::text AS id,reference AS code,reference AS label FROM public.affaire WHERE type_affaire='livraison'",
 } as const;
 export type CutoverLookupEntity = keyof typeof lookupQueries;
 export async function repoCutoverLookup(entity: CutoverLookupEntity, search: string) {
@@ -121,6 +126,18 @@ async function allowedDomains(tx: PoolClient, batchId: string, access: CutoverAc
   const result = await tx.query<{ domain: CutoverDomain }>("SELECT domain FROM public.data_cutover_contributors WHERE batch_id=$1::uuid AND user_id=$2", [batchId, access.userId]);
   if (!result.rows.length) throw new HttpError(404, "CUTOVER_BATCH_NOT_FOUND", "Dossier de reprise introuvable.");
   return result.rows.map((row) => row.domain);
+}
+export async function repoGetCutoverWipContext(batchId: string, rowId: string, chosenVersionId: string | undefined, access: CutoverAccess, quantity?: string, orderId?: string) {
+  return transaction(async (tx) => {
+    await getBatch(tx, batchId);
+    const domains = await allowedDomains(tx, batchId, access);
+    if (domains && !domains.includes("WIP")) throw new HttpError(404, "CUTOVER_ROW_NOT_FOUND", "Fiche de reprise introuvable.");
+    const row = (await getRows(tx, batchId, { domains: ["WIP"], ids: [rowId] }))[0];
+    if (!row) throw new HttpError(404, "CUTOVER_ROW_NOT_FOUND", "Fiche de reprise introuvable.");
+    if (!access.isSuperadmin && chosenVersionId && chosenVersionId !== row.values.historicalVersionId) throw new HttpError(403, "CUTOVER_SUPERADMIN_MAPPING_REQUIRED", "Le SuperAdmin choisit la version technique rapprochée.");
+    if (!access.isSuperadmin && orderId && orderId !== row.values.affairTargetId) throw new HttpError(403, "CUTOVER_SUPERADMIN_MAPPING_REQUIRED", "Le SuperAdmin choisit la commande rapprochée.");
+    return readWipPreparationContextTx(tx, { ...row, values: { ...row.values, ...(quantity === undefined ? {} : { quantityRemaining: quantity }), ...(orderId === undefined ? {} : { affairTargetId: orderId }) } }, chosenVersionId);
+  });
 }
 function assertVersion(batch: StoredBatch, expected: number): void {
   if (batch.version !== expected) throw new HttpError(409, "CUTOVER_STALE_VERSION", "Le dossier a été modifié depuis son affichage. Rechargez les données avant de continuer.");
@@ -339,7 +356,7 @@ export async function repoIsCutoverInstalled(): Promise<boolean> {
   return result.rows[0]?.installed === true;
 }
 export async function repoIsCutoverApplicationInstalled(): Promise<boolean> {
-  const result = await pool.query<{ installed: boolean }>("SELECT to_regclass('public.data_cutover_application_runs') IS NOT NULL AND to_regclass('public.data_cutover_application_crosswalk') IS NOT NULL AND to_regclass('public.data_cutover_application_order_groups') IS NOT NULL AND to_regclass('public.data_cutover_opening_states') IS NOT NULL AND to_regclass('public.data_cutover_evidence_links') IS NOT NULL AND to_regclass('public.financial_cutover_gate') IS NOT NULL AND to_regclass('public.financial_cutover_events') IS NOT NULL AS installed");
+  const result = await pool.query<{ installed: boolean }>("SELECT to_regclass('public.data_cutover_application_runs') IS NOT NULL AND to_regclass('public.data_cutover_application_crosswalk') IS NOT NULL AND to_regclass('public.data_cutover_application_order_groups') IS NOT NULL AND to_regclass('public.data_cutover_opening_states') IS NOT NULL AND to_regclass('public.data_cutover_evidence_links') IS NOT NULL AND to_regclass('public.data_cutover_wip_resumptions') IS NOT NULL AND to_regclass('public.data_cutover_wip_operation_checkpoints') IS NOT NULL AND to_regclass('public.data_cutover_wip_material_checkpoints') IS NOT NULL AND to_regclass('public.data_cutover_wip_material_checkpoint_lines') IS NOT NULL AND to_regclass('public.data_cutover_wip_material_opening_bindings') IS NOT NULL AND to_regclass('public.financial_cutover_gate') IS NOT NULL AND to_regclass('public.financial_cutover_events') IS NOT NULL AS installed");
   return result.rows[0]?.installed === true;
 }
 
@@ -354,10 +371,15 @@ export async function loadApplicationPreparationTx(tx: PoolClient, id: string, e
 
 /** IDs explicitly chosen in the native lookup are resolved without equating legacy codes to IDs. */
 export async function resolveApplicationExplicitTargetsTx(tx: PoolClient, rows: CutoverRow[]) {
-  const targets: Array<{ alias: string; id: string; reference: string | null; type: CutoverLookupEntity }> = [];
+  const targets: Array<{ alias: string; id: string; reference: string | null; type: string }> = [];
   for (const entity of Object.keys(lookupQueries) as CutoverLookupEntity[]) {
     const ids = [...new Set(rows.flatMap((row) => catalogFor(row.domain).fields.filter((field) => field.lookup_entity === entity).flatMap((field) => typeof row.values[field.key] === "string" && row.values[field.key] ? [String(row.values[field.key])] : [])))];
     if (!ids.length) continue;
+    if (entity === "NATIVE_ORDER") {
+      const orders = await tx.query<{ id: string; reference: string; order_type: string }>("SELECT id::text AS id,numero AS reference,order_type FROM public.commande_client WHERE id::text=ANY($1::text[])", [ids]);
+      for (const order of orders.rows) targets.push({ alias: `${entity}:${order.id}`, id: order.id, reference: order.reference, type: order.order_type === "INTERNE" ? "BESOIN_INTERNE" : "COMMANDE_CLIENT" });
+      continue;
+    }
     const found = await tx.query<{ id: string; code: string | null }>(`SELECT id,code FROM (${lookupQueries[entity]}) lookup WHERE id=ANY($1::text[])`, [ids]);
     for (const target of found.rows) targets.push({ alias: `${entity}:${target.id}`, id: target.id, reference: target.code, type: entity });
   }

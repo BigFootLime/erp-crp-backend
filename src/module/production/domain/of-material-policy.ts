@@ -6,11 +6,17 @@ export type MaterialOriginPolicy = {
   maximumLots: 1 | 2;
   usedOrigins: string[];
   originsByLot: Record<string, string[]>;
+  /** Historical evidence has no native lot genealogy; it is visible but cannot
+   * be reconciled with a new reservation automatically. */
+  unresolvedOpeningOrigins?: string[];
 };
 
 /** Remnants retain their original heat/lot. Stock locations and bars do not
  * create additional origins; consumed origins remain committed for the OF. */
 export function assertMaterialOriginLimit(policy: MaterialOriginPolicy, lotIds: readonly string[]) {
+  if (lotIds.length && policy.unresolvedOpeningOrigins?.length) throw new HttpError(409, 'MATERIAL_ORIGIN_UNRESOLVED',
+    'La traçabilité historique d’une matière déjà consommée doit être rapprochée avant de réserver un nouveau lot.',
+    { openingReferences: [...policy.unresolvedOpeningOrigins].sort() });
   const origins = new Set(policy.usedOrigins);
   for (const id of lotIds) {
     const roots = policy.originsByLot[id];

@@ -16,7 +16,21 @@ export async function readMaterialOriginPolicyTx(tx: DossierDb, ofIds: readonly 
       AND (r.qty_consumed>0 OR r.status='CONSUMED' OR
         (r.status='ACTIVE' AND r.qty_reserved>r.qty_consumed AND (r.expires_at IS NULL OR r.expires_at>now())))
     ORDER BY 1`, [ofIds, ofIds.map(String)])).rows.map(r => r.lot_id);
-  const lotIds = [...new Set([...held, ...additionalLotIds])].sort();
+  const openingInstalled = (await tx.query<{ installed: boolean }>("SELECT to_regclass('public.data_cutover_wip_material_opening_bindings') IS NOT NULL AS installed")).rows[0]?.installed === true;
+  const openingLots = openingInstalled ? (await tx.query<{ lot_id: string }>(`SELECT DISTINCT line.physical_lot_id::text AS lot_id
+    FROM public.data_cutover_wip_material_opening_bindings binding
+    JOIN public.data_cutover_wip_material_checkpoint_lines line ON line.checkpoint_id=binding.checkpoint_id
+      AND line.technical_purchase_id=binding.technical_purchase_id
+    WHERE binding.of_id=ANY($1::bigint[]) AND line.quantity_consumed>0 AND line.physical_lot_id IS NOT NULL
+    ORDER BY 1`, [ofIds])).rows.map(row => row.lot_id) : [];
+  const unresolvedOpeningOrigins = openingInstalled ? (await tx.query<{ reference: string }>(`SELECT DISTINCT concat('CUTOVER:',line.checkpoint_id::text,':',line.technical_purchase_id::text,':',
+      COALESCE(line.historical_trace_reference,'TRACE_NON_RENSEIGNEE')) AS reference
+    FROM public.data_cutover_wip_material_opening_bindings binding
+    JOIN public.data_cutover_wip_material_checkpoint_lines line ON line.checkpoint_id=binding.checkpoint_id
+      AND line.technical_purchase_id=binding.technical_purchase_id
+    WHERE binding.of_id=ANY($1::bigint[]) AND line.quantity_consumed>0 AND line.physical_lot_id IS NULL
+    ORDER BY 1`, [ofIds])).rows.map(row => row.reference) : [];
+  const lotIds = [...new Set([...held, ...openingLots, ...additionalLotIds])].sort();
   const ancestry = (await tx.query<{ lot_id: string; origin_id: string }>(`WITH RECURSIVE ancestry(lot_id,ancestor_id) AS (
     SELECT id,id FROM public.lots WHERE id=ANY($1::uuid[])
     UNION SELECT a.lot_id,e.parent_lot_id FROM ancestry a
@@ -32,7 +46,8 @@ export async function readMaterialOriginPolicyTx(tx: DossierDb, ofIds: readonly 
     throw new HttpError(409, 'MATERIAL_ORIGIN_UNRESOLVED', 'Vérifiez la traçabilité des lots matière déjà engagés.', { lotId: id });
   const critical = rows.some(row => row.critical);
   return { critical, maximumLots: critical ? 1 : 2, originsByLot,
-    usedOrigins: [...new Set(held.flatMap(id => originsByLot[id]))].sort() };
+    usedOrigins: [...new Set([...held, ...openingLots].flatMap(id => originsByLot[id]))].sort(),
+    unresolvedOpeningOrigins };
 }
 
 /** Central reservation owner also covers receipt transfers. Lock the OF before

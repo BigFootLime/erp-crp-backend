@@ -8,6 +8,12 @@ const stock: CutoverRow = { id: "row", batch_id: "batch", domain: "OPENING_STOCK
 const context = (targets = new Map()): ApplicationContext => ({ client: { query: async () => { throw new Error("inspect must not write"); } } as never, batchId: "batch", actorId: 1, sourceSystem: "CLIPPER_EXCEL", correlationId: "preview", operationKey: "op", rows: [stock], targets });
 
 describe("opening application adapters", () => {
+  it("keeps incomplete WIP in preparation instead of locking an unusable historical opening", async () => {
+    const adapter = openingApplicationAdapters.find((item) => item.kind === "RESUME_WIP")!;
+    const fixture = context();
+    fixture.rows = [{ ...stock, domain: "WIP", values: { resumeMode: "REVIEW_ONLY", workshopValidator: "Atelier", evidenceReference: "Fiche validée" } }];
+    await expect(adapter.inspect(fixture)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ code: "CUTOVER_WIP_RESUMPTION_REQUIRED", field: "resumeMode" })]));
+  });
   it("reports precise preview blockers without calling a writer", async () => {
     const adapter = openingApplicationAdapters.find((item) => item.kind === "OPENING_STOCK")!;
     await expect(adapter.inspect(context())).resolves.toEqual(expect.arrayContaining([

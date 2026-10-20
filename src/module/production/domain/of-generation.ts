@@ -27,6 +27,36 @@ import { usesPreparationRules } from '../repository/production-preparation.repos
 
 export type Queryable = Pick<PoolClient, "query">;
 
+/** A resumed physical cohort is already the native root OF for its commercial
+ * line. A later generic launch must stop explicitly rather than create a
+ * second root or rewrite the opening checkpoints. */
+async function assertNoWipResumptionForCommercialLine(tx: Queryable, params: {
+  commande_id: number | null;
+  commande_ligne_id: number | null;
+  livraison_affaire_id: number | null;
+}) {
+  if (params.commande_id == null || params.commande_ligne_id == null) return;
+  const installed = (await tx.query<{ installed: boolean }>(
+    "SELECT to_regclass('public.data_cutover_wip_resumptions') IS NOT NULL AS installed",
+  )).rows[0]?.installed === true;
+  if (!installed) return;
+  const resumed = await tx.query<{ id: string; numero: string }>(
+    `SELECT resume.id::text AS id,ordre.numero
+       FROM public.data_cutover_wip_resumptions resume
+       JOIN public.ordres_fabrication ordre ON ordre.id=resume.of_id
+      WHERE ordre.commande_id=$1::bigint
+        AND ordre.commande_ligne_id=$2::bigint
+        AND ordre.affaire_id IS NOT DISTINCT FROM $3::bigint
+      ORDER BY ordre.id FOR KEY SHARE OF ordre`,
+    [params.commande_id, params.commande_ligne_id, params.livraison_affaire_id],
+  );
+  if (resumed.rows.length) {
+    throw new HttpError(409, "CUTOVER_WIP_RESUMPTION_EXISTS", "Un encours repris est déjà rattaché à cette ligne. Terminez ou corrigez cet OF avant de relancer une fabrication.", {
+      resumed_of_references: resumed.rows.map((row) => row.numero),
+    });
+  }
+}
+
 function toInt(value: unknown, label = "id"): number {
   if (typeof value === "number" && Number.isInteger(value)) return value;
   if (typeof value === "string" && /^\d+$/.test(value)) return Number.parseInt(value, 10);
@@ -334,6 +364,15 @@ export type ApplicableTechnicalSnapshot = {
   sha256: string;
 };
 
+export type HistoricalTechnicalSnapshot = ApplicableTechnicalSnapshot & {
+  /**
+   * A cutover-only snapshot may be based on a version that was once
+   * applicable and has since become obsolete.  Ordinary OF generation must
+   * keep using the current applicable version.
+   */
+  historical_published: true;
+};
+
 type VersionNotApplicableDetails = {
   piece_technique_id: string;
   code_piece: string;
@@ -391,9 +430,10 @@ async function loadVersionNotApplicableDetails(
 export async function loadApplicableTechnicalSnapshot(
   tx: Queryable,
   pieceTechniqueId: string,
-  opts?: { pinned_version_id?: string | null; preparation_evidence?: unknown }
+  opts?: { pinned_version_id?: string | null; preparation_evidence?: unknown; allow_historical_published?: boolean }
 ): Promise<ApplicableTechnicalSnapshot> {
   const pinned = opts?.pinned_version_id ?? null;
+  const allowHistoricalPublished = opts?.allow_historical_published === true;
   const versionRes = await tx.query<{
     version_id: string;
     gamme_id: string | null;
@@ -408,12 +448,16 @@ export async function loadApplicableTechnicalSnapshot(
         ON g.piece_technique_version_id = v.id
        AND g.is_current = true
       WHERE v.piece_technique_id = $1::uuid
-        AND v.statut = 'APPLICABLE'
-        AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
+        AND (
+          ($3::boolean AND v.id=$2::uuid AND v.statut IN ('APPLICABLE','OBSOLETE'))
+          OR
+          (NOT $3::boolean AND v.statut = 'APPLICABLE'
+            AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE))
+        )
       ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
       LIMIT 1
     `,
-    [pieceTechniqueId]
+    [pieceTechniqueId, pinned, allowHistoricalPublished]
   );
   const version = versionRes.rows[0] ?? null;
   if (!version) {
@@ -569,6 +613,25 @@ export async function loadApplicableTechnicalSnapshot(
     snapshot,
     sha256: crypto.createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"),
   };
+}
+
+/**
+ * Cutover-only resolver for a version explicitly evidenced as the version
+ * used before CERP.  It can retain a published obsolete version; the regular
+ * OF path above continues to use current APPLICABLE versions only.
+ */
+export async function loadHistoricalPublishedTechnicalSnapshot(
+  tx: Queryable,
+  pieceTechniqueId: string,
+  historicalVersionId: string,
+  opts?: { preparation_evidence?: unknown }
+): Promise<HistoricalTechnicalSnapshot> {
+  const technical = await loadApplicableTechnicalSnapshot(tx, pieceTechniqueId, {
+    pinned_version_id: historicalVersionId,
+    preparation_evidence: opts?.preparation_evidence,
+    allow_historical_published: true,
+  });
+  return { ...technical, historical_published: true };
 }
 
 /**
@@ -830,6 +893,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
   root_preparation_evidence?: unknown;
 }): Promise<RecursiveOfGenerationResult> {
   const preparationEnabled = params.force_preparation === true || await usesPreparationRules(tx);
+  await assertNoWipResumptionForCommercialLine(tx, params);
   if(preparationEnabled&&!params.existing_root_of_id&&!params.planned_quantities_by_path)return createPreparationDraftTree(tx,params);
   const sourceType: OfGenerationSourceType = params.source_type ?? "COMMANDE_CLIENT";
   const fullTree = await loadFabricationGenerationTree(tx, params.root_piece_technique_id);
