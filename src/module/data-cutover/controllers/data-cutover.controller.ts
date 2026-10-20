@@ -6,7 +6,7 @@ import { getCutoverCapabilities } from "../services/data-cutover.service";
 import * as repository from "../repository/data-cutover.repository";
 import type { CutoverAccess } from "../types/data-cutover.types";
 import { CUTOVER_DOMAINS } from "../types/data-cutover.types";
-import { applicationApplySchema, applicationPreviewSchema, createCutoverBatchSchema, cutoverIdempotencyKey, cutoverUuid, listCutoverRowsSchema, patchCutoverRowSchema, prepareWipDeliveryTargetSchema, previewCutoverSchema, validateCutoverSchema } from "../validators/data-cutover.validators";
+import { applicationApplySchema, applicationPreviewSchema, createCutoverBatchSchema, cutoverIdempotencyKey, cutoverUuid, listCutoverRowsSchema, nativeRemainderApplySchema, nativeRemainderPreviewSchema, patchCutoverRowSchema, prepareWipDeliveryTargetSchema, previewCutoverSchema, validateCutoverSchema } from "../validators/data-cutover.validators";
 import { cutoverApplication } from "../application/application.registry";
 
 const access = (res: Response): CutoverAccess => res.locals.cutoverAccess as CutoverAccess;
@@ -62,6 +62,23 @@ export const applicationPreview = handler(async (req, res) => {
 export const apply = handler(async (req, res) => {
   const correlationId = typeof res.locals.correlationId === "string" ? res.locals.correlationId : key(req);
   res.json(await cutoverApplication.apply(cutoverUuid.parse(req.params.id), applicationApplySchema.parse(req.body), access(res).userId, key(req), correlationId));
+});
+export const previewNativeRemainder = handler(async (req, res) => {
+  res.json(await repository.repoPreviewNativeRemainder(
+    cutoverUuid.parse(req.params.id),
+    z.string().regex(/^[1-9]\d{0,14}$/).parse(req.params.commandeId),
+    nativeRemainderPreviewSchema.parse(req.body),
+    access(res).userId,
+  ));
+});
+export const applyNativeRemainder = handler(async (req, res) => {
+  res.json(await repository.repoApplyNativeRemainder(
+    cutoverUuid.parse(req.params.id),
+    z.string().regex(/^[1-9]\d{0,14}$/).parse(req.params.commandeId),
+    nativeRemainderApplySchema.parse(req.body),
+    access(res).userId,
+    key(req),
+  ));
 });
 export const applications = handler(async (req, res) => {
   const id = cutoverUuid.parse(req.params.id);

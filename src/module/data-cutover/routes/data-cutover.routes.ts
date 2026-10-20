@@ -46,6 +46,8 @@ router.get("/batches/:id/contributors", onlySuperadmin, controller.contributors)
 router.post("/batches/:id/contributors", onlySuperadmin, recentAssurance, controller.assignContributor);
 router.post("/batches/:id/application-preview", onlySuperadmin, recentAssurance, controller.applicationPreview);
 router.post("/batches/:id/apply", onlySuperadmin, recentAssurance, controller.apply);
+router.post("/batches/:id/commands/:commandeId/preview-native-remainder", onlySuperadmin, recentAssurance, controller.previewNativeRemainder);
+router.post("/batches/:id/commands/:commandeId/apply-native-remainder", onlySuperadmin, recentAssurance, controller.applyNativeRemainder);
 router.get("/batches/:id/applications", onlySuperadmin, recentAssurance, controller.applications);
 router.get("/batches/:id/openings", onlySuperadmin, recentAssurance, controller.openings);
 router.get("/batches/:id/evidence", onlySuperadmin, recentAssurance, controller.evidence);

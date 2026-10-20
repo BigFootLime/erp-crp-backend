@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "76f58e55ee6a75618d9727e14862df1700053f625ee589eaa6c1da1a0a9d758e";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ddcd4b4075931275f144059c1e1698dae1101eb3e53c824c78cd61247680ab3f";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -5775,7 +5775,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/applications",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:49",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5804,6 +5804,44 @@ export const GENERATED_ROUTE_INVENTORY = [
       "onlySuperadmin",
       "recentAssurance",
       "controller.apply"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/commands/{commandeId}/apply-native-remainder",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:50",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.applyNativeRemainder"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/commands/{commandeId}/preview-native-remainder",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:49",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.previewNativeRemainder"
     ],
     "authenticated": true,
     "rbac": [
@@ -5850,7 +5888,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/evidence",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:51",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5888,7 +5926,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/openings",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:50",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5961,7 +5999,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/rows/{rowId}/evidence",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:52",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",

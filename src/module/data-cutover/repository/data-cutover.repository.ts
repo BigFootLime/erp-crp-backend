@@ -11,7 +11,8 @@ import { getFinancialCutoverStatusTx, startFinancialCutoverPreparationTx } from 
 import { listCutoverOpeningStatesTx } from "../application/openings/openings.repository";
 import { readWipPreparationContextTx } from "../application/openings/wip-preparation.contract";
 import { buildConfirmedWipCheckpoints } from "../application/openings/wip-preparation.contract";
-import { createCutoverDeliveryTargetTx } from "../../commande-client/repository/commande-client.repository";
+import { createCutoverDeliveryTargetTx, applyNativeRemainderTx, previewNativeRemainderTx } from "../../commande-client/repository/commande-client.repository";
+import type { NativeRemainderApplyInput } from "../validators/data-cutover.validators";
 
 type StoredBatch = Omit<CutoverBatch, "summary"> & { preview_hash: string | null; preview_payload: CutoverPreview | null; validation: unknown };
 type StoredRow = Omit<CutoverRow, "status" | "issues">;
@@ -141,10 +142,61 @@ export async function repoGetCutoverWipContext(batchId: string, rowId: string, c
     return readWipPreparationContextTx(tx, { ...row, values: { ...row.values, ...(quantity === undefined ? {} : { quantityRemaining: quantity }), ...(orderId === undefined ? {} : { affairTargetId: orderId }) } }, chosenVersionId);
   });
 }
+async function assertNativeRemainderProvenanceTx(tx: PoolClient, batchId: string, commandeId: string): Promise<void> {
+  const native = await tx.query<{ id: string }>(
+    `SELECT id::text AS id FROM public.data_cutover_application_crosswalk
+      WHERE target_type='COMMANDE_CLIENT' AND target_id=$1::text LIMIT 1 FOR KEY SHARE`, [commandeId],
+  );
+  if (!native.rows[0]) throw new HttpError(409, "CUTOVER_NATIVE_ORDER_PROVENANCE_REQUIRED", "Cette commande n'est pas issue d'une reprise CLIPPER/Excel reconnue.");
+  const wip = await tx.query<{ id: string }>(
+    `SELECT row.id::text AS id
+       FROM public.data_cutover_rows row
+      WHERE row.domain='WIP' AND row.decision='INCLUDE'
+        AND (row."values"->>'affairTargetId'=$1 OR row."values"->>'commandeId'=$1)
+        AND NULLIF(row."values"->>'livraisonAffaireId','') IS NULL
+      LIMIT 1 FOR KEY SHARE`, [commandeId],
+  );
+  if (wip.rows[0]) throw new HttpError(409, "CUTOVER_WIP_TARGET_NOT_PREPARED", "Toutes les cohortes WIP incluses de cette commande doivent d'abord avoir une affaire de livraison persistée.");
+  await getBatch(tx, batchId, true);
+}
+export async function repoPreviewNativeRemainder(batchId: string, commandeId: string, input: { expected_batch_version: number }, actorId: number) {
+  return transaction(async (tx) => {
+    const batch = await getBatch(tx, batchId, true);
+    assertVersion(batch, input.expected_batch_version);
+    await assertNativeRemainderProvenanceTx(tx, batchId, commandeId);
+    const preview = await previewNativeRemainderTx(tx, { commande_id: commandeId });
+    const preview_hash = hashCutover({ batch_id: batchId, batch_version: batch.version, commande_id: commandeId, preview });
+    await audit(tx, batchId, null, actorId, "NATIVE_REMAINDER_PREVIEWED", { commande_id: commandeId, preview_hash, blocker_count: preview.blockers.length, business_writes: false });
+    return { ...preview, batch_version: batch.version, preview_hash };
+  });
+}
+export async function repoApplyNativeRemainder(batchId: string, commandeId: string, input: NativeRemainderApplyInput, actorId: number, key: string) {
+  return command(actorId, `native-remainder:${batchId}:${commandeId}`, key, input, async (tx) => {
+    const batch = await getBatch(tx, batchId, true);
+    assertVersion(batch, input.expected_batch_version);
+    await assertNativeRemainderProvenanceTx(tx, batchId, commandeId);
+    const preview = await previewNativeRemainderTx(tx, { commande_id: commandeId });
+    const preview_hash = hashCutover({ batch_id: batchId, batch_version: batch.version, commande_id: commandeId, preview });
+    if (preview_hash !== input.expected_preview_hash) throw new HttpError(409, "CUTOVER_STALE_PREVIEW", "Le reliquat, le stock ou la préparation WIP a changé. Relancez l'aperçu.");
+    if (preview.blockers.length) {
+      const technical = preview.blockers.some((blocker) => ["PIECE_TECHNIQUE_REQUIRED", "CUTOVER_APPLICABLE_TECHNICAL_VERSION_REQUIRED", "CUTOVER_NATIVE_REMAINDER_UNIT_INVALID"].includes(blocker.code));
+      throw new HttpError(technical ? 422 : 409, technical ? "CUTOVER_NATIVE_REMAINDER_TECHNICAL_BLOCKED" : "CUTOVER_NATIVE_REMAINDER_BLOCKED", "Le reliquat ne peut pas être préparé tant que les blocages affichés ne sont pas levés.", { blockers: preview.blockers });
+    }
+    const result = await applyNativeRemainderTx(tx, { commande_id: commandeId, user_id: actorId, expected_plan_hash: preview.plan_hash });
+    if (batch.status === "VALIDATED") await invalidateValidation(tx, batch, actorId, "NATIVE_REMAINDER_APPLIED");
+    const next = await tx.query<{ version: number }>(
+      `UPDATE public.data_cutover_batches
+          SET status='DRAFT',version=version+1,preview_hash=NULL,preview_payload=NULL,validation='{}'::jsonb,updated_at=now()
+        WHERE id=$1::uuid RETURNING version`, [batchId]
+    );
+    await audit(tx, batchId, null, actorId, "NATIVE_REMAINDER_APPLIED", { ...result, creates_bon_livraison: false, creates_financial_document: false, creates_historical_movement: false });
+    return { ...result, batch_version: next.rows[0]!.version, preview_hash };
+  });
+}
 function assertVersion(batch: StoredBatch, expected: number): void {
   if (batch.version !== expected) throw new HttpError(409, "CUTOVER_STALE_VERSION", "Le dossier a été modifié depuis son affichage. Rechargez les données avant de continuer.");
 }
-async function invalidateValidation(tx: PoolClient, batch: StoredBatch, actorId: number, reason: "ROW_UPDATED" | "CONTRIBUTORS_CHANGED" | "EVIDENCE_LINKED" | "WIP_DELIVERY_TARGET_PREPARED"): Promise<void> {
+async function invalidateValidation(tx: PoolClient, batch: StoredBatch, actorId: number, reason: "ROW_UPDATED" | "CONTRIBUTORS_CHANGED" | "EVIDENCE_LINKED" | "WIP_DELIVERY_TARGET_PREPARED" | "NATIVE_REMAINDER_APPLIED"): Promise<void> {
   // Keep the signed preparation evidence immutable in the audit trail. The
   // validation itself is cleared only once the reason and its prior hash have
   // been recorded, so a later reviewer can see why a signature disappeared.

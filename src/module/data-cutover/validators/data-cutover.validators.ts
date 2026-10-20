@@ -61,3 +61,12 @@ export const applicationApplySchema = z.object({
   }).strict(),
 }).strict();
 export type ApplicationApplyInput = z.infer<typeof applicationApplySchema>;
+export const nativeRemainderPreviewSchema = z.object({
+  expected_batch_version: z.number().int().positive(),
+}).strict();
+export const nativeRemainderApplySchema = z.object({
+  expected_batch_version: z.number().int().positive(),
+  expected_preview_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  confirm: z.literal(true),
+}).strict();
+export type NativeRemainderApplyInput = z.infer<typeof nativeRemainderApplySchema>;
