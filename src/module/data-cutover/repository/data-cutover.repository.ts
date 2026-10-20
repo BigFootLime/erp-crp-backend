@@ -294,6 +294,17 @@ export async function repoPatchCutoverRow(batchId: string, rowId: string, input:
     const domains = await allowedDomains(tx, batchId, access);
     if (domains !== null && !domains.includes(previous.domain)) throw new HttpError(404, "CUTOVER_ROW_NOT_FOUND", "Fiche de reprise introuvable dans ce dossier.");
     if (previous.version !== input.expected_version) throw new HttpError(409, "CUTOVER_STALE_ROW", "Cette fiche a été modifiée par une autre personne. Rechargez-la avant d'enregistrer.");
+    // Once the target has created a real native allocation, its identity and
+    // dimensional facts are evidence.  Changing them would orphan that
+    // allocation (or turn one physical cohort into another) without any
+    // compensating business write.
+    if (previous.domain === "WIP" && typeof previous.values.livraisonAffaireId === "string" && previous.values.livraisonAffaireId.trim()) {
+      const frozen = ["resumeMode", "affairTargetId", "commandeLigneId", "livraisonAffaireId", "articleTargetId", "historicalVersionId", "quantityRemaining", "unit", "planReference", "technicalRevision", "withoutRevision", "physicalBatchReference"];
+      const changed = frozen.find((field) => JSON.stringify(previous.values[field] ?? null) !== JSON.stringify(input.values[field] ?? null));
+      if (changed || input.decision !== "INCLUDE") {
+        throw new HttpError(409, "CUTOVER_WIP_PREPARED_TARGET_IMMUTABLE", "Cette cohorte possède déjà une affaire de livraison native : conservez sa décision et ses données d'identité, de quantité et de traçabilité physique.", { field: changed ?? "decision" });
+      }
+    }
     const knownFields = new Set(catalogFor(previous.domain).fields.map((field) => field.key));
     for (const field of Object.keys(input.values)) if (!knownFields.has(field)) throw new HttpError(422, "CUTOVER_UNKNOWN_FIELD", "Cette fiche ne peut contenir que les champs prévus pour ce domaine.", { field });
     for (const field of catalogFor(previous.domain).fields) if (!access.isSuperadmin && field.lookup_entity && (input.values[field.key] ?? null) !== (previous.values[field.key] ?? null)) throw new HttpError(403, "CUTOVER_SUPERADMIN_MAPPING_REQUIRED", "Le SuperAdmin choisit et vérifie les fiches CERP correspondantes. Vous pouvez compléter les informations source sans modifier ces rapprochements.", { field: field.key });
@@ -384,6 +395,8 @@ export async function repoPrepareCutoverWipDeliveryTarget(
       articleId,
       pieceTechniqueVersionId: versionId,
       quantity,
+      sourceRowId: rowId,
+      physicalBatchReference: typeof row.values.physicalBatchReference === "string" ? row.values.physicalBatchReference : "",
     });
     const values = { ...stored.values, commandeLigneId: target.commande_ligne_id, livraisonAffaireId: target.livraison_affaire_id };
     await tx.query(`UPDATE public.data_cutover_rows SET "values"=$3::jsonb,version=version+1,updated_by=$4,updated_at=now() WHERE id=$1::uuid AND batch_id=$2::uuid`, [rowId, batchId, JSON.stringify(values), actorId]);

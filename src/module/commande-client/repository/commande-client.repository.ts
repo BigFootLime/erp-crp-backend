@@ -7238,6 +7238,10 @@ export type CutoverDeliveryTargetInput = {
   articleId: string;
   pieceTechniqueVersionId: string;
   quantity: number;
+  /** Cutover-only provenance.  Present for UI preparation, optional for the
+   * low-level WIP integration fixtures that do not own a cutover row. */
+  sourceRowId?: string;
+  physicalBatchReference?: string;
 };
 
 export type CutoverDeliveryTarget = {
@@ -7262,6 +7266,28 @@ export async function createCutoverDeliveryTargetTx(db: PoolClient, input: Cutov
   if (!header) throw new HttpError(404, "CUTOVER_WIP_ORDER_NOT_FOUND", "La commande CERP sélectionnée n'existe plus.");
   if (header.order_type === "INTERNE") throw new HttpError(422, "CUTOVER_WIP_INTERNAL_TARGET_UNSUPPORTED", "Un besoin interne ne nécessite pas d'affaire de livraison.");
   if (!header.client_id) throw new HttpError(422, "CUTOVER_WIP_CUSTOMER_REQUIRED", "La commande client doit être rapprochée de son client avant de préparer cet encours.");
+
+  const physicalReference = input.physicalBatchReference?.trim().toLowerCase() ?? "";
+  if (input.sourceRowId && !physicalReference) throw new HttpError(422, "CUTOVER_WIP_PHYSICAL_BATCH_REQUIRED", "Identifier le groupe physique encore en fabrication avant de préparer sa cible.");
+  if (physicalReference) {
+    // Migration 06 makes a physical reference global.  Serialize it before
+    // inspecting other batches: two imports must not each consume a native
+    // allocation while the WIP writer later rejects the second cohort.
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`cutover-wip-cohort:${physicalReference}`]);
+    const duplicate = await db.query<{ id: string }>(
+      `SELECT id::text FROM public.data_cutover_rows
+        WHERE domain='WIP' AND id<>COALESCE($1::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+          AND NULLIF(lower(btrim("values"->>'physicalBatchReference')),'')=$2
+          AND NULLIF("values"->>'livraisonAffaireId','') IS NOT NULL
+        LIMIT 1`, [input.sourceRowId ?? null, physicalReference],
+    );
+    if (duplicate.rows[0]) throw new HttpError(409, "CUTOVER_WIP_PHYSICAL_BATCH_ALREADY_PREPARED", "Ce groupe physique est déjà préparé dans une autre fiche de reprise.");
+    const resumed = await db.query<{ id: string }>(
+      `SELECT id::text FROM public.data_cutover_wip_resumptions
+        WHERE lower(btrim(physical_batch_reference))=$1 LIMIT 1`, [physicalReference],
+    );
+    if (resumed.rows[0]) throw new HttpError(409, "CUTOVER_WIP_PHYSICAL_BATCH_ALREADY_RESUMED", "Ce groupe physique a déjà été repris dans CERP.");
+  }
 
   const line = (await db.query<{ quantity: number; article_id: string | null; version_id: string | null; allocated: number; has_unallocated_normal_of: boolean }>(
     `SELECT line.quantite::float8 AS quantity,line.article_id::text AS article_id,line.piece_technique_version_id::text AS version_id,
@@ -7351,8 +7377,8 @@ type NativeRemainderPreview = {
  * already persisted on each line: WIP cohorts are therefore immutable input,
  * while every other unallocated native line remains eligible. */
 async function buildNativeRemainderPlanTx(db: PoolClient, commandeId: number): Promise<NativeRemainderPreview> {
-  const header = (await db.query<{ client_id: string | null; ar_sent_at: string | null; order_type: string; numero: string; creation_flow_version: number }>(
-    `SELECT client_id,ar_sent_at::text AS ar_sent_at,order_type::text AS order_type,numero,creation_flow_version
+  const header = (await db.query<{ client_id: string | null; devis_id: string | null; updated_at: string; ar_sent_at: string | null; order_type: string; numero: string; creation_flow_version: number }>(
+    `SELECT client_id,devis_id::text AS devis_id,updated_at::text AS updated_at,ar_sent_at::text AS ar_sent_at,order_type::text AS order_type,numero,creation_flow_version
        FROM public.commande_client WHERE id=$1::bigint FOR UPDATE`, [commandeId]
   )).rows[0];
   if (!header) throw new HttpError(404, "CUTOVER_NATIVE_ORDER_NOT_FOUND", "La commande native n'existe plus.");
@@ -7413,8 +7439,9 @@ async function buildNativeRemainderPlanTx(db: PoolClient, commandeId: number): P
        ) control ON TRUE WHERE lot.id=ANY($1::uuid[]) ORDER BY lot.id`, [candidates.map((candidate) => candidate.lot_id).filter((id): id is string => id !== null)]
   );
   const qualityByLot = new Map(quality.rows.map((row) => [row.lot_id, row] as const));
-  const stock_snapshot = candidates.map((candidate) => ({ article_id: candidate.article_id, stock_level_id: candidate.stock_level_id, stock_batch_id: candidate.stock_batch_id, lot_id: candidate.lot_id, stock_scope: candidate.stock_scope, version: candidate.piece_technique_version_id, compatible_version_ids: candidate.compatible_version_ids, qty_available: candidate.qty_available, quality: candidate.lot_id ? qualityByLot.get(candidate.lot_id) ?? null : null }));
-  const stable = { commande_id: String(commandeId), commande_numero: header.numero, lines, blockers, stock_snapshot };
+  const stock_snapshot = candidates.map((candidate) => ({ article_id: candidate.article_id, stock_level_id: candidate.stock_level_id, stock_batch_id: candidate.stock_batch_id, lot_id: candidate.lot_id, stock_scope: candidate.stock_scope, version: candidate.piece_technique_version_id, compatible_version_ids: [...candidate.compatible_version_ids].sort(), qty_available: candidate.qty_available, quality: candidate.lot_id ? qualityByLot.get(candidate.lot_id) ?? null : null }));
+  const technical_snapshot = refs.map((ref) => ({ commande_ligne_id: ref.commande_ligne_id, article_id: ref.article_id, article_unit: unitByLine.get(ref.commande_ligne_id)?.article_unit ?? null, line_unit: unitByLine.get(ref.commande_ligne_id)?.unite ?? null, version_id: ref.piece_technique_version_id ?? null, version_status: ref.piece_technique_version_status ?? null, version_effective: ref.piece_technique_version_effective ?? null }));
+  const stable = { commande_id: String(commandeId), commande_numero: header.numero, header: { client_id: header.client_id, devis_id: header.devis_id, updated_at: header.updated_at, order_type: header.order_type, creation_flow_version: header.creation_flow_version, ar_sent_at: header.ar_sent_at }, lines, blockers, technical_snapshot, stock_snapshot };
   return { commande_id: stable.commande_id, commande_numero: stable.commande_numero, lines, blockers, plan_hash: crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex") };
 }
 

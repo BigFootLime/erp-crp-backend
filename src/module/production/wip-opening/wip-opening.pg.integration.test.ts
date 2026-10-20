@@ -168,10 +168,24 @@ describePg("native WIP resumption on dedicated schema", () => {
     try {
       await tx.query("BEGIN");
       const source = await seed(tx, { withDelivery: false, quantity: 10 });
+      const lineB = (await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions)
+        VALUES($1,'Ligne WIP B',70,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [source.commandId, ids.article, ids.piece, ids.version])).rows[0]!;
+      const lineC = (await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions)
+        VALUES($1,'Ligne native C',5,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [source.commandId, ids.article, ids.piece, ids.version])).rows[0]!;
+      const warehouse = randomUUID(), location = randomUUID(), magasin = randomUUID(), lot = randomUUID(), level = randomUUID(), stockBatch = randomUUID();
+      await tx.query("INSERT INTO public.warehouses(id,code,name,stock_scope) VALUES($1::uuid,'WIP-OLD-1710','Stock OLD WIP','OLD')", [warehouse]);
+      await tx.query("INSERT INTO public.locations(id,warehouse_id,code) VALUES($1::uuid,$2::uuid,'WIP-OLD-LOC')", [location, warehouse]);
+      await tx.query("INSERT INTO public.magasins(id,code,code_magasin,name,libelle,warehouse_id,stock_scope,is_active,actif) VALUES($1::uuid,'WIP-OLD-1710','WIP-OLD-1710','Stock OLD WIP','Stock OLD WIP',$2::uuid,'OLD',true,true)", [magasin, warehouse]);
+      await tx.query("INSERT INTO public.emplacements(magasin_id,location_id,code,name,is_active) VALUES($1::uuid,$2::uuid,'WIP-OLD-01','Stock OLD WIP',true)", [magasin, location]);
+      const unit = (await tx.query<{ id: string }>("SELECT id::text AS id FROM public.units WHERE code='u'")).rows[0]!;
+      await tx.query("INSERT INTO public.lots(id,article_id,lot_code,lot_status,source_scope,stock_scope,piece_technique_version_id,created_by,updated_by) VALUES($1::uuid,$2::uuid,'WIP-OLD-LOT','LIBERE','OLD','OLD',$3::uuid,$4,$4)", [lot, ids.article, ids.version, ids.user]);
+      await tx.query("INSERT INTO public.stock_levels(id,article_id,unit_id,warehouse_id,location_id,qty_total,qty_reserved,created_by,updated_by) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,20,0,$6,$6)", [level, ids.article, unit.id, warehouse, location, ids.user]);
+      await tx.query("INSERT INTO public.stock_batches(id,stock_level_id,lot_id,batch_code,qty_total,qty_reserved) VALUES($1::uuid,$2::uuid,$3::uuid,'WIP-OLD-LOT',20,0)", [stockBatch, level, lot]);
       const target = await createCutoverDeliveryTargetTx(tx, {
         commandeId: source.commandId, commandeLigneId: source.commandLineId, articleId: ids.article,
         pieceTechniqueVersionId: ids.version, quantity: 6,
       });
+      await createCutoverDeliveryTargetTx(tx, { commandeId: source.commandId, commandeLigneId: lineB.id, articleId: ids.article, pieceTechniqueVersionId: ids.version, quantity: 50 });
       expect(target).toMatchObject({ commande_ligne_id: source.commandLineId, quantity: 6, unallocated_quantity_after: 4 });
       expect((await tx.query<{ n: number }>("SELECT count(*)::int AS n FROM public.ordres_fabrication WHERE commande_id=$1::bigint", [source.commandId])).rows[0]?.n).toBe(0);
       const resumed = await resumeWipOpeningTx(tx, {
@@ -194,10 +208,28 @@ describePg("native WIP resumption on dedicated schema", () => {
     try {
       await tx.query("BEGIN");
       const source = await seed(tx, { withDelivery: false, quantity: 10 });
+      const articleB = randomUUID(), pieceB = randomUUID(), versionB = randomUUID();
+      await tx.query("INSERT INTO public.pieces_techniques(id,client_id,name_piece,code_piece,designation,root_piece_technique_id,version_number) VALUES($1::uuid,NULL,'Pièce WIP B','WIP-B-1710','Pièce synthétique WIP B',$1::uuid,1)", [pieceB]);
+      await tx.query("INSERT INTO public.articles(id,root_article_id,code,designation,article_type,piece_technique_id,unite,lot_tracking,is_active,article_category,stock_managed,family_code,version_number,plan_index,status,is_sold,row_version) VALUES($1::uuid,$1::uuid,'WIP-B-1710','Article synthétique WIP B','PIECE_TECHNIQUE',$2::uuid,'u',true,true,'fabrique',true,'piece_finie',1,1,'VALIDE',true,1)", [articleB, pieceB]);
+      await tx.query("UPDATE public.pieces_techniques SET article_id=$2::uuid WHERE id=$1::uuid", [pieceB, articleB]);
+      await tx.query("INSERT INTO public.articles_fabrique(article_id,family_code,piece_technique_id) VALUES($1::uuid,'piece_finie',$2::uuid)", [articleB, pieceB]);
+      await tx.query("INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice,plan_reference,statut,is_current,date_revision,date_validation,date_application,version_interne,code_metier,code_metier_normalise,document_requirements_frozen_at,document_requirements_policy) VALUES($1::uuid,$2::uuid,'A','WIP-B-PLAN','APPLICABLE',true,now(),now(),CURRENT_DATE,1,'WIP-B-PLAN','WIP-B-PLAN',now(),'NONE')", [versionB, pieceB]);
+      const lineB = (await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions) VALUES($1,'Ligne WIP B',70,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [source.commandId, articleB, pieceB, versionB])).rows[0]!;
+      const lineC = (await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions) VALUES($1,'Ligne native C',5,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [source.commandId, ids.article, ids.piece, ids.version])).rows[0]!;
+      const warehouse = randomUUID(), location = randomUUID(), magasin = randomUUID(), lot = randomUUID(), level = randomUUID(), stockBatch = randomUUID();
+      await tx.query("INSERT INTO public.warehouses(id,code,name,stock_scope) VALUES($1::uuid,'WIP-OLD-1710','Stock OLD WIP','OLD')", [warehouse]);
+      await tx.query("INSERT INTO public.locations(id,warehouse_id,code) VALUES($1::uuid,$2::uuid,'WIP-OLD-LOC')", [location, warehouse]);
+      await tx.query("INSERT INTO public.magasins(id,code,code_magasin,name,libelle,warehouse_id,stock_scope,is_active,actif) VALUES($1::uuid,'WIP-OLD-1710','WIP-OLD-1710','Stock OLD WIP','Stock OLD WIP',$2::uuid,'OLD',true,true)", [magasin, warehouse]);
+      await tx.query("INSERT INTO public.emplacements(magasin_id,location_id,code,name,is_active) VALUES($1::uuid,$2::uuid,'WIP-OLD-01','Stock OLD WIP',true)", [magasin, location]);
+      const unit = (await tx.query<{ id: string }>("SELECT id::text AS id FROM public.units WHERE code='u'")).rows[0]!;
+      await tx.query("INSERT INTO public.lots(id,article_id,lot_code,lot_status,source_scope,stock_scope,piece_technique_version_id,created_by,updated_by) VALUES($1::uuid,$2::uuid,'WIP-OLD-LOT','LIBERE','OLD','OLD',$3::uuid,$4,$4)", [lot, articleB, versionB, ids.user]);
+      await tx.query("INSERT INTO public.stock_levels(id,article_id,unit_id,warehouse_id,location_id,qty_total,qty_reserved,created_by,updated_by) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,20,0,$6,$6)", [level, articleB, unit.id, warehouse, location, ids.user]);
+      await tx.query("INSERT INTO public.stock_batches(id,stock_level_id,lot_id,batch_code,qty_total,qty_reserved) VALUES($1::uuid,$2::uuid,$3::uuid,'WIP-OLD-LOT',20,0)", [stockBatch, level, lot]);
       const target = await createCutoverDeliveryTargetTx(tx, {
         commandeId: source.commandId, commandeLigneId: source.commandLineId, articleId: ids.article,
         pieceTechniqueVersionId: ids.version, quantity: 6,
       });
+      await createCutoverDeliveryTargetTx(tx, { commandeId: source.commandId, commandeLigneId: lineB.id, articleId: articleB, pieceTechniqueVersionId: versionB, quantity: 50 });
       const resumed = await resumeWipOpeningTx(tx, {
         openingStateId: ids.opening, batchId: ids.batch, rowId: ids.row, sourceSystem: "CLIPPER_EXCEL", operationKey: "fixture-native-remainder-wip",
         articleId: ids.article, pieceTechniqueId: ids.piece, historicalVersionId: ids.version,
@@ -207,21 +239,25 @@ describePg("native WIP resumption on dedicated schema", () => {
       }, { resolveMaterialCheckpoint: async () => ({ requiresMaterial: false, checkpointId: null, physicalBatchReference: null }) });
       const preview = await previewNativeRemainderTx(tx, { commande_id: source.commandId });
       expect(preview.blockers).toEqual([]);
-      expect(preview.lines).toEqual([expect.objectContaining({ commande_ligne_id: Number(source.commandLineId), requested_qty: 10, already_allocated_qty: 6, remainder_qty: 4, production_qty: 4, old_qty: 0, new_qty: 0, article_code: "WIP-1710", unit: "u" })]);
+      expect(preview.lines).toEqual(expect.arrayContaining([
+        expect.objectContaining({ commande_ligne_id: Number(source.commandLineId), requested_qty: 10, already_allocated_qty: 6, remainder_qty: 4, production_qty: 4, old_qty: 0, new_qty: 0, article_code: "WIP-1710", unit: "u" }),
+        expect.objectContaining({ commande_ligne_id: Number(lineB.id), requested_qty: 70, already_allocated_qty: 50, remainder_qty: 20, production_qty: 0, old_qty: 20 }),
+        expect.objectContaining({ commande_ligne_id: Number(lineC.id), requested_qty: 5, already_allocated_qty: 0, remainder_qty: 5, production_qty: 5 }),
+      ]));
       const applied = await applyNativeRemainderTx(tx, { commande_id: source.commandId, user_id: ids.user, expected_plan_hash: preview.plan_hash });
-      expect(applied.affaires).toEqual([expect.objectContaining({ kind: "PRODUCTION" })]);
-      expect(applied.of_ids).toHaveLength(1);
+      expect(applied.affaires).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "STOCK" }), expect.objectContaining({ kind: "PRODUCTION" })]));
+      expect(applied.of_ids).toHaveLength(2);
       const effects = await tx.query<{ allocated: string; wip_qty: string; new_of_qty: string; bl: number; invoice: number; history: number }>(
         `SELECT
-          (SELECT sum(qty_ordered)::text FROM public.commande_ligne_affaire_allocation WHERE commande_ligne_id=$1::bigint) AS allocated,
-          (SELECT quantity_launched::text FROM public.data_cutover_wip_resumptions WHERE of_id=$2::bigint) AS wip_qty,
-          (SELECT quantite_lancee::text FROM public.ordres_fabrication WHERE id=$3::bigint) AS new_of_qty,
-          (SELECT count(*)::int FROM public.bon_livraison WHERE commande_id=$4::bigint) AS bl,
-          (SELECT count(*)::int FROM public.facture WHERE commande_id=$4::bigint) AS invoice,
-          (SELECT count(*)::int FROM public.production_quantity_declarations WHERE of_id IN ($2::bigint,$3::bigint)) AS history`,
-        [source.commandLineId, resumed.ofId, applied.of_ids[0], source.commandId]
+          (SELECT sum(qty_ordered)::text FROM public.commande_ligne_affaire_allocation WHERE commande_id=$3::bigint) AS allocated,
+          (SELECT quantity_launched::text FROM public.data_cutover_wip_resumptions WHERE of_id=$1::bigint) AS wip_qty,
+          (SELECT quantite_lancee::text FROM public.ordres_fabrication WHERE id=$2::bigint) AS new_of_qty,
+          (SELECT count(*)::int FROM public.bon_livraison WHERE commande_id=$3::bigint) AS bl,
+          (SELECT count(*)::int FROM public.facture WHERE commande_id=$3::bigint) AS invoice,
+          (SELECT count(*)::int FROM public.production_quantity_declarations declaration JOIN public.ordres_fabrication ofx ON ofx.id=declaration.of_id WHERE ofx.commande_id=$3::bigint) AS history`,
+        [resumed.ofId, applied.of_ids[0], source.commandId]
       );
-      expect(effects.rows[0]).toEqual({ allocated: "10.000", wip_qty: "6.0000", new_of_qty: "4.000", bl: 0, invoice: 0, history: 0 });
+      expect(effects.rows[0]).toEqual({ allocated: "85.000", wip_qty: "6.0000", new_of_qty: "4.000", bl: 0, invoice: 0, history: 0 });
       await expect(applyNativeRemainderTx(tx, { commande_id: source.commandId, user_id: ids.user, expected_plan_hash: preview.plan_hash })).rejects.toMatchObject({ code: "CUTOVER_NATIVE_REMAINDER_STALE" });
       await tx.query("ROLLBACK");
     } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }

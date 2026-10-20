@@ -91,6 +91,23 @@ créent ni OF, ni pointage historique, ni facture, ni règlement, ni entrée ou
 sortie de stock. Leur rattachement ultérieur à une cible native est un parcours
 métier distinct et doit rester vérifié.
 
+### Complément natif d'une commande reprise
+
+Après préparation persistée de **toutes** les cohortes WIP d'une commande, le
+SuperAdmin peut prévisualiser puis appliquer son reliquat natif. Le calcul part
+exclusivement de `quantite - allocations` de chaque ligne, y compris les lignes
+sans WIP. Il réserve d'abord les lots OLD/NEW compatibles, puis crée seulement
+les affaires de livraison et OF neufs nécessaires. La confirmation relit le
+snapshot (commande, unité/version applicable, lots, qualité et réservations)
+sous verrou ; toute divergence est refusée.
+
+Une cohorte WIP déjà préparée fige son identité, quantité, unité, version et
+groupe physique. Le groupe physique est globalement unique et sérialisé entre
+lots de reprise. Aucun assemblage, conversion d'unité ou choix implicite de
+version n'est effectué : une ambiguïté ou une version non APPLICABLE bloque
+l'opération. Le parcours ne crée ni pointage, mouvement historique, BL,
+facture ni affaire principale.
+
 ## Limites assumées et blocages
 
 - La création d'un nouvel article matière dans une reprise reste bloquée tant
