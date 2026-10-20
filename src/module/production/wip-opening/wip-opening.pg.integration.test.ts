@@ -8,6 +8,7 @@ import type { WipOpeningInput } from "./wip-opening.types";
 import { bindWipMaterialOpeningTx, readWipMaterialOpeningProjectionTx, resolveWipMaterialCheckpointTx, validateWipMaterialOpeningTx } from "../wip-material-opening/wip-material-opening.repository";
 import { readMaterialTx } from "../repository/of-material.repository";
 import { usesOperationReadiness } from "../repository/operation-readiness.repository";
+import { createCutoverDeliveryTargetTx } from "../../commande-client/repository/commande-client.repository";
 
 const url = process.env.CERP_WIP_RESUME_INTEGRATION_URL;
 const describePg = url ? describe : describe.skip;
@@ -46,7 +47,7 @@ async function applyPatches() {
   ]) await db.query(readFileSync(`db/patches/${name}`, "utf8"));
 }
 
-async function seed(tx: PoolClient) {
+async function seed(tx: PoolClient, options: { withDelivery?: boolean; quantity?: number } = {}) {
   // User and order writes invalidate planning. The isolated clone starts
   // empty, so create its normal planning singleton first instead of disabling
   // triggers that must stay active in a real resume.
@@ -73,11 +74,16 @@ async function seed(tx: PoolClient) {
   await tx.query("INSERT INTO public.gammes(id,piece_technique_version_id,code,designation,statut,is_current,created_by,updated_by) VALUES($1::uuid,$2::uuid,'WIP-G','Gamme WIP','APPLICABLE',true,$3,$3)", [ids.gamme, ids.version, ids.user]);
   for (const phase of [10, 20]) await tx.query(`INSERT INTO public.pieces_techniques_operations(piece_technique_id,gamme_id,phase,ordre,designation,type_operation,cf_id,machine_family_code,coef,tp,tf_unit,qte,taux_horaire,temps_fabrication,temps_total,cout_mo)
     VALUES($1::uuid,$2::uuid,$3,$3,'Opération WIP','FRAISAGE',$4::uuid,'W',1,0,1,1,0,1,1,0)`, [ids.piece, ids.gamme, phase, ids.center]);
+  const quantity = options.quantity ?? 5;
   const line = await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions)
-    VALUES($1,'Ligne WIP',5,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [commandId, ids.article, ids.piece, ids.version]);
-  const affair = await tx.query<{ id: string }>("INSERT INTO public.affaire(reference,client_id,commande_id,type_affaire,statut,date_ouverture) VALUES('AFF-WIP-1710',$2,$1,'livraison','OUVERTE',CURRENT_DATE) RETURNING id::text AS id", [commandId, clientId]);
-  await tx.query(`INSERT INTO public.commande_ligne_affaire_allocation(commande_id,commande_ligne_id,livraison_affaire_id,article_ref_id,qty_ordered,qty_from_stock,qty_reserved,qty_to_produce,qty_produced,qty_stocked,qty_delivered,qty_remaining,allocation_version,delivery_status)
-    VALUES($1,$2::bigint,$3::bigint,$4::uuid,5,0,0,5,0,0,0,5,1,'A_PREPARER')`, [commandId, line.rows[0]!.id, affair.rows[0]!.id, ids.article]);
+    VALUES($1,'Ligne WIP',$5,'u',1,$2::uuid,$3::uuid,$4::uuid,'KEEP','RESOLVED','{}'::jsonb,'{}'::jsonb) RETURNING id::text AS id`, [commandId, ids.article, ids.piece, ids.version, quantity]);
+  let deliveryAffairId: string | null = null;
+  if (options.withDelivery !== false) {
+    const affair = await tx.query<{ id: string }>("INSERT INTO public.affaire(reference,client_id,commande_id,type_affaire,statut,date_ouverture) VALUES('AFF-WIP-1710',$2,$1,'livraison','OUVERTE',CURRENT_DATE) RETURNING id::text AS id", [commandId, clientId]);
+    deliveryAffairId = affair.rows[0]!.id;
+    await tx.query(`INSERT INTO public.commande_ligne_affaire_allocation(commande_id,commande_ligne_id,livraison_affaire_id,article_ref_id,qty_ordered,qty_from_stock,qty_reserved,qty_to_produce,qty_produced,qty_stocked,qty_delivered,qty_remaining,allocation_version,delivery_status)
+      VALUES($1,$2::bigint,$3::bigint,$4::uuid,$5,0,0,$5,0,0,0,$5,1,'A_PREPARER')`, [commandId, line.rows[0]!.id, deliveryAffairId, ids.article, quantity]);
+  }
   const internal = await tx.query<{ id: string }>(`INSERT INTO public.commande_client(numero,date_commande,total_ht,total_ttc,order_type)
     VALUES('WIP-INT-1710',CURRENT_DATE,0,0,'INTERNE') RETURNING id::text AS id`);
   const internalLine = await tx.query<{ id: string }>(`INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id,piece_technique_id,piece_technique_version_id,sale_price_decision,reconciliation_status,reconciliation_sources,reconciliation_decisions)
@@ -88,7 +94,7 @@ async function seed(tx: PoolClient) {
     VALUES($1::uuid,$2::uuid,'WIP','WIP:fixture','fixture','WIP',2,'{}'::jsonb,'{}'::jsonb,$3)`, [ids.row, ids.batch, ids.user]);
   await tx.query(`INSERT INTO public.data_cutover_opening_states(id,batch_id,row_id,opening_kind,domain,source_system,state,provenance,created_by)
     VALUES($1::uuid,$2::uuid,$3::uuid,'WIP','WIP','CLIPPER_EXCEL','{}'::jsonb,'{}'::jsonb,$4)`, [ids.opening, ids.batch, ids.row, ids.user]);
-  return { commandId: String(commandId), commandLineId: line.rows[0]!.id, deliveryAffairId: affair.rows[0]!.id, internalCommandId: internal.rows[0]!.id, internalCommandLineId: internalLine.rows[0]!.id };
+  return { commandId: String(commandId), commandLineId: line.rows[0]!.id, deliveryAffairId, internalCommandId: internal.rows[0]!.id, internalCommandLineId: internalLine.rows[0]!.id };
 }
 
 describePg("native WIP resumption on dedicated schema", () => {
@@ -152,6 +158,32 @@ describePg("native WIP resumption on dedicated schema", () => {
         ...input, quantityLaunched: 4,
         checkpoints: [{ ...input.checkpoints[0], quantityGood: 4 }, input.checkpoints[1]],
       }, { resolveMaterialCheckpoint: async () => ({ requiresMaterial: false, checkpointId: null, physicalBatchReference: null }) })).rejects.toMatchObject({ code: "CUTOVER_WIP_IDEMPOTENCY_CONFLICT" });
+      await tx.query("ROLLBACK");
+    } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }
+  });
+
+  it("prepares only a delivery target for a six-unit cohort, then resumes it without consuming the four-unit native remainder", async () => {
+    const tx = await db.connect();
+    try {
+      await tx.query("BEGIN");
+      const source = await seed(tx, { withDelivery: false, quantity: 10 });
+      const target = await createCutoverDeliveryTargetTx(tx, {
+        commandeId: source.commandId, commandeLigneId: source.commandLineId, articleId: ids.article,
+        pieceTechniqueVersionId: ids.version, quantity: 6,
+      });
+      expect(target).toMatchObject({ commande_ligne_id: source.commandLineId, quantity: 6, unallocated_quantity_after: 4 });
+      expect((await tx.query<{ n: number }>("SELECT count(*)::int AS n FROM public.ordres_fabrication WHERE commande_id=$1::bigint", [source.commandId])).rows[0]?.n).toBe(0);
+      const resumed = await resumeWipOpeningTx(tx, {
+        openingStateId: ids.opening, batchId: ids.batch, rowId: ids.row, sourceSystem: "CLIPPER_EXCEL", operationKey: "fixture-wip-target-1710",
+        articleId: ids.article, pieceTechniqueId: ids.piece, historicalVersionId: ids.version,
+        affair: { type: "COMMANDE_CLIENT", id: source.commandId, commandLineId: source.commandLineId, deliveryAffairId: target.livraison_affaire_id },
+        quantityLaunched: 6, unit: "u", physicalBatchReference: "WIP-TARGET-1710", materialScope: "NONE", actorId: ids.user,
+        checkpoints: [{ phase: 10, status: "COMPLETED", quantityGood: 6, quantityScrap: 0, quantityPendingControl: 0, evidenceReference: "TARGET-10" }, { phase: 20, status: "IN_PROGRESS", quantityGood: 0, quantityScrap: 0, quantityPendingControl: 0, evidenceReference: "TARGET-20" }],
+      }, { resolveMaterialCheckpoint: async () => ({ requiresMaterial: false, checkpointId: null, physicalBatchReference: null }) });
+      expect(resumed.ofReference).toMatch(/^OF-/);
+      const state = await tx.query<{ allocated: string; of_count: number }>(`SELECT (SELECT sum(qty_ordered)::text FROM public.commande_ligne_affaire_allocation WHERE commande_ligne_id=$1::bigint) AS allocated,
+        (SELECT count(*)::int FROM public.ordres_fabrication WHERE commande_id=$2::bigint) AS of_count`, [source.commandLineId, source.commandId]);
+      expect(state.rows[0]).toEqual({ allocated: "6.000", of_count: 1 });
       await tx.query("ROLLBACK");
     } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }
   });

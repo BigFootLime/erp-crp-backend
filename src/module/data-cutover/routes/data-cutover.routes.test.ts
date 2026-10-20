@@ -6,6 +6,7 @@ import { errorHandler } from "../../../middlewares/errorHandler";
 const mocks = vi.hoisted(() => ({
   patch: vi.fn(), create: vi.fn(), preview: vi.fn(), validate: vi.fn(), export: vi.fn(), lookup: vi.fn(),
   applicationPreview: vi.fn(), apply: vi.fn(), applications: vi.fn(), openings: vi.fn(), evidence: vi.fn(), linkEvidence: vi.fn(),
+  prepareWipDeliveryTarget: vi.fn(),
 }));
 vi.mock("../application/application.registry", () => ({ cutoverApplication: { preview: mocks.applicationPreview, apply: mocks.apply, list: mocks.applications } }));
 vi.mock("../../auth/middlewares/auth.middleware", () => ({
@@ -28,6 +29,7 @@ vi.mock("../repository/data-cutover.repository", () => ({
   repoCutoverArticleFamilies: async () => ({ fabrique: ["PT"], achat: ["ACH"] }),
   repoGetContributorDomains: async () => ["OPENING_STOCK"],
   repoListCutoverOpenings: mocks.openings, repoListCutoverEvidence: mocks.evidence, repoLinkCutoverEvidence: mocks.linkEvidence,
+  repoPrepareCutoverWipDeliveryTarget: mocks.prepareWipDeliveryTarget,
 }));
 import router from "./data-cutover.routes";
 
@@ -69,6 +71,20 @@ describe("cutover HTTP security and error contract", () => {
     expect(stale.status).toBe(428);
     expect(stale.body.code).toBe("MFA_STEP_UP_REQUIRED");
     expect(mocks.patch).not.toHaveBeenCalled();
+  });
+  it("prepares a WIP delivery target only for a SuperAdmin with fresh MFA and a strict idempotent payload", async () => {
+    const path = `${endpoint}/rows/${row}/wip/prepare-delivery-target`;
+    for (const actor of ["contributor", "admin-no-mfa", "admin-stale-mfa"]) {
+      const response = await request(app).post(path).set("X-Fixture-Actor", actor).set("Idempotency-Key", "fixture-wip-target-1").send({ expected_version: 1, commande_ligne_id: "12" });
+      expect(response.status).toBe(actor === "admin-stale-mfa" ? 428 : 403);
+    }
+    expect(mocks.prepareWipDeliveryTarget).not.toHaveBeenCalled();
+    const invalid = await request(app).post(path).set("X-Fixture-Actor", "admin").set("Idempotency-Key", "fixture-wip-target-1").send({ expected_version: 1, commande_ligne_id: "12", quantity: 6 });
+    expect(invalid.status).toBe(422);
+    mocks.prepareWipDeliveryTarget.mockResolvedValueOnce({ row: { id: row, version: 2 }, batch_version: 2, target: { commande_ligne_id: "12", livraison_affaire_id: "42", quantity: 6 } });
+    const accepted = await request(app).post(path).set("X-Fixture-Actor", "admin").set("Idempotency-Key", "fixture-wip-target-1").send({ expected_version: 1, commande_ligne_id: "12" });
+    expect(accepted.status).toBe(200);
+    expect(mocks.prepareWipDeliveryTarget).toHaveBeenCalledWith(batch, row, { expected_version: 1, commande_ligne_id: "12" }, 1, "fixture-wip-target-1");
   });
   it("keeps applications, openings and evidence private and requires fresh assurance", async () => {
     for (const action of ["applications", "openings", "evidence"]) {
