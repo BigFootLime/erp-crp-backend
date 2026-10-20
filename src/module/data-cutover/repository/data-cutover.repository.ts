@@ -148,15 +148,17 @@ async function assertNativeRemainderProvenanceTx(tx: PoolClient, batchId: string
       WHERE target_type='COMMANDE_CLIENT' AND target_id=$1::text LIMIT 1 FOR KEY SHARE`, [commandeId],
   );
   if (!native.rows[0]) throw new HttpError(409, "CUTOVER_NATIVE_ORDER_PROVENANCE_REQUIRED", "Cette commande n'est pas issue d'une reprise CLIPPER/Excel reconnue.");
-  const wip = await tx.query<{ id: string }>(
-    `SELECT row.id::text AS id
+  const wip = await tx.query<{ id: string; decision: string; prepared: boolean }>(
+    `SELECT row.id::text AS id,row.decision,
+            NULLIF(row."values"->>'livraisonAffaireId','') IS NOT NULL AS prepared
        FROM public.data_cutover_rows row
-      WHERE row.domain='WIP' AND row.decision='INCLUDE'
+      WHERE row.domain='WIP' AND row.decision<>'EXCLUDE'
         AND (row."values"->>'affairTargetId'=$1 OR row."values"->>'commandeId'=$1)
-        AND NULLIF(row."values"->>'livraisonAffaireId','') IS NULL
-      LIMIT 1 FOR KEY SHARE`, [commandeId],
+        AND (row.decision='PENDING' OR NULLIF(row."values"->>'livraisonAffaireId','') IS NULL)
+      ORDER BY row.decision,row.row_number,row.id LIMIT 1 FOR KEY SHARE`, [commandeId],
   );
-  if (wip.rows[0]) throw new HttpError(409, "CUTOVER_WIP_TARGET_NOT_PREPARED", "Toutes les cohortes WIP incluses de cette commande doivent d'abord avoir une affaire de livraison persistée.");
+  if (wip.rows[0]?.decision === "PENDING") throw new HttpError(409, "CUTOVER_WIP_DECISION_REQUIRED", "Toute cohorte WIP de cette commande doit être explicitement incluse ou exclue avant de préparer un OF neuf.");
+  if (wip.rows[0] && !wip.rows[0].prepared) throw new HttpError(409, "CUTOVER_WIP_TARGET_NOT_PREPARED", "Toutes les cohortes WIP incluses de cette commande doivent d'abord avoir une affaire de livraison persistée.");
   await getBatch(tx, batchId, true);
 }
 export async function repoPreviewNativeRemainder(batchId: string, commandeId: string, input: { expected_batch_version: number }, actorId: number) {
