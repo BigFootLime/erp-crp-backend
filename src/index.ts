@@ -21,6 +21,9 @@ import { startPlanningForecastMaintenance } from "./module/planning/services/pla
 import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
 import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
+import { resolveRuntimeRole, startBackgroundRuntime } from "./shared/runtime/background-runtime";
+import { startMaintenanceGroup } from "./shared/runtime/drainable-maintenance";
+import { startWorkerHealthServer } from "./shared/runtime/worker-health-server";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -47,10 +50,9 @@ async function start(): Promise<void> {
   const uploadRoots = preflightSecureUploadStorageRoots();
   logger.info("upload_storage_preflight_succeeded", { root_count: uploadRoots.length });
 
-  const [{ default: app }, uploadScanner] = await Promise.all([
-    import("./config/app"),
-    Promise.resolve(getUploadScannerStartupConfiguration()),
-  ]);
+  const runtimeRole = resolveRuntimeRole();
+  const uploadScanner = getUploadScannerStartupConfiguration();
+  const app = runtimeRole === "worker" ? null : (await import("./config/app")).default;
   setScannerStartupState(uploadScanner);
   if (!uploadScanner.ready) {
     logger.error("upload_scanner_degraded", {
@@ -61,54 +63,48 @@ async function start(): Promise<void> {
     });
   }
 
+  const startMaintenance = () => startMaintenanceGroup([
+    startAuthRateLimitMaintenance,
+    startMfaArtifactMaintenance,
+    startExpiredLockMaintenance,
+    startReminderMaintenance,
+    startElectronicInvoiceMaintenance,
+    startSupplierInvoiceMaintenance,
+    startEReportingMaintenance,
+    startWebhookDeliveryMaintenance,
+    startAuthoritativePdfArchiveMaintenance,
+    startPlanningForecastMaintenance,
+    startDurationLearningMaintenance,
+    startCumpProjectionMaintenance,
+  ]);
+  const backgroundRuntime = startBackgroundRuntime({ pool, startMaintenance });
+  const workerHealth = runtimeRole === "worker" ? await startWorkerHealthServer() : null;
   const port = Number.parseInt(process.env.PORT || "5000", 10);
-  const httpServer = createServer(app);
-  const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
-  const stopMfaArtifactMaintenance = startMfaArtifactMaintenance();
-  const stopReminderMaintenance = startReminderMaintenance();
-  const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
-  const stopSupplierInvoiceMaintenance = startSupplierInvoiceMaintenance();
-  const stopEReportingMaintenance = startEReportingMaintenance();
-  const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
-  const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
-  const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
-  const stopDurationLearningMaintenance = startDurationLearningMaintenance();
-  const stopCumpProjectionMaintenance = startCumpProjectionMaintenance();
+  const httpServer = app ? createServer(app) : null;
 
-  initSocketServer(httpServer);
-  const stopExpiredLockMaintenance = startExpiredLockMaintenance();
-
-  const listenHost = process.env.CERP_MANAGED_TEST_ID ? '127.0.0.1':e2eListenHost();
-  httpServer.listen(port, listenHost, () => {
-    logger.info("upload_scanner_initialized", {
-      mode: uploadScanner.mode,
-      provider: uploadScanner.provider,
-      ready: uploadScanner.ready,
+  if (httpServer) {
+    initSocketServer(httpServer);
+    const listenHost = process.env.CERP_MANAGED_TEST_ID ? "127.0.0.1" : e2eListenHost();
+    httpServer.listen(port, listenHost, () => {
+      logger.info("upload_scanner_initialized", {
+        mode: uploadScanner.mode,
+        provider: uploadScanner.provider,
+        ready: uploadScanner.ready,
+      });
+      logger.info("service_listening", { listen_host: listenHost, listen_port: port, runtime_role: runtimeRole });
     });
-    logger.info("service_listening", { listen_host: listenHost, listen_port: port });
-  });
+  } else {
+    logger.info("background_worker_started", { runtime_role: runtimeRole, health_port: workerHealth?.port });
+  }
 
   const configuredShutdownTimeout = Number.parseInt(process.env.SHUTDOWN_TIMEOUT_MS ?? "10000", 10);
   const shutdownTimeoutMs = Number.isSafeInteger(configuredShutdownTimeout) && configuredShutdownTimeout > 0
     ? configuredShutdownTimeout
     : 10_000;
   const shutdown = createApplicationShutdown({
-    httpServer,
-    stopRealtime: shutdownRealtimeSocketServer,
-    stopMaintenance: [
-      stopAuthRateLimitMaintenance,
-      stopMfaArtifactMaintenance,
-      stopExpiredLockMaintenance,
-      stopReminderMaintenance,
-      stopElectronicInvoiceMaintenance,
-      stopSupplierInvoiceMaintenance,
-      stopEReportingMaintenance,
-      stopWebhookDeliveryMaintenance,
-      stopAuthoritativePdfArchiveMaintenance,
-      stopPlanningForecastMaintenance,
-      stopDurationLearningMaintenance,
-      stopCumpProjectionMaintenance,
-    ],
+    httpServer: httpServer ?? { listening: false, close: () => undefined },
+    stopRealtime: httpServer ? shutdownRealtimeSocketServer : async () => workerHealth?.close(),
+    stopMaintenance: [backgroundRuntime.stop],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),
   }, shutdownTimeoutMs);
@@ -131,7 +127,7 @@ async function start(): Promise<void> {
 
   process.once("SIGTERM", () => terminate("SIGTERM"));
   process.once("SIGINT", () => terminate("SIGINT"));
-  httpServer.once("close", () => terminate("HTTP_CLOSE"));
+  httpServer?.once("close", () => terminate("HTTP_CLOSE"));
 }
 
 void start().catch((error) => {

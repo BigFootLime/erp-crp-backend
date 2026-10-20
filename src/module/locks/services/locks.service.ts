@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import { resolveAccessProfile } from "../../access-control/services/access-control.service";
 import {
   moduleForRealtimeEntity,
@@ -170,11 +171,9 @@ export function startExpiredLockMaintenance(): () => void {
       running = false;
     }
   };
-  const timer = setInterval(() => void sweep(), expiredLockSweepIntervalMs());
-  timer.unref();
-  void sweep();
-  return () => {
+  const stop = startDrainingInterval(sweep, expiredLockSweepIntervalMs(), { immediate: true });
+  return async () => {
     stopped = true;
-    clearInterval(timer);
+    await stop();
   };
 }

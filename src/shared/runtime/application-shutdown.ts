@@ -7,7 +7,7 @@ export type ShutdownHttpServer = {
 export type ApplicationShutdownDependencies = {
   httpServer: ShutdownHttpServer;
   stopRealtime: () => Promise<void>;
-  stopMaintenance: readonly (() => void)[];
+  stopMaintenance: readonly (() => void | Promise<void>)[];
   closeDatabase: () => Promise<void>;
   log?: (type: string, fields: Record<string, string | number | boolean>) => void;
 };
@@ -36,18 +36,15 @@ export function createApplicationShutdown(
     dependencies.log?.(type, fields);
   };
 
-  const stopMaintenanceOnce = (): unknown[] => {
+  const stopMaintenanceOnce = async (): Promise<unknown[]> => {
     if (maintenanceStopped) return [];
     maintenanceStopped = true;
-    const errors: unknown[] = [];
-    for (const stop of dependencies.stopMaintenance) {
-      try {
-        stop();
-      } catch (error) {
-        errors.push(error);
-      }
-    }
-    return errors;
+    const results = await Promise.allSettled(
+      dependencies.stopMaintenance.map((stop) => Promise.resolve().then(stop))
+    );
+    return results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason);
   };
 
   const stopRealtimeOnce = (): Promise<void> => {
@@ -84,7 +81,7 @@ export function createApplicationShutdown(
   };
 
   const runGracefulShutdown = async (): Promise<void> => {
-    const errors = stopMaintenanceOnce();
+    const errors = await stopMaintenanceOnce();
     try {
       await stopRealtimeOnce();
     } catch (error) {
@@ -127,8 +124,10 @@ export function createApplicationShutdown(
         } catch {
           // The process exits with failure below; no payload from the error is logged.
         }
-        stopMaintenanceOnce();
-        void closeDatabaseOnce().catch(() => undefined);
+        // Keep the PostgreSQL session lock until the fatal process exit. Closing
+        // the pool here would let a standby worker start while a non-cancellable
+        // external side effect may still be draining in this process.
+        void stopMaintenanceOnce();
         log("application_shutdown_timeout", { signal, timeoutMs: boundedTimeoutMs });
         finish({ exitCode: 1, timedOut: true });
       }, boundedTimeoutMs);

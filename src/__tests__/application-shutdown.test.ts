@@ -40,6 +40,25 @@ describe("application shutdown", () => {
     expect(closeDatabase).toHaveBeenCalledTimes(1);
   });
 
+  it("awaits an asynchronous worker drain before closing realtime", async () => {
+    const order: string[] = [];
+    let finishDrain: (() => void) | undefined;
+    const drain = new Promise<void>((resolve) => { finishDrain = resolve; });
+    const shutdown = createApplicationShutdown({
+      httpServer: listeningServer(() => order.push("http")),
+      stopRealtime: vi.fn(async () => { order.push("realtime"); }),
+      stopMaintenance: [async () => { order.push("maintenance"); await drain; }],
+      closeDatabase: vi.fn(async () => { order.push("database"); }),
+    }, 100);
+
+    const result = shutdown("SIGTERM");
+    await Promise.resolve();
+    expect(order).toEqual(["maintenance"]);
+    finishDrain?.();
+    await expect(result).resolves.toEqual({ exitCode: 0, timedOut: false });
+    expect(order).toEqual(["maintenance", "realtime", "http", "database"]);
+  });
+
   it("still closes PostgreSQL and reports failure when a shutdown phase rejects", async () => {
     const closeDatabase = vi.fn(async () => undefined);
     const closeHttp = vi.fn();
@@ -89,7 +108,7 @@ describe("application shutdown", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("forces bounded termination and starts database closure when services hang", async () => {
+  it("forces bounded termination without releasing the worker database lock early", async () => {
     const closeAllConnections = vi.fn();
     const closeDatabase = vi.fn(async () => undefined);
     const never = new Promise<void>(() => undefined);
@@ -106,6 +125,6 @@ describe("application shutdown", () => {
 
     await expect(shutdown("SIGINT")).resolves.toEqual({ exitCode: 1, timedOut: true });
     expect(closeAllConnections).toHaveBeenCalledTimes(1);
-    expect(closeDatabase).toHaveBeenCalledTimes(1);
+    expect(closeDatabase).not.toHaveBeenCalled();
   });
 });

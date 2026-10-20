@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../runtime/drainable-maintenance";
 import pool from "../../config/database";
 import { renderSupplierPurchaseOrderOfficialPdf } from "../../module/commande-fournisseur/services/commande-fournisseur-official-pdf";
 import { renderDevisOfficialPdf } from "../../module/devis/services/devis-official-pdf";
@@ -83,9 +84,10 @@ export async function runAuthoritativePdfArchiveWorkerOnce(
 export function startAuthoritativePdfArchiveMaintenance(): () => void {
   const registry = createAuthoritativePdfProducerRegistry();
   const workerId = `pdf-worker:${process.pid}`;
+  let stopped = false;
   let running = false;
   const cycle = async () => {
-    if (running) return;
+    if (stopped || running) return;
     running = true;
     try { await runAuthoritativePdfArchiveWorkerOnce(registry, workerId); }
     catch (error) {
@@ -94,8 +96,6 @@ export function startAuthoritativePdfArchiveMaintenance(): () => void {
       console.error(JSON.stringify({ type: "authoritative_pdf_archive_worker_failed", code: (error as { code?: string } | null)?.code ?? "UNKNOWN" }));
     } finally { running = false; }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), parseInterval(process.env.CERP_AUTHORITATIVE_PDF_ARCHIVE_INTERVAL_MS));
-  timer.unref?.();
-  return () => clearInterval(timer);
+  const drain = startDrainingInterval(cycle, parseInterval(process.env.CERP_AUTHORITATIVE_PDF_ARCHIVE_INTERVAL_MS), { immediate: true });
+  return async () => { stopped = true; await drain(); };
 }

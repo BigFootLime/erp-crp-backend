@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import bcrypt from "bcryptjs";
 import bwipjs from "bwip-js";
 import type { PoolClient } from "pg";
@@ -891,8 +892,5 @@ export function startMfaArtifactMaintenance(intervalMs = 15 * 60_000): () => voi
       logger.error("mfa_expired_artifact_cleanup_failed", { failure_code: safeErrorCode(error) });
     }
   };
-  void run();
-  const timer = setInterval(() => void run(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainingInterval(run, intervalMs, { immediate: true });
 }

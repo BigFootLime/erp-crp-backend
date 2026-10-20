@@ -1,3 +1,4 @@
+import { startDrainingInterval } from "../../../shared/runtime/drainable-maintenance";
 import { HttpError } from "../../../utils/httpError";
 import { dateInTimeZone, safeReminderFailure } from "../domain/reminder-policy";
 import {
@@ -123,49 +124,38 @@ function boundedInteger(raw: string | undefined, fallback: number, minimum: numb
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
-export function startReminderMaintenance(environment = process.env): () => void {
+export function startReminderMaintenance(environment = process.env): () => Promise<void> {
   const enabled = (environment.ADV_REMINDERS_JOB_ENABLED ?? "false").trim().toLowerCase() === "true";
-  if (!enabled) return () => undefined;
+  if (!enabled) return async () => undefined;
   const intervalMs = boundedInteger(environment.ADV_REMINDERS_JOB_INTERVAL_MS, 300_000, 60_000, 86_400_000);
   const limit = boundedInteger(environment.ADV_REMINDERS_JOB_BATCH_SIZE, 100, 1, 500);
-  let running = false;
-  const timer = setInterval(() => {
-    if (running) {
-      logger.warn("critical_job_overlap_skipped", { job: REMINDER_JOB_NAME });
-      return;
-    }
-    running = true;
+  const cycle = async (): Promise<void> => {
     const correlationId = crypto.randomUUID();
     const startedAt = Date.now();
-    runWithObservabilityContext({ requestId: correlationId, correlationId }, () => {
+    await runWithObservabilityContext({ requestId: correlationId, correlationId }, async () => {
       markJobStarted(REMINDER_JOB_NAME, startedAt);
       logger.info("critical_job_started", { job: REMINDER_JOB_NAME, batch_limit: limit });
-      void runReminderCycle({ now: new Date(), limit, actor: null })
-        .then((result) => {
-          markJobFinished(REMINDER_JOB_NAME, true);
-          logger.info("critical_job_succeeded", {
-            job: REMINDER_JOB_NAME,
-            duration_ms: Date.now() - startedAt,
-            processed: result.processed,
-            sent: result.sent,
-            retryable_failures: result.retryable_failures,
-            final_failures: result.final_failures,
-          });
-        })
-        .catch((error: unknown) => {
-          markJobFinished(REMINDER_JOB_NAME, false);
-          logger.error("critical_job_failed", {
-            job: REMINDER_JOB_NAME,
-            duration_ms: Date.now() - startedAt,
-            failure_code: safeErrorCode(error) ?? "REMINDER_CYCLE_FAILURE",
-            error_fingerprint: errorFingerprint(error),
-          });
-        })
-        .finally(() => {
-          running = false;
+      try {
+        const result = await runReminderCycle({ now: new Date(), limit, actor: null });
+        markJobFinished(REMINDER_JOB_NAME, true);
+        logger.info("critical_job_succeeded", {
+          job: REMINDER_JOB_NAME,
+          duration_ms: Date.now() - startedAt,
+          processed: result.processed,
+          sent: result.sent,
+          retryable_failures: result.retryable_failures,
+          final_failures: result.final_failures,
         });
+      } catch (error: unknown) {
+        markJobFinished(REMINDER_JOB_NAME, false);
+        logger.error("critical_job_failed", {
+          job: REMINDER_JOB_NAME,
+          duration_ms: Date.now() - startedAt,
+          failure_code: safeErrorCode(error) ?? "REMINDER_CYCLE_FAILURE",
+          error_fingerprint: errorFingerprint(error),
+        });
+      }
     });
-  }, intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  };
+  return startDrainingInterval(cycle, intervalMs);
 }
