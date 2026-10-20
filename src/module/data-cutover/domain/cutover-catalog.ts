@@ -103,13 +103,33 @@ for (const key of ["SALES_ORDER", "INTERNAL_DEMAND", "OPENING_STOCK", "WIP"] as 
     if (key === "OPENING_STOCK") fields.push({ key: "withoutRevision", label: "Plan explicitement sans indice", type: "boolean", required: false, group: "Identification technique" });
   }
 }
+
+// Historical review remains available, but an actual continuation is explicit
+// and requires a confirmed physical cohort and a published technical version.
+const nativeWip = [{ field: "resumeMode", value: "NATIVE_RESUME" }] as const;
+const wipFields = catalogFor("WIP").fields;
+const nativeWipField = (field: CutoverField): CutoverField => ({ ...field, required: false, required_when: [...nativeWip], group: "Poursuivre la fabrication" });
+wipFields.unshift({ ...select("resumeMode", "Suite à donner à cet encours", ["REVIEW_ONLY", "NATIVE_RESUME"], false), hint: "Un dossier à compléter reste un état d'ouverture. La reprise native prépare un OF pour les seules pièces encore en fabrication." });
+wipFields.push(
+  nativeWipField({ ...text("historicalVersionId", "Version technique utilisée"), format: "uuid", lookup_entity: "TECHNICAL_VERSION", hint: "Choisir la version publiée correspondant au plan et à l'indice réellement utilisés, même si elle est devenue obsolète." }),
+  nativeWipField({ ...text("physicalBatchReference", "Groupe physique encore en fabrication"), hint: "Référence unique de ce groupe de pièces, distincte du numéro de lot matière. Séparer les groupes si leur avancement ou leur matière diffère." }),
+  nativeWipField(unit()),
+  { key: "previousOperationsConfirmed", label: "Toute cette cohorte a franchi les phases précédentes", type: "boolean", required: false, group: "Poursuivre la fabrication", hint: "À confirmer lorsqu'il existe des phases précédentes. Séparer les groupes si leur avancement diffère." },
+  { ...text("affairTargetId", "Commande CERP à poursuivre", false, "Rapprochement CERP"), lookup_entity: "NATIVE_ORDER", pattern: "^[1-9][0-9]{0,14}$", hint: "Rapprochement SuperAdmin avec la commande ou le besoin interne déjà créé dans CERP." },
+  { ...text("commandeLigneId", "Ligne de commande CERP", false, "Rapprochement CERP"), lookup_entity: "NATIVE_ORDER_LINE", pattern: "^[1-9][0-9]{0,14}$", hint: "Choisir la ligne de la pièce réellement reprise, après préparation de la commande." },
+  { ...text("livraisonAffaireId", "Affaire de livraison CERP", false, "Rapprochement CERP"), lookup_entity: "DELIVERY_AFFAIR", pattern: "^[1-9][0-9]{0,14}$", hint: "Choisir l'affaire affectée à cette ligne de commande. Aucun nouveau numéro historique n'est inventé." },
+  { ...text("materialOpening", "État matière confirmé", false), required_when: [...nativeWip], max_length: 8000, group: "Matière déjà utilisée", hint: "Renseigner les matières déjà consommées par exigence et par lot, sans créer de sortie de stock supplémentaire." },
+  { key: "withoutRevision", label: "Plan utilisé explicitement sans indice", type: "boolean", required: false, group: "Identification technique" },
+);
+wipFields.find((field) => field.key === "technicalRevision")!.required = false;
+wipFields.find((field) => field.key === "quantityRemaining")!.hint = "Uniquement les pièces physiques encore en cours dans ce groupe. Les pièces finies en OLD et les rebuts historiques sont renseignés séparément.";
 // Match native persisted precision: never allow PostgreSQL to silently round a
 // preparation quantity or price during a later qualified business posting.
 for (const key of ["SALES_ORDER", "INTERNAL_DEMAND", "SUPPLIER_ORDER", "WIP", "LEGACY_DELIVERY", "LEGACY_RECEIPT"] as const) {
   for (const field of catalogFor(key).fields) {
     if (field.type === "number" && /^(quantity|stockReserved|scrapQuantity)/.test(field.key)) {
       field.precision = 3;
-      field.max = key === "SUPPLIER_ORDER" ? 99999999999 : 999999999;
+      field.max = key === "WIP" ? 9_999_999_999.999 : key === "SUPPLIER_ORDER" ? 99999999999 : 999999999;
       if (field.key === "quantityOrdered" || field.key === "quantity") field.min = 0.001;
     }
     if (field.key === "unitPrice") { field.precision = key === "SUPPLIER_ORDER" ? 4 : 2; field.max = 9999999999; }

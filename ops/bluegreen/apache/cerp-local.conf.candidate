@@ -1,0 +1,35 @@
+# Candidate replacement for /etc/apache2/sites-enabled/cerp-local.conf.
+# Review with `apache2ctl configtest` before installation. It keeps the current
+# static frontend, managed-test router and the production/default split.
+<VirtualHost *:8081>
+    ServerName cerp.local
+    ServerAdmin webmaster@localhost
+    DocumentRoot /srv/cerp/apps/frontend/dist
+    DirectoryIndex index.html
+    <Directory /srv/cerp/apps/frontend/dist>
+        Options -Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+        FallbackResource /index.html
+    </Directory>
+
+    ProxyPreserveHost On
+    ProxyRequests Off
+    RewriteEngine On
+
+    # Managed test bases have no production fallback.
+    RewriteRule ^/api/v1/test-databases(/.*)?$ http://127.0.0.1:8084/api/v1/test-databases$1 [P,L,NE]
+    RewriteCond %{HTTP:X-CERP-Database} ^cerp_test_ [NC]
+    RewriteRule ^/api/(.*)$ http://127.0.0.1:8084/api/$1 [P,L,NE]
+    RewriteCond %{QUERY_STRING} (^|&)database=cerp_test_ [NC]
+    RewriteRule ^/socket.io/(.*)$ ws://127.0.0.1:8084/socket.io/$1 [P,L,NE]
+    RewriteCond %{HTTP:X-CERP-Database} =cerp_test [NC]
+    RewriteRule ^/api/(.*)$ http://127.0.0.1:8082/api/$1 [P,L,NE]
+    RewriteCond %{QUERY_STRING} (^|&)database=cerp_test(&|$) [NC]
+    RewriteRule ^/socket.io/(.*)$ ws://127.0.0.1:8082/socket.io/$1 [P,L,NE]
+
+    # Only unqualified production traffic reaches the selected colour.
+    IncludeOptional /etc/apache2/conf-enabled/cerp-api-bluegreen-active.conf
+    ErrorLog ${APACHE_LOG_DIR}/cerp-local-error.log
+    CustomLog ${APACHE_LOG_DIR}/cerp-local-access.log combined
+</VirtualHost>

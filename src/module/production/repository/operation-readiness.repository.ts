@@ -11,6 +11,7 @@ import {readOfComponentCoverageTx} from './of-component-coverage.repository';
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
+import {readWipOpeningCheckpointsTx} from '../wip-opening/wip-opening-read.repository';
 
 type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
@@ -18,13 +19,28 @@ type DependencyRow = {successor:string;predecessor:string;label:string;status:st
 export async function usesOperationReadiness(tx:DossierDb,ofId:number){
   const installed=(await tx.query("SELECT to_regclass('public.of_dossier_validations') IS NOT NULL AS installed")).rows[0]?.installed===true;
   if(!installed)return false;
-  return await materialWorkflowEnabled(tx)||(await tx.query<{guarded:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_dossier_validations WHERE of_id=$1)
+  if(await materialWorkflowEnabled(tx))return true;
+  const guarded=(await tx.query<{guarded:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_dossier_validations WHERE of_id=$1)
     OR EXISTS(SELECT 1 FROM public.of_material_needs WHERE of_id=$1) AS guarded`,[ofId])).rows[0]?.guarded===true;
+  if(guarded)return true;
+  // A cutover OF can have neither a native material need nor a prepared
+  // dossier yet. Its append-only opening checkpoints still need the normal
+  // readiness projection so operators see completed predecessors and do not
+  // restart them. Check installation separately: old databases may not yet
+  // carry the cutover tables.
+  const wipInstalled=(await tx.query("SELECT to_regclass('public.data_cutover_wip_resumptions') IS NOT NULL AS installed")).rows[0]?.installed===true;
+  return wipInstalled && (await tx.query<{resumed:boolean}>(`SELECT EXISTS(
+    SELECT 1 FROM public.data_cutover_wip_resumptions WHERE of_id=$1
+  ) AS resumed`,[ofId])).rows[0]?.resumed===true;
 }
-
 export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material?:Awaited<ReturnType<typeof readMaterialTx>>,reservationAvailability?:MaterialReservationAvailability){
   const dossier=await readOfDossierTx(tx,ofId);
   const coverage=material??await readMaterialTx(tx,ofId);
+  // Cutover checkpoints are opening facts, not operator declarations.  They
+  // make an evidenced predecessor available without manufacturing a time log
+  // or changing the native operation timestamps/statuses.
+  const openingCheckpoints=await readWipOpeningCheckpointsTx(tx,ofId);
+  const openingByOperation=new Map(openingCheckpoints.map(checkpoint=>[checkpoint.operationId,checkpoint]));
   const operations=(await tx.query<OperationRow>(`
     SELECT op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
       (m.archived_at IS NOT NULL OR m.is_available IS FALSE OR EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL) OR EXISTS(SELECT 1 FROM public.production_machine_unavailability u JOIN public.planning_events e ON e.id=u.planning_event_id WHERE u.machine_id=m.id AND u.archived_at IS NULL AND e.archived_at IS NULL AND e.status NOT IN ('DONE','CANCELLED') AND e.start_ts<=statement_timestamp() AND e.end_ts>statement_timestamp())) AS machine_unavailable,
@@ -88,27 +104,37 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
   const statuses=['HORS_SERVICE','OUT_OF_SERVICE','MAINTENANCE','EN_MAINTENANCE','IN_MAINTENANCE','INDISPONIBLE'];
   const results=dossier.operations.map(op=>{
     const row=operations.find(r=>r.id===op.id);
+    const opening=openingByOperation.get(op.id);
+    const openingProcessed=(opening?.quantityGood??0)+(opening?.quantityScrap??0)+(opening?.quantityPendingControl??0);
     const facts:OperationReadinessFacts={id:op.id,label:op.label,phase:op.phase,status:op.status,targetQuantity:dossier.quantity,
-      processedQuantity:Number(row?.good??0)+Number(row?.scrap??0)+Number(row?.pending??0)+Number(row?.rework??0),dossierComplete:dossier.status==='COMPLETE',executionStatus:dossier.executionStatus,
+      processedQuantity:Number(row?.good??0)+Number(row?.scrap??0)+Number(row?.pending??0)+Number(row?.rework??0)+openingProcessed,dossierComplete:dossier.status==='COMPLETE',executionStatus:dossier.executionStatus,
       planned:op.planned||['RUNNING','DONE'].includes(op.status),machineBlocked:row?.machine_unavailable===true||statuses.includes(row?.machine_status??''),
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
        programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
       wholeOfMaterialBlockers:[...missingMaterial.map(n=>`${n.designation} : ${n.missing} ${n.unit??''} à couvrir physiquement.${n.blockers.length?' '+n.blockers.join(' '):''}`),...(originBlock?[originBlock]:[])],
       predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>{
+        const openingPredecessor=openingByOperation.get(d.predecessor);
+        const openingGood=openingPredecessor?.quantityGood??0;
         const packages=external.filter(p=>p.operationId===d.predecessor);
         if(operations.some(source=>source.id===d.predecessor&&source.kind==='SOUS_TRAITANCE')){
-          const good=packages.reduce((n,p)=>n+p.released,0);
+          const good=packages.reduce((n,p)=>n+p.released,0)+openingGood;
+          // A completed cutover checkpoint is the evidenced arrival of this
+          // physical cohort at the next phase. It is displayed as available
+          // transfer only; no historical transfer batch is manufactured.
+          const transferred=externalTransfers.filter(b=>b.operation_id===d.predecessor&&b.successor_operation_id===op.id).reduce((n,b)=>n+b.effective,0)+openingGood;
           return {id:d.predecessor,label:d.label,done:good>=dossier.quantity,good,
-            transferred:externalTransfers.filter(b=>b.operation_id===d.predecessor&&b.successor_operation_id===op.id).reduce((n,b)=>n+b.effective,0),
-            partial:d.minimum!==null,minimum:d.minimum??1,requireTransfer:true};
+            transferred,
+            partial:d.minimum!==null,minimum:d.minimum??1,requireTransfer:true,origin:openingPredecessor?'CUTOVER_OPENING' as const:undefined};
         }
-        return {id:d.predecessor,label:d.label,done:d.status==='DONE',good:d.good,transferred:Math.min(d.good,d.transferred),partial:d.partial,minimum:d.minimum??1};
+        const good=d.good+openingGood;
+        return {id:d.predecessor,label:d.label,done:d.status==='DONE'||openingPredecessor?.status==='COMPLETED',good,transferred:Math.min(good,d.transferred+openingGood),partial:d.partial,minimum:d.minimum??1,origin:openingPredecessor?'CUTOVER_OPENING' as const:undefined};
       })};
     const firstMachining=operations.find(o=>['TOURNAGE','FRAISAGE','REPRISE'].includes(o.kind??''));
     const quantityKind=row?.kind==='DECOUPE'&&firstMachining?.kind==='TOURNAGE'&&coverage.needs.some(n=>n.operationId===op.id&&n.debitRule?.form==='BAR')?'POTENTIAL' as const:'ACTUAL' as const;
     return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
       assemblyOperation:row?.kind==='ASSEMBLAGE',quantityKind,
+      ...(opening?{openingCheckpoint:{...opening}}:{}),
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};
   });
   return {enabled:true as const,ofId,number:dossier.number,missingMaterial,originPolicy:coverage.originPolicy,version:materialPropertiesFingerprint({coverage:coverage.version,operations,dependencies,external,componentCoverageVersion:componentCoverage?.version??null,materialAvailability:[...availableReservations].map(([key,a])=>[key,a.usable,a.blockers]),results}),operations:results};

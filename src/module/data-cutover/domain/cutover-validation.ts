@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { catalogFor } from "./cutover-catalog";
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { parseWipMaterialPayload } from "./wip-material-payload";
 import type { CutoverDomain, CutoverIssue, CutoverRow, CutoverSummary, CutoverValues, Scalar } from "../types/data-cutover.types";
 
 export function canonicalJson(value: unknown): string {
@@ -67,6 +68,18 @@ export function validateCutoverValues(domain: CutoverDomain, values: CutoverValu
   if ((domain === "TECHNICAL_PIECE" || (domain === "OPENING_STOCK" && values.stockKind === "PF")) && values.resolution !== "LINK" && missing(values.externalRevision) && values.withoutRevision !== true) add("externalRevision", "REVISION_REQUIRED", "Préciser l'indice ou confirmer explicitement un plan sans indice.");
   if (!missing(values.externalRevision) && values.withoutRevision === true) add("externalRevision", "REVISION_CONTRADICTION", "Un plan ne peut pas avoir un indice et être déclaré sans indice en même temps.");
   if (!missing(values.externalRevision) && missing(values.planReference)) add("planReference", "PLAN_REFERENCE_REQUIRED", "Confirmer la référence du plan séparément de son indice.");
+  if (domain === "WIP") {
+    if (missing(values.technicalRevision) && values.withoutRevision !== true) add("technicalRevision", "REVISION_REQUIRED", "Confirmer l'indice utilisé ou un plan explicitement sans indice.");
+    if (!missing(values.technicalRevision) && values.withoutRevision === true) add("technicalRevision", "REVISION_CONTRADICTION", "Le plan utilisé ne peut pas avoir un indice et être déclaré sans indice.");
+    if (values.resumeMode === "NATIVE_RESUME") {
+      if (decimal(values.quantityRemaining) === 0n) add("quantityRemaining", "CUTOVER_WIP_COHORT_REQUIRED", "Une reprise concerne des pièces encore en fabrication. Les pièces finies vont dans l'ouverture de stock.");
+      if (!/^(?:0|[1-9]\d{0,8})$/.test(String(values.currentPhase ?? ""))) add("currentPhase", "CUTOVER_WIP_PHASE_REQUIRED", "Choisir une phase de la gamme publiée utilisée.");
+      if (typeof values.materialOpening === "string") {
+        try { parseWipMaterialPayload(values.materialOpening); }
+        catch (error) { add("materialOpening", "CUTOVER_WIP_MATERIAL_INVALID", error instanceof Error ? error.message : "Compléter le tableau matière proposé avant la reprise."); }
+      }
+    }
+  }
   if (domain === "OPENING_STOCK") {
     if (values.owner && values.owner !== "CRP" && missing(values.ownerCode)) add("ownerCode", "OWNER_REQUIRED", "Identifier le propriétaire tiers du stock.");
     if (values.owner === "CLIENT" && missing(values.ownerTargetId) && missing(values.ownerLegacyKey)) add("ownerTargetId", "OWNER_TARGET_REQUIRED", "Rapprocher le client propriétaire CERP avant l'ouverture du stock.");

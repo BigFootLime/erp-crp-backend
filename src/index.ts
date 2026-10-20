@@ -78,11 +78,11 @@ async function start(): Promise<void> {
       startPlanningForecastMaintenance,
       startDurationLearningMaintenance,
       startCumpProjectionMaintenance,
+      startExpiredLockMaintenance,
     ],
   });
 
   initSocketServer(httpServer);
-  const stopExpiredLockMaintenance = startExpiredLockMaintenance();
 
   const listenHost = process.env.CERP_MANAGED_TEST_ID ? '127.0.0.1':e2eListenHost();
   httpServer.listen(port, listenHost, () => {
@@ -103,7 +103,6 @@ async function start(): Promise<void> {
     stopRealtime: shutdownRealtimeSocketServer,
     stopMaintenance: [
       () => backgroundLifecycle.stop(),
-      stopExpiredLockMaintenance,
     ],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),

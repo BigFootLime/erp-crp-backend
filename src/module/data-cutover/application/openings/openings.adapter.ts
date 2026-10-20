@@ -2,6 +2,7 @@ import { HttpError } from "../../../../utils/httpError";
 import type { ApplicationAdapter, ApplicationContext } from "../application.types";
 import { applyFinanceOpeningsTx, applyOpeningStockTx, applyWipOpeningTx, assertOpeningRowsReady, assertOpeningStockInputs, resolveOpeningPfTechnicalVersionTx } from "./openings.contract";
 import type { CutoverIssue } from "../../types/data-cutover.types";
+import { inspectNativeWipPreparationTx } from "./wip-native.adapter";
 
 const issue = (rowId: string, error: unknown): CutoverIssue & { row_id?: string } => ({
   row_id: rowId, field: null,
@@ -53,17 +54,28 @@ const stockAdapter: ApplicationAdapter = {
   async apply(context) { return applyOpeningStockTx({ client: context.client, rows: context.rows, targets: context.targets, audit: audit(context), idempotencyKeyFor: (row) => `${context.operationKey}:${row.id}` }); },
 };
 const wipAdapter: ApplicationAdapter = {
-  domains: ["WIP"], kind: "OPENING_WIP", mode: "OPENING", effects: ["Crée un état d'ouverture à rattacher ; aucun OF ni pointage historique."], groupKey: (row) => row.id,
+  domains: ["WIP"], kind: "RESUME_WIP", mode: "OPENING", effects: ["Prépare un OF brouillon pour la cohorte physique confirmée, avec son avancement et sa matière d'ouverture. Aucun ancien pointage ni mouvement de stock n'est rejoué."], groupKey: (row) => row.id,
   async inspect(context) {
     const blockers = commonInspect(context, ["WIP"]);
     for (const row of context.rows) {
       if (!targetExists(context, row.id, "articleTargetId", "ARTICLE", "articleLegacyKey")) blockers.push({ row_id: row.id, field: "articleTargetId", code: "CUTOVER_WIP_TARGET_UNRESOLVED", message: "Rapprocher l'article CERP." });
       if (!targetExists(context, row.id, "affairTargetId", "SALES_ORDER", "affairLegacyKey", ["SALES_ORDER", "INTERNAL_DEMAND", "COMMANDE_CLIENT", "BESOIN_INTERNE"]) && !targetExists(context, row.id, "affairTargetId", "INTERNAL_DEMAND", "affairLegacyKey", ["SALES_ORDER", "INTERNAL_DEMAND", "COMMANDE_CLIENT", "BESOIN_INTERNE"])) blockers.push({ row_id: row.id, field: "affairTargetId", code: "CUTOVER_WIP_TARGET_UNRESOLVED", message: "Rapprocher l'affaire CERP." });
       if (!text(context, row.id, "workshopValidator") || !text(context, row.id, "evidenceReference")) blockers.push({ row_id: row.id, field: "evidenceReference", code: "CUTOVER_WIP_EVIDENCE_REQUIRED", message: "Faire confirmer l'encours par l'atelier." });
+      if (row.values.resumeMode !== "NATIVE_RESUME") {
+        blockers.push({ row_id: row.id, field: "resumeMode", code: "CUTOVER_WIP_RESUMPTION_REQUIRED", message: "Cet encours reste en préparation. Compléter sa reprise native avant de charger la fabrication ; aucun OF ne sera créé à partir d'un dossier à compléter." });
+        continue;
+      }
+      const article = targetFor(context, row.id, "articleTargetId", "ARTICLE", "articleLegacyKey");
+      const types = ["SALES_ORDER", "INTERNAL_DEMAND", "COMMANDE_CLIENT", "BESOIN_INTERNE"];
+      const affair = targetFor(context, row.id, "affairTargetId", "SALES_ORDER", "affairLegacyKey", types) ?? targetFor(context, row.id, "affairTargetId", "INTERNAL_DEMAND", "affairLegacyKey", types);
+      if (article && affair) try { await inspectNativeWipPreparationTx(context.client, { row, article, affair, actorId: context.actorId, sourceSystem: context.sourceSystem, operationKey: context.operationKey }); } catch (error) { blockers.push(issue(row.id, error)); }
     }
     return blockers;
   },
-  async apply(context) { return applyWipOpeningTx({ client: context.client, rows: context.rows, targets: context.targets, actorId: context.actorId }); },
+  async apply(context) {
+    if (context.rows.some((row) => row.values.resumeMode !== "NATIVE_RESUME")) throw new HttpError(409, "CUTOVER_WIP_RESUMPTION_REQUIRED", "Compléter la reprise native avant de charger ces encours.");
+    return applyWipOpeningTx({ client: context.client, rows: context.rows, targets: context.targets, actorId: context.actorId, sourceSystem: context.sourceSystem, operationKey: context.operationKey });
+  },
 };
 const financeAdapter: ApplicationAdapter = {
   domains: ["OPENING_RECEIVABLE", "OPENING_PAYABLE", "LEGACY_DELIVERY", "LEGACY_RECEIPT"], kind: "OPENING_FINANCE", mode: "OPENING", effects: ["Crée un état à rapprocher ; aucune facture, aucun règlement et aucun mouvement de stock."], groupKey: (row) => row.id,

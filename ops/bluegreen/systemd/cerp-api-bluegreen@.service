@@ -1,0 +1,30 @@
+[Unit]
+Description=CERP API blue/green slot %i (loopback standby)
+After=network-online.target postgresql@17-main.service
+Wants=network-online.target
+RequiresMountsFor=/mnt/data
+
+[Service]
+Type=simple
+User=cerp
+Group=cerp_write
+Environment=NODE_ENV=production
+# The shared file is root-owned and contains the ordinary production values;
+# the slot file supplies PORT, CERP_RELEASE_DIR and CERP_STANDBY. Neither is committed.
+EnvironmentFile=/etc/cerp/bluegreen/shared.env
+EnvironmentFile=/etc/cerp/bluegreen/%i.env
+WorkingDirectory=${CERP_RELEASE_DIR}
+ExecStart=/srv/cerp/runtime/node-v24.18.0-linux-x64/bin/node ${CERP_RELEASE_DIR}/dist/index.js
+Restart=always
+RestartSec=5
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/cerp /mnt/data/cerp /mnt/data/cerp-ged/prod
+CapabilityBoundingSet=
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
