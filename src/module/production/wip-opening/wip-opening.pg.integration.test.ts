@@ -203,6 +203,39 @@ describePg("native WIP resumption on dedicated schema", () => {
     } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }
   });
 
+  it("refuses a second batch using the same physical group before it consumes an affair number or allocation", async () => {
+    const tx = await db.connect();
+    try {
+      await tx.query("BEGIN");
+      const source = await seed(tx, { withDelivery: false, quantity: 100 });
+      const physical = "Physical-Global-1710";
+      const values = { physicalBatchReference: physical };
+      await tx.query(`UPDATE public.data_cutover_rows SET decision='INCLUDE',"values"=$2::jsonb WHERE id=$1::uuid`, [ids.row, JSON.stringify(values)]);
+      const first = await createCutoverDeliveryTargetTx(tx, {
+        commandeId: source.commandId, commandeLigneId: source.commandLineId, articleId: ids.article, pieceTechniqueVersionId: ids.version, quantity: 30,
+        sourceRowId: ids.row, physicalBatchReference: physical,
+      });
+      await tx.query(`UPDATE public.data_cutover_rows SET "values"=$2::jsonb WHERE id=$1::uuid`, [ids.row, JSON.stringify({ ...values, livraisonAffaireId: first.livraison_affaire_id })]);
+      const secondBatch = randomUUID(), secondRow = randomUUID();
+      await tx.query(`INSERT INTO public.data_cutover_batches(id,name,source_system,source_hash,sources,created_by)
+        VALUES($1::uuid,'Second WIP fixture','CLIPPER_EXCEL',repeat('b',64),'[]'::jsonb,$2)`, [secondBatch, ids.user]);
+      await tx.query(`INSERT INTO public.data_cutover_rows(id,batch_id,domain,legacy_key,source_id,sheet,row_number,source_values,"values",decision,updated_by)
+        VALUES($1::uuid,$2::uuid,'WIP','WIP:second','fixture','WIP',3,'{}'::jsonb,$3::jsonb,'INCLUDE',$4)`, [secondRow, secondBatch, JSON.stringify({ physicalBatchReference: "  physical-global-1710  " }), ids.user]);
+      const before = await tx.query<{ affairs: number; allocated: string }>(`SELECT
+        (SELECT count(*)::int FROM public.affaire WHERE commande_id=$1::bigint) AS affairs,
+        (SELECT sum(qty_ordered)::text FROM public.commande_ligne_affaire_allocation WHERE commande_id=$1::bigint) AS allocated`, [source.commandId]);
+      await expect(createCutoverDeliveryTargetTx(tx, {
+        commandeId: source.commandId, commandeLigneId: source.commandLineId, articleId: ids.article, pieceTechniqueVersionId: ids.version, quantity: 30,
+        sourceRowId: secondRow, physicalBatchReference: "  physical-global-1710  ",
+      })).rejects.toMatchObject({ code: "CUTOVER_WIP_PHYSICAL_BATCH_ALREADY_PREPARED" });
+      const after = await tx.query<{ affairs: number; allocated: string }>(`SELECT
+        (SELECT count(*)::int FROM public.affaire WHERE commande_id=$1::bigint) AS affairs,
+        (SELECT sum(qty_ordered)::text FROM public.commande_ligne_affaire_allocation WHERE commande_id=$1::bigint) AS allocated`, [source.commandId]);
+      expect(after.rows[0]).toEqual(before.rows[0]);
+      await tx.query("ROLLBACK");
+    } catch (error) { await tx.query("ROLLBACK"); throw error; } finally { tx.release(); }
+  });
+
   it("allocates every native remainder after a six-unit WIP cohort without changing WIP or creating a delivery document", async () => {
     const tx = await db.connect();
     try {
