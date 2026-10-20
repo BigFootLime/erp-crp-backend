@@ -10,6 +10,8 @@ import { linkCutoverEvidenceTx, listEvidenceTx } from "../application/evidence/e
 import { getFinancialCutoverStatusTx, startFinancialCutoverPreparationTx } from "../../facturation/repository/financial-cutover-guard";
 import { listCutoverOpeningStatesTx } from "../application/openings/openings.repository";
 import { readWipPreparationContextTx } from "../application/openings/wip-preparation.contract";
+import { buildConfirmedWipCheckpoints } from "../application/openings/wip-preparation.contract";
+import { createCutoverDeliveryTargetTx } from "../../commande-client/repository/commande-client.repository";
 
 type StoredBatch = Omit<CutoverBatch, "summary"> & { preview_hash: string | null; preview_payload: CutoverPreview | null; validation: unknown };
 type StoredRow = Omit<CutoverRow, "status" | "issues">;
@@ -142,7 +144,7 @@ export async function repoGetCutoverWipContext(batchId: string, rowId: string, c
 function assertVersion(batch: StoredBatch, expected: number): void {
   if (batch.version !== expected) throw new HttpError(409, "CUTOVER_STALE_VERSION", "Le dossier a été modifié depuis son affichage. Rechargez les données avant de continuer.");
 }
-async function invalidateValidation(tx: PoolClient, batch: StoredBatch, actorId: number, reason: "ROW_UPDATED" | "CONTRIBUTORS_CHANGED" | "EVIDENCE_LINKED"): Promise<void> {
+async function invalidateValidation(tx: PoolClient, batch: StoredBatch, actorId: number, reason: "ROW_UPDATED" | "CONTRIBUTORS_CHANGED" | "EVIDENCE_LINKED" | "WIP_DELIVERY_TARGET_PREPARED"): Promise<void> {
   // Keep the signed preparation evidence immutable in the audit trail. The
   // validation itself is cleared only once the reason and its prior hash have
   // been recorded, so a later reviewer can see why a signature disappeared.
@@ -258,6 +260,89 @@ export async function repoPatchCutoverRow(batchId: string, rowId: string, input:
       const row = await tx.query<{ domain: CutoverDomain }>("SELECT domain FROM public.data_cutover_rows WHERE id=$1::uuid AND batch_id=$2::uuid", [rowId, batchId]);
       if (!row.rows[0] || !domains.includes(row.rows[0].domain)) throw new HttpError(404, "CUTOVER_ROW_NOT_FOUND", "Fiche de reprise introuvable dans ce dossier.");
     }
+  });
+}
+
+/**
+ * The normal customer-order launch creates an OF for every shortage.  A
+ * resumed physical cohort must instead receive its delivery target first, so
+ * the qualified WIP writer remains the sole creator of its OF.
+ */
+export async function repoPrepareCutoverWipDeliveryTarget(
+  batchId: string,
+  rowId: string,
+  input: { expected_version: number; commande_ligne_id: string },
+  actorId: number,
+  key: string,
+) {
+  if (!await repoIsCutoverApplicationInstalled()) {
+    throw new HttpError(503, "CUTOVER_APPLICATION_NOT_INSTALLED", "La reprise WIP nécessite les composants de reprise installés. Aucune affaire de livraison n'a été créée.");
+  }
+  return command(actorId, `wip-delivery-target:${batchId}:${rowId}`, key, input, async (tx) => {
+    const batch = await getBatch(tx, batchId, true);
+    const result = await tx.query<StoredRow>(
+      `SELECT id::text,batch_id::text,domain,legacy_key,source_id,sheet,row_number,source_values,"values",source_issues,source_notes,decision,review_note,version
+         FROM public.data_cutover_rows WHERE id=$1::uuid AND batch_id=$2::uuid FOR UPDATE`,
+      [rowId, batchId],
+    );
+    const stored = result.rows[0];
+    if (!stored || stored.domain !== "WIP") throw new HttpError(404, "CUTOVER_WIP_ROW_NOT_FOUND", "La fiche d'encours demandée est introuvable dans ce dossier.");
+    if (stored.version !== input.expected_version) throw new HttpError(409, "CUTOVER_STALE_ROW", "Cette fiche a été modifiée par une autre personne. Rechargez-la avant de préparer l'affaire.");
+    if (stored.decision !== "INCLUDE") throw new HttpError(409, "CUTOVER_WIP_ROW_NOT_SELECTED", "Sélectionner cette fiche d'encours dans le lot avant de préparer son affaire de livraison.");
+    if (stored.values.resumeMode !== "NATIVE_RESUME") throw new HttpError(422, "CUTOVER_WIP_RESUME_MODE_REQUIRED", "Choisir « poursuivre dans CERP » avant de préparer une affaire de livraison.");
+    const orderId = typeof stored.values.affairTargetId === "string" ? stored.values.affairTargetId.trim() : "";
+    const articleId = typeof stored.values.articleTargetId === "string" ? stored.values.articleTargetId.trim() : "";
+    const versionId = typeof stored.values.historicalVersionId === "string" ? stored.values.historicalVersionId.trim() : "";
+    if (!/^[1-9]\d{0,14}$/.test(orderId) || !articleId || !versionId) {
+      throw new HttpError(422, "CUTOVER_WIP_TARGET_REQUIRED", "Rapprocher la commande, l'article et la version technique avant de préparer l'affaire de livraison.");
+    }
+    const existingLine = typeof stored.values.commandeLigneId === "string" ? stored.values.commandeLigneId.trim() : "";
+    const existingAffair = typeof stored.values.livraisonAffaireId === "string" ? stored.values.livraisonAffaireId.trim() : "";
+    if (existingAffair) throw new HttpError(409, "CUTOVER_WIP_DELIVERY_TARGET_ALREADY_PREPARED", "Cette fiche possède déjà une affaire de livraison préparée. Rechargez la fiche puis poursuivez la reprise WIP.");
+    if (existingLine && existingLine !== input.commande_ligne_id) throw new HttpError(409, "CUTOVER_WIP_LINE_ALREADY_SELECTED", "Une autre ligne de commande est déjà enregistrée sur cette fiche. Rechargez-la avant de continuer.");
+
+    const row = inspectCutoverRow(stored, { allowedUnits: (await listUnits(tx)).map((unit) => unit.code) });
+    const context = await readWipPreparationContextTx(tx, row, versionId);
+    if (!context.article_ready || !context.selected_version || !context.piece_technique_id || context.demand_type === "INTERNE") {
+      throw new HttpError(422, "CUTOVER_WIP_CUSTOMER_ORDER_REQUIRED", "Cette préparation concerne uniquement une commande client et un article fabriqué correctement rapprochés.");
+    }
+    if (context.resumption_blocker) throw new HttpError(409, context.resumption_blocker.code, context.resumption_blocker.message);
+    const chosenLine = context.demand_lines.find((line) => line.id === input.commande_ligne_id);
+    if (!chosenLine) throw new HttpError(422, "CUTOVER_WIP_LINE_NOT_MATCHED", "Choisir une ligne de cette commande correspondant à l'article et à la version de l'encours.");
+    // This performs the cohort/phase/evidence checks now, before creating any
+    // native affair. It writes no historical operation or pointage.
+    buildConfirmedWipCheckpoints(row, context.phases);
+    const planReference = typeof row.values.planReference === "string" ? row.values.planReference.trim() : "";
+    const revision = typeof row.values.technicalRevision === "string" ? row.values.technicalRevision.trim() : "";
+    const noRevision = row.values.withoutRevision === true;
+    if (!planReference || planReference !== context.selected_version.plan_reference ||
+      (noRevision ? Boolean(context.selected_version.indice) || Boolean(revision) : !revision || revision !== context.selected_version.indice)) {
+      throw new HttpError(422, "CUTOVER_WIP_REVISION_MISMATCH", "Le plan et son indice confirmés doivent correspondre à la version publiée utilisée par cet encours.");
+    }
+    const rowUnit = typeof row.values.unit === "string" ? canonicalizeStockUnitCode(row.values.unit) : null;
+    if (!rowUnit || rowUnit !== context.unit) {
+      throw new HttpError(422, "CUTOVER_WIP_UNIT_MISMATCH", "La cohorte doit utiliser l'unité de l'article CERP. Aucune conversion automatique n'est effectuée.");
+    }
+    const quantity = Number(String(row.values.quantityRemaining ?? "").replace(",", "."));
+    const target = await createCutoverDeliveryTargetTx(tx, {
+      commandeId: orderId,
+      commandeLigneId: input.commande_ligne_id,
+      articleId,
+      pieceTechniqueVersionId: versionId,
+      quantity,
+    });
+    const values = { ...stored.values, commandeLigneId: target.commande_ligne_id, livraisonAffaireId: target.livraison_affaire_id };
+    await tx.query(`UPDATE public.data_cutover_rows SET "values"=$3::jsonb,version=version+1,updated_by=$4,updated_at=now() WHERE id=$1::uuid AND batch_id=$2::uuid`, [rowId, batchId, JSON.stringify(values), actorId]);
+    if (batch.status === "VALIDATED") await invalidateValidation(tx, batch, actorId, "WIP_DELIVERY_TARGET_PREPARED");
+    const updatedBatch = await tx.query<{ version: number }>(`UPDATE public.data_cutover_batches SET status='DRAFT',version=version+1,preview_hash=NULL,preview_payload=NULL,validation='{}'::jsonb,updated_at=now() WHERE id=$1::uuid RETURNING version`, [batchId]);
+    await audit(tx, batchId, rowId, actorId, "WIP_DELIVERY_TARGET_PREPARED", {
+      commande_id: orderId, commande_ligne_id: target.commande_ligne_id, livraison_affaire_id: target.livraison_affaire_id,
+      affaire_reference: target.affaire_reference, quantity: target.quantity, unallocated_quantity_after: target.unallocated_quantity_after,
+      creates_of: false, creates_stock_movement: false, creates_delivery: false, creates_financial_document: false, external_effects: false,
+    });
+    const updated = inspectCutoverRow({ ...stored, values, version: stored.version + 1 }, { allowedUnits: (await listUnits(tx)).map((unit) => unit.code) });
+    await verifyReferenceTargets(tx, [updated]);
+    return { row: updated, batch_version: updatedBatch.rows[0]!.version, target };
   });
 }
 

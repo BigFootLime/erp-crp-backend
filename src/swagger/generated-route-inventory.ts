@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "11161ab4984411e7dd2910ed0138952a32e6793263558fde4743d89923227dd9";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "76f58e55ee6a75618d9727e14862df1700053f625ee589eaa6c1da1a0a9d758e";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -5756,7 +5756,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/application-preview",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:46",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:47",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5775,7 +5775,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/applications",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:48",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5794,7 +5794,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/apply",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:47",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5813,7 +5813,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/contributors",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:44",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5831,7 +5831,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/contributors",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:45",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5850,7 +5850,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/evidence",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:50",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5869,7 +5869,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/export",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:43",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:44",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5888,7 +5888,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/data-cutover/batches/{id}/openings",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:49",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5907,7 +5907,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/preview",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:38",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:39",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5943,7 +5943,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/data-cutover/batches/{id}/rows/{rowId}",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:37",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:38",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5961,7 +5961,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/data-cutover/batches/{id}/rows/{rowId}/evidence",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:51",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5996,8 +5996,27 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/data-cutover/batches/{id}/rows/{rowId}/wip/prepare-delivery-target",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:37",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.prepareWipDeliveryTarget"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/data-cutover/batches/{id}/validate",
-    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:39",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",

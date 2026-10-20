@@ -7227,6 +7227,101 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
   await db.query("SELECT public.capture_initial_delivery_promises($1::bigint)", [input.commande_id]);
 }
 
+/**
+ * Creates the native delivery target required by a validated WIP cohort.
+ * The ordinary command launch is deliberately not used: it creates an OF for
+ * every shortage, whereas the cutover WIP writer must be the only OF writer.
+ */
+export type CutoverDeliveryTargetInput = {
+  commandeId: string;
+  commandeLigneId: string;
+  articleId: string;
+  pieceTechniqueVersionId: string;
+  quantity: number;
+};
+
+export type CutoverDeliveryTarget = {
+  commande_ligne_id: string;
+  livraison_affaire_id: string;
+  affaire_reference: string;
+  quantity: number;
+  unallocated_quantity_after: number;
+};
+
+export async function createCutoverDeliveryTargetTx(db: PoolClient, input: CutoverDeliveryTargetInput): Promise<CutoverDeliveryTarget> {
+  const commandeId = toInt(input.commandeId, "commande_id");
+  const ligneId = toInt(input.commandeLigneId, "commande_ligne_id");
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
+    throw new HttpError(422, "CUTOVER_WIP_COHORT_REQUIRED", "La quantité de cohorte à reprendre doit être strictement positive.");
+  }
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`cutover-wip-target:${commandeId}:${ligneId}`]);
+  const header = (await db.query<{ client_id: string | null; devis_id: string | null; order_type: string }>(
+    `SELECT client_id,devis_id::text AS devis_id,order_type::text FROM public.commande_client WHERE id=$1::bigint FOR UPDATE`,
+    [commandeId],
+  )).rows[0];
+  if (!header) throw new HttpError(404, "CUTOVER_WIP_ORDER_NOT_FOUND", "La commande CERP sélectionnée n'existe plus.");
+  if (header.order_type === "INTERNE") throw new HttpError(422, "CUTOVER_WIP_INTERNAL_TARGET_UNSUPPORTED", "Un besoin interne ne nécessite pas d'affaire de livraison.");
+  if (!header.client_id) throw new HttpError(422, "CUTOVER_WIP_CUSTOMER_REQUIRED", "La commande client doit être rapprochée de son client avant de préparer cet encours.");
+
+  const line = (await db.query<{ quantity: number; article_id: string | null; version_id: string | null; allocated: number; has_unallocated_normal_of: boolean }>(
+    `SELECT line.quantite::float8 AS quantity,line.article_id::text AS article_id,line.piece_technique_version_id::text AS version_id,
+       COALESCE((SELECT sum(allocation.qty_ordered)::float8 FROM public.commande_ligne_affaire_allocation allocation
+                 WHERE allocation.commande_id=line.commande_id AND allocation.commande_ligne_id=line.id),0)::float8 AS allocated
+       ,EXISTS(SELECT 1 FROM public.ordres_fabrication production
+                WHERE production.commande_ligne_id=line.id AND production.parent_of_id IS NULL
+                  AND production.affaire_id IS NULL AND production.statut::text<>'ANNULE') AS has_unallocated_normal_of
+       FROM public.commande_ligne line WHERE line.id=$1::bigint AND line.commande_id=$2::bigint FOR UPDATE`,
+    [ligneId, commandeId],
+  )).rows[0];
+  if (!line) throw new HttpError(422, "CUTOVER_WIP_LINE_NOT_MATCHED", "La ligne sélectionnée n'appartient pas à cette commande.");
+  if (line.article_id !== input.articleId || line.version_id !== input.pieceTechniqueVersionId) {
+    throw new HttpError(422, "CUTOVER_WIP_LINE_TECHNICAL_MISMATCH", "La ligne sélectionnée doit correspondre à l'article et à la version technique validés pour cet encours.");
+  }
+  if (line.has_unallocated_normal_of) {
+    throw new HttpError(409, "CUTOVER_WIP_UNALLOCATED_NORMAL_OF_EXISTS", "Un OF normal existe déjà sur cette ligne sans affaire de livraison. Vérifiez-le avant de préparer une reprise WIP afin d'éviter un double lancement.");
+  }
+  const unallocated = Number(line.quantity) - Number(line.allocated);
+  if (!Number.isFinite(unallocated) || input.quantity > unallocated + 1e-9) {
+    throw new HttpError(409, "CUTOVER_WIP_QUANTITY_EXCEEDS_UNALLOCATED", "La cohorte dépasse le reliquat encore non affecté de cette ligne. Rechargez la commande avant de continuer.", { quantity: input.quantity, unallocated_quantity: Math.max(0, unallocated) });
+  }
+
+  const affaireId = await createAffaire(db, {
+    commande_id: commandeId,
+    client_id: header.client_id,
+    devis_id: header.devis_id ? toInt(header.devis_id, "commande.devis_id") : null,
+    delivery_readiness_state: "WAITING_TECHNICAL",
+  });
+  await insertCommandeToAffaireMapping(db, {
+    commande_id: commandeId,
+    affaire_id: affaireId,
+    role: "LIVRAISON",
+    commentaire: "Cible de reprise WIP préparée sans OF ni réservation",
+  });
+  await upsertCommandeAllocations(db, {
+    commande_id: commandeId,
+    livraison_affaire_id: affaireId,
+    allocation_mode: "CUTOVER_WIP",
+    reserve_stock: false,
+    reserved_qty_by_line: null,
+    lines: [{ commande_ligne_id: ligneId, code_piece: null, article_ref_id: input.articleId, article_legacy_id: null,
+      qty_ordered: input.quantity, qty_on_hand: 0, qty_from_stock: 0, qty_to_produce: input.quantity }],
+  });
+  // The generic allocation upsert intentionally leaves progression fields to
+  // its caller.  This target starts with no delivery, stock or production
+  // fact, so its sole native remaining quantity is the WIP cohort itself.
+  await db.query(
+    `UPDATE public.commande_ligne_affaire_allocation
+        SET qty_remaining=$3,qty_produced=0,qty_stocked=0,qty_delivered=0,
+            delivery_status='A_PREPARER',allocation_version=allocation_version+1,updated_at=now()
+      WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND livraison_affaire_id=$4::bigint`,
+    [commandeId, ligneId, input.quantity, affaireId],
+  );
+  const affaire = (await db.query<{ reference: string }>("SELECT reference FROM public.affaire WHERE id=$1::bigint", [affaireId])).rows[0];
+  if (!affaire?.reference) throw new Error("CUTOVER_WIP_DELIVERY_AFFAIRE_MISSING");
+  return { commande_ligne_id: String(ligneId), livraison_affaire_id: String(affaireId), affaire_reference: affaire.reference,
+    quantity: input.quantity, unallocated_quantity_after: Math.max(0, unallocated - input.quantity) };
+}
+
 export async function repoPreviewAffairesFromCommande(id: string) {
   const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();

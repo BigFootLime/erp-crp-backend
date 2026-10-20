@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-10-20T12:04:39.904Z",
+  "generated_at": "2026-10-20T14:58:54.441Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 322,
-  "support_file_count": 701,
-  "recent_patch_count": 264,
+  "patch_count": 324,
+  "support_file_count": 707,
+  "recent_patch_count": 266,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -600,10 +600,10 @@
   ],
   "risk_totals": {
     "destructive_ddl": 3,
-    "destructive_dml": 38,
-    "data_rewrite": 209,
+    "destructive_dml": 40,
+    "data_rewrite": 211,
     "table_lock": 229,
-    "blocking_index": 214,
+    "blocking_index": 216,
     "enum_change": 2
   },
   "patches": [
@@ -6102,6 +6102,42 @@
     },
     {
       "order": 322,
+      "filename": "20261020_06_cutover_wip_resume_1710.sql",
+      "sha256": "abc92545952c179e049ff1c6edbd3201cdbf023e187af97a95dc0833764639e1",
+      "bytes": 5449,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "destructive-dml",
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 323,
+      "filename": "20261020_07_cutover_wip_material_1710.sql",
+      "sha256": "6122609758aeb3ff3fd261a97b8bda23be56af0d4f70073a0ca7a6bbc8294f5b",
+      "bytes": 7374,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "destructive-dml",
+        "data-rewrite",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 324,
       "filename": "20261020_cutover_numbering_1710.sql",
       "sha256": "12a2958dc84ba79c3ee9738fc37833ae30399dc9ccd4987bbc39bed84550522f",
       "bytes": 3335,

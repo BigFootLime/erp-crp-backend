@@ -45,6 +45,10 @@ export const listCutoverRowsSchema = z.object({ domain: z.enum(CUTOVER_DOMAINS).
 export const cutoverUuid = z.string().uuid();
 export const cutoverIdempotencyKey = z.string().regex(/^[A-Za-z0-9_.:-]{8,200}$/);
 export const applicationPreviewSchema = z.object({ expected_version: z.number().int().positive() }).strict();
+export const prepareWipDeliveryTargetSchema = z.object({
+  expected_version: z.number().int().positive(),
+  commande_ligne_id: z.string().regex(/^[1-9]\d{0,14}$/, "Sélectionner une ligne de commande CERP valide."),
+}).strict();
 export const applicationApplySchema = z.object({
   expected_version: z.number().int().positive(),
   expected_preview_hash: z.string().regex(/^[a-f0-9]{64}$/),

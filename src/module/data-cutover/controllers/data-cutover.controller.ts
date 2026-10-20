@@ -6,7 +6,7 @@ import { getCutoverCapabilities } from "../services/data-cutover.service";
 import * as repository from "../repository/data-cutover.repository";
 import type { CutoverAccess } from "../types/data-cutover.types";
 import { CUTOVER_DOMAINS } from "../types/data-cutover.types";
-import { applicationApplySchema, applicationPreviewSchema, createCutoverBatchSchema, cutoverIdempotencyKey, cutoverUuid, listCutoverRowsSchema, patchCutoverRowSchema, previewCutoverSchema, validateCutoverSchema } from "../validators/data-cutover.validators";
+import { applicationApplySchema, applicationPreviewSchema, createCutoverBatchSchema, cutoverIdempotencyKey, cutoverUuid, listCutoverRowsSchema, patchCutoverRowSchema, prepareWipDeliveryTargetSchema, previewCutoverSchema, validateCutoverSchema } from "../validators/data-cutover.validators";
 import { cutoverApplication } from "../application/application.registry";
 
 const access = (res: Response): CutoverAccess => res.locals.cutoverAccess as CutoverAccess;
@@ -29,6 +29,15 @@ export const rows = handler(async (req, res) => res.json(await repository.repoGe
 export const wipContext = handler(async (req, res) => {
   const query = z.object({ versionId: cutoverUuid.optional(), quantity: z.string().regex(/^\d{1,10}(?:\.\d{1,3})?$/).optional(), orderId: z.string().regex(/^[1-9]\d{0,14}$/).optional() }).strict().parse(req.query);
   res.json(await repository.repoGetCutoverWipContext(cutoverUuid.parse(req.params.id), cutoverUuid.parse(req.params.rowId), query.versionId, access(res), query.quantity, query.orderId));
+});
+export const prepareWipDeliveryTarget = handler(async (req, res) => {
+  res.json(await repository.repoPrepareCutoverWipDeliveryTarget(
+    cutoverUuid.parse(req.params.id),
+    cutoverUuid.parse(req.params.rowId),
+    prepareWipDeliveryTargetSchema.parse(req.body),
+    access(res).userId,
+    key(req),
+  ));
 });
 export const create = handler(async (req, res) => res.status(201).json(await repository.repoCreateCutoverBatch(createCutoverBatchSchema.parse(req.body), access(res).userId, key(req))));
 export const patchRow = handler(async (req, res) => res.json(await repository.repoPatchCutoverRow(cutoverUuid.parse(req.params.id), cutoverUuid.parse(req.params.rowId), patchCutoverRowSchema.parse(req.body), access(res), key(req))));
