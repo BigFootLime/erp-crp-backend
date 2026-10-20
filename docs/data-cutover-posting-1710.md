@@ -117,6 +117,12 @@ données synthétiques, sans écriture dans les bases métier :
   (matière et pièce finie, version technique et unité contrôlées).
 - 6 tests PostgreSQL du moteur d'application et 11 tests PostgreSQL de
   préparation, exécutés par l'équipe de reprise.
+- Après l'exécution des contrôles complets, les contrats de test suivent explicitement
+  le générateur inactif d'affaires et la fonction transactionnelle d'achat
+  extraite : 43 tests ciblés réussis. Le contrôle append-only reste inchangé ;
+  la fixture OLD conserve désormais ses journaux au lieu de les nettoyer.
+  Les deux essais OLD et les trois commandes natives ont été rejoués avec
+  PostgreSQL et réussissent.
 
 Cette preuve qualifie le périmètre indiqué ; elle ne vaut ni recette
 utilisateur complète, ni déclaration de conformité, ni activation des données

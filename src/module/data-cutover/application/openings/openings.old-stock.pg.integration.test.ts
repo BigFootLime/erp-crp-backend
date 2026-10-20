@@ -92,7 +92,8 @@ const audit={user_id:1,ip:null,user_agent:null,device_type:null,os:null,browser:
 describePg("native OLD opening PostgreSQL", () => {
   beforeAll(async()=>{ requireDedicatedDb(); db=new Pool({connectionString:integrationUrl}); if ((await db.query("SELECT current_database() AS name")).rows[0]?.name !== "cerp_cutover_1710") throw new Error("Unexpected fixture identity"); await installStockFixture(db); });
   beforeEach(async()=>{
-    await db.query(`TRUNCATE public.stock_movement_lines,public.stock_movement_event_log,public.stock_movements,public.stock_batches,public.stock_levels,public.stock_lot_trace_references,public.lots,public.stock_command_receipts,public.erp_audit_logs,public.erp_outbox_events,public.realtime_stream_enqueue_state,public.emplacements,public.locations,public.magasins,public.warehouses,public.articles_matiere,public.articles,public.units RESTART IDENTITY CASCADE`);
+    // Audit evidence stays append-only, including in this disposable fixture.
+    await db.query(`TRUNCATE public.stock_movement_lines,public.stock_movement_event_log,public.stock_movements,public.stock_batches,public.stock_levels,public.stock_lot_trace_references,public.lots,public.stock_command_receipts,public.erp_outbox_events,public.realtime_stream_enqueue_state,public.emplacements,public.locations,public.magasins,public.warehouses,public.articles_matiere,public.articles,public.units RESTART IDENTITY CASCADE`);
     await db.query("INSERT INTO public.units(id,code,label) VALUES($1,'kg','Kilogramme')",[ids.unit]);
     await db.query("INSERT INTO public.articles(id,article_category,stock_managed,lot_tracking,unite) VALUES($1,'matiere',true,true,'kg')",[ids.article]);
     await db.query("INSERT INTO public.warehouses(id) VALUES($1)",[ids.warehouse]);
