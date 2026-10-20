@@ -7,5 +7,5 @@ SELECT tgname,tgenabled FROM pg_trigger WHERE tgrelid IN (
   'public.data_cutover_wip_material_checkpoint_lines'::regclass,
   'public.data_cutover_wip_material_opening_bindings'::regclass
 ) AND NOT tgisinternal ORDER BY tgname;
-SELECT b.of_id,b.of_material_need_id,b.quantity_consumed,b.checkpoint_id
+SELECT b.of_id,b.technical_purchase_id,b.quantity_consumed,b.checkpoint_id
 FROM public.data_cutover_wip_material_opening_bindings b ORDER BY b.created_at,b.id;
