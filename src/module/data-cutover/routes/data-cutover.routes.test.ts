@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   patch: vi.fn(), create: vi.fn(), preview: vi.fn(), validate: vi.fn(), export: vi.fn(), lookup: vi.fn(),
   applicationPreview: vi.fn(), apply: vi.fn(), applications: vi.fn(), openings: vi.fn(), evidence: vi.fn(), linkEvidence: vi.fn(),
   prepareWipDeliveryTarget: vi.fn(),
+  previewNativeRemainder: vi.fn(), applyNativeRemainder: vi.fn(),
 }));
 vi.mock("../application/application.registry", () => ({ cutoverApplication: { preview: mocks.applicationPreview, apply: mocks.apply, list: mocks.applications } }));
 vi.mock("../../auth/middlewares/auth.middleware", () => ({
@@ -30,6 +31,7 @@ vi.mock("../repository/data-cutover.repository", () => ({
   repoGetContributorDomains: async () => ["OPENING_STOCK"],
   repoListCutoverOpenings: mocks.openings, repoListCutoverEvidence: mocks.evidence, repoLinkCutoverEvidence: mocks.linkEvidence,
   repoPrepareCutoverWipDeliveryTarget: mocks.prepareWipDeliveryTarget,
+  repoPreviewNativeRemainder: mocks.previewNativeRemainder, repoApplyNativeRemainder: mocks.applyNativeRemainder,
 }));
 import router from "./data-cutover.routes";
 
@@ -85,6 +87,23 @@ describe("cutover HTTP security and error contract", () => {
     const accepted = await request(app).post(path).set("X-Fixture-Actor", "admin").set("Idempotency-Key", "fixture-wip-target-1").send({ expected_version: 1, commande_ligne_id: "12" });
     expect(accepted.status).toBe(200);
     expect(mocks.prepareWipDeliveryTarget).toHaveBeenCalledWith(batch, row, { expected_version: 1, commande_ligne_id: "12" }, 1, "fixture-wip-target-1");
+  });
+  it("keeps native-remainder preview/apply behind SuperAdmin MFA and forwards only server-derived choices", async () => {
+    const command = "12";
+    const previewPath = `${endpoint}/commands/${command}/preview-native-remainder`;
+    const applyPath = `${endpoint}/commands/${command}/apply-native-remainder`;
+    for (const actor of ["contributor", "admin-no-mfa", "admin-stale-mfa"]) {
+      const response = await request(app).post(previewPath).set("X-Fixture-Actor", actor).send({ expected_batch_version: 1 });
+      expect(response.status).toBe(actor === "admin-stale-mfa" ? 428 : 403);
+    }
+    expect((await request(app).post(previewPath).set("X-Fixture-Actor", "admin").send({ expected_batch_version: 1, quantity: 4 })).status).toBe(422);
+    mocks.previewNativeRemainder.mockResolvedValueOnce({ preview_hash: "a".repeat(64), lines: [] });
+    expect((await request(app).post(previewPath).set("X-Fixture-Actor", "admin").send({ expected_batch_version: 1 })).status).toBe(200);
+    expect(mocks.previewNativeRemainder).toHaveBeenCalledWith(batch, command, { expected_batch_version: 1 }, 1);
+    expect((await request(app).post(applyPath).set("X-Fixture-Actor", "admin").set("Idempotency-Key", "remainder-apply-1").send({ expected_batch_version: 1, expected_preview_hash: "a".repeat(64), confirm: true, quantity: 4 })).status).toBe(422);
+    mocks.applyNativeRemainder.mockResolvedValueOnce({ affaires: [] });
+    expect((await request(app).post(applyPath).set("X-Fixture-Actor", "admin").set("Idempotency-Key", "remainder-apply-1").send({ expected_batch_version: 1, expected_preview_hash: "a".repeat(64), confirm: true })).status).toBe(200);
+    expect(mocks.applyNativeRemainder).toHaveBeenCalledWith(batch, command, { expected_batch_version: 1, expected_preview_hash: "a".repeat(64), confirm: true }, 1, "remainder-apply-1");
   });
   it("keeps applications, openings and evidence private and requires fresh assurance", async () => {
     for (const action of ["applications", "openings", "evidence"]) {
