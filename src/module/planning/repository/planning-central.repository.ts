@@ -120,7 +120,8 @@ SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
   (SELECT max(addition.created_at) FROM public.production_recovery_consolidation_additions addition
     WHERE addition.producer_of_id=tasks.of_id AND addition.evidence->'resumptions'
       @> jsonb_build_array(jsonb_build_object('operation_id',tasks.operation_id))) AS cycle_started_at,
-  customer.planning_color_hex AS client_color,
+  CASE WHEN to_jsonb(customer) ? 'planning_color_hex' THEN to_jsonb(customer)->>'planning_color_hex'
+       ELSE COALESCE(to_jsonb(customer)->>'color_hex',to_jsonb(customer)->>'color') END AS client_color,
   COALESCE(promise.due::text,tasks.due) AS commercial_due
   FROM tasks LEFT JOIN public.ordres_fabrication owner ON owner.id=tasks.of_id
   LEFT JOIN public.clients customer ON customer.client_id=owner.client_id

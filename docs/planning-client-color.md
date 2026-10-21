@@ -6,6 +6,8 @@ Demande et confirmation humaines du 21 octobre 2026 : la couleur du client est c
 
 `clients.planning_color_hex` est l’affectation commune, isolée dans la base choisie. `NULL` rétablit une couleur stable calculée à partir de l’identifiant client. Les noms prédéfinis CRP et Vision Systems conservent une teinte dédiée. Le domaine `planning-client-color.ts` fournit la palette, la résolution et l’éclaircissement des couleurs foncées. Les pastels existants sont conservés ; le rouge d’alerte est refusé.
 
+Lors de la première application du patch, l’ancienne couleur commune `color_hex` (puis `color`) est reprise avant toute préférence individuelle. Une préférence historique n’est reprise qu’en l’absence de couleur commune et si toutes les valeurs enregistrées pour ce client concordent, après normalisation. Un second passage du patch ne recolore jamais un client remis volontairement à `NULL`.
+
 - `GET /api/v1/planning/client-colors` : dictionnaire `id:<client_id>` → couleur résolue, accès planning `read`.
 - `PUT /api/v1/planning/client-colors/:clientId` : `{ "color": "#DCFCE7" }` ou `{ "color": null }`, capacité `manage_schedule`, validation Zod stricte, mise à jour d’un seul client et audit dans la même transaction. Retour `{ "client_id": "…", "color": "…" }`.
 - Les événements classiques et tâches centrales exposent la même couleur résolue. Les préférences personnelles historiques restent conservées mais ne pilotent plus la couleur client dans la nouvelle interface.
@@ -19,7 +21,7 @@ Seul le fond du cartouche est ajouté. La typographie, le bandeau production, le
 ## Livraison coordonnée
 
 1. Sauvegarder la base cible avant modification, conformément à la demande de Keenan.
-2. Appliquer le patch additif sur Test, puis qualifier l’API avec deux utilisateurs habilités. Il reprend une ancienne préférence seulement si toutes les préférences enregistrées pour ce client concordent ; sinon aucune préférence personnelle ne gagne arbitrairement et la couleur par défaut s’applique. Les anciennes préférences sont conservées.
+2. Appliquer le patch additif sur Test **avant de démarrer le nouveau backend**, puis qualifier l’API avec deux utilisateurs habilités. Il reprend d’abord la couleur commune historique, puis une ancienne préférence seulement si toutes les préférences enregistrées pour ce client concordent ; sinon aucune préférence personnelle ne gagne arbitrairement et la couleur par défaut s’applique. Les anciennes préférences sont conservées.
 3. Livrer backend et frontend ensemble. Un ancien frontend peut encore afficher sa préférence locale pendant une livraison partielle.
 4. Qualifier puis appliquer le même patch à Prod avec sauvegarde préalable. Ne pas remplacer de données métier. Un retour logiciel peut conserver la colonne additive.
 

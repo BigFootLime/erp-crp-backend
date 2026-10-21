@@ -382,7 +382,8 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        c.planning_color_hex AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
@@ -1558,7 +1559,8 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        c.planning_color_hex AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,

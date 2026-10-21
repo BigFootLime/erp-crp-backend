@@ -202,7 +202,8 @@ export async function readOfHeader(ofId: number, tx: DbQueryer = pool): Promise<
             o.client_id::text                AS client_id,
             c.client_code                    AS client_code,
             c.company_name                   AS client_nom,
-            c.planning_color_hex             AS client_planning_color,
+            CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+                 ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_planning_color,
             o.piece_technique_id::text       AS piece_technique_id,
             COALESCE(ptv.plan_reference, pt.code_piece) AS piece_reference,
             COALESCE(pt.designation, pt.name_piece)     AS piece_designation,
