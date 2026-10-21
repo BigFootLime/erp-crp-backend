@@ -51,7 +51,6 @@ export function mountDirectoryTabletPins(app:Express,db:Pool,sourceJwtSecret:str
   return !!row?.locked_until&&new Date(row.locked_until)>new Date();
  };
  const isRateLimited=async(client:PoolClient,scope:'ip'|'account_device',value:string)=>{const row=(await client.query<{locked_until:string|null}>(`SELECT locked_until FROM public.cerp_directory_tablet_rate_limits WHERE scope=$1 AND key_hash=$2`,[scope,hash(value)])).rows[0];return !!row?.locked_until&&new Date(row.locked_until)>new Date();};
- const resetRateLimit=async(client:PoolClient,scope:'account_device',value:string)=>client.query(`UPDATE public.cerp_directory_tablet_rate_limits SET attempts=0,locked_until=NULL,window_started_at=now() WHERE scope=$1 AND key_hash=$2 AND locked_until IS NULL`,[scope,hash(value)]);
  const pinOnlySchemaReady=async(client:Pick<PoolClient,'query'>)=>(await client.query<{ready:boolean}>(`SELECT count(*)=3 AND EXISTS(SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_class t ON t.oid=i.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=i.indkey[0] WHERE n.nspname='public' AND t.relname='cerp_directory_tablet_pins' AND c.relname='cerp_directory_tablet_pins_lookup_hash_uq' AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts=1 AND a.attname='pin_lookup_hash' AND pg_get_expr(i.indpred,i.indrelid)='(pin_lookup_hash IS NOT NULL)') AS ready FROM pg_attribute WHERE attrelid='public.cerp_directory_tablet_pins'::regclass AND NOT attisdropped AND attname=ANY(ARRAY['pin_lookup_hash','pin_verifier_version','pin_key_fingerprint'])`)).rows[0]?.ready===true;
  app.post('/internal/directory/tablet-pin-status',wrap(async(req:any,res:any)=>{
   const body=envelope.extend({input:z.object({}).strict()}).parse(req.body),actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);
@@ -122,7 +121,8 @@ export function mountDirectoryTabletPins(app:Express,db:Pool,sourceJwtSecret:str
    const row=(await client.query<LoginRow>(`${selectAccount} WHERE p.pin_lookup_hash=$2 AND p.pin_verifier_version=${PIN_VERIFIER_VERSION} AND p.pin_key_fingerprint=$3 FOR UPDATE OF p`,[site,pinLookupHash(body.input.pin),pinKeyFingerprint()])).rows[0];
    const valid=!!row&&!row.mfa_reenrollment_required&&row.status==='Active'&&row.user_status==='Active'&&typeof row.pin_hash==='string'&&(!body.input.username||canonicalizeAuthUsername(row.username)===body.input.username)&&await bcrypt.compare(pinVerifier(body.input.pin),row.pin_hash);
    if(!valid){await rateLimit(client,'ip',limiter.ip,100);await rateLimit(client,'account_device',limiter.device);await client.query('COMMIT');throw authError();}
-   await resetRateLimit(client,'account_device',limiter.device);
+   // Keep failed guesses for the whole device window: a known valid PIN must
+   // not let one employee reset the budget while guessing another user's PIN.
    const required=accountRequiresMfa({policy:normalizeMfaPolicy(row.mfa_policy),isSuperadmin:row.is_superadmin||row.member_superadmin,role:row.role,roles:row.roles,hasActiveFactor:row.has_factor,mfaRequired:row.mfa_required});
    await client.query('UPDATE public.cerp_directory_tablet_devices SET last_used_at=now() WHERE device_id=$1::uuid AND database_id=$2',[body.input.device_id,site]);
    // MFA locks the user in a separate transaction. Its work must finish before

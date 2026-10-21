@@ -4,6 +4,7 @@
 
 - Résoudre le compte depuis un PIN unique dans l’annuaire partagé, sur tablette appairée uniquement. Les administrateurs conservent le défi MFA ; les droits métier restent ceux du compte.
 - Protéger la recherche par HMAC indexé et le vérificateur par bcrypt avec dérivation séparée. Refuser les collisions, limiter les tentatives et conserver les sessions web/Electron lors d’une révocation du PIN tablette.
+- Conserver les échecs pendant quinze minutes même après un PIN valide : connaître son propre code ne permet pas de contourner la limite de cinq échecs par tablette. Les connexions valides ne consomment pas ce quota.
 - Migration additive de l’annuaire et procédure de réenregistrement/rotation préparées. Aucun PIN réel, appareil ou service de production n’est modifié par ce lot de développement.
 
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
