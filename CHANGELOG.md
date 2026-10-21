@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Couleur client commune au planning et aux OF (21 octobre 2026)
+
+- Couleur pastel commune à l’atelier, enregistrée sur le client et modifiable par un utilisateur habilité à planifier ; écriture auditée, rouge réservé aux problèmes.
+- Les nouveaux OF (gabarit 1.9) figent cette couleur en fond de la case « Client et documents ». Les textes, mesures, pages et éditions archivées 1.4 à 1.8 sont conservés.
+- Migration additive `20261021_shared_planning_client_color.sql` à appliquer avant le backend ; aucun changement de base effectué par ce lot local. Voir `docs/planning-client-color.md` pour l’intégration et la reprise des anciennes préférences.
+
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
 - Préparer un OF brouillon à partir d'une cohorte physique constatée, avec version technique publiée, demande native précise et checkpoints d'avancement. La reprise d'une phase commencée sans pièce produite conserve cette réalité sans inventer de temps passé.

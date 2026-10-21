@@ -159,6 +159,7 @@ export type OfHeaderRow = {
   client_id: string | null;
   client_code?: string | null;
   client_nom: string | null;
+  client_planning_color?: string | null;
   piece_technique_id: string | null;
   piece_reference: string | null;
   piece_designation: string | null;
@@ -201,6 +202,7 @@ export async function readOfHeader(ofId: number, tx: DbQueryer = pool): Promise<
             o.client_id::text                AS client_id,
             c.client_code                    AS client_code,
             c.company_name                   AS client_nom,
+            c.planning_color_hex             AS client_planning_color,
             o.piece_technique_id::text       AS piece_technique_id,
             COALESCE(ptv.plan_reference, pt.code_piece) AS piece_reference,
             COALESCE(pt.designation, pt.name_piece)     AS piece_designation,

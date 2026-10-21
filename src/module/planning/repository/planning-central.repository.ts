@@ -1,3 +1,4 @@
+import { resolvePlanningClientColor } from "../domain/planning-client-color";
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
 import pool from "../../../config/database";
@@ -119,7 +120,7 @@ SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
   (SELECT max(addition.created_at) FROM public.production_recovery_consolidation_additions addition
     WHERE addition.producer_of_id=tasks.of_id AND addition.evidence->'resumptions'
       @> jsonb_build_array(jsonb_build_object('operation_id',tasks.operation_id))) AS cycle_started_at,
-  COALESCE(to_jsonb(customer)->>'color_hex',to_jsonb(customer)->>'color') AS client_color,
+  customer.planning_color_hex AS client_color,
   COALESCE(promise.due::text,tasks.due) AS commercial_due
   FROM tasks LEFT JOIN public.ordres_fabrication owner ON owner.id=tasks.of_id
   LEFT JOIN public.clients customer ON customer.client_id=owner.client_id
@@ -157,7 +158,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
   const committed = interval(row.committed_start,row.committed_end);
   return { id:String(row.id),source:row.source as CentralTask["source"],operationId:str(row.operation_id),
     programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
-    clientName:str(row.client_name),clientColor:str(row.client_color),cycleStartedAt:instant(row.cycle_started_at),
+    clientName:str(row.client_name),clientColor:resolvePlanningClientColor(str(row.client_id),str(row.client_name),str(row.client_color)),cycleStartedAt:instant(row.cycle_started_at),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
     phase:row.source==="OPERATION" && row.phase != null ? num(row.phase) : null,
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,

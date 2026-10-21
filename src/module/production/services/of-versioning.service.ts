@@ -78,6 +78,7 @@ import {
 } from "./of-document-commit";
 import { storageKeyForSha256 } from "../../ged/services/ged-vault.service";
 import * as repo from "../repository/of-versioning.repository";
+import { resolvePlanningClientColor } from "../../planning/domain/planning-client-color";
 
 export type OfActor = {
   userId: number;
@@ -1061,6 +1062,7 @@ async function buildDocumentPayloadTx(
     commandeNumero: commercial.commands.length === 1 ? commercial.commands[0].numero : commercial.commands.length > 1 ? "Regroupement de commandes" : header.commande_numero,
     clientCode: header.client_code ?? null,
     clientNom: header.client_nom,
+    clientPlanningColor: resolvePlanningClientColor(header.client_id, header.client_nom, header.client_planning_color),
     affaires: commercial.affairs,
     cadenceLivraison: commercial.affairs.flatMap(affaire => affaire.delaiClient && affaire.quantite !== null
       ? [{ date: affaire.delaiClient, quantite: affaire.quantite, affaireNumero: affaire.numero }] : []),

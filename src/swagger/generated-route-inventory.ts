@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "ddcd4b4075931275f144059c1e1698dae1101eb3e53c824c78cd61247680ab3f";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "1bdc0a0184db9e71b1d63df2de8d5d9f8dbeb27c7608f3e5205a7fff00720267";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -13829,7 +13829,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/autoplan",
-    "source": "src/module/planning/routes/planning.routes.ts:72",
+    "source": "src/module/planning/routes/planning.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13848,8 +13848,48 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/planning/client-colors",
+    "source": "src/module/planning/routes/planning.routes.ts:67",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read)",
+      "listPlanningClientColors"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/client-colors/{clientId}",
+    "source": "src/module/planning/routes/planning.routes.ts:68",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)",
+      "setPlanningClientColor"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/planning/events",
-    "source": "src/module/planning/routes/planning.routes.ts:71",
+    "source": "src/module/planning/routes/planning.routes.ts:74",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13869,7 +13909,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/events",
-    "source": "src/module/planning/routes/planning.routes.ts:74",
+    "source": "src/module/planning/routes/planning.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13889,7 +13929,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/planning/events/{id}",
-    "source": "src/module/planning/routes/planning.routes.ts:77",
+    "source": "src/module/planning/routes/planning.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13909,7 +13949,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/events/{id}",
-    "source": "src/module/planning/routes/planning.routes.ts:75",
+    "source": "src/module/planning/routes/planning.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13929,7 +13969,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/planning/events/{id}",
-    "source": "src/module/planning/routes/planning.routes.ts:76",
+    "source": "src/module/planning/routes/planning.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13949,7 +13989,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/events/{id}/comments",
-    "source": "src/module/planning/routes/planning.routes.ts:79",
+    "source": "src/module/planning/routes/planning.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13969,7 +14009,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/events/{id}/documents",
-    "source": "src/module/planning/routes/planning.routes.ts:81",
+    "source": "src/module/planning/routes/planning.routes.ts:84",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -13990,7 +14030,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/events/{id}/documents/{docId}/file",
-    "source": "src/module/planning/routes/planning.routes.ts:82",
+    "source": "src/module/planning/routes/planning.routes.ts:85",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14010,7 +14050,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/events/{id}/restore",
-    "source": "src/module/planning/routes/planning.routes.ts:78",
+    "source": "src/module/planning/routes/planning.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14030,7 +14070,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/execution-intelligence",
-    "source": "src/module/planning/routes/planning.routes.ts:63",
+    "source": "src/module/planning/routes/planning.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14050,7 +14090,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/governance",
-    "source": "src/module/planning/routes/planning.routes.ts:59",
+    "source": "src/module/planning/routes/planning.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14068,7 +14108,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/governance/metrics",
-    "source": "src/module/planning/routes/planning.routes.ts:61",
+    "source": "src/module/planning/routes/planning.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14088,7 +14128,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/governance/usage",
-    "source": "src/module/planning/routes/planning.routes.ts:60",
+    "source": "src/module/planning/routes/planning.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14106,7 +14146,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/health",
-    "source": "src/module/planning/routes/planning.routes.ts:55",
+    "source": "src/module/planning/routes/planning.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14124,7 +14164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/preferences",
-    "source": "src/module/planning/routes/planning.routes.ts:64",
+    "source": "src/module/planning/routes/planning.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14144,7 +14184,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/planning/preferences",
-    "source": "src/module/planning/routes/planning.routes.ts:65",
+    "source": "src/module/planning/routes/planning.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14164,7 +14204,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/references/ofs",
-    "source": "src/module/planning/routes/planning.routes.ts:67",
+    "source": "src/module/planning/routes/planning.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14184,7 +14224,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/references/ofs/{id}",
-    "source": "src/module/planning/routes/planning.routes.ts:68",
+    "source": "src/module/planning/routes/planning.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14204,7 +14244,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/resources",
-    "source": "src/module/planning/routes/planning.routes.ts:70",
+    "source": "src/module/planning/routes/planning.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14584,7 +14624,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/validate-for-ar",
-    "source": "src/module/planning/routes/planning.routes.ts:73",
+    "source": "src/module/planning/routes/planning.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
