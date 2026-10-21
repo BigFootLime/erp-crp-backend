@@ -1,3 +1,4 @@
+import { archiveDocumentCategory } from "../../../shared/pdf/document-appearance";
 import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document";
 import { issuerIdentityLine, issuerLegalMentions } from "../../../shared/pdf/legal-mentions";
 import { readGedEntityImageVersion } from "../../../shared/pdf/ged-entity-image";
@@ -29,6 +30,7 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     : null;
 
   return renderCerpDocument({
+      category: archiveDocumentCategory(archive.renderVersion, "commerce"),
     documentType: "Fiche client",
     name: source.entity_label,
     code: source.reference,

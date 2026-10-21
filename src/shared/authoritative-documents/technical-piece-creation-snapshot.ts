@@ -34,7 +34,7 @@ export function buildTechnicalPieceCreationSnapshotInput(
     entityId: input.id,
     documentKind: "TECHNICAL_PIECE_CREATION_SNAPSHOT",
     documentVersion: 1,
-    renderVersion: "internal-creation-snapshot-v1",
+    renderVersion: "internal-creation-snapshot-v1+style-20261019",
     idempotencyKey: `piece-technique:${input.id}:creation:v1`,
     title: `Instantané de création — pièce technique ${input.code}`,
     originalName: authoritativePdfFilename(["piece-technique", input.code, "creation"]),

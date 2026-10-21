@@ -1,3 +1,4 @@
+import { hasModuleAppearance } from "../../../shared/pdf/document-appearance";
 import { renderCerpDocument } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
 import { money, quantity, rate, unitPrice } from "../../../shared/pdf/format-fr";
@@ -18,7 +19,7 @@ export type ProformaDocumentSnapshot = {
 };
 
 /** Only frozen commercial facts are printed; payment coverage is a separate live read. */
-export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot, options: { example?: boolean } = {}): Promise<Buffer> {
+export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot, options: { example?: boolean; legacyAppearance?: boolean } = {}): Promise<Buffer> {
   const issuedAt = new Date(snapshot.issued_at);
   if (!Number.isFinite(issuedAt.getTime()) || snapshot.document_type !== "PROFORMA" || snapshot.fiscal_invoice_created !== false) {
     throw new Error("PROFORMA_DOCUMENT_SOURCE_INVALID");
@@ -27,6 +28,7 @@ export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot,
   const date = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris" }).format(issuedAt);
   const total = preview.company_totals.reduce((sum, company) => sum + moneyToCents(company.total_incl_tax), 0n);
   return renderCerpDocument({
+      category: options.legacyAppearance ? undefined : "commerce",
     designVersion: "structured-v5", documentType: "Proforma", name: snapshot.reference, code: snapshot.reference,
     status: "Demande de règlement", generatedAt: date, creationDate: issuedAt,
     watermark: options.example ? "EXEMPLE" : null,
@@ -100,5 +102,5 @@ export const renderProformaOfficialPdf: import("../../../shared/authoritative-do
   const snapshot = archive.sourceSnapshot as unknown as ProformaDocumentSnapshot;
   if (archive.entityType !== "proforma" || archive.documentKind !== "CUSTOMER_PROFORMA" || snapshot.id !== archive.entityId
     || snapshot.template_version !== "proforma/1.1") throw new Error("AUTHORITATIVE_PDF_PROFORMA_SOURCE_INVALID");
-  return renderProformaDocument(snapshot);
+  return renderProformaDocument(snapshot, { legacyAppearance: !hasModuleAppearance(archive.renderVersion) });
 };

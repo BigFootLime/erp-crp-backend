@@ -17,7 +17,7 @@ type HeaderGeometry = {
   marginX: number
   marginTop: number
   width: number
-  colors: { brand: string; ink: string; graphite: string; steel: string; hairline: string; wash: string; paper: string }
+  colors: { brand: string; ink: string; graphite: string; steel: string; hairline: string; wash: string; paper: string; danger?: string }
 }
 
 /** Editorial identity; only images already resolved by the authorized caller are accepted. */
@@ -62,7 +62,7 @@ export function drawEditorialDocumentHeader(
   doc.fillColor(c.graphite).text(status, x + 9, y + 5, { width: Math.max(statusWidth - 18, 1) })
   y += statusHeight + 8
   if (header.flag?.trim()) {
-    doc.font("Helvetica-Bold").fontSize(9).fillColor(c.brand)
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(c.danger ?? c.brand)
     doc.text(safeText(header.flag), x, y, { width: mainWidth })
     y = doc.y + 7
   }

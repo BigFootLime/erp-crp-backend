@@ -66,7 +66,7 @@ export async function repoIssueProforma(args: CommandContext & { id: string; inp
     await tx.query(`UPDATE public.proforma_client SET status='ISSUED',issued_at=$2::timestamptz,issued_by=$3,
       issued_snapshot=$4::jsonb,row_version=row_version+1 WHERE id=$1::uuid`, [document.id, issuedAt, args.actor.userId, JSON.stringify(snapshot)]);
     const archive = await queueCreationPdfArchive(tx, { entityType: "proforma", entityId: document.id,
-      documentKind: "CUSTOMER_PROFORMA", documentVersion: 1, renderVersion: "proforma/1.1",
+      documentKind: "CUSTOMER_PROFORMA", documentVersion: 1, renderVersion: "proforma/1.1+style-20261019",
       idempotencyKey: `proforma:${document.id}:issue:v1`, title: `Proforma ${document.reference}`,
       originalName: `PROFORMA_${document.reference}.pdf`, sourceRevision: financePreviewHash(snapshot),
       sourceSnapshot: { ...snapshot }, exactPdfBytes: bytes, actorUserId: args.actor.userId });

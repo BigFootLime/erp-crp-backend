@@ -1279,7 +1279,7 @@ export async function repoCreateAffaire(input: CreateAffaireBodyDTO, audit?: Aud
       entityId: String(affaireId),
       documentKind: "AFFAIR_CREATION_SNAPSHOT",
       documentVersion: 1,
-      renderVersion: "internal-creation-snapshot-v1",
+      renderVersion: "internal-creation-snapshot-v1+style-20261019",
       idempotencyKey: `affaire:${affaireId}:creation:v1`,
       title: `Instantané de création — affaire ${reference}`,
       originalName: authoritativePdfFilename(["affaire", reference, "creation"]),

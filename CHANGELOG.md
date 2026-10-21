@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Couleur client commune au planning et aux OF (21 octobre 2026)
+
+- Couleur pastel commune à l’atelier, enregistrée sur le client et modifiable par un utilisateur habilité à planifier ; écriture auditée, rouge réservé aux problèmes.
+- Les nouveaux OF (gabarit 1.9) figent cette couleur en fond de la case « Client et documents ». Les textes, mesures, pages et éditions archivées 1.4 à 1.8 sont conservés.
+- Migration additive `20261021_shared_planning_client_color.sql` à appliquer avant le backend ; aucun changement de base effectué par ce lot local. Voir `docs/planning-client-color.md` pour l’intégration et la reprise des anciennes préférences.
+
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
 - Préparer un OF brouillon à partir d'une cohorte physique constatée, avec version technique publiée, demande native précise et checkpoints d'avancement. La reprise d'une phase commencée sans pièce produite conserve cette réalité sans inventer de temps passé.
@@ -11,6 +17,12 @@
 - Le canal Socket.IO applique la même frontière que l’authentification HTTP : une session explicitement refusée ou périmée par l’annuaire est révoquée ; une indisponibilité technique ferme seulement le transport avec une demande de reconnexion.
 - Les erreurs transitoires de l’annuaire ou de la lecture d’autorisation ne déclenchent plus l’événement de révocation de session consommé par les clients web et Electron. Les raisons de déconnexion sont journalisées dans une liste fixe, sans jeton ni donnée personnelle.
 - Correctif sans migration, modification MFA, durée de session, habilitation ou changement de flux métier. La qualification locale ne permet pas d’attribuer rétrospectivement un incident utilisateur à l’annuaire.
+
+## Préparé — Harmonisation PDF par module (19 octobre 2026)
+
+- Couleurs Production, Commerce, Qualité, Stock et Système appliquées aux PDF et rapports, avec logo CRP conservé. Encadrés et bandeaux légèrement arrondis ; dimensions, informations, positions, polices et sauts de page conservés.
+- Gabarit OF 1.8 et habillage des nouvelles archives versionnés ; les éditions historiques gardent leur rendu. Aucun changement de données, de schéma ou de règles métier.
+- Inventaire, comparaisons de géométrie, contrôles couleur/gris et limites de qualification : `docs/pdf-module-style-20261019.md`. Lot local à intégrer avec le frontend, sans déploiement direct.
 
 ## Préparé — Retrait des comptes locaux historiques (#1378)
 

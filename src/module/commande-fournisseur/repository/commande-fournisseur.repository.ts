@@ -178,7 +178,7 @@ export async function queueSupplierPurchaseOrderCreationPdfTx(
     entityId: input.commandeId,
     documentKind: "SUPPLIER_PURCHASE_ORDER",
     documentVersion: 1,
-    renderVersion: "supplier-po-pdf-v1",
+    renderVersion: "supplier-po-pdf-v1+style-20261019",
     idempotencyKey: `commande-fournisseur:${input.commandeId}:creation:v1`,
     title: `Bon de commande fournisseur ${input.code}`,
     originalName: authoritativePdfFilename(["BCF", input.code, "v1"]),
@@ -1825,7 +1825,7 @@ export async function repoQueueSupplierPoOfficialDocument(
     const edition=Number(currentArchive.rows[0]?.edition??1);
     const archive = await queueFrozenCommercialPdfArchive(client, {
       entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER",
-      documentVersion: edition, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
+      documentVersion: edition, renderVersion: "supplier-po-pdf-v1+style-20261019", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
       originalName: authoritativePdfFilename(["BCF", code, `v${edition}`]),
       sourceRevision,
       sourceSnapshot:{...sourceSnapshot,frozen_document:{id:frozen.id,version:Number(frozen.version)}},actorUserId:audit.user_id,

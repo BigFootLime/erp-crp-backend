@@ -1,3 +1,5 @@
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("production");
 // src/module/pieces-techniques/services/piece-document-dossier-pdf.service.ts
 // Issue #227 — dossier documentaire contrôlé, rendu PDF côté serveur.
 //
@@ -67,9 +69,9 @@ function keyValue(doc: PDFKit.PDFDocument, key: string, value: string): void {
 
 function heading(doc: PDFKit.PDFDocument, title: string): void {
   doc.moveDown(0.8);
-  doc.font("Helvetica-Bold").fontSize(12).text(winAnsi(title));
+  doc.fillColor(C.brand).font("Helvetica-Bold").fontSize(12).text(winAnsi(title));
   doc.moveDown(0.2);
-  doc.font("Helvetica").fontSize(9);
+  doc.fillColor(C.ink).font("Helvetica").fontSize(9);
 }
 
 /**
@@ -87,15 +89,15 @@ export async function renderPieceDocumentDossierPdf(args: {
   const generatedAt = args.generatedAt ?? new Date(d.generated_at);
 
   return renderToBuffer((doc) => {
-    doc.font("Helvetica-Bold").fontSize(16).text(winAnsi("Dossier documentaire — pièce technique"));
+    doc.fillColor(C.brand).font("Helvetica-Bold").fontSize(16).text(winAnsi("Dossier documentaire — pièce technique"));
     doc.moveDown(0.3);
-    doc.font("Helvetica").fontSize(9).fillColor("#555555");
+    doc.font("Helvetica").fontSize(9).fillColor(C.steel);
     doc.text(
       winAnsi(
         `Document de contrôle généré par CERP le ${formatDateTimeFR(generatedAt.toISOString())} par ${args.generatedBy}.`
       )
     );
-    doc.fillColor("#000000");
+    doc.fillColor(C.ink);
 
     heading(doc, "Pièce");
     keyValue(doc, "Code pièce :", d.piece.code_piece || "-");
@@ -130,7 +132,7 @@ export async function renderPieceDocumentDossierPdf(args: {
         ),
         { width: 500 }
       );
-      doc.fillColor("#000000").font("Helvetica").fontSize(9);
+      doc.fillColor(C.ink).font("Helvetica").fontSize(9);
     }
     if (!d.policy_infrastructure_ready) {
       doc.moveDown(0.2);
@@ -142,7 +144,7 @@ export async function renderPieceDocumentDossierPdf(args: {
         ),
         { width: 500 }
       );
-      doc.fillColor("#000000").font("Helvetica").fontSize(9);
+      doc.fillColor(C.ink).font("Helvetica").fontSize(9);
     }
     if (d.not_required_reason) {
       keyValue(doc, "Motif :", d.not_required_reason.reason_label);
@@ -165,7 +167,7 @@ export async function renderPieceDocumentDossierPdf(args: {
       const mark = STATE_MARK[slot.state] ?? "[?]";
       doc.font("Helvetica-Bold").fontSize(10);
       doc.text(winAnsi(`${mark} ${slot.document_type_label}${slot.required ? " (requis)" : ""}`));
-      doc.font("Helvetica").fontSize(9).fillColor("#444444");
+      doc.font("Helvetica").fontSize(9).fillColor(C.graphite);
       doc.text(winAnsi(`État : ${DOCUMENT_SLOT_STATE_LABELS[slot.state]} — ${slot.state_detail}`), { width: 500 });
       if (slot.reason_label) doc.text(winAnsi(`Pourquoi : ${slot.reason_label}`), { width: 500 });
       if (slot.document) {
@@ -176,11 +178,11 @@ export async function renderPieceDocumentDossierPdf(args: {
           { width: 500 }
         );
       }
-      doc.fillColor("#000000");
+      doc.fillColor(C.ink);
     }
 
     doc.moveDown(1);
-    doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666666");
+    doc.font("Helvetica-Oblique").fontSize(8).fillColor(C.steel);
     doc.text(
       winAnsi(
         "Ce dossier reflète l'état enregistré dans CERP à la date de génération. " +
@@ -188,6 +190,6 @@ export async function renderPieceDocumentDossierPdf(args: {
       ),
       { width: 500 }
     );
-    doc.fillColor("#000000");
+    doc.fillColor(C.ink);
   }, generatedAt);
 }

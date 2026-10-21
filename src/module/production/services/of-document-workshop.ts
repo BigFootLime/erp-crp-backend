@@ -1,6 +1,6 @@
 import { CERP_DOC_COLORS, CONTENT_WIDTH, type CerpDocumentContext } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable, type WorkshopFieldBox } from "../../../shared/pdf/workshop-document-blocks";
-import { formatDateFr, formatNumberFr, formatQuantity, type OfDocumentPayload } from "../domain/of-document";
+import { formatDateFr, formatNumberFr, formatQuantity, OF_WORKSHOP_TEMPLATE_VERSION, type OfDocumentPayload } from "../domain/of-document";
 import type { WorkshopDocumentTechnicalEvidence } from "../domain/of-document-technical-source";
 import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
 
@@ -74,7 +74,9 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
     materialHeader(payload),
   ], { compact: true });
   renderWorkshopBoxes(ctx, [
-    { title: "Client et documents", columns: 2, fields: [
+    { title: "Client et documents", columns: 2,
+      backgroundColor: payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? payload.clientPlanningColor : undefined,
+      fields: [
       { label: "Code client", value: payload.clientCode },
       { label: "Affaire de livraison", value: payload.affaires.map(affaire => affaire.numero ?? `Affaire #${affaire.affaireId}`).join("\n") || "Aucune affaire rattachée" },
       { label: "Documents à fournir", span: 2, value: payload.documentsAFournir.map(document => `- ${document}`).join("\n") || "Aucun document requis" },

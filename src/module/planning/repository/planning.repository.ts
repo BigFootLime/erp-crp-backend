@@ -1,3 +1,4 @@
+import { resolvePlanningClientColor } from "../domain/planning-client-color";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -381,7 +382,8 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
@@ -442,7 +444,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     of_numero: row.of_numero,
     client_id: row.client_id,
     client_company_name: row.client_company_name,
-    client_color: row.client_color,
+    client_color: resolvePlanningClientColor(row.client_id, row.client_company_name, row.client_color),
     client_blocked: toNullableBoolean(row.client_blocked),
     client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,
@@ -1557,7 +1559,8 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
@@ -1616,7 +1619,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     of_numero: row.of_numero,
     client_id: row.client_id,
     client_company_name: row.client_company_name,
-    client_color: row.client_color,
+    client_color: resolvePlanningClientColor(row.client_id, row.client_company_name, row.client_color),
     client_blocked: toNullableBoolean(row.client_blocked),
     client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,

@@ -1,3 +1,5 @@
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("systeme");
 import crypto from "node:crypto";
 import PDFDocument from "pdfkit";
 
@@ -71,16 +73,16 @@ export function buildPayrollPdf(meta: { periodStart: string; periodEnd: string }
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      doc.fontSize(15).text("Récapitulatif temps — paie", { align: "left" });
-      doc.moveDown(0.3).fontSize(10).fillColor("#555").text(`Période : ${meta.periodStart} → ${meta.periodEnd}`);
-      doc.fillColor("#000").moveDown(0.8);
+      doc.fillColor(C.brand).fontSize(15).text("Récapitulatif temps — paie", { align: "left" });
+      doc.moveDown(0.3).fontSize(10).fillColor(C.steel).text(`Période : ${meta.periodStart} → ${meta.periodEnd}`);
+      doc.fillColor(C.ink).moveDown(0.8);
 
       const cols = ["Matricule", "Salarié", "Semaine", "Trav.", "Contrat", "HS25", "HS50", "Abs."];
       const widths = [70, 130, 90, 45, 50, 40, 40, 45];
       const startX = doc.x;
       let y = doc.y;
       const drawRow = (cells: string[], bold: boolean) => {
-        doc.fontSize(8).font(bold ? "Helvetica-Bold" : "Helvetica");
+        doc.fillColor(bold ? C.heading : C.ink).fontSize(8).font(bold ? "Helvetica-Bold" : "Helvetica");
         let x = startX;
         cells.forEach((c, i) => {
           doc.text(c, x + 2, y + 2, { width: widths[i] - 4, ellipsis: true });

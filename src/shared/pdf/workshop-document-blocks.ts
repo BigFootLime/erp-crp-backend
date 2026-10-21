@@ -1,5 +1,6 @@
-import { CERP_DOC_COLORS as C, CONTENT_WIDTH, toPdfSafeText, type CerpDocumentContext } from "./cerp-document"
+import { CONTENT_WIDTH, toPdfSafeText, type CerpDocumentContext } from "./cerp-document"
 import { sectionHeight } from "./editorial-document-blocks"
+import { documentPanelPath } from "./document-shapes"
 
 const X = 38
 const PAD = 9
@@ -29,6 +30,7 @@ function wrappedLines(doc: PDFKit.PDFDocument, text: string, width: number, bold
 
 export type WorkshopFieldBox = {
   title: string
+  backgroundColor?: string | null
   columns?: 1 | 2
   columnWeights?: readonly [number, number]
   fields: ReadonlyArray<{ label: string; value: string | null; prominent?: boolean; span?: 2 }>
@@ -36,6 +38,7 @@ export type WorkshopFieldBox = {
 
 /** Bordered business zones: labels and their values stay together, with measured wrapping. */
 export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly WorkshopFieldBox[], options: { compact?: boolean } = {}): void {
+  const C = ctx.colors
   if (!boxes.length) return
   // The first-page cartouches must leave clearance around the horizontal A4 fold.
   // Keep the full-size table typography for routing instructions on later pages.
@@ -100,10 +103,12 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
   const top = ctx.y
   measured.forEach((item, index) => {
     const x = X + index * (width + gap)
-    ctx.doc.save().rect(x, top, width, headingHeight).fill(C.graphite).restore()
+    if (item.box.backgroundColor && /^#[0-9a-f]{6}$/i.test(item.box.backgroundColor))
+      documentPanelPath(ctx.doc.save(), x, top, width, height, C).fill(item.box.backgroundColor).restore()
+    documentPanelPath(ctx.doc.save(), x, top, width, headingHeight, C, "top").fill(C.heading).restore()
     ctx.doc.font("Helvetica-Bold").fontSize(10).fillColor(C.paper)
     item.title.forEach((line, i) => ctx.text(line, x + pad, top + headingPad + i * 12, { width: width - pad * 2 }))
-    ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite).rect(x, top, width, height).stroke().restore()
+    documentPanelPath(ctx.doc.save().lineWidth(0.8).strokeColor(C.graphite), x, top, width, height, C).stroke().restore()
     let y = top + headingHeight + pad
     const columns = item.box.columns ?? 1
     const dividerX = x + pad + item.fieldWidths[0] + gap / 2
@@ -133,8 +138,9 @@ export type WorkshopTableRow = { cells: Record<string, string>; continuationLabe
 
 /** A titled handwriting area without a redundant empty table heading. */
 export function renderWorkshopWritingArea(ctx: CerpDocumentContext, title: string, height = 52): void {
+  const C = ctx.colors
   ctx.section(title, { cohesion: height + 10 })
-  ctx.doc.save().lineWidth(0.65).strokeColor(C.graphite).rect(X, ctx.y, CONTENT_WIDTH, height).stroke().restore()
+  documentPanelPath(ctx.doc.save().lineWidth(0.65).strokeColor(C.graphite), X, ctx.y, CONTENT_WIDTH, height, C).stroke().restore()
   ctx.y += height + 12
 }
 
@@ -149,6 +155,7 @@ export function renderWorkshopTable(ctx: CerpDocumentContext, table: {
   bodySize?: number
   padding?: number
 }): void {
+  const C = ctx.colors
   const { columns, rows } = table
   if (!columns.length) return
   const pad = table.padding ?? PAD

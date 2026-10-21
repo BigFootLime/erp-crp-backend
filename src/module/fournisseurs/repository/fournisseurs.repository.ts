@@ -692,7 +692,7 @@ export async function repoCreateFournisseur(
     if (!sourceRevision) throw new Error("SUPPLIER_CREATION_SNAPSHOT_REVISION_MISSING")
     await queueCreationPdfArchive(client, {
       entityType: "fournisseur", entityId: id, documentKind: "SUPPLIER_CREATION_SNAPSHOT", documentVersion: 1,
-      renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `fournisseur:${id}:creation-snapshot:v1`,
+      renderVersion: "internal-creation-snapshot-v1+style-20261019", idempotencyKey: `fournisseur:${id}:creation-snapshot:v1`,
       title: `Création fiche fournisseur ${code}`, originalName: authoritativePdfFilename(["Fournisseur", code, "creation"]), sourceRevision,
       sourceSnapshot: buildInternalCreationSnapshot({
         entityLabel: "Fiche fournisseur", reference: code,
