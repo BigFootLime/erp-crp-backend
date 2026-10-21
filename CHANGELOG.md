@@ -4,6 +4,7 @@
 
 - L'approbation des demandes, la création et l'édition administratives acceptent toutes les fonctions attribuables ensemble. La borne de validation suit la taille du catalogue et ne bloque plus une sélection dépassant 20 fonctions.
 - Le contrat OpenAPI décrit les fonctions attribuables et le catalogue distinct des fonctions principales. La fonction principale reste cochée et compatible avec le stockage existant ; modules explicites, SuperAdmin, MFA et audit conservent leurs contrôles.
+- Qualification de livraison : le Vite utilisé par Vitest passe de 7.3.6 à 7.3.7 dans les deux lockfiles pour corriger GHSA-587h-7wmj-h5pm ; aucune dépendance de production ne change.
 - Qualification locale et limites de livraison dans `docs/testing/account-request-functions-1372.md`. Aucun déploiement ni migration n'est inclus.
 
 
