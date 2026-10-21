@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { adminCreateUserSchema } from "../module/admin/validators/admin.validators";
+import { adminCreateUserSchema, adminUpdateUserSchema } from "../module/admin/validators/admin.validators";
+import { ASSIGNABLE_USER_ROLES } from "../module/auth/domain/roles";
 
 const idempotencyKey = "7eb84d7e-9df1-4ee7-a8e9-3ee6c85b2bee";
 
 describe("administrative user provisioning validator", () => {
+  it("allows all catalogue functions during account creation and subsequent editing", () => {
+    const functions = { role: "Responsable Qualité", roles: [...ASSIGNABLE_USER_ROLES] };
+    expect(functions.roles.length).toBeGreaterThan(20);
+
+    const created = adminCreateUserSchema.parse({
+      headers: { idempotencyKey },
+      body: { username: "QUALITE.TEST", name: "Compte", surname: "Qualité", email: "qualite@example.test", ...functions },
+    });
+    expect(created.body).toMatchObject({ ...functions, status: "Inactive" });
+
+    const updated = adminUpdateUserSchema.parse({ params: { id: "42" }, body: functions });
+    expect(updated.body).toEqual(functions);
+  });
+
   it("accepts a minimal account and defaults it to Inactive", () => {
     const parsed = adminCreateUserSchema.parse({
       headers: { idempotencyKey },

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from "../module/auth/domain/roles";
 import { deliveryAffairsOperation, deliveryAffairsSchemas } from "./delivery-affairs-contract";
 import { proformaOperation, proformaSchemas } from "./proforma-contract";
 import {RECEIPT_PROCESSING_ACTIONS,receiptProcessingOperation,receiptProcessingSchemas} from "./receipt-processing-contract";
@@ -467,8 +468,8 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
         required: ["expected_version", "primary_role", "roles", "administrative_kind", "module_keys"],
         properties: {
           expected_version: { type: "integer", minimum: 0 },
-          primary_role: { type: "string" },
-          roles: { type: "array", minItems: 1, maxItems: 20, items: { type: "string" } },
+          primary_role: { type: "string", enum: [...PRIMARY_USER_ROLES] },
+          roles: { type: "array", minItems: 1, maxItems: ASSIGNABLE_USER_ROLES.length, items: { type: "string", enum: [...ASSIGNABLE_USER_ROLES] }, description: "Toutes les fonctions du catalogue peuvent être cumulées." },
           administrative_kind: { type: "string", enum: ["STANDARD", "BUSINESS_ADMIN"] },
           module_keys: { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: { type: "string", pattern: "^[a-z0-9-]+$" } },
           link_historical_user_id: { type: "integer", minimum: 1, nullable: true, description: "Réservé à une opération propriétaire distincte ; la route retourne 422 si fourni." },

@@ -2,8 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import { GENERATED_ROUTE_INVENTORY } from "../swagger/generated-route-inventory";
 import { swaggerSpec } from "../swagger/swagger";
+import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from "../module/auth/domain/roles";
 
 describe("account request OpenAPI inventory", () => {
+  it("documents the full simultaneous selection and the distinct primary-function catalogue", () => {
+    const schemas = swaggerSpec.components!.schemas as Record<string, { properties: Record<string, Record<string, unknown>> }>;
+    expect(schemas.AccountRequestApproval.properties.primary_role).toMatchObject({ enum: [...PRIMARY_USER_ROLES] });
+    expect(schemas.AccountRequestApproval.properties.roles).toMatchObject({
+      minItems: 1,
+      maxItems: ASSIGNABLE_USER_ROLES.length,
+      items: { enum: [...ASSIGNABLE_USER_ROLES] },
+    });
+  });
+
   it("discovers the two public and four SuperAdmin request routes through named router imports", () => {
     const routes = GENERATED_ROUTE_INVENTORY.filter((route) => route.path.includes("account-requests"));
 
