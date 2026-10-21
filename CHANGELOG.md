@@ -1,11 +1,20 @@
 # Changelog
 
-## Préparé — Cumul de toutes les fonctions du catalogue (#1372)
+## 2.0.14 — Identification tablette par PIN seul (#1403)
+
+- Résoudre le compte depuis un PIN unique dans l’annuaire partagé, sur tablette appairée uniquement. Les administrateurs conservent le défi MFA ; les droits métier restent ceux du compte.
+- Protéger la recherche par HMAC indexé et le vérificateur par bcrypt avec dérivation séparée. Refuser les collisions, limiter les tentatives et conserver les sessions web/Electron lors d’une révocation du PIN tablette.
+- Conserver les échecs pendant quinze minutes même après un PIN valide : connaître son propre code ne permet pas de contourner la limite de cinq échecs par tablette. Les connexions valides ne consomment pas ce quota.
+- Migration additive de l’annuaire et procédure de réenregistrement/rotation préparées. Aucun PIN réel, appareil ou service de production n’est modifié par ce lot de développement.
+
+## 2.0.13 — Cumul de toutes les fonctions du catalogue (#1372)
 
 - L'approbation des demandes, la création et l'édition administratives acceptent toutes les fonctions attribuables ensemble. La borne de validation suit la taille du catalogue et ne bloque plus une sélection dépassant 20 fonctions.
 - Le contrat OpenAPI décrit les fonctions attribuables et le catalogue distinct des fonctions principales. La fonction principale reste cochée et compatible avec le stockage existant ; modules explicites, SuperAdmin, MFA et audit conservent leurs contrôles.
 - Qualification de livraison : le Vite utilisé par Vitest passe de 7.3.6 à 7.3.7 dans les deux lockfiles pour corriger GHSA-587h-7wmj-h5pm ; aucune dépendance de production ne change.
 - Qualification locale et limites de livraison dans `docs/testing/account-request-functions-1372.md`. Aucun déploiement ni migration n'est inclus.
+
+## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
 
 ## Préparé — Disponibilité du temps réel avec annuaire partagé (#1388)
