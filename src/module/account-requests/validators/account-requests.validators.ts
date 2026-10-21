@@ -40,7 +40,7 @@ export const approveAccountRequestSchema = z.object({
   body: z.object({
     expected_version: version,
     primary_role: z.enum(PRIMARY_USER_ROLES),
-    roles: z.array(z.enum(ASSIGNABLE_USER_ROLES)).min(1).max(20),
+    roles: z.array(z.enum(ASSIGNABLE_USER_ROLES)).min(1).max(ASSIGNABLE_USER_ROLES.length),
     administrative_kind: z.enum(["STANDARD", "BUSINESS_ADMIN"]),
     module_keys: z.array(moduleKey).max(100).refine((values) => new Set(values).size === values.length, "Modules dupliqués"),
     link_historical_user_id: z.number().int().positive().nullable().optional(),

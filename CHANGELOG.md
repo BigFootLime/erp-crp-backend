@@ -1,5 +1,13 @@
 # Changelog
 
+## Préparé — Cumul de toutes les fonctions du catalogue (#1372)
+
+- L'approbation des demandes, la création et l'édition administratives acceptent toutes les fonctions attribuables ensemble. La borne de validation suit la taille du catalogue et ne bloque plus une sélection dépassant 20 fonctions.
+- Le contrat OpenAPI décrit les fonctions attribuables et le catalogue distinct des fonctions principales. La fonction principale reste cochée et compatible avec le stockage existant ; modules explicites, SuperAdmin, MFA et audit conservent leurs contrôles.
+- Qualification de livraison : le Vite utilisé par Vitest passe de 7.3.6 à 7.3.7 dans les deux lockfiles pour corriger GHSA-587h-7wmj-h5pm ; aucune dépendance de production ne change.
+- Qualification locale et limites de livraison dans `docs/testing/account-request-functions-1372.md`. Aucun déploiement ni migration n'est inclus.
+
+
 ## Préparé — Disponibilité du temps réel avec annuaire partagé (#1388)
 
 - Le canal Socket.IO applique la même frontière que l’authentification HTTP : une session explicitement refusée ou périmée par l’annuaire est révoquée ; une indisponibilité technique ferme seulement le transport avec une demande de reconnexion.

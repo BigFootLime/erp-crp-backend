@@ -1,5 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import { accountRequestStatusSchema, submitAccountRequestSchema, usernameBaseFromGivenName } from './validators/account-requests.validators';
+import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from '../auth/domain/roles';
+import { accountRequestStatusSchema, approveAccountRequestSchema, submitAccountRequestSchema, usernameBaseFromGivenName } from './validators/account-requests.validators';
+
+const approval = {
+  params: { id: '13720000-0000-4000-8000-000000000001' },
+  headers: { idempotencyKey: '13720000-0000-4000-8000-000000000002' },
+  body: {
+    expected_version: 3,
+    primary_role: 'Employee',
+    roles: [...ASSIGNABLE_USER_ROLES],
+    administrative_kind: 'STANDARD',
+    module_keys: ['stock', 'qualite', 'planning'],
+  },
+};
+
+describe('account-request approval functions', () => {
+  it('accepts every catalogue function together without losing roles or selected modules', () => {
+    expect(approval.body.roles.length).toBeGreaterThan(20);
+    expect(approveAccountRequestSchema.parse(approval)).toEqual(approval);
+  });
+
+  it.each(PRIMARY_USER_ROLES)('accepts the selected primary function %s with the full catalogue', (primaryRole) => {
+    const input = { ...approval, body: { ...approval.body, primary_role: primaryRole } };
+    expect(approveAccountRequestSchema.parse(input)).toEqual(input);
+  });
+
+  it('still requires the primary function to be selected', () => {
+    const result = approveAccountRequestSchema.safeParse({
+      ...approval,
+      body: { ...approval.body, primary_role: 'Responsable Qualité', roles: ['Employee'] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues.some(issue => issue.path.join('.') === 'body.roles')).toBe(true);
+  });
+
+  it.each([
+    { roles: [] },
+    { roles: [...ASSIGNABLE_USER_ROLES.slice(1), 'Role-Inconnu'] },
+    { primary_role: 'SuperAdmin' },
+    { primary_role: 'Qualité' },
+    { is_superadmin: true },
+    { expected_version: -1 },
+  ])('rejects invalid or privileged approval input: %j', (patch) => {
+    expect(approveAccountRequestSchema.safeParse({ ...approval, body: { ...approval.body, ...patch } }).success).toBe(false);
+  });
+});
 
 describe('account-request authority input', () => {
   it('rejects a first name that cannot produce an identifier as an input error before hashing or persistence', () => {
