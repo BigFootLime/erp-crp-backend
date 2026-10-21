@@ -48,7 +48,19 @@ d'idempotence, de sélection de modules et d'autorisation existants.
 - Les données de test sont synthétiques. Aucune approbation de salarié réel,
   écriture métier, connexion PostgreSQL de recette ou migration n'a été exécutée.
 
-## Livraison restant à autoriser
+## Préparation de livraison autorisée
+
+Keenan a autorisé le déploiement et la publication du bureau (« aller go »).
+Les PR de développement #1401 et de livraison #1402 sont ouvertes. La branche
+de livraison reprend le main déployé `860f29da` et exclut les travaux de reprise
+de données présents sur dev. Le chantier PIN seul reste dans une livraison
+ultérieure, en coordination avec le chantier ISO/RGPD.
+
+Le gate candidat a détecté GHSA-587h-7wmj-h5pm dans le Vite 7.3.6 transitif de
+Vitest. Les lockfiles npm et pnpm passent uniquement ce paquet de développement
+à 7.3.7 ; le contrat du paquet et les résolutions de production sont identiques.
+Le contrôle complet doit être relancé sur le SHA corrigé, sans contournement.
+Source : https://github.com/advisories/GHSA-587h-7wmj-h5pm.
 
 Livrer le serveur API et l'annuaire partagé, puis le frontend corrigé et sa
 version embarquée Electron. Vérifier le parcours réel après livraison avec
