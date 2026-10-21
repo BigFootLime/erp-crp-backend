@@ -1,12 +1,16 @@
 /* Disposable site API used only by check-tablet-pin-http-1372.cjs. */
 process.env.NODE_ENV='test';
 require('ts-node/register/transpile-only');
+const trace=stage=>{if(process.env.CERP_TABLET_PIN_FIXTURE_TRACE==='1')console.error(`TABLET_PIN_SITE_FIXTURE_STAGE:${stage}`);};
+trace('ts-node-ready');
 
+trace('before-server-import');
 const express=require('express');
 const pool=require('../../src/config/database').default;
 const siteRuntime=require('../../src/shared-directory/site-runtime');
 const {DirectoryClient}=require('../../src/shared-directory/client');
 const {errorHandler}=require('../../src/middlewares/errorHandler');
+trace('server-imported');
 
 const fixtureError=(stage,error,operation)=>console.error(JSON.stringify({type:'tablet_pin_site_fixture_error',stage,operation:operation??null,name:error?.name??null,code:error?.code??null,status:error?.status??null,constraint:error?.constraint??null,stack:typeof error?.stack==='string'?error.stack.split('\n').slice(0,8):null}));
 const directoryCall=DirectoryClient.prototype.call;
@@ -16,7 +20,9 @@ siteRuntime.directoryAuthenticationResult=async(...args)=>{try{return await dire
 const v1Router=require('../../src/routes/v1.routes').default;
 
 async function main(){
+ trace('before-initialize');
  await siteRuntime.initializeSharedDirectorySite(pool);
+ trace('initialized');
  const app=express();
  const fixtureNonce=process.env.CERP_TABLET_PIN_SITE_FIXTURE_NONCE;
  if(!fixtureNonce)throw new Error('CERP_TABLET_PIN_SITE_FIXTURE_NONCE is required');
@@ -24,7 +30,7 @@ async function main(){
  app.use(express.json({limit:'1mb'}));
  app.use('/api/v1',v1Router);
  app.use(errorHandler);
- const server=app.listen(Number(process.env.PORT||8086),'127.0.0.1');
+ const server=app.listen(Number(process.env.PORT||8086),'127.0.0.1',()=>trace('listening'));
  const close=()=>server.close(()=>void pool.end().finally(()=>process.exit(0)));
  process.once('SIGTERM',close);process.once('SIGINT',close);
 }
