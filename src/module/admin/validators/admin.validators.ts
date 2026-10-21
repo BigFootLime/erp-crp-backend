@@ -64,7 +64,7 @@ const userCoreObject = z
     roles: z
       .array(z.enum(ASSIGNABLE_USER_ROLES))
       .min(1, "Au moins un rôle est requis")
-      .max(20, "Trop de rôles attribués"),
+      .max(ASSIGNABLE_USER_ROLES.length, "La sélection dépasse le catalogue des fonctions"),
     gender: z.enum(genders).optional().nullable(),
     address: trimString(3, "Adresse invalide (min 3 caractères)").optional().nullable(),
     lane: trimString(2, "Rue invalide (min 2 caractères)").optional().nullable(),
