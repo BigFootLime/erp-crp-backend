@@ -6,6 +6,9 @@ export async function isDirectoryOwner(db:Pool,identity:Pick<DirectorySession,'p
 }
 export function requireDirectoryAdmin(identity:DirectorySession):asserts identity is MfaDirectorySession{
  if(!identity.is_superadmin)throw new HttpError(403,'DIRECTORY_ADMIN_REQUIRED','Accès administrateur requis.');
+ requireDirectoryRecentMfa(identity);
+}
+export function requireDirectoryRecentMfa(identity:DirectorySession):asserts identity is MfaDirectorySession{
  const elapsed=identity.mfa_verified_at===null?NaN:Date.now()-new Date(identity.mfa_verified_at).getTime();
  if(!identity.mfa_factor_id||identity.mfa_factor_version===null||!identity.mfa_method||!Number.isFinite(elapsed)||elapsed<0||elapsed>300000)throw new HttpError(428,'MFA_STEP_UP_REQUIRED','Confirmez votre double authentification pour cette opération.');
 }

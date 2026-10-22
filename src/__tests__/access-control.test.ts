@@ -179,10 +179,10 @@ beforeEach(() => {
 });
 
 describe("Catalogue de modules #326", () => {
-  it("expose 25 modules aux clés et préfixes uniques, dont un seul protégé", () => {
-    expect(MODULE_CATALOG).toHaveLength(25);
+  it("expose 26 modules aux clés et préfixes uniques, dont un seul protégé", () => {
+    expect(MODULE_CATALOG).toHaveLength(26);
     const keys = MODULE_CATALOG.map((entry) => entry.module_key);
-    expect(new Set(keys).size).toBe(25);
+    expect(new Set(keys).size).toBe(26);
 
     const prefixes = MODULE_CATALOG.flatMap((entry) => entry.api_prefixes);
     expect(new Set(prefixes).size).toBe(prefixes.length);
@@ -601,7 +601,13 @@ describe("Surface HTTP /admin/access", () => {
 });
 
 describe("Surface HTTP /admin/reference-data", () => {
-  it("refuse un Directeur non SuperAdmin, y compris la lecture des capacités", async () => {
+  beforeEach(() => {
+    repo.repoResolveAccessProfile.mockImplementation(async () => [{
+      ...CATALOG_ROW, module_key: "parametrage-erp", nav_page_keys: ["erp-settings", "reference-data"],
+      is_superadmin: await repo.repoIsSuperadmin(1), access: null,
+    }]);
+  });
+  it("refuse un Directeur sans droit explicite, y compris la lecture des capacités", async () => {
     repo.repoIsSuperadmin.mockResolvedValue(false);
 
     const res = await request(app)
@@ -630,6 +636,19 @@ describe("Surface HTTP /admin/reference-data", () => {
       approve: true,
       apply: true,
     });
+  });
+
+  it("ouvre les références au compte délégué et lui refuse toujours la création de comptes", async () => {
+    repo.repoResolveAccessProfile.mockResolvedValue([{
+      ...CATALOG_ROW, module_key: "parametrage-erp", nav_page_keys: ["erp-settings", "reference-data"],
+      is_superadmin: false, access: "GRANTED",
+    }]);
+    const response = await request(app).get("/api/v1/admin/reference-data/capabilities")
+      .set("x-test-role", "Employee").set("x-test-user-id", String(OPERATEUR_ID));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ approve: true, apply: true });
+    await request(app).post("/api/v1/admin/users")
+      .set("x-test-role", "Directeur").set("x-test-user-id", String(OPERATEUR_ID)).send({}).expect(403);
   });
 
   it("conserve les lectures SuperAdmin et impose une MFA récente avant toute mutation", async () => {

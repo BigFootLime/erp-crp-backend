@@ -104,7 +104,7 @@ export function createDirectoryServer(options:Options){
  mountDirectoryPasswords(app,wrap);
  mountDirectoryAdmin(app,options.db,wrap);
  mountDirectoryAccountRequests(app,options.db,wrap);
- mountDirectoryCompany(app,options.db,wrap);
+ mountDirectoryCompany(app,options.db,wrap,options.directoryId,async()=>typeof options.keys==='function'?await options.keys():options.keys,options.commonAccessTransport);
  mountDirectoryAvatars(app,options.db,wrap);
  mountDirectorySelfProfile(app,options.db,wrap);
  mountDirectoryTabletPins(app,options.db,options.sourceJwtSecret,wrap);
