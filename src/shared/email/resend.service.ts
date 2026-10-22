@@ -102,10 +102,12 @@ export async function sendTransactionalEmail(params: {
   html: string;
   idempotencyKey?: string | null;
   attachments?: EmailAttachment[];
+  /** Server-derived authenticated sender only; never populated from request recipients. */
+  testSenderEmail?: string | null;
 }): Promise<ResendSendResult> {
   const cfg = readResendConfig();
   if (!cfg) return { ok: false, skipped: true };
-  const delivery = resolveOutboundEmailRecipients(params.to);
+  const delivery = resolveOutboundEmailRecipients(params.to, process.env, params.testSenderEmail);
 
   return postResendEmail({
     cfg,

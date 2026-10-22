@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
+import { isTestEmailEnvironment, resolveOutboundEmailRecipients, testSafeEmailSubject } from "../../../shared/email/test-email-routing";
 import { readIssuerParty } from "../../../shared/documents/issuer-identity.repository";
 import {
   CONTENT_WIDTH,
@@ -27,6 +28,7 @@ import {
   repoListCommandeArDrafts,
   repoMarkCommandeArFailed,
   repoResolveCommandeArOfficialArchive,
+  repoReadActiveArSenderEmail,
 } from "../repository/commande-ar.repository";
 import pool from "../../../config/database";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
@@ -497,6 +499,21 @@ export async function svcSendCommandeAr(params: {
   let providerCallStarted = false;
   let providerDefinitelyNotCalled = false;
   try {
+    // The actor comes from authentication, never from the recipient form. The
+    // isolated harness still permits only its loopback example.local sink.
+    const isolatedSink = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_MANAGED_STACK === "1" && process.env.CERP_E2E_EMAIL_SINK === "1";
+    const testSenderEmail = isTestEmailEnvironment() && !isolatedSink
+      ? await repoReadActiveArSenderEmail(params.user_id)
+      : undefined;
+    let delivery: ReturnType<typeof resolveOutboundEmailRecipients>;
+    try {
+      delivery = resolveOutboundEmailRecipients(recipientEmails, process.env, testSenderEmail);
+    } catch (error) {
+      if (error instanceof Error && error.message === "TEST_EMAIL_SENDER_EMAIL_REQUIRED") {
+        throw new HttpError(409, "TEST_AR_SENDER_EMAIL_REQUIRED", "Renseignez une adresse email valide dans votre compte avant d’envoyer un AR en base Test.");
+      }
+      throw error;
+    }
     // The supplier/customer-facing email must attach the exact archived GED
     // bytes, never a mutable legacy working-file copy.
     // The authoritative worker archives the immutable GED rendition just
@@ -543,7 +560,8 @@ export async function svcSendCommandeAr(params: {
     const termsFile = await readArchivedGeneralTerms({scope:"commande-client",entityId:String(params.commande_id),archiveId,documentKind:ACKNOWLEDGEMENT_DOCUMENT_KIND,actor:params.user_id});
     providerCallStarted = true;
     const emailResult = await sendTransactionalEmail({
-      to: recipientEmails,
+      to: delivery.recipients,
+      testSenderEmail,
       subject: generatedContent.subject,
       text: sentText,
       html: sentHtml,
@@ -576,14 +594,14 @@ export async function svcSendCommandeAr(params: {
       ar_id: params.body.ar_id,
       send_lock_token: claim.lock_token,
       sent_by: params.user_id,
-      recipient_emails: recipientEmails,
+      recipient_emails: delivery.recipients,
       recipient_contact_ids: recipientContactIds,
       email_provider_id: emailResult.id ?? null,
       provider_name: "resend",
-      sent_email_subject: generatedContent.subject,
+      sent_email_subject: testSafeEmailSubject(generatedContent.subject, delivery.rerouted),
       sent_email_text: sentText,
       sent_email_html: sentHtml,
-      commentaire: `AR envoyé à ${recipientEmails.join(", ")}`,
+      commentaire: `${delivery.rerouted ? "AR de Test" : "AR"} envoyé à ${delivery.recipients.join(", ")}`,
     });
 
     return finalized.result;
