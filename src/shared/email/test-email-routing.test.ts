@@ -42,10 +42,24 @@ describe("test email routing safety boundary", () => {
     expect(() => resolveOutboundEmailRecipients([], env)).toThrow(/example\.local/);
   });
 
+  it("routes Test ARs only to the authenticated sender supplied by the server", () => {
+    const env = { DATABASE_URL: "postgresql://db/cerp_test" } as NodeJS.ProcessEnv;
+    expect(resolveOutboundEmailRecipients(["customer@example.com"], env, "ghislaine@example.test"))
+      .toEqual({ recipients: ["ghislaine@example.test"], rerouted: true });
+    expect(resolveOutboundEmailRecipients(["customer@example.com"], env, "other-user@example.test"))
+      .toEqual({ recipients: ["other-user@example.test"], rerouted: true });
+    for (const invalid of [null, "", "bad-email", "a@example.test,b@example.test", "a@example.test\nBcc: customer@example.com"]) {
+      expect(() => resolveOutboundEmailRecipients(["customer@example.com"], env, invalid))
+        .toThrow("TEST_EMAIL_SENDER_EMAIL_REQUIRED");
+    }
+  });
+
   it("keeps deduplicated intended recipients in production", () => {
     expect(resolveOutboundEmailRecipients(
       ["client@example.com", "client@example.com"],
       { CERP_ENVIRONMENT: "production", DATABASE_URL: "postgresql://db/cerp" } as NodeJS.ProcessEnv
     )).toEqual({ recipients: ["client@example.com"], rerouted: false });
+    expect(resolveOutboundEmailRecipients(["client@example.com"], { CERP_ENVIRONMENT: "production", DATABASE_URL: "postgresql://db/cerp_prod" } as NodeJS.ProcessEnv, "sender@example.test"))
+      .toEqual({ recipients: ["client@example.com"], rerouted: false });
   });
 });

@@ -32,6 +32,14 @@ import type {
 
 type DbQueryer = Pick<PoolClient, "query">;
 
+export async function repoReadActiveArSenderEmail(userId: number): Promise<string | null> {
+  const result = await pool.query<{ email: string | null }>(
+    "SELECT email FROM public.users WHERE id=$1 AND status='Active'",
+    [userId]
+  );
+  return result.rows[0]?.email ?? null;
+}
+
 export function formatCommandeArReference(seriesNumber: number, versionNumber: number): string {
   return `AR-${String(seriesNumber).padStart(8, "0")}-v${versionNumber}`;
 }

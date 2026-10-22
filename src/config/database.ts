@@ -24,7 +24,16 @@ const pool = new Pool({
   idle_in_transaction_session_timeout: readPositiveIntEnv('PG_IDLE_TX_TIMEOUT_MS', 15_000),
 });
 
-pool.on('connect', () => {
+pool.on('connect', (client) => {
+  // Pool errors cover idle clients. A checked-out client must also keep an
+  // error listener while a transaction or recurring task owns it. Query
+  // rejections still propagate to their existing rollback/release handlers.
+  client.on('error', (err) => {
+    logger.error('database_client_error', {
+      failure_code: safeErrorCode(err),
+      error_fingerprint: errorFingerprint(err),
+    });
+  });
   logger.info('database_connection_opened');
 });
 
