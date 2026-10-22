@@ -49,6 +49,7 @@ vi.mock("../../../shared/authoritative-documents/authoritative-document.service"
   officialDocumentGenerationEnvelope: vi.fn(),
 }));
 vi.mock("../repository/commande-ar.repository", () => ({
+  repoReadActiveArSenderEmail: vi.fn().mockResolvedValue("sender@example.test"),
   buildCommandeArRecipientSuggestions: mocks.suggestions,
   repoAbortCommandeArSendClaim: mocks.abortClaim,
   repoAuthorizeCommandeArGeneration: mocks.authorizeGeneration,

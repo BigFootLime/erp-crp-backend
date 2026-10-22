@@ -32,7 +32,8 @@ export function isTestEmailEnvironment(env: NodeJS.ProcessEnv = process.env): bo
 
 export function resolveOutboundEmailRecipients(
   intendedRecipients: readonly string[],
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  testSenderEmail?: string | null
 ): { recipients: string[]; rerouted: boolean } {
   if (
     env.CERP_E2E_ISOLATED === "1" &&
@@ -46,6 +47,13 @@ export function resolveOutboundEmailRecipients(
     return { recipients, rerouted: false };
   }
   if (isTestEmailEnvironment(env)) {
+    if (testSenderEmail !== undefined) {
+      const sender = testSenderEmail?.trim() ?? "";
+      if (sender.length > 254 || !/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(sender)) {
+        throw new Error("TEST_EMAIL_SENDER_EMAIL_REQUIRED");
+      }
+      return { recipients: [sender], rerouted: true };
+    }
     return { recipients: [...TEST_EMAIL_RECIPIENTS], rerouted: true };
   }
   return {
