@@ -109,7 +109,7 @@ describe('Connexion PostgreSQL', () => {
         const pg = await import('pg')
         await import('../config/database')
 
-        ; (pg as any).__emitter__.emit('connect')
+        ; (pg as any).__emitter__.emit('connect', new EventEmitter())
 
         expect(loggerMocks.info).toHaveBeenCalledWith('database_connection_opened')
     })
