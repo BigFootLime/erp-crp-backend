@@ -1,5 +1,16 @@
 # Changelog
 
+## Préparé — Destinataire des AR de Test et résilience PostgreSQL (#1415, #1416)
+
+- En base Test, les AR clients sont transmis uniquement à l’adresse du compte actif qui confirme l’envoi, résolue côté serveur. Une adresse absente ou invalide bloque l’appel au fournisseur ; l’historique conserve le destinataire réel et l’objet Test. Les destinataires Production et les autres flux email sont conservés.
+- Les connexions PostgreSQL empruntées au pool conservent un écouteur d’erreur avec journalisation minimale. Les échecs de requête, les annulations et la destruction des connexions perdues gardent leur comportement transactionnel.
+
+## Préparé — Paramétrage ERP délégué (#1412)
+
+- Droit nominatif `parametrage-erp`, modifiable dans la matrice de comptes, pour le démarrage, l’expédition et les références. Les écritures exigent un MFA récent ; la gestion des comptes conserve sa garde SuperAdmin.
+- La configuration de l’entreprise conserve son annuaire commun et vérifie les droits Production actuels par réponse privée signée, depuis Production comme depuis Test.
+- Les listes d’accès affichent l’identifiant canonique de l’annuaire lorsque le nom local est technique. Déploiement et données de catalogue à coordonner ; aucun changement de schéma.
+
 ## Préparé — Exécution des maintenances pour le bleu/vert (#1381)
 
 - Séparer les API routées sans tâches périodiques du worker dédié sous verrou PostgreSQL ; conserver le fonctionnement combiné par défaut.

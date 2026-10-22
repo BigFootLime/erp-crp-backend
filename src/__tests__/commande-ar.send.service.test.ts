@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   claim: vi.fn(),
@@ -9,10 +9,12 @@ const mocks = vi.hoisted(() => ({
   findArchive: vi.fn(),
   readOfficialPdf: vi.fn(),
   readGeneralTerms: vi.fn(),
+  senderEmail: vi.fn(),
 }));
 
 vi.mock("../module/commande-client/repository/commande-ar.repository", () => ({
   repoClaimCommandeArSend: mocks.claim,
+  repoReadActiveArSenderEmail: mocks.senderEmail,
   repoFinalizeCommandeArSend: mocks.finalize,
   repoMarkCommandeArFailed: mocks.markFailed,
   repoFindCommandeArOfficialArchiveId: mocks.findArchive,
@@ -97,6 +99,7 @@ const sendBody = {
 
 beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
+  mocks.senderEmail.mockResolvedValue("sender@example.test");
   mocks.findArchive.mockResolvedValue("44444444-4444-4444-8444-444444444444");
   mocks.readOfficialPdf.mockResolvedValue({ filename: "AR-00000001-v1.pdf", bytes: PDF });
   mocks.readGeneralTerms.mockResolvedValue(null);
@@ -123,7 +126,42 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => vi.unstubAllEnvs());
+
 describe("svcSendCommandeAr", () => {
+  it("uses the authenticated actor mailbox for Test and records the actual delivery", async () => {
+    vi.stubEnv("CERP_ENVIRONMENT", "test");
+    mocks.sendEmail.mockResolvedValue({ ok: true, id: "test-provider" });
+    await svcSendCommandeAr({ commande_id: 42, user_id: 7, body: sendBody });
+    expect(mocks.senderEmail).toHaveBeenCalledWith(7);
+    expect(mocks.sendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: ["sender@example.test"], testSenderEmail: "sender@example.test",
+    }));
+    expect(mocks.finalize).toHaveBeenCalledWith(expect.objectContaining({
+      recipient_emails: ["sender@example.test"], sent_email_subject: expect.stringMatching(/^\[TEST/),
+    }));
+  });
+
+  it.each([null, "invalid-address"])("blocks Test AR without a valid account mailbox (%s)", async (email) => {
+    vi.stubEnv("CERP_ENVIRONMENT", "test");
+    mocks.senderEmail.mockResolvedValue(email);
+    await expect(svcSendCommandeAr({ commande_id: 42, user_id: 7, body: sendBody }))
+      .rejects.toMatchObject({ code: "TEST_AR_SENDER_EMAIL_REQUIRED", status: 409 });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.readOfficialPdf).not.toHaveBeenCalled();
+    expect(mocks.markFailed).toHaveBeenCalledWith(expect.objectContaining({ release_idempotency: true }));
+  });
+
+  it("keeps Production AR recipients and does not look up a Test mailbox", async () => {
+    vi.stubEnv("NODE_ENV", "production");vi.stubEnv("CERP_ENVIRONMENT", "production");
+    vi.stubEnv("CERP_EMAIL_TEST_MODE", "");vi.stubEnv("DATABASE_URL", "postgresql://db/cerp_prod");
+    mocks.sendEmail.mockResolvedValue({ ok: true });
+    await svcSendCommandeAr({ commande_id: 42, user_id: 7, body: sendBody });
+    expect(mocks.senderEmail).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: sendBody.recipient_emails }));
+    expect(mocks.finalize).toHaveBeenCalledWith(expect.objectContaining({ recipient_emails: sendBody.recipient_emails }));
+  });
+
   it("sends the previewed PDF and only advances workflow after provider success", async () => {
     mocks.sendEmail.mockResolvedValue({ ok: true, id: "re_123" });
 

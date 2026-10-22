@@ -28,6 +28,11 @@ beforeEach(()=>{query.mockReset();release.mockReset();query.mockImplementation(a
 afterEach(async()=>{if(server){await new Promise<void>((resolve,reject)=>server!.close(error=>error?reject(error):resolve()));server=undefined;}});
 
 describe('live common access source',()=>{
+ it('binds a Production configuration read to the same current account policy',async()=>{
+  const ownBinding={...binding,target_site:'cerp_prod'};
+  const policy=await readCommonAccessSource(ownBinding,key,await transport());
+  expect(policy).toMatchObject({...ownBinding,epoch:'72'});
+ });
  it('reads current Production decisions in one read-only snapshot and binds its reply',async()=>{
   const policy=await readCommonAccessSource(binding,key,await transport());
   expect(policy).toMatchObject({...binding,epoch:'72',modules:[{module_key:'production',allowed:true},{module_key:'rh',allowed:false}],capabilities:['audit.read']});

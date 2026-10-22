@@ -1,8 +1,6 @@
 import { Router } from "express";
 
-import { grantAccountModuleAccessToRequest } from "../../access-control/context/account-module-access.context";
-import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
-import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
+import { requireErpConfiguration } from "../../access-control/middlewares/require-erp-configuration";
 
 import {
   applyChangeSet,
@@ -32,24 +30,8 @@ import {
 
 const router = Router();
 
-// Reference datasets govern costs and operational commitments. This is an
-// Administration surface: the database-backed SuperAdmin marker is the
-// boundary, never a descriptive role label or a module decision. The explicit
-// request context is installed only after that database-backed confirmation
-// and the canonical MFA step-up check for mutations; reference-data policies
-// can therefore recognize the confirmed SuperAdmin without mutating its
-// descriptive JWT role.
-router.use(requireSuperadmin, requireRecentMfaForMutations, (req, res, next) => {
-  if (typeof req.user?.id !== "number") {
-    res.status(401).json({ error: "Utilisateur non authentifié" });
-    return;
-  }
-  grantAccountModuleAccessToRequest(
-    req,
-    { userId: req.user.id, moduleKey: "administration", elevated: true },
-    next,
-  );
-});
+// The explicit account grant and recent MFA for writes install the trusted context.
+router.use(requireErpConfiguration);
 
 router.get("/capabilities", readCapabilities);
 router.get("/catalog", requireReferenceDataCapability("view"), readCatalog);

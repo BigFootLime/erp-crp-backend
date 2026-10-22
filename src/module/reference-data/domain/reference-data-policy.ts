@@ -102,7 +102,7 @@ export function roleHasReferenceDataCapability(
   capability: ReferenceDataCapability
 ): boolean {
   const access = getAccountModuleAccessContext();
-  if (access?.granted === true && access.elevated === true && access.moduleKey === "administration") {
+  if (access?.granted === true && access.elevated === true && (access.moduleKey === "administration" || access.moduleKey === "parametrage-erp")) {
     return true;
   }
   const parts = effectiveRoleParts(role).map(normalizeRole);
