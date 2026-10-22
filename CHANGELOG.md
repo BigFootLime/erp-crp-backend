@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.15 — Compte et droits communs à toutes les bases (#1407)
+
+- L'approbation active Production et Test ; les autres bases Test enregistrées reprennent le compte, ses fonctions et son statut SuperAdmin réel. Un blocage explicite demeure prioritaire et une inscription Test seule ne donne aucun accès Production.
+- Mot de passe, PIN et facteur MFA restent dans l'annuaire commun. Une installation appairée par l'autorité Production fonctionne sur les bases enregistrées, avec défis et sessions liés à leur base cible.
+- Les modules et capacités sensibles courants sont lus auprès de l'API Production par appels privés signés, puis projetés avant l'autorisation Test. Une révocation est reprise ; une source indisponible produit une erreur temporaire 503.
+- Aucun changement de schéma. Conserver l'annuaire PIN-v2, ses clés et ses facteurs lors de toute intervention. Qualification et livraison : `docs/testing/common-accounts-1407.md`.
+
 ## 2.0.14 — Identification tablette par PIN seul (#1403)
 
 - Résoudre le compte depuis un PIN unique dans l’annuaire partagé, sur tablette appairée uniquement. Les administrateurs conservent le défi MFA ; les droits métier restent ceux du compte.

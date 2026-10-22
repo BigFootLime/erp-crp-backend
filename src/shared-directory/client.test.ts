@@ -1,9 +1,22 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {DirectoryClient,LOCAL_DIRECTORY_ENDPOINT,WIREGUARD_DIRECTORY_ENDPOINT} from './client';
 import {verifyDirectoryCall} from './call-signature';
+import {commonAccessReplyMac} from './common-access-signature';
 const key='ab'.repeat(32);
 afterEach(()=>vi.unstubAllGlobals());
 describe('private directory transport',()=>{
+ it('binds a common access reply to this site request nonce, including the Test-only result',async()=>{
+  let saved:Response|undefined;
+  const fetchMock=vi.fn(async(_url:string,options:RequestInit)=>{
+   if(saved)return saved.clone();
+   const nonce=(options.headers as Record<string,string>)['X-CERP-Directory-Nonce'],bytes=Buffer.from(JSON.stringify({policy:null}));
+   saved=new Response(bytes,{headers:{'X-CERP-Common-Access-Site-Signature':commonAccessReplyMac('site',key,nonce,bytes).toString('hex')}});
+   return saved.clone();
+  });vi.stubGlobal('fetch',fetchMock);
+  const directory=new DirectoryClient(LOCAL_DIRECTORY_ENDPOINT,'cerp_test',key);
+  await expect(directory.commonAccessPolicy('00000000-0000-4000-8000-000000000000')).resolves.toEqual({policy:null});
+  await expect(directory.commonAccessPolicy('00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({status:503,code:'DIRECTORY_UNAVAILABLE'});
+ });
  it.each([LOCAL_DIRECTORY_ENDPOINT,WIREGUARD_DIRECTORY_ENDPOINT])('signs the same caller, method, path and bytes on %s',async endpoint=>{
   const fetchMock=vi.fn(async(url:string,options:RequestInit)=>{
    expect(url).toBe(`${endpoint}/info`);expect(options.redirect).toBe('error');
