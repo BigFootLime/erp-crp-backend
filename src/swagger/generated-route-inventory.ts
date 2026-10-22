@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "e4dcee5c1800383eafdb70d047d22b0c6ba3ae978f2f29fa8a91e186fb8ef2a7";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ca658d5b11090e1fe96216eaadc0d1e388f07201bbbdd5537ae704c09d68c55e";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -183,7 +183,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/events",
-    "source": "src/module/access-control/routes/access-control.routes.ts:18",
+    "source": "src/module/access-control/routes/access-control.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -191,6 +191,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessEvents"
     ],
     "authenticated": true,
@@ -203,7 +204,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/modules/{moduleKey}/default",
-    "source": "src/module/access-control/routes/access-control.routes.ts:24",
+    "source": "src/module/access-control/routes/access-control.routes.ts:32",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -211,6 +212,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putModuleDefault"
     ],
     "authenticated": true,
@@ -223,7 +225,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/overview",
-    "source": "src/module/access-control/routes/access-control.routes.ts:15",
+    "source": "src/module/access-control/routes/access-control.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -231,6 +233,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getOverview"
     ],
     "authenticated": true,
@@ -243,7 +246,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/reviews",
-    "source": "src/module/access-control/routes/access-control.routes.ts:19",
+    "source": "src/module/access-control/routes/access-control.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -251,6 +254,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessReviews"
     ],
     "authenticated": true,
@@ -263,7 +267,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/reviews",
-    "source": "src/module/access-control/routes/access-control.routes.ts:20",
+    "source": "src/module/access-control/routes/access-control.routes.ts:28",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -271,6 +275,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postAccessReview"
     ],
     "authenticated": true,
@@ -283,7 +288,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/reviews/{reviewId}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:21",
+    "source": "src/module/access-control/routes/access-control.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -291,6 +296,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessReview"
     ],
     "authenticated": true,
@@ -303,7 +309,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/reviews/{reviewId}/close",
-    "source": "src/module/access-control/routes/access-control.routes.ts:23",
+    "source": "src/module/access-control/routes/access-control.routes.ts:31",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -311,6 +317,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postCloseAccessReview"
     ],
     "authenticated": true,
@@ -323,7 +330,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/reviews/{reviewId}/users/{userId}/decision",
-    "source": "src/module/access-control/routes/access-control.routes.ts:22",
+    "source": "src/module/access-control/routes/access-control.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -331,6 +338,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putAccessReviewDecision"
     ],
     "authenticated": true,
@@ -343,7 +351,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/unlock-all",
-    "source": "src/module/access-control/routes/access-control.routes.ts:27",
+    "source": "src/module/access-control/routes/access-control.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -351,6 +359,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postUnlockAll"
     ],
     "authenticated": true,
@@ -363,7 +372,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/modules",
-    "source": "src/module/access-control/routes/access-control.routes.ts:26",
+    "source": "src/module/access-control/routes/access-control.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -371,6 +380,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putUserModulesBulk"
     ],
     "authenticated": true,
@@ -383,7 +393,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/modules/{moduleKey}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:25",
+    "source": "src/module/access-control/routes/access-control.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -391,6 +401,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putUserModuleAccess"
     ],
     "authenticated": true,
@@ -403,7 +414,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/users/{userId}/sensitive-capabilities",
-    "source": "src/module/access-control/routes/access-control.routes.ts:16",
+    "source": "src/module/access-control/routes/access-control.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -411,6 +422,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getSensitiveCapabilities"
     ],
     "authenticated": true,
@@ -423,7 +435,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/sensitive-capabilities/{capability}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:17",
+    "source": "src/module/access-control/routes/access-control.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -431,6 +443,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putSensitiveCapability"
     ],
     "authenticated": true,

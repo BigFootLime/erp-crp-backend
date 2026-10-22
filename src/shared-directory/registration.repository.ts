@@ -19,7 +19,8 @@ export async function registerSharedTestProfile(db:Pool,site:string,raw:unknown,
   await tx.query('INSERT INTO public.cerp_directory_profiles(profile_id,user_id,weekly_hours_target,work_profile_incomplete) VALUES($1::uuid,$2,$3,false)',[profileId,user.id,input.weekly_hours_target]);
   await createEmployeeWorkProfile(tx,user.id,input,`DIR-${user.id}`);
   // This explicit, validated Test registration authorizes its own Test site.
-  // A Production employee never receives such membership merely by logging in.
+  // This Test-only registration never grants Production. Production-approved
+  // accounts instead reuse their canonical rights on every registered Test.
   await tx.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
    VALUES($1::uuid,$2,'Administrateur Systeme et Reseau',ARRAY['Administrateur Systeme et Reseau'],'Active',true)`,[profileId,site]);
   await tx.query('INSERT INTO public.test_account_registrations(idempotency_key,request_hash,user_id) VALUES($1::uuid,$2,$3)',[key,requestHash,user.id]);

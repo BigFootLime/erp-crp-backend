@@ -151,7 +151,8 @@ export async function approveDirectoryAccountRequest(db: Pool, actor: DirectoryS
     const profileId = randomUUID();
     await tx.query('INSERT INTO public.cerp_directory_profiles(profile_id,user_id,work_profile_incomplete) VALUES($1::uuid,$2,true)', [profileId, user.id]);
     await tx.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
-      VALUES($1::uuid,$2,$3,$4::text[],'Inactive',false)`, [profileId, actor.database, input.primary_role, roles]);
+      VALUES($1::uuid,'cerp_prod',$2,$3::text[],'Inactive',false),
+            ($1::uuid,'cerp_test',$2,$3::text[],'Inactive',false)`, [profileId, input.primary_role, roles]);
     await tx.query(`UPDATE public.cerp_directory_account_requests SET status='PROJECTION_PENDING',version=version+1,password_hash=NULL,approved_username=$2,profile_id=$3::uuid,primary_role=$4,roles=$5::text[],administrative_kind=$6,module_keys=$7::text[],reviewed_by_profile_id=$8::uuid,reviewed_at=now() WHERE id=$1::uuid`, [id, username, profileId, input.primary_role, roles, input.administrative_kind, modules, actor.profile_id]);
     await event(tx, id, 'APPROVAL_PREPARED', actor.profile_id, { profile_id: profileId, administrative_kind: input.administrative_kind });
     const next = await locked(tx, id), result = preparedApproval(next);
@@ -164,10 +165,15 @@ export async function activateDirectoryAccountRequest(db: Pool, actor: Directory
     const row = await locked(tx, input.id);
     if (row.status === 'APPROVED') { if (row.profile_id !== input.profile_id) throw new HttpError(409, 'ACCOUNT_REQUEST_PROJECTION_CONFLICT', 'Projection incohérente.'); await tx.query('COMMIT'); return { request_id: row.id, status: 'APPROVED' as const, username: row.approved_username! }; }
     if (row.status !== 'PROJECTION_PENDING' || row.profile_id !== input.profile_id || row.version !== input.expected_version) throw new HttpError(409, 'ACCOUNT_REQUEST_PROJECTION_CONFLICT', 'La projection doit être reprise avant activation.');
-    const membership = await tx.query("UPDATE public.cerp_directory_memberships SET status='Active',version=version+1 WHERE profile_id=$1::uuid AND database_id=$2 AND status='Inactive'", [row.profile_id, actor.database]);
-    if (membership.rowCount !== 1) throw new HttpError(409, 'ACCOUNT_REQUEST_MEMBERSHIP_CONFLICT', 'L’adhésion ne peut pas être activée.');
+    // Resume a preparation made by the previous release, which only inserted
+    // Production. Never overwrite an existing Test membership or its status.
+    await tx.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
+      VALUES($1::uuid,'cerp_test',$2,$3::text[],'Inactive',false)
+      ON CONFLICT(profile_id,database_id) DO NOTHING`, [row.profile_id,row.primary_role,row.roles]);
+    const membership = await tx.query("UPDATE public.cerp_directory_memberships SET status='Active',version=version+1 WHERE profile_id=$1::uuid AND database_id IN ('cerp_prod','cerp_test') AND status='Inactive' AND NOT is_superadmin AND role_key=$2 AND roles=$3::text[]", [row.profile_id,row.primary_role,row.roles]);
+    if (membership.rowCount !== 2) throw new HttpError(409, 'ACCOUNT_REQUEST_MEMBERSHIP_CONFLICT', 'Les accès Production et Test ne peuvent pas être activés.');
     await tx.query("UPDATE public.cerp_directory_account_requests SET status='APPROVED',version=version+1 WHERE id=$1::uuid", [row.id]);
-    await event(tx, row.id, 'ACTIVATED', actor.profile_id, { profile_id: row.profile_id });
+    await event(tx, row.id, 'ACTIVATED', actor.profile_id, { profile_id: row.profile_id, databases: ['cerp_prod','cerp_test'] });
     await tx.query('COMMIT'); return { request_id: row.id, status: 'APPROVED' as const, username: row.approved_username! };
   } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
 }

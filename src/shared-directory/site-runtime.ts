@@ -7,6 +7,7 @@ import {issueSessionToken} from '../module/auth/domain/session-token';
 import {insertLoginLog} from '../module/auth/repository/authLog.repository';
 import {synchronizeDirectoryCompany} from './company.projection';
 import {createEmployeeWorkProfile} from '../module/auth/repository/work-profile.repository';
+import {synchronizeCommonAccess} from './common-access';
 let client:DirectoryClient|null=null;
 let site:string|null=null;
 let authorityId:string|null=null;
@@ -122,6 +123,7 @@ export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?
   return result as Record<string,unknown>;
  }
  const identity=directorySessionSchema.parse(value.identity),projection=await projectDirectoryIdentity(db,identity);
+ if(client&&site&&!identity.is_superadmin)await synchronizeCommonAccess(db,client,site,identity.profile_id);
  if(meta)await insertLoginLog({user_id:projection.id,username_attempt:identity.username,success:true,...meta});
  const mfa=identity.mfa_factor_id!==null&&identity.mfa_factor_version!==null&&identity.mfa_verified_at!==null&&identity.mfa_method!==null?{factorId:identity.mfa_factor_id,factorVersion:identity.mfa_factor_version,verifiedAt:new Date(identity.mfa_verified_at),method:identity.mfa_method}:undefined;
  return {...issueSessionToken({id:projection.id,username:identity.username,email:identity.email,role:identity.role,roles:identity.roles,avatar_key:identity.avatar_key,profile_picture_asset_id:identity.avatar_asset_id,realtime_session_epoch:projection.session_epoch},mfa, {session:value.directory_session,profileId:identity.profile_id,membershipVersion:identity.membership_version,globalEpoch:identity.global_session_epoch}),...(value.recovery_codes?{recovery_codes:value.recovery_codes}:{})};
@@ -131,6 +133,7 @@ export async function validateSiteDirectoryToken(db:Pool,claims:{id:number;direc
  const identity=await client.validate(claims.directory_session);
  if(identity.profile_id!==claims.directory_profile_id||identity.global_session_epoch!==claims.directory_global_epoch||identity.membership_version!==claims.directory_membership_version||identity.mfa_factor_id!==(claims.mfa_factor_id??null)||identity.mfa_factor_version!==(claims.mfa_factor_version??null)||(identity.mfa_factor_id!==null)!==(claims.mfa===true)||(identity.mfa_verified_at===null?claims.mfa_verified_at!==undefined:Math.floor(new Date(identity.mfa_verified_at).getTime()/1000)!==claims.mfa_verified_at))throw new Error('DIRECTORY_SESSION_STALE');
  const projection=await projectDirectoryIdentity(db,identity);
+ if(site&&!identity.is_superadmin)await synchronizeCommonAccess(db,client,site,identity.profile_id);
  if(projection.id!==claims.id||projection.session_epoch!==claims.session_epoch)throw new Error('DIRECTORY_LOCAL_SESSION_STALE');
  await synchronizeDirectoryCompany(db,claims.directory_session);
  return identity;

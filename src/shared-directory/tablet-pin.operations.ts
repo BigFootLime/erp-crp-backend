@@ -3,7 +3,7 @@ import {createHash,createHmac,randomBytes,randomUUID,timingSafeEqual} from 'node
 import {z} from 'zod';
 import type {Express,RequestHandler} from 'express';
 import type {Pool,PoolClient} from 'pg';
-import {validateDirectorySession,createDirectorySession,bindChallenge} from './session.repository';
+import {validateDirectorySession,createDirectorySession,bindChallenge,ensureTestMembership} from './session.repository';
 import {directoryAuthMetaSchema} from './mfa.operations';
 import {canonicalizeAuthUsername} from '../module/auth/domain/auth-identity';
 import {accountRequiresMfa,normalizeMfaPolicy} from '../module/auth/domain/mfa-policy';
@@ -38,7 +38,11 @@ const pinVerifier=(value:string)=>pinHmac('directory-tablet-pin-verifier',value)
 const pinKeyFingerprint=()=>pinHmac('directory-tablet-pin-key-fingerprint','');
 const PIN_VERIFIER_VERSION=2;
 
-type DeviceRow={device_id:string;device_secret_hash:string|null;revoked_at:string|null};
+type DeviceRow={device_id:string;database_id:string;global_authority:boolean;device_secret_hash:string|null;revoked_at:string|null};
+export function pairedDeviceAllowsTarget(origin:string,target:string,registered:ReadonlySet<string>|undefined,globalAuthority:boolean){
+ if(origin===target)return true;
+ return !!registered?.has(origin)&&registered.has(target)&&globalAuthority;
+}
 type LoginRow={pin_hash:string|null;pin_verifier_version:number|null;profile_id:string;id:number;username:string;password:string;mfa_required:boolean;is_superadmin:boolean;mfa_reenrollment_required:boolean;role:string;roles:string[];member_superadmin:boolean;status:string;user_status:string;session_epoch:number|string;mfa_policy:string|null;has_factor:boolean;pin_version:number};
 
 /** Credentials are Directory-only. A tablet is a neutral facility asset, not a user credential. */
@@ -112,19 +116,32 @@ export function mountDirectoryTabletPins(app:Express,db:Pool,sourceJwtSecret:str
   const selectAccount=`SELECT p.pin_hash,p.pin_verifier_version,p.version AS pin_version,p.profile_id,u.id,u.username,u.password,u.mfa_required,u.is_superadmin,u.mfa_reenrollment_required,u.role,coalesce((SELECT array_agg(ura.role_key) FROM public.user_role_assignments ura WHERE ura.user_id=u.id),ARRAY[u.role]) AS roles,m.is_superadmin AS member_superadmin,m.status,u.status AS user_status,coalesce(e.session_epoch,0) AS session_epoch,(SELECT value_text FROM public.erp_settings WHERE key='security.mfa_policy') AS mfa_policy,EXISTS(SELECT 1 FROM public.user_mfa_factors f WHERE f.user_id=u.id AND f.state='ACTIVE') AS has_factor FROM public.cerp_directory_profiles dp JOIN public.users u ON u.id=dp.user_id JOIN public.cerp_directory_memberships m ON m.profile_id=dp.profile_id AND m.database_id=$1 JOIN public.cerp_directory_tablet_pins p ON p.profile_id=dp.profile_id LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id`;
   try{await client.query('BEGIN');
    // Validate the paired device before any account/PIN lookup. This keeps a
-   // stolen PIN from probing accounts through another tablet or another site.
-   const device=(await client.query<DeviceRow>('SELECT device_id::text,device_secret_hash,revoked_at FROM public.cerp_directory_tablet_devices WHERE device_id=$1::uuid AND database_id=$2 FOR UPDATE',[body.input.device_id,site])).rows[0];
-   const deviceValid=!!device&&!device.revoked_at&&!!device.device_secret_hash&&equalHash(device.device_secret_hash,hash(body.input.device_secret));
+   // stolen PIN from probing accounts through another installation. A shared
+   // installation still requires registered sites and Production authority.
+   const device=(await client.query<DeviceRow>(`SELECT d.device_id::text,d.database_id,d.device_secret_hash,d.revoked_at,
+    (d.database_id='cerp_prod' OR EXISTS(SELECT 1 FROM public.erp_audit_logs a
+      JOIN public.cerp_directory_profiles creator ON creator.user_id=a.user_id
+      JOIN public.cerp_directory_memberships owner ON owner.profile_id=creator.profile_id AND owner.database_id='cerp_prod' AND owner.status='Active' AND owner.is_superadmin
+      WHERE a.action='TABLET_DEVICE_CREATED' AND a.entity_type='tablet_device' AND a.entity_id=d.device_id::text)) AS global_authority
+    FROM public.cerp_directory_tablet_devices d WHERE d.device_id=$1::uuid FOR UPDATE OF d`,[body.input.device_id])).rows[0];
+   const deviceValid=!!device&&!device.revoked_at&&!!device.device_secret_hash&&pairedDeviceAllowsTarget(device.database_id,site,req.directorySites,device.global_authority)&&equalHash(device.device_secret_hash,hash(body.input.device_secret));
    const throttled=await isRateLimited(client,'ip',limiter.ip)||await isRateLimited(client,'account_device',limiter.device);
    if(!deviceValid||throttled){if(!throttled){await rateLimit(client,'ip',limiter.ip,100);if(deviceValid)await rateLimit(client,'account_device',limiter.device);}await client.query('COMMIT');if(throttled)throw Object.assign(new Error('TOO_MANY_ATTEMPTS'),{status:429,code:'TOO_MANY_ATTEMPTS'});throw authError();}
    if(!await pinOnlySchemaReady(client)){await client.query('COMMIT');throw pinOnlySchemaUnavailable();}
-   const row=(await client.query<LoginRow>(`${selectAccount} WHERE p.pin_lookup_hash=$2 AND p.pin_verifier_version=${PIN_VERIFIER_VERSION} AND p.pin_key_fingerprint=$3 FOR UPDATE OF p`,[site,pinLookupHash(body.input.pin),pinKeyFingerprint()])).rows[0];
+   // Resolve only after the installation and target caller were verified.
+   // Provisioning copies active Production authority, never a Test admin role.
+   if(site!=='cerp_prod'){
+    const candidate=(await client.query<{user_id:number}>(`SELECT dp.user_id FROM public.cerp_directory_tablet_pins p JOIN public.cerp_directory_profiles dp ON dp.profile_id=p.profile_id WHERE p.pin_lookup_hash=$1 AND p.pin_verifier_version=$2 AND p.pin_key_fingerprint=$3`,[pinLookupHash(body.input.pin),PIN_VERIFIER_VERSION,pinKeyFingerprint()])).rows[0];
+    if(candidate)await ensureTestMembership(client,site,candidate.user_id);
+   }
+   const row=(await client.query<LoginRow>(`${selectAccount} WHERE p.pin_lookup_hash=$2 AND p.pin_verifier_version=${PIN_VERIFIER_VERSION} AND p.pin_key_fingerprint=$3
+    AND NOT EXISTS(SELECT 1 FROM public.cerp_directory_memberships prod WHERE prod.profile_id=dp.profile_id AND prod.database_id='cerp_prod' AND prod.status<>'Active') FOR UPDATE OF p`,[site,pinLookupHash(body.input.pin),pinKeyFingerprint()])).rows[0];
    const valid=!!row&&!row.mfa_reenrollment_required&&row.status==='Active'&&row.user_status==='Active'&&typeof row.pin_hash==='string'&&(!body.input.username||canonicalizeAuthUsername(row.username)===body.input.username)&&await bcrypt.compare(pinVerifier(body.input.pin),row.pin_hash);
    if(!valid){await rateLimit(client,'ip',limiter.ip,100);await rateLimit(client,'account_device',limiter.device);await client.query('COMMIT');throw authError();}
    // Keep failed guesses for the whole device window: a known valid PIN must
    // not let one employee reset the budget while guessing another user's PIN.
    const required=accountRequiresMfa({policy:normalizeMfaPolicy(row.mfa_policy),isSuperadmin:row.is_superadmin||row.member_superadmin,role:row.role,roles:row.roles,hasActiveFactor:row.has_factor,mfaRequired:row.mfa_required});
-   await client.query('UPDATE public.cerp_directory_tablet_devices SET last_used_at=now() WHERE device_id=$1::uuid AND database_id=$2',[body.input.device_id,site]);
+   await client.query('UPDATE public.cerp_directory_tablet_devices SET last_used_at=now() WHERE device_id=$1::uuid',[body.input.device_id]);
    // MFA locks the user in a separate transaction. Its work must finish before
    // the audit insert takes the user foreign-key lock in this transaction.
    const recordPinLogin=()=>repoInsertAuditLog({tx:client,user_id:row.id,ip:body.meta.ip,user_agent:body.meta.user_agent,device_type:body.meta.device_type,os:body.meta.os,browser:body.meta.browser,body:{event_type:'ACTION',action:'AUTH_TABLET_PIN_LOGIN',page_key:'tablet-pin',entity_type:'tablet_device',entity_id:body.input.device_id,path:'/auth/tablet-pin/login',details:{mfa_required:required}}});
