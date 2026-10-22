@@ -5,6 +5,7 @@
 - Séparer les API routées sans tâches périodiques du worker dédié sous verrou PostgreSQL ; conserver le fonctionnement combiné par défaut.
 - Arrêter les douze minuteries puis attendre les cycles actifs avant un passage normal au worker suivant. Exposer le mode et l'état du worker dans la readiness.
 - Préparation sans nouvelle dépendance, migration, changement de droits ou activation en production. La bascule réseau, le bootstrap et le retour compatible avec Directory PIN v2 restent à qualifier séparément ; aucune garantie de traitement exactement une fois sous partition n'est annoncée.
+
 ## 2.0.15 — Compte et droits communs à toutes les bases (#1407)
 
 - L'approbation active Production et Test ; les autres bases Test enregistrées reprennent le compte, ses fonctions et son statut SuperAdmin réel. Un blocage explicite demeure prioritaire et une inscription Test seule ne donne aucun accès Production.
