@@ -23,6 +23,9 @@
 
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
+- Préparer un OF brouillon à partir d'une cohorte physique constatée, avec version technique publiée, demande native précise et checkpoints d'avancement. La reprise d'une phase commencée sans pièce produite conserve cette réalité sans inventer de temps passé.
+- Conserver les matières déjà utilisées dans des checkpoints immuables et les projeter avec l'origine `CUTOVER_OPENING`, sans créer de mouvements, réservations ou pointages historiques. Les besoins futurs restent soumis à la préparation normale.
+- Vérifier côté serveur les correspondances, les reliquats, les preuves, l'unité et la propriété. Les sources incomplètes restent en préparation ; la qualification intégrée, les migrations et la publication du candidat restent à effectuer.
 
 ## Préparé — Disponibilité du temps réel avec annuaire partagé (#1388)
 

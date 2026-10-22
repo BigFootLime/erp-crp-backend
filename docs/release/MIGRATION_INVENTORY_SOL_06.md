@@ -1,21 +1,21 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-09-14T18:16:40.161Z
+- Généré : 2026-10-20T14:58:54.441Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 231
-- Scripts auxiliaires : 438
-- Patches depuis 2026-07-01 : 173
+- Patches exécutables : 324
+- Scripts auxiliaires : 707
+- Patches depuis 2026-07-01 : 266
 
 ## Risques statiques à examiner
 
 | Classe | Nombre de patches |
 |---|---:|
 | DDL destructif | 3 |
-| DML destructif | 10 |
-| Réécriture de données | 135 |
-| Verrou de table possible | 172 |
-| Index non concurrent | 159 |
-| Évolution d'enum | 1 |
+| DML destructif | 40 |
+| Réécriture de données | 211 |
+| Verrou de table possible | 229 |
+| Index non concurrent | 216 |
+| Évolution d'enum | 2 |
 
 Ces détections sont volontairement conservatrices : elles servent de file de revue, pas de preuve de danger. Les durées réelles sont capturées par la répétition isolée.
 
@@ -82,5 +82,18 @@ Ces détections sont volontairement conservatrices : elles servent de file de re
 - `20260909_consumable_need_reservations.sql`: preflight=true, verify=true, rollback=false
 - `20260909_consumable_of_revision.sql`: preflight=true, verify=true, rollback=false
 - `20260909_supply_terminals.sql`: preflight=true, verify=true, rollback=false
+- `20261006_of_completion_before_planning.sql`: preflight=true, verify=true, rollback=false
+- `20261007_material_source_yield_877.sql`: preflight=true, verify=true, rollback=false
+- `20261010_recipe_numeric_precision_1062.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_requests_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_fees_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_replenishments_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_restitutions_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_recovery_material_extensions_1034.sql`: preflight=false, verify=true, rollback=true
+- `20261012_recovery_consolidation_additions_1034.sql`: preflight=false, verify=true, rollback=true
+- `20261013_empty_quality_execution_cancellation_1276.sql`: preflight=false, verify=true, rollback=true
+- `20261013_material_bar_identity_1256.sql`: preflight=false, verify=true, rollback=true
+- `20261013_subcontract_operation_completion_1273.sql`: preflight=false, verify=true, rollback=true
+- `20261013_subcontract_origin_packages_1269.sql`: preflight=false, verify=true, rollback=true
 
 Le détail machine, l'ordre, les SHA-256, la transaction, la rejouabilité et les risques par fichier sont dans `MIGRATION_INVENTORY_SOL_06.json`.

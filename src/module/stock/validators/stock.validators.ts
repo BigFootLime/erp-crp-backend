@@ -805,6 +805,12 @@ const historicalPfImportSchema = z.object({
     kind: z.literal("PF"),
     client_number: z.string().trim().min(1).max(40),
     article_id: uuid.optional(),
+    // Optional for the established historical-import endpoint.  Controlled
+    // cutover supplies it after an exact plan/revision lookup so an OLD lot
+    // cannot silently attach to the current technical version.
+    technical_version_id: uuid.optional().nullable(),
+    unite: z.string().trim().min(1).max(30).optional().nullable(),
+    supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
     reference: z.string().trim().min(1).max(120).optional(),
     indice: z.string().trim().min(1).max(40).optional().nullable(),
     family_code: z.string().trim().min(1).max(40).optional(),
@@ -813,6 +819,15 @@ const historicalPfImportSchema = z.object({
     of_affaire_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
     mp_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
     traitement_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
+    historical_lot_reference: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_shelf: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_status: z.enum(["LIBERE", "QUARANTAINE", "BLOQUE", "EN_ATTENTE"]).optional(),
+    owner_client_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+    historical_traceability: z.object({
+      certificate_reference: z.string().trim().min(1).max(120).optional(),
+      heat_number: z.string().trim().min(1).max(120).optional(),
+      source: z.object({ legacy_key: z.string().trim().min(1).max(240), source_id: z.string().trim().min(1).max(240), sheet: z.string().trim().min(1).max(240), row_number: z.number().int().positive() }).strict(),
+    }).strict().optional(),
     notes: z.string().trim().min(1).max(2000).optional().nullable(),
   }).strict();
 const historicalMpImportSchema = z.object({
@@ -822,6 +837,16 @@ const historicalMpImportSchema = z.object({
     quantity: z.coerce.number().positive(),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
     lot_number: z.string().trim().min(1).max(120),
+    supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_reference: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_shelf: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_status: z.enum(["LIBERE", "QUARANTAINE", "BLOQUE", "EN_ATTENTE"]).optional(),
+    owner_client_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+    historical_traceability: z.object({
+      certificate_reference: z.string().trim().min(1).max(120).optional(),
+      heat_number: z.string().trim().min(1).max(120).optional(),
+      source: z.object({ legacy_key: z.string().trim().min(1).max(240), source_id: z.string().trim().min(1).max(240), sheet: z.string().trim().min(1).max(240), row_number: z.number().int().positive() }).strict(),
+    }).strict().optional(),
     notes: z.string().trim().min(1).max(2000).optional().nullable(),
   }).strict();
 export const historicalImportSchema = z.object({ body: z.discriminatedUnion("kind", [historicalPfImportSchema, historicalMpImportSchema]) }).superRefine((value, ctx) => {

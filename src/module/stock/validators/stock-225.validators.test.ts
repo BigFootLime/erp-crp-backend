@@ -67,6 +67,10 @@ describe("#225 stock validators", () => {
       of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
     } }).success).toBe(true);
     expect(historicalImportSchema.safeParse({ body: {
+      kind: "PF", client_number: "CLI-01", article_id: UUID_A, technical_version_id: UUID_B, unite: "u", quantity: 2,
+      of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
+    } }).success).toBe(true);
+    expect(historicalImportSchema.safeParse({ body: {
       kind: "PF", client_number: "CLI-01", quantity: 2,
       of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [],
     } }).success).toBe(false);
@@ -78,6 +82,12 @@ describe("#225 stock validators", () => {
     expect(historicalImportSchema.safeParse({ body: {
       kind: "MP", article_id: UUID_A, quantity: 1, lot_number: "F-1", unexpected: true,
     } }).success).toBe(false);
+    expect(historicalImportSchema.safeParse({ body: {
+      kind: "MP", article_id: UUID_A, quantity: 1, unite: "kg", lot_number: "F-1",
+      historical_lot_reference: "CLIPPER-LOT-1", historical_shelf: "MAG/A1",
+      historical_lot_status: "BLOQUE", owner_client_id: "001",
+    } }).success).toBe(true);
+    expect(historicalImportSchema.safeParse({ body: { kind: "MP", article_id: UUID_A, quantity: 1, lot_number: "F-1", owner_client_id: UUID_B } }).success).toBe(false);
     expect(listConsolidatedInventoryQuerySchema.safeParse({ scope: "OLD", sortBy: "lot_code", sortDir: "desc" }).success).toBe(true);
     expect(listConsolidatedInventoryQuerySchema.safeParse({ scope: "ARCHIVE" }).success).toBe(false);
   });

@@ -3202,6 +3202,9 @@ type InsertCommandeLignesOptions = {
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
   existing_line_ids?: ReadonlySet<number>;
+  /** Internal requirements are operational only and must never change the
+   * commercial reference price of an article. */
+  skip_sale_price_reference?: boolean;
 };
 
 const RECONCILIATION_REQUIRED_FIELDS = [
@@ -3631,16 +3634,18 @@ async function insertCommandeLignes(
         );
       }
     }
-    const referencePrice = await applyOrderLineSalePriceTx(client, {
-      article_id: resolved.article_id,
-      proposed_price: l.prix_unitaire_ht,
-      decision: l.reference_price_decision ?? null,
-      source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
-      source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
-      source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
-      actor_user_id: options.actor_user_id,
-      line_index: lineIndex,
-    });
+    const referencePrice = options.skip_sale_price_reference
+      ? { reference_price: null, reference_source: null, decision: "KEEP" as const, history_id: null }
+      : await applyOrderLineSalePriceTx(client, {
+        article_id: resolved.article_id,
+        proposed_price: l.prix_unitaire_ht,
+        decision: l.reference_price_decision ?? null,
+        source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
+        source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
+        source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
+        actor_user_id: options.actor_user_id,
+        line_index: lineIndex,
+      });
 
     const insertRes = await client.query<{ id: string }>(
       `
@@ -4080,6 +4085,43 @@ async function transitionLinkedDevisArticlesToValide(
   );
 
   return updated.rowCount ?? 0;
+}
+
+/**
+ * Cutover-only transaction primitive. It deliberately reuses the same native
+ * header/line/checkpoint writes as order creation, but never emits an AR,
+ * notification or creation PDF. The caller owns BEGIN/COMMIT together with
+ * its durable cutover crosswalk.
+ */
+export async function repoCreateCommandeCutoverDraftTx(
+  client: PoolClient,
+  input: CreateCommandeInput,
+  actorUserId: number
+): Promise<{ id: number; numero: string }> {
+  const contractCall = await prepareContractCall(client, input, actorUserId, []);
+  await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
+  const idRes = await client.query<{ id: string }>("SELECT nextval('public.commande_client_id_seq')::bigint::text AS id");
+  const rawId = idRes.rows[0]?.id;
+  if (!rawId) throw new Error("Failed to allocate commande id");
+  const commandeIdInt = toInt(rawId, "commande_client.id");
+  const numero = await generateCommandeCode(client, { client_code: input.code_client ?? input.client_id ?? "CMD", date: input.date_commande ? new Date(input.date_commande) : undefined });
+  const orderType = input.order_type ?? "FERME";
+  const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+  const inserted = await client.query<{ id: string }>(`
+    INSERT INTO commande_client (id,numero,client_id,contact_id,destinataire_id,adresse_facturation_id,emetteur,code_client,date_commande,arc_edi,arc_date_envoi,compteur_affaire_id,type_affaire,order_type,cadre_start_date,cadre_end_date,dest_stock_magasin_id,dest_stock_emplacement_id,mode_port_id,mode_reglement_id,conditions_paiement_id,biller_id,compte_vente_id,commentaire,remise_globale,total_ht,total_ttc,devis_id,source_devis_version_id,creation_flow_version,delivery_prepayment_requirement)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING id::text AS id`, [
+      commandeIdInt, numero, input.client_id ?? null, input.contact_id ?? null, input.destinataire_id ?? null, input.adresse_facturation_id ?? null, input.emetteur ?? null, input.code_client ?? null, input.date_commande, input.arc_edi ?? false, input.arc_date_envoi ?? null, input.compteur_affaire_id ?? null, "livraison", orderType, input.cadre_start_date ?? null, input.cadre_end_date ?? null, input.dest_stock_magasin_id ?? null, input.dest_stock_emplacement_id ?? null, input.mode_port_id ?? null, input.mode_reglement_id ?? null, input.conditions_paiement_id ?? null, input.biller_id ?? null, input.compte_vente_id ?? null, input.commentaire ?? null, input.remise_globale ?? 0, input.total_ht ?? 0, input.total_ttc ?? 0, input.devis_id ?? null, input.source_devis_version_id ?? input.devis_id ?? null, input.creation_flow_version ?? 1, orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+    ]);
+  const commandeId = inserted.rows[0]?.id;
+  if (!commandeId) throw new Error("Failed to create commande");
+  await insertCommandeLignes(client, commandeId, input.lignes, { officialize_preparatory_data: input.officialize_preparatory_data ?? false, commande_id_int: commandeIdInt, actor_user_id: actorUserId, creation_flow_version: input.creation_flow_version ?? 1, save_intent: "DRAFT", skip_sale_price_reference: orderType === "INTERNE" });
+  await recordContractCall(client, contractCall, commandeId, input);
+  await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
+  await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
+  await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, "Commande de reprise creee - brouillon a verifier"]);
+  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: "technical_analysis", cutover_draft: true }, user_id: actorUserId });
+  return { id: commandeIdInt, numero };
 }
 
 export async function repoCreateCommande(
@@ -7183,6 +7225,285 @@ async function upsertCommandeAllocations(db: PoolClient, input: AllocationUpsert
   }
   // Allocations can be created after an AR; only the original sent snapshot is accepted.
   await db.query("SELECT public.capture_initial_delivery_promises($1::bigint)", [input.commande_id]);
+}
+
+/**
+ * Creates the native delivery target required by a validated WIP cohort.
+ * The ordinary command launch is deliberately not used: it creates an OF for
+ * every shortage, whereas the cutover WIP writer must be the only OF writer.
+ */
+export type CutoverDeliveryTargetInput = {
+  commandeId: string;
+  commandeLigneId: string;
+  articleId: string;
+  pieceTechniqueVersionId: string;
+  quantity: number;
+  /** Cutover-only provenance.  Present for UI preparation, optional for the
+   * low-level WIP integration fixtures that do not own a cutover row. */
+  sourceRowId?: string;
+  physicalBatchReference?: string;
+};
+
+export type CutoverDeliveryTarget = {
+  commande_ligne_id: string;
+  livraison_affaire_id: string;
+  affaire_reference: string;
+  quantity: number;
+  unallocated_quantity_after: number;
+};
+
+export async function createCutoverDeliveryTargetTx(db: PoolClient, input: CutoverDeliveryTargetInput): Promise<CutoverDeliveryTarget> {
+  const commandeId = toInt(input.commandeId, "commande_id");
+  const ligneId = toInt(input.commandeLigneId, "commande_ligne_id");
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
+    throw new HttpError(422, "CUTOVER_WIP_COHORT_REQUIRED", "La quantité de cohorte à reprendre doit être strictement positive.");
+  }
+  await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`cutover-wip-target:${commandeId}:${ligneId}`]);
+  const header = (await db.query<{ client_id: string | null; devis_id: string | null; order_type: string }>(
+    `SELECT client_id,devis_id::text AS devis_id,order_type::text FROM public.commande_client WHERE id=$1::bigint FOR UPDATE`,
+    [commandeId],
+  )).rows[0];
+  if (!header) throw new HttpError(404, "CUTOVER_WIP_ORDER_NOT_FOUND", "La commande CERP sélectionnée n'existe plus.");
+  if (header.order_type === "INTERNE") throw new HttpError(422, "CUTOVER_WIP_INTERNAL_TARGET_UNSUPPORTED", "Un besoin interne ne nécessite pas d'affaire de livraison.");
+  if (!header.client_id) throw new HttpError(422, "CUTOVER_WIP_CUSTOMER_REQUIRED", "La commande client doit être rapprochée de son client avant de préparer cet encours.");
+
+  const physicalReference = input.physicalBatchReference?.trim().toLowerCase() ?? "";
+  if (input.sourceRowId && !physicalReference) throw new HttpError(422, "CUTOVER_WIP_PHYSICAL_BATCH_REQUIRED", "Identifier le groupe physique encore en fabrication avant de préparer sa cible.");
+  if (physicalReference) {
+    // Migration 06 makes a physical reference global.  Serialize it before
+    // inspecting other batches: two imports must not each consume a native
+    // allocation while the WIP writer later rejects the second cohort.
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`cutover-wip-cohort:${physicalReference}`]);
+    const duplicate = await db.query<{ id: string }>(
+      `SELECT id::text FROM public.data_cutover_rows
+        WHERE domain='WIP' AND id<>COALESCE($1::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+          AND NULLIF(lower(btrim("values"->>'physicalBatchReference')),'')=$2
+          AND NULLIF("values"->>'livraisonAffaireId','') IS NOT NULL
+        LIMIT 1`, [input.sourceRowId ?? null, physicalReference],
+    );
+    if (duplicate.rows[0]) throw new HttpError(409, "CUTOVER_WIP_PHYSICAL_BATCH_ALREADY_PREPARED", "Ce groupe physique est déjà préparé dans une autre fiche de reprise.");
+    const resumed = await db.query<{ id: string }>(
+      `SELECT id::text FROM public.data_cutover_wip_resumptions
+        WHERE lower(btrim(physical_batch_reference))=$1 LIMIT 1`, [physicalReference],
+    );
+    if (resumed.rows[0]) throw new HttpError(409, "CUTOVER_WIP_PHYSICAL_BATCH_ALREADY_RESUMED", "Ce groupe physique a déjà été repris dans CERP.");
+  }
+
+  const line = (await db.query<{ quantity: number; article_id: string | null; version_id: string | null; allocated: number; has_unallocated_normal_of: boolean }>(
+    `SELECT line.quantite::float8 AS quantity,line.article_id::text AS article_id,line.piece_technique_version_id::text AS version_id,
+       COALESCE((SELECT sum(allocation.qty_ordered)::float8 FROM public.commande_ligne_affaire_allocation allocation
+                 WHERE allocation.commande_id=line.commande_id AND allocation.commande_ligne_id=line.id),0)::float8 AS allocated
+       ,EXISTS(SELECT 1 FROM public.ordres_fabrication production
+                WHERE production.commande_ligne_id=line.id AND production.parent_of_id IS NULL
+                  AND production.affaire_id IS NULL AND production.statut::text<>'ANNULE') AS has_unallocated_normal_of
+       FROM public.commande_ligne line WHERE line.id=$1::bigint AND line.commande_id=$2::bigint FOR UPDATE`,
+    [ligneId, commandeId],
+  )).rows[0];
+  if (!line) throw new HttpError(422, "CUTOVER_WIP_LINE_NOT_MATCHED", "La ligne sélectionnée n'appartient pas à cette commande.");
+  if (line.article_id !== input.articleId || line.version_id !== input.pieceTechniqueVersionId) {
+    throw new HttpError(422, "CUTOVER_WIP_LINE_TECHNICAL_MISMATCH", "La ligne sélectionnée doit correspondre à l'article et à la version technique validés pour cet encours.");
+  }
+  if (line.has_unallocated_normal_of) {
+    throw new HttpError(409, "CUTOVER_WIP_UNALLOCATED_NORMAL_OF_EXISTS", "Un OF normal existe déjà sur cette ligne sans affaire de livraison. Vérifiez-le avant de préparer une reprise WIP afin d'éviter un double lancement.");
+  }
+  const unallocated = Number(line.quantity) - Number(line.allocated);
+  if (!Number.isFinite(unallocated) || input.quantity > unallocated + 1e-9) {
+    throw new HttpError(409, "CUTOVER_WIP_QUANTITY_EXCEEDS_UNALLOCATED", "La cohorte dépasse le reliquat encore non affecté de cette ligne. Rechargez la commande avant de continuer.", { quantity: input.quantity, unallocated_quantity: Math.max(0, unallocated) });
+  }
+
+  const affaireId = await createAffaire(db, {
+    commande_id: commandeId,
+    client_id: header.client_id,
+    devis_id: header.devis_id ? toInt(header.devis_id, "commande.devis_id") : null,
+    delivery_readiness_state: "WAITING_TECHNICAL",
+  });
+  await insertCommandeToAffaireMapping(db, {
+    commande_id: commandeId,
+    affaire_id: affaireId,
+    role: "LIVRAISON",
+    commentaire: "Cible de reprise WIP préparée sans OF ni réservation",
+  });
+  await upsertCommandeAllocations(db, {
+    commande_id: commandeId,
+    livraison_affaire_id: affaireId,
+    allocation_mode: "CUTOVER_WIP",
+    reserve_stock: false,
+    reserved_qty_by_line: null,
+    lines: [{ commande_ligne_id: ligneId, code_piece: null, article_ref_id: input.articleId, article_legacy_id: null,
+      qty_ordered: input.quantity, qty_on_hand: 0, qty_from_stock: 0, qty_to_produce: input.quantity }],
+  });
+  // The generic allocation upsert intentionally leaves progression fields to
+  // its caller.  This target starts with no delivery, stock or production
+  // fact, so its sole native remaining quantity is the WIP cohort itself.
+  await db.query(
+    `UPDATE public.commande_ligne_affaire_allocation
+        SET qty_remaining=$3,qty_produced=0,qty_stocked=0,qty_delivered=0,
+            delivery_status='A_PREPARER',allocation_version=allocation_version+1,updated_at=now()
+      WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND livraison_affaire_id=$4::bigint`,
+    [commandeId, ligneId, input.quantity, affaireId],
+  );
+  const affaire = (await db.query<{ reference: string }>("SELECT reference FROM public.affaire WHERE id=$1::bigint", [affaireId])).rows[0];
+  if (!affaire?.reference) throw new Error("CUTOVER_WIP_DELIVERY_AFFAIRE_MISSING");
+  return { commande_ligne_id: String(ligneId), livraison_affaire_id: String(affaireId), affaire_reference: affaire.reference,
+    quantity: input.quantity, unallocated_quantity_after: Math.max(0, unallocated - input.quantity) };
+}
+
+type NativeRemainderLine = {
+  commande_ligne_id: number;
+  requested_qty: number;
+  already_allocated_qty: number;
+  remainder_qty: number;
+  old_qty: number;
+  new_qty: number;
+  production_qty: number;
+  article_id: string | null;
+  piece_technique_version_id: string | null;
+  article_reference: string | null;
+  designation: string | null;
+  unit: string | null;
+  article_code: string | null;
+  article_designation: string | null;
+  ligne_code: string | null;
+};
+type NativeRemainderPreview = {
+  commande_id: string;
+  commande_numero: string;
+  lines: NativeRemainderLine[];
+  blockers: Array<{ code: string; message: string; commande_ligne_id?: number }>;
+  plan_hash: string;
+};
+
+/** Cutover-only remainder planner.  It deliberately starts from allocations
+ * already persisted on each line: WIP cohorts are therefore immutable input,
+ * while every other unallocated native line remains eligible. */
+async function buildNativeRemainderPlanTx(db: PoolClient, commandeId: number): Promise<NativeRemainderPreview> {
+  const header = (await db.query<{ client_id: string | null; devis_id: string | null; updated_at: string; ar_sent_at: string | null; order_type: string; numero: string; creation_flow_version: number }>(
+    `SELECT client_id,devis_id::text AS devis_id,updated_at::text AS updated_at,ar_sent_at::text AS ar_sent_at,order_type::text AS order_type,numero,creation_flow_version
+       FROM public.commande_client WHERE id=$1::bigint FOR UPDATE`, [commandeId]
+  )).rows[0];
+  if (!header) throw new HttpError(404, "CUTOVER_NATIVE_ORDER_NOT_FOUND", "La commande native n'existe plus.");
+  const blockers: NativeRemainderPreview["blockers"] = [];
+  if (header.order_type === "INTERNE") blockers.push({ code: "CUTOVER_NATIVE_REMAINDER_CUSTOMER_ORDER_REQUIRED", message: "Le complément de reprise concerne une commande client." });
+  if (!header.client_id) blockers.push({ code: "CUTOVER_NATIVE_REMAINDER_CUSTOMER_REQUIRED", message: "La commande doit conserver son client avant de préparer le reliquat." });
+  if (header.ar_sent_at) blockers.push({ code: "COMMANDE_LOCKED_AFTER_AR", message: "La commande est verrouillée après émission de l'AR." });
+  await db.query(`SELECT id FROM public.commande_ligne WHERE commande_id=$1::bigint ORDER BY id FOR UPDATE`, [commandeId]);
+  const refs = await selectCommandeLineRefs(db, commandeId);
+  const allocationRows = await db.query<{ commande_ligne_id: number; quantity: number }>(
+    `SELECT commande_ligne_id::bigint::int AS commande_ligne_id,qty_ordered::float8 AS quantity
+       FROM public.commande_ligne_affaire_allocation WHERE commande_id=$1::bigint
+      ORDER BY commande_ligne_id,id FOR UPDATE`, [commandeId]
+  );
+  const allocatedByLine = new Map<number, number>();
+  for (const allocation of allocationRows.rows) allocatedByLine.set(allocation.commande_ligne_id, Number(allocatedByLine.get(allocation.commande_ligne_id) ?? 0) + Number(allocation.quantity));
+  const ordinaryRoots = await db.query<{ commande_ligne_id: number; numero: string }>(
+    `SELECT commande_ligne_id::bigint::int AS commande_ligne_id,numero
+       FROM public.ordres_fabrication WHERE commande_id=$1::bigint AND parent_of_id IS NULL
+         AND affaire_id IS NULL AND statut::text<>'ANNULE' ORDER BY commande_ligne_id,id FOR KEY SHARE`, [commandeId]
+  );
+  for (const root of ordinaryRoots.rows) blockers.push({ code: "CUTOVER_WIP_UNALLOCATED_NORMAL_OF_EXISTS", message: `Un OF normal racine sans affaire existe (${root.numero}).`, commande_ligne_id: root.commande_ligne_id });
+  const requestedByLine = new Map(refs.map((ref) => [ref.commande_ligne_id, Number(ref.qty_ordered)] as const));
+  for (const ref of refs) if (Number(allocatedByLine.get(ref.commande_ligne_id) ?? 0) > Number(ref.qty_ordered) + 1e-9) {
+    blockers.push({ code: "CUTOVER_NATIVE_REMAINDER_OVERALLOCATED", message: "Les allocations existantes dépassent la quantité demandée; corrigez la commande avant de préparer un reliquat.", commande_ligne_id: ref.commande_ligne_id });
+  }
+  const remainders = refs.map((ref) => ({ ...ref, qty_ordered: Math.max(0, Number(ref.qty_ordered) - Number(allocatedByLine.get(ref.commande_ligne_id) ?? 0)) }));
+  if (!remainders.some((ref) => ref.qty_ordered > 1e-9)) blockers.push({ code: "CUTOVER_NATIVE_REMAINDER_EMPTY", message: "Aucun reliquat non affecté ne reste à préparer sur cette commande." });
+  const units = await db.query<{ id: number; unite: string | null; article_unit: string | null; known: boolean }>(
+    `SELECT line.id::bigint::int AS id,line.unite,article.unite AS article_unit,
+            EXISTS(SELECT 1 FROM public.units unit WHERE lower(unit.code)=lower(line.unite)) AS known
+       FROM public.commande_ligne line LEFT JOIN public.articles article ON article.id=line.article_id
+       WHERE line.commande_id=$1::bigint ORDER BY line.id`, [commandeId]
+  );
+  const unitByLine = new Map(units.rows.map((unit) => [unit.id, unit] as const));
+  const candidates = await loadScopedDeliveryStockCandidates(db, [...new Set(remainders.map((line) => line.article_id).filter((id): id is string => Boolean(id)))]);
+  const stock = allocateCompatibleStock(remainders, candidates);
+  const lines: NativeRemainderLine[] = [];
+  for (let index = 0; index < remainders.length; index += 1) {
+    const ref = remainders[index]!;
+    const planned = stock[index]!;
+    const productionQty = Math.max(0, Number(planned.shortage_qty));
+    const unit = unitByLine.get(ref.commande_ligne_id);
+    if (!unit?.unite?.trim() || !unit.known || (ref.article_id !== null && (!unit.article_unit || unit.article_unit.toLowerCase() !== unit.unite.toLowerCase()))) blockers.push({ code: "CUTOVER_NATIVE_REMAINDER_UNIT_INVALID", message: "L'unité de la ligne doit correspondre à l'unité native de l'article; aucune conversion automatique n'est effectuée.", commande_ligne_id: ref.commande_ligne_id });
+    if (productionQty > 1e-9) {
+      if (!ref.article_id || !ref.piece_technique_id) blockers.push({ code: "PIECE_TECHNIQUE_REQUIRED", message: "La ligne à fabriquer doit être rattachée à un article et une pièce technique.", commande_ligne_id: ref.commande_ligne_id });
+      if (ref.piece_technique_version_status !== "APPLICABLE" || !ref.piece_technique_version_effective) blockers.push({ code: "CUTOVER_APPLICABLE_TECHNICAL_VERSION_REQUIRED", message: "Un OF neuf exige une version technique APPLICABLE et effective; une version OBSOLETE ou ambiguë bloque le reliquat.", commande_ligne_id: ref.commande_ligne_id });
+    }
+    lines.push({ commande_ligne_id: ref.commande_ligne_id, requested_qty: Number(requestedByLine.get(ref.commande_ligne_id) ?? 0), already_allocated_qty: Number(allocatedByLine.get(ref.commande_ligne_id) ?? 0), remainder_qty: Number(ref.qty_ordered), old_qty: Number(planned.old_used_qty), new_qty: Number(planned.new_used_qty), production_qty: productionQty, article_id: ref.article_id, piece_technique_version_id: ref.piece_technique_version_id ?? null, article_reference: ref.article_code ?? ref.code_piece, designation: ref.article_designation ?? ref.piece_designation, unit: unit?.unite ?? null, article_code: ref.article_code, article_designation: ref.article_designation, ligne_code: ref.code_piece });
+  }
+  const quality = await db.query<{ lot_id: string; lot_status: string | null; control_id: string | null; control_status: string | null; validation_date: string | null; qty_released: string | null; qty_consumed: string | null }>(
+    `SELECT lot.id::text AS lot_id,lot.lot_status::text AS lot_status,control.id::text AS control_id,control.status::text AS control_status,
+            control.validation_date::text,control.qty_released::text,control.qty_consumed::text
+       FROM public.lots lot LEFT JOIN LATERAL (
+         SELECT id,status,validation_date,qty_released,qty_consumed FROM public.quality_control
+          WHERE (lot_id=lot.id OR (source_type='LOT' AND source_id=lot.id::text)) AND status::text<>'CANCELLED'
+          ORDER BY control_date DESC,id DESC LIMIT 1
+       ) control ON TRUE WHERE lot.id=ANY($1::uuid[]) ORDER BY lot.id`, [candidates.map((candidate) => candidate.lot_id).filter((id): id is string => id !== null)]
+  );
+  const qualityByLot = new Map(quality.rows.map((row) => [row.lot_id, row] as const));
+  const stock_snapshot = candidates.map((candidate) => ({ article_id: candidate.article_id, stock_level_id: candidate.stock_level_id, stock_batch_id: candidate.stock_batch_id, lot_id: candidate.lot_id, stock_scope: candidate.stock_scope, version: candidate.piece_technique_version_id, compatible_version_ids: [...candidate.compatible_version_ids].sort(), qty_available: candidate.qty_available, quality: candidate.lot_id ? qualityByLot.get(candidate.lot_id) ?? null : null }));
+  const technical_snapshot = refs.map((ref) => ({ commande_ligne_id: ref.commande_ligne_id, article_id: ref.article_id, article_unit: unitByLine.get(ref.commande_ligne_id)?.article_unit ?? null, line_unit: unitByLine.get(ref.commande_ligne_id)?.unite ?? null, version_id: ref.piece_technique_version_id ?? null, version_status: ref.piece_technique_version_status ?? null, version_effective: ref.piece_technique_version_effective ?? null }));
+  const stable = { commande_id: String(commandeId), commande_numero: header.numero, header: { client_id: header.client_id, devis_id: header.devis_id, updated_at: header.updated_at, order_type: header.order_type, creation_flow_version: header.creation_flow_version, ar_sent_at: header.ar_sent_at }, lines, blockers, technical_snapshot, stock_snapshot };
+  return { commande_id: stable.commande_id, commande_numero: stable.commande_numero, lines, blockers, plan_hash: crypto.createHash("sha256").update(JSON.stringify(stable)).digest("hex") };
+}
+
+export async function previewNativeRemainderTx(db: PoolClient, input: { commande_id: string }): Promise<NativeRemainderPreview> {
+  return buildNativeRemainderPlanTx(db, toInt(input.commande_id, "commande_id"));
+}
+
+export async function applyNativeRemainderTx(db: PoolClient, input: { commande_id: string; user_id: number; expected_plan_hash: string }) {
+  const commandeId = toInt(input.commande_id, "commande_id");
+  const plan = await buildNativeRemainderPlanTx(db, commandeId);
+  if (plan.plan_hash !== input.expected_plan_hash) throw new HttpError(409, "CUTOVER_NATIVE_REMAINDER_STALE", "Le reliquat a changé pendant sa préparation.");
+  if (plan.blockers.length) {
+    const technical = plan.blockers.some((blocker) => blocker.code === "PIECE_TECHNIQUE_REQUIRED" || blocker.code === "CUTOVER_APPLICABLE_TECHNICAL_VERSION_REQUIRED" || blocker.code === "CUTOVER_NATIVE_REMAINDER_UNIT_INVALID");
+    throw new HttpError(technical ? 422 : 409, technical ? "CUTOVER_NATIVE_REMAINDER_TECHNICAL_BLOCKED" : "CUTOVER_NATIVE_REMAINDER_BLOCKED", "Le reliquat comporte des blocages qui doivent être corrigés avant application.", { blockers: plan.blockers });
+  }
+  const header = (await db.query<{ client_id: string; devis_id: string | null; numero: string; creation_flow_version: number }>(
+    `SELECT client_id,devis_id::text AS devis_id,numero,creation_flow_version FROM public.commande_client WHERE id=$1::bigint FOR UPDATE`, [commandeId]
+  )).rows[0]!;
+  const refs = await selectCommandeLineRefs(db, commandeId);
+  const refByLine = new Map(refs.map((ref) => [ref.commande_ligne_id, ref] as const));
+  const stockLines = plan.lines.filter((line) => line.old_qty + line.new_qty > 1e-9);
+  const productionLines = plan.lines.filter((line) => line.production_qty > 1e-9);
+  const created: Array<{ kind: "STOCK" | "PRODUCTION"; affaire_id: number }> = [];
+  const makeAffaire = async (kind: "STOCK" | "PRODUCTION", lines: NativeRemainderLine[]) => {
+    if (!lines.length) return null;
+    const affaireId = await createAffaire(db, { commande_id: commandeId, client_id: header.client_id, devis_id: header.devis_id ? toInt(header.devis_id, "commande.devis_id") : null, delivery_readiness_state: kind === "PRODUCTION" ? "WAITING_STOCK" : "PARTIALLY_AVAILABLE" });
+    await insertCommandeToAffaireMapping(db, { commande_id: commandeId, affaire_id: affaireId, role: "LIVRAISON", commentaire: kind === "STOCK" ? "Complément de reprise — stock OLD/NEW" : "Complément de reprise — fabrication" });
+    await queueAffaireCreationPdf(db, { affaireId, actorUserId: input.user_id });
+    await upsertCommandeAllocations(db, { commande_id: commandeId, livraison_affaire_id: affaireId, allocation_mode: kind === "STOCK" ? "CUTOVER_REMAINDER_STOCK" : "CUTOVER_REMAINDER_PRODUCTION", reserve_stock: false, reserved_qty_by_line: null, lines: lines.map((line) => ({ commande_ligne_id: line.commande_ligne_id, code_piece: refByLine.get(line.commande_ligne_id)?.code_piece ?? null, article_ref_id: line.article_id, article_legacy_id: null, qty_ordered: kind === "STOCK" ? line.old_qty + line.new_qty : line.production_qty, qty_on_hand: 0, qty_from_stock: kind === "STOCK" ? line.old_qty + line.new_qty : 0, qty_to_produce: kind === "PRODUCTION" ? line.production_qty : 0 })) });
+    for (const line of lines) {
+      const quantity = kind === "STOCK" ? line.old_qty + line.new_qty : line.production_qty;
+      await db.query(
+        `UPDATE public.commande_ligne_affaire_allocation
+            SET qty_remaining=$4,qty_produced=0,qty_stocked=0,qty_delivered=0,
+                delivery_status='A_PREPARER',allocation_version=allocation_version+1,updated_at=now()
+          WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND livraison_affaire_id=$3::bigint`,
+        [commandeId, line.commande_ligne_id, affaireId, quantity]
+      );
+    }
+    created.push({ kind, affaire_id: affaireId });
+    return affaireId;
+  };
+  const stockAffaireId = await makeAffaire("STOCK", stockLines);
+  const productionAffaireId = await makeAffaire("PRODUCTION", productionLines);
+  const reservations = stockAffaireId === null ? [] : await reserveCommandeStockForLaterDelivery(db, { commande_id: commandeId, livraison_affaire_id: stockAffaireId, user_id: input.user_id, analysis_lines: plan.lines.map((line) => ({ ...refByLine.get(line.commande_ligne_id)!, requested_qty: line.remainder_qty, old_available_qty: line.old_qty, old_used_qty: line.old_qty, new_available_qty: line.new_qty, new_used_qty: line.new_qty, available_qty: line.old_qty + line.new_qty, available_used_qty: line.old_qty + line.new_qty, shortage_qty: line.production_qty, proposed_production_qty: line.production_qty, status: line.production_qty > 1e-9 ? "PARTIAL" as const : "FULL" as const, assembly_plan: null })), quantities_by_line: new Map(stockLines.map((line) => [line.commande_ligne_id, line.old_qty + line.new_qty] as const)) });
+  const ofs: GeneratedOfRef[] = [];
+  if (productionAffaireId !== null) for (const line of productionLines) {
+    const ref = refByLine.get(line.commande_ligne_id)!;
+    const generated = await createRecursiveOrdresFabrication(db, { commande_id: commandeId, commande_numero: header.numero, commande_ligne_id: line.commande_ligne_id, livraison_affaire_id: productionAffaireId, client_id: header.client_id, root_article_id: ref.article_id, root_piece_technique_id: ref.piece_technique_id!, root_pinned_version_id: ref.piece_technique_version_id ?? null, qty_to_produce: line.production_qty, user_id: input.user_id });
+    ofs.push(...generated.ofs);
+  }
+  for (const root of ofs.filter((of) => of.parent_of_id === null)) await queueRootOfCreationPdf(db, { ofId: root.id, actorUserId: input.user_id });
+  const allOfs = await listGeneratedOfRefs(db, commandeId);
+  const hasTechnicalWarnings = allOfs.some((of) => of.technical_readiness !== "VALIDATED");
+  // A resumed WIP OF can deliberately remain a draft while its historical
+  // technical dossier is completed.  Never let a stock-only complement mark
+  // that checkpoint done merely because it creates no additional root OF.
+  const workflow_status = hasTechnicalWarnings ? null : header.creation_flow_version === 2
+    ? await advanceCustomerOrderV2AfterLaunch({ tx: db, commande_id: commandeId, user_id: input.user_id, has_technical_warnings: false, needs_production: allOfs.length > 0, of_ids: allOfs.map((of) => of.id), waiting_contract_supply: false })
+    : (await advanceCustomerOrderWorkflowAfterLaunch({ tx: db, commande_id: commandeId, user_id: input.user_id, needs_production: allOfs.length > 0, of_ids: allOfs.map((of) => of.id) })).nouveau_statut;
+  await db.query("UPDATE public.commande_client SET updated_at=now() WHERE id=$1::bigint", [commandeId]);
+  return { commande_id: String(commandeId), idempotent_replay: false, affaires: created, reservation_ids: reservations, of_ids: ofs.map((of) => of.id), workflow_status, technical_warnings: hasTechnicalWarnings, lines: plan.lines };
 }
 
 export async function repoPreviewAffairesFromCommande(id: string) {

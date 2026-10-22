@@ -5,6 +5,7 @@ import crypto from "node:crypto"
 import type { PoolClient } from "pg"
 
 import pool from "../../../config/database"
+import { generateBlCode } from "../../../shared/codes/code-generator.service"
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service"
 import { canonicalizeStockUnitCode } from "../../../shared/stock-unit"
@@ -1617,11 +1618,7 @@ async function insertLines(client: PoolClient, bonLivraisonId: string, lignes: I
 export async function repoCreateLivraison(input: CreateLivraisonBodyDTO, userId: number): Promise<{ id: string }> {
   const db = await pool.connect()
   return withRealtimeOutboxTransaction(db, async (db) => {
-    const seqRes = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
-    const raw = seqRes.rows[0]?.n
-    const n = raw ? Number(raw) : NaN
-    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
-    const numero = String(`BL-${String(n).padStart(8, "0")}`).slice(0, 30)
+    const numero = await generateBlCode(db)
     const statut: BonLivraisonStatut = "DRAFT"
 
     let id: string
@@ -3311,11 +3308,7 @@ export async function repoCreateLivraisonFromCommande(
     const affaireRes = await db.query<{ affaire_id: number }>(affaireSql, [commandeId])
     const affaireId = affaireRes.rows[0]?.affaire_id ?? null
 
-    const seqRes = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
-    const raw = seqRes.rows[0]?.n
-    const n = raw ? Number(raw) : NaN
-    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
-    const numero = String(`BL-${String(n).padStart(8, "0")}`).slice(0, 30)
+    const numero = await generateBlCode(db)
 
     let id: string
 
@@ -5428,10 +5421,7 @@ export async function repoCreateLivraisonFromReservations(params: {
       }
     }
 
-    const seq = await db.query<{ n: string }>(`SELECT nextval('public.bon_livraison_no_seq')::text AS n`)
-    const n = Number(seq.rows[0]?.n)
-    if (!Number.isFinite(n)) throw new Error("Failed to reserve bon_livraison number")
-    const numero = `BL-${String(n).padStart(8, "0")}`
+    const numero = await generateBlCode(db)
     const commandeIds = new Set(locked.rows.map((row) => row.commande_id))
     const affaireIds = new Set(locked.rows.map((row) => row.livraison_affaire_id))
     const headerCommandeId = commandeIds.size === 1 ? first.commande_id : null

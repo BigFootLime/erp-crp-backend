@@ -904,18 +904,15 @@ async function recordIdempotence(
   );
 }
 
-export async function repoCreateCommandeFournisseur(
+export async function repoCreateCommandeFournisseurTx(
   body: CreateCommandeBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  client: PoolClient,
+  options: { sideEffects?: "normal" | "none" } = {}
 ): Promise<{ id: string; code: string; idempotent_replay: boolean }> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-
     if (body.idempotency_key) {
       const replay = await readIdempotentReplay(client, body.idempotency_key, "CREATE");
       if (replay) {
-        await client.query("COMMIT");
         return replay as { id: string; code: string; idempotent_replay: boolean };
       }
     }
@@ -968,10 +965,8 @@ export async function repoCreateCommandeFournisseur(
     // Automatic, server-built creation snapshot. This is queued in the same
     // transaction as the PO so a committed order can never silently miss its
     // future GED filing work. The browser never supplies the PDF payload.
-    await queueSupplierPurchaseOrderCreationPdfTx(client, {
-      commandeId: id,
-      code,
-      actorUserId: audit.user_id,
+    if (options.sideEffects !== "none") await queueSupplierPurchaseOrderCreationPdfTx(client, {
+      commandeId: id, code, actorUserId: audit.user_id,
     });
     await insertAuditLog(client, audit, {
       action: "commandes_fournisseurs.create",
@@ -984,8 +979,19 @@ export async function repoCreateCommandeFournisseur(
     if (body.idempotency_key) {
       await recordIdempotence(client, body.idempotency_key, "CREATE", id, { id, code });
     }
-    await client.query("COMMIT");
     return resultat;
+}
+
+export async function repoCreateCommandeFournisseur(
+  body: CreateCommandeBodyDTO,
+  audit: AuditContext
+): Promise<{ id: string; code: string; idempotent_replay: boolean }> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await repoCreateCommandeFournisseurTx(body, audit, client);
+    await client.query("COMMIT");
+    return result;
   } catch (err) {
     await client.query("ROLLBACK");
     // Double-clic concurrent : la même clé a gagné dans une autre transaction -> rejouer.

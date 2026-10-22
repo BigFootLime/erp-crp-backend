@@ -4,12 +4,13 @@ import { repoInternalListDocumentParentLinks, repoInternalParentLinkExists } fro
 import { repoResolveRevisionBusinessParent } from "../repository/ged-revision-links.repository";
 
 type ParentIdentity = "text" | "integer" | "uuid";
-type ParentPolicy = Readonly<{ moduleKey: string; canonicalType: string; identity: ParentIdentity }>;
+type ParentPolicy = Readonly<{ moduleKey: string; canonicalType: string; identity: ParentIdentity; superadminOnly?: true }>;
 
 // GED links are free-text for historical compatibility. Delivery is not: only
 // these explicitly reviewed parent shapes can authorize private bytes. Each
 // alias resolves to the exact canonical parent that is revalidated in SQL.
 const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
+  CUTOVER_ROW: { moduleKey: "data-cutover", canonicalType: "CUTOVER_ROW", identity: "uuid", superadminOnly: true },
   CLIENT: { moduleKey: "clients", canonicalType: "CLIENT", identity: "text" },
   FOURNISSEUR: { moduleKey: "fournisseurs", canonicalType: "FOURNISSEUR", identity: "uuid" },
   DEVIS: { moduleKey: "devis", canonicalType: "DEVIS", identity: "integer" },
@@ -80,7 +81,7 @@ export async function assertGedVersionParentReadable(actorUserId: number, docume
   if (!await repoInternalParentLinkExists(policy.canonicalType, entityId)) opaqueNotFound();
 
   const profile = await resolveAccessProfile(actorUserId);
-  if (!profile || !(profile.is_superadmin || profile.modules.some((entry) => entry.module_key === policy.moduleKey && entry.allowed))) {
+  if (!profile || (policy.superadminOnly && !profile.is_superadmin) || !(profile.is_superadmin || profile.modules.some((entry) => entry.module_key === policy.moduleKey && entry.allowed))) {
     opaqueNotFound();
   }
   return { moduleKey: policy.moduleKey, entityType: policy.canonicalType, entityId };
@@ -101,7 +102,7 @@ export async function assertGedParentLinkWritable(
   if (!await repoInternalParentLinkExists(policy.canonicalType, entityId)) opaqueNotFound();
 
   const profile = await resolveAccessProfile(actorUserId);
-  if (!profile || !(profile.is_superadmin || profile.modules.some((entry) => entry.module_key === policy.moduleKey && entry.allowed))) {
+  if (!profile || (policy.superadminOnly && !profile.is_superadmin) || !(profile.is_superadmin || profile.modules.some((entry) => entry.module_key === policy.moduleKey && entry.allowed))) {
     opaqueNotFound();
   }
   return { moduleKey: policy.moduleKey, entityType: policy.canonicalType, entityId };

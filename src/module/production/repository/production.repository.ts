@@ -400,7 +400,7 @@ async function reconcileMachineMutation(
   return "uncertain";
 }
 
-async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
+export async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
   action: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -3553,8 +3553,39 @@ export async function repoCreateOrdreFabrication(params: {
 }): Promise<OrdreFabricationDetail> {
   const client = await pool.connect();
   try {
-    const ofId = await withRealtimeOutboxTransaction(client, async (client) => {
-    if (await usesPreparationRules(client)) {
+    const ofId = await withRealtimeOutboxTransaction(client, async (tx) =>
+      repoCreateOrdreFabricationTx(tx, params)
+    );
+    const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
+    if (!out) throw new Error("Failed to load created OF");
+    return out;
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
+    }
+    throw err;
+  }
+}
+
+export type OfCreationTxOptions = {
+  /** Only the cutover writer may supply an already checked historical snapshot. */
+  technical?: Awaited<ReturnType<typeof loadApplicableTechnicalSnapshot>>;
+  /** Prevents the normal recursive preparation path for a single opening cohort. */
+  forceDirect?: boolean;
+};
+
+/**
+ * Native OF creation inside an already-owned transaction.  The public
+ * repository above remains the sole ordinary entrypoint; this export exists
+ * for the cutover transaction so its receipt, opening checkpoints and OF
+ * cannot commit separately.
+ */
+export async function repoCreateOrdreFabricationTx(
+  client: PoolClient,
+  params: { body: CreateOfBodyDTO; audit: AuditContext },
+  options: OfCreationTxOptions = {}
+): Promise<number> {
+    if (!options.forceDirect && await usesPreparationRules(client)) {
       if (params.body.statut !== 'BROUILLON') throw new HttpError(422,'OF_PREPARATION_REQUIRED','Créez cet OF en brouillon puis complétez sa préparation.');
       const generated = await createRecursiveOrdresFabrication(client,{
         source_type:'MANUAL',commande_id:params.body.commande_id??null,commande_numero:null,commande_ligne_id:null,
@@ -3579,7 +3610,7 @@ export async function repoCreateOrdreFabrication(params: {
 
     // #170 : sélection/validation de version et snapshot unifiés avec le moteur
     // de génération récursive (aucun chemin ne contourne la même porte).
-    const technical = await loadApplicableTechnicalSnapshot(client, params.body.piece_technique_id, {
+    const technical = options.technical ?? await loadApplicableTechnicalSnapshot(client, params.body.piece_technique_id, {
       pinned_version_id: params.body.piece_technique_version_id,
     });
     const technicalSnapshot = technical.snapshot;
@@ -3707,17 +3738,7 @@ export async function repoCreateOrdreFabrication(params: {
     // back OF creation.
     await queueRootOfCreationPdf(client, { ofId, actorUserId: params.audit.user_id });
 
-      return ofId;
-    });
-    const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
-    if (!out) throw new Error("Failed to load created OF");
-    return out;
-  } catch (err) {
-    if (isPgUniqueViolation(err)) {
-      throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
-    }
-    throw err;
-  }
+    return ofId;
 }
 
 export async function repoUpdateOrdreFabrication(params: {

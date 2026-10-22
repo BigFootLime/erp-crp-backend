@@ -12,6 +12,21 @@ const rootPath = rootPieceId;
 const childPath = `${rootPieceId}/${childPieceId}`;
 
 describe("createRecursiveOrdresFabrication — maturation d'un OF racine", () => {
+  it("refuses a generic relaunch when the commercial line already has a resumed WIP OF", async () => {
+    const tx = { query: vi.fn(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("AS enabled")) return { rows: [{ enabled: false }] };
+      if (text.includes("data_cutover_wip_resumptions') IS NOT NULL")) return { rows: [{ installed: true }] };
+      if (text.includes("FROM public.data_cutover_wip_resumptions resume")) return { rows: [{ id: "resume-1", numero: "OF-REPRISE-01" }] };
+      return { rows: [] };
+    }) };
+    await expect(createRecursiveOrdresFabrication(tx as never, {
+      source_type: "COMMANDE_CLIENT", commande_id: 7, commande_numero: "CMD-7", commande_ligne_id: 8,
+      livraison_affaire_id: 9, client_id: "1", root_article_id: articleId, root_piece_technique_id: rootPieceId,
+      qty_to_produce: 1, user_id: 3,
+    })).rejects.toMatchObject({ code: "CUTOVER_WIP_RESUMPTION_EXISTS", details: { resumed_of_references: ["OF-REPRISE-01"] } });
+  });
+
   it.each([false, true])("réutilise le brouillon racine et ne crée qu'un sous-OF pour le manque calculé (préparation=%s)", async (preparationEnabled) => {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
     let nextOfId = 100;
