@@ -87,6 +87,9 @@ async function main() {
   await client.connect();
   try {
     await client.query("BEGIN");
+    // Mirror the explicit release catalogue operation in this owned loopback fixture.
+    require("ts-node/register/transpile-only");
+    await require("../../src/module/access-control/repository/erp-configuration-catalog.repository").synchronizeErpConfigurationCatalog(client);
     // The access-review browser proof must always start from the same state.
     // The migration rehearsal also runs this seed against historical schemas,
     // before SOL-25 created these tables, so the reset is capability-based.
