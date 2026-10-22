@@ -18,8 +18,9 @@ const SOURCE_PATH='/internal/cerp/common-access-v1';
 const SOURCE_URL='http://127.0.0.1:8080'+SOURCE_PATH;
 const MARKER='DIRECTORY_COMMON_ACCESS_PROJECTED';
 const unavailable=()=>new HttpError(503,'DIRECTORY_UNAVAILABLE','Les droits communs sont momentanément indisponibles.');
-const testSite=siteIdSchema.refine(site=>site!=='cerp_prod');
-const bindingSchema=z.object({authority_id:directoryIdSchema,profile_id:z.string().uuid(),target_site:testSite}).strict();
+// Production may read its own signed ACL snapshot for shared configuration;
+// the projection endpoint below still rejects Production callers explicitly.
+const bindingSchema=z.object({authority_id:directoryIdSchema,profile_id:z.string().uuid(),target_site:siteIdSchema}).strict();
 const dataSchema=bindingSchema.extend({
  epoch:z.string().regex(/^(0|[1-9][0-9]{0,39})$/),
  modules:z.array(z.object({module_key:z.string().min(1).max(100),allowed:z.boolean()}).strict()).max(1000),

@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Paramétrage ERP délégué (#1412)
+
+- Droit nominatif `parametrage-erp`, modifiable dans la matrice de comptes, pour le démarrage, l’expédition et les références. Les écritures exigent un MFA récent ; la gestion des comptes conserve sa garde SuperAdmin.
+- La configuration de l’entreprise conserve son annuaire commun et vérifie les droits Production actuels par réponse privée signée, depuis Production comme depuis Test.
+- Les listes d’accès affichent l’identifiant canonique de l’annuaire lorsque le nom local est technique. Déploiement et données de catalogue à coordonner ; aucun changement de schéma.
+
 ## Préparé — Exécution des maintenances pour le bleu/vert (#1381)
 
 - Séparer les API routées sans tâches périodiques du worker dédié sous verrou PostgreSQL ; conserver le fonctionnement combiné par défaut.

@@ -14,6 +14,7 @@ vi.mock("../module/admin/services/admin.service", () => ({
 const securityMocks = vi.hoisted(() => ({
   activeAccount: vi.fn(),
   isSuperadmin: vi.fn(),
+  profile: vi.fn(),
 }));
 
 vi.mock("../module/auth/repository/auth.repository", () => ({
@@ -22,6 +23,7 @@ vi.mock("../module/auth/repository/auth.repository", () => ({
 
 vi.mock("../module/access-control/services/access-control.service", () => ({
   isSuperadmin: securityMocks.isSuperadmin,
+  resolveAccessProfile: securityMocks.profile,
 }));
 
 import adminRoutes from "../module/admin/routes/admin.routes";
@@ -53,7 +55,7 @@ const body = {
 };
 
 function token(role: string, id = 7) {
-  return jwt.sign({ id, username: "ACTOR", email: "actor@example.test", role, session_epoch: 0 }, secret);
+  return jwt.sign({ id, username: "ACTOR", email: "actor@example.test", role, session_epoch: 0, mfa: true, mfa_verified_at: Math.floor(Date.now() / 1000) }, secret);
 }
 
 beforeAll(() => {
@@ -72,12 +74,13 @@ beforeEach(() => {
   upsertDefaultShippingLocation.mockReset();
   securityMocks.activeAccount.mockResolvedValue({ status: "Active", session_epoch: 0 });
   securityMocks.isSuperadmin.mockResolvedValue(false);
+  securityMocks.profile.mockImplementation(async () => ({ is_superadmin: await securityMocks.isSuperadmin(), modules: [] }));
 });
 
 describe("ERP settings routes", () => {
   const path = "/api/v1/admin/erp-settings/stock.default_shipping_location";
 
-  it("requires authentication and the live superadmin marker", async () => {
+  it("requires authentication and a live configuration permission", async () => {
     expect((await request(app).get(path)).status).toBe(401);
 
     const forbidden = await request(app)

@@ -183,7 +183,7 @@ export async function repoListAccessUsers(tx?: DbQueryer): Promise<AccessUserRow
     `
       SELECT
         u.id::int AS id,
-        u.username,
+        CASE WHEN u.directory_profile_id IS NOT NULL THEN coalesce(nullif(u.directory_username, ''), u.username) ELSE u.username END AS username,
         u.name,
         u.surname,
         u.email,
@@ -212,7 +212,7 @@ export async function repoGetAccessUser(userId: number, tx?: DbQueryer): Promise
     `
       SELECT
         u.id::int AS id,
-        u.username,
+        CASE WHEN u.directory_profile_id IS NOT NULL THEN coalesce(nullif(u.directory_username, ''), u.username) ELSE u.username END AS username,
         u.name,
         u.surname,
         u.email,
