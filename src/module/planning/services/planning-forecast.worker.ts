@@ -12,6 +12,7 @@ import {dependencyClosure,dependencyIndex} from '../domain/central-dependencies'
 import {HttpError} from '../../../utils/httpError';
 import {recordDurationPredictions} from '../repository/duration-learning.repository';
 import {forecastPlacements} from '../domain/forecast-placement';
+import {startDrainableRecurringTask} from '../../../shared/runtime/drainable-recurring-task';
 
 /** Durable queue, single DB writer, bounded calculation. Only forecast columns
  * are written: no planning_event, assignment, commitment or actual date. */
@@ -105,9 +106,10 @@ export async function runPlanningForecastOnce(){
     throw error;
   }
 }
-export function startPlanningForecastMaintenance(){
-  let running:Promise<unknown>|null=null,stopped=false;
-  const cycle=()=>{if(stopped||running)return;running=runPlanningForecastOnce().catch(()=>console.error(JSON.stringify({type:'planning_forecast_failed'}))).finally(()=>{running=null;});};
-  const timer=setInterval(cycle,30000);timer.unref?.();cycle();
-  return async()=>{stopped=true;clearInterval(timer);await running;};
+export function startPlanningForecastMaintenance(options: Readonly<{cycle?:()=>Promise<unknown>}> = {}){
+  return startDrainableRecurringTask(
+    async()=>{await (options.cycle??runPlanningForecastOnce)();},
+    30_000,
+    {onError:()=>console.error(JSON.stringify({type:'planning_forecast_failed'}))},
+  ).stop;
 }

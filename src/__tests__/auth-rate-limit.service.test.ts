@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AuthRateLimitConfig } from "../config/auth-rate-limit";
 import type {
@@ -6,7 +6,7 @@ import type {
   AuthRateLimitStoreCounter,
   AuthRateLimitStoreInput,
 } from "../module/auth/domain/auth-rate-limit";
-import { AuthRateLimiter } from "../module/auth/services/auth-rate-limit.service";
+import { AuthRateLimiter, startAuthRateLimitMaintenance } from "../module/auth/services/auth-rate-limit.service";
 
 type SharedCounter = { count: number; expiresAt: number };
 
@@ -111,6 +111,26 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
 }
 
 describe("distributed auth rate limiter", () => {
+  it("drains an active cleanup before stop resolves", async () => {
+    vi.useFakeTimers();
+    let finish: (() => void) | undefined;
+    const store = {
+      consume: vi.fn(),
+      deleteExpired: vi.fn(() => new Promise<number>((resolve) => { finish = () => resolve(0); })),
+    } as unknown as AuthRateLimitStore;
+    const stop = startAuthRateLimitMaintenance(store, testConfig({ cleanupIntervalMs: 10 }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.deleteExpired).toHaveBeenCalledTimes(1);
+    const stopping = stop();
+    let settled = false;
+    void stopping.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(settled).toBe(false);
+    expect(store.deleteExpired).toHaveBeenCalledTimes(1);
+    finish?.();
+    await stopping;
+    vi.useRealTimers();
+  });
   it("admits twenty different employees behind one IP while keeping receipt and submission scopes separate", async () => {
     const store = new SharedDeterministicStore(() => 1_000);
     const limiter = new AuthRateLimiter(store, testConfig());

@@ -1,5 +1,6 @@
 import { logger } from "../../../shared/observability/logger";
 import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import { HttpError } from "../../../utils/httpError";
 import { canonicalJson } from "../domain/finance-policy";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
@@ -503,7 +504,10 @@ export async function svcReconcileOutstandingElectronicInvoices(): Promise<numbe
   return applied;
 }
 
-export function startElectronicInvoiceMaintenance(): () => void {
+export function startElectronicInvoiceMaintenance(options: Readonly<{ cycle?: () => Promise<void> }> = {}): () => void | Promise<void> {
+  // Internal test seam: production callers never pass this option.  Keep it
+  // ahead of provider discovery so drain behaviour is independently testable.
+  if (options.cycle) return startDrainableRecurringTask(options.cycle, 30_000).stop;
   if (electronicInvoiceProviderRegistry.list().length === 0) return () => undefined;
   const configured = Number.parseInt(process.env.EINVOICE_JOB_INTERVAL_MS ?? "30000", 10);
   const intervalMs = Number.isSafeInteger(configured) && configured >= 5_000 ? configured : 30_000;
@@ -535,8 +539,5 @@ export function startElectronicInvoiceMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(cycle, intervalMs).stop;
 }

@@ -6,7 +6,7 @@ import { createServer } from "http";
 import pool from "./config/database";
 import {assertManagedDatabaseAtStartup} from './config/managed-database';
 import {initializeSharedDirectorySite} from './shared-directory/site-runtime';
-import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
+import { assertE2EIsolation } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service";
@@ -21,6 +21,8 @@ import { startPlanningForecastMaintenance } from "./module/planning/services/pla
 import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
 import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
+import { startBackgroundLifecycle } from "./shared/runtime/background-lifecycle";
+import { runtimeListenHost } from "./shared/runtime/runtime-listen-host";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -63,22 +65,27 @@ async function start(): Promise<void> {
 
   const port = Number.parseInt(process.env.PORT || "5000", 10);
   const httpServer = createServer(app);
-  const stopAuthRateLimitMaintenance = startAuthRateLimitMaintenance();
-  const stopMfaArtifactMaintenance = startMfaArtifactMaintenance();
-  const stopReminderMaintenance = startReminderMaintenance();
-  const stopElectronicInvoiceMaintenance = startElectronicInvoiceMaintenance();
-  const stopSupplierInvoiceMaintenance = startSupplierInvoiceMaintenance();
-  const stopEReportingMaintenance = startEReportingMaintenance();
-  const stopWebhookDeliveryMaintenance = startWebhookDeliveryMaintenance();
-  const stopAuthoritativePdfArchiveMaintenance = startAuthoritativePdfArchiveMaintenance();
-  const stopPlanningForecastMaintenance = startPlanningForecastMaintenance();
-  const stopDurationLearningMaintenance = startDurationLearningMaintenance();
-  const stopCumpProjectionMaintenance = startCumpProjectionMaintenance();
+  const backgroundLifecycle = startBackgroundLifecycle({
+    pool,
+    starters: [
+      startAuthRateLimitMaintenance,
+      startMfaArtifactMaintenance,
+      startExpiredLockMaintenance,
+      startReminderMaintenance,
+      startElectronicInvoiceMaintenance,
+      startSupplierInvoiceMaintenance,
+      startEReportingMaintenance,
+      startWebhookDeliveryMaintenance,
+      startAuthoritativePdfArchiveMaintenance,
+      startPlanningForecastMaintenance,
+      startDurationLearningMaintenance,
+      startCumpProjectionMaintenance,
+    ],
+  });
 
   initSocketServer(httpServer);
-  const stopExpiredLockMaintenance = startExpiredLockMaintenance();
 
-  const listenHost = process.env.CERP_MANAGED_TEST_ID ? '127.0.0.1':e2eListenHost();
+  const listenHost = runtimeListenHost(backgroundLifecycle.mode);
   httpServer.listen(port, listenHost, () => {
     logger.info("upload_scanner_initialized", {
       mode: uploadScanner.mode,
@@ -95,20 +102,7 @@ async function start(): Promise<void> {
   const shutdown = createApplicationShutdown({
     httpServer,
     stopRealtime: shutdownRealtimeSocketServer,
-    stopMaintenance: [
-      stopAuthRateLimitMaintenance,
-      stopMfaArtifactMaintenance,
-      stopExpiredLockMaintenance,
-      stopReminderMaintenance,
-      stopElectronicInvoiceMaintenance,
-      stopSupplierInvoiceMaintenance,
-      stopEReportingMaintenance,
-      stopWebhookDeliveryMaintenance,
-      stopAuthoritativePdfArchiveMaintenance,
-      stopPlanningForecastMaintenance,
-      stopDurationLearningMaintenance,
-      stopCumpProjectionMaintenance,
-    ],
+    stopMaintenance: [backgroundLifecycle.stop],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),
   }, shutdownTimeoutMs);

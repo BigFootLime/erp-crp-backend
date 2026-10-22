@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 
 import {
   authRateLimitConfig,
@@ -119,7 +120,7 @@ export const authRateLimiter = new AuthRateLimiter(authRateLimitStore, authRateL
 export function startAuthRateLimitMaintenance(
   store: AuthRateLimitStore = authRateLimitStore,
   config: AuthRateLimitConfig = authRateLimitConfig
-): () => void {
+): () => void | Promise<void> {
   if (!config.enabled) return () => undefined;
 
   const run = async () => {
@@ -136,7 +137,5 @@ export function startAuthRateLimitMaintenance(
     }
   };
 
-  const timer = setInterval(() => void run(), config.cleanupIntervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(run, config.cleanupIntervalMs, { immediate: false }).stop;
 }
