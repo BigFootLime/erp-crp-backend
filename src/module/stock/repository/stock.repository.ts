@@ -6079,15 +6079,19 @@ async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { cli
   return id;
 }
 
-export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
+/**
+ * Creates one OLD opening movement in the caller's transaction.
+ *
+ * This is deliberately transaction-neutral: the cutover coordinator owns the
+ * commit together with its crosswalk and audit records.  The public endpoint
+ * continues to use {@link repoCreateHistoricalImport}, which owns its own
+ * transaction.
+ */
+export async function repoCreateHistoricalImportTx(client: PoolClient, body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
     const command = await beginStockCommand(client, { audit, idempotency_key: idempotencyKey, command_type: "MOVEMENT_CREATE", request_payload: { historical_import: body } });
     if (command.existing) {
       const data = command.existing.result_payload as HistoricalStockImport | null;
       if (!data) throw new Error("Historical import receipt has no result");
-      await client.query("COMMIT");
       return { ...data, replayed: true };
     }
     let articleId: string;
@@ -6098,14 +6102,15 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
       const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE OF a`, [articleId]);
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
-      shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
+      shelf = body.historical_shelf?.trim() || a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {
       if (body.article_id) {
         const selected = await client.query<{ id: string; category: string; is_active: boolean; piece_technique_id: string | null; client_code: string | null }>(
           `SELECT a.id::text AS id, ${normalizedArticleCategorySql("a.article_category")} AS category,
-                  a.is_active, a.piece_technique_id::text AS piece_technique_id, pt.code_client AS client_code
+                  a.is_active, a.piece_technique_id::text AS piece_technique_id, COALESCE(NULLIF(pt.code_client,''),c.client_code,pt.client_id) AS client_code
            FROM public.articles a
            LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+           LEFT JOIN public.clients c ON c.client_id = pt.client_id
            WHERE a.id = $1::uuid
            FOR UPDATE OF a`,
           [body.article_id]
@@ -6132,11 +6137,26 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
           articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], commercial_scope:"CLIENTS", client_ids:[historicalClient], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
         }
       }
-      shelf = body.client_number.trim();
+      shelf = body.historical_shelf?.trim() || body.client_number.trim();
     }
     await ensureArticleStockManaged(client, articleId);
-    const historicalTechnicalVersionId = body.kind === "PF"
-      ? (await client.query<{ id: string }>(
+    let historicalTechnicalVersionId: string | null = null;
+    if (body.kind === "PF" && body.technical_version_id) {
+      const selectedVersion = await client.query<{ id: string }>(
+        `SELECT version.id::text AS id
+         FROM public.articles article
+         JOIN public.piece_technique_versions version
+           ON version.piece_technique_id = article.piece_technique_id
+         WHERE article.id = $1::uuid AND version.id = $2::uuid
+         FOR SHARE OF article, version`,
+        [articleId, body.technical_version_id]
+      );
+      if (!selectedVersion.rows[0]?.id) {
+        throw new HttpError(422, "PF_TECHNICAL_VERSION_MISMATCH", "La version technique sélectionnée ne correspond pas à l'article fini.");
+      }
+      historicalTechnicalVersionId = selectedVersion.rows[0].id;
+    } else if (body.kind === "PF") {
+      historicalTechnicalVersionId = (await client.query<{ id: string }>(
           `SELECT version.id::text AS id
            FROM public.articles article
            JOIN public.piece_technique_versions version
@@ -6149,34 +6169,56 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
              version.created_at DESC
            LIMIT 1`,
           [articleId]
-        )).rows[0]?.id ?? null
-      : null;
+        )).rows[0]?.id ?? null;
+    }
     const position = await ensureHistoricalPositionTx(client, body.kind, shelf, audit);
     const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
-    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, lot_status, piece_technique_version_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD','EN_ATTENTE',$7::uuid,$8,$8) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, historicalTechnicalVersionId, audit.user_id]);
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, material_properties, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, lot_status, piece_technique_version_id, client_proprietaire_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5::jsonb,$6,$7,'OLD','OLD','OLD',$8,$9::uuid,$10::varchar,$11,$11) RETURNING id::text AS id`, [articleId, lotCode, body.supplier_lot_code ?? (body.kind === "MP" ? body.lot_number : null), body.notes ?? null, JSON.stringify(body.historical_traceability ?? {}), trace, `CERP-STOCK:${trace}`, body.historical_lot_status ?? "EN_ATTENTE", historicalTechnicalVersionId, body.owner_client_id ?? null, audit.user_id]);
     const lotId = lot.rows[0]?.id;
     if (!lotId) throw new Error("Unable to create historical lot");
     const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"
       ? [["OF", body.of_affaire_refs], ["MP_LOT", body.mp_lot_refs], ["TRAITEMENT_LOT", body.traitement_lot_refs]]
       : [["MP_LOT", [body.lot_number]]];
     for (const [type, values] of refs) for (const value of values) await client.query(`INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by) VALUES ($1::uuid,$2,$3,$4) ON CONFLICT DO NOTHING`, [lotId, type, value, audit.user_id]);
-    const unitId = await resolveUnitIdForArticle(client, articleId, body.kind === "MP" ? body.unite ?? null : null);
+    if (body.historical_lot_reference) await client.query(`INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by) VALUES ($1::uuid,'HISTORICAL_LOT',$2,$3) ON CONFLICT DO NOTHING`, [lotId, body.historical_lot_reference, audit.user_id]);
+    const suppliedUnit = body.unite ?? null;
+    const unitId = await resolveUnitIdForArticle(client, articleId, suppliedUnit);
+    if (body.kind === "PF" && suppliedUnit) {
+      const articleUnitId = await resolveUnitIdForArticle(client, articleId, null);
+      if (unitId !== articleUnitId) {
+        throw new HttpError(422, "PF_ARTICLE_UNIT_MISMATCH", "L'unité du stock historique ne correspond pas à l'unité de l'article fini.");
+      }
+    }
     const levelId = await ensureStockLevel(client, { article_id: articleId, unit_id: unitId, warehouse_id: position.warehouse_id, location_id: position.location_id, actor_user_id: audit.user_id });
     const batchId = await ensureStockBatchId(client, { stock_level_id: levelId, lot_id: lotId });
     const movementNo = await reserveMovementNo(client);
     const movement = await client.query<{ id: string }>(`INSERT INTO public.stock_movements (movement_no,movement_type,status,article_id,stock_level_id,stock_batch_id,qty,currency,effective_at,posted_at,posted_by,source_document_type,reason_code,notes,correlation_id,user_id,created_by,updated_by) VALUES ($1,'IN','POSTED',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',now(),now(),$6,'CERP_HISTORICAL_OPENING','HISTORICAL_OPENING',$7,$8::uuid,$6,$6,$6) RETURNING id::text AS id`, [movementNo, articleId, levelId, batchId, body.quantity, audit.user_id, body.notes ?? null, command.correlation_id]);
     const movementId = movement.rows[0]?.id;
     if (!movementId) throw new Error("Unable to post historical opening movement");
-    await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.kind === "MP" ? body.unite ?? null : null, position.magasinId, position.emplacementId, audit.user_id]);
+    await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.unite ?? null, position.magasinId, position.emplacementId, audit.user_id]);
     await insertMovementEvent(client, { movement_id: movementId, event_type: "CREATED_POSTED", old_values: null, new_values: { status: "POSTED", source: "CERP_HISTORICAL_OPENING" }, user_id: audit.user_id });
     const result: HistoricalStockImport = { article_id: articleId, lot_id: lotId, lot_code: lotCode, movement_id: movementId, stock_trace_code: trace, qr_payload: `CERP-STOCK:${trace}`, replayed: false };
     await insertAuditLog(client, audit, { action: "stock.historical-import.create", entity_type: "stock_movements", entity_id: movementId, details: { kind: body.kind, article_id: articleId, lot_id: lotId, stock_scope: "OLD" } });
     await completeStockCommand(client, { audit, command, command_type: "MOVEMENT_CREATE", resource_type: "stock_movement", resource_id: movementId, result_payload: result });
+    return result;
+}
+
+/** Endpoint-safe wrapper retaining the established standalone transaction. */
+export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await repoCreateHistoricalImportTx(client, body, audit, idempotencyKey);
     await client.query("COMMIT");
     return result;
-  } catch (err) { await client.query("ROLLBACK"); throw err; } finally { client.release(); }
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<Paginated<StockBalanceRow>> {

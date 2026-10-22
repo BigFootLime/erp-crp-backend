@@ -3,7 +3,38 @@
 Le contrôle d'accès par compte repose sur `public.app_modules` et
 `public.app_module_user_access`.
 
-## Politique autoritaire #262
+## Politique actuelle — revue du 20 octobre 2026
+
+Le code livré applique un **refus par défaut** par compte et par module.
+La fonction `decide()` de `access-control.service.ts` est la référence :
+
+- le SuperAdmin conserve l'accès complet ;
+- un module protégé reste réservé au SuperAdmin ;
+- un module inactif est refusé aux autres comptes ;
+- `GRANTED` autorise explicitement un module actif non protégé ;
+- `DENIED` le refuse ;
+- l'absence de décision et `INHERIT` ne donnent aucun accès ;
+- un nouveau module n'est donc pas ouvert automatiquement aux comptes existants.
+
+Les intitulés de rôle restent descriptifs. Les capacités sensibles et la MFA
+restent des contrôles distincts : ouvrir un module ne confère pas par lui-même
+une capacité d'administration, un accès RH sensible ou le journal global.
+La visibilité du menu suit le profil d'accès ; les routes serveur restent
+autoritaires, y compris lorsqu'un utilisateur dispose d'un lien direct.
+
+L'assistant de reprise `/data-cutover` applique en plus ses attributions
+explicites par lot et domaine. Un contributeur ne devient pas administrateur et
+ne reçoit ni les données financières, ni le droit de valider ou charger le lot.
+
+Ne pas réexécuter une ancienne migration d'ouverture générale pour réparer une
+fiche utilisateur. Toute modification de droits passe par la gestion nominative
+actuelle, sa MFA et son audit.
+
+## Historique #262 — remplacé pour la décision d'accès
+
+Les paragraphes historiques ci-dessous décrivent l'ancienne politique de
+juillet. Ils ne doivent plus servir de procédure de paramétrage ou de modèle
+de sécurité pour un nouveau module.
 
 Depuis le 30 juillet 2026, les rôles sont descriptifs et ne portent plus
 d'autorisation :

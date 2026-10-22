@@ -10,6 +10,7 @@ import { buildProformaPreview } from "./proforma-preview.repository";
 import { readProformaOrderSources } from "./proforma-source.repository";
 import { persistProformaDraftContentTx } from "./proforma-draft-content.repository";
 import { runProformaCommand } from "./proforma-transaction.repository";
+import { assertFinancialCutoverEmissionAllowedTx } from "./financial-cutover-guard";
 import { todayInParis } from "../domain/reporting-policy";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { renderProformaDocument, type ProformaDocumentSnapshot } from "../services/proforma-document";
@@ -26,6 +27,9 @@ export async function lockProforma(tx: PoolClient, id: string, expectedVersion: 
 
 export async function repoCreateProforma(args: CommandContext & { input: ProformaCreateBodyDTO }): Promise<ProformaCommandResult> {
   return runProformaCommand({ ...args, commandType: "PROFORMA_DRAFT_CREATE", payload: args.input, work: async (tx, correlationId) => {
+    // A draft consumes the legal-looking proforma sequence, therefore it is
+    // subject to the same cutover suspension as issued fiscal documents.
+    await assertFinancialCutoverEmissionAllowedTx(tx);
     const preview = await buildProformaPreview(tx, args.input, true);
     if (preview.preview_hash !== args.input.preview_hash) throw new HttpError(409, "PROFORMA_PREVIEW_CHANGED", "Les données de commande ont changé : actualisez l'aperçu.", { preview });
     const id = crypto.randomUUID();
@@ -40,6 +44,8 @@ export async function repoCreateProforma(args: CommandContext & { input: Proform
 
 export async function repoIssueProforma(args: CommandContext & { id: string; input: ProformaIssueBodyDTO }): Promise<ProformaCommandResult> {
   return runProformaCommand({ ...args, commandType: "PROFORMA_ISSUE", payload: { id: args.id, ...args.input }, work: async (tx) => {
+    // Existing drafts must not bypass the suspension by being issued later.
+    await assertFinancialCutoverEmissionAllowedTx(tx);
     const document = await lockProforma(tx, args.id, args.input.expected_version);
     if (document.status !== "DRAFT") throw new HttpError(409, "PROFORMA_NOT_DRAFT", "Cette proforma n'est plus un brouillon.");
     const current = await buildProformaPreview(tx, { client_id: document.client_id, currency: document.currency,

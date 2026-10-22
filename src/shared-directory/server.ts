@@ -21,10 +21,11 @@ import {mountDirectoryAvatars} from './avatar.operations';
 import {mountDirectorySelfProfile} from './self-profile.operations';
 import {directoryProfileForSite} from './admin.repository';
 import {mountDirectoryTabletPins} from './tablet-pin.operations';
+import {mountDirectoryCommonAccess} from './common-access';
 const sessionInput=z.object({directory_session:z.string().max(100)}).strict();
 const authMeta=z.object({ip:z.string().max(80).nullable(),user_agent:z.string().max(512).nullable(),device_type:z.string().max(80).nullable(),os:z.string().max(80).nullable(),browser:z.string().max(80).nullable()}).strict();
-type Options={db:Pool;directoryId:string;sourceJwtSecret:string;keys:ReadonlyMap<string,string>|(()=>Promise<ReadonlyMap<string,string>>);registrationOpen?:boolean;registrationHashKey?:string};
-declare global {namespace Express {interface Request {directoryCaller?:string;}}}
+type Options={db:Pool;directoryId:string;sourceJwtSecret:string;keys:ReadonlyMap<string,string>|(()=>Promise<ReadonlyMap<string,string>>);registrationOpen?:boolean;registrationHashKey?:string;commonAccessTransport?:typeof fetch};
+declare global {namespace Express {interface Request {directoryCaller?:string;directorySites?:ReadonlySet<string>;directoryRequestNonce?:string;}}}
 /** A private loopback service owns credentials/MFA. Site APIs have no source key. */
 export function createDirectoryServer(options:Options){
  const app=express();app.disable('x-powered-by');
@@ -33,12 +34,14 @@ export function createDirectoryServer(options:Options){
    if(req.method!=='POST'||!Buffer.isBuffer(req.body))throw new Error('DIRECTORY_CALL_REJECTED');
    if(req.originalUrl!=='/internal/directory/avatar-upload'&&req.body.length>16384)throw new Error('DIRECTORY_CALL_TOO_LARGE');
    const headers=Object.fromEntries(Object.entries(req.headers).map(([k,v])=>[k,typeof v==='string'?v:undefined]));
-   const caller=verifyDirectoryCall(headers,typeof options.keys==='function'?await options.keys():options.keys,req.method,req.originalUrl,req.body);
+   const keys=typeof options.keys==='function'?await options.keys():options.keys;
+   const caller=verifyDirectoryCall(headers,keys,req.method,req.originalUrl,req.body);
    await consumeCallNonce(options.db,caller.nonce,caller.expires_at);
-   req.directoryCaller=caller.site;req.body=JSON.parse(req.body.toString('utf8'));next();
+   req.directoryCaller=caller.site;req.directorySites=new Set(keys.keys());req.directoryRequestNonce=caller.nonce;req.body=JSON.parse(req.body.toString('utf8'));next();
   }catch{res.status(401).json({code:'DIRECTORY_CALL_REJECTED',message:'Appel annuaire refusé.'});}
  });
  const wrap=(work:(req:express.Request,res:express.Response)=>Promise<void>):express.RequestHandler=>(req,res,next)=>{void work(req,res).catch(next);};
+ mountDirectoryCommonAccess(app,options.db,options.directoryId,async()=>typeof options.keys==='function'?await options.keys():options.keys,wrap,options.commonAccessTransport);
  app.post('/internal/directory/info',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({directory_id:options.directoryId,schema_version:1,capabilities:['shared-auth-mfa','shared-users','shared-company','shared-avatar'],import_mode:'EMPTY_NO_LEGACY_IMPORT'});}));
  app.post('/internal/directory/registration-options',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({enabled:!!options.registrationOpen&&req.directoryCaller!=='cerp_prod',database:req.directoryCaller,avatars:AVATAR_KEYS,role:'superAdmin'});}));
  app.post('/internal/directory/register',wrap(async(req,res)=>{

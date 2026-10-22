@@ -5,12 +5,20 @@ import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import * as controller from "../controllers/access-control.controller";
 import { requireSuperadmin } from "../middlewares/require-superadmin";
+import { sharedDirectoryClient, sharedDirectorySite } from "../../../shared-directory/site-runtime";
 
 const router = Router();
 
 // Aucun `authorizeRole` ici : le statut superadmin n'est pas un rôle métier et ne
 // doit pas pouvoir être obtenu par une attribution de rôle depuis /admin/users.
 router.use(authenticateToken, requireSuperadmin, requireRecentMfaForMutations);
+router.use((req,res,next)=>{
+ const changesCommonRights=/^\/(?:users\/\d+\/(?:modules|sensitive-capabilities)(?:\/|$)|modules\/|unlock-all$)/.test(req.path);
+ if(changesCommonRights&&!['GET','HEAD','OPTIONS'].includes(req.method)&&sharedDirectoryClient()&&sharedDirectorySite()!=='cerp_prod'){
+  res.status(403).json({code:'COMMON_ACCESS_PRODUCTION_REQUIRED',message:'Les droits sont communs à toutes les bases. Modifiez-les depuis la Production.'});return;
+ }
+ next();
+});
 
 router.get("/overview", controller.getOverview);
 router.get("/users/:userId/sensitive-capabilities", controller.getSensitiveCapabilities);

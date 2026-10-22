@@ -42,6 +42,7 @@ import {
   repoFindDocumentByBlobHash,
   repoGetGedBlobReferenceState,
   repoGetQuarantineSession,
+  repoIsQuarantineSessionCutoverPrivate,
   repoGetClass,
   repoGetDocumentDetail,
   repoGetTree,
@@ -431,7 +432,7 @@ export async function listClasses(actor: GedActor): Promise<GedDocumentClass[]> 
 
 export async function listDocuments(actor: GedActor, filters: GedListFilters): Promise<GedListResult> {
   assertGedCapability(actor.role, "read");
-  return repoListDocuments(filters);
+  return repoListDocuments({ ...filters, exclude_cutover: !await repoIsSuperadmin(actor.id) });
 }
 
 export async function getDocument(actor: GedActor, documentId: string): Promise<GedDocumentDetail> {
@@ -440,12 +441,13 @@ export async function getDocument(actor: GedActor, documentId: string): Promise<
   if (!detail) {
     throw new HttpError(404, "GED_DOCUMENT_NOT_FOUND", "Document introuvable.");
   }
+  if (detail.links.some((link) => link.entity_type.toUpperCase() === "CUTOVER_ROW")) await assertGedVersionParentReadable(actor.id, documentId);
   return detail;
 }
 
 export async function getTree(actor: GedActor): Promise<GedTreeNode[]> {
   assertGedCapability(actor.role, "read");
-  const rows = await repoGetTree();
+  const rows = await repoGetTree(!await repoIsSuperadmin(actor.id));
 
   // L'arborescence est CALCULÉE à partir du référentiel et des liens. Elle
   // n'existe nulle part sur le disque : renommer une classe ne déplace rien.
@@ -497,11 +499,22 @@ function publicQuarantineItem(session: GedUploadSessionInternal): GedQuarantineI
 
 export async function listQuarantine(actor: GedActor): Promise<GedQuarantineItem[]> {
   assertGedCapability(actor.role, "admin");
-  return (await repoListQuarantine()).map(publicQuarantineItem);
+  const superadmin = await repoIsSuperadmin(actor.id);
+  return (await repoListQuarantine({ excludeCutover: !superadmin })).map(publicQuarantineItem);
+}
+
+async function assertQuarantineCutoverAccess(actor: GedActor, sessionId: string): Promise<void> {
+  if (!await repoIsQuarantineSessionCutoverPrivate(sessionId)) return;
+  if (!await repoIsSuperadmin(actor.id)) {
+    // Deliberately opaque: a GED administrator must not learn whether a
+    // private cutover upload is awaiting antivirus handling.
+    throw new HttpError(404, "GED_QUARANTINE_NOT_FOUND", "Fichier de quarantaine introuvable.");
+  }
 }
 
 export async function rescanQuarantine(actor: GedActor, sessionId: string): Promise<GedQuarantineItem> {
   assertGedCapability(actor.role, "admin");
+  await assertQuarantineCutoverAccess(actor, sessionId);
   const before = await repoGetQuarantineSession(sessionId);
   if (!before || before.quarantine_status !== "quarantined" || !before.quarantine_key) {
     throw new HttpError(404, "GED_QUARANTINE_NOT_FOUND", "Fichier de quarantaine introuvable.");
@@ -597,6 +610,7 @@ function releaseMetadata(session: GedUploadSessionInternal): ReleaseMetadata {
 
 export async function releaseQuarantine(actor: GedActor, sessionId: string): Promise<GedDocumentDetail> {
   assertGedCapability(actor.role, "admin");
+  await assertQuarantineCutoverAccess(actor, sessionId);
   const session = await repoGetQuarantineSession(sessionId);
   if (!session || session.quarantine_status !== "quarantined" || !session.quarantine_key) {
     throw new HttpError(404, "GED_QUARANTINE_NOT_FOUND", "Fichier de quarantaine introuvable.");
@@ -744,6 +758,7 @@ export async function releaseQuarantine(actor: GedActor, sessionId: string): Pro
 
 export async function deleteQuarantine(actor: GedActor, sessionId: string): Promise<void> {
   assertGedCapability(actor.role, "admin");
+  await assertQuarantineCutoverAccess(actor, sessionId);
   const session = await repoGetQuarantineSession(sessionId);
   if (!session || !session.quarantine_key || !["quarantined", "deleted"].includes(session.quarantine_status)) {
     throw new HttpError(404, "GED_QUARANTINE_NOT_FOUND", "Fichier de quarantaine introuvable.");

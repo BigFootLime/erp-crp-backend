@@ -20,6 +20,7 @@ import { createObservabilityRouter } from "../shared/observability/routes";
 import { createOriginPolicy } from "./origins";
 import { deploymentIdentity } from "./deployment-security";
 import { createRequestBudget } from "../middlewares/request-budget";
+import { mountCommonAccessSource } from "../shared-directory/common-access";
 
 installStructuredConsole();
 const app = express();
@@ -123,6 +124,8 @@ app.use(
     limit: "10mb",
   })
 );
+
+mountCommonAccessSource(app, pool);
 
 /* ------------------ 3) Swagger / Docs ------------------ */
 

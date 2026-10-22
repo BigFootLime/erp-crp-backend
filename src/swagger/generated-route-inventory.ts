@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "e4dcee5c1800383eafdb70d047d22b0c6ba3ae978f2f29fa8a91e186fb8ef2a7";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "6df2abbec418672d3e32c474d5368952787de448a738186334495253123a64fc";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -183,7 +183,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/events",
-    "source": "src/module/access-control/routes/access-control.routes.ts:18",
+    "source": "src/module/access-control/routes/access-control.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -191,6 +191,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessEvents"
     ],
     "authenticated": true,
@@ -203,7 +204,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/modules/{moduleKey}/default",
-    "source": "src/module/access-control/routes/access-control.routes.ts:24",
+    "source": "src/module/access-control/routes/access-control.routes.ts:32",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -211,6 +212,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putModuleDefault"
     ],
     "authenticated": true,
@@ -223,7 +225,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/overview",
-    "source": "src/module/access-control/routes/access-control.routes.ts:15",
+    "source": "src/module/access-control/routes/access-control.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -231,6 +233,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getOverview"
     ],
     "authenticated": true,
@@ -243,7 +246,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/reviews",
-    "source": "src/module/access-control/routes/access-control.routes.ts:19",
+    "source": "src/module/access-control/routes/access-control.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -251,6 +254,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessReviews"
     ],
     "authenticated": true,
@@ -263,7 +267,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/reviews",
-    "source": "src/module/access-control/routes/access-control.routes.ts:20",
+    "source": "src/module/access-control/routes/access-control.routes.ts:28",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -271,6 +275,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postAccessReview"
     ],
     "authenticated": true,
@@ -283,7 +288,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/reviews/{reviewId}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:21",
+    "source": "src/module/access-control/routes/access-control.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -291,6 +296,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getAccessReview"
     ],
     "authenticated": true,
@@ -303,7 +309,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/reviews/{reviewId}/close",
-    "source": "src/module/access-control/routes/access-control.routes.ts:23",
+    "source": "src/module/access-control/routes/access-control.routes.ts:31",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -311,6 +317,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postCloseAccessReview"
     ],
     "authenticated": true,
@@ -323,7 +330,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/reviews/{reviewId}/users/{userId}/decision",
-    "source": "src/module/access-control/routes/access-control.routes.ts:22",
+    "source": "src/module/access-control/routes/access-control.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -331,6 +338,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putAccessReviewDecision"
     ],
     "authenticated": true,
@@ -343,7 +351,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/access/unlock-all",
-    "source": "src/module/access-control/routes/access-control.routes.ts:27",
+    "source": "src/module/access-control/routes/access-control.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -351,6 +359,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.postUnlockAll"
     ],
     "authenticated": true,
@@ -363,7 +372,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/modules",
-    "source": "src/module/access-control/routes/access-control.routes.ts:26",
+    "source": "src/module/access-control/routes/access-control.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -371,6 +380,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putUserModulesBulk"
     ],
     "authenticated": true,
@@ -383,7 +393,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/modules/{moduleKey}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:25",
+    "source": "src/module/access-control/routes/access-control.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -391,6 +401,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putUserModuleAccess"
     ],
     "authenticated": true,
@@ -403,7 +414,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/admin/access/users/{userId}/sensitive-capabilities",
-    "source": "src/module/access-control/routes/access-control.routes.ts:16",
+    "source": "src/module/access-control/routes/access-control.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -411,6 +422,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.getSensitiveCapabilities"
     ],
     "authenticated": true,
@@ -423,7 +435,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/admin/access/users/{userId}/sensitive-capabilities/{capability}",
-    "source": "src/module/access-control/routes/access-control.routes.ts:17",
+    "source": "src/module/access-control/routes/access-control.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -431,6 +443,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireSuperadmin",
       "requireRecentMfaForMutations",
+      "anonymous",
       "controller.putSensitiveCapability"
     ],
     "authenticated": true,
@@ -5702,6 +5715,411 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/data-cutover/batches",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:32",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "controller.list"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:33",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.create"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:34",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "controller.detail"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/application-preview",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:47",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.applicationPreview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/applications",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:51",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.applications"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/apply",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:48",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.apply"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/commands/{commandeId}/apply-native-remainder",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:50",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.applyNativeRemainder"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/commands/{commandeId}/preview-native-remainder",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:49",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.previewNativeRemainder"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/contributors",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:45",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "controller.contributors"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/contributors",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:46",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.assignContributor"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/evidence",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:53",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.evidence"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/export",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:44",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.exportPackage"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/openings",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:52",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.openings"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/preview",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:39",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.preview"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/rows",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:35",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "controller.rows"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "patch",
+    "path": "/data-cutover/batches/{id}/rows/{rowId}",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:38",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "recentAssurance",
+      "controller.patchRow"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/rows/{rowId}/evidence",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:54",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.linkEvidence"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/batches/{id}/rows/{rowId}/wip-context",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:36",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "controller.wipContext"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/rows/{rowId}/wip/prepare-delivery-target",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:37",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.prepareWipDeliveryTarget"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/data-cutover/batches/{id}/validate",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:40",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "recentAssurance",
+      "controller.validate"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/capabilities",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:30",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "controller.capabilities"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/data-cutover/lookups/{entity}",
+    "source": "src/module/data-cutover/routes/data-cutover.routes.ts:31",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "anonymous",
+      "onlySuperadmin",
+      "controller.lookup"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/devis",
     "source": "src/module/devis/routes/devis.routes.ts:131",
     "middleware": [
@@ -8242,7 +8660,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/classes",
-    "source": "src/module/ged/routes/ged.routes.ts:20",
+    "source": "src/module/ged/routes/ged.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8259,7 +8677,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/documents",
-    "source": "src/module/ged/routes/ged.routes.ts:31",
+    "source": "src/module/ged/routes/ged.routes.ts:32",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8276,7 +8694,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/documents",
-    "source": "src/module/ged/routes/ged.routes.ts:32",
+    "source": "src/module/ged/routes/ged.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8294,76 +8712,84 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/documents/{id}",
-    "source": "src/module/ged/routes/ged.routes.ts:33",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireGedCapability(read)",
-      "controller.getDocument"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireGedCapability(read)"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/ged/documents/{id}/history",
     "source": "src/module/ged/routes/ged.routes.ts:34",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireGedCapability(read)",
-      "controller.getDocumentHistory"
+      "requireCutoverParentAccess",
+      "controller.getDocument"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireGedCapability(read)"
+      "requireGedCapability(read)",
+      "requireCutoverParentAccess"
     ]
   },
   {
-    "method": "post",
-    "path": "/ged/documents/{id}/revision-links",
-    "source": "src/module/ged/routes/ged.routes.ts:30",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireGedCapability(upload)",
-      "controller.reuseRevisionDocument"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireGedCapability(upload)"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/ged/documents/{id}/versions",
+    "method": "get",
+    "path": "/ged/documents/{id}/history",
     "source": "src/module/ged/routes/ged.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireGedCapability(read)",
+      "requireCutoverParentAccess",
+      "controller.getDocumentHistory"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(read)",
+      "requireCutoverParentAccess"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/ged/documents/{id}/revision-links",
+    "source": "src/module/ged/routes/ged.routes.ts:31",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
       "requireGedCapability(upload)",
+      "requireCutoverParentAccess",
+      "controller.reuseRevisionDocument"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(upload)",
+      "requireCutoverParentAccess"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/ged/documents/{id}/versions",
+    "source": "src/module/ged/routes/ged.routes.ts:36",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireGedCapability(upload)",
+      "requireCutoverParentAccess",
       "upload.single(file)",
       "controller.postDocumentVersion"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireGedCapability(upload)"
+      "requireGedCapability(upload)",
+      "requireCutoverParentAccess"
     ]
   },
   {
     "method": "get",
     "path": "/ged/health",
-    "source": "src/module/ged/routes/ged.routes.ts:22",
+    "source": "src/module/ged/routes/ged.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8380,7 +8806,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/piece-revisions/{revisionId}/reusable-documents",
-    "source": "src/module/ged/routes/ged.routes.ts:29",
+    "source": "src/module/ged/routes/ged.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8397,7 +8823,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/quarantine",
-    "source": "src/module/ged/routes/ged.routes.ts:23",
+    "source": "src/module/ged/routes/ged.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8414,7 +8840,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/ged/quarantine/{sessionId}",
-    "source": "src/module/ged/routes/ged.routes.ts:26",
+    "source": "src/module/ged/routes/ged.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8431,7 +8857,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/quarantine/{sessionId}/release",
-    "source": "src/module/ged/routes/ged.routes.ts:25",
+    "source": "src/module/ged/routes/ged.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8448,7 +8874,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/quarantine/{sessionId}/rescan",
-    "source": "src/module/ged/routes/ged.routes.ts:24",
+    "source": "src/module/ged/routes/ged.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8465,7 +8891,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/ged/tree",
-    "source": "src/module/ged/routes/ged.routes.ts:21",
+    "source": "src/module/ged/routes/ged.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8482,86 +8908,96 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/approve",
-    "source": "src/module/ged/routes/ged.routes.ts:44",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireGedCapability(approve)",
-      "controller.approveVersion"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireGedCapability(approve)"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/ged/versions/{versionId}/content",
-    "source": "src/module/ged/routes/ged.routes.ts:49",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "requireGedCapability(download)",
-      "controller.downloadVersion"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireGedCapability(download)"
-    ]
-  },
-  {
-    "method": "post",
-    "path": "/ged/versions/{versionId}/obsolete",
     "source": "src/module/ged/routes/ged.routes.ts:46",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
+      "requireGedCapability(approve)",
+      "requireCutoverParentAccess",
+      "controller.approveVersion"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(approve)",
+      "requireCutoverParentAccess"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/ged/versions/{versionId}/content",
+    "source": "src/module/ged/routes/ged.routes.ts:51",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireGedCapability(download)",
+      "requireCutoverParentAccess",
+      "controller.downloadVersion"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireGedCapability(download)",
+      "requireCutoverParentAccess"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/ged/versions/{versionId}/obsolete",
+    "source": "src/module/ged/routes/ged.routes.ts:48",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
       "requireGedCapability(obsolete)",
+      "requireCutoverParentAccess",
       "controller.obsoleteVersion"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireGedCapability(obsolete)"
+      "requireGedCapability(obsolete)",
+      "requireCutoverParentAccess"
     ]
   },
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/publish",
-    "source": "src/module/ged/routes/ged.routes.ts:45",
+    "source": "src/module/ged/routes/ged.routes.ts:47",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireGedCapability(publish)",
+      "requireCutoverParentAccess",
       "controller.publishVersion"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireGedCapability(publish)"
+      "requireGedCapability(publish)",
+      "requireCutoverParentAccess"
     ]
   },
   {
     "method": "post",
     "path": "/ged/versions/{versionId}/submit",
-    "source": "src/module/ged/routes/ged.routes.ts:43",
+    "source": "src/module/ged/routes/ged.routes.ts:45",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "requireGedCapability(submit)",
+      "requireCutoverParentAccess",
       "controller.submitVersion"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireGedCapability(submit)"
+      "requireGedCapability(submit)",
+      "requireCutoverParentAccess"
     ]
   },
   {

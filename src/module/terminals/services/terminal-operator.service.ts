@@ -188,6 +188,9 @@ export async function assertStartAllowed(params: {
   ).rows[0];
   if (replay) return; // canonical service still compares the full payload and owner
   const context = await operationContext(terminal, ofId, operationId, db);
+  if (context.status === "CUTOVER_COMPLETED") {
+    throw new HttpError(409, "CUTOVER_WIP_OPERATION_ALREADY_COMPLETED", "Cette opération est déjà attestée comme terminée lors de la reprise. Démarrez la première phase restante.");
+  }
   const event = (
     await db.query(
       `SELECT id,updated_at::text FROM public.planning_events WHERE of_operation_id=$1 AND machine_id=$2
