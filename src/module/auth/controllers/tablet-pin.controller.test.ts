@@ -109,19 +109,28 @@ describe("tablet PIN public HTTP contract", () => {
     expect(directory.call).not.toHaveBeenCalled();
   });
 
-  it("maps public camelCase input to the Directory wire format and preserves its login result", async () => {
+  it("maps PIN-only camelCase input to the Directory wire format without a username", async () => {
     directory.call.mockResolvedValueOnce({ directory_session: "directory-session", identity: { profile_id: "profile" } });
     directory.authenticate.mockResolvedValueOnce({ token: "site-token", user: { id: 1 } });
 
     const response = await request(app())
       .post("/tablet-pin/login")
-      .send({ username: "operator", pin: "0123", deviceId, deviceSecret })
+      .send({ pin: "0123", deviceId, deviceSecret })
       .expect(200);
 
     expect(directory.call).toHaveBeenCalledWith("tablet-pin-login", expect.objectContaining({
-      input: { username: "OPERATOR", pin: "0123", device_id: deviceId, device_secret: deviceSecret },
+      input: { pin: "0123", device_id: deviceId, device_secret: deviceSecret },
     }));
     expect(response.body).toEqual({ message: "Connexion réussie", token: "site-token", user: { id: 1 } });
+  });
+
+  it("retains username only as a legacy-client compatibility field", async () => {
+    directory.call.mockResolvedValueOnce({ directory_session: "directory-session", identity: { profile_id: "profile" } });
+    directory.authenticate.mockResolvedValueOnce({ token: "site-token", user: { id: 1 } });
+    await request(app()).post("/tablet-pin/login").send({ username: "operator", pin: "0123", deviceId, deviceSecret }).expect(200);
+    expect(directory.call).toHaveBeenCalledWith("tablet-pin-login", expect.objectContaining({
+      input: { username: "OPERATOR", pin: "0123", device_id: deviceId, device_secret: deviceSecret },
+    }));
   });
 
   it("returns 204 for a successful personal PIN mutation", async () => {

@@ -126,9 +126,13 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
   if(role||roles){
    const nextRole=role??roles![0];
    const nextRoles=roles??[nextRole];if(!nextRoles.includes(nextRole))throw new HttpError(400,'DIRECTORY_ROLE_INVALID','Le rôle principal doit figurer dans les rôles attribués.');
+   // Production membership owns the functions of a common account, even when
+   // its Production owner edits the profile from a Test context.
+   const common=actor.database!=='cerp_prod'&&(await db.query("SELECT 1 FROM public.cerp_directory_memberships WHERE profile_id=$1::uuid AND database_id='cerp_prod'",[body.profile_id])).rows.length>0;
+   const roleSite=common?'cerp_prod':actor.database;
    await db.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin) VALUES($1::uuid,$2,$3,$4::text[],'Active',false)
     ON CONFLICT(profile_id,database_id) DO UPDATE SET role_key=excluded.role_key,roles=excluded.roles,version=public.cerp_directory_memberships.version+1
-    WHERE (public.cerp_directory_memberships.role_key,public.cerp_directory_memberships.roles) IS DISTINCT FROM (excluded.role_key,excluded.roles)`,[body.profile_id,actor.database,nextRole,nextRoles]);
+    WHERE (public.cerp_directory_memberships.role_key,public.cerp_directory_memberships.roles) IS DISTINCT FROM (excluded.role_key,excluded.roles)`,[body.profile_id,roleSite,nextRole,nextRoles]);
   }
   return detail(actor,body.profile_id);
  });

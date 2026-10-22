@@ -1,6 +1,20 @@
 # Changelog
 
-## Préparé — Cumul de toutes les fonctions du catalogue (#1372)
+## 2.0.15 — Compte et droits communs à toutes les bases (#1407)
+
+- L'approbation active Production et Test ; les autres bases Test enregistrées reprennent le compte, ses fonctions et son statut SuperAdmin réel. Un blocage explicite demeure prioritaire et une inscription Test seule ne donne aucun accès Production.
+- Mot de passe, PIN et facteur MFA restent dans l'annuaire commun. Une installation appairée par l'autorité Production fonctionne sur les bases enregistrées, avec défis et sessions liés à leur base cible.
+- Les modules et capacités sensibles courants sont lus auprès de l'API Production par appels privés signés, puis projetés avant l'autorisation Test. Une révocation est reprise ; une source indisponible produit une erreur temporaire 503.
+- Aucun changement de schéma. Conserver l'annuaire PIN-v2, ses clés et ses facteurs lors de toute intervention. Qualification et livraison : `docs/testing/common-accounts-1407.md`.
+
+## 2.0.14 — Identification tablette par PIN seul (#1403)
+
+- Résoudre le compte depuis un PIN unique dans l’annuaire partagé, sur tablette appairée uniquement. Les administrateurs conservent le défi MFA ; les droits métier restent ceux du compte.
+- Protéger la recherche par HMAC indexé et le vérificateur par bcrypt avec dérivation séparée. Refuser les collisions, limiter les tentatives et conserver les sessions web/Electron lors d’une révocation du PIN tablette.
+- Conserver les échecs pendant quinze minutes même après un PIN valide : connaître son propre code ne permet pas de contourner la limite de cinq échecs par tablette. Les connexions valides ne consomment pas ce quota.
+- Migration additive de l’annuaire et procédure de réenregistrement/rotation préparées. Aucun PIN réel, appareil ou service de production n’est modifié par ce lot de développement.
+
+## 2.0.13 — Cumul de toutes les fonctions du catalogue (#1372)
 
 - L'approbation des demandes, la création et l'édition administratives acceptent toutes les fonctions attribuables ensemble. La borne de validation suit la taille du catalogue et ne bloque plus une sélection dépassant 20 fonctions.
 - Le contrat OpenAPI décrit les fonctions attribuables et le catalogue distinct des fonctions principales. La fonction principale reste cochée et compatible avec le stockage existant ; modules explicites, SuperAdmin, MFA et audit conservent leurs contrôles.
