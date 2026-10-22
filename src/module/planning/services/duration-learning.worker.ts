@@ -2,6 +2,7 @@ import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { readLearningSources, persistLearningObservation } from "../repository/duration-learning.repository";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 
 /** Separate consumer: the forecast worker must never acknowledge learning jobs. */
 export async function runDurationLearningOnce(): Promise<number> {
@@ -40,10 +41,10 @@ export async function runDurationLearningOnce(): Promise<number> {
     throw error;
   }
 }
-export function startDurationLearningMaintenance(){
-  let running:Promise<unknown>|null=null,stopped=false;
-  const cycle=()=>{if(stopped||running)return;running=runDurationLearningOnce()
-    .catch(()=>console.error(JSON.stringify({type:'duration_learning_failed'}))).finally(()=>{running=null;});};
-  const timer=setInterval(cycle,15000);timer.unref?.();cycle();
-  return async()=>{stopped=true;clearInterval(timer);await running;};
+export function startDurationLearningMaintenance(options: Readonly<{cycle?:()=>Promise<unknown>}> = {}){
+  return startDrainableRecurringTask(
+    async()=>{await (options.cycle??runDurationLearningOnce)();},
+    15_000,
+    {onError:()=>console.error(JSON.stringify({type:'duration_learning_failed'}))},
+  ).stop;
 }

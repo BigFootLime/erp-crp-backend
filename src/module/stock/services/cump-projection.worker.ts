@@ -1,6 +1,7 @@
 import pool from '../../../config/database';
 import { logger, safeErrorCode } from '../../../shared/observability/logger';
 import { projectCumpWindowTx, type CumpProjectionBatch } from './cump-projection.service';
+import { startDrainableRecurringTask } from '../../../shared/runtime/drainable-recurring-task';
 
 /** An uncertain COMMIT is retried from the durable cursor, never from an
  * in-memory list. Entries, balances and allocation cursors share one commit. */
@@ -25,18 +26,20 @@ export async function runCumpProjectionOnce(): Promise<CumpProjectionBatch> {
   } finally { if (!released) client.release(); }
 }
 
-export function startCumpProjectionMaintenance() {
-  let running: Promise<unknown> | null = null,stopped = false,lastLoggedFailure: string | null = null;
-  const cycle = () => {
-    if (stopped || running) return;
-    running = runCumpProjectionOnce().then(()=>{ lastLoggedFailure = null; }).catch(error=>{
+export function startCumpProjectionMaintenance(options: Readonly<{cycle?:()=>Promise<unknown>}> = {}) {
+  let lastLoggedFailure: string | null = null;
+  return startDrainableRecurringTask(
+    async()=>{
+      await (options.cycle??runCumpProjectionOnce)();
+      lastLoggedFailure = null;
+    },
+    30_000,
+    {onError:(error)=>{
       const failure = safeErrorCode(error);
       // A short busy journal is expected; leave its cursor intact for next tick.
       if (failure==='55P03' || failure==='57014') return;
       if (failure!==lastLoggedFailure) logger.error('stock_cump_projection_failed',{ failure_code: failure });
       lastLoggedFailure = failure;
-    }).finally(()=>{ running = null; });
-  };
-  const timer = setInterval(cycle,30000); timer.unref?.(); cycle();
-  return async () => { stopped = true; clearInterval(timer); await running; };
+    }},
+  ).stop;
 }

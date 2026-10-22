@@ -10,6 +10,7 @@ import { getRealtimeReadiness } from "../../sockets/sockeServer";
 import { checkOperationalMediaStorage } from "../../module/operational-media/services/operational-media-health.service";
 import { setDependencyState, setGedCapacity, setGedQuarantineMetrics } from "./metrics";
 import { runtimeMetadata } from "./runtime";
+import { getBackgroundRuntimeSnapshot, type BackgroundRuntimeSnapshot } from "../runtime/background-runtime-state";
 
 export type HealthStatus = "up" | "down" | "degraded";
 export type HealthDependency = "database" | "ged_storage" | "operational_media_storage" | "antivirus" | "realtime";
@@ -33,6 +34,7 @@ export type ReadinessReport = Readonly<{
   environment: string;
   observed_at: string;
   checks: Record<HealthDependency, HealthCheck>;
+  runtime?: Readonly<{ background_workers: BackgroundRuntimeSnapshot }>;
 }>;
 
 type HealthProbeDependencies = Readonly<{
@@ -239,5 +241,6 @@ export async function collectReadiness(
     ...runtimeMetadata,
     observed_at: new Date().toISOString(),
     checks,
+    runtime: { background_workers: getBackgroundRuntimeSnapshot() },
   };
 }

@@ -1,4 +1,5 @@
 import pool from "../../config/database";
+import { startDrainableRecurringTask } from "../runtime/drainable-recurring-task";
 import { renderSupplierPurchaseOrderOfficialPdf } from "../../module/commande-fournisseur/services/commande-fournisseur-official-pdf";
 import { renderDevisOfficialPdf } from "../../module/devis/services/devis-official-pdf";
 import { renderCommandeArOfficialPdf } from "../../module/commande-client/services/commande-ar.service";
@@ -80,11 +81,15 @@ export async function runAuthoritativePdfArchiveWorkerOnce(
 }
 
 /** Bounded serial worker; failures remain in the durable outbox for retry. */
-export function startAuthoritativePdfArchiveMaintenance(): () => void {
+export function startAuthoritativePdfArchiveMaintenance(options: Readonly<{ cycle?: () => Promise<void> }> = {}): () => void | Promise<void> {
   const registry = createAuthoritativePdfProducerRegistry();
   const workerId = `pdf-worker:${process.pid}`;
   let running = false;
   const cycle = async () => {
+    if (options.cycle) {
+      await options.cycle();
+      return;
+    }
     if (running) return;
     running = true;
     try { await runAuthoritativePdfArchiveWorkerOnce(registry, workerId); }
@@ -94,8 +99,5 @@ export function startAuthoritativePdfArchiveMaintenance(): () => void {
       console.error(JSON.stringify({ type: "authoritative_pdf_archive_worker_failed", code: (error as { code?: string } | null)?.code ?? "UNKNOWN" }));
     } finally { running = false; }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), parseInterval(process.env.CERP_AUTHORITATIVE_PDF_ARCHIVE_INTERVAL_MS));
-  timer.unref?.();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(cycle, parseInterval(process.env.CERP_AUTHORITATIVE_PDF_ARCHIVE_INTERVAL_MS)).stop;
 }
