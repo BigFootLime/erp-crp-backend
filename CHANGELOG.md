@@ -1,5 +1,11 @@
 # Changelog
 
+## Publication documentaire automatique — #1436
+
+- Tous les dépôts GED et nouvelles versions deviennent applicables après verdict antivirus sain et sortie de quarantaine, dans la transaction du dépôt.
+- Le verdict doit correspondre aux octets exacts ; les gels, consignations, droits sur les rattachements et anciennes versions sont conservés.
+- Une publication automatique est identifiée dans le journal sans inventer une approbation humaine. Les validations métier restent distinctes.
+
 ## Documents Clients / plans PT — #1432
 
 - Nouvelle édition `client-profile-pdf-v3` : bleu Commerce, Inter embarquée, logo client GED, TVA française espacée et pagination mesurée.
