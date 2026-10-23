@@ -20,6 +20,7 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
 
   const status = summaryValue(source.summary, "Statut") ?? "Client";
   const blocked = summaryValue(source.summary, "Bloqué")?.toLocaleLowerCase("fr-FR") === "oui";
+  const currentDesign = archive.renderVersion === "client-profile-pdf-v3";
   const entityImage = source.entity_image
     ? await readGedEntityImageVersion({
         versionId: source.entity_image.ged_version_id,
@@ -29,8 +30,9 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     : null;
 
   return renderCerpDocument({
+    ...(currentDesign ? { designVersion: "structured-v5" as const, appearance: "clients-v3" as const } : {}),
     documentType: "Fiche client",
-    name: source.entity_label,
+    name: currentDesign ? source.reference : source.entity_label,
     code: source.reference,
     subtitle: `Version GED v${archive.documentVersion} — données figées le ${createdAt.toLocaleDateString("fr-FR")}`,
     status,
@@ -45,10 +47,16 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     subject: "Fiche client consolidée, versionnée et archivée dans la GED",
     creationDate: createdAt,
   }, (ctx) => {
+    if (currentDesign) ctx.fieldsGrid([{ label: "Raison sociale", value: source.entity_label }], 1);
     ctx.legalStrip([...source.summary]);
     for (const section of source.sections) {
       ctx.section(section.title);
-      if (section.rows?.length) ctx.fieldsGrid(section.rows, Math.min(3, section.rows.length));
+      if (section.rows?.length) ctx.fieldsGrid(section.rows.map((row) => ({
+        ...row,
+        value: currentDesign && row.label.toLocaleLowerCase("fr-FR").includes("tva") && row.value
+          ? row.value.replace(/\s/g, "").replace(/^(FR[A-Z0-9]{2})(\d{3})(\d{3})(\d{3})$/i, "$1 $2 $3 $4")
+          : row.value,
+      })), Math.min(3, section.rows.length));
       if (section.table) {
         const columns = section.table.columns.map((column) => ({ key: column.key, label: column.label, flex: 1 }));
         const rows: CerpLineRow[] = section.table.rows.map((row) => ({
