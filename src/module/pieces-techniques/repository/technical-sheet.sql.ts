@@ -4,7 +4,7 @@ import { applicableBomScopeSql } from "./bom-version-scope.sql";
 export const TECHNICAL_SHEET_SOURCE_SQL = `
 SELECT jsonb_build_object(
   'piece', jsonb_build_object('id',p.id,'code',p.code_piece,'designation',p.designation,
-    'designation_2',p.designation_2,'client_code',p.code_client,'client_name',p.client_name,
+    'designation_2',p.designation_2,'client_code',c.client_code,'client_name',COALESCE(c.company_name,p.client_name),
     'critical',p.piece_critique,'quality_levels',p.quality_levels),
   'version',to_jsonb(v),
   'gamme',CASE WHEN g.id IS NULL THEN NULL ELSE jsonb_build_object('code',g.code,'designation',g.designation,'statut',g.statut) END,
@@ -53,6 +53,7 @@ SELECT jsonb_build_object(
       AND l.link_role<>'AUTHORITATIVE_PDF'), '[]'::jsonb)
 ) AS source
 FROM public.pieces_techniques p JOIN public.piece_technique_versions v ON v.piece_technique_id=p.id
+LEFT JOIN public.clients c ON c.client_id=p.client_id
 LEFT JOIN public.gammes g ON g.piece_technique_version_id=v.id AND g.is_current=true
 WHERE p.id=$1::uuid AND v.id=$2::uuid AND p.deleted_at IS NULL
 `;

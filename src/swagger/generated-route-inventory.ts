@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "d50686d09ac8bb4ce072618881f5e756632f879206f05c8e8745b59335bcdd8c";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "171f7fa383c7f714daaa0ab7a07bf6dd9f2bf1516bed6aadb3fbe833fcf00235";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",

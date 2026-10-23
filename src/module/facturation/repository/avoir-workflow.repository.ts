@@ -926,7 +926,7 @@ export async function repoIssueAvoir(params: {
       entityId: avoir.uuid,
       documentKind: "FINANCE_CREDIT_NOTE_LEGAL_PDF",
       documentVersion: 1,
-      renderVersion: "finance-legal-issued-v1",
+      renderVersion: "finance-legal-issued-v2",
       idempotencyKey: `finance:avoir:${avoir.uuid}:legal:${legal.legalNumber}:v1`,
       title: `Avoir légal ${legal.legalNumber}`,
       originalName: artifact.fileName,

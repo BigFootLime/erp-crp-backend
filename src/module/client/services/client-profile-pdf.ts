@@ -30,6 +30,7 @@ export async function renderClientProfilePdf({ archive }: { archive: Authoritati
     : null;
 
   return renderCerpDocument({
+      module: "commerce",
     ...(currentDesign ? { designVersion: "structured-v5" as const, appearance: "clients-v3" as const } : {}),
     documentType: "Fiche client",
     name: currentDesign ? source.reference : source.entity_label,

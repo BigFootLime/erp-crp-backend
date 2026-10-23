@@ -348,6 +348,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
 
   return renderCerpDocument(
     {
+      module: "commerce",
       designVersion:"structured-v5",
       documentType,
       name: input.number,

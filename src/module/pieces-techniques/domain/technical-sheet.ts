@@ -70,7 +70,6 @@ export function buildTechnicalSheet(source: unknown) {
       {
         title: "Définition de la pièce",
         rows: [
-          { label: "Version technique (UUID)", value: version.id },
           { label: "Désignation complémentaire", value: piece.designation_2 },
           { label: "Mode de fabrication", value: version.manufacturing_mode },
           { label: "Matière prévue", value: version.matiere_prevue },
