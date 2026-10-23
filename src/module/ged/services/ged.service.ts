@@ -69,6 +69,7 @@ import {
   type GedUploadSessionInternal,
 } from "../repository/ged.repository";
 import { assertGedParentLinkWritable, assertGedVersionParentReadable } from "./ged-parent-authorization.service";
+import { automaticallyPublishCleanUpload } from "./ged-automatic-publication.service";
 import type {
   GedAccessEvent,
   GedDocumentClass,
@@ -706,6 +707,7 @@ export async function releaseQuarantine(actor: GedActor, sessionId: string): Pro
         actor_id: actor.id,
         details: { session_id: sessionId, sha256: written.sha256, size_bytes: written.size_bytes },
       });
+      await automaticallyPublishCleanUpload(tx, actor, created.documentId, created.versionId);
       return created;
     }, uploadTransactionHooks(releaseFiles, session.sha256, () => promotionCompleted));
   } catch (error) {
@@ -907,6 +909,7 @@ export async function uploadDocument(
         },
       });
 
+      await automaticallyPublishCleanUpload(tx, actor, created.document_id, created.version_id);
       return { documentId: created.document_id, versionId: created.version_id };
     }, uploadTransactionHooks(publicationFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
@@ -1041,6 +1044,7 @@ export async function uploadNewVersion(
         },
       });
 
+      await automaticallyPublishCleanUpload(tx, actor, documentId, version.version_id);
       return { documentId, versionId: version.version_id };
     }, uploadTransactionHooks(publicationFiles, expectedSha256, () => promotionCompleted));
   } catch (err) {
