@@ -1,5 +1,11 @@
 # Changelog
 
+## Commandes sans visa technique redondant — #1439
+
+- Les commandes passent au contrôle OLD/NEW puis au lancement ; la préparation et la validation techniques restent dans les OF.
+- Les anciens checkpoints techniques sont retirés avec un événement et un historique de reprise, sans visa humain fictif. Blocages, affectations et notes sont conservés ; les OF déjà créés ne sont pas recréés.
+- Contrat généré et parcours de création/duplication alignés, sans changement de schéma.
+
 ## Publication documentaire automatique — #1436
 
 - Tous les dépôts GED et nouvelles versions deviennent applicables après verdict antivirus sain et sortie de quarantaine, dans la transaction du dépôt.

@@ -48,9 +48,9 @@ describe('customer order v2 stock-only handoff', () => {
 
   it.each([
     { needs_production: true, has_technical_warnings: false, of_ids: [94], expected: 'ATTENTE_PLANNING' },
-    { needs_production: true, has_technical_warnings: true, of_ids: [94], expected: 'ATTENTE_TECHNIQUE' },
+    { needs_production: true, has_technical_warnings: true, of_ids: [94], expected: 'ATTENTE_PLANNING' },
     { needs_production: true, has_technical_warnings: false, of_ids: [], waiting_contract_supply: true, expected: 'ATTENTE_OF' },
-    { needs_production: false, has_technical_warnings: true, of_ids: [], expected: 'ATTENTE_TECHNIQUE' },
+    { needs_production: false, has_technical_warnings: true, of_ids: [], expected: 'ATTENTE_PLANNING' },
     { needs_production: false, has_technical_warnings: false, of_ids: [94], expected: 'ATTENTE_PLANNING' },
   ])('keeps the production/technical/contract gate: $expected', async ({ expected, ...input }) => {
     const { tx, query } = transaction({ status: 'BROUILLON' });
