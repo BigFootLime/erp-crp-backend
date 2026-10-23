@@ -1614,20 +1614,20 @@ async function advanceInternalOrderWorkflowAfterGeneration(params: {
       SET
         status = CASE
           WHEN checkpoint_code IN ('commercial_review','stock_check','ar_preparation','ar_sent','invoicing') THEN 'skipped'
-          WHEN checkpoint_code IN ('order_intake','technical_analysis','of_generation') THEN 'done'
+          WHEN checkpoint_code IN ('order_intake','of_generation') THEN 'done'
           WHEN checkpoint_code = 'planning_validation' THEN 'active'
           ELSE status
         END,
         completed_at = CASE
           WHEN checkpoint_code IN (
-            'order_intake','commercial_review','technical_analysis','stock_check','of_generation',
+            'order_intake','commercial_review','stock_check','of_generation',
             'ar_preparation','ar_sent','invoicing'
           ) THEN COALESCE(completed_at, now())
           ELSE completed_at
         END,
         completed_by = CASE
           WHEN checkpoint_code IN (
-            'order_intake','commercial_review','technical_analysis','stock_check','of_generation',
+            'order_intake','commercial_review','stock_check','of_generation',
             'ar_preparation','ar_sent','invoicing'
           ) THEN COALESCE(completed_by, $2::int)
           ELSE completed_by
@@ -1921,7 +1921,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
   const row = res.rows[0] ?? null;
   if (!row) return null;
   const statut = normalizeCommandeWorkflowStatus(row.raw_statut) ?? "BROUILLON";
-  return {
+  const header = {
     id: toInt(row.id, "commande.id"),
     numero: row.numero,
     client_id: row.client_id,
@@ -1929,6 +1929,51 @@ async function loadCommandeWorkflowHeaderWithStatus(
     raw_statut: row.raw_statut,
     statut,
   };
+  return options.forUpdate ? repoRetireCommandeTechnicalReview(tx, header) : header;
+}
+
+/** Caller holds the command lock. Retiring a UI milestone never validates an OF. */
+export async function repoRetireCommandeTechnicalReview(tx: Queryable, header: CommandeWorkflowHeader): Promise<CommandeWorkflowHeader> {
+  if (header.statut !== "ATTENTE_TECHNIQUE" && header.statut !== "BLOQUE") return header;
+  const legacy = await tx.query<{
+    status: string; assigned_user_id: number | null; due_at: string | null;
+    blocked_reason: string | null; notes: string | null; metadata: Record<string, unknown>;
+    has_of: boolean; stock_done: boolean;
+  }>(`SELECT cp.status, cp.assigned_user_id, cp.due_at::text, cp.blocked_reason, cp.notes, cp.metadata,
+      EXISTS (SELECT 1 FROM public.ordres_fabrication o WHERE o.commande_id=$1 AND o.statut::text<>'ANNULE') AS has_of,
+      EXISTS (SELECT 1 FROM public.commande_client_workflow_checkpoint s
+        WHERE s.commande_id=$1 AND s.checkpoint_code='stock_check' AND s.status='done') AS stock_done
+    FROM public.commande_client_workflow_checkpoint cp
+    WHERE cp.commande_id=$1 AND cp.checkpoint_code='technical_analysis'
+      AND cp.status IN ('active','pending','blocked') FOR UPDATE OF cp`, [header.id]);
+  const old = legacy.rows[0];
+  if (!old || (header.statut === "BLOQUE" && old.status !== "blocked")) return header;
+  const target = old.has_of ? "planning_validation"
+    : header.order_type === "INTERNE" || old.stock_done ? "of_generation" : "stock_check";
+  const status: CommandeWorkflowStatus = target === "planning_validation" ? "ATTENTE_PLANNING"
+    : target === "of_generation" ? "ATTENTE_OF" : "ATTENTE_STOCK";
+  await repoEnsureCommandeWorkflowCheckpoints(tx, header.id, status);
+  await tx.query(`UPDATE public.commande_client_workflow_checkpoint
+    SET status=$3, assigned_user_id=COALESCE(assigned_user_id,$4::int), due_at=COALESCE(due_at,$5::timestamptz),
+      blocked_reason=CASE WHEN $3='blocked' THEN $6 ELSE blocked_reason END,
+      notes=COALESCE(notes,$7), metadata=COALESCE(metadata,'{}'::jsonb)||$8::jsonb, updated_at=now()
+    WHERE commande_id=$1 AND checkpoint_code=$2 AND status NOT IN ('done','skipped')`,
+    [header.id,target,old.status === "blocked" ? "blocked" : "active",old.assigned_user_id,old.due_at,old.blocked_reason,old.notes,
+      JSON.stringify({ retired_technical_checkpoint: true, ...(old.status === "blocked" ? { previous_status_before_block: status } : {}) })]);
+  await tx.query(`UPDATE public.commande_client_workflow_checkpoint SET status='skipped',
+      metadata=COALESCE(metadata,'{}'::jsonb)||$2::jsonb, updated_at=now()
+    WHERE commande_id=$1 AND checkpoint_code='technical_analysis' AND status IN ('active','pending','blocked')`,
+    [header.id,JSON.stringify({ skip_reason: "technical_review_moved_to_of", successor_checkpoint: target, former_status: old.status })]);
+  if (header.statut !== "BLOQUE") {
+    await repoEnsureCommandeWorkflowStatus({ tx,commande_id:header.id,nouveau_statut:status,
+      cause:"technical_review_retired",user_id:null,
+      commentaire:"Étape technique de commande retirée ; contrôles conservés dans la préparation des OF." });
+  }
+  await insertCommandeEvent(tx, { commande_id:header.id,event_type:"TECHNICAL_REVIEW_RETIRED",user_id:null,
+    old_values:{ checkpoint_code:"technical_analysis",status:old.status },
+    new_values:{ checkpoint_code:target,policy:"command-technical-review-retired-20261023",of_validation_unchanged:true } });
+  return { ...header, statut:header.statut === "BLOQUE" ? "BLOQUE" : status,
+    raw_statut:header.statut === "BLOQUE" ? header.raw_statut : status };
 }
 
 export async function repoEnsureCommandeWorkflowCheckpoints(
@@ -2005,7 +2050,7 @@ async function loadCommandeWorkflowCheckpoints(tx: Queryable, commandeId: number
     `,
     [commandeId]
   );
-  return rows.rows.map(mapWorkflowCheckpoint);
+  return rows.rows.filter(row => row.checkpoint_code !== "technical_analysis").map(mapWorkflowCheckpoint);
 }
 
 function buildWorkflowView(
@@ -3334,15 +3379,13 @@ export async function advanceCustomerOrderV2AfterLaunch(params: {
               completed_by = COALESCE(completed_by, $2::int),
               metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb, updated_at = now()
         WHERE commande_id = $1
-          AND checkpoint_code IN ('order_intake', 'commercial_review', 'technical_analysis', 'stock_check')`,
+          AND checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check')`,
       [params.commande_id, params.user_id, JSON.stringify({ flow_version: 2, commercial_validation: true, of_ids: [] })]
     );
     await prepareStockOnlyCustomerOrderCheckpoints(params);
   }
   const targetStatus: CommandeWorkflowStatus = stockOnly
     ? "AR_PRET"
-    : params.has_technical_warnings
-    ? "ATTENTE_TECHNIQUE"
     : params.waiting_contract_supply
       ? "ATTENTE_OF"
       : "ATTENTE_PLANNING";
@@ -3355,31 +3398,27 @@ export async function advanceCustomerOrderV2AfterLaunch(params: {
             WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check') THEN 'done'
             WHEN checkpoint_code = 'of_generation' THEN
               CASE WHEN $5::boolean THEN 'active' ELSE 'done' END
-            WHEN checkpoint_code = 'technical_analysis' THEN
-              CASE WHEN $3::boolean THEN 'active' ELSE 'done' END
             WHEN checkpoint_code = 'planning_validation' THEN
-              CASE WHEN $3::boolean OR $5::boolean THEN 'pending' ELSE 'active' END
+              CASE WHEN $5::boolean THEN 'pending' ELSE 'active' END
             ELSE status
           END,
           completed_at = CASE
             WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check')
               OR (checkpoint_code = 'of_generation' AND NOT $5::boolean)
-              OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
               THEN COALESCE(completed_at, now())
             ELSE NULL
           END,
           completed_by = CASE
             WHEN checkpoint_code IN ('order_intake', 'commercial_review', 'stock_check')
               OR (checkpoint_code = 'of_generation' AND NOT $5::boolean)
-              OR (checkpoint_code = 'technical_analysis' AND NOT $3::boolean)
               THEN COALESCE(completed_by, $2::int)
             ELSE NULL
           END,
-          metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+          metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb || jsonb_build_object('of_preparation_required',$3::boolean),
           updated_at = now()
       WHERE commande_id = $1
         AND checkpoint_code IN (
-          'order_intake', 'commercial_review', 'technical_analysis', 'stock_check',
+          'order_intake', 'commercial_review', 'stock_check',
           'of_generation', 'planning_validation'
         )
     `,
@@ -4161,7 +4200,7 @@ export async function repoCreateCommande(
 
     const orderType = input.order_type ?? "FERME";
 
-    const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+    const initialWorkflowStatus: CommandeWorkflowStatus = orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
     const insertSql = `
       INSERT INTO commande_client (
         id,
@@ -4256,7 +4295,7 @@ export async function repoCreateCommande(
         INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1, $2, $3, $4, $5)
       `,
-      [commandeIdInt, null, null, initialWorkflowStatus, "Commande creee - Analyse technique a lancer"]
+      [commandeIdInt, null, null, initialWorkflowStatus, "Commande créée — contrôle stock et lancement à préparer"]
     );
 
     await insertCommandeEvent(client, {
@@ -4265,7 +4304,7 @@ export async function repoCreateCommande(
       old_values: { statut: null },
       new_values: {
         statut: initialWorkflowStatus,
-        active_checkpoint: "technical_analysis",
+        active_checkpoint: orderType === "INTERNE" ? "of_generation" : "stock_check",
       },
       user_id: null,
     });
@@ -4281,11 +4320,11 @@ export async function repoCreateCommande(
       },
       role: "technique",
       kind: "commande.workflow.created",
-      title: `Commande ${numeroForInsert}: Analyse technique`,
-      message: "Commande creee - Analyse technique a lancer.",
+      title: `Commande ${numeroForInsert}: ${orderType === "INTERNE" ? "Lancement à préparer" : "Contrôle du stock"}`,
+      message: "Commande créée — contrôles techniques à effectuer dans le dossier OF.",
       severity: "info",
-      checkpoint_code: "technical_analysis",
-      dedupe_key: `commande:${commandeIdInt}:checkpoint:technical_analysis:created`,
+      checkpoint_code: orderType === "INTERNE" ? "of_generation" : "stock_check",
+      dedupe_key: `commande:${commandeIdInt}:checkpoint:launch-preparation:created`,
     });
 
     for (const notification of notifications) {
@@ -4414,7 +4453,7 @@ async function queueCommandeCreationPdf(
     entityLabel: "Commande client — instantané de création",
     reference: header.numero,
     summary: [
-      { label: "Commande", value: header.numero }, { label: "Statut initial", value: "ATTENTE_TECHNIQUE" },
+      { label: "Commande", value: header.numero }, { label: "Statut initial", value: header.order_type === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK" },
       { label: "Type", value: header.order_type }, { label: "Date", value: header.date_commande },
       { label: "Client", value: header.client_name ?? header.client_id }, { label: "Total HT", value: header.total_ht },
       { label: "Total TTC", value: header.total_ttc }, { label: "Remise globale", value: header.remise_globale },
@@ -4724,7 +4763,7 @@ export async function repoDeleteCommande(
           cp.assigned_user_id::int AS assigned_user_id,
           (
             SELECT COUNT(*) = 1
-              AND BOOL_AND(ch.ancien_statut IS NULL AND ch.nouveau_statut = 'ATTENTE_TECHNIQUE')
+              AND BOOL_AND(ch.ancien_statut IS NULL AND ch.nouveau_statut IN ('ATTENTE_TECHNIQUE','ATTENTE_STOCK'))
             FROM public.commande_historique ch
             WHERE ch.commande_id = cc.id
           ) AS initial_history_only,
@@ -4785,7 +4824,7 @@ export async function repoDeleteCommande(
         ) latest ON TRUE
         LEFT JOIN public.commande_client_workflow_checkpoint cp
           ON cp.commande_id = cc.id
-         AND cp.checkpoint_code = 'technical_analysis'
+         AND cp.checkpoint_code = CASE WHEN latest.nouveau_statut='ATTENTE_STOCK' THEN 'stock_check' ELSE 'technical_analysis' END
         WHERE cc.id = $1::bigint
         LIMIT 1
       `,
@@ -4800,7 +4839,7 @@ export async function repoDeleteCommande(
 
     const initialDeletableState =
       row.order_type !== "INTERNE"
-      && normalizeCommandeWorkflowStatus(row.raw_statut) === "ATTENTE_TECHNIQUE"
+      && ["ATTENTE_TECHNIQUE","ATTENTE_STOCK"].includes(normalizeCommandeWorkflowStatus(row.raw_statut) ?? "")
       && row.checkpoint_status === "active"
       && row.responsible_role === "technique"
       && row.initial_history_only
@@ -6803,7 +6842,7 @@ export async function createInternalContractDraft(
     creation_flow_version: 2,
     save_intent: "DRAFT",
   });
-  await repoEnsureCommandeWorkflowCheckpoints(db, commandeId, "ATTENTE_TECHNIQUE");
+  await repoEnsureCommandeWorkflowCheckpoints(db, commandeId, "ATTENTE_OF");
   await insertCommandeEvent(db, {
     commande_id: commandeId,
     event_type: "INTERNAL_CONTRACT_DRAFT_CREATED",
@@ -7838,7 +7877,7 @@ export async function repoDuplicateCommande(id: string) {
     if (!newId) throw new Error("Failed to allocate commande id");
     const newIdInt = toInt(newId, "commande_client.id");
     const newNumero = await generateCommandeCode(client, { client_code: original.code_client ?? original.client_id ?? "CMD" });
-    const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+    const initialWorkflowStatus: CommandeWorkflowStatus = original.order_type === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
 
     await client.query(
       `
