@@ -796,13 +796,13 @@ describe("/api/v1/stock", () => {
       .set("Authorization", "Bearer fake")
       .set("Idempotency-Key", "test-lot-required-movement-001")
       .send({
-        movement_type: "IN",
+        movement_type: "OUT",
         lines: [
           {
             article_id: "11111111-1111-1111-1111-111111111111",
             qty: 5,
-            dst_magasin_id: "33333333-3333-3333-3333-333333333333",
-            dst_emplacement_id: 1,
+            src_magasin_id: "33333333-3333-3333-3333-333333333333",
+            src_emplacement_id: 1,
           },
         ],
       });
