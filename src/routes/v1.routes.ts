@@ -146,8 +146,9 @@ router.use("/admin/access", accessControlRoutes);
 router.use("/admin/webhooks", webhookAdminRoutes);
 router.use("/admin/client-portal", clientPortalAdminRoutes);
 router.use("/admin/reference-data", referenceDataRoutes);
-router.use("/admin", adminRoutes);
+// Resolve delegated ERP configuration before the legacy admin superadmin guard.
 router.use("/admin/onboarding", onboardingRoutes);
+router.use("/admin", adminRoutes);
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
 router.use(commercialReferencesRoutes);
