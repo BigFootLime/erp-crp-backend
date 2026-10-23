@@ -305,6 +305,11 @@ export async function archiveClaimedAuthoritativePdf(
     const version = await repoAddVersion(tx, { document_id: existingDocumentId, blob_id: blob.id, original_name: item.archive.originalName, change_reason: changeReason, created_by: item.archive.actorUserId });
     documentId = existingDocumentId;
     versionId = version.version_id;
+    if (item.archive.documentKind === "CLIENT_PROFILE") {
+      // Only the live document label follows the new edition. Old names, bytes,
+      // snapshots and audit entries stay on their respective immutable versions.
+      await tx.query(`UPDATE public.ged_documents SET title = $2, updated_at = now() WHERE id = $1::uuid`, [documentId, item.archive.title]);
+    }
   } else {
     const created = await repoCreateDocumentWithVersion(tx, { class_key: gedPolicy.classKey, domain: PDF_DOMAIN, title: item.archive.title, description: `${item.archive.documentKind} — ${item.archive.entityType}:${item.archive.entityId}`, blob_id: blob.id, original_name: item.archive.originalName, change_reason: changeReason, created_by: item.archive.actorUserId });
     documentId = created.document_id;

@@ -571,12 +571,13 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
       p.en_fabrication::int AS en_fabrication,
       p.cycle,
       p.cycle_fabrication,
-      p.code_client,
-      p.client_name,
+      COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS code_client,
+      COALESCE(NULLIF(btrim(c.company_name), ''), NULLIF(btrim(p.client_name), '')) AS client_name,
       p.ensemble,
       COALESCE(p.quality_levels, ARRAY[]::text[]) AS quality_levels,
       COALESCE(p.piece_critique, false) AS piece_critique
     FROM pieces_techniques p
+    LEFT JOIN clients c ON c.client_id = p.client_id
     WHERE p.id = $1::uuid
       AND p.deleted_at IS NULL
   `;
