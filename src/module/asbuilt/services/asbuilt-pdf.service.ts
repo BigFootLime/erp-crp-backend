@@ -1,4 +1,4 @@
-import PDFDocument from "pdfkit"
+import { drawCerpRawSection, renderCerpRawBody } from "../../../shared/pdf/raw-document-body"
 
 import type { AsBuiltPreview } from "../types/asbuilt.types"
 
@@ -22,19 +22,10 @@ function n(value: number | null | undefined, unit?: string | null): string {
   return unit ? `${formatted} ${unit}` : formatted
 }
 
-async function renderPdfToBuffer(args: { creationDate: Date; render: (doc: PDFKit.PDFDocument) => void }): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", margin: 40, info: { CreationDate: args.creationDate } })
-  const chunks: Buffer[] = []
-  doc.on("data", (c) => chunks.push(c as Buffer))
-  args.render(doc)
-  doc.end()
-
-  await new Promise<void>((resolve, reject) => {
-    doc.on("end", () => resolve())
-    doc.on("error", (err) => reject(err))
-  })
-
-  return Buffer.concat(chunks)
+async function renderPdfToBuffer(args: { creationDate: Date; reference: string; render: (doc: PDFKit.PDFDocument) => void }): Promise<Buffer> {
+  return renderCerpRawBody({ module:"qualite",documentType:"Dossier de lot — conformité",name:args.reference,
+    code:args.reference,status:"Traçabilité enregistrée",generatedAt:formatDateFR(args.creationDate.toISOString()),
+    title:`Dossier de lot ${args.reference}`,subject:"Dossier as-built et preuves de conformité",creationDate:args.creationDate },args.render)
 }
 
 function drawKeyValue(doc: PDFKit.PDFDocument, key: string, value: string) {
@@ -43,9 +34,7 @@ function drawKeyValue(doc: PDFKit.PDFDocument, key: string, value: string) {
 }
 
 function section(doc: PDFKit.PDFDocument, title: string) {
-  doc.moveDown(0.7)
-  doc.fontSize(12).font("Helvetica-Bold").text(title)
-  doc.fontSize(10).font("Helvetica")
+  drawCerpRawSection(doc,title,"qualite")
 }
 
 /**
@@ -70,10 +59,8 @@ export async function svcRenderAsbuiltPdf(args: {
 
   return renderPdfToBuffer({
     creationDate: args.generatedAt,
+    reference: p.lot.lot_code,
     render: (doc) => {
-      doc.fontSize(18).font("Helvetica-Bold").text("Dossier de lot (as-built)")
-      doc.moveDown(0.6)
-
       doc.fontSize(10).font("Helvetica")
       drawKeyValue(doc, "Lot :", p.lot.lot_code)
       drawKeyValue(doc, "Article :", `${p.lot.article_code} - ${p.lot.article_designation}`)
@@ -123,7 +110,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.technical_versions.length) {
         section(doc, "Definition technique figee")
-        for (const v of e.technical_versions.slice(0, 30)) {
+        for (const v of e.technical_versions) {
           doc.text(
             `- OF ${v.of_numero} : indice ${v.indice ?? "-"}, plan ${v.plan_reference ?? "-"}` +
               (v.snapshot_sha256 ? "" : " [DEFINITION FIGEE NON DOCUMENTEE]")
@@ -133,7 +120,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.consumed_lots.length) {
         section(doc, "Lots matiere reellement consommes")
-        for (const c of e.consumed_lots.slice(0, 60)) {
+        for (const c of e.consumed_lots) {
           doc.text(
             `- ${c.article_code} lot ${c.lot_code}` +
               (c.supplier_lot_code ? ` (fournisseur ${c.supplier_lot_code})` : "") +
@@ -145,14 +132,14 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (p.ofs.length) {
         section(doc, "Ordres de fabrication")
-        for (const of of p.ofs.slice(0, 30)) {
+        for (const of of p.ofs) {
           doc.text(`- OF ${of.numero} (${of.statut}) - Piece: ${of.piece_code}`)
         }
       }
 
       if (e?.operations.length) {
         section(doc, "Operations et machines")
-        for (const op of e.operations.slice(0, 60)) {
+        for (const op of e.operations) {
           const machine = op.machine_code ? `${op.machine_code}` : "-"
           const operators = op.operators.length ? op.operators.join(", ") : "-"
           doc.text(
@@ -165,7 +152,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.production_receipts.length) {
         section(doc, "Receptions de production")
-        for (const r of e.production_receipts.slice(0, 30)) {
+        for (const r of e.production_receipts) {
           doc.text(
             `- OF ${r.of_numero} le ${formatDateFR(r.created_at)} : ` +
               `OK ${n(r.qty_ok)}, rebut ${n(r.qty_scrap)}, retouche ${n(r.qty_rework)} [${r.quality_status ?? "-"}]`
@@ -175,9 +162,9 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.stock_movements.length) {
         section(doc, "Mouvements de stock")
-        for (const m of e.stock_movements.slice(0, 50)) {
+        for (const m of e.stock_movements) {
           doc.text(
-            `- ${m.movement_type} ${m.movement_no ?? m.movement_id.slice(0, 8)} (${m.status}) ` +
+            `- ${m.movement_type} ${m.movement_no ?? m.movement_id} (${m.status}) ` +
               `${n(m.qty, m.unit)} le ${formatDateFR(m.effective_at)}` +
               (m.reversal_of_id ? " [COMPENSATION]" : "")
           )
@@ -186,9 +173,9 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.controls.length) {
         section(doc, "Controles qualite")
-        for (const c of e.controls.slice(0, 40)) {
+        for (const c of e.controls) {
           doc.text(
-            `- ${c.reference ?? c.control_id.slice(0, 8)} (${c.control_type ?? "-"}) le ${formatDateFR(c.control_date)} : ` +
+            `- ${c.reference ?? c.control_id} (${c.control_type ?? "-"}) le ${formatDateFR(c.control_date)} : ` +
               `verdict ${c.verdict ?? c.verdict_computed ?? "-"} | ` +
               `controle ${n(c.qty_controlled, c.unit)}, conforme ${n(c.qty_conforming, c.unit)} | ` +
               `plan v${c.plan_version ?? "-"}` +
@@ -199,7 +186,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.measurements.length) {
         section(doc, "Mesures, instruments et certificats")
-        for (const m of e.measurements.slice(0, 80)) {
+        for (const m of e.measurements) {
           const tol =
             m.tolerance_min !== null || m.tolerance_max !== null
               ? ` [${n(m.tolerance_min)} ; ${n(m.tolerance_max)}]`
@@ -222,7 +209,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.release_decisions.length) {
         section(doc, "Decisions de liberation")
-        for (const d of e.release_decisions.slice(0, 30)) {
+        for (const d of e.release_decisions) {
           doc.text(
             `- ${d.decision ?? "-"} (${d.verdict ?? "-"}) ${n(d.qty, d.unit)} le ${formatDateFR(d.decided_at)}` +
               (d.derogation_code ? ` | derogation ${d.derogation_code}` : "")
@@ -232,7 +219,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.derogations.length) {
         section(doc, "Derogations")
-        for (const d of e.derogations.slice(0, 30)) {
+        for (const d of e.derogations) {
           doc.text(
             `- ${d.code} (${d.status}${d.derogation_type ? `, ${d.derogation_type}` : ""}) : ` +
               `${n(d.consumed_qty, d.unit)} / ${n(d.max_qty, d.unit)}` +
@@ -243,7 +230,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (p.non_conformities.length) {
         section(doc, "Non-conformites")
-        for (const nc of p.non_conformities.slice(0, 50)) {
+        for (const nc of p.non_conformities) {
           const due = nc.due_date ? `, echeance: ${formatDateFR(nc.due_date)}` : ""
           doc.text(`- NC ${nc.reference} (${nc.status}, ${nc.severity})${due}`)
         }
@@ -251,7 +238,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.allocations.length) {
         section(doc, "Allocations de livraison")
-        for (const a of e.allocations.slice(0, 50)) {
+        for (const a of e.allocations) {
           doc.text(
             `- BL ${a.bon_livraison_numero} : ${n(a.qty, a.unit)} (${a.designation ?? "-"})` +
               (a.stock_movement_line_id ? "" : " [SANS MOUVEMENT DE SORTIE]")
@@ -261,7 +248,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (p.bon_livraisons.length) {
         section(doc, "Bons de livraison")
-        for (const bl of p.bon_livraisons.slice(0, 30)) {
+        for (const bl of p.bon_livraisons) {
           const sig = bl.reception_date_signature
             ? `, reception signee: ${formatDateFR(bl.reception_date_signature)}`
             : ""
@@ -271,7 +258,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (e?.delivery_proofs.length) {
         section(doc, "Preuves de livraison")
-        for (const pr of e.delivery_proofs.slice(0, 30)) {
+        for (const pr of e.delivery_proofs) {
           doc.text(
             `- BL ${pr.bon_livraison_numero} : ${pr.proof_type ?? "-"} le ${formatDateFR(pr.delivered_at)}` +
               (pr.received_by_name ? ` (recu par ${pr.received_by_name})` : "")
@@ -281,7 +268,7 @@ export async function svcRenderAsbuiltPdf(args: {
 
       if (p.pack_versions.length) {
         section(doc, "Versions precedentes du dossier")
-        for (const v of p.pack_versions.slice(0, 20)) {
+        for (const v of p.pack_versions) {
           doc.text(
             `- v${v.version} (${v.status}) generee le ${formatDateFR(v.generated_at)} par ${v.generated_by?.label ?? "-"}`
           )

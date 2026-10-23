@@ -4,7 +4,7 @@
 // Le rendu prend en entrée EXACTEMENT le payload que l'aperçu écran consomme
 // (`PieceDocumentDossier`). Aucune requête, aucun recalcul : ce fichier ne sait que
 // dessiner. C'est ce qui garantit qu'un dossier imprimé ne peut pas contredire l'écran.
-import PDFDocument from "pdfkit";
+import { drawCerpRawSection, renderCerpRawBody } from "../../../shared/pdf/raw-document-body";
 
 import {
   DOCUMENT_SLOT_STATE_LABELS,
@@ -43,21 +43,10 @@ const STATE_MARK: Record<DocumentSlotState, string> = {
   SERVER_ERROR: "[ERREUR]",
 };
 
-async function renderToBuffer(render: (doc: PDFKit.PDFDocument) => void, creationDate: Date): Promise<Buffer> {
-  const doc = new PDFDocument({
-    size: "A4",
-    margin: 42,
-    info: { Title: "Dossier documentaire piece technique", CreationDate: creationDate },
-  });
-  const chunks: Buffer[] = [];
-  doc.on("data", (c) => chunks.push(c as Buffer));
-  render(doc);
-  doc.end();
-  await new Promise<void>((resolve, reject) => {
-    doc.on("end", () => resolve());
-    doc.on("error", (err) => reject(err));
-  });
-  return Buffer.concat(chunks);
+async function renderToBuffer(render: (doc: PDFKit.PDFDocument) => void, creationDate: Date, reference: string): Promise<Buffer> {
+  return renderCerpRawBody({module:"production",documentType:"Dossier documentaire — pièce technique",name:reference,code:reference,
+    status:"État documentaire",generatedAt:creationDate.toLocaleString("fr-FR",{timeZone:"Europe/Paris"}),
+    title:"Dossier documentaire pièce technique",subject:"État des exigences et documents enregistrés",creationDate},render);
 }
 
 function keyValue(doc: PDFKit.PDFDocument, key: string, value: string): void {
@@ -66,10 +55,7 @@ function keyValue(doc: PDFKit.PDFDocument, key: string, value: string): void {
 }
 
 function heading(doc: PDFKit.PDFDocument, title: string): void {
-  doc.moveDown(0.8);
-  doc.font("Helvetica-Bold").fontSize(12).text(winAnsi(title));
-  doc.moveDown(0.2);
-  doc.font("Helvetica").fontSize(9);
+  drawCerpRawSection(doc,winAnsi(title),"production");
 }
 
 /**
@@ -87,7 +73,7 @@ export async function renderPieceDocumentDossierPdf(args: {
   const generatedAt = args.generatedAt ?? new Date(d.generated_at);
 
   return renderToBuffer((doc) => {
-    doc.font("Helvetica-Bold").fontSize(16).text(winAnsi("Dossier documentaire — pièce technique"));
+
     doc.moveDown(0.3);
     doc.font("Helvetica").fontSize(9).fillColor("#555555");
     doc.text(
@@ -189,5 +175,5 @@ export async function renderPieceDocumentDossierPdf(args: {
       { width: 500 }
     );
     doc.fillColor("#000000");
-  }, generatedAt);
+  }, generatedAt, d.piece.code_piece || "Référence non renseignée");
 }

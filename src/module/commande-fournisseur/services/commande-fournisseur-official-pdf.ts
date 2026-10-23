@@ -87,6 +87,7 @@ export async function renderSupplierPurchaseOrderOfficialPdf(input: { archive: A
     metaColumn: "designation",
   }));
   return renderCerpDocument({
+      module: "commerce",
     documentType: "Bon de commande fournisseur", name: source.code, code: source.code,
     subtitle: `Version ${input.archive.documentVersion} · ${draft ? "Instantané de création" : `Émis le ${formatDateFR(source.issued_at)}`}`,
     status: source.status, monogramName: supplierName, generatedAt: formatDateFR(archivedAt.toISOString()),

@@ -14,7 +14,7 @@ export type ProformaDocumentSnapshot = {
   issuer_snapshot: Record<string, unknown>;
   preview: ProformaPreview;
   fiscal_invoice_created: false;
-  template_version: "proforma/1.1";
+  template_version: "proforma/1.1" | "proforma/1.2";
 };
 
 /** Only frozen commercial facts are printed; payment coverage is a separate live read. */
@@ -27,6 +27,7 @@ export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot,
   const date = new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris" }).format(issuedAt);
   const total = preview.company_totals.reduce((sum, company) => sum + moneyToCents(company.total_incl_tax), 0n);
   return renderCerpDocument({
+      module: "commerce",
     designVersion: "structured-v5", documentType: "Proforma", name: snapshot.reference, code: snapshot.reference,
     status: "Demande de règlement", generatedAt: date, creationDate: issuedAt,
     watermark: options.example ? "EXEMPLE" : null,
@@ -99,6 +100,6 @@ export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot,
 export const renderProformaOfficialPdf: import("../../../shared/authoritative-documents/authoritative-document.types").AuthoritativePdfProducer = async ({ archive }) => {
   const snapshot = archive.sourceSnapshot as unknown as ProformaDocumentSnapshot;
   if (archive.entityType !== "proforma" || archive.documentKind !== "CUSTOMER_PROFORMA" || snapshot.id !== archive.entityId
-    || snapshot.template_version !== "proforma/1.1") throw new Error("AUTHORITATIVE_PDF_PROFORMA_SOURCE_INVALID");
+    || !["proforma/1.1", "proforma/1.2"].includes(snapshot.template_version)) throw new Error("AUTHORITATIVE_PDF_PROFORMA_SOURCE_INVALID");
   return renderProformaDocument(snapshot);
 };

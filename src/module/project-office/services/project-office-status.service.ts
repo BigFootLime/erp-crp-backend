@@ -1,4 +1,4 @@
-import PDFDocument from "pdfkit";
+import { drawCerpRawSection, renderCerpRawBody } from "../../../shared/pdf/raw-document-body";
 import { HttpError } from "../../../utils/httpError";
 import { repoGetProjectById, repoListActivity } from "../repository/project-office.repository";
 import { repoGetProjectStats } from "../repository/project-office-report.repository";
@@ -99,14 +99,10 @@ export function statusReportToMarkdown(r: StatusReport): string {
 }
 
 export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48, info: { Title: `Rapport de statut ${r.project.code}` } });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  return renderCerpRawBody({ module:"systeme",documentType:"Rapport de statut projet",name:r.project.name,code:r.project.code,
+    status:r.health,generatedAt:r.generated_at.slice(0,16).replace("T"," "),title:"Rapport de statut "+r.project.code,
+    subject:"Synthèse, jalons, risques et actions du projet",creationDate:new Date(r.generated_at) }, doc=>{
 
-    doc.fontSize(18).text(`Rapport de statut — ${r.project.name}`, { continued: false });
     doc.moveDown(0.2);
     doc.fontSize(10).fillColor("#555")
       .text(`${r.project.code} · généré le ${r.generated_at.slice(0, 16).replace("T", " ")} · santé : ${r.health}`);
@@ -121,15 +117,13 @@ export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
       ["Risques ouverts", String(r.stats.risks_open)],
       ["Actions ouvertes", String(r.stats.actions_open)],
     ];
-    doc.fillColor("#000").fontSize(13).text("Synthèse");
-    doc.moveDown(0.3);
+    drawCerpRawSection(doc, "Synthèse", "systeme");
     doc.fontSize(10);
     for (const [k, v] of kv) doc.text(`${k} : ${v}`);
     doc.moveDown();
 
     const section = (title: string, lines: string[], empty: string) => {
-      doc.fontSize(13).text(title);
-      doc.moveDown(0.3);
+      drawCerpRawSection(doc, title, "systeme");
       doc.fontSize(10);
       if (!lines.length) doc.fillColor("#777").text(empty).fillColor("#000");
       for (const line of lines) doc.text(`• ${line}`);
@@ -140,6 +134,5 @@ export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
     section("Risques ouverts", r.risks_open.map((k) => `${k.title} — sévérité ${k.severity} (P${k.probability}×I${k.impact})`), "Aucun.");
     section("Actions ouvertes", r.actions_open.map((a) => `${a.title} (${a.source_type}) — ${a.status}`), "Aucune.");
 
-    doc.end();
   });
 }

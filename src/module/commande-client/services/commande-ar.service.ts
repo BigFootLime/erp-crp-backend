@@ -248,6 +248,7 @@ export async function buildCommandeArPdfBuffer(params: {
 
   return renderCerpDocument(
     {
+      module: "commerce",
       documentType: "Accusé de réception",
       name: clientName,
       code: reference,

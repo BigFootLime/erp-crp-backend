@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { basePdfRenderVersion, modulePdfRenderVersion } from "../pdf/document-theme";
 import crypto from "node:crypto";
 
 import { HttpError } from "../../utils/httpError";
@@ -56,7 +57,7 @@ export async function repoQueueAuthoritativePdf(
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING ${ARCHIVE_COLUMNS}`,
-      [input.entityType, input.entityId, input.documentKind, input.documentVersion, input.renderVersion, input.idempotencyKey,
+      [input.entityType, input.entityId, input.documentKind, input.documentVersion, input.exactPdfBytes ? input.renderVersion : modulePdfRenderVersion(input.renderVersion), input.idempotencyKey,
         input.title, input.originalName, JSON.stringify(input.sourceSnapshot), input.sourceRevision, snapshotSha256,
         input.exactPdfBytes ?? null,
         input.exactPdfBytes ? crypto.createHash("sha256").update(input.exactPdfBytes).digest("hex") : null,
@@ -80,7 +81,7 @@ export async function repoQueueAuthoritativePdf(
   if (
     mapped.snapshotSha256 !== snapshotSha256 || mapped.entityType !== input.entityType ||
     mapped.entityId !== input.entityId || mapped.documentKind !== input.documentKind ||
-    mapped.documentVersion !== input.documentVersion || mapped.renderVersion !== input.renderVersion ||
+    mapped.documentVersion !== input.documentVersion || basePdfRenderVersion(mapped.renderVersion) !== basePdfRenderVersion(input.renderVersion) ||
     mapped.title !== input.title || mapped.originalName !== input.originalName || mapped.sourceRevision !== input.sourceRevision ||
     (input.exactPdfBytes != null && (mapped.exactPdfSha256 !== crypto.createHash("sha256").update(input.exactPdfBytes).digest("hex") || mapped.exactPdfSizeBytes !== input.exactPdfBytes.byteLength))
   ) {
