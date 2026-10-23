@@ -1,3 +1,5 @@
+import { registerInterDocumentFonts } from "../../../shared/pdf/document-fonts";
+import { PDF_MODULE_ACCENTS } from "../../../shared/pdf/document-theme";
 import PDFDocument from 'pdfkit';
 import bwipjs from 'bwip-js';
 import { HttpError } from '../../../utils/httpError';
@@ -15,11 +17,12 @@ export async function finishedPackagingLabels(lotId: string, packagingId: string
     if (!label)
         throw new HttpError(409, 'PACKAGING_LABEL_SNAPSHOT_MISSING', 'Le conditionnement ne possède pas d’identité figée pour ses étiquettes.');
     const doc = new PDFDocument({ autoFirstPage: false });
+    registerInterDocumentFonts(doc);
     const chunks: Buffer[] = [];
     const result = new Promise<Buffer>((resolve, reject) => { doc.on('data', (part: Buffer) => chunks.push(part)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject); });
     for (const [index, quantity] of record.portions.entries()) {
         doc.addPage({ size: [283.46, 170.08], margin: 15 });
-        doc.fontSize(12).text(label.articleCode, { width: 195 }).fontSize(10).text(label.articleDesignation, { height: 24, width: 195 });
+        doc.fillColor(PDF_MODULE_ACCENTS.stock).fontSize(12).text(label.articleCode, { width: 195 }).fillColor("#152E3D").fontSize(10).text(label.articleDesignation, { height: 24, width: 195 });
         doc.moveDown(0.4).fontSize(14).text(`${label.label} / ${index + 1}`, { width: 195 });
         doc.fontSize(10).text(`${quantity} pièces · ${index + 1}/${record.portions.length}`);
         doc.text(`Indice : ${label.index ?? 'sans indice'} · version ${label.internalVersion ?? 'inconnue'}`);

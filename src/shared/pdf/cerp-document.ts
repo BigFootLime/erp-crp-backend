@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit"
+import { currentPdfPresentation, PDF_MODULE_ACCENTS, type PdfModule } from "./document-theme"
 import { documentFont, registerInterDocumentFonts } from "./document-fonts"
 
 import { CERP_LOGO_PNG, CERP_LOGO_RATIO } from "./cerp-logo"
@@ -39,7 +40,7 @@ const CLIENT_DOCUMENT_COLORS: DocumentColors = {
 }
 
 function configureFonts(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): void {
-  if (header.appearance !== "clients-v3") return
+  if (header.appearance !== "clients-v3" && header.appearance !== "module-v1") return
   // Aliases are registered on this document only. Historic jobs retain their metrics.
   registerInterDocumentFonts(doc)
 }
@@ -241,7 +242,8 @@ export function monogramFromName(name: string | null | undefined): string {
 
 export type CerpDocumentHeader = {
   /** Explicit renderer opt-in; never restyles an already-issued historical PDF. */
-  appearance?: "clients-v3"
+  appearance?: "clients-v3" | "module-v1" | "legacy-v1"
+  module?: PdfModule
   /** Explicit visual contract. Legacy/pending archives keep the classic renderer by default. */
   designVersion?: CerpDocumentDesign
   /** Type de document, en capitales dans l'en-tete et le rappel d'identite. */
@@ -932,7 +934,8 @@ function drawIdentity(doc: PDFKit.PDFDocument, header: CerpDocumentHeader, top: 
 }
 
 function drawRunningHead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): void {
-  const colors = header.appearance === "clients-v3" ? CLIENT_DOCUMENT_COLORS : CERP_DOC_COLORS
+  const colors = header.appearance === "module-v1" ? { ...CLIENT_DOCUMENT_COLORS, brand: PDF_MODULE_ACCENTS[header.module ?? "commerce"] }
+    : header.appearance === "clients-v3" ? CLIENT_DOCUMENT_COLORS : CERP_DOC_COLORS
   if (header.designVersion === "editorial-v2" || (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")) {
     drawEditorialRunningHead(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH, colors }, toPdfSafeText)
     return
@@ -1074,6 +1077,10 @@ export async function renderCerpDocument(
   header: CerpDocumentHeader,
   render: (ctx: CerpDocumentContext) => void
 ): Promise<Buffer> {
+  const policy = currentPdfPresentation(header.documentType, header.module)
+  if (!policy.legacy && header.appearance !== "legacy-v1") {
+    header = { ...header, designVersion: "structured-v5", appearance: "module-v1", module: policy.module }
+  }
   const geometry = measureFooter(header)
   const doc = new PDFDocument({
     size: "A4",
@@ -1085,6 +1092,7 @@ export async function renderCerpDocument(
       Subject: toPdfSafeText(header.subject),
       Creator: "CERP - Croix Rousse Precision",
       Producer: "CERP",
+      ...(header.appearance === "module-v1" ? { Keywords: `CERP charter=module-v1; module=${header.module}` } : {}),
       CreationDate: header.creationDate,
     },
   })
@@ -1092,7 +1100,9 @@ export async function renderCerpDocument(
   const chunks: Buffer[] = []
   doc.on("data", (chunk) => chunks.push(chunk as Buffer))
   configureFonts(doc, header)
-  const colors = header.appearance === "clients-v3" ? CLIENT_DOCUMENT_COLORS : CERP_DOC_COLORS
+  const colors = header.appearance === "module-v1"
+    ? { ...CLIENT_DOCUMENT_COLORS, brand: PDF_MODULE_ACCENTS[header.module ?? policy.module] }
+    : header.appearance === "clients-v3" ? CLIENT_DOCUMENT_COLORS : CERP_DOC_COLORS
 
   const afterIdentity = (header.designVersion === "workshop-v3" || header.designVersion === "workshop-v4" || header.designVersion === "structured-v5")
     ? drawWorkshopDocumentHeader(doc, header, { marginX: MARGIN_X, marginTop: MARGIN_TOP, width: CONTENT_WIDTH }, toPdfSafeText)

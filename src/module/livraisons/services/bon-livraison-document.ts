@@ -131,6 +131,7 @@ export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInpu
 
   return renderCerpDocument(
     {
+      module: "commerce",
       documentType: "Bon de livraison",
       name: bl.numero,
       code: `Version ${version}`,

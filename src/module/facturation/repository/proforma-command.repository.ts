@@ -61,12 +61,12 @@ export async function repoIssueProforma(args: CommandContext & { id: string; inp
     const issuer = await issuerSnapshotAt(tx, policy.legal_entity_code, todayInParis());
     if (!issuer?.company_name) throw new HttpError(409, "PROFORMA_ISSUER_NOT_CONFIGURED", "Complétez les coordonnées de l'émetteur commercial.");
     const snapshot: ProformaDocumentSnapshot = { document_type: "PROFORMA", id: document.id, reference: document.reference, issued_at: issuedAt,
-      issuer_snapshot: issuer, preview: current, fiscal_invoice_created: false, template_version: "proforma/1.1" };
+      issuer_snapshot: issuer, preview: current, fiscal_invoice_created: false, template_version: "proforma/1.2" };
     const bytes = await renderProformaDocument(snapshot);
     await tx.query(`UPDATE public.proforma_client SET status='ISSUED',issued_at=$2::timestamptz,issued_by=$3,
       issued_snapshot=$4::jsonb,row_version=row_version+1 WHERE id=$1::uuid`, [document.id, issuedAt, args.actor.userId, JSON.stringify(snapshot)]);
     const archive = await queueCreationPdfArchive(tx, { entityType: "proforma", entityId: document.id,
-      documentKind: "CUSTOMER_PROFORMA", documentVersion: 1, renderVersion: "proforma/1.1",
+      documentKind: "CUSTOMER_PROFORMA", documentVersion: 1, renderVersion: "proforma/1.2",
       idempotencyKey: `proforma:${document.id}:issue:v1`, title: `Proforma ${document.reference}`,
       originalName: `PROFORMA_${document.reference}.pdf`, sourceRevision: financePreviewHash(snapshot),
       sourceSnapshot: { ...snapshot }, exactPdfBytes: bytes, actorUserId: args.actor.userId });

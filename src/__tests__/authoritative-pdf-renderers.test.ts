@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "./helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 
 import { renderSupplierPurchaseOrderOfficialPdf } from "../module/commande-fournisseur/services/commande-fournisseur-official-pdf";
@@ -20,31 +20,7 @@ const archive = (sourceSnapshot: Record<string, unknown>) => ({
 
 const issuer = { company_name: "CROIX ROUSSE PRECISION", legal_form: "SARL", siret: "38056901200020" };
 
-function pageTexts(bytes: Buffer): string[] {
-  const pages: string[] = [];
-  let cursor = 0;
-  for (;;) {
-    const start = bytes.indexOf("stream", cursor);
-    if (start < 0) break;
-    let from = start + "stream".length;
-    if (bytes[from] === 0x0d) from += 1;
-    if (bytes[from] === 0x0a) from += 1;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    cursor = end + "endstream".length;
-    let stream: string;
-    try { stream = inflateSync(bytes.subarray(from, end)).toString("latin1"); }
-    catch { continue; }
-    pages.push([...stream.matchAll(/\((?:\\.|[^\\)])*\)|<[0-9a-fA-F\s]+>/g)]
-      .map((match) => {
-        const value = match[0];
-        if (value.startsWith("<")) return Buffer.from(value.slice(1, -1).replace(/\s+/g, ""), "hex").toString("latin1");
-        return value.slice(1, -1).replace(/\\([()\\])/g, "$1");
-      })
-      .join(" "));
-  }
-  return pages;
-}
+const pageTexts = pdfPageTexts;
 
 // PDFKit can split one visual word across several text-showing operations.  The
 // layout assertion therefore compares a compact form rather than assuming the
