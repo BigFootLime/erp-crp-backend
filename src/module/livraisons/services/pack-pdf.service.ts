@@ -94,6 +94,7 @@ export async function svcRenderPackCofcPdf(args: {
 
   return renderCerpDocument(
     {
+      module: "commerce",
       documentType: "Certificat de conformité",
       name: bl.numero,
       code: `Version ${args.version}`,

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { basePdfRenderVersion, withArchivePdfPresentation } from "../pdf/document-theme";
 import type { PoolClient } from "pg";
 
 import { HttpError } from "../../utils/httpError";
@@ -341,7 +342,9 @@ export async function processAuthoritativePdfItem(
   const producer = registry.get(item.archive.entityType, item.archive.documentKind);
   // No dynamic entity/document value is retained in a failure record or log.
   if (!producer) throw new Error("AUTHORITATIVE_PDF_PRODUCER_NOT_REGISTERED");
-  await archiveClaimedAuthoritativePdf(tx, item, await producer({ archive: item.archive }), observeOwnership);
+  const bytes = await withArchivePdfPresentation(item.archive.entityType, item.archive.renderVersion,
+    () => producer({ archive: { ...item.archive, renderVersion: basePdfRenderVersion(item.archive.renderVersion) } }));
+  await archiveClaimedAuthoritativePdf(tx, item, bytes, observeOwnership);
 }
 
 /**

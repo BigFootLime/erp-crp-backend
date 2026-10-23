@@ -51,6 +51,7 @@ export async function renderDevisOfficialPdf({ archive }: { archive: Authoritati
     meta: line.discount_pct ? `Remise : ${percent(line.discount_pct)}` : null, metaColumn: "designation",
   }));
   return renderCerpDocument({
+      module: "commerce",
     documentType: "Devis", name: source.number, code: source.number,
     subtitle: `Version ${archive.documentVersion} · ${draft ? "Instantané de création" : `Émis le ${formatDateFR(source.issued_at)}`}`,
     status: source.status, monogramName: customer, generatedAt: formatDateFR(archivedAt.toISOString()),

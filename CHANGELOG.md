@@ -1,5 +1,12 @@
 # Changelog
 
+## Charte commune des PDF — #1442
+
+- Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.
+- Archives existantes et anciens jobs gardent leur présentation. Les nouvelles éditions portent une identité de rendu explicite et les reprises idempotentes restent stables.
+- Fiche technique : code client métier résolu par sa relation et identifiants internes retirés des champs visibles.
+
+
 ## Commandes sans visa technique redondant — #1439
 
 - Les commandes passent au contrôle OLD/NEW puis au lancement ; la préparation et la validation techniques restent dans les OF.

@@ -369,6 +369,8 @@ export type OfDocumentPayload = {
   documentStatut: string;
   /** Version du gabarit de rendu. Un changement de gabarit change le binaire. */
   templateVersion: string;
+  /** New issuances opt in; stored historic payloads keep their original fonts. */
+  documentCharter?: "module-v1";
   snapshotId: string;
   snapshotSha256: string;
   /** Technical, inventory and execution freshness; internal transport metadata, never printed. */
@@ -642,6 +644,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     ofStatut: input.ofStatut,
     documentStatut: input.documentStatut ?? "BROUILLON",
     templateVersion: input.templateVersion ?? OF_DOCUMENT_TEMPLATE_VERSION,
+    documentCharter: "module-v1",
     snapshotId: input.snapshotId,
     snapshotSha256: input.snapshotSha256,
     auteur: input.auteur,

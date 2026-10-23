@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import PDFDocument from "pdfkit";
+import { renderCerpDocument } from "../../../shared/pdf/cerp-document";
 
 // T7 — Générateurs d'export PURS (CSV `;` + BOM UTF-8, PDF récap) + checksum. Aucune dépendance Excel/XLSX.
 
@@ -63,51 +63,14 @@ export function sha256Hex(data: string | Buffer): string {
 
 // PDF récapitulatif (pdfkit, police Helvetica intégrée — aucun fichier de police requis).
 export function buildPayrollPdf(meta: { periodStart: string; periodEnd: string }, rows: PayrollWeekRow[]): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    try {
-      const doc = new PDFDocument({ margin: 36, size: "A4" });
-      const chunks: Buffer[] = [];
-      doc.on("data", (c: Buffer) => chunks.push(c));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", reject);
-
-      doc.fontSize(15).text("Récapitulatif temps — paie", { align: "left" });
-      doc.moveDown(0.3).fontSize(10).fillColor("#555").text(`Période : ${meta.periodStart} → ${meta.periodEnd}`);
-      doc.fillColor("#000").moveDown(0.8);
-
-      const cols = ["Matricule", "Salarié", "Semaine", "Trav.", "Contrat", "HS25", "HS50", "Abs."];
-      const widths = [70, 130, 90, 45, 50, 40, 40, 45];
-      const startX = doc.x;
-      let y = doc.y;
-      const drawRow = (cells: string[], bold: boolean) => {
-        doc.fontSize(8).font(bold ? "Helvetica-Bold" : "Helvetica");
-        let x = startX;
-        cells.forEach((c, i) => {
-          doc.text(c, x + 2, y + 2, { width: widths[i] - 4, ellipsis: true });
-          x += widths[i];
-        });
-        y += 16;
-        if (y > 780) { doc.addPage(); y = doc.y; }
-      };
-      drawRow([...cols], true);
-      for (const r of rows) {
-        drawRow(
-          [
-            r.matricule,
-            `${r.surname ?? ""} ${r.name ?? ""}`.trim(),
-            r.week_start,
-            minutesToDecimalHours(r.worked_minutes),
-            minutesToDecimalHours(r.contract_minutes),
-            minutesToDecimalHours(r.overtime_25_minutes),
-            minutesToDecimalHours(r.overtime_50_minutes),
-            minutesToDecimalHours(r.absence_minutes),
-          ],
-          false
-        );
-      }
-      doc.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
+ const created=new Date();
+ return renderCerpDocument({module:"systeme",documentType:"Récapitulatif temps — paie",name:meta.periodStart+" au "+meta.periodEnd,
+   code:null,status:"Récapitulatif",generatedAt:created.toLocaleDateString("fr-FR",{timeZone:"Europe/Paris"}),
+   title:"Récapitulatif temps — paie",subject:"Temps et heures supplémentaires de la période",creationDate:created},ctx=>{
+   ctx.linesTable({columns:[{key:"id",label:"Matricule",flex:1},{key:"name",label:"Salarié",flex:2},{key:"week",label:"Semaine",flex:1.2},
+     {key:"work",label:"Trav.",flex:.8},{key:"contract",label:"Contrat",flex:.8},{key:"hs25",label:"HS25",flex:.7},{key:"hs50",label:"HS50",flex:.7},{key:"absence",label:"Abs.",flex:.7}],
+     rows:rows.map(r=>({cells:{id:r.matricule,name:(r.surname??"")+" "+(r.name??""),week:r.week_start,
+       work:minutesToDecimalHours(r.worked_minutes),contract:minutesToDecimalHours(r.contract_minutes),hs25:minutesToDecimalHours(r.overtime_25_minutes),
+       hs50:minutesToDecimalHours(r.overtime_50_minutes),absence:minutesToDecimalHours(r.absence_minutes)}})),emptyLabel:"Aucune ligne sur la période."});
+ });
 }

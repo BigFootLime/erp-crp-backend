@@ -119,6 +119,8 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
 
   const buffer = await renderCerpDocument(
     {
+      appearance: payload.documentCharter === "module-v1" ? "module-v1" : "legacy-v1",
+      module: "production",
       designVersion: payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || payload.templateVersion === "of-ordre-fabrication/1.6" || payload.templateVersion === "of-ordre-fabrication/1.5" ? "workshop-v4" : payload.templateVersion === "of-ordre-fabrication/1.4" ? "workshop-v3" : payload.templateVersion === "of-ordre-fabrication/1.3" ? "editorial-v2" : "classic-v1",
       documentType: "Ordre de fabrication",
       name: payload.ofNumero,

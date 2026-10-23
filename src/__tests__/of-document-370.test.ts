@@ -4,7 +4,7 @@
 // PDF : c'est ce qui permet d'affirmer qu'une valeur y figure, plutôt que de
 // l'espérer (même harnais que le bon de livraison, ADR-0042).
 
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "./helpers/pdf-text";
 
 import { describe, expect, it } from "vitest";
 
@@ -41,39 +41,7 @@ import type { OfRevisionOperation } from "../module/production/domain/of-revisio
  * Les polices standard sont encodées en WinAnsi, dont les octets coïncident avec
  * latin1 sur les accents français.
  */
-function pdfText(buffer: Buffer): string {
-  const raw = buffer.toString("latin1");
-  const streams: string[] = [];
-  const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let match: RegExpExecArray | null;
-  while ((match = streamRe.exec(raw)) !== null) {
-    try {
-      streams.push(inflateSync(Buffer.from(match[1], "latin1")).toString("latin1"));
-    } catch {
-      // Flux non compressé, image ou police : sans texte à relire.
-    }
-  }
-
-  const content = streams.join("\n");
-  const pieces: string[] = [];
-  const showRe = /<([0-9A-Fa-f\s]+)>|\(((?:\\.|[^\\()])*)\)/g;
-  while ((match = showRe.exec(content)) !== null) {
-    if (match[1] !== undefined) {
-      const hex = match[1].replace(/\s+/g, "");
-      if (hex.length % 2 === 0) {
-        pieces.push(Buffer.from(hex, "hex").toString("latin1"));
-      }
-    } else {
-      pieces.push(
-        match[2].replace(/\\([nrtbf()\\])/g, (_, char: string) =>
-          char === "n" ? "\n" : char === "r" ? "\r" : char === "t" ? "\t" : char
-        )
-      );
-    }
-  }
-
-  return pieces.join("");
-}
+const pdfText = (bytes: Buffer): string => pdfPageTexts(bytes).join("\n");
 
 function countPages(buffer: Buffer): number {
   const matches = buffer.toString("latin1").match(/\/Type\s*\/Page[^s]/g);
@@ -271,11 +239,12 @@ describe("#374 E — rendu serveur", () => {
       // de lancer une quantité, pour une commande, à une date. Il EMBARQUE la
       // gamme applicable, il ne s'y réduit pas.
       "ORDRE DE FABRICATION",
-      "Gamme applicable",
       "71 h",
     ]) {
-      expect(text).toContain(expected);
+      expect(text.replace(/\s/g, "")).toContain(expected.replace(/\s/g, ""));
     }
+    // PDFKit may position the words separately in the section band.
+    expect(text.replace(/\s/g, "").toLowerCase()).toContain("gammeapplicable");
 
     // Garde anti-régression : le mauvais titre ne doit pas revenir. Un document
     // intitulé « gamme de fabrication » ferait passer un ordre de lancement pour

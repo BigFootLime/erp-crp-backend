@@ -28,6 +28,7 @@ export async function renderCurrentTechnicalDocumentPdf({
   const name = sheet ? "Fiche technique" : "Fiche suiveuse";
   return renderCerpDocument(
     {
+      module: "production",
       documentType: name,
       name: source.entity_label,
       code: source.reference,
