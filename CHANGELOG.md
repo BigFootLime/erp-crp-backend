@@ -1,5 +1,12 @@
 # Changelog
 
+## Documents Clients / plans PT — #1432
+
+- Nouvelle édition `client-profile-pdf-v3` : bleu Commerce, Inter embarquée, logo client GED, TVA française espacée et pagination mesurée.
+- Les anciennes éditions gardent leur rendu ; les nouvelles versions mettent à jour le titre courant GED tout en conservant les noms et octets historiques.
+- Le détail PT affiche le code canonique du client lié, comme la liste, au lieu d’une ancienne valeur dénormalisée.
+- Réémission avec révision serveur contrôlée et nouvelle édition documentaire, sans altérer les archives initiales.
+
 ## Préparé — Destinataire des AR de Test et résilience PostgreSQL (#1415, #1416)
 
 - En base Test, les AR clients sont transmis uniquement à l’adresse du compte actif qui confirme l’envoi, résolue côté serveur. Une adresse absente ou invalide bloque l’appel au fournisseur ; l’historique conserve le destinataire réel et l’objet Test. Les destinataires Production et les autres flux email sont conservés.
