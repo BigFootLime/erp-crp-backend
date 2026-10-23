@@ -28,6 +28,14 @@ created and their pg_restore catalogues checked. Both live databases received
 the migration. Read-only inspection confirmed distinct sequences, the retired
 shared allocation path, CLI maximum 999, and preserved machine counters.
 
+The same migration is installed in Demo and the configured blank managed-Test
+template. The template metadata matches the already published API release.
+The narrow scope-initialization helper uses a fixed `pg_catalog` search path
+and its owner initializes sequences for restricted application roles. Sequence
+usage is copied from the old allocator's consumers; schema CREATE is not
+granted to applications. Read-only inspection under the actual application
+roles confirmed sequence access in all four databases without consuming codes.
+
 An explicitly authorized operational repair changed the single newly created
 Test client from CLI-013 to CLI-001, retaining its primary key, contacts and other
 data. Precondition checks required that CLI-001 was unused and no derived quote,

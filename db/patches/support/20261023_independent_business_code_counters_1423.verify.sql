@@ -9,6 +9,7 @@ JOIN pg_namespace n ON n.oid=c.relnamespace
 JOIN pg_sequences s ON s.schemaname=n.nspname AND s.sequencename=c.relname
 WHERE c.relkind='S' AND c.relname LIKE 'cerp_code_issue_%'
 ORDER BY scope;
-SELECT count(*)=count(DISTINCT c.oid) AS scopes_have_distinct_sequences
+SELECT count(*)=count(DISTINCT obj_description(c.oid,'pg_class')) AS sequences_have_distinct_scopes,
+       bool_and(c.relname='cerp_code_issue_' || md5(replace(obj_description(c.oid,'pg_class'),'Business-code scope: ','')) || '_seq') AS scope_mapping_matches
 FROM pg_class c WHERE c.relkind='S' AND c.relname LIKE 'cerp_code_issue_%';
 ROLLBACK;
