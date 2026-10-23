@@ -15,6 +15,7 @@ import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMateri
   applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
 import type { MaterialBarPostingOwner } from './material-bar-posting-owner';
 import type { PoolClient } from "pg";
+import { assertStockEntrySource } from "../domain/manual-entry-policy";
 import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
@@ -4947,12 +4948,13 @@ export async function repoCreateEmplacement(
   try {
     await client.query("BEGIN");
 
-    const mag = await client.query<{ ok: number; code: string; name: string }>(
+    const mag = await client.query<{ ok: number; code: string; name: string; warehouse_id: string | null }>(
       `
         SELECT
           1::int AS ok,
           COALESCE(code, code_magasin)::text AS code,
-          COALESCE(name, libelle)::text AS name
+          COALESCE(name, libelle)::text AS name,
+          warehouse_id::text AS warehouse_id
         FROM public.magasins
         WHERE id = $1::uuid
         FOR UPDATE
@@ -5006,7 +5008,7 @@ export async function repoCreateEmplacement(
     const warehouseCode = base.code;
     const warehouseName = base.name;
 
-    let warehouseId = (
+    let warehouseId = base.warehouse_id ?? (
       await client.query<{ id: string }>(
         `SELECT id::text AS id FROM public.warehouses WHERE code = $1::citext LIMIT 1`,
         [warehouseCode]
@@ -5036,6 +5038,12 @@ export async function repoCreateEmplacement(
     }
 
     if (!warehouseId) throw new Error("Failed to resolve warehouse for emplacement");
+
+    await client.query(
+      `UPDATE public.magasins SET warehouse_id=$2::uuid, updated_at=now(), updated_by=$3
+       WHERE id=$1::uuid AND warehouse_id IS NULL`,
+      [magasinId, warehouseId, audit.user_id]
+    );
 
     const locationCode = `${warehouseCode}-${body.code}`;
     let locationId = (
@@ -6905,6 +6913,7 @@ export async function repoGetMovement(id: string, tx: Pick<PoolClient, "query"> 
 export async function repoPreviewMovement(
   body: CreateMovementBodyDTO
 ): Promise<StockMovementImpactPreview> {
+  assertStockEntrySource({ movementType: body.movement_type });
   assertSameArticle(body.lines);
   assertConsistentLocations(body.lines, body.movement_type);
   if (body.movement_type === "RESERVE" || body.movement_type === "UNRESERVE") {
@@ -7587,6 +7596,7 @@ export async function repoCreateMovement(
       return existing;
     }
 
+    assertStockEntrySource({ movementType: body.movement_type, trustedSource: options.trusted_source_flow });
     if (body.movement_type === "RESERVE" || body.movement_type === "UNRESERVE") {
       throw new HttpError(
         422,
@@ -8008,6 +8018,7 @@ export async function repoPostMovement(
     if (m.status !== "DRAFT") {
       throw new HttpError(409, "INVALID_STATUS", "Only DRAFT movements can be posted");
     }
+    assertStockEntrySource({ movementType: m.movement_type, trustedSource: Boolean(externalClient), reversalOfId: m.reversal_of_id });
 
     if(!externalClient){
       const reversal=(await client.query<{reversal_of_id:string|null}>('SELECT reversal_of_id::text FROM public.stock_movements WHERE id=$1::uuid',[id])).rows[0];
