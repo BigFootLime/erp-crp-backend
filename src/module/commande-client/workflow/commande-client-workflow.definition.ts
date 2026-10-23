@@ -74,6 +74,7 @@ export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "checkpoint",
   "customer_order_launch",
   "planning_repair",
+  "technical_review_retired",
   "internal_order_launch",
   "internal_planning_validation",
   "internal_production_launch",
@@ -97,8 +98,7 @@ export type CommandeWorkflowTransitionRule = {
 
 const CHECKPOINT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
   { from: "BROUILLON", to: "EN_ANALYSE", cause: "checkpoint" },
-  { from: "EN_ANALYSE", to: "ATTENTE_TECHNIQUE", cause: "checkpoint" },
-  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_STOCK", cause: "checkpoint" },
+  { from: "EN_ANALYSE", to: "ATTENTE_STOCK", cause: "checkpoint" },
   { from: "ATTENTE_STOCK", to: "ATTENTE_OF", cause: "checkpoint" },
   { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "checkpoint" },
   { from: "PLANNING_VALIDE", to: "AR_PRET", cause: "checkpoint" },
@@ -126,6 +126,10 @@ export const COMMANDE_WORKFLOW_BLOCKABLE_STATUSES = COMMANDE_WORKFLOW_STATUSES.f
 export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionRule[] = [
   ...CHECKPOINT_TRANSITIONS,
   ...CANCELLATION_TRANSITIONS,
+  // Compatibility repair retires a command checkpoint, never an OF validation.
+  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_STOCK", cause: "technical_review_retired" },
+  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_OF", cause: "technical_review_retired" },
+  { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_PLANNING", cause: "technical_review_retired" },
   { from: "ATTENTE_OF", to: "ATTENTE_PLANNING", cause: "customer_order_launch" },
   // Une commande entièrement couverte par le stock ne saute plus l'AR : le
   // lancement réserve/prépare techniquement le BL, puis remet la main au
@@ -243,19 +247,9 @@ export const COMMANDE_WORKFLOW_CHECKPOINTS: CommandeWorkflowCheckpointDefinition
     description: "Client, conditions, delais et documents verifies avant passage technique.",
     responsible_role: "secretariat",
     sort_order: 20,
-    status_when_done: "ATTENTE_TECHNIQUE",
-    action_key: "request_technical_analysis",
-    action_label: "Demander analyse technique",
-  },
-  {
-    code: "technical_analysis",
-    label: "Analyse technique",
-    description: "Faisabilite, article, piece technique et gamme valides par les methodes, sans planification.",
-    responsible_role: "technique",
-    sort_order: 30,
     status_when_done: "ATTENTE_STOCK",
-    action_key: "complete_technical_analysis",
-    action_label: "Valider technique",
+    action_key: "request_stock_check",
+    action_label: "Passer au contrôle stock",
   },
   {
     code: "stock_check",

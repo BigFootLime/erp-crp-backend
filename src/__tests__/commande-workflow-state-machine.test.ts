@@ -189,7 +189,7 @@ describe("commande workflow canonical state machine", () => {
     await expect(repoEnsureCommandeWorkflowStatus({
       tx: { query } as never,
       commande_id: 123,
-      nouveau_statut: "ATTENTE_STOCK",
+      nouveau_statut: "ATTENTE_OF",
       cause: "checkpoint",
       commentaire: "unsafe jump",
       user_id: 1,

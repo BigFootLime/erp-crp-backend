@@ -79,11 +79,9 @@
       "EN_ANALYSE"
     ],
     "EN_ANALYSE": [
-      "ATTENTE_TECHNIQUE"
-    ],
-    "ATTENTE_TECHNIQUE": [
       "ATTENTE_STOCK"
     ],
+    "ATTENTE_TECHNIQUE": [],
     "ATTENTE_STOCK": [
       "ATTENTE_OF"
     ],
@@ -128,11 +126,6 @@
     },
     {
       "from": "EN_ANALYSE",
-      "to": "ATTENTE_TECHNIQUE",
-      "cause": "checkpoint"
-    },
-    {
-      "from": "ATTENTE_TECHNIQUE",
       "to": "ATTENTE_STOCK",
       "cause": "checkpoint"
     },
@@ -255,6 +248,21 @@
       "from": "BLOQUE",
       "to": "ANNULE",
       "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_TECHNIQUE",
+      "to": "ATTENTE_STOCK",
+      "cause": "technical_review_retired"
+    },
+    {
+      "from": "ATTENTE_TECHNIQUE",
+      "to": "ATTENTE_OF",
+      "cause": "technical_review_retired"
+    },
+    {
+      "from": "ATTENTE_TECHNIQUE",
+      "to": "ATTENTE_PLANNING",
+      "cause": "technical_review_retired"
     },
     {
       "from": "ATTENTE_OF",
@@ -382,19 +390,9 @@
       "description": "Client, conditions, delais et documents verifies avant passage technique.",
       "responsible_role": "secretariat",
       "sort_order": 20,
-      "status_when_done": "ATTENTE_TECHNIQUE",
-      "action_key": "request_technical_analysis",
-      "action_label": "Demander analyse technique"
-    },
-    {
-      "code": "technical_analysis",
-      "label": "Analyse technique",
-      "description": "Faisabilite, article, piece technique et gamme valides par les methodes, sans planification.",
-      "responsible_role": "technique",
-      "sort_order": 30,
       "status_when_done": "ATTENTE_STOCK",
-      "action_key": "complete_technical_analysis",
-      "action_label": "Valider technique"
+      "action_key": "request_stock_check",
+      "action_label": "Passer au contrôle stock"
     },
     {
       "code": "stock_check",
