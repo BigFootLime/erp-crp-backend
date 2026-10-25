@@ -19,6 +19,7 @@ import type {
   OutillageRecentMovement,
 } from "../types/outil.types";
 import type { CreateOutilInput, UpdateOutilInput } from "../validators/outil.validator";
+import type { CatalogueSourceProvenance } from "../services/outil-catalogue.service";
 
 type OutilFilters = {
   id_famille?: number;
@@ -64,6 +65,15 @@ function asNullableString(value: unknown) {
 function asInteger(value: unknown, fallback = 0) {
   const parsed = asNullableNumber(value);
   return parsed === null ? fallback : Math.trunc(parsed);
+}
+
+function asBoolean(value: unknown) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function asNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((item) => typeof item === "number" && Number.isFinite(item))) return [];
+  return value;
 }
 
 function mediaId(ids: Map<string, string>, value: unknown) {
@@ -118,6 +128,7 @@ function mapOutilListItem(row: Record<string, unknown>, ids: Map<string, string>
     nombre_dents: asNullableNumber(row.nombre_dents),
     quantite_stock: asInteger(row.quantite_stock),
     quantite_minimale: asInteger(row.quantite_minimale),
+    inventory_required: asBoolean(row.inventory_required),
   };
 }
 
@@ -220,12 +231,20 @@ async function getOutilBaseRow(client: DbClient, id: number) {
         g.nom_geometrie,
         g.image_path,
         COALESCE(s.quantite, 0)::int AS quantite_stock,
-        COALESCE(s.quantite_minimale, 0)::int AS quantite_minimale
+        COALESCE(s.quantite_minimale, 0)::int AS quantite_minimale,
+        (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required,
+        cp.source_selection_id AS catalogue_selection_id,
+        cp.source_document AS catalogue_source_document,
+        cp.source_sha256 AS catalogue_source_sha256,
+        cp.source_page AS catalogue_source_page,
+        cp.source_rect AS catalogue_source_rect,
+        cp.confirmed_at::text AS catalogue_confirmed_at
       FROM gestion_outils_outil o
       LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
       LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
       LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
       LEFT JOIN gestion_outils_stock s ON o.id_outil = s.id_outil
+      LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
       WHERE o.id_outil = $1
       LIMIT 1
     `,
@@ -251,26 +270,60 @@ export const outilRepository = {
     return Boolean(result.rows[0]);
   },
 
+  async assertCatalogueProvenanceSchema(): Promise<void> {
+    const result = await db.query(`
+      SELECT
+        to_regclass('public.gestion_outils_catalogue_provenance') AS table_name,
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'gestion_outils_stock' AND column_name = 'last_inventory_at'
+        ) AS inventory_column
+    `);
+    if (!result.rows[0]?.table_name || !asBoolean(result.rows[0]?.inventory_column)) {
+      throw new HttpError(503, "OUTILLAGE_CATALOGUE_PROVENANCE_UNAVAILABLE", "La provenance catalogue n'est pas encore disponible.");
+    }
+  },
+
+  async createCatalogueProvenance(
+    client: DbClient,
+    id_outil: number,
+    source: CatalogueSourceProvenance,
+    user: { id: number | null | undefined; username: string }
+  ): Promise<void> {
+    if (!user.id) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise");
+    await client.query(
+      `INSERT INTO gestion_outils_catalogue_provenance (
+        id_outil, source_selection_id, source_document, source_sha256, source_page, source_rect,
+        confirmed_by_user_id, confirmed_by_username, confirmed_at
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW())`,
+      [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), user.id, user.username]
+    );
+  },
+
   async getControlCenterSummary(): Promise<OutillageControlCenterSummary> {
     const [stockSummary, movementSummary, hasImportBatches] = await Promise.all([
       db.query(
         `
           SELECT
             COUNT(*)::int AS total_tools,
-            COUNT(*) FILTER (WHERE COALESCE(s.quantite, 0) = 0)::int AS stock_ruptures,
+            COUNT(*) FILTER (WHERE COALESCE(s.quantite, 0) = 0 AND NOT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL))::int AS stock_ruptures,
             COUNT(*) FILTER (
               WHERE COALESCE(s.quantite, 0) <= COALESCE(s.quantite_minimale, 0)
                 AND COALESCE(s.quantite_minimale, 0) > 0
+                AND NOT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL)
             )::int AS under_minimum,
             COUNT(*) FILTER (
               WHERE COALESCE(s.quantite, 0) <= COALESCE(s.quantite_minimale, 0)
                 AND COALESCE(s.quantite_minimale, 0) > 0
+                AND NOT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL)
             )::int AS to_replenish,
+            COUNT(*) FILTER (WHERE cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL)::int AS inventory_pending,
             COUNT(DISTINCT o.id_famille)::int AS families_count,
             COUNT(DISTINCT o.id_geometrie)::int AS geometries_count,
             COUNT(DISTINCT o.id_fabricant)::int AS manufacturers_count
           FROM gestion_outils_outil o
           LEFT JOIN gestion_outils_stock s ON s.id_outil = o.id_outil
+          LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
         `
       ),
       db.query(
@@ -296,6 +349,7 @@ export const outilRepository = {
       active_sorties: null,
       active_sorties_available: false,
       import_batches_available: hasImportBatches,
+      inventory_pending: asInteger(row.inventory_pending),
     };
   },
 
@@ -450,6 +504,16 @@ export const outilRepository = {
           }) satisfies OutilValeurArete
       ),
       recent_movements: recentMovements.rows.map(mapStockMovement),
+      catalogue_source: baseRow.catalogue_selection_id
+        ? {
+          selection_id: String(baseRow.catalogue_selection_id),
+          document: String(baseRow.catalogue_source_document ?? ""),
+          sha256: String(baseRow.catalogue_source_sha256 ?? ""),
+          page: asInteger(baseRow.catalogue_source_page),
+          rect: asNumberArray(baseRow.catalogue_source_rect),
+          confirmed_at: asNullableString(baseRow.catalogue_confirmed_at),
+        }
+        : null,
     } satisfies OutilDetail;
   },
 
@@ -532,7 +596,10 @@ export const outilRepository = {
     }
 
     if (only_in_stock) {
-      where.push(`COALESCE(s.quantite, 0) > 0`);
+      // A quantity received or returned before the first physical count is not
+      // available for tablet withdrawal. The inventory transaction is the only
+      // operation that clears this state.
+      where.push(`COALESCE(s.quantite, 0) > 0 AND NOT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL)`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -548,12 +615,14 @@ export const outilRepository = {
         g.nom_geometrie,
         g.image_path,
         COALESCE(s.quantite, 0) AS quantite_stock,
-        COALESCE(s.quantite_minimale, 0) AS quantite_minimale
+        COALESCE(s.quantite_minimale, 0) AS quantite_minimale,
+        (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required
       FROM gestion_outils_outil o
       LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
       LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
       LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
       LEFT JOIN gestion_outils_stock s ON o.id_outil = s.id_outil
+      LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
       ${whereSql}
       ORDER BY o.id_outil DESC
       LIMIT $${idx++} OFFSET $${idx++}
@@ -580,7 +649,9 @@ export const outilRepository = {
       LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
       LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
       LEFT JOIN gestion_outils_stock s ON o.id_outil = s.id_outil
+      LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
       WHERE COALESCE(s.quantite, 0) <= COALESCE(s.quantite_minimale, 0)
+        AND NOT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL)
       ORDER BY COALESCE(s.quantite, 0) ASC, o.id_outil DESC
     `);
 
@@ -1003,11 +1074,22 @@ export const outilRepository = {
     if (!Number.isFinite(qte) || qte <= 0) throw new HttpError(422, "INVALID_QTY", "Quantite invalide pour la sortie stock");
 
     const res = await client.query(
-      `SELECT quantite FROM gestion_outils_stock WHERE id_outil = $1 FOR UPDATE`,
+      `
+        SELECT
+          s.quantite,
+          (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required
+        FROM gestion_outils_stock s
+        LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = s.id_outil
+        WHERE s.id_outil = $1
+        FOR UPDATE OF s
+      `,
       [id_outil]
     );
 
     if (res.rowCount === 0) throw new HttpError(404, "STOCK_NOT_FOUND", "Stock introuvable pour cet outil");
+    if (asBoolean(res.rows[0].inventory_required)) {
+      throw new HttpError(409, "INVENTORY_REQUIRED", "Un inventaire physique doit être confirmé avant toute sortie de stock");
+    }
 
     const currentStock = Number(res.rows[0].quantite);
     if (currentStock < qte) throw new HttpError(409, "INSUFFICIENT_STOCK", `Stock insuffisant pour l'outil ${id_outil}`);
@@ -1030,14 +1112,14 @@ export const outilRepository = {
     );
 
     const r = await client.query(
-      `UPDATE gestion_outils_stock SET quantite = $1, date_maj = NOW() WHERE id_outil = $2`,
+      `UPDATE gestion_outils_stock SET quantite = $1, date_maj = NOW(), last_inventory_at = NOW() WHERE id_outil = $2`,
       [qty, id_outil]
     );
 
     if (r.rowCount === 0) {
       await client.query(
-        `INSERT INTO gestion_outils_stock (id_outil, quantite, quantite_minimale, date_maj)
-         VALUES ($1, $2, 0, NOW())`,
+        `INSERT INTO gestion_outils_stock (id_outil, quantite, quantite_minimale, date_maj, last_inventory_at)
+         VALUES ($1, $2, 0, NOW(), NOW())`,
         [id_outil, qty]
       );
     }
@@ -1618,12 +1700,14 @@ export const outilRepository = {
         g.nom_geometrie,
         g.image_path,
         COALESCE(s.quantite, 0) AS quantite_stock,
-        COALESCE(s.quantite_minimale, 0) AS quantite_minimale
+        COALESCE(s.quantite_minimale, 0) AS quantite_minimale,
+        (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required
       FROM gestion_outils_outil o
       LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
       LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
       LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
       LEFT JOIN gestion_outils_stock s ON o.id_outil = s.id_outil
+      LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
       ORDER BY o.id_outil DESC
     `);
 
