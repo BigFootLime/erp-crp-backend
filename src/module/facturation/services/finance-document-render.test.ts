@@ -1,3 +1,4 @@
+import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 /**
  * Rendu reel de la facture et de l'avoir.
  *
@@ -12,7 +13,6 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { inflateSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 import { getGeneratedRootPath } from "../../../utils/cerpStorage";
@@ -40,49 +40,8 @@ function keep(name: string, bytes: Buffer): void {
 }
 
 /** WinAnsi, pas latin1 : les deux divergent de 0x80 a 0x9F (tiret cadratin, apostrophe). */
-const WINANSI = new TextDecoder("windows-1252");
 
-function drawnPages(bytes: Buffer): string[] {
-  const decodeOperands = (operands: string): string =>
-    [...operands.matchAll(/<([0-9a-fA-F\s]*)>|\(((?:\\.|[^\\)])*)\)/g)]
-      .map((m) =>
-        m[1] !== undefined
-          ? WINANSI.decode(Buffer.from(m[1].replace(/\s+/g, ""), "hex"))
-          : m[2].replace(/\\([()\\])/g, "$1")
-      )
-      .join("");
-
-  const pages: string[] = [];
-  let cursor = 0;
-
-  for (;;) {
-    const start = bytes.indexOf("stream", cursor);
-    if (start < 0) break;
-    let from = start + "stream".length;
-    if (bytes[from] === 0x0d) from += 1;
-    if (bytes[from] === 0x0a) from += 1;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    cursor = end + "endstream".length;
-
-    let content: string;
-    try {
-      content = inflateSync(bytes.subarray(from, end)).toString("latin1");
-    } catch {
-      continue;
-    }
-    if (!content.includes("BT")) continue;
-
-    pages.push(
-      [
-        ...[...content.matchAll(/\[([^\]]*)\]\s*TJ/g)].map((m) => decodeOperands(m[1])),
-        ...[...content.matchAll(/(<[0-9a-fA-F\s]*>|\((?:\\.|[^\\)])*\))\s*Tj/g)].map((m) => decodeOperands(m[1])),
-      ].join("\n")
-    );
-  }
-
-  return pages;
-}
+const drawnPages = pdfPageTexts;
 
 function drawnText(bytes: Buffer): string {
   return drawnPages(bytes).join("\n");

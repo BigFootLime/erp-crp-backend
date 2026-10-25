@@ -493,7 +493,8 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
   const operations = [...input.operations].sort((a, b) => a.phase - b.phase);
   const familles = input.familles;
   const avertissements: OfDocumentWarning[] = [];
-  const workshop = input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.6" || input.templateVersion === "of-ordre-fabrication/1.5" || input.templateVersion === "of-ordre-fabrication/1.4";
+  const templateVersion = input.templateVersion ?? OF_DOCUMENT_TEMPLATE_VERSION;
+  const workshop = templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.6" || templateVersion === "of-ordre-fabrication/1.5" || templateVersion === "of-ordre-fabrication/1.4";
 
   const phases = operations.map<OfDocumentPhase>((operation) => {
     const { fabricationHours: fabrication, finalHours: final } = documentOperationLoad(operation, workshop ? input.quantiteLancee : undefined);
@@ -643,8 +644,10 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     revisionStatut: input.revisionStatut,
     ofStatut: input.ofStatut,
     documentStatut: input.documentStatut ?? "BROUILLON",
-    templateVersion: input.templateVersion ?? OF_DOCUMENT_TEMPLATE_VERSION,
-    documentCharter: "module-v1",
+    templateVersion,
+    // The charter is versioned with the issued payload. Archives prior to the workshop
+    // edition retain their historical font metrics and byte-identical rendering.
+    ...(templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? { documentCharter: "module-v1" as const } : {}),
     snapshotId: input.snapshotId,
     snapshotSha256: input.snapshotSha256,
     auteur: input.auteur,
