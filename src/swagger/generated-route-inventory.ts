@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "171f7fa383c7f714daaa0ab7a07bf6dd9f2bf1516bed6aadb3fbe833fcf00235";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "5796971a8376a447fb86c19514c1c5d918a6742c4e25ce80ea9441f71fdb28d4";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -11204,7 +11204,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/outils",
-    "source": "src/module/outils/routes/outil.routes.ts:65",
+    "source": "src/module/outils/routes/outil.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11219,40 +11219,44 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils",
-    "source": "src/module/outils/routes/outil.routes.ts:97",
+    "source": "src/module/outils/routes/outil.routes.ts:104",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageToolUpload.fields([ { name: \"esquisse\", maxCount: 1 }, { name: \"plan\", maxCount: 1 }, { name: \"ima)",
       "asyncHandler(outilController.create)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "delete",
     "path": "/outils/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:119",
+    "source": "src/module/outils/routes/outil.routes.ts:128",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "asyncHandler(outilController.remove)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:87",
+    "source": "src/module/outils/routes/outil.routes.ts:94",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11267,24 +11271,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/outils/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:108",
+    "source": "src/module/outils/routes/outil.routes.ts:116",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageToolUpload.fields([ { name: \"esquisse\", maxCount: 1 }, { name: \"plan\", maxCount: 1 }, { name: \"ima)",
       "asyncHandler(outilController.update)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/{id}/lifecycle",
-    "source": "src/module/outils/routes/outil.routes.ts:79",
+    "source": "src/module/outils/routes/outil.routes.ts:86",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11302,7 +11308,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/{id}/parameter-versions",
-    "source": "src/module/outils/routes/outil.routes.ts:80",
+    "source": "src/module/outils/routes/outil.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11320,7 +11326,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/outils/{id}/pricing",
-    "source": "src/module/outils/routes/outil.routes.ts:86",
+    "source": "src/module/outils/routes/outil.routes.ts:93",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11336,7 +11342,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/outils/allocations",
-    "source": "src/module/outils/routes/outil.routes.ts:72",
+    "source": "src/module/outils/routes/outil.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11354,7 +11360,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations",
-    "source": "src/module/outils/routes/outil.routes.ts:73",
+    "source": "src/module/outils/routes/outil.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11372,7 +11378,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations/{allocationId}/break",
-    "source": "src/module/outils/routes/outil.routes.ts:76",
+    "source": "src/module/outils/routes/outil.routes.ts:83",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11390,7 +11396,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations/{allocationId}/cancel",
-    "source": "src/module/outils/routes/outil.routes.ts:78",
+    "source": "src/module/outils/routes/outil.routes.ts:85",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11408,7 +11414,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations/{allocationId}/issue",
-    "source": "src/module/outils/routes/outil.routes.ts:74",
+    "source": "src/module/outils/routes/outil.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11426,7 +11432,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations/{allocationId}/return",
-    "source": "src/module/outils/routes/outil.routes.ts:75",
+    "source": "src/module/outils/routes/outil.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11444,7 +11450,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/allocations/{allocationId}/wear",
-    "source": "src/module/outils/routes/outil.routes.ts:77",
+    "source": "src/module/outils/routes/outil.routes.ts:84",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11462,7 +11468,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/outils/aretes",
-    "source": "src/module/outils/routes/outil.routes.ts:55",
+    "source": "src/module/outils/routes/outil.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11476,8 +11482,44 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/outils/catalogue",
+    "source": "src/module/outils/routes/outil.routes.ts:74",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireOutillageCapability(read)",
+      "getCatalogue"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireOutillageCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/outils/catalogue/assets/{filename}",
+    "source": "src/module/outils/routes/outil.routes.ts:75",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireOutillageCapability(read)",
+      "getCatalogueAsset"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireOutillageCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/outils/fabricants",
-    "source": "src/module/outils/routes/outil.routes.ts:31",
+    "source": "src/module/outils/routes/outil.routes.ts:32",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11492,41 +11534,45 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/fabricants",
-    "source": "src/module/outils/routes/outil.routes.ts:32",
+    "source": "src/module/outils/routes/outil.routes.ts:33",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageFabricantUpload.single(logo)",
       "asyncHandler(outilSupportController.postFabricant)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "patch",
     "path": "/outils/fabricants/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:38",
+    "source": "src/module/outils/routes/outil.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageFabricantUpload.single(logo)",
       "asyncHandler(outilSupportController.patchFabricant)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/familles",
-    "source": "src/module/outils/routes/outil.routes.ts:28",
+    "source": "src/module/outils/routes/outil.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11541,41 +11587,45 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/familles",
-    "source": "src/module/outils/routes/outil.routes.ts:29",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "outillageFamilleUpload.single(image)",
-      "asyncHandler(outilSupportController.postFamille)"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate"
-    ]
-  },
-  {
-    "method": "patch",
-    "path": "/outils/familles/{id}",
     "source": "src/module/outils/routes/outil.routes.ts:30",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
+      "outillageFamilleUpload.single(image)",
+      "asyncHandler(outilSupportController.postFamille)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
+    ]
+  },
+  {
+    "method": "patch",
+    "path": "/outils/familles/{id}",
+    "source": "src/module/outils/routes/outil.routes.ts:31",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageFamilleUpload.single(image)",
       "asyncHandler(outilSupportController.patchFamille)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/fournisseurs",
-    "source": "src/module/outils/routes/outil.routes.ts:45",
+    "source": "src/module/outils/routes/outil.routes.ts:48",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11590,39 +11640,43 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/fournisseurs",
-    "source": "src/module/outils/routes/outil.routes.ts:46",
+    "source": "src/module/outils/routes/outil.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "asyncHandler(outilSupportController.postFournisseur)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "patch",
     "path": "/outils/fournisseurs/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:47",
+    "source": "src/module/outils/routes/outil.routes.ts:50",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "asyncHandler(outilSupportController.patchFournisseur)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/geometries",
-    "source": "src/module/outils/routes/outil.routes.ts:49",
+    "source": "src/module/outils/routes/outil.routes.ts:52",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11637,41 +11691,45 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/geometries",
-    "source": "src/module/outils/routes/outil.routes.ts:50",
+    "source": "src/module/outils/routes/outil.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageGeometrieUpload.single(image)",
       "asyncHandler(outilSupportController.postGeometrie)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "patch",
     "path": "/outils/geometries/{id}",
-    "source": "src/module/outils/routes/outil.routes.ts:51",
+    "source": "src/module/outils/routes/outil.routes.ts:54",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "outillageGeometrieUpload.single(image)",
       "asyncHandler(outilSupportController.patchGeometrie)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/import-batches/summary",
-    "source": "src/module/outils/routes/outil.routes.ts:68",
+    "source": "src/module/outils/routes/outil.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11687,23 +11745,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/inventaire/set",
-    "source": "src/module/outils/routes/outil.routes.ts:141",
+    "source": "src/module/outils/routes/outil.routes.ts:150",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.inventaireSet)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/low-stock",
-    "source": "src/module/outils/routes/outil.routes.ts:83",
+    "source": "src/module/outils/routes/outil.routes.ts:90",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11719,23 +11779,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/reapprovisionner",
-    "source": "src/module/outils/routes/outil.routes.ts:132",
+    "source": "src/module/outils/routes/outil.routes.ts:141",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.reapprovisionner)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/recent-movements",
-    "source": "src/module/outils/routes/outil.routes.ts:67",
+    "source": "src/module/outils/routes/outil.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11751,7 +11813,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/outils/ref_fabricant/{ref_fabricant}",
-    "source": "src/module/outils/routes/outil.routes.ts:90",
+    "source": "src/module/outils/routes/outil.routes.ts:97",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11766,23 +11828,25 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/retour",
-    "source": "src/module/outils/routes/outil.routes.ts:129",
+    "source": "src/module/outils/routes/outil.routes.ts:138",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.retourStock)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/revetements",
-    "source": "src/module/outils/routes/outil.routes.ts:52",
+    "source": "src/module/outils/routes/outil.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11797,71 +11861,79 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/outils/revetements",
-    "source": "src/module/outils/routes/outil.routes.ts:53",
+    "source": "src/module/outils/routes/outil.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(configure)",
       "asyncHandler(outilSupportController.postRevetement)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(configure)"
     ]
   },
   {
     "method": "post",
     "path": "/outils/scan/entree",
-    "source": "src/module/outils/routes/outil.routes.ts:138",
+    "source": "src/module/outils/routes/outil.routes.ts:147",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.scanEntree)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "post",
     "path": "/outils/scan/sortie",
-    "source": "src/module/outils/routes/outil.routes.ts:135",
+    "source": "src/module/outils/routes/outil.routes.ts:144",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.scanSortie)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "post",
     "path": "/outils/sortie",
-    "source": "src/module/outils/routes/outil.routes.ts:128",
+    "source": "src/module/outils/routes/outil.routes.ts:137",
     "middleware": [
       "anonymous",
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
+      "requireOutillageCapability(operate)",
       "asyncHandler(outilController.sortieStock)"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requireOutillageCapability(operate)"
     ]
   },
   {
     "method": "get",
     "path": "/outils/summary",
-    "source": "src/module/outils/routes/outil.routes.ts:66",
+    "source": "src/module/outils/routes/outil.routes.ts:69",
     "middleware": [
       "anonymous",
       "authenticateToken",

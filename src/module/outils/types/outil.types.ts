@@ -37,6 +37,7 @@ export type OutilListItem = {
   nombre_dents?: number | null
   quantite_stock: number
   quantite_minimale: number
+  inventory_required: boolean
 }
 
 export type OutilRelationOption = {
@@ -106,6 +107,7 @@ export type OutillageControlCenterSummary = {
   active_sorties: number | null
   active_sorties_available: boolean
   import_batches_available: boolean
+  inventory_pending?: number
 }
 
 export type OutillageRecentMovement = OutilStockMovement & {
@@ -140,4 +142,12 @@ export type OutilDetail = OutilListItem & {
   revetements: OutilRelationOption[]
   valeurs_aretes: OutilValeurArete[]
   recent_movements: OutilStockMovement[]
+  catalogue_source: {
+    selection_id: string
+    document: string
+    sha256: string
+    page: number
+    rect: number[]
+    confirmed_at: string | null
+  } | null
 }
