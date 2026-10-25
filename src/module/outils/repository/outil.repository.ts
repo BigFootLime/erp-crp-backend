@@ -288,15 +288,15 @@ export const outilRepository = {
     client: DbClient,
     id_outil: number,
     source: CatalogueSourceProvenance,
-    user: { id: number | null | undefined; username: string }
+    actor: { id: number | null | undefined; username: string }
   ): Promise<void> {
-    if (!user.id) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise");
+    if (!actor.id) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise");
     await client.query(
       `INSERT INTO gestion_outils_catalogue_provenance (
         id_outil, source_selection_id, source_document, source_sha256, source_page, source_rect,
         confirmed_by_user_id, confirmed_by_username, confirmed_at
       ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW())`,
-      [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), user.id, user.username]
+      [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), actor.id, actor.username]
     );
   },
 

@@ -25,10 +25,12 @@ const definition = {
   achats: [{ type: "MATIERE", qty: 10, pu_achat: 42 }],
 };
 
-test("technical sheet records the selected version and distinct setup/piece times without financial data", () => {
+test("technical sheet records the selected version label and setup/piece times without internal IDs or financial data", () => {
   const sheet = buildTechnicalSheet(definition),
     json = JSON.stringify(sheet);
-  assert.ok(json.includes("selected-version"));
+  assert.ok(!json.includes("selected-version"));
+  assert.equal(sheet.summary.find((entry) => entry.label === "Indice client")?.value, "B");
+  assert.equal(sheet.summary.find((entry) => entry.label === "Version interne")?.value, "2");
   assert.ok(!json.includes("pu_achat") && !json.includes("cout_mo"));
   const operation = sheet.sections.find((s) => s.title.startsWith("Gamme"))!
     .table!.rows[0];

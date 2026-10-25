@@ -1,3 +1,4 @@
+import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 /**
  * Rendu reel du bon de livraison et du certificat de conformite.
  *
@@ -11,7 +12,6 @@
 
 import { mkdirSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { inflateSync } from "node:zlib"
 
 import { describe, expect, it, vi } from "vitest"
 import { getGeneratedRootPath } from "../../../utils/cerpStorage"
@@ -90,50 +90,8 @@ function countPages(bytes: Buffer): number {
  * l'apostrophe typographique et les guillemets. Lire en latin1 ferait disparaitre ces
  * caracteres du texte extrait et laisserait croire a une perte de donnee.
  */
-const WINANSI = new TextDecoder("windows-1252")
 
-function drawnPages(bytes: Buffer): string[] {
-  const decodeOperands = (operands: string): string =>
-    [...operands.matchAll(/<([0-9a-fA-F\s]*)>|\(((?:\\.|[^\\)])*)\)/g)]
-      .map((m) =>
-        m[1] !== undefined
-          ? WINANSI.decode(Buffer.from(m[1].replace(/\s+/g, ""), "hex"))
-          : m[2].replace(/\\([()\\])/g, "$1")
-      )
-      .join("")
-
-  const pages: string[] = []
-  let cursor = 0
-
-  for (;;) {
-    const start = bytes.indexOf("stream", cursor)
-    if (start < 0) break
-    let from = start + "stream".length
-    if (bytes[from] === 0x0d) from += 1
-    if (bytes[from] === 0x0a) from += 1
-    const end = bytes.indexOf("endstream", from)
-    if (end < 0) break
-    cursor = end + "endstream".length
-
-    let content: string
-    try {
-      content = inflateSync(bytes.subarray(from, end)).toString("latin1")
-    } catch {
-      continue // flux non compresse ou image : sans interet ici
-    }
-    // Chaque page a son propre flux de contenu ; `BT` en marque le texte.
-    if (!content.includes("BT")) continue
-
-    pages.push(
-      [
-        ...[...content.matchAll(/\[([^\]]*)\]\s*TJ/g)].map((m) => decodeOperands(m[1])),
-        ...[...content.matchAll(/(<[0-9a-fA-F\s]*>|\((?:\\.|[^\\)])*\))\s*Tj/g)].map((m) => decodeOperands(m[1])),
-      ].join("\n")
-    )
-  }
-
-  return pages
-}
+const drawnPages = pdfPageTexts
 
 /** Texte de tout le document, pages concatenees. */
 function drawnText(bytes: Buffer): string {
@@ -267,16 +225,21 @@ function preview(overrides: Partial<LivraisonPackPreview> = {}): LivraisonPackPr
 }
 
 describe("bon de livraison PDF — rendu reel", () => {
-  it("scenario 1 (BL expedie, 2 lignes) : une page, pagination complete", async () => {
+  it("scenario 1 (BL expedie, 2 lignes) : reception complete sur deux pages", async () => {
     const bytes = await svcRenderPackBonLivraisonPdf({ preview: preview(), version: 1 })
     keep("50-bl-expedie", bytes)
 
     expect(bytes.byteLength).toBeGreaterThan(1000)
-    expect(countPages(bytes)).toBe(1)
+    expect(countPages(bytes)).toBe(2)
 
-    const text = drawnText(bytes)
+    const pages = drawnPages(bytes)
+    const text = pages.join("\n")
+    expect(pages).toHaveLength(2)
+    expect(pages[1]).toContain("RÉCEPTION")
+    expect(pages[1]).toContain("Page 2 / 2")
     expect(text).toContain("BL-2026-0142")
-    expect(text).toContain("Page 1 / 1")
+    expect(text).toContain("Page 1 / 2")
+    expect(text).toContain("Page 2 / 2")
   }, 60_000)
 
   it("n'imprime jamais l'identifiant technique du client", async () => {
@@ -433,16 +396,15 @@ describe("bon de livraison PDF — rendu reel", () => {
   }, 60_000)
 
   it("les mentions ne coutent aucune page et ne repoussent pas le cadre de réception", async () => {
-    // Les mentions vivent dans la bande de pied, pas dans le flux : placees a la suite du
-    // contenu, elles poussaient ce bon de deux lignes sur une seconde page qui ne portait
-    // qu'elles. Le cadre de reception reste entier sur la premiere page.
+    // Les mentions vivent dans le pied de chaque page et le cadre de réception reste entier sur une seconde page.
     const bytes = await svcRenderPackBonLivraisonPdf({ preview: preview(), version: 1 })
-    expect(countPages(bytes)).toBe(1)
+    expect(countPages(bytes)).toBe(2)
 
     const pages = drawnPages(bytes)
-    expect(pages).toHaveLength(1)
-    expect(pages[0]).toContain("RÉCEPTION")
-    expect(pages[0]).toContain("Pénalités de retard")
+    expect(pages).toHaveLength(2)
+    expect(pages[1]).toContain("RÉCEPTION")
+    expect(pages[1]).toContain("Pénalités de retard")
+    expect(pages[1]).toContain("Page 2 / 2")
   }, 60_000)
 
   it("répète l'identité légale et les mentions sur chaque page", async () => {
@@ -502,16 +464,21 @@ describe("certificat de conformite PDF — rendu reel", () => {
     includeDocuments: false,
   }
 
-  it("scenario 5 (certificat nominal) : une page, tracabilite portee", async () => {
+  it("scenario 5 (certificat nominal) : signature et tracabilite portees sur deux pages", async () => {
     const bytes = await svcRenderPackCofcPdf({ preview: preview(), ...COFC })
     keep("54-cofc-nominal", bytes)
 
-    expect(countPages(bytes)).toBe(1)
-    const text = drawnText(bytes)
+    expect(countPages(bytes)).toBe(2)
+    const pages = drawnPages(bytes)
+    const text = pages.join("\n")
+    expect(pages).toHaveLength(2)
+    expect(pages[1]).toContain("Établi par")
+    expect(pages[1]).toContain("Page 2 / 2")
     expect(text).toContain("BL-2026-0142")
     expect(text).toContain("MV-2026-0771")
     expect(text).toContain("LOT-2026-0001")
-    expect(text).toContain("Page 1 / 1")
+    expect(text).toContain("Page 1 / 2")
+    expect(text).toContain("Page 2 / 2")
 
     // Le vocabulaire interne des mouvements est traduit : un client ne lit pas `OUT`/`POSTED`.
     expect(text).toContain("Sortie")

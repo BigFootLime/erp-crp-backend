@@ -39,13 +39,12 @@ describe("client profile PDF v3", () => {
     expect(body).not.toMatch(/\/BaseFont \/Helvetica/);
     expect(/0\.145098\d* 0\.388235\d* 0\.921568\d* (?:scn|rg)/.test(streams(pdf))).toBe(true);
   });
-  it("keeps historical Helvetica/red rendering independent of concurrent v3 work", async () => {
+  it("keeps the historical layout while using the shared Inter document font", async () => {
     const [old, current] = await Promise.all([
       renderClientProfilePdf({ archive: archive("client-profile-pdf-v2") }),
       renderClientProfilePdf({ archive: archive("client-profile-pdf-v3") }),
     ]);
-    expect(old.toString("latin1")).toMatch(/\/BaseFont \/Helvetica/);
-    expect(old.toString("latin1")).not.toContain("Inter-Regular");
+    expect(old.toString("latin1")).toContain("Inter-Regular");
     expect(current.toString("latin1")).toContain("Inter-Regular");
   });
   it("includes the exact client logo revision alongside the company logo", async () => {

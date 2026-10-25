@@ -360,10 +360,13 @@ describe("#475 article/stock unit contract", () => {
       .set("Authorization", "Bearer fake")
       .set("Idempotency-Key", "contract-movement-mm-001")
       .send({
-        movement_type: "IN",
+        movement_type: "ADJUST",
+        reason_code: "INVENTORY",
+        notes: "Inventaire d'ouverture du contrat unitaire",
         lines: [{
           article_id: articleResponse.body.id,
           qty: 5,
+          direction: "IN",
           dst_magasin_id: MAGASIN_ID,
           dst_emplacement_id: 1,
         }],
