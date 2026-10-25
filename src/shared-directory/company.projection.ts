@@ -4,7 +4,7 @@ import {directoryProfileSchema} from './model';
 import {projectDirectoryProfile,sharedDirectoryClient} from './site-runtime';
 const billerColumns=['biller_id','biller_name','street','house_number','postal_code','city','country','phone','email','default_bank_name','default_iban','default_bic','text_on_invoice','creation_date','modification_date'] as const;
 const mentionColumns=['mention_set_id','biller_id','version','effective_from','effective_to','legal_form','share_capital','share_capital_currency','rcs_city','rcs_number','siren','siret','vat_number','ape_code','late_penalty_rate','late_penalty_basis','recovery_indemnity','early_discount_rate','early_discount_basis','vat_on_receipts','vat_exempt_293b','retention_of_title','extra_mentions','created_at','created_by','electronic_address_scheme','electronic_address_value','electronic_address_directory_entry_id','electronic_address_verified_at'] as const;
-const snapshotSchema=z.object({revision:z.number().int().nonnegative(),primary_biller_id:z.string().uuid().nullable(),billers:z.array(z.record(z.unknown())),mentions:z.array(z.record(z.unknown())),profiles:z.array(directoryProfileSchema)}).strict();
+const snapshotSchema=z.object({revision:z.number().int().nonnegative(),primary_biller_id:z.string().uuid().nullable(),billers:z.array(z.record(z.string(),z.unknown())),mentions:z.array(z.record(z.string(),z.unknown())),profiles:z.array(directoryProfileSchema)}).strict();
 /** Add canonical UUIDs; never merge an existing legacy company by its name. */
 export async function synchronizeDirectoryCompany(db:Pool,session:string){
  const client=sharedDirectoryClient();if(!client)return;

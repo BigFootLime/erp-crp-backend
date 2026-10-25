@@ -21,7 +21,7 @@ const decimalMoney = z.string().regex(/^\d{1,9}(?:\.\d{1,6})?$/, "Montant décim
 // POST /time-clock/events (salarié) — aucun employee_id.
 export const createTimeEventSchema = z
   .object({
-    event_type: z.enum(HR_EVENT_TYPES, { errorMap: () => ({ message: "event_type invalide" }) }),
+    event_type: z.enum(HR_EVENT_TYPES, { error: () => ({ message: "event_type invalide" }) }),
     event_time: eventTime,
   })
   .strict();
@@ -35,7 +35,7 @@ export const deviceEventSchema = z
     // que les bornes déjà installées reçoivent leur mise à jour automatique.
     event_type: z.union([
       z.literal("AUTO"),
-      z.enum(HR_EVENT_TYPES, { errorMap: () => ({ message: "event_type invalide" }) }),
+      z.enum(HR_EVENT_TYPES, { error: () => ({ message: "event_type invalide" }) }),
     ]),
     event_time: eventTime,
     idempotency_key: z.string().min(8, "idempotency_key requis (min 8 caractères)").max(200),
@@ -70,8 +70,8 @@ export const createAdjustmentSchema = z
     target_type: z.enum(HR_ADJUSTMENT_TARGETS),
     target_id: z.string().uuid("target_id (uuid) attendu"),
     reason: z.string().trim().min(3, "Motif obligatoire (min 3 caractères)").max(2000),
-    old_value: z.record(z.unknown()).optional(),
-    new_value: z.record(z.unknown()).optional(),
+    old_value: z.record(z.string(), z.unknown()).optional(),
+    new_value: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 export type CreateAdjustmentBody = z.infer<typeof createAdjustmentSchema>;
@@ -124,10 +124,11 @@ export const ruleSetBodySchema = z
     overtime_rate_1: z.number().min(1).max(5).nullable().default(null),
     overtime_threshold_2_minutes: nonNegInt.max(10080).nullable().default(null),
     overtime_rate_2: z.number().min(1).max(5).nullable().default(null),
-    rounding_rule: z.record(z.unknown()).default({}),
+    rounding_rule: z.record(z.string(), z.unknown()).default({}),
     break_rule: breakRuleSchema.default({
       short_break_minutes: 15,
       lunch_break_minutes: 60,
+      min_break_minutes: 75,
       auto_deduct_after_minutes: 360,
     }),
   })

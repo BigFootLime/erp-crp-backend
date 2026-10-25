@@ -622,7 +622,7 @@ export const createEmplacementSchema = z.object({
       location_type: stockLocationTypeSchema.optional().default("STORAGE"),
       allow_inbound: z.boolean().optional().default(true),
       allow_outbound: z.boolean().optional().default(true),
-      restrictions: z.record(z.unknown()).optional().default({}),
+      restrictions: z.record(z.string(), z.unknown()).optional().default({}),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict()
@@ -663,7 +663,7 @@ export const updateEmplacementSchema = z.object({
       location_type: stockLocationTypeSchema.optional(),
       allow_inbound: z.boolean().optional(),
       allow_outbound: z.boolean().optional(),
-      restrictions: z.record(z.unknown()).optional(),
+      restrictions: z.record(z.string(), z.unknown()).optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),
