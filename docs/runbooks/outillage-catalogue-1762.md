@@ -159,3 +159,12 @@ not the shared database. It covers UUID foreign keys, source constraints,
 duplicate receipt references, the pre-period price baseline, refusal before
 inventory and stock rollback when actual-price insertion fails. Module tests
 and receipt-service orchestration tests complement these SQL checks.
+
+The shared test bootstrap also exposed an outbox backlog: its selector sorted
+thousands of pending notifications for every event. The guarded, test-only
+`20261025_realtime_outbox_candidate_indexes_test.sql` adds ordered candidate
+and unpublished-predecessor indexes concurrently. The candidate index begins
+with `(created_at,id)` to satisfy the selector's order; `available_at` is an
+included filter column. The measured EXPLAIN estimated cost fell from about
+183,000 to 5.91, and test readiness returned to healthy without dropping any
+business or audit evidence. This is not a production migration.
