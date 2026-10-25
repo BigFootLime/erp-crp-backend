@@ -219,6 +219,18 @@ async function hasTable(tableName: string) {
   return Boolean(result.rows[0]?.table_name);
 }
 
+async function hasTableWith(client: DbClient, tableName: string) {
+  const result = await client.query(`SELECT to_regclass($1) AS table_name`, [tableName]);
+  return Boolean(result.rows[0]?.table_name);
+}
+
+async function requireMasterSupplierTable(client: DbClient, fournisseurIds: readonly string[]) {
+  if (fournisseurIds.length === 0) return;
+  if (!(await hasTableWith(client, "public.outillage_tool_fournisseur_master"))) {
+    throw new HttpError(503, "OUTILLAGE_MASTER_SUPPLIER_SCHEMA_UNAVAILABLE", "Les liens fournisseur maître Outillage ne sont pas disponibles sur cette base.");
+  }
+}
+
 async function getOutilBaseRow(client: DbClient, id: number) {
   const result = await client.query(
     `
@@ -437,7 +449,11 @@ export const outilRepository = {
     const baseRow = await getOutilBaseRow(db, id);
     if (!baseRow) return null;
 
-    const [fournisseurs, revetements, valeursAretes, recentMovements] = await Promise.all([
+    // This projection is optional until the test-only schema is promoted.
+    // Legacy databases must still be able to read an outil detail.
+    const masterSupplierTableAvailable = await hasTable("public.outillage_tool_fournisseur_master");
+
+    const [fournisseurs, fournisseursMaster, revetements, valeursAretes, recentMovements] = await Promise.all([
       db.query(
         `
           SELECT f.id_fournisseur AS id, f.nom AS label
@@ -448,6 +464,10 @@ export const outilRepository = {
         `,
         [id]
       ),
+      masterSupplierTableAvailable
+        ? db.query(`SELECT f.id::text AS id, f.nom AS label FROM outillage_tool_fournisseur_master link
+          JOIN fournisseurs f ON f.id=link.fournisseur_id WHERE link.id_outil=$1 ORDER BY f.nom`, [id])
+        : Promise.resolve({ rows: [] as Record<string, unknown>[] }),
       db.query(
         `
           SELECT r.id_revetement AS id, r.nom AS label
@@ -503,6 +523,7 @@ export const outilRepository = {
     return {
       ...mapOutilListItem(baseRow, media.images, media.documents),
       fournisseurs: fournisseurs.rows.map((row) => ({ id: asInteger(row.id), label: asNullableString(row.label) ?? "" })),
+      fournisseur_ids: fournisseursMaster.rows.map((row) => ({ id: String(row.id), label: asNullableString(row.label) ?? "" })),
       revetements: revetements.rows.map((row) => ({ id: asInteger(row.id), label: asNullableString(row.label) ?? "" })),
       valeurs_aretes: valeursAretes.rows.map(
         (row) =>
@@ -787,6 +808,7 @@ export const outilRepository = {
       data.stock_initial_id_fournisseur,
     ]);
 
+    await requireMasterSupplierTable(client, data.fournisseur_ids ?? []);
     await this.assertCreationRelations(client, data, supplierIds);
     await this.assertReferenceFabricantAvailable(client, data.id_fabricant, data.reference_fabricant);
 
@@ -853,6 +875,7 @@ export const outilRepository = {
 
     // 🔗 relations
     if (supplierIds.length) await this.linkFournisseurs(client, id_outil, supplierIds);
+    if (data.fournisseur_ids !== undefined) await this.replaceMasterFournisseurs(client, id_outil, data.fournisseur_ids);
     if (data.revetements?.length) await this.linkRevetements(client, id_outil, data.revetements);
     if (data.valeurs_aretes?.length) await this.linkValeursAretes(client, id_outil, data.valeurs_aretes);
     if (data.prix_fournisseurs?.length) {
@@ -899,6 +922,7 @@ export const outilRepository = {
       ...(data.prix_fournisseurs ?? []).map((item) => item.id_fournisseur),
     ]);
 
+    await requireMasterSupplierTable(client, data.fournisseur_ids ?? []);
     await this.assertCreationRelations(client, data, supplierIds);
     await this.assertReferenceFabricantAvailable(client, data.id_fabricant, data.reference_fabricant, id_outil);
 
@@ -969,6 +993,7 @@ export const outilRepository = {
 
     await this.updateStockSettings(client, id_outil, data.quantite_minimale ?? 0);
     await this.replaceFournisseurs(client, id_outil, supplierIds);
+    if (data.fournisseur_ids !== undefined) await this.replaceMasterFournisseurs(client, id_outil, data.fournisseur_ids);
     await this.replaceRevetements(client, id_outil, data.revetements ?? []);
     await this.replaceValeursAretes(client, id_outil, data.valeurs_aretes ?? []);
     if (data.prix_fournisseurs?.length) {
@@ -1060,6 +1085,14 @@ export const outilRepository = {
     const qte = Number(quantite);
     if (!Number.isFinite(qte) || qte <= 0) throw new HttpError(422, "INVALID_QTY", "Quantite invalide pour l'entree stock");
 
+    const pending = await client.query(`SELECT (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required
+      FROM gestion_outils_stock s LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil=s.id_outil
+      WHERE s.id_outil=$1 FOR UPDATE OF s`, [id_outil]);
+    if (asBoolean(pending.rows[0]?.inventory_required)) throw new HttpError(409, "INVENTORY_REQUIRED", "Un inventaire physique doit être confirmé avant toute réception de stock");
+    if (!pending.rows[0]) {
+      const provenance = await client.query(`SELECT 1 FROM gestion_outils_catalogue_provenance WHERE id_outil=$1`, [id_outil]);
+      if (provenance.rows[0]) throw new HttpError(409, "INVENTORY_REQUIRED", "Un inventaire physique doit être confirmé avant toute réception de stock");
+    }
     const r = await client.query(
       `
       UPDATE gestion_outils_stock
@@ -1236,6 +1269,18 @@ export const outilRepository = {
     await this.linkFournisseurs(client, id_outil, fournisseurs);
   },
 
+  async replaceMasterFournisseurs(client: DbClient, id_outil: number, fournisseurIds: string[]) {
+    await requireMasterSupplierTable(client, fournisseurIds);
+    if (fournisseurIds.length === 0 && !(await hasTableWith(client, "public.outillage_tool_fournisseur_master"))) return;
+    await client.query(`DELETE FROM outillage_tool_fournisseur_master WHERE id_outil=$1`, [id_outil]);
+    for (const fournisseurId of [...new Set(fournisseurIds)]) {
+      const inserted = await client.query(`INSERT INTO outillage_tool_fournisseur_master(id_outil,fournisseur_id)
+        SELECT $1,f.id FROM fournisseurs f JOIN fournisseur_domaine_lien dl ON dl.fournisseur_id=f.id AND dl.domaine_code='outillage'
+        WHERE f.id=$2::uuid AND f.actif=true ON CONFLICT DO NOTHING RETURNING fournisseur_id`, [id_outil, fournisseurId]);
+      if (!inserted.rows[0]) throw new HttpError(422, "OUTILLAGE_SUPPLIER_INVALID", "Le fournisseur maître doit être actif et qualifié Outillage");
+    }
+  },
+
   async replaceRevetements(client: DbClient, id_outil: number, revetements: number[]) {
     await client.query(`DELETE FROM gestion_outils_outil_revetement WHERE id_outil = $1`, [id_outil]);
     await this.linkRevetements(client, id_outil, revetements);
@@ -1367,19 +1412,24 @@ export const outilRepository = {
   async createFabricant(
     nom_fabricant: string,
     logo: string | null,
-    id_fournisseurs: number[],
+    fournisseur_ids: string[],
     client: DbClient = db
   ) {
+    if (fournisseur_ids.length && !(await hasTableWith(client, "public.outillage_fabricant_fournisseur_master"))) {
+      throw new HttpError(503, "OUTILLAGE_MASTER_SUPPLIER_SCHEMA_UNAVAILABLE", "Les liens fournisseur maître Outillage ne sont pas disponibles sur cette base.");
+    }
     const result = await client.query(
       `INSERT INTO gestion_outils_fabricant (name, logo) VALUES ($1, $2) RETURNING id_fabricant`,
       [nom_fabricant, normalizeStoredImagePath(logo)]
     );
 
     const id_fabricant = asInteger(result.rows[0]?.id_fabricant);
-    for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
+    for (const fournisseur_id of [...new Set(fournisseur_ids)]) {
       await client.query(
-        `INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur) VALUES ($1, $2)`,
-        [id_fabricant, id_fournisseur]
+        `INSERT INTO outillage_fabricant_fournisseur_master(id_fabricant,fournisseur_id)
+         SELECT $1, f.id FROM fournisseurs f JOIN fournisseur_domaine_lien dl ON dl.fournisseur_id=f.id AND dl.domaine_code='outillage'
+         WHERE f.id=$2::uuid AND f.actif=true
+         ON CONFLICT DO NOTHING`, [id_fabricant, fournisseur_id]
       );
     }
     return id_fabricant;
@@ -1389,9 +1439,12 @@ export const outilRepository = {
     id_fabricant: number,
     nom_fabricant: string,
     logo: string | null,
-    id_fournisseurs: number[],
+    fournisseur_ids: string[],
     client: DbClient = db
   ) {
+    if (fournisseur_ids.length && !(await hasTableWith(client, "public.outillage_fabricant_fournisseur_master"))) {
+      throw new HttpError(503, "OUTILLAGE_MASTER_SUPPLIER_SCHEMA_UNAVAILABLE", "Les liens fournisseur maître Outillage ne sont pas disponibles sur cette base.");
+    }
     const result = await client.query(
       `
         UPDATE gestion_outils_fabricant
@@ -1406,15 +1459,20 @@ export const outilRepository = {
 
     if (!result.rows[0]) throw new HttpError(404, "FABRICANT_NOT_FOUND", "Fabricant introuvable");
 
-    await client.query(`DELETE FROM gestion_outils_fournisseur_fabricant WHERE id_fabricant = $1`, [id_fabricant]);
-    for (const id_fournisseur of uniquePositiveIntegers(id_fournisseurs)) {
+    if (!(await hasTableWith(client, "public.outillage_fabricant_fournisseur_master"))) {
+      return {
+        value: asInteger(result.rows[0].id_fabricant),
+        label: asNullableString(result.rows[0].name) ?? "",
+        logo: await resolveMediaId(result.rows[0].logo),
+      };
+    }
+
+    await client.query(`DELETE FROM outillage_fabricant_fournisseur_master WHERE id_fabricant = $1`, [id_fabricant]);
+    for (const fournisseur_id of [...new Set(fournisseur_ids)]) {
       await client.query(
-        `
-          INSERT INTO gestion_outils_fournisseur_fabricant (id_fabricant, id_fournisseur)
-          VALUES ($1, $2)
-          ON CONFLICT DO NOTHING
-        `,
-        [id_fabricant, id_fournisseur]
+        `INSERT INTO outillage_fabricant_fournisseur_master(id_fabricant,fournisseur_id)
+         SELECT $1, f.id FROM fournisseurs f JOIN fournisseur_domaine_lien dl ON dl.fournisseur_id=f.id AND dl.domaine_code='outillage'
+         WHERE f.id=$2::uuid AND f.actif=true ON CONFLICT DO NOTHING`, [id_fabricant, fournisseur_id]
       );
     }
 

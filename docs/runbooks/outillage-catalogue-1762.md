@@ -113,3 +113,49 @@ duplicate abort without deletion.
 No native PostgreSQL server or parallel-session concurrency test was run for
 this delivery. No production migration, deployment, or production data action
 is authorized by this runbook.
+
+## Test-only supplier and price extension (2026-10-25)
+
+The subsequent user confirmation permits the ten catalogue brands as initial
+direct-purchase suppliers in `cerp_test`; distributors will be linked per tool
+later. Canonical `fournisseurs` UUIDs own supplier identity. Legacy integer
+Outillage supplier IDs remain distinct and must never receive a coerced UUID.
+Tool and manufacturer master links are additive to the legacy relationships.
+
+The two files under `db/test-only-patches/20261025_outillage_*` are excluded
+from standard production migrations and each checks `current_database()`.
+Back up and verify `cerp_test` before applying them. Do not apply these patches
+or import data into production or the managed test template. Reads remain
+compatible when optional master-link tables are absent; new receipt writes
+fail with an explicit schema-unavailable response before stock changes.
+
+The private maintenance tools `import-direct-suppliers-test.js` and
+`import-indicative-prices-test.js` default to dry-run. The first accepts a
+reviewed explicit brand mapping and uses canonical supplier/catalogue services.
+The second requires the absolute evidence dataset path and SHA-256; apply also
+requires `CERP_TOOL_INDICATIVE_PRICE_TEST_IMPORT=true`. Both verify the database
+name independently and use the existing inactive, non-superadmin import actor.
+Replays reuse stable supplier keys and immutable price-evidence keys.
+
+The 1,674 printed JANIN/MAGAFOR prices retain EUR/piece, source document/hash,
+PDF page, rectangle and its bottom-left coordinate convention. Unknown tariff
+dates and tax treatment remain unknown. They live in the indicative-evidence
+table, separately from canonical current offers and actual purchases. Linking
+a manually entered supplier catalogue item records `source_kind=MANUAL` and a
+required note, without fabricated PDF evidence.
+
+`POST /outils/reapprovisionner` now requires the canonical supplier UUID,
+confirmed quantity, HT price, currency, unit, receipt date, receipt reference
+and idempotency key. A transaction-scoped actor/key lock serializes replay;
+stock, movement, actual purchase evidence and audit share the transaction. A
+tool still pending its first inventory is refused. Supplier-order drafts do
+not call this endpoint or change stock. Actual price history and the variation
+report compare only identical tool/supplier/currency/unit groups, with an
+earlier purchase available as the period baseline and no percentage for a
+zero preceding price.
+
+Additional local PostgreSQL 18 evidence uses an isolated `cerp_test` cluster,
+not the shared database. It covers UUID foreign keys, source constraints,
+duplicate receipt references, the pre-period price baseline, refusal before
+inventory and stock rollback when actual-price insertion fails. Module tests
+and receipt-service orchestration tests complement these SQL checks.

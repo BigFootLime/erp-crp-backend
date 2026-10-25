@@ -10,6 +10,7 @@ import { deleteStoredImageFile, normalizeStoredImagePath } from "../../../utils/
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository"
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service"
 import { HttpError } from "../../../utils/httpError"
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import {
   type UploadCommitReconciliation,
   withUploadTransaction,
@@ -46,8 +47,13 @@ type RetourStockPayload = SortieStockPayload
 type ReapproPayload = {
   id_outil: number
   quantite: number
-  prix: number
-  id_fournisseur: number
+  prix_unitaire_ht: number
+  fournisseur_id: string
+  purchased_at: string
+  devise: string
+  unite: string
+  reception_ref: string
+  idempotency_key: string
   utilisateur: string
   user_id?: number | null
   reason?: string | null
@@ -104,6 +110,17 @@ function assertNonNegativeNumber(n: number, label: string) {
 
 function assertUser(utilisateur: string) {
   if (!utilisateur) throw new HttpError(401, "UNAUTHORIZED", "Utilisateur requis")
+}
+
+async function requireReceiptSchema(client: Pick<PoolClient, "query">) {
+  const result = await client.query<{ table_name: string | null }>(
+    `SELECT to_regclass('public.outillage_tool_actual_purchase_prices')::text AS table_name,
+            to_regclass('public.outillage_tool_receipt_idempotence')::text AS idempotence_table_name`
+  )
+  const row = result.rows[0] as { table_name?: string | null; idempotence_table_name?: string | null } | undefined
+  if (!row?.table_name || !row.idempotence_table_name) {
+    throw new HttpError(503, "OUTILLAGE_RECEIPT_SCHEMA_UNAVAILABLE", "La réception Outillage n'est pas disponible sur cette base.")
+  }
 }
 
 function normalizeTaxonomyLabel(value: string) {
@@ -491,16 +508,27 @@ export const outilService = {
   },
 
   async reapprovisionner(payload: ReapproPayload) {
-    const { id_outil, quantite, prix, id_fournisseur, utilisateur } = payload
+    const { id_outil, quantite, prix_unitaire_ht, fournisseur_id, utilisateur } = payload
 
     assertPositiveInt(id_outil, "id_outil")
     assertPositiveNumber(quantite, "quantite")
-    assertNonNegativeNumber(prix, "prix")
-    assertPositiveInt(id_fournisseur, "id_fournisseur")
+    assertNonNegativeNumber(prix_unitaire_ht, "prix_unitaire_ht")
     assertUser(utilisateur)
 
     const client = await db.connect()
     return withRealtimeOutboxTransaction(client, async () => {
+      // Do this before any stock mutation: production does not yet carry the
+      // test-only receipt ledger and must fail explicitly rather than partially.
+      await requireReceiptSchema(client)
+      const hash = crypto.createHash("sha256").update(JSON.stringify({ ...payload, utilisateur: undefined, user_id: undefined })).digest("hex")
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`outillage-receipt:${payload.user_id ?? 0}:${payload.idempotency_key}`])
+      const replay = await client.query(`SELECT request_hash,result FROM outillage_tool_receipt_idempotence WHERE actor_id=$1 AND idempotency_key=$2 FOR UPDATE`, [payload.user_id ?? 0, payload.idempotency_key])
+      if (replay.rows[0]) {
+        if (replay.rows[0].request_hash !== hash) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Clé d'idempotence réutilisée avec une autre réception.")
+        return { ...(replay.rows[0].result as object), idempotent_replay: true }
+      }
+      const supplier = await client.query(`SELECT 1 FROM fournisseurs f JOIN fournisseur_domaine_lien dl ON dl.fournisseur_id=f.id AND dl.domaine_code='outillage' WHERE f.id=$1::uuid AND f.actif=true`, [fournisseur_id])
+      if (!supplier.rows[0]) throw new HttpError(422, "OUTILLAGE_SUPPLIER_INVALID", "Le fournisseur maître doit être actif et qualifié Outillage.")
       await outilRepository.addToStock(client, id_outil, quantite)
       const movement = await outilRepository.logMouvementStock(client, {
         id_outil,
@@ -512,10 +540,13 @@ export const outilService = {
         source: payload.source ?? "manual",
         note: payload.note ?? null,
         affaire_id: payload.affaire_id ?? null,
-        id_fournisseur,
-        prix_unitaire: prix,
+        id_fournisseur: null,
+        prix_unitaire: null,
       })
-      await outilRepository.insertHistoriquePrix(client, id_outil, prix, id_fournisseur)
+      await client.query(`INSERT INTO outillage_tool_actual_purchase_prices(id_outil,fournisseur_id,prix_unitaire_ht,devise,unite,purchased_at,purchase_source_ref,created_by,quantite)
+        VALUES($1,$2::uuid,$3,$4,$5,$6::date,$7,$8,$9)`, [id_outil, fournisseur_id, prix_unitaire_ht, payload.devise, payload.unite, payload.purchased_at, payload.reception_ref, payload.user_id ?? null, quantite])
+      await repoInsertAuditLog({ user_id: payload.user_id ?? null, tx: client, ip: null, user_agent: null, device_type: null, os: null, browser: null,
+        body: { event_type: "ACTION", action: "outillage.receipt.recorded", entity_type: "OUTIL", entity_id: String(id_outil), details: { fournisseur_id, reception_ref: payload.reception_ref, quantite, prix_unitaire_ht, devise: payload.devise, unite: payload.unite, purchased_at: payload.purchased_at } } })
       await enqueueEntityChanged(client, {
         entityType: "OUTIL",
         entityId: String(id_outil),
@@ -524,7 +555,9 @@ export const outilService = {
         at: new Date(movement.date).toISOString(),
         invalidateKeys: ["outils", "outils-low-stock", "outils-summary", "outils-recent-movements", "outil-pricing"],
       }, { deduplicationKey: `outillage:movement:${movement.id}` })
-      return { success: true }
+      const result = { success: true, id_outil, reception_ref: payload.reception_ref, actual_purchase_price_recorded: true }
+      await client.query(`INSERT INTO outillage_tool_receipt_idempotence(actor_id,idempotency_key,request_hash,result) VALUES($1,$2,$3,$4::jsonb)`, [payload.user_id ?? 0, payload.idempotency_key, hash, JSON.stringify(result)])
+      return { ...result, idempotent_replay: false }
     })
   },
 
@@ -689,7 +722,7 @@ export const outilSupportService = {
   },
   getFabricants: () => outilRepository.getFabricants(),
   getFournisseurs: (fabricantId?: number) => outilRepository.getFournisseurs(fabricantId),
-  async createFabricant(nom: string, file: Express.Multer.File | undefined, fournisseurs: number[]) {
+  async createFabricant(nom: string, file: Express.Multer.File | undefined, fournisseurs: string[]) {
     return withSingleOutillageUpload({
       context: "outillage.fabricants.create",
       operation: "create",
@@ -708,7 +741,7 @@ export const outilSupportService = {
     id_fabricant: number,
     nom: string,
     file: Express.Multer.File | undefined,
-    fournisseurs: number[]
+    fournisseurs: string[]
   ) {
     const realtimeMutationId = crypto.randomUUID()
     return withSingleOutillageUpload({

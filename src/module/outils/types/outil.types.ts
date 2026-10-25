@@ -139,6 +139,7 @@ export type OutillageImportBatchSummary = {
 
 export type OutilDetail = OutilListItem & {
   fournisseurs: OutilRelationOption[]
+  fournisseur_ids?: Array<{ id: string; label: string }>
   revetements: OutilRelationOption[]
   valeurs_aretes: OutilValeurArete[]
   recent_movements: OutilStockMovement[]

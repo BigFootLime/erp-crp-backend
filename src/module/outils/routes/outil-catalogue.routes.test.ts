@@ -74,7 +74,7 @@ describe("private tool catalogue routes", () => {
       .set("x-test-auth", "yes")
       .set("x-test-configure", "yes")
       .send({})
-      .expect(200);
+      .expect(url.includes("/fournisseurs") ? 410 : 200);
   });
 
   it("protects private asset bytes with the same read capability", async () => {
