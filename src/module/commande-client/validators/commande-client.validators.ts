@@ -46,7 +46,7 @@ const technicalDraftSchema = z.object({
   schema_version: z.union([z.literal(1), z.literal(2)]),
   source: z.literal("DEVIS"),
   source_devis_id: z.coerce.number().int().positive(),
-  source_dossier_id: z.string().uuid().optional().nullable(),
+  source_dossier_id: z.string().guid().optional().nullable(),
   completion_percent: z.coerce.number().int().min(0).max(100),
   sections: z.object({
     identity: technicalDraftSectionSchema,
@@ -71,18 +71,18 @@ const boolFromQuery = z.preprocess((value) => {
 }, z.boolean());
 
 export const commandeLigneInputSchema = z.object({
-  client_forecast_allocations: z.array(z.object({forecast_id:z.string().uuid().transform(value=>value.toLowerCase()),
+  client_forecast_allocations: z.array(z.object({forecast_id:z.string().guid().transform(value=>value.toLowerCase()),
     expected_version:z.number().int().positive().max(2147483645),
     quantity:z.number().positive().max(1_000_000_000).refine(value=>Number(value.toFixed(3))===value,'3 décimales maximum')}).strict()).max(36).optional(),
-  client_contract_line_id: z.string().uuid().transform(value=>value.toLowerCase()).optional().nullable(),
+  client_contract_line_id: z.string().guid().transform(value=>value.toLowerCase()).optional().nullable(),
   id: z.coerce.number().int().positive().optional(),
   designation: z.string().min(1),
-  article_id: z.string().uuid().optional().nullable(),
-  piece_technique_id: z.string().uuid().optional().nullable(),
-  piece_technique_version_id: z.string().uuid().optional().nullable(),
+  article_id: z.string().guid().optional().nullable(),
+  piece_technique_id: z.string().guid().optional().nullable(),
+  piece_technique_version_id: z.string().guid().optional().nullable(),
   source_devis_ligne_id: z.coerce.number().int().positive().optional().nullable(),
-  source_article_devis_id: z.string().uuid().optional().nullable(),
-  source_dossier_devis_id: z.string().uuid().optional().nullable(),
+  source_article_devis_id: z.string().guid().optional().nullable(),
+  source_dossier_devis_id: z.string().guid().optional().nullable(),
   code_piece: z.string().optional().nullable(),
   quantite: z.number().positive(),
   unite: z.string().optional().nullable(),
@@ -98,7 +98,7 @@ export const commandeLigneInputSchema = z.object({
   reconciliation: commandeLineReconciliationSchema.optional().nullable(),
   article_devis_data: z
     .object({
-      id: z.string().uuid(),
+      id: z.string().guid(),
       devis_id: z.coerce.number().int().positive(),
       code: z.string().trim().min(1),
       designation: z.string().trim().min(1),
@@ -107,18 +107,18 @@ export const commandeLigneInputSchema = z.object({
       family_code: z.string().trim().min(1),
       plan_index: z.coerce.number().int().positive().optional().default(1),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
-      source_official_article_id: z.string().uuid().optional().nullable(),
+      source_official_article_id: z.string().guid().optional().nullable(),
     })
     .optional()
     .nullable(),
   dossier_technique_piece_devis_data: z
     .object({
-      id: z.string().uuid(),
-      article_devis_id: z.string().uuid(),
+      id: z.string().guid(),
+      article_devis_id: z.string().guid(),
       devis_id: z.coerce.number().int().positive(),
       code_piece: z.string().trim().min(1),
       designation: z.string().trim().min(1),
-      source_official_piece_technique_id: z.string().uuid().optional().nullable(),
+      source_official_piece_technique_id: z.string().guid().optional().nullable(),
       payload: z.record(z.string(), z.unknown()).optional().default({}),
     })
     .optional()
@@ -144,8 +144,8 @@ export const createCommandeBodySchema = z.preprocess((value) => {
 },
 z.object({
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
-  client_contract_call: z.object({contract_id:z.string().uuid().transform(value=>value.toLowerCase()),
-    expected_version:z.number().int().positive().max(2147483646),idempotency_key:z.string().uuid().transform(value=>value.toLowerCase())}).strict().optional().nullable(),
+  client_contract_call: z.object({contract_id:z.string().guid().transform(value=>value.toLowerCase()),
+    expected_version:z.number().int().positive().max(2147483646),idempotency_key:z.string().guid().transform(value=>value.toLowerCase())}).strict().optional().nullable(),
   creation_flow_version: commandeCreationFlowVersionSchema.optional().default(1),
   save_intent: z.enum(["DRAFT", "VALIDATE"]).optional().default("VALIDATE"),
   numero: z.string().trim().min(1).optional(),
@@ -155,14 +155,14 @@ z.object({
   source_devis_version_id: z.coerce.number().int().positive().optional().nullable(),
   officialize_preparatory_data: z.boolean().optional().default(false),
   date_commande: isoDate,
-  contact_id: z.string().uuid().optional().nullable(),
-  destinataire_id: z.string().uuid().optional().nullable(),
-  adresse_facturation_id: z.string().uuid().optional().nullable(),
+  contact_id: z.string().guid().optional().nullable(),
+  destinataire_id: z.string().guid().optional().nullable(),
+  adresse_facturation_id: z.string().guid().optional().nullable(),
   emetteur: z.string().optional().nullable(),
   code_client: z.string().optional().nullable(),
   arc_edi: z.boolean().optional().default(false),
   arc_date_envoi: z.string().optional().nullable(),
-  compteur_affaire_id: z.string().uuid().optional().nullable(),
+  compteur_affaire_id: z.string().guid().optional().nullable(),
   type_affaire: z.enum(["livraison"]).optional().default("livraison"),
 
   cadre_start_date: isoDate.optional().nullable(),
@@ -187,12 +187,12 @@ z.object({
     .optional()
     .nullable(),
 
-  mode_port_id: z.string().uuid().optional().nullable(),
-  mode_reglement_id: z.string().uuid().optional().nullable(),
+  mode_port_id: z.string().guid().optional().nullable(),
+  mode_reglement_id: z.string().guid().optional().nullable(),
   conditions_paiement_id: z.number().int().optional().nullable(),
   delivery_prepayment_requirement: z.enum(["NOT_REQUIRED", "PROFORMA"]).optional(),
-  biller_id: z.string().uuid().optional().nullable(),
-  compte_vente_id: z.string().uuid().optional().nullable(),
+  biller_id: z.string().guid().optional().nullable(),
+  compte_vente_id: z.string().guid().optional().nullable(),
   commentaire: z.string().optional().nullable(),
   remise_globale: z.number().min(0).optional().default(0),
   total_ht: z.number().min(0).optional().default(0),
@@ -402,14 +402,14 @@ export const releaseLineIdParamSchema = z.object({
 export const documentIdParamSchema = z.object({
   params: z.object({
     id: z.string().regex(/^\d+$/, "id must be an integer"),
-    docId: z.string().uuid("docId must be a UUID"),
+    docId: z.string().guid("docId must be a UUID"),
   }),
 });
 
 export const createCadreReleaseLineBodySchema = z.object({
   ordre: z.coerce.number().int().positive().optional(),
   commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
-  article_id: z.string().uuid().optional().nullable(),
+  article_id: z.string().guid().optional().nullable(),
   designation: z.string().trim().min(1).max(10000),
   code_piece: z.string().trim().min(1).max(200).optional().nullable(),
   quantite: z.coerce.number().positive(),
@@ -422,7 +422,7 @@ export type CreateCadreReleaseLineBodyDTO = z.infer<typeof createCadreReleaseLin
 export const updateCadreReleaseLineBodySchema = z.object({
   ordre: z.coerce.number().int().positive().optional(),
   commande_ligne_id: z.coerce.number().int().positive().optional().nullable(),
-  article_id: z.string().uuid().optional().nullable(),
+  article_id: z.string().guid().optional().nullable(),
   designation: z.string().trim().min(1).max(10000).optional(),
   code_piece: z.string().trim().min(1).max(200).optional().nullable(),
   quantite: z.coerce.number().positive().optional(),

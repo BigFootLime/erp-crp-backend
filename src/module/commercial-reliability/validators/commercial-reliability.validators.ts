@@ -49,7 +49,7 @@ export const discountRequestBodySchema = z.object({
 });
 
 export const discountDecisionBodySchema = z.object({
-  approval_request_id: z.string().uuid(),
+  approval_request_id: z.string().guid(),
   decision: z.enum(["APPROVE", "REJECT"]),
   note: boundedNote,
 });

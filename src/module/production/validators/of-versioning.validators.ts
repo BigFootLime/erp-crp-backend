@@ -16,15 +16,15 @@ export const ofIdParam = z.object({
 });
 
 export const revisionIdParam = ofIdParam.extend({
-  revisionId: z.string().uuid(),
+  revisionId: z.string().guid(),
 });
 
 export const documentIdParam = ofIdParam.extend({
-  documentId: z.string().uuid(),
+  documentId: z.string().guid(),
 });
 
 export const planningIdParam = ofIdParam.extend({
-  versionId: z.string().uuid(),
+  versionId: z.string().guid(),
 });
 
 /** Modification d'une phase, appliquée à la NOUVELLE révision seulement. */
@@ -39,7 +39,7 @@ const operationChangeSchema = z.object({
     .regex(/^[A-Z0-9_]{1,24}$/, "Code de famille machine invalide.")
     .nullable()
     .optional(),
-  machineId: z.string().uuid().nullable().optional(),
+  machineId: z.string().guid().nullable().optional(),
   // Chaîne vide interdite : un n° de programme vide doit être `null` pour que le
   // document le SIGNALE au lieu de l'imprimer en blanc.
   programme: z.string().trim().min(1).max(120).nullable().optional(),
@@ -57,8 +57,8 @@ export const createRevisionSchema = z.object({
 });
 
 export const compareRevisionsQuery = z.object({
-  from: z.string().uuid(),
-  to: z.string().uuid(),
+  from: z.string().guid(),
+  to: z.string().guid(),
 });
 
 export const createVisaSchema = z.object({
@@ -97,7 +97,7 @@ const plannedOperationSchema = z.object({
     .trim()
     .regex(/^[A-Z0-9_]{1,24}$/)
     .nullable(),
-  machineId: z.string().uuid().nullable(),
+  machineId: z.string().guid().nullable(),
   machineLabel: z.string().trim().max(200).nullable(),
   centre: z.string().trim().max(50).nullable().optional(),
   dateDebut: z.string().trim().nullable(),
@@ -137,7 +137,7 @@ export const createPlanningDraftSchema = z.object({
       .max(500)
       .optional(),
   }),
-  sourceProposalId: z.string().uuid().nullable().optional(),
+  sourceProposalId: z.string().guid().nullable().optional(),
 });
 
 export const planningDecisionSchema = z.object({
@@ -171,7 +171,7 @@ export const updateArDossierSchema = z.object({
 });
 
 export const emitDocumentSchema = z.object({
-  revisionId: z.string().uuid().nullable().optional(),
+  revisionId: z.string().guid().nullable().optional(),
   // Empreinte vue par l'aperçu. Facultative dans la forme, mais son absence
   // renonce au verrou anti-dérive : l'appelant assume une émission non gardée.
   expectedSnapshotSha256: z
@@ -183,7 +183,7 @@ export const emitDocumentSchema = z.object({
 });
 
 export const previewDocumentQuery = z.object({
-  revisionId: z.string().uuid().nullable().optional(),
+  revisionId: z.string().guid().nullable().optional(),
 });
 
 export const listArQuery = z.object({

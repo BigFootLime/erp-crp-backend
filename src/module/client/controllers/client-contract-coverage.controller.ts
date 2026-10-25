@@ -7,7 +7,7 @@ import { getClientContractCoverage } from '../services/client-contract-coverage.
 export const readClientContractCoverage: RequestHandler = async (req, res, next) => {
   try {
     const result = await getClientContractCoverage(contractClientIdSchema.parse(req.params.id),
-      z.string().uuid().transform(value => value.toLowerCase()).parse(req.params.contractId), clientContractCoverageQuerySchema.parse(req.query));
+      z.string().guid().transform(value => value.toLowerCase()).parse(req.params.contractId), clientContractCoverageQuerySchema.parse(req.query));
     res.setHeader('Cache-Control', 'private, no-store'); res.json(result);
   } catch (error) { next(error); }
 };

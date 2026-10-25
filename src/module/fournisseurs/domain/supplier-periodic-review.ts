@@ -15,7 +15,7 @@ const score = z.number().int().min(0).max(5).nullable();
 const policy = z
   .object({
     action: z.literal("CONFIGURE"),
-    idempotency_key: z.string().uuid(),
+    idempotency_key: z.string().guid(),
     domaine_code: z.string().trim().min(1).max(80).nullable(),
     enabled: z.boolean(),
     cadence_months: z.number().int().min(1).max(60),
@@ -27,9 +27,9 @@ const policy = z
 const evaluation = z
   .object({
     action: z.literal("EVALUATE"),
-    idempotency_key: z.string().uuid(),
-    scope_id: z.string().uuid(),
-    expected_policy_id: z.string().uuid(),
+    idempotency_key: z.string().guid(),
+    scope_id: z.string().guid(),
+    expected_policy_id: z.string().guid(),
     period_from: reviewDate,
     period_to: reviewDate,
     evaluated_on: reviewDate,
@@ -40,8 +40,8 @@ const evaluation = z
     responsiveness_score: score,
     observations: z.string().trim().min(3).max(4000),
     actions: z.string().trim().min(3).max(4000),
-    version_id: z.string().uuid(),
-    supersedes_id: z.string().uuid().nullable(),
+    version_id: z.string().guid(),
+    supersedes_id: z.string().guid().nullable(),
     correction_reason: reason.nullable(),
   })
   .strict();

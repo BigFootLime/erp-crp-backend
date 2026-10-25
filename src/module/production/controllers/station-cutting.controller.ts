@@ -24,7 +24,7 @@ function station(req: Request) {
 const scan = z
   .object({
     code: z.string().trim().min(1).max(256),
-    eventId: z.string().uuid(),
+    eventId: z.string().guid(),
   })
   .strict();
 export const readCutting = asyncHandler(async (req, res) => {

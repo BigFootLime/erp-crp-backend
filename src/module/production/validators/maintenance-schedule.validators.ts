@@ -1,5 +1,5 @@
 import { z } from 'zod';
-const uuid = z.string().uuid().transform(v => v.toLowerCase());
+const uuid = z.string().guid().transform(v => v.toLowerCase());
 const date = z.string().date();
 const time = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, 'Saisissez une heure entre 00:00 et 23:59.');
 const target = z.object({

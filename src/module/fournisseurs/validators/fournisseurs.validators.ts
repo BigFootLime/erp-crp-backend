@@ -1,7 +1,7 @@
 import { supplierPriceTiersSchema } from "./supplier-price-tiers";
 import { z } from "zod"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 const siren = z.string().trim().regex(/^\d{9}$/, "SIREN invalide")
 const electronicAddress = z.object({
   scheme: z.string().trim().regex(/^[A-Za-z0-9]{4}$/, "Le schéma d'adresse électronique doit contenir 4 caractères alphanumériques").transform((value) => value.toUpperCase()),

@@ -25,7 +25,7 @@ export type FinanceConfigurationReadinessQueryDTO = z.infer<
 export const activateFinanceConfigurationBodySchema = z
   .object({
     confirm: z.literal(true),
-    legal_entity_code: z.string().uuid(),
+    legal_entity_code: z.string().guid(),
     policy_version: safeIdentifier("La version de politique", 3, 80),
     effective_from: isoDate,
     effective_to: isoDate.optional().nullable(),

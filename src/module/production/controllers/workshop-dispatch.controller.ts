@@ -7,9 +7,9 @@ import { buildAuditContext } from "../../project-office/controllers/project-offi
 import { listWorkshopDispatchJobs } from "../repository/workshop-dispatch.repository";
 import { claimWorkshopDispatchJob, printWorkshopDispatchJob, acknowledgeWorkshopDispatchJob } from "../services/workshop-dispatch.service";
 import { printResponseContext, setWorkshopPrintHeaders } from "./workshop-print-response";
-const device = z.object({ deviceId: z.string().uuid() }).strict();
-const params = z.object({ jobId: z.string().uuid() });
-const receipt = device.extend({ intentId: z.string().uuid(), outcome: z.enum(["SPOOLED", "FAILED", "UNCERTAIN"]) });
+const device = z.object({ deviceId: z.string().guid() }).strict();
+const params = z.object({ jobId: z.string().guid() });
+const receipt = device.extend({ intentId: z.string().guid(), outcome: z.enum(["SPOOLED", "FAILED", "UNCERTAIN"]) });
 function actor(req: Request) {
   if (!req.user || !Number.isSafeInteger(req.user.id)) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
   return { userId: req.user.id, username: req.user.username ?? `#${req.user.id}`, role: req.user.role ?? null };

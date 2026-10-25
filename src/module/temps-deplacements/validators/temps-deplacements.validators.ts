@@ -59,7 +59,7 @@ export const meAnomaliesQuerySchema = z.object({
   from: dateOnly.optional(),
   to: dateOnly.optional(),
 });
-export const employeeIdParamsSchema = z.object({ id: z.string().uuid("employee id (uuid) attendu") });
+export const employeeIdParamsSchema = z.object({ id: z.string().guid("employee id (uuid) attendu") });
 
 // --- T4 : corrections tracées + validation ---
 export const HR_ADJUSTMENT_TARGETS = ["EVENT", "DAY", "WEEK"] as const;
@@ -68,7 +68,7 @@ export const HR_ADJUSTMENT_TARGETS = ["EVENT", "DAY", "WEEK"] as const;
 export const createAdjustmentSchema = z
   .object({
     target_type: z.enum(HR_ADJUSTMENT_TARGETS),
-    target_id: z.string().uuid("target_id (uuid) attendu"),
+    target_id: z.string().guid("target_id (uuid) attendu"),
     reason: z.string().trim().min(3, "Motif obligatoire (min 3 caractères)").max(2000),
     old_value: z.record(z.string(), z.unknown()).optional(),
     new_value: z.record(z.string(), z.unknown()).optional(),
@@ -76,7 +76,7 @@ export const createAdjustmentSchema = z
   .strict();
 export type CreateAdjustmentBody = z.infer<typeof createAdjustmentSchema>;
 
-export const uuidParamsSchema = z.object({ id: z.string().uuid("id (uuid) attendu") });
+export const uuidParamsSchema = z.object({ id: z.string().guid("id (uuid) attendu") });
 export const teamAnomaliesQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
 // --- T5 : admin RH (règles / contrats / horaires) ---
@@ -137,13 +137,13 @@ export type RuleSetBody = z.infer<typeof ruleSetBodySchema>;
 
 export const contractBodySchema = z
   .object({
-    employee_id: z.string().uuid(),
+    employee_id: z.string().guid(),
     contract_type: z.enum(HR_CONTRACT_TYPES),
     weekly_hours_target: z.number().min(0).max(168),
     daily_hours_target: z.number().min(0).max(24).nullable().default(null),
     start_date: dateOnly,
     end_date: dateOnly.nullable().default(null),
-    rule_set_id: z.string().uuid().nullable().default(null),
+    rule_set_id: z.string().guid().nullable().default(null),
     active: z.boolean().default(true),
   })
   .strict();
@@ -151,7 +151,7 @@ export type ContractBody = z.infer<typeof contractBodySchema>;
 
 export const scheduleBodySchema = z
   .object({
-    employee_id: z.string().uuid(),
+    employee_id: z.string().guid(),
     day_of_week: z.number().int().min(0).max(6),
     expected_start: timeOfDay.default(null),
     expected_end: timeOfDay.default(null),
@@ -174,7 +174,7 @@ export const createKmSchema = z
   .object({
     date: dateOnly,
     type: z.enum(HR_KM_TYPES).default("MISSION"),
-    vehicle_id: z.string().uuid().nullable().default(null),
+    vehicle_id: z.string().guid().nullable().default(null),
     start_location: z.string().trim().max(300).nullable().default(null),
     end_location: z.string().trim().max(300).nullable().default(null),
     start_odometer: z.number().min(0).max(9_999_999).nullable().default(null),
@@ -222,14 +222,14 @@ export const deviceStatusSchema = z.object({ status: z.enum(["ACTIVE", "DISABLED
 
 export const badgeBodySchema = z
   .object({
-    employee_id: z.string().uuid(),
+    employee_id: z.string().guid(),
     badge_uid: z.string().trim().min(1, "badge_uid requis").max(256),
     badge_label: z.string().trim().max(200).nullable().default(null),
   })
   .strict();
 export type BadgeBody = z.infer<typeof badgeBodySchema>;
 
-export const listBadgesQuerySchema = z.object({ employee_id: z.string().uuid().optional() });
+export const listBadgesQuerySchema = z.object({ employee_id: z.string().guid().optional() });
 
 // --- T7 : exports paie ---
 export const HR_EXPORT_FORMATS = ["CSV", "PDF"] as const;
@@ -237,8 +237,8 @@ export const exportBodySchema = z
   .object({ period_start: dateOnly, period_end: dateOnly, format: z.enum(HR_EXPORT_FORMATS) })
   .strict();
 export type ExportBody = z.infer<typeof exportBodySchema>;
-export const listContractsQuerySchema = z.object({ employee_id: z.string().uuid().optional() });
-export const listSchedulesQuerySchema = z.object({ employee_id: z.string().uuid("employee_id (uuid) requis") });
+export const listContractsQuerySchema = z.object({ employee_id: z.string().guid().optional() });
+export const listSchedulesQuerySchema = z.object({ employee_id: z.string().guid("employee_id (uuid) requis") });
 
 export const HR_ABSENCE_TYPES = ["PAID_LEAVE", "SICK_LEAVE", "RTT", "TRAINING", "OTHER"] as const;
 export const HR_ABSENCE_STATUSES = ["REQUESTED", "APPROVED", "REJECTED", "CANCELLED"] as const;
@@ -258,7 +258,7 @@ export const absenceStatusQuerySchema = z.object({ status: z.enum(HR_ABSENCE_STA
 export const createPeriodClosureSchema = z.object({
   period_start: dateOnly,
   period_end: dateOnly,
-  employee_id: z.string().uuid().nullish(),
+  employee_id: z.string().guid().nullish(),
   timezone: timezone.default("Europe/Paris"),
   reason: z.string().trim().min(5).max(2000),
 }).strict().refine((value) => value.period_end >= value.period_start, {

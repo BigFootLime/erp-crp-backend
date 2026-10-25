@@ -10,7 +10,7 @@ export function uuidRouteParam(name: string) {
           ? `Le paramètre de route "${name}" est requis`
           : `Le paramètre de route "${name}" doit être fourni une seule fois sous forme de chaîne`,
     })
-    .uuid(`Le paramètre de route "${name}" doit être un UUID valide`)
+    .guid(`Le paramètre de route "${name}" doit être un UUID valide`)
 }
 
 /**

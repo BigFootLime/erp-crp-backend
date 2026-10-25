@@ -24,7 +24,7 @@ function identity(
   const raw = req.params.id;
   const valid =
     scope === "commande-fournisseur"
-      ? z.string().uuid().safeParse(raw)
+      ? z.string().guid().safeParse(raw)
       : z
           .string()
           .regex(/^[1-9][0-9]{0,14}$/)
@@ -86,7 +86,7 @@ export function generalTermsHandlers(
         entity_type: parentTypes[scope],
         entity_id: id,
       });
-      const archive = z.string().uuid().safeParse(req.params.documentId);
+      const archive = z.string().guid().safeParse(req.params.documentId);
       if (!archive.success)
         throw new HttpError(
           400,

@@ -134,7 +134,7 @@ export const readPurchaseQualification: RequestHandler = async (req,res,next) =>
 export const readSupplierConsultations:RequestHandler=async(req,res,next)=>{
   try{
     const {params}=commandeIdParamSchema.parse({params:req.params});
-    const query=z.object({round:z.string().uuid().optional()}).strict().parse(req.query);
+    const query=z.object({round:z.string().guid().optional()}).strict().parse(req.query);
     res.json(await readSupplierConsultationsSVC(params.id,req.user?.role,query.round,buildAuditContext(req).user_id));
   }catch(error){next(error);}
 };

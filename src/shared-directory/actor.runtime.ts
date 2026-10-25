@@ -5,7 +5,7 @@ import {sharedDirectoryClient,sharedDirectorySite,projectDirectoryProfile} from 
 import {synchronizeCommonAccess} from './common-access';
 import {bumpRealtimeSessionEpoch} from '../shared/realtime/realtime-control-plane';
 import {HttpError} from '../utils/httpError';
-const actorSchema=z.object({profile:directoryProfileSchema,global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),mfa_factor_id:z.string().uuid().nullable(),mfa_factor_version:z.number().int().positive().nullable(),mfa_required:z.boolean()}).strict().refine(value=>(value.mfa_factor_id===null)===(value.mfa_factor_version===null),'Incomplete actor MFA factor');
+const actorSchema=z.object({profile:directoryProfileSchema,global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),mfa_factor_id:z.string().guid().nullable(),mfa_factor_version:z.number().int().positive().nullable(),mfa_required:z.boolean()}).strict().refine(value=>(value.mfa_factor_id===null)===(value.mfa_factor_version===null),'Incomplete actor MFA factor');
 /** Native PIN remains local. Its actor lifecycle and base permissions are common. */
 export async function synchronizeDirectoryActor(db:Pool,userId:number){
  const directory=sharedDirectoryClient();if(!directory)return null;

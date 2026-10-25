@@ -39,7 +39,7 @@ export const adminNewPasswordSchema = z
 export const provisioningIdempotencyKeySchema = z
   .string({ error: "Clé d'idempotence requise" })
   .trim()
-  .uuid("Clé d'idempotence invalide");
+  .guid("Clé d'idempotence invalide");
 
 export const adminUserIdParamSchema = z.object({
   params: z.object({ id: userIdParam }),

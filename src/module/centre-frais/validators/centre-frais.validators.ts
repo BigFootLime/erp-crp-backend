@@ -11,7 +11,7 @@ export const createPieceCFSchema = z.object({
 })
 
 export const idParamSchema = z.object({
-  params: z.object({ id: z.string().uuid("id must be a uuid") }),
+  params: z.object({ id: z.string().guid("id must be a uuid") }),
 })
 
 export function validate(schema: z.ZodTypeAny) {

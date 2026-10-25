@@ -8,8 +8,8 @@ export const commercialTermsScopeSchema = z.enum([
 export type CommercialTermsScope = z.infer<typeof commercialTermsScopeSchema>;
 export const generalTermsSnapshotSchema = z.object({
   kind: z.enum(["CGV", "CGA"]),
-  document_id: z.string().uuid(),
-  version_id: z.string().uuid(),
+  document_id: z.string().guid(),
+  version_id: z.string().guid(),
   code: z.string().min(1),
   title: z.string().min(1),
   version_number: z.number().int().positive(),
@@ -20,10 +20,10 @@ export const generalTermsSnapshotSchema = z.object({
 export type GeneralTermsSnapshot = z.infer<typeof generalTermsSnapshotSchema>;
 export const selectGeneralTermsSchema = z
   .object({
-    version_id: z.string().uuid(),
-    expected_selection_id: z.string().uuid().nullable(),
+    version_id: z.string().guid(),
+    expected_selection_id: z.string().guid().nullable(),
     reason: z.string().trim().min(3).max(500),
-    idempotency_key: z.string().uuid(),
+    idempotency_key: z.string().guid(),
   })
   .strict();
 export function termsKind(scope: CommercialTermsScope): "CGV" | "CGA" {

@@ -3,7 +3,7 @@ import { z } from "zod";
 // PostgreSQL restitue les UUID en minuscules. Canonicaliser dès la frontière
 // HTTP garantit que hash, réservation et recherche de dépendance utilisent la
 // même identité textuelle, quelle que soit la casse envoyée par la station.
-const uuid = z.string().uuid().transform((value) => value.toLowerCase());
+const uuid = z.string().guid().transform((value) => value.toLowerCase());
 const nullableUuid = uuid.nullable();
 const idempotencyKey = z.string().trim().min(8).max(200);
 const occurredAt = z.string().trim()

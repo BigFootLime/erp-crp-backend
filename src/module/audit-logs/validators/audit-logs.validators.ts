@@ -10,7 +10,7 @@ export const createAuditLogBodySchema = z
     entity_type: z.string().trim().max(80).optional().nullable(),
     entity_id: z.string().trim().max(80).optional().nullable(),
     path: z.string().trim().max(400).optional().nullable(),
-    client_session_id: z.string().uuid().optional().nullable(),
+    client_session_id: z.string().guid().optional().nullable(),
     details: z.record(z.string(), z.unknown()).refine(value => Buffer.byteLength(JSON.stringify(value), "utf8") <= 4096, "Les détails du journal sont trop volumineux.").optional().nullable(),
   })
   .strict();

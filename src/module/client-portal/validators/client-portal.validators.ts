@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const email = z.string().trim().email().max(254);
 const password = z.string().min(12).max(128)
   .regex(/[A-Z]/, "Une majuscule est requise.")
@@ -52,7 +52,7 @@ export const adminRevokePortalPublicationSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict();
 
-export const idempotencyKeySchema = z.string().uuid();
+export const idempotencyKeySchema = z.string().guid();
 
 export type PortalLoginInput = z.infer<typeof portalLoginSchema>;
 export type PortalActivateInput = z.infer<typeof portalActivateSchema>;

@@ -1,51 +1,51 @@
 import {z} from "zod";
 export const materialIdentitySchema=z.object({id:z.coerce.number().int().positive()});
-export const materialSourceRefSchema=z.string().uuid();
-export const supplierQualificationQuerySchema=z.object({articleId:z.string().uuid(),supplierId:z.string().uuid(),catalogueId:z.string().uuid().optional()}).strict();
-export const supplierRecommendationQuerySchema=z.object({articleId:z.string().uuid(),quantity:z.coerce.number().finite().positive().max(1e9).optional(),unit:z.string().trim().min(1).max(30).optional(),currency:z.string().regex(/^[A-Z]{3}$/).default('EUR')}).strict();
-export const materialCommandSchema=z.object({expectedVersion:z.string().regex(/^[a-f0-9]{64}$/),idempotencyKey:z.string().uuid()}).strict();
+export const materialSourceRefSchema=z.string().guid();
+export const supplierQualificationQuerySchema=z.object({articleId:z.string().guid(),supplierId:z.string().guid(),catalogueId:z.string().guid().optional()}).strict();
+export const supplierRecommendationQuerySchema=z.object({articleId:z.string().guid(),quantity:z.coerce.number().finite().positive().max(1e9).optional(),unit:z.string().trim().min(1).max(30).optional(),currency:z.string().regex(/^[A-Z]{3}$/).default('EUR')}).strict();
+export const materialCommandSchema=z.object({expectedVersion:z.string().regex(/^[a-f0-9]{64}$/),idempotencyKey:z.string().guid()}).strict();
 const text=z.string().trim().min(1).max(300);
 export const materialConfigurationSchema=materialCommandSchema.extend({configuration:z.object({
-  operationId:z.string().uuid(),requirements:z.object({grade:text.nullable(),condition:text.nullable(),ownerClientId:z.string().trim().min(1).max(80).nullable(),dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),certificates:z.array(text).max(20),manualChecks:z.array(text).max(20)}).strict(),
+  operationId:z.string().guid(),requirements:z.object({grade:text.nullable(),condition:text.nullable(),ownerClientId:z.string().trim().min(1).max(80).nullable(),dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),certificates:z.array(text).max(20),manualChecks:z.array(text).max(20)}).strict(),
   supplyMode:z.enum(["PURCHASE","CUSTOMER"]),debitRule:z.object({form:z.enum(["UNIT","BAR","SHEET"]),stockUnit:z.string().trim().min(1).max(20),unitsPerBlank:z.number().finite().positive().max(1e9),kerfPerBlank:z.number().finite().min(0).max(1e9),yieldValidated:z.boolean()}).strict(),
-  allowPartial:z.boolean(),supplierId:z.string().uuid().nullable(),destinationId:z.string().uuid().nullable(),
+  allowPartial:z.boolean(),supplierId:z.string().guid().nullable(),destinationId:z.string().guid().nullable(),
 }).strict()}).strict();
 export const materialConfirmationSchema=materialCommandSchema.extend({
   existingPurchasesReviewed:z.boolean().default(false),
-  selections:z.array(z.object({needKey:z.string().uuid(),batchId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100),
-  futureSelections:z.array(z.object({needKey:z.string().uuid(),lineId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),requirementsReviewed:z.literal(true)}).strict()).max(100).default([]),
+  selections:z.array(z.object({needKey:z.string().guid(),batchId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100),
+  futureSelections:z.array(z.object({needKey:z.string().guid(),lineId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),requirementsReviewed:z.literal(true)}).strict()).max(100).default([]),
 }).strict();
 export type MaterialConfirmation=Omit<z.infer<typeof materialConfirmationSchema>,'existingPurchasesReviewed'>&{existingPurchasesReviewed?:boolean};
-export const materialSupplierSchema=materialCommandSchema.extend({supplierId:z.string().uuid(),destinationId:z.string().uuid().nullable()}).strict();
+export const materialSupplierSchema=materialCommandSchema.extend({supplierId:z.string().guid(),destinationId:z.string().guid().nullable()}).strict();
 export type MaterialSupplier=z.infer<typeof materialSupplierSchema>;
 export const materialLotVerificationSchema=materialCommandSchema.extend({
-  batchId:z.string().uuid(),grade:text.nullable(),condition:text.nullable(),
+  batchId:z.string().guid(),grade:text.nullable(),condition:text.nullable(),
   dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),
-  certificates:z.array(z.object({label:text,documentId:z.string().uuid()}).strict()).max(20),
+  certificates:z.array(z.object({label:text,documentId:z.string().guid()}).strict()).max(20),
   evidence:z.string().trim().min(10).max(4000),manualRequirementsChecked:z.boolean(),
 }).strict();
 export type MaterialLotVerification=z.infer<typeof materialLotVerificationSchema>;
 const materialBarClosure=z.object({discardedQuantity:z.number().finite().nonnegative().max(1e9).multipleOf(.001),acknowledgedLargeRemainder:z.boolean()}).strict();
-const materialBarCut=z.object({barId:z.string().uuid(),expectedVersion:z.number().int().positive(),
+const materialBarCut=z.object({barId:z.string().guid(),expectedVersion:z.number().int().positive(),
   quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
   yield:z.object({good:z.number().int().nonnegative().max(1e9),scrap:z.number().int().nonnegative().max(1e9)}).strict().optional(),
   barClosure:materialBarClosure.optional(),
 }).strict();
 export const materialDebitSchema=materialCommandSchema.extend({
-  operationId:z.string().uuid(),
+  operationId:z.string().guid(),
   good:z.number().int().nonnegative().max(1e9),
   scrap:z.number().int().nonnegative().max(1e9),
   scrapReason:z.string().trim().min(1).max(100).nullable(),
   note:z.string().trim().min(10).max(2000),
   varianceReason:z.string().trim().min(10).max(2000).nullable().optional(),
-  remnants:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
+  remnants:z.array(z.object({reservationId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),
     dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9))}).strict()).max(100).default([]),
-  sources:z.array(z.object({reservationId:z.string().uuid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive(),
+  sources:z.array(z.object({reservationId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),expectedVersion:z.number().int().positive(),
     yield:z.object({good:z.number().int().nonnegative().max(1e9),scrap:z.number().int().nonnegative().max(1e9)}).strict().optional(),
     barClosure:materialBarClosure.optional(),
     bars:z.array(materialBarCut).min(1).max(100).optional(),
   }).strict()).min(1).max(100),
-  successorOperationId:z.string().uuid().nullable(),
+  successorOperationId:z.string().guid().nullable(),
 }).strict().superRefine((v,ctx)=>{
   if(v.good+v.scrap===0)ctx.addIssue({code:'custom',path:['good'],message:'Indiquez les bruts obtenus ou rebutés.'});
   if(v.scrap>0&&!v.scrapReason)ctx.addIssue({code:'custom',path:['scrapReason'],message:'Précisez la cause du rebut.'});
@@ -59,12 +59,12 @@ export const materialDebitSchema=materialCommandSchema.extend({
   }
 });
 export type MaterialDebit=z.infer<typeof materialDebitSchema>;
-export const materialDebitCorrectionSchema=materialCommandSchema.extend({debitId:z.string().uuid(),reason:z.string().trim().min(10).max(2000)}).strict();
+export const materialDebitCorrectionSchema=materialCommandSchema.extend({debitId:z.string().guid(),reason:z.string().trim().min(10).max(2000)}).strict();
 export type MaterialDebitCorrection=z.infer<typeof materialDebitCorrectionSchema>;
-export const materialTransferSchema=materialCommandSchema.extend({debitId:z.string().uuid(),successorOperationId:z.string().uuid(),
+export const materialTransferSchema=materialCommandSchema.extend({debitId:z.string().guid(),successorOperationId:z.string().guid(),
   action:z.enum(['RELEASE','RETURN']),quantity:z.number().int().positive().max(1e9),reason:z.string().trim().min(10).max(2000)}).strict();
 export type MaterialTransfer=z.infer<typeof materialTransferSchema>;
-export const materialReconciliationSchema=materialCommandSchema.extend({previousNeedId:z.string().uuid(),targetNeedId:z.string().uuid().nullable(),
+export const materialReconciliationSchema=materialCommandSchema.extend({previousNeedId:z.string().guid(),targetNeedId:z.string().guid().nullable(),
   disposition:z.enum(['CARRY','KEEP_SEPARATE']),reason:z.string().trim().min(10).max(2000)}).strict().superRefine((v,ctx)=>{
   if((v.disposition==='CARRY')!==(v.targetNeedId!==null))ctx.addIssue({code:'custom',path:['targetNeedId'],message:'Choisissez un besoin destinataire pour reprendre la couverture, ou conservez l’engagement séparément.'});
 });

@@ -37,7 +37,7 @@ export async function directoryAdminCall(db:Pool,req:Request,operation:string,in
 export async function directoryTargetId(db:Pool,localId:number){
  const value=(await db.query('SELECT directory_profile_id FROM public.users WHERE id=$1',[localId])).rows[0]?.directory_profile_id;
  if(!value)throw new HttpError(404,'USER_NOT_FOUND','Ce compte n’appartient pas au nouvel annuaire commun.');
- return z.string().uuid().parse(value);
+ return z.string().guid().parse(value);
 }
 export async function directoryAdminList(db:Pool,req:Request){
  const result=await directoryAdminCall(db,req,'admin-users',{});const rows=z.array(entrySchema).parse(result);
@@ -48,7 +48,7 @@ export async function directoryAdminUser(db:Pool,req:Request,operation:string,in
 }
 export async function directoryAdminSuperadmin(db:Pool,req:Request,localId:number,input:{is_superadmin:boolean;expected_version:number}){
  const profileId=await directoryTargetId(db,localId);
- const result=z.object({profile_id:z.string().uuid(),is_superadmin:z.boolean(),version:z.number().int().nonnegative(),changed:z.boolean()}).parse(await directoryAdminCall(db,req,'admin-user-superadmin',{profile_id:profileId,...input}));
+ const result=z.object({profile_id:z.string().guid(),is_superadmin:z.boolean(),version:z.number().int().nonnegative(),changed:z.boolean()}).parse(await directoryAdminCall(db,req,'admin-user-superadmin',{profile_id:profileId,...input}));
  const refreshed=await directoryAdminUser(db,req,'admin-user',{profile_id:profileId});
  return {...refreshed,changed:result.changed};
 }

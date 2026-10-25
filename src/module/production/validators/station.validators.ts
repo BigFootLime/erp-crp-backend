@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { HANDOVER_MACHINE_STATES, IDENTIFICATION_METHODS } from "../domain/station";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 const devicePublicCode = z
   .string()

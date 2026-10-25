@@ -1,6 +1,6 @@
 import { z } from 'zod';
-export const recoveryConsolidationParams=z.object({recoveryId:z.string().uuid(),consolidationId:z.string().uuid()}).strict();
-export const recoveryConsolidationCandidateParams=z.object({recoveryId:z.string().uuid()}).strict();
+export const recoveryConsolidationParams=z.object({recoveryId:z.string().guid(),consolidationId:z.string().guid()}).strict();
+export const recoveryConsolidationCandidateParams=z.object({recoveryId:z.string().guid()}).strict();
 export const recoveryConsolidationCandidatesQuery=z.object({
   q:z.string().trim().max(80).default(''),
   cursor:z.coerce.number().int().positive().optional(),
@@ -12,6 +12,6 @@ export const recoveryConsolidationApplyBody=z.object({
   preview_hash:z.string().regex(/^[a-f0-9]{64}$/),
   proposal_hash:z.string().regex(/^[a-f0-9]{64}$/),
   planning_reference_at:z.string().datetime({offset:true}),
-  idempotency_key:z.string().uuid(),
+  idempotency_key:z.string().guid(),
 }).strict();
 export type RecoveryConsolidationApplyInput=z.infer<typeof recoveryConsolidationApplyBody>;

@@ -6,7 +6,7 @@ const dateOnly = z.string()
     const parsed = Date.parse(`${value}T00:00:00Z`);
     return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
   }, "Date calendaire invalide");
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const stockIntelligenceOverviewQuerySchema = z.object({
   as_of: dateOnly.optional(),

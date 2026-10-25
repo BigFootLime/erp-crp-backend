@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { materialBarMovementCommandSchema } from '../../stock/validators/material-bar-movement.validators';
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
 function isParsableDateTime(value: string): boolean {
@@ -252,7 +252,7 @@ export type UpdateNonConformityStatusBodyDTO = z.infer<typeof updateNonConformit
 export const createNonConformityDispositionSchema = z.object({
   body: z
     .object({
-      idempotency_key: z.string().uuid().optional(),
+      idempotency_key: z.string().guid().optional(),
       note: z.string().trim().min(1).max(2000).optional().nullable(),
       disposition_type: nonConformityDispositionTypeSchema,
       material_bars: materialBarMovementCommandSchema.optional(),

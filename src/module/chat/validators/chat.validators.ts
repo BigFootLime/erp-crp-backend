@@ -15,7 +15,7 @@ export const listChatMessagesQuerySchema = z.object({
 export type ListChatMessagesQueryDTO = z.infer<typeof listChatMessagesQuerySchema>;
 
 export const chatConversationIdParamSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
 });
 
 export type ChatConversationIdParamDTO = z.infer<typeof chatConversationIdParamSchema>;

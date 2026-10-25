@@ -7,7 +7,7 @@ import {
   maintenanceWrite,
 } from "../services/operator-maintenance.service";
 function context(req: Request) {
-  const id = z.string().uuid().safeParse(req.params.id);
+  const id = z.string().guid().safeParse(req.params.id);
   if (!id.success)
     throw new HttpError(
       422,

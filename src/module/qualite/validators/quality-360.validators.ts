@@ -27,7 +27,7 @@ import {
   QUALITY_SOURCE_TYPES,
 } from "../domain/quality-release";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const optionalUuid = uuid.nullable().optional();
 
 const isoDateTime = z

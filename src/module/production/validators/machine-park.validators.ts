@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDateTime = z.string().datetime({ offset: true });
 const optionalText = (max: number) => z.string().trim().min(1).max(max).optional().nullable();
 

@@ -18,7 +18,7 @@ const decimal = (maxDecimals: number, label: string) =>
 
 export const financeUuidParamsSchema = z
   .object({
-    id: z.string().uuid(),
+    id: z.string().guid(),
   })
   .strict();
 
@@ -33,7 +33,7 @@ export const eligibleSourcesQuerySchema = z
     q: z.string().trim().max(120).optional(),
     client_id: z.string().trim().min(1).max(120).optional(),
     commande_id: z.coerce.number().int().positive().optional(),
-    livraison_id: z.string().uuid().optional(),
+    livraison_id: z.string().guid().optional(),
     affaire_id: z.coerce.number().int().positive().optional(),
     page: z.coerce.number().int().min(1).optional().default(1),
     pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
@@ -54,7 +54,7 @@ const sourceSelectionSchema = z
     if(source.source_type==='DEPOSIT') {
       if(source.quantity!==undefined && !/^1(?:\.0{1,3})?$/.test(source.quantity))ctx.addIssue({code:z.ZodIssueCode.custom,path:['quantity'],message:"Un acompte porte sur un montant, pas sur une quantité de pièces."});
       if(!source.advance_amount_ex_tax || /^0(?:\.0+)?$/.test(source.advance_amount_ex_tax))ctx.addIssue({code:z.ZodIssueCode.custom,path:['advance_amount_ex_tax'],message:"Sélectionnez un montant d'acompte HT positif."});
-      if(!z.string().uuid().safeParse(source.source_id).success || !z.string().uuid().safeParse(source.source_line_id).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_line_id'],message:"Sélectionnez une ligne de proforma existante."});
+      if(!z.string().guid().safeParse(source.source_id).success || !z.string().guid().safeParse(source.source_line_id).success)ctx.addIssue({code:z.ZodIssueCode.custom,path:['source_line_id'],message:"Sélectionnez une ligne de proforma existante."});
     } else {
       if(source.quantity===undefined)ctx.addIssue({code:z.ZodIssueCode.custom,path:['quantity'],message:"Sélectionnez la quantité livrée à facturer."});
       if(source.advance_amount_ex_tax!==undefined)ctx.addIssue({code:z.ZodIssueCode.custom,path:['advance_amount_ex_tax'],message:"Ce montant s'applique uniquement aux factures d'acompte."});
@@ -198,7 +198,7 @@ export const registerPaymentBodySchema = z
     currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/).default("EUR"),
     mode: z.string().trim().min(1).max(80),
     reference: z.string().trim().min(1).max(200),
-    proof_document_id: z.string().uuid().optional().nullable(),
+    proof_document_id: z.string().guid().optional().nullable(),
     comment: z.string().trim().max(2000).optional().nullable(),
     allocations: z.array(paymentAllocationSchema).max(200).optional().default([]),
   })

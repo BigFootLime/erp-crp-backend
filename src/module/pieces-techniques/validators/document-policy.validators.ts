@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { CLIENT_DOCUMENT_POLICIES } from "../domain/document-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const clientDocumentPolicySchema = z.enum(CLIENT_DOCUMENT_POLICIES);
 

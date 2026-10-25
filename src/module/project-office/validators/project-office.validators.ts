@@ -29,11 +29,11 @@ const trimmed = (max: number) => z.string().trim().min(1).max(max);
 // URLs de preuves/liens : http(s) uniquement (pas de javascript:, file:, etc.).
 const httpUrl = z.string().trim().url().max(2048).refine((u) => /^https?:\/\//i.test(u), "URL http(s) requise");
 
-export const uuidParamsSchema = z.object({ id: z.string().uuid() }).strict();
-export const projectIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
+export const uuidParamsSchema = z.object({ id: z.string().guid() }).strict();
+export const projectIdParamsSchema = z.object({ id: z.string().guid() }).strict();
 export const projectAffaireLinkParamsSchema = z.object({
-  id: z.string().uuid(),
-  linkId: z.string().uuid(),
+  id: z.string().guid(),
+  linkId: z.string().guid(),
 }).strict();
 
 export const createProjectBudgetSchema = z.object({
@@ -64,8 +64,8 @@ export const evidenceFilesQuerySchema = paginationQuerySchema.extend({
 });
 
 export const projectEvidenceFileContentParamsSchema = z.object({
-  projectId: z.string().uuid(),
-  id: z.string().uuid(),
+  projectId: z.string().guid(),
+  id: z.string().guid(),
 }).strict();
 
 export const evidenceFileContentQuerySchema = z.object({
@@ -105,14 +105,14 @@ export const addMemberSchema = z.object({
 }).strict();
 
 export const memberParamsSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   userId: z.coerce.number().int().positive(),
 }).strict();
 
 // ---------------------------------------------------------------- Work packages
 export const createWorkPackageSchema = z.object({
-  project_id: z.string().uuid(),
-  parent_id: z.string().uuid().nullish(),
+  project_id: z.string().guid(),
+  parent_id: z.string().guid().nullish(),
   code: trimmed(64).regex(/^[A-Z0-9][A-Z0-9_-]*$/i, "Code alphanumérique (tirets/underscores autorisés)").optional(),
   title: trimmed(300),
   description: z.string().trim().max(20_000).nullish(),
@@ -127,7 +127,7 @@ export const createWorkPackageSchema = z.object({
 export type CreateWorkPackageDTO = z.infer<typeof createWorkPackageSchema>;
 
 export const patchWorkPackageSchema = z.object({
-  parent_id: z.string().uuid().nullish(),
+  parent_id: z.string().guid().nullish(),
   title: trimmed(300).optional(),
   description: z.string().trim().max(20_000).nullish(),
   type: z.enum(PO_WP_TYPES).optional(),
@@ -143,12 +143,12 @@ export const patchWorkPackageSchema = z.object({
 export type PatchWorkPackageDTO = z.infer<typeof patchWorkPackageSchema>;
 
 export const listWorkPackagesQuerySchema = paginationQuerySchema.extend({
-  project_id: z.string().uuid(),
+  project_id: z.string().guid(),
   q: z.string().trim().max(200).optional(),
   status: z.enum(PO_WP_STATUSES).optional(),
   type: z.enum(PO_WP_TYPES).optional(),
   assignee_id: z.coerce.number().int().positive().optional(),
-  parent_id: z.string().uuid().optional(),
+  parent_id: z.string().guid().optional(),
 }).strict();
 
 export const createCommentSchema = z.object({
@@ -156,7 +156,7 @@ export const createCommentSchema = z.object({
 }).strict();
 
 export const createDependencySchema = z.object({
-  target_work_package_id: z.string().uuid(),
+  target_work_package_id: z.string().guid(),
   dependency_type: z.enum(PO_DEPENDENCY_TYPES).default("BLOCKS"),
 }).strict();
 
@@ -224,7 +224,7 @@ export const createActionSchema = z.object({
   priority: z.enum(PO_PRIORITIES).default("NORMAL"),
   owner_id: z.number().int().positive().nullish(),
   due_date: isoDate.nullish(),
-  evidence_id: z.string().uuid().nullish(),
+  evidence_id: z.string().guid().nullish(),
 }).strict();
 
 export const patchActionSchema = z.object({
@@ -235,11 +235,11 @@ export const patchActionSchema = z.object({
   owner_id: z.number().int().positive().nullish(),
   due_date: isoDate.nullish(),
   status: z.enum(PO_ACTION_STATUSES).optional(),
-  evidence_id: z.string().uuid().nullish(),
+  evidence_id: z.string().guid().nullish(),
 }).strict();
 
 export const createEvidenceSchema = z.object({
-  work_package_id: z.string().uuid().nullish(),
+  work_package_id: z.string().guid().nullish(),
   type: z.enum(PO_EVIDENCE_TYPES).default("OTHER"),
   title: trimmed(300),
   url: httpUrl.nullish(),
@@ -249,7 +249,7 @@ export const createEvidenceSchema = z.object({
 // Multipart metadata for a controlled evidence file.  The binary itself is
 // accepted only by the dedicated upload route, never by a JSON evidence URL.
 export const createEvidenceFileSchema = z.object({
-  work_package_id: z.string().uuid().nullish(),
+  work_package_id: z.string().guid().nullish(),
   title: trimmed(300).optional(),
   description: z.string().trim().max(10_000).nullish(),
   category: z.enum(["DOCUMENT", "VSM"]).default("DOCUMENT"),
@@ -261,9 +261,9 @@ export const createEvidenceFileSchema = z.object({
 export type CreateEvidenceFileDTO = z.infer<typeof createEvidenceFileSchema>;
 
 export const createExternalLinkSchema = z.object({
-  project_id: z.string().uuid(),
+  project_id: z.string().guid(),
   entity_type: z.enum(["project", "work_package", "spec", "decision", "risk", "action"]).default("project"),
-  entity_id: z.string().uuid().nullish(),
+  entity_id: z.string().guid().nullish(),
   provider: z.enum(PO_LINK_PROVIDERS).default("GITHUB"),
   external_type: z.enum(PO_EXTERNAL_TYPES).default("PR"),
   external_id: z.string().trim().max(200).nullish(),
@@ -279,8 +279,8 @@ export const createReportSchema = z.object({
 }).strict();
 
 export const entryParamsSchema = z.object({
-  id: z.string().uuid(),        // report id
-  sectionId: z.string().uuid(), // section id
+  id: z.string().guid(),        // report id
+  sectionId: z.string().guid(), // section id
 }).strict();
 
 export const patchEntrySchema = z.object({
@@ -290,7 +290,7 @@ export const patchEntrySchema = z.object({
 }).strict();
 
 export const linkEntryEvidenceSchema = z.object({
-  evidence_id: z.string().uuid(),
+  evidence_id: z.string().guid(),
   relation_type: z.enum(PO_ENTRY_EVIDENCE_RELATIONS).default("SOURCE"),
 }).strict();
 
@@ -300,7 +300,7 @@ export const createReportVersionSchema = z.object({
 }).strict();
 
 export const createWorkLogSchema = z.object({
-  work_package_id: z.string().uuid().nullish(),
+  work_package_id: z.string().guid().nullish(),
   branch_name: z.string().trim().max(300).nullish(),
   pr_url: httpUrl.nullish(),
   commit_sha: z.string().trim().regex(/^[0-9a-f]{7,64}$/i).nullish(),
@@ -317,11 +317,11 @@ export const listWorkLogsQuerySchema = paginationQuerySchema.extend({
 }).strict();
 
 export const createErrorRecordSchema = z.object({
-  work_package_id: z.string().uuid().nullish(),
+  work_package_id: z.string().guid().nullish(),
   title: trimmed(300),
   error_message: z.string().trim().max(20_000).nullish(),
   context: z.string().trim().max(20_000).nullish(),
-  screenshot_asset_id: z.string().uuid().nullish(),
+  screenshot_asset_id: z.string().guid().nullish(),
   severity: z.enum(PO_ERROR_SEVERITIES).default("MEDIUM"),
 }).strict();
 
@@ -329,14 +329,14 @@ export const patchErrorRecordSchema = z.object({
   title: trimmed(300).optional(),
   error_message: z.string().trim().max(20_000).nullish(),
   context: z.string().trim().max(20_000).nullish(),
-  screenshot_asset_id: z.string().uuid().nullish(),
+  screenshot_asset_id: z.string().guid().nullish(),
   severity: z.enum(PO_ERROR_SEVERITIES).optional(),
   status: z.enum(PO_ERROR_STATUSES).optional(),
   fix_summary: z.string().trim().max(20_000).nullish(),
 }).strict();
 
 export const createAssetSchema = z.object({
-  report_entry_id: z.string().uuid().nullish(),
+  report_entry_id: z.string().guid().nullish(),
   title: trimmed(300),
   description: z.string().trim().max(5_000).nullish(),
   asset_type: z.enum(PO_ASSET_TYPES).default("SCREENSHOT"),

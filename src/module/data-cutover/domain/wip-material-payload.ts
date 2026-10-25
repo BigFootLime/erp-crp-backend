@@ -4,7 +4,7 @@ import type { WipMaterialOpeningInput } from "../../production/wip-material-open
 
 const reference = z.string().trim().max(500).refine((value) => !/[<>\u0000-\u001f]/.test(value), "Référence attendue sans balise ni caractère de contrôle.");
 const optionalReference = reference.nullish();
-const identifier = z.string().uuid();
+const identifier = z.string().guid();
 const MAX_WIP_MATERIAL_QUANTITY = 9_999_999_999.9999;
 const fourDecimalQuantity = z.number().finite().nonnegative().max(MAX_WIP_MATERIAL_QUANTITY).refine((quantity) => {
   const rounded = Number(quantity.toFixed(4));

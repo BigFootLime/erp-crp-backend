@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TERMINAL_KINDS } from "../domain/terminal-policy";
-export const uuid = z.string().uuid();
+export const uuid = z.string().guid();
 export const scopeSchema = z
   .object({ of_id: z.coerce.number().int().positive(), operation_id: uuid })
   .strict();
