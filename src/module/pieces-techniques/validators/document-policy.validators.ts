@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { CLIENT_DOCUMENT_POLICIES } from "../domain/document-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const clientDocumentPolicySchema = z.enum(CLIENT_DOCUMENT_POLICIES);
 
@@ -83,7 +83,7 @@ export const saveDraftSchema = z.object({
      * Contenu opaque du parcours. Borné à 256 Ko : un brouillon est une saisie en cours,
      * pas un dépôt de fichiers. Au-delà, c'est un signe que la donnée est au mauvais endroit.
      */
-    payload: z.record(z.unknown()).refine(
+    payload: z.record(z.string(), z.unknown()).refine(
       (value) => JSON.stringify(value).length <= 256 * 1024,
       "Brouillon trop volumineux (256 Ko maximum)."
     ),

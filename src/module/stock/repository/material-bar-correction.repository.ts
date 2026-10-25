@@ -8,8 +8,8 @@ import {createMaterialBarPostingOwner} from './material-bar-posting-owner';
 type Db=Pick<PoolClient,'query'>;
 const length=z.number().finite().nonnegative().max(1e9);
 const shape=z.object({version:z.number().int().positive(),remainingMm:length});
-const proofSchema=z.object({id:z.string().uuid(),barId:z.string().uuid(),batchId:z.string().uuid(),before:shape,
-  after:shape.extend({sources:z.array(z.object({reservationId:z.string().uuid(),stockMovementId:z.string().uuid(),
+const proofSchema=z.object({id:z.string().guid(),barId:z.string().guid(),batchId:z.string().guid(),before:shape,
+  after:shape.extend({sources:z.array(z.object({reservationId:z.string().guid(),stockMovementId:z.string().guid(),
     cutMm:length,discardedMm:length,heldBeforeMm:length,heldAfterMm:length,extraMm:length})).min(1)})});
 type CutProof=z.infer<typeof proofSchema>;
 const preparedCorrections=new WeakMap<CutProof[],{tx:Db;originals:Original[]}>();

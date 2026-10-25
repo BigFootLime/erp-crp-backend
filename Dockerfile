@@ -14,6 +14,7 @@ COPY scripts/openapi ./scripts/openapi
 COPY docs/http/openapi-route-coverage.json ./docs/http/openapi-route-coverage.json
 COPY scripts/security ./scripts/security
 COPY scripts/build ./scripts/build
+COPY resources/outillage-catalogue ./resources/outillage-catalogue
 RUN npm run build
 
 # --------- Runtime ------------
@@ -78,6 +79,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 COPY scripts/db-patches.js ./scripts/db-patches.js
 COPY scripts/migrations/patch-dependencies.js ./scripts/migrations/patch-dependencies.js
 COPY db/patches ./db/patches
+COPY resources/outillage-catalogue ./resources/outillage-catalogue
 
 # ...
 COPY --from=builder /app/dist ./dist

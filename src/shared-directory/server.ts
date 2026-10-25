@@ -45,7 +45,7 @@ export function createDirectoryServer(options:Options){
  app.post('/internal/directory/info',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({directory_id:options.directoryId,schema_version:1,capabilities:['shared-auth-mfa','shared-users','shared-company','shared-avatar'],import_mode:'EMPTY_NO_LEGACY_IMPORT'});}));
  app.post('/internal/directory/registration-options',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({enabled:!!options.registrationOpen&&req.directoryCaller!=='cerp_prod',database:req.directoryCaller,avatars:AVATAR_KEYS,role:'superAdmin'});}));
  app.post('/internal/directory/register',wrap(async(req,res)=>{
-  const body=z.object({input:testRegistrationSchema,key:z.string().uuid(),meta:authMeta}).strict().parse(req.body),site=req.directoryCaller!;
+  const body=z.object({input:testRegistrationSchema,key:z.string().guid(),meta:authMeta}).strict().parse(req.body),site=req.directoryCaller!;
   if(!options.registrationOpen||site==='cerp_prod'||!options.registrationHashKey){res.status(403).json({code:'TEST_REGISTRATION_DISABLED',message:'La création de compte est fermée.'});return;}
   await registerSharedTestProfile(options.db,site,body.input,body.key,options.registrationHashKey);
   const result=await loginUser(body.input.username,body.input.password,body.meta);
@@ -56,7 +56,7 @@ export function createDirectoryServer(options:Options){
   const body=sessionInput.parse(req.body);res.json(await validateDirectorySession(options.db,req.directoryCaller!,body.directory_session));
  }));
  app.post(['/internal/directory/validate-actor','/internal/directory/validate-actor-v2'],wrap(async(req,res)=>{
-  const body=z.object({profile_id:z.string().uuid()}).strict().parse(req.body),profile=await directoryProfileForSite(options.db,req.directoryCaller!,body.profile_id);
+  const body=z.object({profile_id:z.string().guid()}).strict().parse(req.body),profile=await directoryProfileForSite(options.db,req.directoryCaller!,body.profile_id);
   const row=(await options.db.query(`SELECT coalesce(e.session_epoch,0)::text AS epoch,coalesce(m.version,0) AS version,f.id AS factor_id,f.version AS factor_version,
    u.is_superadmin,u.mfa_required,u.mfa_reenrollment_required,u.role,
    coalesce((SELECT array_agg(ura.role_key) FROM public.user_role_assignments ura WHERE ura.user_id=u.id),ARRAY[u.role]) AS roles,

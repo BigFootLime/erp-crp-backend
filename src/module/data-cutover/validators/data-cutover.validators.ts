@@ -3,7 +3,17 @@ import { CUTOVER_DOMAINS } from "../types/data-cutover.types";
 import { catalogFor } from "../domain/cutover-catalog";
 
 const scalar = z.union([z.string().max(8000), z.number().finite(), z.boolean(), z.null()]);
-export const cutoverValuesSchema = z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine((key) => !["constructor", "prototype", "__proto__"].includes(key)), scalar).refine((values) => Object.keys(values).length <= 60, "Trop de champs dans la fiche.");
+const cutoverValueKey = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine((key) => !["constructor", "prototype", "__proto__"].includes(key));
+// Zod 4 normalizes unsafe object keys before `z.record` sees them. Reject them
+// at the input boundary instead of silently dropping a malicious field.
+export const cutoverValuesSchema = z.unknown().superRefine((value, ctx) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  for (const key of Object.keys(value)) {
+    if (["constructor", "prototype", "__proto__"].includes(key)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Clé de fiche interdite.", path: [key] });
+    }
+  }
+}).pipe(z.record(cutoverValueKey, scalar)).refine((values) => Object.keys(values).length <= 60, "Trop de champs dans la fiche.");
 const source = z.object({
   id: z.string().regex(/^[A-Za-z0-9_.:-]{1,120}$/),
   name: z.string().trim().min(1).max(240).refine((name) => !/[\\/\u0000-\u001f]/.test(name), "Un nom de fichier simple est attendu, sans chemin."),
@@ -42,7 +52,7 @@ export const validateCutoverSchema = z.object({
 }).strict();
 export type ValidateCutover = z.infer<typeof validateCutoverSchema>;
 export const listCutoverRowsSchema = z.object({ domain: z.enum(CUTOVER_DOMAINS).optional(), status: z.enum(["UNDECIDED", "MISSING", "READY", "EXCLUDED"]).optional(), search: z.string().trim().max(150).optional(), page: z.coerce.number().int().min(1).max(10000).default(1), page_size: z.coerce.number().int().min(1).max(100).default(25) }).strict();
-export const cutoverUuid = z.string().uuid();
+export const cutoverUuid = z.string().guid();
 export const cutoverIdempotencyKey = z.string().regex(/^[A-Za-z0-9_.:-]{8,200}$/);
 export const applicationPreviewSchema = z.object({ expected_version: z.number().int().positive() }).strict();
 export const prepareWipDeliveryTargetSchema = z.object({

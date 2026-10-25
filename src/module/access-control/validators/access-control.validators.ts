@@ -2,19 +2,19 @@
 import { z } from "zod";
 
 const moduleKeyParam = z
-  .string({ required_error: "Clé de module requise", invalid_type_error: "Clé de module invalide" })
+  .string({ error: (issue) => issue.input === undefined ? "Clé de module requise" : "Clé de module invalide" })
   .trim()
   .min(1, "Clé de module requise")
   .max(64, "Clé de module invalide")
   .regex(/^[a-z0-9-]+$/, "Clé de module invalide");
 
 const userIdParam = z
-  .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
+  .string({ error: (issue) => issue.input === undefined ? "ID utilisateur requis" : "ID utilisateur invalide" })
   .trim()
   .regex(/^\d+$/, "ID utilisateur invalide");
 
 const accessDecision = z.enum(["GRANTED", "DENIED"], {
-  errorMap: () => ({ message: "Décision d'accès invalide (GRANTED ou DENIED)" }),
+  error: () => ({ message: "Décision d'accès invalide (GRANTED ou DENIED)" }),
 });
 
 export const setModuleDefaultSchema = z.object({
@@ -22,8 +22,7 @@ export const setModuleDefaultSchema = z.object({
   body: z
     .object({
       enabled_by_default: z.boolean({
-        required_error: "Valeur par défaut requise",
-        invalid_type_error: "Valeur par défaut invalide",
+        error: (issue) => issue.input === undefined ? "Valeur par défaut requise" : "Valeur par défaut invalide",
       }),
     })
     .strict(),
@@ -56,7 +55,7 @@ export const setUserModulesBulkSchema = z.object({
 export type SetUserModulesBulkDTO = z.infer<typeof setUserModulesBulkSchema>;
 
 export const unlockAllSchema = z.object({
-  body: z.object({ confirm: z.string({ required_error: "Confirmation requise" }) }).strict(),
+  body: z.object({ confirm: z.string({ error: "Confirmation requise" }) }).strict(),
 });
 export type UnlockAllDTO = z.infer<typeof unlockAllSchema>;
 
@@ -68,7 +67,7 @@ export const listAccessEventsQuerySchema = z.object({
 });
 export type ListAccessEventsQueryDTO = z.infer<typeof listAccessEventsQuerySchema>;
 
-const reviewIdParam = z.string().uuid("Identifiant de revue invalide");
+const reviewIdParam = z.string().guid("Identifiant de revue invalide");
 
 export const createAccessReviewSchema = z.object({
   body: z

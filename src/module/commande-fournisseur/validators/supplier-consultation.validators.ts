@@ -7,7 +7,7 @@ const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>{
 const money=z.number().finite().min(0).max(99_999_999);
 const reason=z.string().trim().min(3,"Précisez le motif en trois caractères au moins.").max(2000);
 const command={idempotency_key:z.string().trim().min(8).max(120),expected_updated_at:z.string().trim().min(10).max(64)};
-const current={...command,consultation_id:z.string().uuid(),expected_version:z.number().int().positive()};
+const current={...command,consultation_id:z.string().guid(),expected_version:z.number().int().positive()};
 
 export const supplierOfferResponseSchema=z.object({
   reference:z.string().trim().min(1).max(200),
@@ -17,7 +17,7 @@ export const supplierOfferResponseSchema=z.object({
   payment_terms:z.string().trim().max(200),
   notes:z.string().trim().max(2000),
   lines:z.array(z.object({
-    line_id:z.string().uuid(),
+    line_id:z.string().guid(),
     quantity:z.number().finite().positive().max(9_999_999).refine(v=>Math.abs(v*1000-Math.round(v*1000))<0.000001,'Trois décimales au maximum pour une quantité.'),
     unit:z.string().trim().min(1).max(20),
     unit_price_ht:money,
@@ -33,9 +33,9 @@ export const supplierOfferResponseSchema=z.object({
 });
 export const supplierConsultationCommandSchema=z.discriminatedUnion('action',[
   z.object({...command,action:z.literal('OPEN'),notes:z.string().trim().max(2000)}).strict(),
-  z.object({...current,action:z.literal('INVITE'),supplier_id:z.string().uuid(),document_version_ids:z.array(z.string().uuid()).max(50).optional()}).strict(),
-  z.object({...current,action:z.literal('RECORD_OFFER'),invitation_id:z.string().uuid(),response:supplierOfferResponseSchema,correction_reason:reason.optional()}).strict(),
-  z.object({...current,action:z.literal('SELECT'),offer_id:z.string().uuid(),reason}).strict(),
+  z.object({...current,action:z.literal('INVITE'),supplier_id:z.string().guid(),document_version_ids:z.array(z.string().guid()).max(50).optional()}).strict(),
+  z.object({...current,action:z.literal('RECORD_OFFER'),invitation_id:z.string().guid(),response:supplierOfferResponseSchema,correction_reason:reason.optional()}).strict(),
+  z.object({...current,action:z.literal('SELECT'),offer_id:z.string().guid(),reason}).strict(),
   z.object({...current,action:z.literal('CLOSE'),reason}).strict(),
 ]);
 export type SupplierOfferResponse=z.infer<typeof supplierOfferResponseSchema>;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { canonicalizeStockUnitCode } from '../../../shared/stock-unit';
-const uuid=z.string().uuid().transform(value=>value.toLowerCase());
+const uuid=z.string().guid().transform(value=>value.toLowerCase());
 export const valueAdjustmentParams=z.object({articleId:uuid,unit:z.string().min(1).max(32)
   .refine(value=>value===canonicalizeStockUnitCode(value),'Unité canonique attendue.')});
 export const valueAdjustmentBody=z.object({

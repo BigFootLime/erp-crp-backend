@@ -1,13 +1,13 @@
 import { z } from "zod";
 
-export const supplierInvoiceParamsSchema = z.object({ id: z.string().uuid() });
+export const supplierInvoiceParamsSchema = z.object({ id: z.string().guid() });
 
 export const supplierInvoiceListQuerySchema = z.object({
   status: z.enum([
     "RECEIVED","IDENTIFIED","MATCHED","PENDING_APPROVAL","APPROVED",
     "ACCOUNTING_EXPORTED","CLOSED","DISPUTED","REJECTED",
   ]).optional(),
-  fournisseur_id: z.string().uuid().optional(),
+  fournisseur_id: z.string().guid().optional(),
   search: z.string().trim().min(1).max(120).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).max(100_000).default(0),
@@ -16,7 +16,7 @@ export const supplierInvoiceListQuerySchema = z.object({
 export const supplierInvoiceMatchBodySchema = z.object({
   expected_version: z.number().int().positive(),
   mode: z.enum(["AUTO", "MANUAL"]),
-  purchase_order_id: z.string().uuid().nullable().optional(),
+  purchase_order_id: z.string().guid().nullable().optional(),
   manual_justification: z.string().trim().min(3).max(1000).nullable().optional(),
 }).superRefine((value, ctx) => {
   if (value.mode === "MANUAL" && !value.manual_justification) {
@@ -29,7 +29,7 @@ export const supplierInvoiceMatchBodySchema = z.object({
 
 export const supplierInvoiceIdentifyBodySchema = z.object({
   expected_version: z.number().int().positive(),
-  fournisseur_id: z.string().uuid(),
+  fournisseur_id: z.string().guid(),
 });
 
 export const supplierInvoiceVersionBodySchema = z.object({

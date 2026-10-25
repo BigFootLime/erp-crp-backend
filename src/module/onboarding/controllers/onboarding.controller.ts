@@ -10,7 +10,7 @@ export const status=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control",
 export const progress=asyncHandler(async(req,res)=>{const input=progressSchema.parse(req.body);await saveSetupStep(req.user!.id,input.current_step);res.status(204).end();});
 export const companies=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control","no-store");const directory=sharedDirectoryClient();res.json(directory?await directory.call('company-list',{directory_session:req.user!.directory_session,input:{}}):await readSetupCompanies());});
 export const company=asyncHandler(async(req,res)=>{
- const input=companySchema.parse(req.body),key=z.string().uuid().parse(req.header('Idempotency-Key')),directory=sharedDirectoryClient();
+ const input=companySchema.parse(req.body),key=z.string().guid().parse(req.header('Idempotency-Key')),directory=sharedDirectoryClient();
  const result=directory?await directory.call<{biller_id:string}>('company-save',{directory_session:req.user!.directory_session,input:{company:input,key}}):await saveSetupCompany(input,req.user!.id,key);
  if(directory)await synchronizeDirectoryCompany(pool,req.user!.directory_session!);
  res.json({biller_id:result.biller_id});

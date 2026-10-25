@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
 function parseBoolean(value: unknown): boolean | undefined {

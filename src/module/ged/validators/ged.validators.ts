@@ -61,7 +61,7 @@ export const listQuerySchema = z.object({
   page_size: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
 
-export const uuidParamSchema = z.string().uuid("Identifiant invalide.");
+export const uuidParamSchema = z.string().guid("Identifiant invalide.");
 
 export const reuseRevisionDocumentBodySchema = z.object({
   revision_id: uuidParamSchema,

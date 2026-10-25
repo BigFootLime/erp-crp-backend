@@ -5,6 +5,6 @@ import { MATERIAL_RECONCILIATION_METHOD } from './material-invoice-reconciliatio
 export const materialInvoicePostingBody=z.object({
   method:z.literal(MATERIAL_RECONCILIATION_METHOD),
   expected_source_sha256:z.string().regex(/^[a-f0-9]{64}$/),
-  request_id:z.string().uuid().transform(v=>v.toLowerCase()),
+  request_id:z.string().guid().transform(v=>v.toLowerCase()),
 }).strict();
 export type MaterialInvoicePostingInput=z.infer<typeof materialInvoicePostingBody>;

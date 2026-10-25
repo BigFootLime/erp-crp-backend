@@ -13,15 +13,15 @@ export const createImportBatchFieldsSchema = z.object({
 const mappingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 export const previewImportBatchSchema = z.object({
-  columns: z.record(z.string().trim().min(1).max(200)).default({}),
-  constants: z.record(mappingValueSchema).default({}),
+  columns: z.record(z.string(), z.string().trim().min(1).max(200)).default({}),
+  constants: z.record(z.string(), mappingValueSchema).default({}),
   legacy_key_column: z.string().trim().min(1).max(200),
   approved_decisions: z.array(z.string().trim().regex(/^DEC-\d{2}$/)).max(30).default([]),
   duplicate_strategy: z.enum(["REVIEW", "LINK_EXACT"]).default("REVIEW"),
 }).strict();
 
 export const importBatchIdSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
 });
 
 export const listImportBatchesQuerySchema = z.object({

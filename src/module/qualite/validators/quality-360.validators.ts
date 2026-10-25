@@ -27,7 +27,7 @@ import {
   QUALITY_SOURCE_TYPES,
 } from "../domain/quality-release";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const optionalUuid = uuid.nullable().optional();
 
 const isoDateTime = z
@@ -478,7 +478,7 @@ export const consumeDerogationSchema = z.object({
       quality_control_id: optionalUuid,
       release_decision_id: optionalUuid,
       bon_livraison_id: optionalUuid,
-      context: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+      context: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
     })
     .strict(),
 });

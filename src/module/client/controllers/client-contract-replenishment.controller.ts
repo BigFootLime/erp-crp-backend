@@ -5,7 +5,7 @@ import { contractClientIdSchema, contractIdempotencySchema } from '../validators
 import { clientReplenishmentPreparationSchema } from '../validators/client-contract-replenishment.validators';
 import { getClientReplenishmentPreparation, prepareClientReplenishment } from '../services/client-contract-replenishment.service';
 
-const uuid = z.string().uuid().transform(value => value.toLowerCase());
+const uuid = z.string().guid().transform(value => value.toLowerCase());
 const readQuery = z.object({ page: z.coerce.number().int().min(1).max(100000).default(1) }).strict();
 export const readClientContractReplenishment: RequestHandler = async (req, res, next) => {
   try {

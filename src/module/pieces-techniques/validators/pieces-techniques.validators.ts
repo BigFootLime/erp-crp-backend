@@ -4,7 +4,7 @@ import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 import { QUALITY_LEVELS } from "../../client/validators/client.validators"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const pieceTechniqueStatutSchema = z.enum([
   "DRAFT",

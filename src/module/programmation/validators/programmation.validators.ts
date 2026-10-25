@@ -41,9 +41,9 @@ const rescheduleCandidateSchema = z.object({
   start_date: dateOnlyString,
   end_date: dateOnlyString,
   programmer_user_id: z.number().int().positive().nullable(),
-  machine_id: z.string().uuid().nullable(),
-  poste_id: z.string().uuid().nullable(),
-  calendar_id: z.string().uuid().nullable(),
+  machine_id: z.string().guid().nullable(),
+  poste_id: z.string().guid().nullable(),
+  calendar_id: z.string().guid().nullable(),
 }).strict().superRefine((value, ctx) => {
   const start = Date.parse(`${value.start_date}T00:00:00Z`);
   const end = Date.parse(`${value.end_date}T00:00:00Z`);
@@ -60,11 +60,11 @@ const idempotencyKey = z.string().trim().min(8).max(128).regex(/^[A-Za-z0-9][A-Z
 const rescheduleSource = z.enum(["POINTER", "KEYBOARD", "TOUCH", "API"]);
 
 export const programmationIdParamSchema = z.object({
-  params: z.object({ id: z.string().uuid() }).strict(),
+  params: z.object({ id: z.string().guid() }).strict(),
 }).strict();
 
 export const programmationRescheduleOperationParamSchema = z.object({
-  params: z.object({ id: z.string().uuid(), operationId: z.string().uuid() }).strict(),
+  params: z.object({ id: z.string().guid(), operationId: z.string().guid() }).strict(),
 }).strict();
 
 export const previewProgrammationRescheduleSchema = z.object({

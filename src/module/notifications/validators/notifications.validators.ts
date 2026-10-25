@@ -13,7 +13,7 @@ function parseBoolean(value: unknown): boolean | undefined {
 
 export const notificationIdParamSchema = z.object({
   params: z.object({
-    id: z.string().uuid(),
+    id: z.string().guid(),
   }),
 });
 

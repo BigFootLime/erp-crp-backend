@@ -39,6 +39,14 @@ type RunnerModule = {
 
 const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
+it("permits the exact qualified Outillage patch and rejects a substituted checksum", () => {
+  const filename = "20261025_outillage_catalogue_provenance.sql";
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  expect(runner.parseArgs(["up", "--dry-run", "--only", filename])).toMatchObject({ only: filename, dryRun: true });
+  const selected = runner.immutableOnlyPatch(patches, filename);
+  expect(selected).toMatchObject({ filename, sha256: "634a2197b1218936d51fbdd48b57d8940ba02706b0de0ab8d690bccb94560bf8" });
+  expect(() => runner.immutableOnlyPatch([{ ...selected!, sha256: "0".repeat(64) }], filename)).toThrow(/checksum mismatch/);
+});
 it("orders immutable dependent patches identically for the canonical runner and release rehearsal", () => {
   const files = runner.listPatches(resolve(repoRoot, "db/patches")).map((patch) => patch.filename);
   const gate = require(resolve(repoRoot, "scripts/migrations/release-gate.js"));

@@ -4,7 +4,7 @@ import type { RequestHandler } from "express"
 import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const gammeStatutSchema = z.enum(["BROUILLON", "EN_VALIDATION", "APPLICABLE", "OBSOLETE"])
 export type GammeStatutDTO = z.infer<typeof gammeStatutSchema>
@@ -82,12 +82,12 @@ const machineFamilyCode = z
 const rejectedInputs = z
   .object({
     taux_horaire: z.undefined({
-      invalid_type_error:
+      error:
         "Le taux horaire ne se saisit plus sur l'opération : il est versionné sur le centre de frais.",
     }),
-    temps_total: z.undefined({ invalid_type_error: "Le temps total est calculé, il ne se saisit pas." }),
-    cout_mo: z.undefined({ invalid_type_error: "Le coût main-d'œuvre est calculé, il ne se saisit pas." }),
-    temps_fabrication: z.undefined({ invalid_type_error: "Le temps de fabrication est calculé, il ne se saisit pas." }),
+    temps_total: z.undefined({ error: "Le temps total est calculé, il ne se saisit pas." }),
+    cout_mo: z.undefined({ error: "Le coût main-d'œuvre est calculé, il ne se saisit pas." }),
+    temps_fabrication: z.undefined({ error: "Le temps de fabrication est calculé, il ne se saisit pas." }),
   })
   .partial()
 

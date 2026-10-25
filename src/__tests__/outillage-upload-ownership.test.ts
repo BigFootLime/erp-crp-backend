@@ -20,6 +20,8 @@ const repository = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   setOutilUploadPaths: vi.fn(),
+  assertCatalogueProvenanceSchema: vi.fn(),
+  createCatalogueProvenance: vi.fn(),
   createFamille: vi.fn(),
   updateFamille: vi.fn(),
   setFamilleImagePath: vi.fn(),
@@ -31,6 +33,7 @@ const repository = vi.hoisted(() => ({
   setGeometrieImagePath: vi.fn(),
 }))
 const operationalMedia = vi.hoisted(() => ({ promote: vi.fn() }))
+const catalogue = vi.hoisted(() => ({ source: vi.fn() }))
 
 vi.mock("../config/database", () => ({
   default: {
@@ -44,6 +47,9 @@ vi.mock("../module/outils/repository/outil.repository", () => ({
 }))
 vi.mock("../module/operational-media/services/operational-media-promotion.service", () => ({
   promoteOperationalImage: operationalMedia.promote,
+}))
+vi.mock("../module/outils/services/outil-catalogue.service", () => ({
+  getToolCatalogueSourceProvenance: catalogue.source,
 }))
 
 vi.mock("../sockets/sockeServer", () => ({
@@ -267,6 +273,9 @@ beforeEach(async () => {
   repository.create.mockResolvedValue(42)
   repository.update.mockResolvedValue(undefined)
   repository.setOutilUploadPaths.mockResolvedValue(undefined)
+  repository.assertCatalogueProvenanceSchema.mockResolvedValue(undefined)
+  repository.createCatalogueProvenance.mockResolvedValue(undefined)
+  catalogue.source.mockResolvedValue({ selectionId: "source-1", document: "catalogue.pdf", sha256: "a".repeat(64), page: 8, rect: [1, 2, 3, 4] })
   repository.createFamille.mockResolvedValue({ value: 11, label: "FRAISES", imagePath: null })
   repository.updateFamille.mockResolvedValue({ value: 11, label: "FRAISES", imagePath: null })
   repository.setFamilleImagePath.mockResolvedValue(undefined)
@@ -287,6 +296,28 @@ afterEach(async () => {
 })
 
 describe("Outillage staging avant handler", () => {
+  it("records server-resolved catalogue provenance in the same tool transaction", async () => {
+    const payload = { ...toolPayload(), catalogue_source: { selection_id: "source-1", reference_confirmed: true } }
+    await expect(outilService.createOutil(payload, {})).resolves.toEqual({ id_outil: 42 })
+
+    expect(catalogue.source).toHaveBeenCalledWith("source-1")
+    expect(repository.assertCatalogueProvenanceSchema).toHaveBeenCalledOnce()
+    expect(repository.createCatalogueProvenance).toHaveBeenCalledWith(
+      expect.anything(), 42, expect.objectContaining({ selectionId: "source-1" }),
+      { id: 1, username: "test-admin" }
+    )
+    expect(database.clientQuery.mock.calls.map(([sql]) => sql)).toEqual(["BEGIN", "COMMIT"])
+  })
+
+  it("rejects an invalid catalogue selection before opening a write transaction", async () => {
+    catalogue.source.mockRejectedValueOnce(new HttpError(422, "OUTILLAGE_CATALOGUE_SELECTION_INVALID", "invalid"))
+    const payload = { ...toolPayload(), catalogue_source: { selection_id: "not-found", reference_confirmed: true } }
+
+    await expect(outilService.createOutil(payload, {})).rejects.toMatchObject({ code: "OUTILLAGE_CATALOGUE_SELECTION_INVALID" })
+    expect(database.connect).not.toHaveBeenCalled()
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
   it.each([
     [422, new HttpError(422, "BUSINESS_REJECTED", "validation metier")],
     [500, new Error("downstream failure")],

@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "./helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 import { renderCerpDocument, type CerpDocumentHeader } from "../shared/pdf/cerp-document";
 import { CERP_LOGO_PNG } from "../shared/pdf/cerp-logo";
@@ -12,20 +12,7 @@ const header: CerpDocumentHeader = {
   status: "EN COURS", monogramName: "Client fictif", generatedAt: "13/10/2026", title: "Fixture", subject: "Fixture",
   creationDate: new Date("2026-10-13T10:00:00Z"), footerNote: "Document de recette",
 };
-function content(bytes: Buffer): string {
-  let from = 0, result = "";
-  while ((from = bytes.indexOf("stream\n", from)) >= 0) {
-    from += 7;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    try {
-      const stream = inflateSync(bytes.subarray(from, end)).toString("latin1");
-      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(m => Buffer.from(m[1].replace(/\s/g, ""), "hex").toString("latin1")).join("");
-    } catch { /* Raster streams carry no document text. */ }
-    from = end + 9;
-  }
-  return result.replace(/\s/g, "");
-}
+const content = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 
 describe("Versioned workshop PDF hierarchy", () => {
   it("retains every phase, recorded quantity and final instruction across page breaks", async () => {
@@ -66,8 +53,8 @@ describe("Versioned workshop PDF hierarchy", () => {
       renderCerpDocument({...header,designVersion:undefined,name:"CLASSIC"},ctx=>ctx.section("Legacy title")),
       renderCerpDocument({...header,name:"EDITORIAL"},ctx=>ctx.section("New title")),
     ]);
-    expect(content(classic)).toContain("LEGACYTITLE");expect(content(classic)).not.toContain("Newtitle");
-    expect(content(editorial)).toContain("Newtitle");expect(content(editorial)).not.toContain("LEGACYTITLE");
+    expect(content(classic)).toContain("Legacytitle");expect(content(classic)).not.toContain("Newtitle");
+    expect(content(editorial)).toContain("Newtitle");expect(content(editorial)).not.toContain("Legacytitle");
   });
   it("renders saved OF1.2 with the legacy layout while new1.3 keeps its phase visas and precise unit times", async () => {
     const old=buildOfDocumentPayload(buildFixtureInput({templateVersion:"of-ordre-fabrication/1.2"}));

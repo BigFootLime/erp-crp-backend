@@ -1,5 +1,5 @@
 import { z } from "zod";
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const reason = z.string().trim().min(3).max(2000);
 export const worklistQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
