@@ -40,7 +40,7 @@ async function main() {
     const supplier = await createFournisseurSVC({ nom: item.name.trim(), actif: true, status: "a_completer", domaines: [{ domaine_code: "outillage", is_primary: true }] }, audit, item.idempotencyKey);
     for (const manufacturer of manufacturers.rows) {
       const current = await db.query<{ fournisseur_id: string }>("SELECT fournisseur_id::text FROM outillage_fabricant_fournisseur_master WHERE id_fabricant=$1", [manufacturer.id_fabricant]);
-      await outilRepository.updateFabricant(manufacturer.id_fabricant, manufacturer.name, null, [...new Set([...current.rows.map((r) => r.fournisseur_id), supplier.id])]);
+      if (!current.rows.some((row) => row.fournisseur_id === supplier.id)) await outilRepository.updateFabricant(manufacturer.id_fabricant, manufacturer.name, null, [...new Set([...current.rows.map((r) => r.fournisseur_id), supplier.id])]);
     }
     const tools = await db.query<{ id_outil: number; reference_fabricant: string; designation: string | null; document: string; sha256: string; page: number; rect: number[] }>(`SELECT o.id_outil,o.reference_fabricant,coalesce(nullif(btrim(o.designation_outil_cnc),''),o.reference_fabricant) AS designation,
         p.source_document AS document,p.source_sha256 AS sha256,p.source_page AS page,p.source_rect AS rect

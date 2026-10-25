@@ -74,18 +74,21 @@ export async function linkToolSupplierOffer(toolId: number, catalogueId: string,
       JOIN public.fournisseur_domaine_lien dl ON dl.fournisseur_id=f.id AND dl.domaine_code='outillage'
       WHERE c.id=$1::uuid AND c.type='OUTILLAGE' AND c.actif=true FOR KEY SHARE`, [catalogueId]);
     if (!candidate.rows[0]) throw new HttpError(422, "OUTILLAGE_SUPPLIER_CATALOGUE_INVALID", "La référence fournisseur doit être une offre OUTILLAGE active d'un fournisseur maître Outillage.");
-    await client.query(`INSERT INTO public.outillage_tool_fournisseur_master(id_outil,fournisseur_id)
-      SELECT $1,fournisseur_id FROM public.fournisseur_catalogue WHERE id=$2::uuid ON CONFLICT DO NOTHING`, [toolId, catalogueId]);
+    const masterLink = await client.query(`INSERT INTO public.outillage_tool_fournisseur_master(id_outil,fournisseur_id)
+      SELECT $1,fournisseur_id FROM public.fournisseur_catalogue WHERE id=$2::uuid ON CONFLICT DO NOTHING RETURNING created_at::text`, [toolId, catalogueId]);
     const pdf = "document" in source ? source : null;
     const sourceDate = pdf?.source_date ?? null;
     const taxBasis = pdf?.tax_basis ?? "UNKNOWN";
-    await client.query(`INSERT INTO public.outillage_tool_supplier_catalogue
+    const catalogueLink = await client.query(`INSERT INTO public.outillage_tool_supplier_catalogue
       (id_outil,catalogue_id,source_document,source_sha256,source_page,source_rect,source_date,tax_basis,created_by,source_kind,source_note)
-      VALUES($1,$2::uuid,$3,$4,$5,$6::jsonb,$7::date,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+      VALUES($1,$2::uuid,$3,$4,$5,$6::jsonb,$7::date,$8,$9,$10,$11) ON CONFLICT DO NOTHING RETURNING created_at::text`,
       [toolId, catalogueId, pdf?.document ?? null, pdf?.sha256.toLowerCase() ?? null, pdf?.page ?? null, pdf ? JSON.stringify(pdf.rect) : null, sourceDate, taxBasis, audit.userId, pdf ? "CATALOGUE_PDF" : "MANUAL", "note" in source ? source.note : null]);
+    if (!masterLink.rows[0] && !catalogueLink.rows[0]) {
+      return (await listToolSupplierOffersWith(client, toolId)).find((row) => row.catalogue_id === catalogueId) ?? { id_outil: toolId, catalogue_id: catalogueId };
+    }
     await repoInsertAuditLog({ user_id: audit.userId, tx: client, ip: audit.ip, user_agent: audit.userAgent, device_type: null, os: null, browser: null,
       body: { event_type: "ACTION", action: "outillage.supplier-offer.link", page_key: audit.pageKey, entity_type: "OUTIL", entity_id: String(toolId), path: audit.path, client_session_id: audit.sessionId, details: { catalogue_id: catalogueId, price_kind: "INDICATIVE_OFFER", source_date: sourceDate, tax_basis: taxBasis, source_kind: pdf ? "CATALOGUE_PDF" : "MANUAL", source_note: "note" in source ? source.note : null } } });
-    await enqueueEntityChanged(client, { entityType: "OUTIL", entityId: String(toolId), action: "updated", module: "outillage", at: new Date().toISOString(), invalidateKeys: ["outils", "outil-pricing", "outils-fournisseurs"] }, { deduplicationKey: `outillage:tool:${toolId}:supplier-catalogue:${catalogueId}` });
+    await enqueueEntityChanged(client, { entityType: "OUTIL", entityId: String(toolId), action: "updated", module: "outillage", at: new Date().toISOString(), invalidateKeys: ["outils", "outil-pricing", "outils-fournisseurs"] }, { deduplicationKey: `outillage:tool:${toolId}:supplier-catalogue:${catalogueId}:${catalogueLink.rows[0]?.created_at ?? masterLink.rows[0]?.created_at}` });
     const offers = await listToolSupplierOffersWith(client, toolId);
     return offers.find((row) => row.catalogue_id === catalogueId) ?? { id_outil: toolId, catalogue_id: catalogueId };
   });
