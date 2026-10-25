@@ -48,19 +48,45 @@ export const outilCatalogueImportRepository = {
 
     let revetementId: number | null = null;
     if (coating) {
-      const coatingRow = await client.query<{ id_revetement: number }>("SELECT id_revetement FROM gestion_outils_revetement WHERE id_fabricant = $1 AND lower(btrim(nom)) = lower(btrim($2)) LIMIT 1", [manufacturerId, coating]);
-      revetementId = coatingRow.rows[0]?.id_revetement
-        ?? (await client.query<{ id_revetement: number }>("INSERT INTO gestion_outils_revetement(nom, id_fabricant) VALUES($1, $2) RETURNING id_revetement", [coating, manufacturerId])).rows[0]?.id_revetement
-        ?? null;
+      const global = await client.query<{ id_revetement: number; id_fabricant: number }>(
+        "SELECT id_revetement, id_fabricant FROM gestion_outils_revetement WHERE lower(btrim(nom)) = lower(btrim($1)) LIMIT 1",
+        [coating]
+      );
+      if (global.rows[0]?.id_fabricant === manufacturerId) {
+        revetementId = global.rows[0].id_revetement;
+      } else {
+        const label = global.rows[0] ? `${coating} (${manufacturer})` : coating;
+        const qualified = await client.query<{ id_revetement: number; id_fabricant: number }>(
+          "SELECT id_revetement, id_fabricant FROM gestion_outils_revetement WHERE lower(btrim(nom)) = lower(btrim($1)) LIMIT 1",
+          [label]
+        );
+        if (qualified.rows[0] && qualified.rows[0].id_fabricant !== manufacturerId) {
+          throw new HttpError(409, "CATALOGUE_IMPORT_TAXONOMY_CONFLICT", `Qualified coating unavailable: ${label}`);
+        }
+        revetementId = qualified.rows[0]?.id_revetement
+          ?? (await client.query<{ id_revetement: number }>("INSERT INTO gestion_outils_revetement(nom, id_fabricant) VALUES($1, $2) RETURNING id_revetement", [label, manufacturerId])).rows[0]?.id_revetement
+          ?? null;
+      }
     }
     if (!geometry) return { manufacturerId, familyId, geometryId: null, revetementId };
-    const geometryRow = await client.query<{ id_geometrie: number }>(
-      "SELECT id_geometrie FROM gestion_outils_geometrie WHERE id_famille = $1 AND lower(btrim(nom_geometrie)) = lower(btrim($2)) LIMIT 1",
-      [familyId, geometry]
+    const globalGeometry = await client.query<{ id_geometrie: number; id_famille: number }>(
+      "SELECT id_geometrie, id_famille FROM gestion_outils_geometrie WHERE lower(btrim(nom_geometrie)) = lower(btrim($1)) LIMIT 1",
+      [geometry]
     );
-    const geometryId = geometryRow.rows[0]?.id_geometrie
-      ?? (await client.query<{ id_geometrie: number }>("INSERT INTO gestion_outils_geometrie(nom_geometrie, id_famille, image_path) VALUES($1, $2, NULL) RETURNING id_geometrie", [geometry, familyId])).rows[0]?.id_geometrie;
-    if (!geometryId) throw new HttpError(503, "CATALOGUE_IMPORT_REFERENCE_UNAVAILABLE", "GÃ©omÃ©trie non disponible.");
+    if (globalGeometry.rows[0]?.id_famille === familyId) {
+      return { manufacturerId, familyId, geometryId: globalGeometry.rows[0].id_geometrie, revetementId };
+    }
+    const label = globalGeometry.rows[0] ? `${geometry} (${family})` : geometry;
+    const qualifiedGeometry = await client.query<{ id_geometrie: number; id_famille: number }>(
+      "SELECT id_geometrie, id_famille FROM gestion_outils_geometrie WHERE lower(btrim(nom_geometrie)) = lower(btrim($1)) LIMIT 1",
+      [label]
+    );
+    if (qualifiedGeometry.rows[0] && qualifiedGeometry.rows[0].id_famille !== familyId) {
+      throw new HttpError(409, "CATALOGUE_IMPORT_TAXONOMY_CONFLICT", `Qualified geometry unavailable: ${label}`);
+    }
+    const geometryId = qualifiedGeometry.rows[0]?.id_geometrie
+      ?? (await client.query<{ id_geometrie: number }>("INSERT INTO gestion_outils_geometrie(nom_geometrie, id_famille, image_path) VALUES($1, $2, NULL) RETURNING id_geometrie", [label, familyId])).rows[0]?.id_geometrie;
+    if (!geometryId) throw new HttpError(503, "CATALOGUE_IMPORT_REFERENCE_UNAVAILABLE", "Geometry unavailable.");
     return { manufacturerId, familyId, geometryId, revetementId };
   },
 
