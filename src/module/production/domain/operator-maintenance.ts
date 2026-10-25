@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const reason = z.string().trim().min(3).max(500);
 const date = z.string().date();
 export const maintenanceCounter = z

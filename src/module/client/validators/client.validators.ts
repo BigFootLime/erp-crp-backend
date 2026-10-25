@@ -111,7 +111,7 @@ const contactInputSchema = z
   .object({
     contact_id: z.preprocess(
       emptyStringToUndefined,
-      z.string().uuid("Identifiant de contact invalide").optional().nullable()
+      z.string().guid("Identifiant de contact invalide").optional().nullable()
     ),
     first_name: z.union([z.string(), z.literal(""), z.null()]).optional(),
     last_name: z.union([z.string(), z.literal(""), z.null()]).optional(),
@@ -240,14 +240,14 @@ export const createClientSchema = z.object({
   creation_date: requiredText("Date de création requise"),
   biller_id: z.preprocess(
     emptyStringToUndefined,
-    z.string().uuid("L'entité de facturation est invalide").optional()
+    z.string().guid("L'entité de facturation est invalide").optional()
   ),
-  payment_mode_ids: z.array(z.string().uuid("Le mode de règlement est invalide")).default([]),
+  payment_mode_ids: z.array(z.string().guid("Le mode de règlement est invalide")).default([]),
   bank: bankSchema.optional().transform((value) => value ?? undefined),
   observations: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
   provided_documents_id: z.preprocess(
     emptyStringToUndefined,
-    z.string().uuid("Le document fourni est invalide").optional()
+    z.string().guid("Le document fourni est invalide").optional()
   ),
   bill_address: addressSchema,
   delivery_address: addressSchema,
@@ -288,12 +288,19 @@ export type CreateClientDTO = z.infer<typeof createClientSchema>;
 // PATCH partiel : tous les champs optionnels, mais les validateurs par champ (email, téléphone,
 // SIRET, TVA, NAF, adresses via addressSchema, etc.) restent appliqués quand le champ est fourni.
 // L'identité `client_id` n'est pas dans le body (route param) -> non patchable.
-export const clientPatchSchema = createClientSchema.partial();
+// A PATCH is tri-state. Zod 4 applies defaults declared by the create schema
+// after `.partial()`, which would turn omitted collection fields into empty
+// arrays and erase existing client data.
+export const clientPatchSchema = createClientSchema.partial().extend({
+  payment_mode_ids: z.array(z.string().guid("Le mode de règlement est invalide")).optional(),
+  quality_levels: z.array(z.enum(QUALITY_LEVELS)).optional(),
+  contacts: z.array(normalizedContactSchema).optional(),
+});
 export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;
 
 /** PATCH /clients/:id/contact — le contact doit appartenir au client (vérifié en transaction). */
 export const setPrimaryContactSchema = z.object({
-  contact_id: z.string({ error: "Identifiant de contact requis" }).uuid("Identifiant de contact invalide"),
+  contact_id: z.string({ error: "Identifiant de contact requis" }).guid("Identifiant de contact invalide"),
 });
 export type SetPrimaryContactDTO = z.infer<typeof setPrimaryContactSchema>;
 

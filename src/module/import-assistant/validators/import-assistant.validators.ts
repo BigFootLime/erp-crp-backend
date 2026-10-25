@@ -21,7 +21,7 @@ export const previewImportBatchSchema = z.object({
 }).strict();
 
 export const importBatchIdSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
 });
 
 export const listImportBatchesQuerySchema = z.object({

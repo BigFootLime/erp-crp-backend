@@ -1,5 +1,5 @@
 import {z} from 'zod';
-const uuid=z.string().uuid().transform(value=>value.toLowerCase());
+const uuid=z.string().guid().transform(value=>value.toLowerCase());
 const version=z.number().int().positive().max(2147483646);
 export const forecastMonthSchema=z.string().regex(/^(19|20|21)\d{2}-(0[1-9]|1[0-2])$/,'Mois invalide');
 const date=z.string().regex(/^(19|20|21)\d{2}-\d{2}-\d{2}$/).refine(value=>{

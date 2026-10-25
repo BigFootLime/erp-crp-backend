@@ -3,7 +3,7 @@ import { crmClientIdSchema, crmIdempotencySchema } from "./client-crm.validators
 
 export const contractClientIdSchema = crmClientIdSchema;
 export const contractIdempotencySchema = crmIdempotencySchema;
-const uuid = z.string().uuid().transform(value=>value.toLowerCase());
+const uuid = z.string().guid().transform(value=>value.toLowerCase());
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const parsed = new Date(value + "T00:00:00Z");
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0,10) === value;

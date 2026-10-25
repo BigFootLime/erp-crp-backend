@@ -14,7 +14,7 @@ import { approveAccountRequestSchema, submitAccountRequestSchema } from '../modu
 
 type Wrap = (work: (req: Request, res: Response) => Promise<void>) => RequestHandler;
 const sourceSession = z.string().regex(/^dir_[a-f0-9]{64}$/);
-const requestId = z.string().uuid();
+const requestId = z.string().guid();
 const version = z.number().int().min(0);
 
 export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap) {
@@ -42,7 +42,7 @@ export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap
     if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
     if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
     await requireDirectoryOwner(db, actor);
-    const envelope = z.object({ id: requestId, key: z.string().uuid(), approval: z.unknown() }).strict().parse(raw);
+    const envelope = z.object({ id: requestId, key: z.string().guid(), approval: z.unknown() }).strict().parse(raw);
     const parsed = approveAccountRequestSchema.parse({ params: { id: envelope.id }, headers: { idempotencyKey: envelope.key }, body: envelope.approval });
     if (parsed.body.module_keys.length === 0) throw new HttpError(422, 'ACCOUNT_REQUEST_MODULE_REQUIRED', 'Sélectionnez au moins un module.');
     if (parsed.body.link_historical_user_id !== null && parsed.body.link_historical_user_id !== undefined) throw new HttpError(422, 'HISTORICAL_LINK_REQUIRES_OWNER_OPERATION', 'Le rattachement historique exige une opération administrateur distincte.');
@@ -53,18 +53,18 @@ export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap
     if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
     if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
     await requireDirectoryOwner(db, actor);
-    return activateDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, profile_id: z.string().uuid() }).strict().parse(raw));
+    return activateDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, profile_id: z.string().guid() }).strict().parse(raw));
   });
   endpoint('account-request-reject', async (actor, raw) => {
     if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
     if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
     await requireDirectoryOwner(db, actor);
-    return rejectDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, reason: z.string().trim().max(500).optional(), key: z.string().uuid() }).strict().parse(raw));
+    return rejectDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, reason: z.string().trim().max(500).optional(), key: z.string().guid() }).strict().parse(raw));
   });
   endpoint('account-request-delete', async (actor, raw) => {
     if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
     if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
     await requireDirectoryOwner(db, actor);
-    return deleteDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, key: z.string().uuid() }).strict().parse(raw));
+    return deleteDirectoryAccountRequest(db, actor, z.object({ id: requestId, expected_version: version, key: z.string().guid() }).strict().parse(raw));
   });
 }

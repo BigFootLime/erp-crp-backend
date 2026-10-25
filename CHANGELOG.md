@@ -8,6 +8,7 @@
 - Migration additive, précontrôle des doublons fabricant/référence et index unique insensible à la casse/aux espaces. Procédure de livraison, vérification et rollback protégé : `docs/runbooks/outillage-catalogue-1762.md`. Aucun déploiement ni migration réelle n'est inclus dans cette préparation.
 - La charte PDF reste attachée à sa version de modèle : les anciennes éditions OF conservent leurs empreintes historiques. Les lecteurs de tests décodent les polices incorporées et les scénarios de commande suivent le parcours commercial actuel.
 - Dépendances de sécurité actualisées : Zod 4.6.7 avec son générateur OpenAPI compatible, Multer 2.5.0 et body-parser 1.20.9. Les validateurs conservent leurs messages et bornes avec les API Zod 4 ; les locks npm et pnpm sont synchronisés.
+- Compatibilité de validation : les GUID PostgreSQL historiques gardent leur format accepté, les PATCH n'injectent pas de valeurs de création dans les champs absents, et les clés de pollution de prototype restent refusées avant normalisation.
 
 ## Charte commune des PDF — #1442
 

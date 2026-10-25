@@ -15,7 +15,7 @@ const isoDate = z
     );
   }, "Date inexistante");
 
-const optionalUuid = z.string().trim().uuid().optional();
+const optionalUuid = z.string().trim().guid().optional();
 
 export const directionDashboardQuerySchema = z.object({
   period: z.enum(PERIOD_PRESETS).optional().default("current_month"),

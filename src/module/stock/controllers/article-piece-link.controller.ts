@@ -12,7 +12,7 @@ import type { AuditContext } from "../repository/stock.repository"
 import { getStockArticleSVC, updateStockArticleSVC } from "../services/stock.service"
 import { updateArticleSchema } from "../validators/stock.validators"
 
-const uuidSchema = z.string().uuid()
+const uuidSchema = z.string().guid()
 const linkBodySchema = z.object({ piece_technique_id: uuidSchema })
 
 function buildAuditContext(req: Request): AuditContext {

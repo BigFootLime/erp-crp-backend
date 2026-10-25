@@ -4,7 +4,7 @@ import { z } from "zod";
 import { isValidPlanningDateTime } from "./planning.validators";
 
 const dateTime = z.string().trim().refine(isValidPlanningDateTime, "Expected an ISO-8601 datetime with timezone");
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const hexColor = z.string().regex(/^#[0-9A-Fa-f]{6}$/).transform((value) => value.toUpperCase());
 const ianaTimezone = z.string().trim().min(1).max(80).refine((value) => {
   try {

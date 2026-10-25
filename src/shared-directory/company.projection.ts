@@ -4,7 +4,7 @@ import {directoryProfileSchema} from './model';
 import {projectDirectoryProfile,sharedDirectoryClient} from './site-runtime';
 const billerColumns=['biller_id','biller_name','street','house_number','postal_code','city','country','phone','email','default_bank_name','default_iban','default_bic','text_on_invoice','creation_date','modification_date'] as const;
 const mentionColumns=['mention_set_id','biller_id','version','effective_from','effective_to','legal_form','share_capital','share_capital_currency','rcs_city','rcs_number','siren','siret','vat_number','ape_code','late_penalty_rate','late_penalty_basis','recovery_indemnity','early_discount_rate','early_discount_basis','vat_on_receipts','vat_exempt_293b','retention_of_title','extra_mentions','created_at','created_by','electronic_address_scheme','electronic_address_value','electronic_address_directory_entry_id','electronic_address_verified_at'] as const;
-const snapshotSchema=z.object({revision:z.number().int().nonnegative(),primary_biller_id:z.string().uuid().nullable(),billers:z.array(z.record(z.string(),z.unknown())),mentions:z.array(z.record(z.string(),z.unknown())),profiles:z.array(directoryProfileSchema)}).strict();
+const snapshotSchema=z.object({revision:z.number().int().nonnegative(),primary_biller_id:z.string().guid().nullable(),billers:z.array(z.record(z.string(),z.unknown())),mentions:z.array(z.record(z.string(),z.unknown())),profiles:z.array(directoryProfileSchema)}).strict();
 /** Add canonical UUIDs; never merge an existing legacy company by its name. */
 export async function synchronizeDirectoryCompany(db:Pool,session:string){
  const client=sharedDirectoryClient();if(!client)return;
@@ -21,7 +21,7 @@ export async function synchronizeDirectoryCompany(db:Pool,session:string){
   const state=(await tx.query('SELECT revision FROM public.cerp_directory_company_state WHERE singleton')).rows[0];
   if(state&&state.revision===snapshot.revision){await tx.query('COMMIT');return;}
   for(const biller of snapshot.billers){
-   const id=z.string().uuid().parse(biller.biller_id),known=(await tx.query('SELECT 1 FROM public.cerp_directory_company_bindings WHERE biller_id=$1::uuid',[id])).rows.length>0;
+   const id=z.string().guid().parse(biller.biller_id),known=(await tx.query('SELECT 1 FROM public.cerp_directory_company_bindings WHERE biller_id=$1::uuid',[id])).rows.length>0;
    if(!known&&(await tx.query('SELECT 1 FROM public.factureur WHERE biller_id=$1::uuid',[id])).rows.length)throw new Error('DIRECTORY_COMPANY_UUID_COLLISION');
    const data=Object.fromEntries(billerColumns.map(column=>[column,biller[column]]));
    await tx.query(`INSERT INTO public.factureur(${billerColumns.join(',')}) SELECT ${billerColumns.join(',')} FROM jsonb_populate_record(NULL::public.factureur,$1::jsonb)
@@ -29,7 +29,7 @@ export async function synchronizeDirectoryCompany(db:Pool,session:string){
    await tx.query('INSERT INTO public.cerp_directory_company_bindings(biller_id) VALUES($1::uuid) ON CONFLICT DO NOTHING',[id]);
   }
   for(const mention of snapshot.mentions){
-   const id=z.string().uuid().parse(mention.mention_set_id),biller=z.string().uuid().parse(mention.biller_id);
+   const id=z.string().guid().parse(mention.mention_set_id),biller=z.string().guid().parse(mention.biller_id);
    if(!snapshot.billers.some(b=>b.biller_id===biller))throw new Error('DIRECTORY_LEGAL_COMPANY_MISMATCH');
    const data=Object.fromEntries(mentionColumns.map(column=>[column,column==='created_by'?(typeof mention.creator_profile_id==='string'?localCreators.get(mention.creator_profile_id)??null:null):mention[column]]));
    const existing=(await tx.query<{data:Record<string,unknown>}>('SELECT to_jsonb(m) AS data FROM public.finance_legal_mentions m WHERE mention_set_id=$1::uuid',[id])).rows[0];

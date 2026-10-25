@@ -9,7 +9,7 @@ import {ManagerError,managedDatabaseIdSchema,publicInstance,type ManagedInstance
 import type {TestInstanceHelper} from './helper-client';
 
 type Options={registry:ManagedRegistry;helper:TestInstanceHelper;commonApi:string;origins:string[];enabled:boolean;authorize?:(authorization:string|undefined)=>Promise<number>};
-const commandKey=z.string().uuid(),deleteBody=z.object({confirmation:z.string().max(80)}).strict();
+const commandKey=z.string().guid(),deleteBody=z.object({confirmation:z.string().max(80)}).strict();
 export function createManagedTestBroker(options:Options) {
   const app=express(),server=createServer(app);
   const connections=new Map<string,Set<Duplex>>();

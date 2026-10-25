@@ -51,7 +51,7 @@ export const proformaListQuerySchema = z.object({
 }).strict();
 export type ProformaListQueryDTO = z.infer<typeof proformaListQuerySchema>;
 
-export const proformaIdParamsSchema = z.object({ id: z.string().uuid() }).strict();
+export const proformaIdParamsSchema = z.object({ id: z.string().guid() }).strict();
 export const proformaAllocationParamsSchema = z.object({ allocationId: z.coerce.number().int().positive().safe() }).strict();
 
 export const proformaIssueBodySchema = z.object({
@@ -77,10 +77,10 @@ export const proformaCancelBodySchema = z.object({
 export type ProformaCancelBodyDTO = z.infer<typeof proformaCancelBodySchema>;
 
 export const proformaReceiptAssignmentBodySchema = z.object({
-  payment_allocation_id: z.string().uuid(),
+  payment_allocation_id: z.string().guid(),
   assignments: z.array(z.object({
-    proforma_billing_part_id: z.string().uuid(),
-    deposit_source_id: z.string().uuid(),
+    proforma_billing_part_id: z.string().guid(),
+    deposit_source_id: z.string().guid(),
     amount: positiveMoney,
   }).strict()).min(1).max(200),
 }).strict().superRefine((value, ctx) => {
@@ -91,7 +91,7 @@ export const proformaReceiptAssignmentBodySchema = z.object({
 
 export type ProformaReceiptAssignmentBodyDTO = z.infer<typeof proformaReceiptAssignmentBodySchema>;
 
-export const proformaReceiptReleaseParamsSchema = z.object({ id: z.string().uuid(), assignmentId: z.string().uuid() }).strict();
+export const proformaReceiptReleaseParamsSchema = z.object({ id: z.string().guid(), assignmentId: z.string().guid() }).strict();
 export const proformaReceiptReleaseBodySchema = z.object({
   amount: positiveMoney,
   reason: z.string().trim().min(3).max(1000),

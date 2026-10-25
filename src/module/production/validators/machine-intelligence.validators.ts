@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { machineTypeSchema } from "./production.validators";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 function parseBoolean(value: unknown): boolean | undefined {
   if (value === undefined || value === null) return undefined;

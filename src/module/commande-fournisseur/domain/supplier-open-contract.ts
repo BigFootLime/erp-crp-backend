@@ -32,18 +32,18 @@ const money = z
     "Quatre décimales au maximum.",
   );
 const envelope = z
-  .object({ line_id: z.string().uuid(), limit: quantity, unit_price_ht: money })
+  .object({ line_id: z.string().guid(), limit: quantity, unit_price_ht: money })
   .strict();
 const revision = {
   valid_from: date,
   valid_to: date,
-  evidence_version_id: z.string().uuid(),
+  evidence_version_id: z.string().guid(),
   reason: z.string().trim().min(3).max(500),
   envelopes: z.array(envelope).min(1).max(200),
-  general_terms_version_id: z.string().uuid().optional(),
+  general_terms_version_id: z.string().guid().optional(),
 };
 const base = {
-  idempotency_key: z.string().uuid(),
+  idempotency_key: z.string().guid(),
   expected_updated_at: z.string().min(1).max(100),
 };
 export const supplierOpenContractCommandSchema = z
@@ -52,7 +52,7 @@ export const supplierOpenContractCommandSchema = z
       .object({
         ...base,
         action: z.literal("CREATE"),
-        document_version_ids: z.array(z.string().uuid()).max(200).optional(),
+        document_version_ids: z.array(z.string().guid()).max(200).optional(),
         reference: z.string().trim().min(1).max(120),
         ...revision,
       })
@@ -61,8 +61,8 @@ export const supplierOpenContractCommandSchema = z
       .object({
         ...base,
         action: z.literal("AMEND"),
-        contract_id: z.string().uuid(),
-        expected_revision_id: z.string().uuid(),
+        contract_id: z.string().guid(),
+        expected_revision_id: z.string().guid(),
         ...revision,
       })
       .strict(),
@@ -70,15 +70,15 @@ export const supplierOpenContractCommandSchema = z
       .object({
         ...base,
         action: z.literal("ATTACH"),
-        document_version_ids: z.array(z.string().uuid()).max(200).optional(),
-        contract_id: z.string().uuid(),
-        expected_revision_id: z.string().uuid(),
+        document_version_ids: z.array(z.string().guid()).max(200).optional(),
+        contract_id: z.string().guid(),
+        expected_revision_id: z.string().guid(),
         mappings: z
           .array(
             z
               .object({
-                line_id: z.string().uuid(),
-                contract_line_id: z.string().uuid(),
+                line_id: z.string().guid(),
+                contract_line_id: z.string().guid(),
               })
               .strict(),
           )
@@ -91,8 +91,8 @@ export const supplierOpenContractCommandSchema = z
       .object({
         ...base,
         action: z.literal("CLOSE"),
-        contract_id: z.string().uuid(),
-        expected_revision_id: z.string().uuid(),
+        contract_id: z.string().guid(),
+        expected_revision_id: z.string().guid(),
         reason: z.string().trim().min(3).max(500),
       })
       .strict(),

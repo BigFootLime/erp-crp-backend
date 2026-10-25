@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
 export const assemblyComponentWithdrawalSchema = z.object({
-  idempotencyKey: z.string().uuid(),
+  idempotencyKey: z.string().guid(),
   expectedVersion: z.string().min(1).max(128),
-  operationId: z.string().uuid(),
+  operationId: z.string().guid(),
   quantity: z.number().int().positive().max(1_000_000_000),
 }).strict();
 export const assemblyComponentPreviewSchema = z.object({
@@ -12,7 +12,7 @@ export const assemblyComponentPreviewSchema = z.object({
 export type AssemblyComponentWithdrawal = z.infer<typeof assemblyComponentWithdrawalSchema>;
 
 export const assemblyComponentReturnSchema = z.object({
-  idempotencyKey: z.string().uuid(),
+  idempotencyKey: z.string().guid(),
   expectedVersion: z.string().min(1).max(128),
   reason: z.string().trim().min(3).max(1000),
   confirmPhysicalReturn: z.literal(true),

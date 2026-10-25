@@ -67,7 +67,7 @@ export const listAccessEventsQuerySchema = z.object({
 });
 export type ListAccessEventsQueryDTO = z.infer<typeof listAccessEventsQuerySchema>;
 
-const reviewIdParam = z.string().uuid("Identifiant de revue invalide");
+const reviewIdParam = z.string().guid("Identifiant de revue invalide");
 
 export const createAccessReviewSchema = z.object({
   body: z

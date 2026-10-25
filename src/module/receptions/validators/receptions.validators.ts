@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { receivedMaterialBarsSchema } from '../../stock/validators/material-bars.validators';
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)")
 
 export const sortDirSchema = z.enum(["asc", "desc"])

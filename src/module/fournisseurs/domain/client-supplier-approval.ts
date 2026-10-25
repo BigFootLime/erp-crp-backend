@@ -4,24 +4,24 @@ import { HttpError } from "../../../utils/httpError";
 export const approvalScopeSchema = z
   .object({
   client_id: z.string().trim().min(1).max(3),
-    product_article_id: z.string().uuid().nullable().default(null),
-    purchase_article_id: z.string().uuid().nullable().default(null),
+    product_article_id: z.string().guid().nullable().default(null),
+    purchase_article_id: z.string().guid().nullable().default(null),
     domaine_code: z.string().trim().min(1).max(80),
   })
   .strict();
 export const approvalRevisionInputSchema = z
   .object({
     scope: approvalScopeSchema,
-    expected_revision_id: z.string().uuid().nullable(),
+    expected_revision_id: z.string().guid().nullable(),
     required: z.boolean(),
     suspended: z.boolean().default(false),
     exclusive: z.boolean().default(false),
     valid_from: z.string().date(),
     valid_to: z.string().date().nullable(),
-    supplier_ids: z.array(z.string().uuid()).max(100),
-    evidence_version_id: z.string().uuid(),
+    supplier_ids: z.array(z.string().guid()).max(100),
+    evidence_version_id: z.string().guid(),
     reason: z.string().trim().min(3).max(500),
-    idempotency_key: z.string().uuid(),
+    idempotency_key: z.string().guid(),
   })
   .strict()
   .superRefine((input, ctx) => {

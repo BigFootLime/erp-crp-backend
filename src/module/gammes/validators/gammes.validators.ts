@@ -4,7 +4,7 @@ import type { RequestHandler } from "express"
 import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const gammeStatutSchema = z.enum(["BROUILLON", "EN_VALIDATION", "APPLICABLE", "OBSOLETE"])
 export type GammeStatutDTO = z.infer<typeof gammeStatutSchema>

@@ -19,7 +19,7 @@ const zeroQuantities = {
 const segment = <T extends z.ZodTypeAny>(payload: T) =>
   z
     .object({
-      id: z.string().uuid(),
+      id: z.string().guid(),
       payload,
     })
     .strict();
@@ -37,7 +37,7 @@ export const cuttingExecutionCommandSchema = z.discriminatedUnion("command", [
           activity_code: true,
         })
         .extend({
-          operation_id: z.string().uuid(),
+          operation_id: z.string().guid(),
           activity_code: z.literal("PRODUCTION"),
         })
         .strict(),

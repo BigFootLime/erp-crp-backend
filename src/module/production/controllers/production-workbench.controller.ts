@@ -97,12 +97,12 @@ export const createConsolidation = asyncHandler(async (req, res) => {
     );
 });
 export const getConsolidation = asyncHandler(async (req, res) => {
-  res.json(await svcGetConsolidation(z.string().uuid().parse(req.params.id)));
+  res.json(await svcGetConsolidation(z.string().guid().parse(req.params.id)));
 });
 export const dissolveConsolidation = asyncHandler(async (req, res) => {
   res.json(
     await svcDissolveConsolidation(
-      z.string().uuid().parse(req.params.id),
+      z.string().guid().parse(req.params.id),
       dissolveConsolidationSchema.parse(req.body),
       buildAuditContext(req),
     ),
@@ -159,7 +159,7 @@ export const downloadSelfInspection = asyncHandler(async (req, res) => {
   const params = z
     .object({
       id: z.coerce.number().int().positive(),
-      sheetId: z.string().uuid(),
+      sheetId: z.string().guid(),
     })
     .parse(req.params);
   const pdf = await svcDownloadSelfInspection(

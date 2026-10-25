@@ -10,7 +10,7 @@ import {
  * généré côté serveur (BCF-AAAA-NNNN) et immuable. Pagination/tri/filtres bornés.
  */
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const dateOnly = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format AAAA-MM-JJ")
