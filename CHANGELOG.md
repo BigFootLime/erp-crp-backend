@@ -7,6 +7,7 @@
 - Les outils issus du catalogue restent « inventaire requis » jusqu'au comptage physique ; un comptage confirmé à zéro finalise aussi l'inventaire et établit une rupture réelle. Avant comptage, ils sont distingués des ruptures et seuils ordinaires et ne peuvent pas être sortis ni proposés sur la tablette ; les outils historiques gardent leur comportement.
 - Migration additive, précontrôle des doublons fabricant/référence et index unique insensible à la casse/aux espaces. Procédure de livraison, vérification et rollback protégé : `docs/runbooks/outillage-catalogue-1762.md`. Aucun déploiement ni migration réelle n'est inclus dans cette préparation.
 - La charte PDF reste attachée à sa version de modèle : les anciennes éditions OF conservent leurs empreintes historiques. Les lecteurs de tests décodent les polices incorporées et les scénarios de commande suivent le parcours commercial actuel.
+- Dépendances de sécurité actualisées : Zod 4.6.7 avec son générateur OpenAPI compatible, Multer 2.5.0 et body-parser 1.20.9. Les validateurs conservent leurs messages et bornes avec les API Zod 4 ; les locks npm et pnpm sont synchronisés.
 
 ## Charte commune des PDF — #1442
 

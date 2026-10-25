@@ -5,8 +5,10 @@ import { HttpError } from "./httpError"
 export function uuidRouteParam(name: string) {
   return z
     .string({
-      required_error: `Le paramètre de route "${name}" est requis`,
-      invalid_type_error: `Le paramètre de route "${name}" doit être fourni une seule fois sous forme de chaîne`,
+      error: (issue) =>
+        issue.input === undefined
+          ? `Le paramètre de route "${name}" est requis`
+          : `Le paramètre de route "${name}" doit être fourni une seule fois sous forme de chaîne`,
     })
     .uuid(`Le paramètre de route "${name}" doit être un UUID valide`)
 }

@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {directoryProfileSchema} from './model';
 import {sharedDirectoryClient,projectDirectoryProfile} from './site-runtime';
 import {HttpError} from '../utils/httpError';
-const entrySchema=z.object({profile:directoryProfileSchema,membership_version:z.number().int().nonnegative().optional(),user:z.record(z.unknown())});
+const entrySchema=z.object({profile:directoryProfileSchema,membership_version:z.number().int().nonnegative().optional(),user:z.record(z.string(),z.unknown())});
 const directoryAdminErrorMap=new Map<string,{status:number;message:string}>([
  ['MFA_STEP_UP_REQUIRED',{status:428,message:'Confirmez votre double authentification pour cette opération.'}],
  ['DIRECTORY_MEMBERSHIP_STALE',{status:409,message:'Les droits de ce compte viennent de changer ; actualisez avant de réessayer.'}],

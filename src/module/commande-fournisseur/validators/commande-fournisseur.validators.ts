@@ -106,7 +106,7 @@ const exigenceQualiteSchema = z
   })
   .strict();
 
-export const ligneInputSchema = z
+const ligneInputObject = z
   .object({
     type: z.enum(LIGNE_TYPES).default("ARTICLE"),
     article_id: uuid.nullish(),
@@ -149,7 +149,9 @@ export const ligneInputSchema = z
       .default([]),
   })
   .strict()
-  .superRefine((val, ctx) => {
+  ;
+
+export const ligneInputSchema = ligneInputObject.superRefine((val, ctx) => {
     if (val.type !== "LIBRE_CONTROLEE" && val.type !== "PRESTATION" && !val.article_id && !val.catalogue_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -229,8 +231,7 @@ export const updateLigneSchema = z.object({
   body: z
     .object({
       expected_updated_at: revisionToken.optional(),
-      patch: ligneInputSchema
-        .innerType()
+      patch: ligneInputObject
         .partial()
         .strict(),
     })

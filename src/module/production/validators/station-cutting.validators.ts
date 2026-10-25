@@ -62,7 +62,7 @@ export const cuttingExecutionCommandSchema = z.discriminatedUnion("command", [
             activity_code: z.literal("PRODUCTION").default("PRODUCTION"),
           })
           .strict()
-          .default({}),
+          .default({ activity_code: "PRODUCTION" }),
       ),
     })
     .strict(),

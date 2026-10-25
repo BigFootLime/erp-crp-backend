@@ -7,7 +7,7 @@ import { AVATAR_KEYS } from '../../auth/validators/test-registration.validator';
 import { workProfileSchema } from '../../auth/validators/work-profile.validator';
 
 const userIdParam = z
-  .string({ required_error: "ID utilisateur requis", invalid_type_error: "ID utilisateur invalide" })
+  .string({ error: (issue) => issue.input === undefined ? "ID utilisateur requis" : "ID utilisateur invalide" })
   .trim()
   .regex(/^\d+$/, "ID utilisateur invalide");
 
@@ -16,12 +16,12 @@ const usernameSchema = trimString(3, "Nom d'utilisateur requis (min 3 caractère
   .refine((value) => /^[A-Z0-9._-]+$/.test(value), "Username: caractères autorisés A-Z 0-9 . _ -");
 
 const phoneFR = z
-  .string({ invalid_type_error: "Téléphone invalide" })
+  .string({ error: "Téléphone invalide" })
   .trim()
   .regex(/^(?:\+33|0)[1-9]\d{8}$/, "Téléphone invalide (ex: 06XXXXXXXX ou +33XXXXXXXXX)");
 
 const nir = z
-  .string({ invalid_type_error: "Numéro de sécurité sociale invalide" })
+  .string({ error: "Numéro de sécurité sociale invalide" })
   .trim()
   .regex(/^\d{15}$/, "Le numéro de sécurité sociale doit contenir 15 chiffres");
 
@@ -29,7 +29,7 @@ const genders = ["Male", "Female"] as const;
 const statuses = ["Active", "Inactive", "Blocked", "Suspended"] as const;
 
 export const adminNewPasswordSchema = z
-  .string({ required_error: "Mot de passe requis", invalid_type_error: "Mot de passe invalide" })
+  .string({ error: (issue) => issue.input === undefined ? "Mot de passe requis" : "Mot de passe invalide" })
   .min(10, "Le mot de passe doit faire au moins 10 caractères.")
   .regex(/[A-Z]/, "Le mot de passe doit contenir au moins 1 majuscule.")
   .regex(/[a-z]/, "Le mot de passe doit contenir au moins 1 minuscule.")
@@ -37,7 +37,7 @@ export const adminNewPasswordSchema = z
   .regex(/[^A-Za-z0-9]/, "Le mot de passe doit contenir au moins 1 symbole.");
 
 export const provisioningIdempotencyKeySchema = z
-  .string({ required_error: "Clé d'idempotence requise" })
+  .string({ error: "Clé d'idempotence requise" })
   .trim()
   .uuid("Clé d'idempotence invalide");
 
@@ -60,7 +60,7 @@ const userCoreObject = z
     surname: trimString(2, "Prénom requis (min 2 caractères)"),
     email: strictEmail,
     tel_no: phoneFR.optional().nullable(),
-    role: z.enum(PRIMARY_USER_ROLES, { errorMap: () => ({ message: "Rôle principal non autorisé" }) }),
+    role: z.enum(PRIMARY_USER_ROLES, { error: () => ({ message: "Rôle principal non autorisé" }) }),
     roles: z
       .array(z.enum(ASSIGNABLE_USER_ROLES))
       .min(1, "Au moins un rôle est requis")
@@ -73,7 +73,7 @@ const userCoreObject = z
     country: z.string().trim().min(1).optional().default("France"),
     salary: z
       .union([
-        z.coerce.number({ invalid_type_error: "Salaire invalide" }).min(0).max(1_000_000),
+        z.coerce.number({ error: "Salaire invalide" }).min(0).max(1_000_000),
         z.null(),
       ])
       .optional(),
@@ -130,7 +130,12 @@ const userCreateBody = userCoreObject
   })
   .superRefine(refineEmploymentDates);
 
-const userPatchBody = userCoreObject.partial().superRefine(refineEmploymentDates);
+// Zod 4 applies object defaults even after partial(); a PATCH must only carry
+// fields sent by the caller, so the create-only country default is removed here.
+const userPatchBody = userCoreObject
+  .extend({ country: z.string().trim().min(1).optional() })
+  .partial()
+  .superRefine(refineEmploymentDates);
 
 export const adminCreateUserSchema = z.object({
   headers: z.object({ idempotencyKey: provisioningIdempotencyKeySchema }),

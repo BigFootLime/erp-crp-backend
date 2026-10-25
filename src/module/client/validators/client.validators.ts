@@ -37,7 +37,7 @@ function isDefined<T>(value: T | undefined): value is T {
 }
 
 function requiredText(message: string) {
-  return z.string({ required_error: message, invalid_type_error: message }).trim().min(1, message);
+  return z.string({ error: (issue) => issue.input === undefined ? message : message }).trim().min(1, message);
 }
 
 function optionalTrimmedText(value: unknown): string | undefined | null {
@@ -265,7 +265,7 @@ export const createClientSchema = z.object({
     z.string().trim().regex(deviseRegex, "Devise ISO 4217 à 3 lettres (ex. EUR)").transform((v) => v.toUpperCase()).optional()
   ),
   encours_max: z
-    .number({ invalid_type_error: "Encours maximum invalide" })
+    .number({ error: "Encours maximum invalide" })
     .nonnegative("L'encours maximum doit être positif")
     .optional(),
   incoterm: z.preprocess(emptyStringToUndefined, z.enum(INCOTERMS).optional()),
@@ -293,7 +293,7 @@ export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;
 
 /** PATCH /clients/:id/contact — le contact doit appartenir au client (vérifié en transaction). */
 export const setPrimaryContactSchema = z.object({
-  contact_id: z.string({ required_error: "Identifiant de contact requis" }).uuid("Identifiant de contact invalide"),
+  contact_id: z.string({ error: "Identifiant de contact requis" }).uuid("Identifiant de contact invalide"),
 });
 export type SetPrimaryContactDTO = z.infer<typeof setPrimaryContactSchema>;
 

@@ -478,7 +478,7 @@ export const consumeDerogationSchema = z.object({
       quality_control_id: optionalUuid,
       release_decision_id: optionalUuid,
       bon_livraison_id: optionalUuid,
-      context: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
+      context: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}),
     })
     .strict(),
 });
