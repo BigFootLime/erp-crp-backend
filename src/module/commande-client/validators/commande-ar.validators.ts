@@ -16,12 +16,12 @@ export const sendCommandeArSchema = z.object({
     id: z.string().regex(/^\d+$/, "id must be an integer"),
   }),
   body: z.object({
-    ar_id: z.string().uuid(),
+    ar_id: z.string().guid(),
     recipient_emails: z.array(z.string().email()).min(1).superRefine((values, ctx) => {
       const normalized = values.map((value) => value.trim().toLowerCase());
       if (new Set(normalized).size !== normalized.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate recipient email" });
     }),
-    recipient_contact_ids: z.array(z.string().uuid()).optional().default([]).superRefine((values, ctx) => {
+    recipient_contact_ids: z.array(z.string().guid()).optional().default([]).superRefine((values, ctx) => {
       if (new Set(values).size !== values.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Duplicate recipient contact" });
     }),
     email_body: z.string().trim().min(1).max(20000).optional().nullable(),
@@ -32,7 +32,7 @@ export const sendCommandeArSchema = z.object({
 
 export const acknowledgementDocumentParamsSchema = z.object({
   id: z.string().regex(/^\d+$/, "id must be an integer"),
-  documentId: z.string().uuid(),
+  documentId: z.string().guid(),
 });
 
 export const createAcknowledgementSchema = z.object({
@@ -49,7 +49,7 @@ export const sendAcknowledgementSchema = z.object({
   params: acknowledgementDocumentParamsSchema,
   body: z.object({
     recipient_emails: z.array(z.string().email()).min(1),
-    recipient_contact_ids: z.array(z.string().uuid()).optional().default([]),
+    recipient_contact_ids: z.array(z.string().guid()).optional().default([]),
     email_body: z.string().trim().min(1).max(20000).optional().nullable(),
     message: z.string().trim().max(20000).optional().nullable(),
   }),

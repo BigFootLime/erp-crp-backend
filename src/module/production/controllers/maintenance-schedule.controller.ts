@@ -18,6 +18,6 @@ export const previewMaintenanceCalendar = asyncHandler(async (req, res) => {
 export const publishMaintenanceCalendar = asyncHandler(async (req, res) => {
     assertManager(req);
     const body = publishMaintenanceScheduleSchema.parse(req.body);
-    const key = z.string().uuid().parse(req.get('Idempotency-Key'));
+    const key = z.string().guid().parse(req.get('Idempotency-Key'));
     res.json(await svcPublishMaintenanceCalendar(body.proposal, body.preview_hash, key, buildAuditContext(req)));
 });

@@ -14,7 +14,7 @@ import {
   METROLOGY_VERDICTS,
 } from "../domain/metrology-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const optionalUuid = uuid.nullable().optional();
 
 const isoDate = z

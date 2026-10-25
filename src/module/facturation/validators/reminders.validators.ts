@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const clientId = z.string().trim().min(1).max(3);
 const strictDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const idempotencyKey = z.string().trim().min(8).max(200);

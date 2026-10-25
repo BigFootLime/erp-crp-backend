@@ -10,7 +10,7 @@ import {
  * généré côté serveur (BCF-AAAA-NNNN) et immuable. Pagination/tri/filtres bornés.
  */
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const dateOnly = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format AAAA-MM-JJ")
@@ -106,7 +106,7 @@ const exigenceQualiteSchema = z
   })
   .strict();
 
-export const ligneInputSchema = z
+const ligneInputObject = z
   .object({
     type: z.enum(LIGNE_TYPES).default("ARTICLE"),
     article_id: uuid.nullish(),
@@ -149,7 +149,9 @@ export const ligneInputSchema = z
       .default([]),
   })
   .strict()
-  .superRefine((val, ctx) => {
+  ;
+
+export const ligneInputSchema = ligneInputObject.superRefine((val, ctx) => {
     if (val.type !== "LIBRE_CONTROLEE" && val.type !== "PRESTATION" && !val.article_id && !val.catalogue_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -229,9 +231,26 @@ export const updateLigneSchema = z.object({
   body: z
     .object({
       expected_updated_at: revisionToken.optional(),
-      patch: ligneInputSchema
-        .innerType()
+      patch: ligneInputObject
         .partial()
+        // A line update is tri-state. Zod 4 retains create defaults through
+        // partial(), so override them to avoid rewriting an omitted price,
+        // tax, requirement, or line type.
+        .extend({
+          type: z.enum(LIGNE_TYPES).optional(),
+          prix_unitaire_ht: money.nullable().optional(),
+          remise_pct: pct.optional(),
+          tva_pct: pct.optional(),
+          frais_ht: money.optional(),
+          exigences_qualite: z.array(exigenceQualiteSchema).max(20).optional(),
+          documents_attendus: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+          besoins: z.array(z.object({
+            besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL", "MANUEL"]),
+            besoin_ref: z.string().trim().min(1).max(120),
+            of_id: z.number().int().positive().nullish(),
+            quantite_couverte: qty,
+          }).strict()).max(20).optional(),
+        })
         .strict(),
     })
     .strict(),

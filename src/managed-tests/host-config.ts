@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {z} from 'zod';
 const absolute=z.string().refine(v=>path.isAbsolute(v) && !v.includes('\0') && !v.split(/[\\/]/).includes('..'),'Absolute trusted path required');
-export const hostConfigSchema=z.object({control_root:absolute,data_root:absolute,admin_database_url:z.string().url(),source_env:absolute,template_database:z.string().regex(/^cerp_test_template_[a-z0-9_]{1,35}$/),template_version:z.string().regex(/^[a-zA-Z0-9._-]{1,80}$/),api_release:absolute,app_user:z.string().regex(/^[a-z_][a-z0-9_-]{0,30}$/),app_group:z.string().regex(/^[a-z_][a-z0-9_-]{0,30}$/),minimum_free_memory_mb:z.number().int().min(256),minimum_free_disk_mb:z.number().int().min(512),pg_dump:absolute,pg_restore:absolute,systemctl:absolute,directory_id:z.string().uuid().optional(),directory_callers_file:absolute.optional()}).strict();
+export const hostConfigSchema=z.object({control_root:absolute,data_root:absolute,admin_database_url:z.string().url(),source_env:absolute,template_database:z.string().regex(/^cerp_test_template_[a-z0-9_]{1,35}$/),template_version:z.string().regex(/^[a-zA-Z0-9._-]{1,80}$/),api_release:absolute,app_user:z.string().regex(/^[a-z_][a-z0-9_-]{0,30}$/),app_group:z.string().regex(/^[a-z_][a-z0-9_-]{0,30}$/),minimum_free_memory_mb:z.number().int().min(256),minimum_free_disk_mb:z.number().int().min(512),pg_dump:absolute,pg_restore:absolute,systemctl:absolute,directory_id:z.string().guid().optional(),directory_callers_file:absolute.optional()}).strict();
 export type ManagedHostConfig=z.infer<typeof hostConfigSchema>;
 export async function readHostConfig(file='/etc/cerp-managed-tests/host.json') {
   const stat=await fs.lstat(file);

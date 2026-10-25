@@ -4,7 +4,7 @@ import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 import { packagingPolicySchema } from "../../stock/domain/finished-packaging"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const versionStatutSchema = z.enum(["BROUILLON", "EN_VALIDATION", "APPLICABLE", "OBSOLETE"])
 export type VersionStatutDTO = z.infer<typeof versionStatutSchema>

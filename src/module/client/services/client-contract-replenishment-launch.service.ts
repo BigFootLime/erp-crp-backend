@@ -16,8 +16,8 @@ import { launchPreparedContractReplenishmentTx } from './client-contract-repleni
  * fail during the shared recheck before the first OF can be created. */
 export async function generateClientContractReplenishment(clientId: string, contractId: string,
   command: ClientReplenishmentLaunchCommand, key: string, audit: AuditContext, userRole: string | null | undefined) {
-  const parsed = clientReplenishmentLaunchSchema.safeParse(command), parsedKey = z.string().uuid().safeParse(key);
-  const parsedContract = z.string().uuid().safeParse(contractId);
+  const parsed = clientReplenishmentLaunchSchema.safeParse(command), parsedKey = z.string().guid().safeParse(key);
+  const parsedContract = z.string().guid().safeParse(contractId);
   if (!parsed.success || !parsedKey.success || !parsedContract.success)
     throw new HttpError(422, 'CONTRACT_REPLENISHMENT_SELECTION_INVALID', 'Sélectionnez une préparation et de 1 à 100 propositions distinctes.');
   const contract = parsedContract.data.toLowerCase();

@@ -65,6 +65,29 @@ describe("validators commandes fournisseurs (#172) — Zod strict", () => {
     expect(parsed.body.lignes[0].remise_pct).toBe(0);
   });
 
+  it("ne réintroduit aucun défaut de création dans un PATCH de ligne", () => {
+    const omitted = updateLigneSchema.parse({ body: { patch: { quantite: 2 } } }).body.patch;
+    expect(omitted).toEqual({ quantite: 2 });
+
+    const explicit = updateLigneSchema.parse({
+      body: {
+        patch: {
+          type: "ARTICLE",
+          prix_unitaire_ht: 0,
+          remise_pct: 0,
+          tva_pct: 20,
+          frais_ht: 0,
+          exigences_qualite: [],
+          documents_attendus: [],
+          besoins: [],
+        },
+      },
+    }).body.patch;
+    expect(explicit).toMatchObject({ type: "ARTICLE", prix_unitaire_ht: 0, remise_pct: 0, tva_pct: 20, frais_ht: 0 });
+    expect(explicit.exigences_qualite).toEqual([]);
+    expect(explicit.documents_attendus).toEqual([]);
+    expect(explicit.besoins).toEqual([]);
+  });
   it("rejette tout champ inconnu (mode strict, création et PATCH)", () => {
     expect(() => createCommandeSchema.parse({ body: { ...baseCreate, code: "BCF-2026-9999" } })).toThrow();
     expect(() => createCommandeSchema.parse({ body: { ...baseCreate, statut: "APPROUVEE" } })).toThrow();

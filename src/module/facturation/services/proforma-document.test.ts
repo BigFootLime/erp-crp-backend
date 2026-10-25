@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -9,18 +9,7 @@ import * as tools from "../domain/decimal-money";
 const load = createRequire(resolve(repoRoot, "package.json"));
 const fixtureMaker = load(resolve(repoRoot, "docs/testing/fixtures/proforma-document-fixture.cjs")) as (count: number, companies: number, tools: unknown) => ProformaDocumentSnapshot;
 const fixture=(count=1,companies=1)=>fixtureMaker(count,companies,tools);
-function pdfText(bytes: Buffer): string {
-  let offset=0,result="";
-  const decoder=new TextDecoder("windows-1252");
-  while((offset=bytes.indexOf("stream\n",offset))>=0){
-    offset+=7;const end=bytes.indexOf("endstream",offset);if(end<0)break;
-    try {const stream=inflateSync(bytes.subarray(offset,end)).toString("latin1");
-      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(match=>decoder.decode(Buffer.from(match[1]!.replace(/\s/g,""),"hex"))).join("");
-    } catch { /* Raster streams are not text. */ }
-    offset=end+9;
-  }
-  return result.replace(/\s/g,"");
-}
+const pdfText = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 describe("#1268 structured proforma PDF",()=>{
   it("prints company/affair allocation and frozen precision without technical hashes or a paid flag",async()=>{
     const source=fixture(),before=structuredClone(source),bytes=await renderProformaDocument(source),text=pdfText(bytes);
@@ -30,7 +19,7 @@ describe("#1268 structured proforma PDF",()=>{
     expect(text).toContain("461,70€");expect(text).toContain("14/10/2026");
     expect(text).toContain("neconstituepasunefacturefiscale");expect(text).not.toContain("Éditéle");
     expect(text).not.toContain(source.preview.preview_hash);expect(text).not.toContain("HIDDEN-SHARE");expect(text).not.toContain("Payée");
-    expect(bytes.toString('latin1')).toContain('/BaseFont /Helvetica-Bold');expect(source).toEqual(before);
+    expect(bytes.toString('latin1')).toContain('Inter-Bold');expect(source).toEqual(before);
   });
   it("retains all dense lines and both companies with repeated headers",async()=>{
     const bytes=await renderProformaDocument(fixture(24,2)),text=pdfText(bytes);

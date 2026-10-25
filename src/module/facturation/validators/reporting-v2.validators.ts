@@ -118,7 +118,7 @@ export const exportQuerySchema = reportingFiltersSchema.extend({
    */
   include_client_contacts: z
     .preprocess((value) => (value === undefined ? false : value), z.literal(false, {
-      errorMap: () => ({
+      error: () => ({
         message:
           "Les coordonnées client ne sont jamais exportées (RGPD, minimisation). Demande à instruire hors reporting.",
       }),

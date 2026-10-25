@@ -18,7 +18,7 @@ export function clientContractAuditContext(req:Request):AuditContext {
   const userId=req.user?.id;
   if(typeof userId!=="number"||!Number.isInteger(userId)||userId<1)throw new HttpError(401,"UNAUTHORIZED","Connexion requise");
   const userAgent=typeof req.headers["user-agent"]==="string"?req.headers["user-agent"]:null;
-  const session=z.string().uuid().safeParse(req.headers["x-client-session-id"]??req.headers["x-session-id"]);
+  const session=z.string().guid().safeParse(req.headers["x-client-session-id"]??req.headers["x-session-id"]);
   return {user_id:userId,ip:getClientIp(req),user_agent:userAgent,...parseDevice(userAgent),
     path:stripQueryFromUrl(req.originalUrl),page_key:"clients.contracts",client_session_id:session.success?session.data:null};
 }
@@ -38,7 +38,7 @@ export const listContractArticles:RequestHandler=async(req,res,next)=>{
 };
 export const readContract:RequestHandler=async(req,res,next)=>{
   try {
-    const clientId=contractClientIdSchema.parse(req.params.id),id=z.string().uuid().parse(req.params.contractId);
+    const clientId=contractClientIdSchema.parse(req.params.id),id=z.string().guid().parse(req.params.contractId);
     const query=clientContractQuerySchema.parse(req.query);
     const data=await getClientContract(clientId,id,query.page);
     res.setHeader("Cache-Control","no-store");res.json({...data,can_write:data.client_active&&canWrite(req)});
@@ -54,7 +54,7 @@ export const postContractCommand:RequestHandler=async(req,res,next)=>{
 };
 export const listContractCalls:RequestHandler=async(req,res,next)=>{
   try {
-    const clientId=contractClientIdSchema.parse(req.params.id),id=z.string().uuid().parse(req.params.contractId);
+    const clientId=contractClientIdSchema.parse(req.params.id),id=z.string().guid().parse(req.params.contractId);
     const query=clientContractQuerySchema.parse(req.query);
     res.setHeader('Cache-Control','no-store');res.json(await getClientContractCalls(clientId,id,query.page));
   } catch(error){next(error);}

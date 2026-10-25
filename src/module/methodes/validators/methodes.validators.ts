@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { PROGRAM_NUMBER_MAX_LENGTH } from "../domain/methodes-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const COST_CENTER_STATUSES = ["ACTIF", "SUSPENDU", "ARCHIVE"] as const;
 

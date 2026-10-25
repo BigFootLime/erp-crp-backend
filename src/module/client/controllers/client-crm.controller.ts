@@ -16,7 +16,7 @@ function auditContext(req: Request): AuditContext {
   const userAgent = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
   const device = parseDevice(userAgent);
   const rawSession = req.headers["x-client-session-id"] ?? req.headers["x-session-id"];
-  const session = z.string().uuid().safeParse(rawSession);
+  const session = z.string().guid().safeParse(rawSession);
   return { user_id: id, ip: getClientIp(req), user_agent: userAgent, ...device,
     path: stripQueryFromUrl(req.originalUrl), page_key: "clients.crm",
     client_session_id: session.success ? session.data : null };

@@ -7,8 +7,8 @@ export const deliveryUrgencyBody = z.object({
   preview_hash: z.string().regex(/^[0-9a-f]{64}$/),
   reason: z.string().trim().min(10).max(1000),
 }).strict();
-export const deliveryUrgencyRequestParams = z.object({ requestId: z.string().uuid() }).strict();
-export const deliveryUrgencyKey = z.string().uuid('Une clé de requête UUID est requise');
+export const deliveryUrgencyRequestParams = z.object({ requestId: z.string().guid() }).strict();
+export const deliveryUrgencyKey = z.string().guid('Une clé de requête UUID est requise');
 export const deliveryUrgencyCancelBody = z.object({
   expected_version: z.number().int().positive(),
   reason: z.string().trim().min(10).max(1000),

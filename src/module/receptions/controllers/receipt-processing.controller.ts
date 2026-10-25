@@ -25,8 +25,8 @@ export async function requireReceiptProcessingAccess(
 }
 const ids = (req: Request) =>
   [
-    z.string().uuid().parse(req.params.id),
-    z.string().uuid().parse(req.params.lineId),
+    z.string().guid().parse(req.params.id),
+    z.string().guid().parse(req.params.lineId),
   ] as const;
 export const listProcessing = asyncHandler(async (req, res) => {
   const permissions = await requireReceiptProcessingAccess(req);

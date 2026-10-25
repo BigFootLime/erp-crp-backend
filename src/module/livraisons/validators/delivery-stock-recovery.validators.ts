@@ -8,5 +8,5 @@ export const deliveryStockRecoveryKey = z.string().trim().min(8).max(200);
 export const deliveryStockRecoveryResult = z.object({
   allocation_id: z.number().int().positive(), livraison_affaire_id: z.number().int().positive(), commande_id: z.number().int().positive(),
   reserved_qty: z.number().finite().nonnegative(), shortage_qty: z.number().finite().nonnegative(),
-  reservation_ids: z.array(z.string().uuid()).min(1), idempotent_replay: z.boolean(),
+  reservation_ids: z.array(z.string().guid()).min(1), idempotent_replay: z.boolean(),
 }).strict();

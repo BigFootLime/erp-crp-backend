@@ -1,22 +1,9 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 import { renderSelfInspectionPdf, type SelfInspectionSnapshot } from "./self-inspection-pdf";
 import { inspectionRequirement, inspectionSampling } from "./self-inspection-workshop";
 
-function pdfText(bytes: Buffer): string {
-  let from = 0, result = "";
-  while ((from = bytes.indexOf("stream\n", from)) >= 0) {
-    from += 7;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    try {
-      const stream = inflateSync(bytes.subarray(from, end)).toString("latin1");
-      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(match => Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1")).join("");
-    } catch { /* Raster streams are not text. */ }
-    from = end + 9;
-  }
-  return result.replace(/\s/g, "");
-}
+const pdfText = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 
 export function fixtureInspection(count = 3): SelfInspectionSnapshot {
   return {
@@ -52,7 +39,7 @@ describe("Workshop self-inspection paper evidence", () => {
     expect(text).not.toContain(fixture.source_hash);
     expect(text).not.toContain("Éditéle");
     expect(fixture).toEqual(before);
-    expect(bytes.toString('latin1')).toContain('/BaseFont /Helvetica-Bold');
+    expect(bytes.toString('latin1')).toContain('Inter-Bold');
   });
   it("keeps all requirements and repeats headings across a dense multi-page sheet", async () => {
     const bytes = await renderSelfInspectionPdf(fixtureInspection(32));

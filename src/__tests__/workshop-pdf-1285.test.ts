@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "./helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 import { buildOfDocumentPayload, OF_DOCUMENT_TEMPLATE_VERSION, OF_WORKSHOP_TEMPLATE_VERSION } from "../module/production/domain/of-document";
 import { renderOfDocument } from "../module/production/services/of-document-render";
@@ -6,24 +6,12 @@ import { buildFixtureInput, FIXTURE_OPERATIONS_TFT } from "../../test-support/pr
 import { renderCerpDocument } from "../shared/pdf/cerp-document";
 import { renderWorkshopTable } from "../shared/pdf/workshop-document-blocks";
 
-function content(bytes: Buffer): string {
-  let from = 0, result = "";
-  while ((from = bytes.indexOf("stream\n", from)) >= 0) {
-    from += 7;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    try {
-      const stream = inflateSync(bytes.subarray(from, end)).toString("latin1");
-      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(match => Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1")).join("");
-    } catch { /* Image streams have no document text. */ }
-    from = end + 9;
-  }
-  return result.replace(/\s/g, "");
-}
+const content = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 
 describe("Workshop OF layout and source boundaries", () => {
   it("keeps the saved 1.6 rendering unchanged", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.6" }));
+    expect(payload.documentCharter).toBeUndefined();
     expect((await renderOfDocument(payload)).sha256).toBe("cf0e5a8ad3e9199d09d4799e6f28f37c1a0a308fd9733ceb748b9ec22a95f0e3");
   });
   it("keeps the saved 1.5 rendering unchanged", async () => {
@@ -68,6 +56,7 @@ describe("Workshop OF layout and source boundaries", () => {
   });
   it("prints the generation timestamp only in the footer for new documents", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION }));
+    expect(payload.documentCharter).toBe("module-v1");
     const text = content((await renderOfDocument(payload)).buffer);
     expect(text).not.toContain("Éditéle");
     expect(text).toContain("Généré");

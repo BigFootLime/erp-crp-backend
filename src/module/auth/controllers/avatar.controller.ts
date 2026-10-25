@@ -7,7 +7,7 @@ import pool from '../../../config/database';
 import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
 import {uploadDirectoryAvatar} from '../../../shared-directory/avatar.facade';
 
-const inputSchema=z.object({key:z.string().uuid(),userId:z.number().int().positive().max(2147483647),body:z.object({}).strict()});
+const inputSchema=z.object({key:z.string().guid(),userId:z.number().int().positive().max(2147483647),body:z.object({}).strict()});
 function upload(admin:boolean):RequestHandler {
   return async(req,res,next)=>{try {
     const actorId=req.user?.id;

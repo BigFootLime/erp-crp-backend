@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const unit = z.string().trim().min(1).max(32).transform((value) => value.toUpperCase());
 const numericInput = z.union([
   z.number(),

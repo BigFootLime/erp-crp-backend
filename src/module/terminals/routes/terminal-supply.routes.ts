@@ -42,7 +42,7 @@ router.get('/reception/mp-articles',moduleAccess('stock'),listStockArticles);
 // Logistics commands carry their stable key in the body. Quality uses a header.
 const qualityCommand: RequestHandler = (req,_res,next) => {
   const { idempotencyKey, ...body } = req.body ?? {};
-  if (idempotencyKey) req.headers['idempotency-key'] = z.string().uuid().parse(idempotencyKey);
+  if (idempotencyKey) req.headers['idempotency-key'] = z.string().guid().parse(idempotencyKey);
   req.body = body;
   next();
 };
@@ -70,7 +70,7 @@ router.get('/reception/scan',asyncHandler(async(req,res)=>{
   if(!/^CERP:/i.test(scan)){res.json({q:scan});return;}
   const label=await repoFindLabelByPublicId(parseIdentificationPayload(scan));
   if(!label||label.status!=='ACTIVE')throw new HttpError(404,'RECEIPT_SCAN_UNKNOWN','Étiquette inconnue, remplacée ou invalidée.');
-  if(label.entity_type==='PURCHASE_ORDER'){res.json({orderId:z.string().uuid().parse(label.entity_id)});return;}
+  if(label.entity_type==='PURCHASE_ORDER'){res.json({orderId:z.string().guid().parse(label.entity_id)});return;}
   if(label.entity_type==='WORK_ORDER'){res.json({ofId:z.coerce.number().int().positive().parse(label.entity_id)});return;}
   if(label.entity_type==='STOCK_ARTICLE'){
     const row=(await pool.query('SELECT code FROM public.articles WHERE id=$1::uuid',[label.entity_id])).rows[0];

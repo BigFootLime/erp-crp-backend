@@ -68,8 +68,8 @@ export async function applyMaterialBarTransferTx(tx: Db, plan: Awaited<ReturnTyp
 }
 
 const length = z.number().finite().nonnegative().max(1e9);
-const proof = z.object({ barId: z.string().uuid(), version: z.number().int().positive(), targetReservationId: z.string().uuid(),
-  targetMm: length, transfers: z.array(z.object({ reservationId: z.string().uuid(), quantityMm: length.positive() })) });
+const proof = z.object({ barId: z.string().guid(), version: z.number().int().positive(), targetReservationId: z.string().guid(),
+  targetMm: length, transfers: z.array(z.object({ reservationId: z.string().guid(), quantityMm: length.positive() })) });
 
 /** Capture exact provenance before canonical restoration or surplus release. */
 export async function prepareMaterialBarRestorationTx(tx: Db, contextId: string,

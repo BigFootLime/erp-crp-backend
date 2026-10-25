@@ -9,7 +9,7 @@ import {
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD");
 const isoDateTime = z.string().datetime({ offset: true });
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const positiveMoney = z.string().regex(/^(?:0|[1-9]\d*)\.\d{2}$/, "Montant positif avec deux décimales attendu")
   .refine((value) => value !== "0.00", "Le montant doit être strictement positif.");
 

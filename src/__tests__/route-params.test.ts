@@ -17,9 +17,21 @@ describe("Paramètres de route UUID", () => {
   })
 
   it.each([
+    "11111111-1111-1111-1111-111111111111",
+    "00000000-0000-0000-0000-000000000000",
+    "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+  ])("conserve les identifiants PostgreSQL historiques sans imposer une nouvelle variante RFC : %s", (id) => {
+    expect(parseUuidRouteParam({ id }, "id")).toBe(id)
+    expect(idParamSchema.safeParse({ params: { id } }).success).toBe(true)
+    expect(gammeIdParamSchema.safeParse({ params: { gammeId: id } }).success).toBe(true)
+  })
+
+  it.each([
     ["absent", {}],
     ["multiple", { versionId: [VERSION_ID, VERSION_ID] }],
     ["non UUID", { versionId: "version-A" }],
+    ["format compact", { versionId: "11111111111111111111111111111111" }],
+    ["caractère hors hexadécimal", { versionId: "g1111111-1111-1111-1111-111111111111" }],
   ])("refuse un paramètre %s avec une erreur 400 actionnable", (_label, params) => {
     expect.assertions(4)
     try {
