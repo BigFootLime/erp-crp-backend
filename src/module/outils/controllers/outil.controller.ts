@@ -301,7 +301,7 @@ export const outilController = {
       const user = requireUser(req)
       const payload = reapprovisionnementSchema.parse(req.body)
 
-      await outilService.reapprovisionner({
+      const result = await outilService.reapprovisionner({
         ...payload,
         utilisateur: user.username,
         user_id: user.id ?? null,
@@ -312,7 +312,7 @@ export const outilController = {
       })
 
       return res.status(200).json({
-        success: true,
+        ...result,
         message: `Outil ${payload.id_outil} reapprovisionne de ${payload.quantite} unite(s).`,
       })
     } catch (error) {
@@ -442,20 +442,20 @@ export const outilSupportController = {
     try {
       requireUser(req)
       let fournisseursPayload: unknown = []
-      if (req.body.id_fournisseurs) {
+      if (req.body.fournisseur_ids) {
         try {
-          fournisseursPayload = JSON.parse(req.body.id_fournisseurs)
+          fournisseursPayload = JSON.parse(req.body.fournisseur_ids)
         } catch {
-          throw new HttpError(400, "INVALID_JSON", "id_fournisseurs doit etre un JSON valide")
+          throw new HttpError(400, "INVALID_JSON", "fournisseur_ids doit etre un JSON valide")
         }
       }
 
       const parsed = createFabricantSchema.parse({
         nom_fabricant: req.body.nom_fabricant,
-        id_fournisseurs: fournisseursPayload,
+        fournisseur_ids: fournisseursPayload,
       })
 
-      const id = await outilSupportService.createFabricant(parsed.nom_fabricant, req.file, parsed.id_fournisseurs)
+      const id = await outilSupportService.createFabricant(parsed.nom_fabricant, req.file, parsed.fournisseur_ids)
       return res.status(201).json({ message: "Fabricant cree", id })
     } catch (error) {
       next(error)
@@ -467,24 +467,24 @@ export const outilSupportController = {
       requireUser(req)
       const id = parseId(req.params.id, "ID Fabricant")
       let fournisseursPayload: unknown = []
-      if (req.body.id_fournisseurs) {
+      if (req.body.fournisseur_ids) {
         try {
-          fournisseursPayload = JSON.parse(req.body.id_fournisseurs)
+          fournisseursPayload = JSON.parse(req.body.fournisseur_ids)
         } catch {
-          throw new HttpError(400, "INVALID_JSON", "id_fournisseurs doit etre un JSON valide")
+          throw new HttpError(400, "INVALID_JSON", "fournisseur_ids doit etre un JSON valide")
         }
       }
 
       const parsed = updateFabricantSchema.parse({
         nom_fabricant: req.body.nom_fabricant,
-        id_fournisseurs: fournisseursPayload,
+        fournisseur_ids: fournisseursPayload,
       })
 
       const fabricant = await outilSupportService.updateFabricant(
         id,
         parsed.nom_fabricant,
         req.file,
-        parsed.id_fournisseurs
+        parsed.fournisseur_ids
       )
 
       return res.status(200).json(fabricant)

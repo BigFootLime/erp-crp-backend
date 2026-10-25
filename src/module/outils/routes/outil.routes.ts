@@ -18,6 +18,7 @@ import {
   transitionAllocation,
 } from "../controllers/outillage-lifecycle.controller";
 import { getCatalogue, getCatalogueAsset } from "../controllers/outil-catalogue.controller";
+import { getMasterToolSuppliers, getPriceVariationReport, getToolIndicativePriceHistory, getToolSupplierOffers, postToolSupplierOffer, rejectLegacyToolSupplierWrite } from "../controllers/outil-supplier-catalogue.controller";
 
 const router = Router();
 
@@ -45,9 +46,11 @@ router.patch(
   asyncHandler(outilSupportController.patchFabricant)
 );
 
-router.get("/fournisseurs", asyncHandler(outilSupportController.getFournisseurs));
-router.post("/fournisseurs", authenticateToken, requireOutillageCapability("configure"), asyncHandler(outilSupportController.postFournisseur));
-router.patch("/fournisseurs/:id", authenticateToken, requireOutillageCapability("configure"), asyncHandler(outilSupportController.patchFournisseur));
+// Canonical supplier directory lives under /fournisseurs. This read projection
+// contains only master suppliers qualified for the outillage domain.
+router.get("/fournisseurs", authenticateToken, requireOutillageCapability("read"), asyncHandler(getMasterToolSuppliers));
+router.post("/fournisseurs", authenticateToken, requireOutillageCapability("configure"), rejectLegacyToolSupplierWrite);
+router.patch("/fournisseurs/:id", authenticateToken, requireOutillageCapability("configure"), rejectLegacyToolSupplierWrite);
 
 router.get("/geometries", asyncHandler(outilSupportController.getGeometries));
 router.post("/geometries", authenticateToken, requireOutillageCapability("configure"), outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.postGeometrie));
@@ -88,9 +91,13 @@ router.post("/:id/parameter-versions", authenticateToken, requireOutillageCapabi
 
 // ✅ Low stock
 router.get("/low-stock", authenticateToken, asyncHandler(outilController.getLowStock));
+router.get("/rapports/variations-prix", authenticateToken, requireOutillageCapability("read"), asyncHandler(getPriceVariationReport));
 
 // ✅ Détail par id
 router.get("/:id/pricing", authenticateToken, asyncHandler(outilController.getPricing));
+router.get("/:id/offres-fournisseurs", authenticateToken, requireOutillageCapability("read"), asyncHandler(getToolSupplierOffers));
+router.post("/:id/offres-fournisseurs", authenticateToken, requireOutillageCapability("configure"), asyncHandler(postToolSupplierOffer));
+router.get("/:id/prix/history", authenticateToken, requireOutillageCapability("read"), asyncHandler(getToolIndicativePriceHistory));
 router.get("/:id", asyncHandler(outilController.getById));
 
 // ✅ Lookup par code barre (référence fabricant)
