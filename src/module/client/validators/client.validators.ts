@@ -294,7 +294,7 @@ export type CreateClientDTO = z.infer<typeof createClientSchema>;
 export const clientPatchSchema = createClientSchema.partial().extend({
   payment_mode_ids: z.array(z.string().guid("Le mode de règlement est invalide")).optional(),
   quality_levels: z.array(z.enum(QUALITY_LEVELS)).optional(),
-  contacts: z.array(normalizedContactSchema).optional(),
+  contacts: z.array(normalizedContactSchema).transform((contacts) => contacts.filter(isDefined)).optional(),
 });
 export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;
 
