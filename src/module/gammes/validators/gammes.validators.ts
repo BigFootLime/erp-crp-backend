@@ -44,7 +44,12 @@ export const createGammeSchema = z.object({ body: gammeCore })
 export type CreateGammeBodyDTO = z.infer<typeof createGammeSchema>["body"]
 
 export const updateGammeSchema = z.object({
-  body: gammeCore.partial().extend({ expected_updated_at: z.string().min(1).optional() }),
+  // PATCH must retain the published status/current marker unless explicitly set.
+  body: gammeCore.partial().extend({
+    statut: gammeStatutSchema.optional(),
+    is_current: z.boolean().optional(),
+    expected_updated_at: z.string().min(1).optional(),
+  }),
 })
 export type UpdateGammeBodyDTO = z.infer<typeof updateGammeSchema>["body"]
 

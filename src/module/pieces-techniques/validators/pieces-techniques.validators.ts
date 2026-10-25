@@ -291,6 +291,7 @@ export type AddBomLineBodyDTO = z.infer<typeof addBomLineSchema>["body"]
 export const updateBomLineSchema = z.object({
   body: bomLineInputSchema.partial().extend({
     rang: z.coerce.number().int().min(1).optional(),
+    quantite: z.coerce.number().positive().optional(),
   }),
 })
 
@@ -311,7 +312,15 @@ export const addOperationSchema = z.object({
 export type AddOperationBodyDTO = z.infer<typeof addOperationSchema>["body"]
 
 export const updateOperationSchema = z.object({
-  body: operationInputSchema.partial(),
+  body: operationInputSchema.partial().extend({
+    phase: z.coerce.number().int().min(0).optional(),
+    prix: z.coerce.number().min(0).optional(),
+    coef: z.coerce.number().min(0).optional(),
+    tp: z.coerce.number().min(0).optional(),
+    tf_unit: z.coerce.number().min(0).optional(),
+    qte: z.coerce.number().min(0).optional(),
+    taux_horaire: z.coerce.number().min(0).optional(),
+  }),
 })
 
 export type UpdateOperationBodyDTO = z.infer<typeof updateOperationSchema>["body"]
@@ -323,7 +332,11 @@ export const addAchatSchema = z.object({
 export type AddAchatBodyDTO = z.infer<typeof addAchatSchema>["body"]
 
 export const updateAchatSchema = z.object({
-  body: achatInputSchema.partial(),
+  body: achatInputSchema.partial().extend({
+    type_achat: z.enum(["MATIERE", "CONSOMMABLE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"]).optional(),
+    quantite: z.coerce.number().min(0).optional(),
+    tva_achat: z.coerce.number().min(0).max(100).optional(),
+  }),
 })
 
 export type UpdateAchatBodyDTO = z.infer<typeof updateAchatSchema>["body"]

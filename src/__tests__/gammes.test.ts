@@ -36,6 +36,13 @@ describe("Gammes — validators", () => {
     expect(updateGammeSchema.safeParse({ body: {} }).success).toBe(true)
   })
 
+  it("garde le statut et le marqueur courant absents lors d'un PATCH partiel", () => {
+    expect(updateGammeSchema.parse({ body: { nom: "Gamme renommée" } }).body).toEqual({ nom: "Gamme renommée" })
+    expect(updateGammeSchema.parse({ body: { statut: "APPLICABLE", is_current: true } }).body).toMatchObject({
+      statut: "APPLICABLE",
+      is_current: true,
+    })
+  })
   it("borne le corps d'une révision au verrou optimiste et au nom", () => {
     expect(
       createGammeRevisionSchema.safeParse({

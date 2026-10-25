@@ -233,6 +233,24 @@ export const updateLigneSchema = z.object({
       expected_updated_at: revisionToken.optional(),
       patch: ligneInputObject
         .partial()
+        // A line update is tri-state. Zod 4 retains create defaults through
+        // partial(), so override them to avoid rewriting an omitted price,
+        // tax, requirement, or line type.
+        .extend({
+          type: z.enum(LIGNE_TYPES).optional(),
+          prix_unitaire_ht: money.nullable().optional(),
+          remise_pct: pct.optional(),
+          tva_pct: pct.optional(),
+          frais_ht: money.optional(),
+          exigences_qualite: z.array(exigenceQualiteSchema).max(20).optional(),
+          documents_attendus: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+          besoins: z.array(z.object({
+            besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL", "MANUEL"]),
+            besoin_ref: z.string().trim().min(1).max(120),
+            of_id: z.number().int().positive().nullish(),
+            quantite_couverte: qty,
+          }).strict()).max(20).optional(),
+        })
         .strict(),
     })
     .strict(),

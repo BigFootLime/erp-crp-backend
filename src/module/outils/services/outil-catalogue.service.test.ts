@@ -11,6 +11,7 @@ import {
 } from "./outil-catalogue.service";
 
 const roots: string[] = [];
+const originalCwd = process.cwd();
 
 async function catalogueRoot(manifest: unknown, assets: Record<string, string> = {}): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "cerp-outillage-catalogue-"));
@@ -23,6 +24,7 @@ async function catalogueRoot(manifest: unknown, assets: Record<string, string> =
 }
 
 afterEach(async () => {
+  process.chdir(originalCwd);
   delete process.env.CERP_TOOL_CATALOGUE_ROOT;
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
@@ -79,8 +81,16 @@ describe("outil catalogue private source service", () => {
     await expect(getToolCatalogueBundle()).rejects.toMatchObject({ status: 503, code: "OUTILLAGE_CATALOGUE_UNAVAILABLE" });
   });
 
-  it("keeps the default corpus outside frontend public files", () => {
-    expect(getDefaultToolCatalogueRoot()).toMatch(/[\\/]resources[\\/]outillage-catalogue$/);
-    expect(getDefaultToolCatalogueRoot()).not.toMatch(/[\\/]public([\\/]|$)/);
+  it("anchors the default corpus to the deployed module, independently from a managed-test working directory", async () => {
+    const expected = getDefaultToolCatalogueRoot();
+    const managedRuntime = await fs.mkdtemp(path.join(os.tmpdir(), "cerp-managed-runtime-"));
+    roots.push(managedRuntime);
+    await catalogueRoot(validManifest, { "series.jpg": "jpg", "page.png": "png" });
+    process.chdir(managedRuntime);
+
+    expect(getDefaultToolCatalogueRoot()).toBe(expected);
+    expect(expected).toMatch(/[\\/]resources[\\/]outillage-catalogue$/);
+    expect(expected).not.toMatch(/[\\/]public([\\/]|$)/);
+    await expect(getToolCatalogueAsset("series.jpg")).resolves.toMatchObject({ contentType: "image/jpeg" });
   });
 });

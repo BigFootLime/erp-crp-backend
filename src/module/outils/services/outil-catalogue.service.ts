@@ -50,7 +50,7 @@ async function resolveCatalogueRoot(): Promise<string> {
   const configured = process.env.CERP_TOOL_CATALOGUE_ROOT?.trim();
   const requested = configured
     ? path.resolve(configured)
-    : path.resolve(process.cwd(), "resources", "outillage-catalogue");
+    : getDefaultToolCatalogueRoot();
   try {
     const info = await fs.stat(requested);
     if (!info.isDirectory()) throw unavailable();
@@ -173,5 +173,8 @@ export async function getToolCatalogueAsset(filename: string): Promise<{ bytes: 
 }
 
 export function getDefaultToolCatalogueRoot(): string {
-  return path.resolve(process.cwd(), "resources", "outillage-catalogue");
+  // This module compiles to dist/module/outils/services. Four parents reach the
+  // deployed API root in both source and compiled layouts, unlike process.cwd()
+  // for isolated managed-test instances.
+  return path.resolve(__dirname, "../../../../resources", "outillage-catalogue");
 }
