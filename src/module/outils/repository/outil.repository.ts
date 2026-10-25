@@ -238,7 +238,8 @@ async function getOutilBaseRow(client: DbClient, id: number) {
         cp.source_sha256 AS catalogue_source_sha256,
         cp.source_page AS catalogue_source_page,
         cp.source_rect AS catalogue_source_rect,
-        cp.confirmed_at::text AS catalogue_confirmed_at
+        cp.confirmed_at::text AS catalogue_confirmed_at,
+        to_jsonb(cp) -> 'source_specifications' AS catalogue_source_specifications
       FROM gestion_outils_outil o
       LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
       LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
@@ -288,15 +289,24 @@ export const outilRepository = {
     client: DbClient,
     id_outil: number,
     source: CatalogueSourceProvenance,
-    actor: { id: number | null | undefined; username: string }
+    actor: { id: number | null | undefined; username: string },
+    sourceSpecifications?: Record<string, unknown>
   ): Promise<void> {
     if (!actor.id) throw new HttpError(401, "UNAUTHORIZED", "Authentification requise");
+    const hasSpecifications = sourceSpecifications && Object.keys(sourceSpecifications).length > 0;
     await client.query(
-      `INSERT INTO gestion_outils_catalogue_provenance (
-        id_outil, source_selection_id, source_document, source_sha256, source_page, source_rect,
-        confirmed_by_user_id, confirmed_by_username, confirmed_at
-      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW())`,
-      [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), actor.id, actor.username]
+      hasSpecifications
+        ? `INSERT INTO gestion_outils_catalogue_provenance (
+            id_outil, source_selection_id, source_document, source_sha256, source_page, source_rect,
+            confirmed_by_user_id, confirmed_by_username, confirmed_at, source_specifications
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW(), $9::jsonb)`
+        : `INSERT INTO gestion_outils_catalogue_provenance (
+            id_outil, source_selection_id, source_document, source_sha256, source_page, source_rect,
+            confirmed_by_user_id, confirmed_by_username, confirmed_at
+          ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, NOW())`,
+      hasSpecifications
+        ? [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), actor.id, actor.username, JSON.stringify(sourceSpecifications)]
+        : [id_outil, source.selectionId, source.document, source.sha256, source.page, JSON.stringify(source.rect), actor.id, actor.username]
     );
   },
 
@@ -512,6 +522,9 @@ export const outilRepository = {
           page: asInteger(baseRow.catalogue_source_page),
           rect: asNumberArray(baseRow.catalogue_source_rect),
           confirmed_at: asNullableString(baseRow.catalogue_confirmed_at),
+          source_specifications: baseRow.catalogue_source_specifications && typeof baseRow.catalogue_source_specifications === "object"
+            ? baseRow.catalogue_source_specifications as Record<string, unknown>
+            : null,
         }
         : null,
     } satisfies OutilDetail;

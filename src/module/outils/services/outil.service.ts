@@ -15,7 +15,7 @@ import {
   withUploadTransaction,
 } from "../../../shared/uploads/upload-transaction"
 import { outilRepository } from "../repository/outil.repository"
-import { getToolCatalogueSourceProvenance } from "./outil-catalogue.service"
+import { getToolCatalogueSourceProvenance, type CatalogueSourceProvenance } from "./outil-catalogue.service"
 import type { OutillageImportBatchSummary, OutillageRecentMovement, OutilPricingResponse } from "../types/outil.types"
 import {
   type OutillageToolUploadFiles,
@@ -276,15 +276,17 @@ export const outilService = {
       utilisateur: string
       user_id?: number | null
     },
-    files: OutillageToolUploadFiles = {}
+    files: OutillageToolUploadFiles = {},
+    internal?: { catalogueSourceOverride?: CatalogueSourceProvenance; sourceSpecifications?: Record<string, unknown> }
   ) {
     assertUser(data.utilisateur)
 
     // Resolve immutable source evidence before opening the database transaction.
     // A missing private corpus or un-applied provenance patch never creates a partial tool.
-    const catalogueSource = data.catalogue_source
-      ? await getToolCatalogueSourceProvenance(data.catalogue_source.selection_id)
-      : null
+    const catalogueSource = internal?.catalogueSourceOverride
+      ?? (data.catalogue_source
+        ? await getToolCatalogueSourceProvenance(data.catalogue_source.selection_id)
+        : null)
     if (catalogueSource) await outilRepository.assertCatalogueProvenanceSchema()
 
     const client = await db.connect()
@@ -306,7 +308,7 @@ export const outilService = {
           await outilRepository.createCatalogueProvenance(client, id_outil, catalogueSource, {
             id: data.user_id,
             username: data.utilisateur,
-          })
+          }, internal?.sourceSpecifications)
         }
         const promoted = await promoteOutillageToolFiles(files)
         expected = expectedToolUploads(promoted)

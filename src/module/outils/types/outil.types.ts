@@ -149,5 +149,6 @@ export type OutilDetail = OutilListItem & {
     page: number
     rect: number[]
     confirmed_at: string | null
+    source_specifications?: Record<string, unknown> | null
   } | null
 }
