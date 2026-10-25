@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import process from "node:process";
+import db from "../../../config/database";
 
 import { HttpError } from "../../../utils/httpError";
 import { importQualifiedCatalogueTestOnly, loadQualifiedCatalogueDataset, resolveQualifiedDatasetPath } from "../services/outil-catalogue-test-import.service";
@@ -31,4 +32,4 @@ main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : "Import catalogue impossible";
   process.stderr.write(`${code}: ${message}\n`);
   process.exitCode = 1;
-});
+}).finally(() => db.end());

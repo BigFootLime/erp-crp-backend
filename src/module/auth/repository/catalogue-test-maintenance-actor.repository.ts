@@ -20,7 +20,7 @@ export async function ensureCatalogueTestMaintenanceActor(): Promise<{ id: numbe
   return withRealtimeOutboxTransaction(client, async (tx) => {
     const identity = await connectedTestInfo(tx as Pick<PoolClient, "query">);
     if (identity?.database !== "cerp_test") {
-      throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "L’import catalogue est réservé à cerp_test.");
+      throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "Lâ€™import catalogue est rÃ©servÃ© Ã  cerp_test.");
     }
 
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["catalogue-test-maintenance-actor"]);
@@ -36,7 +36,7 @@ export async function ensureCatalogueTestMaintenanceActor(): Promise<{ id: numbe
     const inserted = await tx.query<{ id: number; username: string }>(
       `INSERT INTO public.users
         (username, password, name, surname, email, role, status, is_superadmin, mfa_reenrollment_required, avatar_key, country)
-       VALUES ($1, $2, 'SYSTEME', 'IMPORT CATALOGUE TEST', $3, 'Op�rateur atelier', 'Inactive', false, true, 'robot', 'France')
+       VALUES ($1, $2, 'SYSTEME', 'IMPORT CATALOGUE TEST', $3, 'Employee', 'Inactive', false, true, 'robot', 'France')
        RETURNING id, username`,
       [CATALOGUE_TEST_MAINTENANCE_USERNAME, password, "cerp-test-catalogue-import@invalid.local"]
     );

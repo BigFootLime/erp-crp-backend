@@ -93,7 +93,7 @@ function sourceFor(record: QualifiedCatalogueRecord): CatalogueSourceProvenance 
   if (!Number.isInteger(record.source?.page) || record.source.page < 1) throw new HttpError(422, "CATALOGUE_IMPORT_RECORD_INVALID", "source.page invalide");
   const rect = record.source?.rect;
   if (!Array.isArray(rect) || rect.length !== 4 || !rect.every((value) => typeof value === "number" && Number.isFinite(value))) {
-    throw new HttpError(422, "CATALOGUE_IMPORT_SOURCE_RECT_REQUIRED", "Les coordonnées source exactes sont requises pour la provenance.");
+    throw new HttpError(422, "CATALOGUE_IMPORT_SOURCE_RECT_REQUIRED", "Les coordonnÃ©es source exactes sont requises pour la provenance.");
   }
   return { selectionId: selectionId(record), document, sha256, page: record.source.page, rect: [...rect] };
 }
@@ -113,9 +113,9 @@ function normalizedDimensions(record: QualifiedCatalogueRecord): Record<string, 
 function utilisationFor(record: QualifiedCatalogueRecord): string | null {
   const usage = optionalString(record.utilisation);
   const coating = optionalString(record.coating);
-  if (!usage) return coating ? `Rev�tement : ${coating}` : null;
+  if (!usage) return coating ? `Revêtement : ${coating}` : null;
   if (!coating || usage.toLocaleLowerCase("fr-FR").includes(coating.toLocaleLowerCase("fr-FR"))) return usage;
-  return `${usage} � Rev�tement : ${coating}`;
+  return `${usage} · Revêtement : ${coating}`;
 }
 function sourceSpecificationsFor(record: QualifiedCatalogueRecord): JsonObject | undefined {
   const facts = object(record.sourceSpecifications);
@@ -128,7 +128,7 @@ export function planQualifiedCatalogueRecord(record: QualifiedCatalogueRecord, i
   const family = stringField(record.family, "family");
   const reference = stringField(record.reference, "reference");
   if (!record.stock || record.stock.state !== "pending_inventory" || record.stock.quantity !== null) {
-    throw new HttpError(422, "CATALOGUE_IMPORT_INVENTORY_REQUIRED", "Une fiche catalogue doit rester en attente d’inventaire avec quantité inconnue.");
+    throw new HttpError(422, "CATALOGUE_IMPORT_INVENTORY_REQUIRED", "Une fiche catalogue doit rester en attente dâ€™inventaire avec quantitÃ© inconnue.");
   }
   const source = sourceFor(record);
   // Validate every mapped numeric field during dry-run, before any actor or
@@ -165,7 +165,7 @@ async function trustedImportMedia(media: JsonObject): Promise<TrustedImportMedia
   ].filter((entry): entry is ["image" | "esquisse", { file: string; sha256?: string }] => entry[1] !== null);
   if (!candidates.length) return { files: {}, ownerships: [] };
   const configuredRoot = process.env.CERP_TOOL_CATALOGUE_IMPORT_MEDIA_ROOT?.trim();
-  if (!configuredRoot) throw new HttpError(503, "CATALOGUE_IMPORT_MEDIA_ROOT_REQUIRED", "Le r�pertoire priv� des m�dias qualifi�s est requis.");
+  if (!configuredRoot) throw new HttpError(503, "CATALOGUE_IMPORT_MEDIA_ROOT_REQUIRED", "Le répertoire privé des médias qualifiés est requis.");
   const root = await fs.realpath(path.resolve(configuredRoot));
   const files: { image?: Express.Multer.File; esquisse?: Express.Multer.File } = {};
   const ownerships: SecureBufferDestinationOwnership[] = [];
@@ -173,16 +173,16 @@ async function trustedImportMedia(media: JsonObject): Promise<TrustedImportMedia
     for (const [field, descriptor] of candidates) {
       const filename = path.basename(descriptor.file);
       if (filename !== descriptor.file.replace(/\\/g, "/").split("/").pop() || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.(png|jpe?g|webp)$/i.test(filename)) {
-        throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "Nom de m�dia qualifi� invalide.");
+        throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "Nom de média qualifié invalide.");
       }
       const candidate = path.resolve(root, filename);
-      if (!isPathInsideDirectory(root, candidate)) throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "M�dia hors du r�pertoire qualifi�.");
+      if (!isPathInsideDirectory(root, candidate)) throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "Média hors du répertoire qualifié.");
       const info = await fs.lstat(candidate);
-      if (!info.isFile() || info.isSymbolicLink() || info.size > 25 * 1024 * 1024) throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "M�dia qualifi� indisponible.");
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 25 * 1024 * 1024) throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_INVALID", "Média qualifié indisponible.");
       const bytes = await fs.readFile(candidate);
       const actual = crypto.createHash("sha256").update(bytes).digest("hex");
       if (!descriptor.sha256 || !/^[a-f0-9]{64}$/i.test(descriptor.sha256) || actual !== descriptor.sha256.toLowerCase()) {
-        throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_HASH_MISMATCH", "Le hash du m�dia qualifi� ne correspond pas.");
+        throw new HttpError(422, "CATALOGUE_IMPORT_MEDIA_HASH_MISMATCH", "Le hash du média qualifié ne correspond pas.");
       }
       const ext = path.extname(filename).toLowerCase();
       const upload = await validateSecureUploadBuffer("tool-media", bytes, filename, MEDIA_MIME[ext] ?? "application/octet-stream", new AbortController().signal);
@@ -207,14 +207,14 @@ async function trustedImportMedia(media: JsonObject): Promise<TrustedImportMedia
 export async function loadQualifiedCatalogueDataset(datasetPath: string): Promise<QualifiedCatalogueRecord[]> {
   const parsed: unknown = JSON.parse(await fs.readFile(datasetPath, "utf8"));
   const records = object(parsed).records;
-  if (!Array.isArray(records)) throw new HttpError(422, "CATALOGUE_IMPORT_DATASET_INVALID", "Le jeu qualifié doit contenir records[].");
+  if (!Array.isArray(records)) throw new HttpError(422, "CATALOGUE_IMPORT_DATASET_INVALID", "Le jeu qualifiÃ© doit contenir records[].");
   return records as QualifiedCatalogueRecord[];
 }
 
 export async function importQualifiedCatalogueTestOnly(records: readonly QualifiedCatalogueRecord[], apply: boolean): Promise<QualifiedCatalogueImportReport> {
   const databaseResult = await db.query<{ database: string }>("SELECT current_database() AS database");
   const database = databaseResult.rows[0]?.database ?? "";
-  if (database !== "cerp_test") throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "L’import catalogue est réservé à cerp_test.");
+  if (database !== "cerp_test") throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "Lâ€™import catalogue est rÃ©servÃ© Ã  cerp_test.");
 
   if (apply) await outilCatalogueImportRepository.assertImportSchema(db);
 
@@ -226,7 +226,7 @@ export async function importQualifiedCatalogueTestOnly(records: readonly Qualifi
   });
   if (!apply) return { database, dryRun: true, created: 0, replayed: 0, rejected };
   if (rejected.length) {
-    throw new HttpError(422, "CATALOGUE_IMPORT_REJECTED", `${rejected.length} ligne(s) doivent �tre corrig�es avant apply.`);
+    throw new HttpError(422, "CATALOGUE_IMPORT_REJECTED", `${rejected.length} ligne(s) doivent être corrigées avant apply.`);
   }
 
   const actor = await ensureCatalogueTestMaintenanceActor();
@@ -285,6 +285,6 @@ export async function importQualifiedCatalogueTestOnly(records: readonly Qualifi
 }
 
 export function resolveQualifiedDatasetPath(candidate: string): string {
-  if (!path.isAbsolute(candidate)) throw new HttpError(422, "CATALOGUE_IMPORT_DATASET_INVALID", "Le chemin du jeu qualifié doit être absolu.");
+  if (!path.isAbsolute(candidate)) throw new HttpError(422, "CATALOGUE_IMPORT_DATASET_INVALID", "Le chemin du jeu qualifiÃ© doit Ãªtre absolu.");
   return path.resolve(candidate);
 }

@@ -12,7 +12,7 @@ export const outilCatalogueImportRepository = {
   async assertTestDatabase(client: DbClient): Promise<void> {
     const result = await client.query("SELECT current_database() AS database");
     if (result.rows[0]?.database !== "cerp_test") {
-      throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "L’import catalogue est réservé à cerp_test.");
+      throw new HttpError(403, "CATALOGUE_IMPORT_TEST_DATABASE_REQUIRED", "Lâ€™import catalogue est rÃ©servÃ© Ã  cerp_test.");
     }
   },
 
@@ -23,7 +23,7 @@ export const outilCatalogueImportRepository = {
         AND column_name = 'source_specifications'
     ) AS available`);
     if (result.rows[0]?.available !== true) {
-      throw new HttpError(503, "CATALOGUE_IMPORT_SCHEMA_UNAVAILABLE", "Le patch cerp_test de sp�cifications catalogue n�est pas appliqu�.");
+      throw new HttpError(503, "CATALOGUE_IMPORT_SCHEMA_UNAVAILABLE", "Le patch cerp_test de spécifications catalogue n’est pas appliqué.");
     }
   },
 
@@ -60,7 +60,7 @@ export const outilCatalogueImportRepository = {
     );
     const geometryId = geometryRow.rows[0]?.id_geometrie
       ?? (await client.query<{ id_geometrie: number }>("INSERT INTO gestion_outils_geometrie(nom_geometrie, id_famille, image_path) VALUES($1, $2, NULL) RETURNING id_geometrie", [geometry, familyId])).rows[0]?.id_geometrie;
-    if (!geometryId) throw new HttpError(503, "CATALOGUE_IMPORT_REFERENCE_UNAVAILABLE", "Géométrie non disponible.");
+    if (!geometryId) throw new HttpError(503, "CATALOGUE_IMPORT_REFERENCE_UNAVAILABLE", "GÃ©omÃ©trie non disponible.");
     return { manufacturerId, familyId, geometryId, revetementId };
   },
 

@@ -23,21 +23,21 @@ describe("qualified catalogue test importer planning", () => {
     expect(plan.codification).toBe("HORN DCG.3.M18");
     expect(plan.source).toMatchObject({ selectionId: "catalogue-p12-r1", page: 12 });
     expect(plan.sourceSpecifications).toMatchObject({ printedPitch: "M1,8" });
-    expect(plan.utilisation).toBe("Finition acier � Rev�tement : TiAlN");
+    expect(plan.utilisation).toBe("Finition acier · Revêtement : TiAlN");
   });
 
   it("does not invent a counted quantity or accept a supplier stock claim", () => {
     expect(() => planQualifiedCatalogueRecord({
       manufacturer: "HORN", family: "Fraises", reference: "DCG.3.M18", source,
       stock: { state: "counted", quantity: 1 },
-    })).toThrow("attente d’inventaire");
+    })).toThrow("attente dâ€™inventaire");
   });
 
   it("rejects provenance that cannot satisfy the immutable four-coordinate evidence contract", () => {
     expect(() => planQualifiedCatalogueRecord({
       manufacturer: "DIXI", family: "Fraises", reference: "66149",
       source: { ...source, rect: [] }, stock: { state: "pending_inventory", quantity: null },
-    })).toThrow("coordonnées source exactes");
+    })).toThrow("coordonnÃ©es source exactes");
   });
 
   it("uses a deterministic source-row identity only when the qualified row has no explicit selection anchor", () => {
