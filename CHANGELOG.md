@@ -1,5 +1,10 @@
 # Changelog
 
+## Lectures de contrôle temps réel sans verrou exclusif — #1450
+
+- La validation du journal lit un snapshot REPEATABLE READ sans verrouiller l'allocateur global ; les lecteurs sains ne bloquent plus les autres instances et les publications.
+- Vérification complète, quarantaine, barrière de resynchronisation et rollback sur conflit conservés. Aucun changement de schéma.
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.
