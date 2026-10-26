@@ -169,17 +169,8 @@ describe("/api/v1/outils", () => {
     )
   })
 
-  it("POST /api/v1/outils/reapprovisionner logs supplier and unit price", async () => {
+  it("POST /api/v1/outils/reapprovisionner rejects the retired legacy supplier-price fields", async () => {
     const token = makeToken()
-
-    mocks.clientQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [{ id_mouvement: "movement-99", date_mouvement: "2026-03-10T09:00:00.000Z" }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ event_id: "outbox-stock-99" }] })
-      .mockResolvedValueOnce({ rows: [] })
-
     const res = await request(app)
       .post("/api/v1/outils/reapprovisionner")
       .set("Authorization", `Bearer ${token}`)
@@ -191,14 +182,60 @@ describe("/api/v1/outils", () => {
         reason: "reappro",
       })
 
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(400)
+    expect(res.body).toMatchObject({ error: "VALIDATION_ERROR" })
+    expect(res.body.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "prix_unitaire_ht" }),
+      expect.objectContaining({ field: "fournisseur_id" }),
+      expect.objectContaining({ field: "idempotency_key" }),
+    ]))
+  })
 
-    const movementInsert = mocks.clientQuery.mock.calls.find((call) =>
-      String(call[0]).includes("INSERT INTO gestion_outils_mouvement_stock")
+  it("POST /api/v1/outils/reapprovisionner records an idempotent master-supplier receipt", async () => {
+    const token = makeToken()
+    const supplierId = "11111111-1111-4111-8111-111111111111"
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const statement = String(sql)
+      if (statement.includes("to_regclass('public.outillage_tool_actual_purchase_prices')")) {
+        return { rows: [{ table_name: "outillage_tool_actual_purchase_prices", idempotence_table_name: "outillage_tool_receipt_idempotence" }] }
+      }
+      if (statement.includes("SELECT request_hash,result FROM outillage_tool_receipt_idempotence")) return { rows: [] }
+      if (statement.includes("FROM fournisseurs f JOIN fournisseur_domaine_lien")) return { rows: [{ ok: 1 }] }
+      if (statement.includes("INSERT INTO gestion_outils_mouvement_stock")) {
+        return { rows: [{ id_mouvement: "movement-99", date_mouvement: "2026-03-10T09:00:00.000Z" }] }
+      }
+      return { rows: [], rowCount: 1 }
+    })
+
+    const res = await request(app)
+      .post("/api/v1/outils/reapprovisionner")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        id_outil: 42,
+        quantite: 5,
+        prix_unitaire_ht: 12.5,
+        fournisseur_id: supplierId,
+        purchased_at: "2026-03-10",
+        devise: "EUR",
+        unite: "piece",
+        reception_ref: "BL-99",
+        idempotency_key: "outillage-receipt-99",
+        reason: "reappro",
+      })
+
+    expect(res.status).toBe(200)
+    expect(res.body).toMatchObject({ success: true, id_outil: 42, reception_ref: "BL-99", actual_purchase_price_recorded: true, idempotent_replay: false })
+
+    const actualPriceInsert = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO outillage_tool_actual_purchase_prices")
     )
-    expect(movementInsert).toBeTruthy()
-    expect(String(movementInsert?.[0])).toContain("id_fournisseur")
-    expect(String(movementInsert?.[0])).toContain("prix_unitaire")
-    expect(movementInsert?.[1]).toEqual(expect.arrayContaining([7, 12.5]))
+    expect(actualPriceInsert).toBeTruthy()
+    expect(actualPriceInsert?.[1]).toEqual(expect.arrayContaining([supplierId, 12.5, "EUR", "piece", "2026-03-10", "BL-99"]))
+
+    const idempotenceInsert = mocks.clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes("INSERT INTO outillage_tool_receipt_idempotence")
+    )
+    expect(idempotenceInsert).toBeTruthy()
   })
 })
