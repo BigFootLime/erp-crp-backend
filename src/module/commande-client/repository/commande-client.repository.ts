@@ -4121,23 +4121,21 @@ async function transitionLinkedDevisArticlesToValide(
   return updated.rowCount ?? 0;
 }
 
-export async function repoCreateCommande(
+/**
+ * The ordinary customer-order creation writes, joined to the caller's transaction.
+ * Keeps technical, price, workflow, notification and document rules identical to
+ * the upload entry point. The caller owns transaction/outbox scope and rollback.
+ * Call with no documents for a server-to-server intake; uploaded files continue
+ * to use the upload transaction wrapper below.
+ */
+export async function repoCreateCommandeNativeTx(
+  client: PoolClient,
   input: CreateCommandeInput,
-  documents: UploadedDocument[],
-  actorUserId: number | null = null
-) {
-  const client = await pool.connect();
+  actorUserId: number | null,
+  documents: UploadedDocument[] = [],
+  movedDocuments: CommandeDocumentMove[] = [],
+): Promise<{ id: number; numero: string }> {
   let notifications: AppNotification[] = [];
-  let commandeIdForReconciliation: string | null = null;
-  const movedDocuments: CommandeDocumentMove[] = [];
-  let result: { id: number };
-  try {
-    result = await withUploadTransaction({
-      client,
-      files: documents,
-      context: "commande-client.create",
-      work: async () => {
-
     const contractCall=await prepareContractCall(client,input,actorUserId,documents);
 
     await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
@@ -4233,7 +4231,6 @@ export async function repoCreateCommande(
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
     if (!commandeId) throw new Error("Failed to create commande");
-    commandeIdForReconciliation = commandeId;
 
     await insertCommandeLignes(client, commandeId, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
@@ -4300,7 +4297,28 @@ export async function repoCreateCommande(
       actorUserId: null,
     });
 
-    return { id: toInt(commandeId, "commande.id") };
+    return { id: toInt(commandeId, "commande.id"), numero: numeroForInsert };
+}
+
+export async function repoCreateCommande(
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) {
+  const client = await pool.connect();
+  let commandeIdForReconciliation: string | null = null;
+  const movedDocuments: CommandeDocumentMove[] = [];
+  let result: { id: number };
+  try {
+    result = await withUploadTransaction({
+      client,
+      files: documents,
+      context: "commande-client.create",
+      work: async () => {
+
+        const created = await repoCreateCommandeNativeTx(client, input, actorUserId, documents, movedDocuments);
+        commandeIdForReconciliation = String(created.id);
+        return { id: created.id };
       },
       reconcile: async () => commandeIdForReconciliation
         ? reconcileCommandeUploadCommit(commandeIdForReconciliation, movedDocuments, "create")
