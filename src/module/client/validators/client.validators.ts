@@ -222,11 +222,14 @@ export const clientProfileDocumentRequestSchema = z.object({
   reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
 }).strict();
 
-export const createClientSchema = z.object({
+const clientCreateBaseSchema = z.object({
   // client_code volontairement absent : le code visible est généré côté serveur
   // dans la transaction de création (ADR-0013) et reste immuable. Toute valeur
   // fournie est rejetée explicitement par le contrôleur (CLIENT_CODE_READONLY).
-  company_name: requiredText("Raison sociale requise"),
+  company_name: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).optional()),
+  customer_type: z.enum(["PROFESSIONAL", "INDIVIDUAL"]).optional().default("PROFESSIONAL"),
+  individual_first_name: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(120).optional()),
+  individual_last_name: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(120).optional()),
   email: z.preprocess(emptyStringToUndefined, z.string().trim().email("Email invalide").optional()),
   phone: z.preprocess(emptyStringToUndefined, z.string().trim().optional()),
   website_url: z.preprocess(emptyStringToUndefined, z.string().trim().url("URL invalide").optional()),
@@ -283,6 +286,20 @@ export const createClientSchema = z.object({
   electronic_address: electronicAddressSchema.nullable().optional(),
 });
 
+export const createClientSchema = clientCreateBaseSchema.superRefine((value, context) => {
+  if (value.customer_type === "PROFESSIONAL") {
+    if (!value.company_name) context.addIssue({ code: z.ZodIssueCode.custom, path: ["company_name"], message: "Raison sociale requise" });
+    return;
+  }
+  if (!value.individual_first_name) context.addIssue({ code: z.ZodIssueCode.custom, path: ["individual_first_name"], message: "Prénom requis" });
+  if (!value.individual_last_name) context.addIssue({ code: z.ZodIssueCode.custom, path: ["individual_last_name"], message: "Nom requis" });
+  for (const field of ["siret", "siren", "vat_number", "naf_code"] as const) {
+    if (value[field]) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Les identifiants professionnels ne concernent pas un particulier" });
+  }
+}).transform((value) => value.customer_type === "INDIVIDUAL"
+  ? { ...value, company_name: `${value.individual_first_name ?? ""} ${value.individual_last_name ?? ""}`.trim() }
+  : { ...value, company_name: value.company_name! });
+
 export type CreateClientDTO = z.infer<typeof createClientSchema>;
 
 // PATCH partiel : tous les champs optionnels, mais les validateurs par champ (email, téléphone,
@@ -291,11 +308,22 @@ export type CreateClientDTO = z.infer<typeof createClientSchema>;
 // A PATCH is tri-state. Zod 4 applies defaults declared by the create schema
 // after `.partial()`, which would turn omitted collection fields into empty
 // arrays and erase existing client data.
-export const clientPatchSchema = createClientSchema.partial().extend({
+export const clientPatchSchema = clientCreateBaseSchema.partial().extend({
   payment_mode_ids: z.array(z.string().guid("Le mode de règlement est invalide")).optional(),
   quality_levels: z.array(z.enum(QUALITY_LEVELS)).optional(),
   contacts: z.array(normalizedContactSchema).transform((contacts) => contacts.filter(isDefined)).optional(),
-});
+}).superRefine((value, context) => {
+  if (value.customer_type !== "INDIVIDUAL") return;
+  if (!value.individual_first_name) context.addIssue({ code: z.ZodIssueCode.custom, path: ["individual_first_name"], message: "Prénom requis lors du passage en particulier" });
+  if (!value.individual_last_name) context.addIssue({ code: z.ZodIssueCode.custom, path: ["individual_last_name"], message: "Nom requis lors du passage en particulier" });
+  for (const field of ["siret", "siren", "vat_number", "naf_code"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(value, field) || value[field]) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Effacez les identifiants professionnels avant le passage en particulier" });
+    }
+  }
+}).transform((value) => value.customer_type === "INDIVIDUAL"
+  ? { ...value, company_name: `${value.individual_first_name ?? ""} ${value.individual_last_name ?? ""}`.trim() }
+  : value);
 export type ClientPatchDTO = z.infer<typeof clientPatchSchema>;
 
 /** PATCH /clients/:id/contact — le contact doit appartenir au client (vérifié en transaction). */
