@@ -20,6 +20,7 @@ import {
   getExecution,
   getImpact,
   listCategories,
+  listEquipmentProfiles,
   listEquipment,
   listExecutions,
   listImpacts,
@@ -54,6 +55,7 @@ const upload = createSecureUpload("quality-document", { maxFiles: 1 });
 
 /* Référentiels ------------------------------------------------------------ */
 router.get("/categories", requireMetrologyCapability("read"), listCategories);
+router.get("/equipment-profiles", requireMetrologyCapability("read"), listEquipmentProfiles);
 router.put("/categories", requireMetrologyCapability("categories_manage"), upsertCategory);
 router.get("/units", requireMetrologyCapability("read"), listUnits);
 

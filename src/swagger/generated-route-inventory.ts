@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "f9240c7a1169778093dc6c31d2bfd7140e0dcb2c3340cb3a51dfcd5a2b49440e";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ff205414fae692ba2ac7c9d5ddd02724c95eac7301404bb8a4778524a9338a59";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -10929,7 +10929,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/categories",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:56",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:57",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -10947,7 +10947,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/metrologie/v2/categories",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:57",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -10965,7 +10965,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/center",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:61",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -10983,7 +10983,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/eligibility",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:62",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11001,7 +11001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:65",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11019,7 +11019,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:66",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11037,7 +11037,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements/{id}",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:67",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:69",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11055,7 +11055,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/metrologie/v2/equipements/{id}",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:68",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11073,7 +11073,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/certificats",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:127",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:129",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11092,7 +11092,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/certificats/{childId}/cancel",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:133",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:135",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11110,7 +11110,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements/{id}/certificats/{childId}/file",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:138",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:140",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11128,7 +11128,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/executions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:102",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:104",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11146,7 +11146,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/impacts",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:147",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:149",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11164,7 +11164,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/plans",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:87",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:89",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11182,7 +11182,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/plans/{childId}/revisions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:88",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:90",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11200,7 +11200,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/plans/{childId}/transitions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:93",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:95",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11218,7 +11218,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/quarantine",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:74",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11236,7 +11236,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements/{id}/schedule-preview",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:86",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:88",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11254,7 +11254,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements/{id}/timeline",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:69",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11272,7 +11272,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/equipements/{id}/transitions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:79",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11290,7 +11290,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/equipements/{id}/usage",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:70",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11307,8 +11307,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/metrologie/v2/equipment-profiles",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:58",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireMetrologyCapability(read)",
+      "listEquipmentProfiles"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireMetrologyCapability(read)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/metrologie/v2/executions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:100",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:102",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11326,7 +11344,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/executions/{id}",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:101",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:103",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11344,7 +11362,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/executions/{id}/cancel",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:120",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:122",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11362,7 +11380,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/executions/{id}/measurements",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:107",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:109",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11380,7 +11398,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/executions/{id}/validate",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:115",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:117",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11398,7 +11416,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/executions/{id}/verdict-preview",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:112",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:114",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11416,7 +11434,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/impacts",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:145",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:147",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11434,7 +11452,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/impacts/{id}",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:146",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:148",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11452,7 +11470,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/impacts/{id}/items/{childId}/decision",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:148",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:150",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11470,7 +11488,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/metrologie/v2/impacts/{id}/transitions",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:153",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:155",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -11488,7 +11506,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/metrologie/v2/units",
-    "source": "src/module/metrologie/routes/metrology-360.routes.ts:58",
+    "source": "src/module/metrologie/routes/metrology-360.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
