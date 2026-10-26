@@ -22,6 +22,18 @@ Les huit points de pied à coulisse et les deux points de jauge de profondeur re
 
 Le patch ajoute les scopes de compteurs `MTR:<famille>` au répartiteur existant et réserve leur plancher. Il conserve les scopes antérieurs et leur politique de permissions. Le retour arrière préserve les séquences consommées et les codes ; supprimer cette histoire casserait la traçabilité. Le code applicatif correspondant doit être retiré avant de retirer le scope du répartiteur.
 
+Le patch est un sélecteur immuable du runner, lié au SHA-256 LF canonique `814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d`. Pour chaque cible, après la sauvegarde fraîche validée et dans l'environnement de release qui fournit secrètement `DATABASE_URL`, l'opérateur exécute uniquement :
+
+```bash
+node scripts/db-patches.js status --only 20261026_metrology_md15_profile_codes.sql
+node scripts/db-patches.js up --dry-run --only 20261026_metrology_md15_profile_codes.sql
+node scripts/db-patches.js up --only 20261026_metrology_md15_profile_codes.sql
+sudo -n -u postgres psql -X -v ON_ERROR_STOP=1 -d <cible> -f db/patches/support/20261026_metrology_md15_profile_codes.verify.sql
+node scripts/db-patches.js status --check --only 20261026_metrology_md15_profile_codes.sql
+```
+
+L'ordre est `cerp_test`, puis le template géré indiqué par l'exploitation, puis `cerp_prod`; aucune commande `up` globale ni `baseline` n'est autorisée. Le préflight SQL doit confirmer avant chaque application que `fn_business_code_scope_sequence(text)` est active mais ne prend pas encore `MTR:<famille>`, que le ledger ne contient pas le fichier MD15 et que la garde d'immuabilité des codes est active. Au 26 octobre, la sauvegarde planifiée de production validée à 02:33:59 est `/var/backups/cerp/cerp_prod_20261026-023357.dump` (55 790 782 octets, SHA-256 `acb51373d1e0a0fe2442537522582f5b69228209d618b51eedf6518f13875dbb`; catalogue `pg_restore --list` de 7 387 entrées, empreinte `bd97c692c968aeac31c52cbc0dfba8669c72cf59a64f06fc209c41841f51b1f1`). Elle est une preuve de restauration disponible, pas un substitut à une sauvegarde fraîche de chaque cible avant écriture.
+
 La recette a été exécutée le 26 octobre sur PostgreSQL 17 (`postgres:17-alpine`, image `sha256:79bd7c99e923138f136f8009d6bffa66e21e9d4fda5c0c561b00fc9c90cfe537`) dans un conteneur éphémère, sans réseau ni port publié, avec une fixture minimale synthétique. Aucun conteneur, volume, port, API ni base CERP réelle n'a été utilisé. Le patch a été appliqué deux fois, le script de vérification a confirmé les 12 planchers et le garde d'immuabilité, puis le rollback a conservé les séquences PC et TFD consommées. Les deux allocations concurrentes ont retourné `PC-62` et `PC-63`; les prochaines valeurs vérifiées étaient `PC-61` et `TFD-04` avant ce test de concurrence. Les scripts synthétiques reproductibles sont sous `test-support/`; les sorties générées restent ignorées sous `test-results/`.
 
 ## Validation locale
