@@ -61,6 +61,7 @@ import {
   svcGetImpact,
   svcInstrumentUsage,
   svcListCategories,
+  svcListEquipmentProfiles,
   svcListEquipment,
   svcListExecutions,
   svcListImpacts,
@@ -161,6 +162,10 @@ export const upsertCategory: RequestHandler = asyncHandler(async (req, res) => {
 
 export const listUnits: RequestHandler = asyncHandler(async (_req, res) => {
   res.json(svcListUnits());
+});
+
+export const listEquipmentProfiles: RequestHandler = asyncHandler(async (_req, res) => {
+  res.json(svcListEquipmentProfiles());
 });
 
 /* -------------------------------------------------------------------------- */
