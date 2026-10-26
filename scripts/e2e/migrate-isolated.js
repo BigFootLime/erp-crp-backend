@@ -163,10 +163,6 @@ async function main() {
   if (!normalized) fail(`normalization boundary ${NORMALIZE_BEFORE} was not found`);
   if (stopBefore && !stopBoundaryFound) fail(`rehearsal boundary ${stopBefore} was not found`);
   if (!stopBefore && !avatarPrerequisiteApplied) fail(`avatar prerequisite boundary ${USER_AVATARS_PATCH} was not found`);
-  if (!stopBefore) {
-    for (const filename of TEST_ONLY_OUTILLAGE_PATCHES) runPatch(filename, 'up', TEST_ONLY_PATCH_DIR);
-    await assertTestOnlyOutillageSchema();
-  }
   const contract = new Client({ connectionString: process.env.DATABASE_URL });
   await contract.connect();
   try {
@@ -188,6 +184,10 @@ async function main() {
     }
   } finally {
     await contract.end();
+  }
+  if (!stopBefore) {
+    for (const filename of TEST_ONLY_OUTILLAGE_PATCHES) runPatch(filename, 'up', TEST_ONLY_PATCH_DIR);
+    await assertTestOnlyOutillageSchema();
   }
   const status = spawnSync(
     process.execPath,
