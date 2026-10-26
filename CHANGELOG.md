@@ -22,6 +22,13 @@
 - L’image Docker conserve ses paquets Alpine épinglés et prend curl 8.23.0-r0, disponible dans le dépôt 3.24 ; la recette complète des paquets a été rejouée sur l’image de base exacte.
 - Compatibilité de validation : les GUID PostgreSQL historiques gardent leur format accepté, les PATCH n'injectent pas de valeurs de création dans les champs absents, et les clés de pollution de prototype restent refusées avant normalisation.
 
+## Préparé localement — Multi-entreprises (#1454 / frontend #1775)
+
+- Contrats purs d'entreprise, adhésion et accès : environnement distinct de l'entreprise, annuaire commun conservé, profil commercial en mode accueil et projections de stock séparées des modules industriels.
+- Contrat d'achat interentreprises avec validation fournisseur, configuration figée et expéditions cumulées ; aucune réservation ou sortie de stock effectuée par ces fonctions.
+- Contrat de la future boutique : clients professionnels/particuliers, confirmation déclenchant un achat, déduplication, révisions et annulations explicites. Deux facturations prévues : CRP → EC et EC → client final, sans devis EC.
+- Ce lot ne crée aucune base, API ou interface et ne modifie ni l'authentification ni les flux existants. Le programme complet reste à raccorder et à qualifier.
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.
