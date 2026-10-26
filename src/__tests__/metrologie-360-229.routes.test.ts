@@ -110,6 +110,7 @@ describe("#229 RBAC — refus par défaut", () => {
   const readRoutes: Array<[string, string]> = [
     ["get", `${BASE}/center`],
     ["get", `${BASE}/categories`],
+    ["get", `${BASE}/equipment-profiles`],
     ["get", `${BASE}/units`],
     ["get", `${BASE}/equipements`],
     ["get", `${BASE}/executions`],
@@ -165,6 +166,14 @@ describe("#229 RBAC — refus par défaut", () => {
 });
 
 describe("#229 validation stricte", () => {
+  it("expose les profils MD15 au client autorisé, avec les huit relevés structurels PC", async () => {
+    const res = await request(app).get(`${BASE}/equipment-profiles`);
+    expect(res.status).toBe(200);
+    const pc = res.body.items.find((profile: { code: string }) => profile.code === "PC");
+    expect(pc).toMatchObject({ code_prefix: "PC", min_next_number: 59 });
+    expect(pc.measurement_points).toHaveLength(8);
+  });
+
   it("refuse un code d'équipement envoyé par le client (alloué serveur)", async () => {
     const res = await request(app)
       .post(`${BASE}/equipements`)

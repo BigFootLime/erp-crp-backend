@@ -39,6 +39,49 @@ type RunnerModule = {
 
 const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
+const md15PatchFilename = "20261026_metrology_md15_profile_codes.sql";
+const md15PatchChecksum =
+  "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d";
+
+it("permits only the exact MD15 patch with its canonical LF checksum", async () => {
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const selected = runner.immutableOnlyPatch(patches, md15PatchFilename)!;
+  const unrelatedPendingSql = "SELECT 'UNRELATED_PENDING';\n";
+  const unrelatedPending = {
+    filename: "20261023_independent_business_code_counters_1423.sql",
+    sql: unrelatedPendingSql,
+    sha256: runner.sha256Sql(unrelatedPendingSql),
+  };
+  const client = inventoryClient();
+
+  expect(selected).toMatchObject({ filename: md15PatchFilename, sha256: md15PatchChecksum });
+  expect(runner.parseArgs(["up", "--dry-run", "--only", md15PatchFilename])).toMatchObject({
+    only: md15PatchFilename,
+    dryRun: true,
+  });
+  expect(() => runner.parseArgs(["up", "--only", unrelatedPending.filename])).toThrow(
+    /not registered as an immutable patch selection/
+  );
+
+  await runner.runUp(
+    { query: client.query },
+    [unrelatedPending, selected],
+    { dryRun: true, only: md15PatchFilename }
+  );
+
+  const statements = client.query.mock.calls.map(([statement]) => String(statement));
+  expect(statements.some((statement) => statement.includes("UNRELATED_PENDING"))).toBe(false);
+  expect(statements.some((statement) => statement.includes("metrology_md15_code_floor_20261026"))).toBe(false);
+});
+
+it("permits the exact qualified Outillage patch and rejects a substituted checksum", () => {
+  const filename = "20261025_outillage_catalogue_provenance.sql";
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  expect(runner.parseArgs(["up", "--dry-run", "--only", filename])).toMatchObject({ only: filename, dryRun: true });
+  const selected = runner.immutableOnlyPatch(patches, filename);
+  expect(selected).toMatchObject({ filename, sha256: "634a2197b1218936d51fbdd48b57d8940ba02706b0de0ab8d690bccb94560bf8" });
+  expect(() => runner.immutableOnlyPatch([{ ...selected!, sha256: "0".repeat(64) }], filename)).toThrow(/checksum mismatch/);
+});
 it("orders immutable dependent patches identically for the canonical runner and release rehearsal", () => {
   const files = runner.listPatches(resolve(repoRoot, "db/patches")).map((patch) => patch.filename);
   const gate = require(resolve(repoRoot, "scripts/migrations/release-gate.js"));

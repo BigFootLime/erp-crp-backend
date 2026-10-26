@@ -1,5 +1,12 @@
 # Changelog
 
+## Préparé — Métrologie MD15 et codes du registre qualité (#1452)
+
+- Profils de fiches et méthodes par famille, reprise contrôlée de codes comme `PC-01` et compteurs séparés réservant les numéros historiques.
+- Colonnes documentaires conservées dans les spécifications versionnées ; visa, état mécanique et entretien des nouvelles exécutions séparés de l'identité de l'opérateur.
+- Préservation des fiches lors des mises à jour, contrôles de cohérence et codes immuables, sans modification des décisions d'éligibilité ou de qualification.
+- Patch SQL rejoué, vérifié et retourné sur PostgreSQL 17 isolé ; les séquences et codes consommés restent préservés. Voir `docs/testing/metrology-md15-20261026.md`.
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.

@@ -32,6 +32,7 @@ import {
   repoEvaluateEligibility,
   repoGetEquipmentDetail,
   repoListCategories,
+  repoListEquipmentProfiles,
   repoListEquipment,
   repoQuarantineEquipment,
   repoRevisePlanVersion,
@@ -45,6 +46,7 @@ import {
 import { listSupportedUnits } from "../domain/metrology-units";
 
 export const svcListCategories = repoListCategories;
+export const svcListEquipmentProfiles = repoListEquipmentProfiles;
 export const svcUpsertCategory = repoUpsertCategory;
 
 export const svcListEquipment = repoListEquipment;
