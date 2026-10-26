@@ -17,6 +17,18 @@ export const COMPANY_PROFILES = ["COMMERCIAL", "INDUSTRIAL"] as const;
 export const COMPANY_STATUSES = ["ACTIVE", "SUSPENDED", "RETIRED"] as const;
 export const MEMBERSHIP_STATUSES = ["ACTIVE", "SUSPENDED", "REVOKED"] as const;
 export const CERP_ENVIRONMENTS = ["cerp_prod", "cerp_test"] as const;
+/** Commercial work plus explicitly granted local enterprise configuration. */
+export const COMMERCIAL_COMPANY_MODULE_KEYS = [
+  "clients",
+  "devis",
+  "commandes-clients",
+  "affaires",
+  "facturation",
+  "reporting-commercial",
+  "fournisseurs",
+  "commandes-fournisseurs",
+  "parametrage-erp",
+] as const;
 export const COMMERCIAL_PROJECTION_CAPABILITIES = [
   "stock.projection.read",
   "livraisons.projection.read",
@@ -269,16 +281,7 @@ export function resolveActiveCompanyContext(
   );
 
   if (company.profile === "COMMERCIAL") {
-    const commercialModules = new Set([
-      "clients",
-      "devis",
-      "commandes-clients",
-      "affaires",
-      "facturation",
-      "reporting-commercial",
-      "fournisseurs",
-      "commandes-fournisseurs",
-    ]);
+    const commercialModules = new Set<string>(COMMERCIAL_COMPANY_MODULE_KEYS);
     const projectedCapabilities = intersect(
       company.enabled_commercial_projection_capabilities,
       membership.enabled_commercial_projection_capabilities,

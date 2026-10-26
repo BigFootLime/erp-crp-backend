@@ -22,12 +22,18 @@ import {mountDirectorySelfProfile} from './self-profile.operations';
 import {directoryProfileForSite} from './admin.repository';
 import {mountDirectoryTabletPins} from './tablet-pin.operations';
 import {mountDirectoryCommonAccess} from './common-access';
+import { mountDirectoryBusinessCompanies } from './business-company.operations';
+import { mountDirectoryBusinessCompanyAdministration } from './business-company-admin.operations';
+import { expireBusinessCompanySwitches } from './business-company-switch.repository';
 const sessionInput=z.object({directory_session:z.string().max(100)}).strict();
 const authMeta=z.object({ip:z.string().max(80).nullable(),user_agent:z.string().max(512).nullable(),device_type:z.string().max(80).nullable(),os:z.string().max(80).nullable(),browser:z.string().max(80).nullable()}).strict();
-type Options={db:Pool;directoryId:string;sourceJwtSecret:string;keys:ReadonlyMap<string,string>|(()=>Promise<ReadonlyMap<string,string>>);registrationOpen?:boolean;registrationHashKey?:string;commonAccessTransport?:typeof fetch};
+type Options={db:Pool;directoryId:string;sourceJwtSecret:string;keys:ReadonlyMap<string,string>|(()=>Promise<ReadonlyMap<string,string>>);registrationOpen?:boolean;registrationHashKey?:string;commonAccessTransport?:typeof fetch;businessCompaniesEnabled?:boolean};
 declare global {namespace Express {interface Request {directoryCaller?:string;directorySites?:ReadonlySet<string>;directoryRequestNonce?:string;}}}
 /** A private loopback service owns credentials/MFA. Site APIs have no source key. */
 export function createDirectoryServer(options:Options){
+ const rawCompanyFlag=process.env.CERP_BUSINESS_COMPANIES_ENABLED;
+ if(rawCompanyFlag!==undefined&&rawCompanyFlag!=='true'&&rawCompanyFlag!=='false')throw new Error('DIRECTORY_BUSINESS_COMPANY_CONFIGURATION_INVALID');
+ const businessCompaniesEnabled=options.businessCompaniesEnabled??rawCompanyFlag==='true';
  const app=express();app.disable('x-powered-by');
  app.use('/internal/directory',express.raw({type:'application/json',limit:'15mb'}),async(req,res,next)=>{
   try{
@@ -42,11 +48,13 @@ export function createDirectoryServer(options:Options){
  });
  const wrap=(work:(req:express.Request,res:express.Response)=>Promise<void>):express.RequestHandler=>(req,res,next)=>{void work(req,res).catch(next);};
  mountDirectoryCommonAccess(app,options.db,options.directoryId,async()=>typeof options.keys==='function'?await options.keys():options.keys,wrap,options.commonAccessTransport);
+ mountDirectoryBusinessCompanies(app,options.db,wrap,{enabled:businessCompaniesEnabled,sourceJwtSecret:options.sourceJwtSecret,directoryId:options.directoryId,keys:async()=>typeof options.keys==='function'?await options.keys():options.keys});
+ mountDirectoryBusinessCompanyAdministration(app,options.db,wrap,businessCompaniesEnabled);
  app.post('/internal/directory/info',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({directory_id:options.directoryId,schema_version:1,capabilities:['shared-auth-mfa','shared-users','shared-company','shared-avatar'],import_mode:'EMPTY_NO_LEGACY_IMPORT'});}));
- app.post('/internal/directory/registration-options',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({enabled:!!options.registrationOpen&&req.directoryCaller!=='cerp_prod',database:req.directoryCaller,avatars:AVATAR_KEYS,role:'superAdmin'});}));
+ app.post('/internal/directory/registration-options',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({enabled:!businessCompaniesEnabled&&!!options.registrationOpen&&req.directoryCaller!=='cerp_prod'&&!req.directoryCaller?.startsWith('cerp_company_'),database:req.directoryCaller,avatars:AVATAR_KEYS,role:'superAdmin'});}));
  app.post('/internal/directory/register',wrap(async(req,res)=>{
   const body=z.object({input:testRegistrationSchema,key:z.string().guid(),meta:authMeta}).strict().parse(req.body),site=req.directoryCaller!;
-  if(!options.registrationOpen||site==='cerp_prod'||!options.registrationHashKey){res.status(403).json({code:'TEST_REGISTRATION_DISABLED',message:'La création de compte est fermée.'});return;}
+  if(businessCompaniesEnabled||site.startsWith('cerp_company_')||!options.registrationOpen||site==='cerp_prod'||!options.registrationHashKey){res.status(403).json({code:'TEST_REGISTRATION_DISABLED',message:'La création de compte est fermée.'});return;}
   await registerSharedTestProfile(options.db,site,body.input,body.key,options.registrationHashKey);
   const result=await loginUser(body.input.username,body.input.password,body.meta);
   if('challenge_token' in result){await bindChallenge(options.db,site,result.challenge_token);res.status(201).json(result);return;}
@@ -120,11 +128,18 @@ export function createDirectoryServer(options:Options){
  const cleanup=async()=>{
   if(cleanupRunning)return;
   cleanupRunning=true;
-  try{await expireDirectoryAccountRequests(options.db,500);}
+  try{
+   await expireDirectoryAccountRequests(options.db,500);
+   if(businessCompaniesEnabled)await expireBusinessCompanySwitches(options.db,500);
+  }
   finally{cleanupRunning=false;}
  };
  return {app,initialize:async()=>{
   await assertDirectoryIdentity(options.db,options.directoryId);
+  if(businessCompaniesEnabled){
+   const schema=(await options.db.query("SELECT to_regclass('public.cerp_business_companies') IS NOT NULL AND to_regclass('public.cerp_business_company_memberships') IS NOT NULL AND to_regclass('public.cerp_business_company_instances') IS NOT NULL AND to_regclass('public.cerp_business_company_switches') IS NOT NULL AS ready")).rows[0];
+   if(schema?.ready!==true)throw new Error('DIRECTORY_BUSINESS_COMPANY_SCHEMA_REQUIRED');
+  }
   if(process.env.NODE_ENV!=='test')await assertDirectoryApplicationRole(options.db);
   await cleanup();
   if(!cleanupTimer){cleanupTimer=setInterval(()=>{void cleanup().catch(()=>console.error(JSON.stringify({type:'directory_account_request_cleanup_failed'})));},60_000);cleanupTimer.unref();}

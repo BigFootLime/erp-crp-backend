@@ -21,6 +21,8 @@ import { createOriginPolicy } from "./origins";
 import { deploymentIdentity } from "./deployment-security";
 import { createRequestBudget } from "../middlewares/request-budget";
 import { mountCommonAccessSource } from "../shared-directory/common-access";
+import { companyRuntimeConfiguration } from "../module/entreprises/runtime/company-runtime.config";
+import { sharedDirectorySite } from "../shared-directory/site-runtime";
 
 installStructuredConsole();
 const app = express();
@@ -69,6 +71,7 @@ const corsOptionsDelegate: cors.CorsOptionsDelegate = (req, cb) => {
       "Content-Type",
       "Authorization",
       "X-CERP-Database",
+      "X-CERP-Company",
       "X-Request-Id",
       "X-Correlation-Id",
       "X-Page-Key",
@@ -156,6 +159,12 @@ app.get("/api/v1/environment", async (_req, res) => {
       "SELECT current_database() AS database"
     );
     const database = rows[0]?.database ?? null;
+    const companyConfig = companyRuntimeConfiguration();
+    if (companyConfig.enabled) {
+      if (!database || database !== sharedDirectorySite()) throw new Error("COMPANY_RUNTIME_BINDING_MISMATCH");
+      res.json({ database: companyConfig.environment, environment: companyConfig.environment === "cerp_prod" ? "production" : "test", company_id: companyConfig.company_id, deployment: deploymentIdentity(), appEnv: process.env.NODE_ENV ?? null, label: null });
+      return;
+    }
     const testInfo=await connectedTestInfo(pool);
     const environment =
       database === "cerp_prod"

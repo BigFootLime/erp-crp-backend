@@ -82,12 +82,14 @@ import commercialReferencesRoutes from "../module/commercial-references/routes/c
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
+import entreprisesRoutes from "../module/entreprises/routes/entreprises.routes";
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+router.use("/entreprises", entreprisesRoutes)
 router.use("/terminals", terminalRoutes)
 router.use("/portal", clientPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)

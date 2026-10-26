@@ -1,5 +1,9 @@
 # Multi-entreprises — qualification du premier lot local
 
+> Historique du lot de contrats purs. Le socle désormais câblé est décrit dans
+> [la qualification du runtime](multi-company-runtime-1454.md). Les limites et
+> nombres ci-dessous concernent uniquement la première étape.
+
 Date : 2026-10-26. Issues : backend #1454, frontend #1775.
 
 ## Périmètre réellement disponible

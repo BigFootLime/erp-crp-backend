@@ -82,6 +82,14 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     return;
   }
 
+  // Company policy narrows even the account owner's industrial modules. A
+  // legacy kill-switch or protected module cannot open the other company.
+  const companyContext = req.businessCompanyAccess?.context;
+  if (companyContext && !moduleKeys.some(key => companyContext.module_keys.includes(key))) {
+    res.status(403).json({ error: "Accès interdit", code: "COMPANY_MODULE_NOT_ALLOWED" });
+    return;
+  }
+
   // Protected administration retains its own SuperAdmin and recent-MFA guards.
   // Do not install a grant here: legacy guards must not read it as a bypass.
   if (moduleKeys.some(isProtectedModuleKey)) {

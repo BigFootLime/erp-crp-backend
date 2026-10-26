@@ -2,7 +2,8 @@ import {z} from 'zod';
 import {workProfileSchema} from '../module/auth/validators/work-profile.validator';
 export const directoryIdSchema=z.string().guid();
 export const directoryDatabaseSchema=z.string().regex(/^cerp_directory_[a-f0-9]{32}$/);
-export const siteIdSchema=z.string().refine(v=>v==='cerp_prod'||v==='cerp_test'||/^cerp_test_[a-f0-9]{32}$/.test(v));
+/** Legacy sites remain supported; business-company instances use the scoped form. */
+export const siteIdSchema=z.string().refine(v=>v==='cerp_prod'||v==='cerp_test'||/^cerp_test_[a-f0-9]{32}$/.test(v)||/^cerp_company_[a-f0-9]{32}_(prod|test)$/.test(v));
 export const privateOwnerSeedSchema=z.object({
  version:z.literal(1),command_id:z.string().guid(),directory_mode:z.literal('EMPTY_NO_LEGACY_IMPORT'),
  profile:z.object({username:z.string().min(3).max(50),name:z.string().min(1).max(80),surname:z.string().min(1).max(80),email:z.string().email(),weekly_hours:z.number().positive().max(80),employment_type:z.literal('CDI'),job_title:z.string().min(1).max(80),avatar_key:z.null(),personal_avatar:z.null()}).strict(),

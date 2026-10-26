@@ -3,6 +3,7 @@ import type {Pool} from 'pg';
 import {directoryProfileSchema} from './model';
 import {sharedDirectoryClient,sharedDirectorySite,projectDirectoryProfile} from './site-runtime';
 import {synchronizeCommonAccess} from './common-access';
+import {companyRuntimeConfiguration} from '../module/entreprises/runtime/company-runtime.config';
 import {bumpRealtimeSessionEpoch} from '../shared/realtime/realtime-control-plane';
 import {HttpError} from '../utils/httpError';
 const actorSchema=z.object({profile:directoryProfileSchema,global_session_epoch:z.number().int().nonnegative(),membership_version:z.number().int().nonnegative(),mfa_factor_id:z.string().guid().nullable(),mfa_factor_version:z.number().int().positive().nullable(),mfa_required:z.boolean()}).strict().refine(value=>(value.mfa_factor_id===null)===(value.mfa_factor_version===null),'Incomplete actor MFA factor');
@@ -20,7 +21,7 @@ export async function synchronizeDirectoryActor(db:Pool,userId:number){
   throw error;
  }
  const local=await projectDirectoryProfile(db,actor.profile);if(local.id!==userId)throw new Error('DIRECTORY_ACTOR_ID_CHANGED');
- const site=sharedDirectorySite();if(site&&actor.profile.status==='Active'&&!actor.profile.is_superadmin)await synchronizeCommonAccess(db,directory,site,actor.profile.profile_id);
+ const site=sharedDirectorySite();if(site&&actor.profile.status==='Active'&&!actor.profile.is_superadmin&&!companyRuntimeConfiguration().enabled)await synchronizeCommonAccess(db,directory,site,actor.profile.profile_id);
  const tx=await db.connect();await tx.query('BEGIN');
  try{
   await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`directory-actor:${actor.profile.profile_id}`]);

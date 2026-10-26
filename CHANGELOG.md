@@ -27,7 +27,12 @@
 - Contrats purs d'entreprise, adhésion et accès : environnement distinct de l'entreprise, annuaire commun conservé, profil commercial en mode accueil et projections de stock séparées des modules industriels.
 - Contrat d'achat interentreprises avec validation fournisseur, configuration figée et expéditions cumulées ; aucune réservation ou sortie de stock effectuée par ces fonctions.
 - Contrat de la future boutique : clients professionnels/particuliers, confirmation déclenchant un achat, déduplication, révisions et annulations explicites. Deux facturations prévues : CRP → EC et EC → client final, sans devis EC.
-- Ce lot ne crée aucune base, API ou interface et ne modifie ni l'authentification ni les flux existants. Le programme complet reste à raccorder et à qualifier.
+- Socle HTTP/Socket.IO à runtime et pool fixes par entreprise/environnement, annuaire central étendu, affectations explicites et échanges de session courts avec reprise idempotente bornée à la session source.
+- Administration centrale versionnée et MFA, politique de modules signée et projetée avec audit, identité légale conservée dans la base de l'entreprise ; mode historique conservé quand la fonctionnalité est désactivée.
+- Clients B2B/B2C ajoutés par patch métier distinct, vérifications de transition atomiques et maintien du libellé historique. Paramétrage commercial sans dépendance aux machines, maintenances ou stock local.
+- Connexion principale et liens de connexion directe par entreprise, avec confirmation du runtime avant saisie des identifiants et récupération explicite d'une cible indisponible.
+- Primitive de création de commande native extraite sans changer ses règles pour permettre une future consommation transactionnelle du bridge. Le transport inter-entreprises et son raccordement aux commandes restent à implémenter.
+- Aucun provisionnement, migration réelle, service, publication ou environnement de production modifié. Les patches Directory restent séparés du runner métier ; aucun lancement global de migrations n'est effectué.
 
 ## Charte commune des PDF — #1442
 
