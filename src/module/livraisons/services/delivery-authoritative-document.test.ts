@@ -50,4 +50,25 @@ describe("#624 shipped delivery source snapshot", () => {
       issuer: { company_name: "CERP Historique", siret: "12345678900012", legal_mentions_version: 4 },
     });
   });
+
+  it("uses the accepted EC legal identity and final destination for a dropship BL", async () => {
+    const query = async (sql: string) => {
+      if (sql.includes("FROM public.bon_livraison bl")) return { rows: [{
+        numero: "BL-EC-1", statut: "SHIPPED", client_name: "CRP should not print", commande_numero: "CMD-EC-1", affaire_reference: null,
+        commande_numeros: ["CMD-EC-1"], affaire_references: [], address_label: "CRP address", date_creation: "2026-10-27", date_expedition: "2026-10-27",
+        transporteur: null, tracking_number: null, commentaire_client: null, updated_at: "2026-10-27T10:00:00.000Z",
+        intercompany_buyer_legal_snapshot: { legal_name: "EC Vente", registration_number: "RCS-EC", address_lines: ["1 avenue EC", "75001 Paris"], country_code: "FR" },
+        intercompany_destination_snapshot: { recipient_name: "Client final", address_lines: ["2 rue finale", "69001 Lyon"], country_code: "FR" },
+      }] };
+      if (sql.includes("FROM public.bon_livraison_ligne line")) return { rows: [] };
+      throw new Error(`Issuer lookup must not happen for EC dropship: ${sql}`);
+    };
+    const input = await buildShippedDeliveryArtifactInput({ query } as never, {
+      deliveryId: "22222222-2222-4222-8222-222222222222", actorUserId: 7, sourceRevision: "3:ec",
+    });
+    expect(input.sourceSnapshot).toMatchObject({
+      client_name: "Client final", address_label: "2 rue finale\n69001 Lyon\nFR",
+      issuer: { company_name: "EC Vente", registration_number: "RCS-EC" },
+    });
+  });
 });

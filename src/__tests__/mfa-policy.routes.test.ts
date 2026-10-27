@@ -27,6 +27,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }))
 
 vi.mock("../module/auth/middlewares/auth-rate-limit.middleware", () => ({
+  createAuthRateLimitMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
   registerRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   accountRequestRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
   accountRequestStatusRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),

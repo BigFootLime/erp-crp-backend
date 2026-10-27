@@ -8,6 +8,7 @@ export type AuthRateLimitEndpoint =
   | "mfa"
   | "tabletPinLogin"
   | "tabletPinPair"
+  | "companySwitch"
   | "einvoiceWebhook";
 
 export type AuthRateLimitDimension = "ip" | "username" | "email" | "token";
@@ -255,6 +256,10 @@ export function loadAuthRateLimitConfig(env: NodeJS.ProcessEnv = process.env): A
       }),
       tabletPinLogin: endpointConfig("closed-error", { ip: { limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_TABLET_PIN_IP_LIMIT", 100, 1, 10_000), windowMs: loginWindowMs } }),
       tabletPinPair: endpointConfig("closed-error", { ip: { limit: readBoundedInteger(env, "AUTH_RATE_LIMIT_TABLET_PAIR_IP_LIMIT", 100, 1, 10_000), windowMs: loginWindowMs } }),
+      companySwitch: endpointConfig("closed-error", {
+        ip: { limit: 60, windowMs: MINUTE_MS },
+        token: { limit: 10, windowMs: MINUTE_MS },
+      }),
       einvoiceWebhook: endpointConfig("closed-error", {
         ip: {
           limit: readBoundedInteger(env, "EINVOICE_WEBHOOK_RATE_LIMIT_IP_LIMIT", 240, 1, 100_000),

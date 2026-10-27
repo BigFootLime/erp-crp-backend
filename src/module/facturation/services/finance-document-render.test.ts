@@ -13,6 +13,7 @@ import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { PDFDocument } from "pdf-lib";
 
 import { describe, expect, it } from "vitest";
 import { getGeneratedRootPath } from "../../../utils/cerpStorage";
@@ -713,5 +714,26 @@ describe("mentions legales — rendu reel", () => {
     expect(text).not.toContain("Escompte");
     expect(text).not.toContain("au capital de");
     expect(drawnPages(bytes)).toHaveLength(1);
+  }, 60_000);
+
+  it("brands an EC issuer invoice from its frozen snapshot without falling back to CRP", async () => {
+    const bytes = await renderFinanceDocument({
+      ...FACTURE,
+      number: "FA-TEST-EC-0001",
+      issuer: {
+        ...ISSUER,
+        company_name: "TEST EC ACHETEUR v2",
+        address_line_1: "1 avenue Fixture",
+        postal_code: "69001",
+        city: "Lyon",
+      },
+    });
+    const text = drawnText(bytes);
+    const pdf = await PDFDocument.load(bytes);
+    expect(text).toContain("TEST EC ACHETEUR v2");
+    expect(text).not.toContain("CROIX ROUSSE PRECISION");
+    expect((bytes.toString("latin1").match(/\/Subtype \/Image\b/g) ?? [])).toHaveLength(0);
+    expect(pdf.getAuthor()).toBe("TEST EC ACHETEUR v2");
+    expect(pdf.getCreator()).toBe("CERP - TEST EC ACHETEUR v2");
   }, 60_000);
 });

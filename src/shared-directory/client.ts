@@ -1,6 +1,7 @@
 import {signDirectoryCall} from './call-signature';
 import {directorySessionSchema,siteIdSchema} from './model';
 import {verifyCommonAccessReply} from './common-access-signature';
+import {verifyCompanyPolicyReply} from './company-policy-signature';
 export const LOCAL_DIRECTORY_ENDPOINT='http://127.0.0.1:8085/internal/directory';
 export const WIREGUARD_DIRECTORY_ENDPOINT='http://10.90.0.2:8086/internal/directory';
 /** The site comes from a verified startup pool, never an HTTP header. */
@@ -35,6 +36,17 @@ export class DirectoryClient {
    if(bytes.length>65536||!verifyCommonAccessReply('site',this.key,headers['X-CERP-Directory-Nonce'],bytes,response.headers.get('x-cerp-common-access-site-signature')??''))throw new Error('COMMON_ACCESS_RESPONSE_REJECTED');
    return JSON.parse(bytes.toString('utf8'));
   }catch{throw Object.assign(new Error('Les droits communs sont momentanément indisponibles.'),{status:503,code:'DIRECTORY_UNAVAILABLE'});}
+ }
+ async businessCompanyPolicy(session:string):Promise<unknown>{
+  const operation='business-company-policy',path='/internal/directory/'+operation,body=Buffer.from(JSON.stringify({directory_session:session,input:{}}));
+  const headers=signDirectoryCall(this.site,this.key,'POST',path,body);
+  try{
+   const response=await fetch(this.base+'/'+operation,{method:'POST',headers:{...headers,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(10000),redirect:'error',cache:'no-store'});
+   if(!response.ok||Number(response.headers.get('content-length'))>65536)throw new Error('COMPANY_POLICY_UNAVAILABLE');
+   const bytes=Buffer.from(await response.arrayBuffer());
+   if(bytes.length>65536||!verifyCompanyPolicyReply(this.key,headers['X-CERP-Directory-Nonce'],bytes,response.headers.get('x-cerp-business-company-policy-signature')??''))throw new Error('COMPANY_POLICY_RESPONSE_REJECTED');
+   return JSON.parse(bytes.toString('utf8'));
+  }catch{throw Object.assign(new Error('La politique entreprise est momentanément indisponible.'),{status:503,code:'DIRECTORY_UNAVAILABLE'});}
  }
  async downloadAvatar(session:string,assetId:string){
   const path='/internal/directory/avatar-content',body=Buffer.from(JSON.stringify({directory_session:session,asset_id:assetId}));

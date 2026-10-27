@@ -32,6 +32,7 @@ import { uploadOwnAvatar } from '../controllers/avatar.controller';
 import { createSecureUpload } from '../../../shared/uploads/secure-upload';
 import {getSelfProfile,patchSelfProfile} from '../controllers/self-profile.controller';
 import { publicAccountRequestRouter } from '../../account-requests/account-requests.routes';
+import { companyLoginTargetMiddleware } from '../../entreprises/routes/entreprises.routes';
 
 const router: Router = Router();
 const avatarUpload = createSecureUpload('image', {maxFiles:1});
@@ -39,10 +40,10 @@ const avatarUpload = createSecureUpload('image', {maxFiles:1});
 router.get('/test-registration', testRegistrationOptions);
 router.post('/test-registration', registerRateLimit, testRegistration);
 
-router.post('/login', loginRateLimit, login);
-router.post('/tablet-pin/login', tabletPinLoginRateLimit, tabletPinLogin);
-router.post('/tablet-pin/pair', tabletPinPairRateLimit, tabletPinPair);
-router.post('/mfa/verify', mfaRateLimit, verifyChallenge);
+router.post('/login', loginRateLimit, companyLoginTargetMiddleware, login);
+router.post('/tablet-pin/login', tabletPinLoginRateLimit, companyLoginTargetMiddleware, tabletPinLogin);
+router.post('/tablet-pin/pair', tabletPinPairRateLimit, companyLoginTargetMiddleware, tabletPinPair);
+router.post('/mfa/verify', mfaRateLimit, companyLoginTargetMiddleware, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);
 router.post('/activate', resetPasswordRateLimit, activateAccount);

@@ -7,6 +7,9 @@ export type ClientRow = {
   client_id: string
   client_code: string | null
   company_name: string
+  customer_type: "PROFESSIONAL" | "INDIVIDUAL"
+  individual_first_name: string | null
+  individual_last_name: string | null
   email: string | null
   phone: string | null
   website_url: string | null
@@ -122,8 +125,16 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
       NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
       NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
     ) AS client_code,
-    c.company_name, c.email, c.phone, c.website_url,
-    c.siret, c.vat_number, c.naf_code,
+    c.company_name,
+    COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') AS customer_type,
+    CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL'
+      THEN NULLIF(btrim(to_jsonb(c)->>'individual_first_name'), '') END AS individual_first_name,
+    CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL'
+      THEN NULLIF(btrim(to_jsonb(c)->>'individual_last_name'), '') END AS individual_last_name,
+    c.email, c.phone, c.website_url,
+    CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL' THEN NULL ELSE c.siret END AS siret,
+    CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL' THEN NULL ELSE c.vat_number END AS vat_number,
+    CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL' THEN NULL ELSE c.naf_code END AS naf_code,
     c.status, c.blocked, c.reason, c.creation_date,
     c.observations, c.provided_documents_id,
     c.quality_level,

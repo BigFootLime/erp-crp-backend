@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AuthRateLimitConfig } from "../config/auth-rate-limit";
+import { loadAuthRateLimitConfig, type AuthRateLimitConfig } from "../config/auth-rate-limit";
 import type {
   AuthRateLimitStore,
   AuthRateLimitStoreCounter,
@@ -130,6 +130,29 @@ describe("distributed auth rate limiter", () => {
     finish?.();
     await stopping;
     vi.useRealTimers();
+  });
+
+  it("persists company exchange counters in valid, pseudonymous PostgreSQL scopes", async () => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const config = loadAuthRateLimitConfig({ NODE_ENV: "test" });
+    const limiter = new AuthRateLimiter(store, config);
+    const ticket = "a".repeat(64);
+    await expect(limiter.check("companySwitch", [
+      { dimension: "ip", value: "ipv4:198.51.100.42" },
+      { dimension: "token", value: ticket },
+    ])).resolves.toMatchObject({ status: "allowed" });
+    expect(store.lastInputs.map(input => input.scope)).toEqual([
+      "auth:company-switch:ip", "auth:company-switch:token",
+    ]);
+    for (const input of store.lastInputs) {
+      expect(input.scope).toMatch(/^[a-z][a-z0-9:_-]{2,63}$/);
+      expect(input.subjectHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(input.subjectHash).not.toBe(ticket);
+    }
+    store.fail = true;
+    await expect(limiter.check("companySwitch", [
+      { dimension: "token", value: ticket },
+    ])).resolves.toMatchObject({ status: "unavailable", failurePolicy: "closed-error" });
   });
   it("admits twenty different employees behind one IP while keeping receipt and submission scopes separate", async () => {
     const store = new SharedDeterministicStore(() => 1_000);

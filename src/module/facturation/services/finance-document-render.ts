@@ -89,6 +89,12 @@ export type FinanceDocumentInput = {
   /** Empreinte de l'instantane immuable, quand le document est emis. */
   snapshotUuid?: string | null;
   draftReference?: string | null;
+  /**
+   * Optional brand resolved by the authorised company configuration layer. The issuer
+   * snapshot still supplies the frozen legal name; the image is never fetched by the PDF
+   * renderer and therefore cannot drift after issuance.
+   */
+  branding?: { logo?: Buffer | null } | null;
 };
 
 function clean(value: unknown): string | null {
@@ -106,6 +112,17 @@ function pick(source: FinanceParty, ...keys: string[]): string | null {
     if (value) return value;
   }
   return null;
+}
+
+function isCerpIdentity(name: string): boolean {
+  return name.normalize("NFD").replace(/[^a-z0-9]/gi, "").toUpperCase() === "CROIXROUSSEPRECISION";
+}
+
+/** Non-CRP issuers use their frozen legal identity, never the default CRP visual brand. */
+function issuerBranding(input: FinanceDocumentInput): { name: string; logo?: Buffer | null } | null {
+  const name = pick(input.issuer, "company_name", "name", "raison_sociale", "biller_name");
+  if (!name || isCerpIdentity(name)) return null;
+  return { name, logo: input.branding?.logo };
 }
 
 /**
@@ -360,6 +377,7 @@ export async function renderFinanceDocument(input: FinanceDocumentInput): Promis
       watermark: input.example ? "EXEMPLE" : null,
       flag: input.draft ? "NE PAS TRANSMETTRE" : null,
       monogramName: clientName,
+      branding: issuerBranding(input),
       generatedAt: formatDateFR(input.issueDate),
       generatedBy: null,
       title: `${documentType} ${input.number}`,

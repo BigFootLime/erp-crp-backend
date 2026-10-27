@@ -31,6 +31,21 @@
 - L’image Docker conserve ses paquets Alpine épinglés et prend curl 8.23.0-r0, disponible dans le dépôt 3.24 ; la recette complète des paquets a été rejouée sur l’image de base exacte.
 - Compatibilité de validation : les GUID PostgreSQL historiques gardent leur format accepté, les PATCH n'injectent pas de valeurs de création dans les champs absents, et les clés de pollution de prototype restent refusées avant normalisation.
 
+## Préparé localement — Multi-entreprises (#1454 / frontend #1775)
+
+- Contrats purs d'entreprise, adhésion et accès : environnement distinct de l'entreprise, annuaire commun conservé, profil commercial en mode accueil et projections de stock séparées des modules industriels.
+- Contrat d'achat interentreprises avec validation fournisseur, configuration figée et expéditions cumulées ; aucune réservation ou sortie de stock effectuée par ces fonctions.
+- Contrat de la future boutique : clients professionnels/particuliers, confirmation déclenchant un achat, déduplication, révisions et annulations explicites. Deux facturations prévues : CRP → EC et EC → client final, sans devis EC.
+- Socle HTTP/Socket.IO à runtime et pool fixes par entreprise/environnement, annuaire central étendu, affectations explicites et échanges de session courts avec reprise idempotente bornée à la session source.
+- Administration centrale versionnée et MFA, politique de modules signée et projetée avec audit, identité légale conservée dans la base de l'entreprise ; mode historique conservé quand la fonctionnalité est désactivée.
+- Clients B2B/B2C ajoutés par patch métier distinct, vérifications de transition atomiques et maintien du libellé historique. Paramétrage commercial sans dépendance aux machines, maintenances ou stock local.
+- Connexion principale et liens de connexion directe par entreprise, avec confirmation du runtime avant saisie des identifiants et récupération explicite d'une cible indisponible.
+- Création native de commande réutilisée après acceptation de la demande fournisseur, avec transaction, notification, liens de lignes et retour de décision. Transport HMAC entre processus et bases fixes, outbox durable, inbox idempotente et retries bornés.
+- Offres fournisseur publiées et versions tarifaires figées ; prix retail propres à l'acheteur, sans transmission au fournisseur. Relations et articles locaux sélectionnés explicitement.
+- Expédition native CRP, document sous identité EC et preuve de livraison externe côté commercial sans mouvement de stock local ; allocations et double facturation natives avec émetteurs et numérotations distincts.
+- Recette PostgreSQL locale du flux et de l'archivage documentaire, migration à froid des 330 patches sans dérive et sélection immuable des neuf patches métier EC. Preuves et limites : `docs/testing/intercompany-native-qualification-1454.md`. Provisionnement réel, accès, catalogue et activation restent distincts de cette recette.
+- Aucun provisionnement, migration réelle, service, publication ou environnement de production modifié. Les patches Directory restent séparés du runner métier ; aucun lancement global de migrations n'est effectué.
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.

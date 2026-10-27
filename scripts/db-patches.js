@@ -11,6 +11,20 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql": "ddd523443ff759509e7d316ee049cd32361af858a59f43e1257cc96cfd89c7a5",
+  "20261027_zzzzz_intercompany_standard_article_locks_1454.sql": "810c4d2029f5645a33eb5986ca0c699e1ca7fe3131c1c8c15e6cb06645d52860",
+  "20261027_zzz_intercompany_dropship_commande_ligne_1454.sql": "ab1d64b4d564799d951c4697d801b01a81ab8de47ec532c2647d4de2cb58d3b8",
+  "20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql": "affb50a542f5983d76b561d8201af035f894473444503a1902d745cc9e4fb12e",
+  "20261027_zz_intercompany_delivery_destination_1454.sql": "ad19e2fc63ed177f1135a90063a35cb12de10b06ae43b0905808473e6c34c595",
+  "20261026_client_person_types_1454.sql": "735153a0942657b254e3abbae0e792fc1353eae5f2891e5f8df23a6ecd25adb9",
+  "20261026_company_policy_projections_1454.sql": "f3d449774c7985471d243f7a815dbc182c76389f6587f4087f35d6f263e523b0",
+  "20261027_00_intercompany_transport_1454.sql": "4c2bf40462097374641ca078fc1c824789a91651f22d2a7f6686bebc9f158a8b",
+  "20261027_intercompany_commercial_catalogue_1454.sql": "3fa46f424c9a58e12a4ded839e74079c087e20ba80b6018298db1302f7495b2f",
+  "20261027_intercompany_external_fulfilment_receipts_1454.sql": "9804bb818b48c1ec0c8f0a04c2ecc54c82877e352275e8563d0c5009d04936c5",
+  "20261027_intercompany_invoice_sources_1454.sql": "b9bda5ab995fd01a9b4785ec1bc0e3aff40e859f94aaeb1016eb160abe345488",
+  "20261027_intercompany_supplier_offer_revisions_1454.sql": "af127653cb6ee15c4270e00cc17cc453e9fa37241fcd2d666a129ff44db0caa8",
+  "20261027_intercompany_transport_immutability_1454.sql": "bb48dcffcb237b3b3b99cd6d79de2620beb64e91672cc93f5a99b862b05b3d44",
+  "20261027_z_intercompany_external_invoice_guard_1454.sql": "ba64015d06015167dcd1d3339d5d4595b2e90709d43bc52c98c134af814cfc3f",
   "20261027_metrology_scan_documents_1780.sql": "2b919939dc894949c3cc048343135b5f89a66bc9b43c66842ff2168025095e47",
   "20261027_metrology_legacy_import_1460.sql": "6a7996429ba92988314c694d044cb2424d3f1d790c6c8f5205c6f986945478b5",
   "20261026_metrology_md15_profile_codes.sql": "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d",

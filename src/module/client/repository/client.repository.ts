@@ -152,7 +152,7 @@ async function insertClient(
   const q = `
   INSERT INTO clients (
     client_code,
-    company_name, contact_id,
+    company_name, customer_type, individual_first_name, individual_last_name, contact_id,
     email, phone, website_url,
     siret, siren, vat_number, naf_code,
     status, blocked, reason, creation_date,
@@ -166,18 +166,18 @@ async function insertClient(
     electronic_address_directory_entry_id, electronic_address_verified_at,
     created_by, updated_by
   ) VALUES (
-    $1,$2,$3,
-    NULLIF($4,''), NULLIF($5,''), NULLIF($6,''),
-    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NULLIF($10,''),
-    $11, $12, NULLIF($13,''), COALESCE($14::timestamp, now()),
-    $15,
-    $16, $17, $18,
-    NULLIF($19,''), $20,
-    COALESCE($21::text[], '{}'),
-    NULLIF($22,''), $23, NULLIF($24,''), NULLIF($25,''),
-    NULLIF($26,''), NULLIF($27,''),
-    NULLIF($28,''), NULLIF($29,''), NULL, NULL,
-    $30, $30
+    $1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6,
+    NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
+    NULLIF($10,''), NULLIF($11,''), NULLIF($12,''), NULLIF($13,''),
+    $14, $15, NULLIF($16,''), COALESCE($17::timestamp, now()),
+    $18,
+    $19, $20, $21,
+    NULLIF($22,''), $23,
+    COALESCE($24::text[], '{}'),
+    NULLIF($25,''), $26, NULLIF($27,''), NULLIF($28,''),
+    NULLIF($29,''), NULLIF($30,''),
+    NULLIF($31,''), NULLIF($32,''), NULL, NULL,
+    $33, $33
   )
   RETURNING client_id
 `;
@@ -185,7 +185,7 @@ async function insertClient(
 
  const { rows } = await db.query(q, [
   clientCode,
-  dto.company_name, null,
+  dto.company_name, dto.customer_type ?? "PROFESSIONAL", dto.individual_first_name ?? "", dto.individual_last_name ?? "", null,
   dto.email ?? "", dto.phone ?? "", dto.website_url ?? "",
   dto.siret ?? "", dto.siren ?? "", dto.vat_number ?? "", dto.naf_code ?? "",
   dto.status, dto.blocked, dto.reason ?? "", dto.creation_date,
@@ -752,7 +752,10 @@ export async function repoPatchClient(
     await db.query("BEGIN");
 
     const current = await db.query(
-      `SELECT client_id, bill_address_id, delivery_address_id, bank_info_id, contact_id AS primary_contact_id
+      `SELECT client_id, bill_address_id, delivery_address_id, bank_info_id, contact_id AS primary_contact_id,
+              COALESCE(NULLIF(btrim(to_jsonb(clients)->>'customer_type'), ''), 'PROFESSIONAL') AS customer_type,
+              NULLIF(btrim(to_jsonb(clients)->>'individual_first_name'), '') AS individual_first_name,
+              NULLIF(btrim(to_jsonb(clients)->>'individual_last_name'), '') AS individual_last_name
          FROM clients WHERE client_id = $1 FOR UPDATE`,
       [id]
     );
@@ -761,12 +764,31 @@ export async function repoPatchClient(
       (err as any).status = 404;
       throw err;
     }
-    const { bill_address_id, delivery_address_id, bank_info_id, primary_contact_id } = current.rows[0] as {
+    const { bill_address_id, delivery_address_id, bank_info_id, primary_contact_id, customer_type, individual_first_name, individual_last_name } = current.rows[0] as {
       bill_address_id: string | null;
       delivery_address_id: string | null;
       bank_info_id: string | null;
       primary_contact_id: string | null;
+      customer_type: "PROFESSIONAL" | "INDIVIDUAL";
+      individual_first_name: string | null;
+      individual_last_name: string | null;
     };
+
+    const targetCustomerType = has("customer_type") ? patch.customer_type : customer_type;
+    const targetFirstName = has("individual_first_name") ? patch.individual_first_name : individual_first_name;
+    const targetLastName = has("individual_last_name") ? patch.individual_last_name : individual_last_name;
+    const shouldRefreshIndividualLabel = targetCustomerType === "INDIVIDUAL" &&
+      (has("customer_type") || has("individual_first_name") || has("individual_last_name") || has("company_name"));
+    if (shouldRefreshIndividualLabel && (!targetFirstName || !targetLastName)) {
+      throw new HttpError(400, "CLIENT_INDIVIDUAL_NAME_REQUIRED", "Un particulier doit avoir un prénom et un nom.");
+    }
+    if (targetCustomerType === "INDIVIDUAL" && ["siret", "siren", "vat_number", "naf_code"].some(field => has(field) && Boolean(patch[field as keyof ClientPatchDTO]))) {
+      throw new HttpError(400, "CLIENT_INDIVIDUAL_FISCAL_ID_FORBIDDEN", "Les identifiants professionnels ne concernent pas un particulier.");
+    }
+    const becomingProfessional = customer_type === "INDIVIDUAL" && targetCustomerType === "PROFESSIONAL";
+    if (becomingProfessional && (!has("company_name") || !patch.company_name?.trim())) {
+      throw new HttpError(400, "CLIENT_PROFESSIONAL_NAME_REQUIRED", "Indiquez la raison sociale lors du passage en client professionnel.");
+    }
 
     // 1) Champs scalaires — SET dynamique, uniquement ceux fournis.
     const sets: string[] = [];
@@ -775,7 +797,18 @@ export async function repoPatchClient(
       vals.push(value);
       sets.push(sql(`$${vals.length}`));
     };
-    if (has("company_name")) put((p) => `company_name = ${p}`, patch.company_name);
+    if (has("customer_type")) put((p) => `customer_type = ${p}`, patch.customer_type);
+    if (becomingProfessional) {
+      sets.push("individual_first_name = NULL", "individual_last_name = NULL");
+    } else {
+      if (has("individual_first_name")) put((p) => `individual_first_name = NULLIF(${p}, '')`, patch.individual_first_name ?? "");
+      if (has("individual_last_name")) put((p) => `individual_last_name = NULLIF(${p}, '')`, patch.individual_last_name ?? "");
+    }
+    if (shouldRefreshIndividualLabel) {
+      put((p) => `company_name = ${p}`, `${targetFirstName!.trim()} ${targetLastName!.trim()}`);
+    } else if (has("company_name")) {
+      put((p) => `company_name = ${p}`, patch.company_name);
+    }
     if (has("email")) put((p) => `email = NULLIF(${p}, '')`, patch.email ?? "");
     if (has("phone")) put((p) => `phone = NULLIF(${p}, '')`, patch.phone ?? "");
     if (has("website_url")) put((p) => `website_url = NULLIF(${p}, '')`, patch.website_url ?? "");

@@ -1,0 +1,34 @@
+import type { PoolClient } from "pg";
+import { HttpError } from "../../../utils/httpError";
+import type { CreateCommandeInput } from "../../commande-client/types/commande-client.types";
+import { purchaseSubmittedPayloadSchema, type PurchaseSubmittedPayload } from "./intercompany-purchase.contract";
+export { purchaseSubmittedPayloadSchema } from "./intercompany-purchase.contract";
+
+export type SupplierPurchasePayload = PurchaseSubmittedPayload;
+
+/** Resolves only declared seller bindings; missing, stale or price-fallback data fail closed. */
+export async function resolveSupplierPurchaseTx(tx: Pick<PoolClient, "query">, payloadInput: unknown, scope: { source_company_id: string; destination_company_id: string; environment: "cerp_prod" | "cerp_test" }): Promise<CreateCommandeInput> {
+  const payload = purchaseSubmittedPayloadSchema.parse(payloadInput);
+  const outputLines: CreateCommandeInput["lignes"] = [];
+  let customerId: string | null = null;
+  for (const [index, line] of payload.lines.entries()) {
+    const found = await tx.query<{ local_customer_id: string; active: boolean; supplier_article_id: string; supplier_piece_technique_id: string | null; supplier_piece_technique_version_id: string | null; unit: string; supplier_sale_unit_price: number; purchase_vat_rate: number; currency: string; designation: string }>(
+      `SELECT r.local_customer_id,c.active,(rev.snapshot->>'supplier_article_id') AS supplier_article_id,(rev.snapshot->>'supplier_piece_technique_id') AS supplier_piece_technique_id,(rev.snapshot->>'supplier_piece_technique_version_id') AS supplier_piece_technique_version_id,(rev.snapshot->>'unit') AS unit,(rev.snapshot->>'supplier_sale_unit_price')::float8 AS supplier_sale_unit_price,(rev.snapshot->>'purchase_vat_rate')::float8 AS purchase_vat_rate,(rev.snapshot->>'currency') AS currency,(rev.snapshot->>'designation') AS designation
+         FROM public.intercompany_commercial_catalogue c JOIN public.intercompany_supplier_relations r ON r.id=c.relation_id
+         JOIN public.intercompany_supplier_offer_revisions rev ON rev.relation_id=c.relation_id AND rev.supplier_catalogue_mapping_id=c.id AND rev.version=$6
+        WHERE c.id=$1::uuid AND c.relation_id=$2::uuid AND r.local_role='SUPPLIER' AND c.local_role='SUPPLIER'
+          AND r.buyer_company_id=$3::uuid AND r.supplier_company_id=$4::uuid AND r.environment=$5 AND r.status='ACTIVE' FOR SHARE OF c,r,rev`, [line.supplier_catalogue_mapping_id, payload.relation_id, scope.source_company_id, scope.destination_company_id, scope.environment,line.supplier_mapping_version]);
+    const row = found.rows[0];
+    if (!row || !row.active || row.supplier_article_id !== line.supplier_article_id || row.supplier_piece_technique_id !== (line.supplier_piece_technique_id ?? null) || row.supplier_piece_technique_version_id !== (line.supplier_piece_technique_version_id ?? null) || row.unit !== line.unit || row.currency !== line.currency || row.supplier_sale_unit_price !== line.purchase_unit_price || row.purchase_vat_rate !== line.purchase_vat_rate) {
+      throw new HttpError(409, "INTERCOMPANY_PURCHASE_BINDING_STALE", `La ligne fournisseur ${index + 1} ne correspond plus au catalogue publié.`);
+    }
+    if (customerId && customerId !== row.local_customer_id) throw new HttpError(409, "INTERCOMPANY_RELATION_CUSTOMER_CONFLICT", "La relation ne désigne pas un client vendeur unique.");
+    customerId = row.local_customer_id;
+    outputLines.push({ article_id: row.supplier_article_id, piece_technique_id: row.supplier_piece_technique_id, piece_technique_version_id: row.supplier_piece_technique_version_id, designation: row.designation, code_piece: line.supplier_reference ?? null, quantite: line.quantity, unite: line.unit, prix_unitaire_ht: row.supplier_sale_unit_price, taux_tva: row.purchase_vat_rate, delai_client: null, reference_price_decision: "KEEP" });
+  }
+  if (!customerId) throw new HttpError(409, "INTERCOMPANY_RELATION_CUSTOMER_REQUIRED", "La relation vendeur ne désigne aucun client local.");
+  const totalHt = outputLines.reduce((sum, line) => sum + line.quantite * line.prix_unitaire_ht, 0);
+  const totalTtc = outputLines.reduce((sum, line) => sum + line.quantite * line.prix_unitaire_ht * (1 + (line.taux_tva ?? 0) / 100), 0);
+  const delivery=payload.final_delivery_address_snapshot;
+  return { client_id: customerId, code_client: `IC-${payload.buyer_sales_order_id}`, date_commande: new Date().toISOString().slice(0, 10), order_type: "FERME", commentaire: `Commande interentreprises ${payload.buyer_purchase_order_id}`, fulfilment_mode: "STANDARD", intercompany_delivery_address: { recipient_name: delivery.recipient_name, address_lines: delivery.address_lines, ...(delivery.address_line_1 ? { address_line_1: delivery.address_line_1 } : {}), ...(delivery.address_line_2 ? { address_line_2: delivery.address_line_2 } : {}), ...(delivery.postal_code ? { postal_code: delivery.postal_code } : {}), ...(delivery.city ? { city: delivery.city } : {}), ...(delivery.country_code ? { country_code: delivery.country_code } : {}), ...(delivery.contact_name ? { contact_name: delivery.contact_name } : {}), ...(delivery.contact_phone ? { contact_phone: delivery.contact_phone } : {}) }, lignes: outputLines, total_ht: totalHt, total_ttc: totalTtc };
+}

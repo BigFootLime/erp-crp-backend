@@ -8,6 +8,8 @@ import {insertLoginLog} from '../module/auth/repository/authLog.repository';
 import {synchronizeDirectoryCompany} from './company.projection';
 import {createEmployeeWorkProfile} from '../module/auth/repository/work-profile.repository';
 import {synchronizeCommonAccess} from './common-access';
+import {companyRuntimeConfiguration} from '../module/entreprises/runtime/company-runtime.config';
+import {synchronizeCompanyPolicy} from './company-policy-projection';
 let client:DirectoryClient|null=null;
 let site:string|null=null;
 let authorityId:string|null=null;
@@ -122,8 +124,18 @@ export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?
   if(challenge.token||!['mfa_required','mfa_enrollment_required','mfa_replacement_pending'].includes(challenge.status??'')||typeof challenge.challenge_token!=='string')throw new Error('DIRECTORY_AUTH_RESPONSE_INVALID');
   return result as Record<string,unknown>;
  }
- const identity=directorySessionSchema.parse(value.identity),projection=await projectDirectoryIdentity(db,identity);
- if(client&&site&&!identity.is_superadmin)await synchronizeCommonAccess(db,client,site,identity.profile_id);
+ const identity=directorySessionSchema.parse(value.identity);
+ // A company tenant receives an explicit company ACL.  A Directory owner is
+ // not implicitly a tenant superadmin merely because they administer the
+ // central registry.
+ const companyTenant=site?.startsWith('cerp_company_')===true;
+ const companyConfig=companyRuntimeConfiguration(),companyMode=companyConfig.enabled;
+ const projectedIdentity=companyTenant?{...identity,is_superadmin:false}:identity;
+ const projection=await projectDirectoryIdentity(db,projectedIdentity);
+ // Common Access is the legacy Production-to-Test projection. A company
+ // instance has an explicit company policy and must never inherit CRP ACLs.
+ if(client&&site&&!identity.is_superadmin&&!companyMode)await synchronizeCommonAccess(db,client,site,identity.profile_id);
+ if(client&&site&&authorityId&&companyMode)await synchronizeCompanyPolicy(db,client,{session:value.directory_session,profileId:identity.profile_id,userId:projection.id,site,authorityId,expectedCompanyId:companyConfig.company_id,expectedEnvironment:companyConfig.environment});
  if(meta)await insertLoginLog({user_id:projection.id,username_attempt:identity.username,success:true,...meta});
  const mfa=identity.mfa_factor_id!==null&&identity.mfa_factor_version!==null&&identity.mfa_verified_at!==null&&identity.mfa_method!==null?{factorId:identity.mfa_factor_id,factorVersion:identity.mfa_factor_version,verifiedAt:new Date(identity.mfa_verified_at),method:identity.mfa_method}:undefined;
  return {...issueSessionToken({id:projection.id,username:identity.username,email:identity.email,role:identity.role,roles:identity.roles,avatar_key:identity.avatar_key,profile_picture_asset_id:identity.avatar_asset_id,realtime_session_epoch:projection.session_epoch},mfa, {session:value.directory_session,profileId:identity.profile_id,membershipVersion:identity.membership_version,globalEpoch:identity.global_session_epoch}),...(value.recovery_codes?{recovery_codes:value.recovery_codes}:{})};
@@ -132,9 +144,15 @@ export async function validateSiteDirectoryToken(db:Pool,claims:{id:number;direc
  if(!client||!claims.directory_session)throw new Error('DIRECTORY_SESSION_REQUIRED');
  const identity=await client.validate(claims.directory_session);
  if(identity.profile_id!==claims.directory_profile_id||identity.global_session_epoch!==claims.directory_global_epoch||identity.membership_version!==claims.directory_membership_version||identity.mfa_factor_id!==(claims.mfa_factor_id??null)||identity.mfa_factor_version!==(claims.mfa_factor_version??null)||(identity.mfa_factor_id!==null)!==(claims.mfa===true)||(identity.mfa_verified_at===null?claims.mfa_verified_at!==undefined:Math.floor(new Date(identity.mfa_verified_at).getTime()/1000)!==claims.mfa_verified_at))throw new Error('DIRECTORY_SESSION_STALE');
- const projection=await projectDirectoryIdentity(db,identity);
- if(site&&!identity.is_superadmin)await synchronizeCommonAccess(db,client,site,identity.profile_id);
+ const companyTenant=site?.startsWith('cerp_company_')===true;
+ const companyConfig=companyRuntimeConfiguration(),companyMode=companyConfig.enabled;
+ const projectedIdentity=companyTenant?{...identity,is_superadmin:false}:identity;
+ const projection=await projectDirectoryIdentity(db,projectedIdentity);
+ if(site&&!identity.is_superadmin&&!companyMode)await synchronizeCommonAccess(db,client,site,identity.profile_id);
+ if(site&&authorityId&&companyMode)await synchronizeCompanyPolicy(db,client,{session:claims.directory_session,profileId:identity.profile_id,userId:projection.id,site,authorityId,expectedCompanyId:companyConfig.company_id,expectedEnvironment:companyConfig.environment});
  if(projection.id!==claims.id||projection.session_epoch!==claims.session_epoch)throw new Error('DIRECTORY_LOCAL_SESSION_STALE');
- await synchronizeDirectoryCompany(db,claims.directory_session);
+ // A business-company runtime owns its legal identity and settings. The legacy
+ // Directory snapshot is global and must never be copied across companies.
+ if(!companyMode)await synchronizeDirectoryCompany(db,claims.directory_session);
  return identity;
 }

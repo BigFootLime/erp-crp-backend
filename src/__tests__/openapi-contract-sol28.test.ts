@@ -92,6 +92,18 @@ describe("SOL-28 generated OpenAPI contract", () => {
     for (const ref of collectRefs(swaggerSpec)) expect(resolveRef(swaggerSpec, ref), ref).toBeDefined();
   });
 
+  it("declares the intercompany peer signature independently of user Bearer authentication", () => {
+    const operation = record(record(record(swaggerSpec.paths)["/intercompany/messages"]).post);
+    expect(operation.security).toEqual([{ intercompanySignature: [] }]);
+    expect(operation.responses).toHaveProperty("401");
+    expect(operation.responses).toHaveProperty("403");
+    expect(operation.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "X-CERP-Intercompany-Destination", required: true }),
+      expect.objectContaining({ name: "X-CERP-Intercompany-Environment", required: true }),
+      expect.objectContaining({ name: "X-CERP-Intercompany-Time", required: true }),
+    ]));
+  });
+
   it("publishes deployment provenance without exposing secrets", () => {
     const serialized = JSON.stringify(swaggerSpec);
     expect(record(swaggerSpec.info)["x-cerp-source-sha256"]).toMatch(/^[0-9a-f]{64}$/);

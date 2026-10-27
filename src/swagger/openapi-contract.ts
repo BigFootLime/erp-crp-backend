@@ -32,6 +32,9 @@ type OpenApiOperation = Record<string, unknown>;
 type OpenApiPathItem = Record<string, OpenApiOperation>;
 
 const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
+  "post /intercompany/messages": "Transport entre entreprises authentifié par HMAC-SHA256 avec clé propre au pair, empreinte du message canonique, cible/environnement fixes, horodatage de 60 secondes et nonce ; traitement transactionnel de l’inbox et rejeu idempotent par identifiant et empreinte. Aucun jeton utilisateur n’est accepté comme preuve du pair.",
+  "get /entreprises/sign-in-context": "Contexte minimal de connexion d'une instance entreprise active. La cible et l'environnement doivent correspondre au runtime fixe ; aucune liste d'entreprises, session ou donnée privée n'est exposée.",
+  "post /entreprises/switches/exchange": "Ticket opaque de changement d'entreprise valable au plus 60 secondes, lié au profil, à la session source, à la cible et aux versions d'adhésion ; limitation IP/ticket persistée, aucun Bearer source accepté, consommation et émission de session idempotentes par la même clé.",
   "get /auth/test-registration": "Disponibilité du formulaire test, désactivé par défaut et limité à current_database()=cerp_test avec opt-in serveur.",
   "post /auth/test-registration": "Création test uniquement avec opt-in serveur, vérification de la base connectée, débit persisté, idempotence et MFA obligatoire avant première session.",
   "post /terminals/pair": "Appairage par secret temporaire aléatoire de 128 bits, à usage unique, valable quinze minutes et lié à un terminal enregistré.",
@@ -175,20 +178,27 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const key = operationKey(route);
   const publicReason = PUBLIC_ROUTE_POLICIES[key];
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
+  const intercompanySigned = key === "post /intercompany/messages";
   const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
   const terminalSession = TERMINAL_SESSION_OPERATIONS.has(key);
   const terminalDevice = TERMINAL_DEVICE_OPERATIONS.has(key) || terminalSession;
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
   const parameters = pathParameters(route);
+  if (intercompanySigned) {
+    for (const suffix of ["Source", "Destination", "Environment", "Time", "Nonce"]) {
+      parameters.push({ name: `X-CERP-Intercompany-${suffix}`, in: "header", required: true, schema: { type: "string" } });
+    }
+  }
   if (idempotent) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
   const operation: OpenApiOperation = {
     tags: [tagFor(route)],
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice),
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice || intercompanySigned),
     security: terminalSession ? [{terminalDevice:[], terminalSession:[]}]
       : terminalDevice ? [{terminalDevice:[]}]
+      : intercompanySigned ? [{intercompanySignature:[]}]
       : route.authenticated
       ? [{ bearerAuth: [] }]
       : clientPortalAuthenticated
@@ -199,6 +209,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     "x-cerp-source": route.source,
     "x-cerp-authentication": terminalSession ? "Appareil appairé + session PIN active liée à cet appareil + compte et droits vérifiés"
       : terminalDevice ? "Secret d’appareil appairé et non révoqué"
+      : intercompanySigned ? "HMAC-SHA256 du pair + message canonique + cible/environnement fixes + fenêtre de 60 secondes"
       : route.authenticated
       ? "JWT Bearer + compte actif"
       : clientPortalAuthenticated
@@ -206,7 +217,8 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
-    "x-cerp-rbac": terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+    "x-cerp-rbac": intercompanySigned ? ["configuredPeerScope", "fixedCompanyEnvironmentScope", "transactionalInboxIdentity"]
+      : terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
       : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
@@ -231,8 +243,38 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
+  if (route.path.startsWith("/entreprises")) return companyOperation(key, operation);
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
   return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));
+}
+
+function companyOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
+  const signInContext = key === "get /entreprises/sign-in-context";
+  const exchange = key === "post /entreprises/switches/exchange";
+  const createSwitch = key === "post /entreprises/switches";
+  const parameters = Array.isArray(operation.parameters) ? operation.parameters : [];
+  const result: OpenApiOperation = {
+    ...operation,
+    tags: ["entreprises"],
+    parameters: [...parameters,
+      { name: "X-CERP-Company", in: "header", required: exchange, schema: { type: "string", format: "uuid" }, description: "Entreprise active, recoupée avec le runtime fixe et l'adhésion Directory. Requise sur les requêtes protégées en mode multi-entreprises, facultative pour la découverte initiale." },
+      { name: "X-CERP-Database", in: "header", required: exchange, schema: { type: "string", enum: ["cerp_prod", "cerp_test"] }, description: "Environnement indépendant de l'entreprise ; jamais une URL ou une connexion SQL." },
+    ],
+    "x-cerp-rbac": signInContext ? ["fixedCompanyRuntime", "activeCompanyInstance"] : exchange ? ["shortLivedCompanySwitchTicket", "fixedCompanyRuntime", "liveSourceAndTargetMembership"] : key.includes("/admin/") ? ["liveDirectoryOwner", "recentMfa", "fixedCompanyRuntime"] : ["liveDirectorySession", "activeCompanyMembership", "fixedCompanyRuntime"],
+    responses: { ...operation.responses as OpenApiObject, ...(signInContext ? {} : { "401": { $ref: "#/components/responses/Unauthenticated" } }), "403": { $ref: "#/components/responses/Forbidden" }, "503": { description: "Annuaire, contexte entreprise ou instance non disponible ; aucun repli vers une autre entreprise." } },
+  };
+  if (exchange || createSwitch) result.requestBody = {
+    required: true,
+    content: { "application/json": { schema: {
+      type: "object", additionalProperties: false,
+      required: exchange ? ["ticket", "key"] : ["target_company_id", "key"],
+      properties: { key: { type: "string", format: "uuid", description: "Conserver la même clé lors d'un réessai après une réponse réseau ambiguë." }, ...(exchange ? { ticket: { type: "string", pattern: "^[a-f0-9]{64}$" } } : { target_company_id: { type: "string", format: "uuid" } }) },
+    } } },
+  };
+  if (exchange) result["x-cerp-authentication"] = "Ticket opaque à cible fixe, sans en-tête Authorization source";
+  if (signInContext) result["x-cerp-authentication"] = "Public : l'instance fixe confirme uniquement sa propre société active ; les en-têtes de cible sont facultatifs et, s'ils sont fournis, doivent correspondre au runtime.";
+  if (exchange || createSwitch) result["x-cerp-idempotency"] = "required-body-key";
+  return result;
 }
 
 function accountRequestOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
@@ -372,6 +414,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
   return {
     ...legacyComponents,
     securitySchemes: {
+      intercompanySignature: { type: "apiKey", in: "header", name: "X-CERP-Intercompany-Signature", description: "HMAC-SHA256 hexadécimal du cadre signé incluant méthode, chemin, entreprises, environnement, horodatage, nonce et empreinte canonique. Les autres en-têtes X-CERP-Intercompany sont obligatoires." },
       terminalDevice: {type:"apiKey",in:"header",name:"X-Terminal-Device",description:"Secret aléatoire du terminal appairé."},
       terminalSession: {type:"apiKey",in:"header",name:"X-Station-Session",description:"Jeton opérateur en mémoire, lié au terminal."},
       bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },

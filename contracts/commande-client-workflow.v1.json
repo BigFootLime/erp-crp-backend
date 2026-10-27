@@ -5,6 +5,7 @@
     "BROUILLON",
     "EN_ANALYSE",
     "ATTENTE_TECHNIQUE",
+    "ATTENTE_FOURNISSEUR",
     "ATTENTE_STOCK",
     "ATTENTE_OF",
     "ATTENTE_PLANNING",
@@ -25,6 +26,7 @@
     "BROUILLON": "Brouillon",
     "EN_ANALYSE": "En analyse",
     "ATTENTE_TECHNIQUE": "Attente technique",
+    "ATTENTE_FOURNISSEUR": "Attente fournisseur",
     "ATTENTE_STOCK": "Attente contrôle stock",
     "ATTENTE_OF": "Attente lancement",
     "ATTENTE_PLANNING": "Attente planning",
@@ -45,6 +47,7 @@
     "BROUILLON": 0,
     "EN_ANALYSE": 1,
     "ATTENTE_TECHNIQUE": 2,
+    "ATTENTE_FOURNISSEUR": 3,
     "ATTENTE_STOCK": 3,
     "ATTENTE_OF": 4,
     "ATTENTE_PLANNING": 5,
@@ -82,6 +85,7 @@
       "ATTENTE_STOCK"
     ],
     "ATTENTE_TECHNIQUE": [],
+    "ATTENTE_FOURNISSEUR": [],
     "ATTENTE_STOCK": [
       "ATTENTE_OF"
     ],
@@ -180,6 +184,11 @@
       "cause": "checkpoint"
     },
     {
+      "from": "ATTENTE_FOURNISSEUR",
+      "to": "LIVRE",
+      "cause": "supplier_shipment_sync"
+    },
+    {
       "from": "BROUILLON",
       "to": "ANNULE",
       "cause": "cancel"
@@ -191,6 +200,11 @@
     },
     {
       "from": "ATTENTE_TECHNIQUE",
+      "to": "ANNULE",
+      "cause": "cancel"
+    },
+    {
+      "from": "ATTENTE_FOURNISSEUR",
       "to": "ANNULE",
       "cause": "cancel"
     },
