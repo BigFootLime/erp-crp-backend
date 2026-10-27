@@ -105,6 +105,10 @@ it("orders immutable dependent patches identically for the canonical runner and 
   expect(files.indexOf("20260909_consumables.sql")).toBeLessThan(files.indexOf("20260909_consumable_procurement.sql"));
   expect(files.indexOf("20260909_consumable_procurement.sql")).toBeLessThan(files.indexOf("20260909_grouped_supplier_receipts.sql"));
   expect(files.indexOf("20260908_supplier_consultations.sql")).toBeLessThan(files.indexOf("20260908_consultation_documents.sql"));
+  expect(files.indexOf("20260227_metrologie_calibration.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780.sql"));
+  expect(files.indexOf("20260823_authoritative_pdf_ged_compatibility_bridge.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780.sql"));
+  expect(files.indexOf("20261014_finance_ged_profile_1268.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780_compat.sql"));
+  expect(files.indexOf("20260227_metrologie_calibration.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780_compat.sql"));
   const materialOrder = orderPatchDependencies([
     '20261012_physical_material_bar_quality_1246.sql',
     '20261012_physical_material_bar_counts_1246.sql',

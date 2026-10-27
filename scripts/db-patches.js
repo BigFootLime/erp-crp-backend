@@ -271,9 +271,9 @@ function listPatches(patchDir) {
   }
 
   const filenames = fs.readdirSync(patchDir)
-    .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b));
-  return require("./migrations/patch-dependencies").orderPatchDependencies(filenames).map((filename) => {
+    .filter((name) => name.endsWith(".sql"));
+  const { orderPatchDependencies, sortPatchNames } = require("./migrations/patch-dependencies");
+  return orderPatchDependencies(sortPatchNames(filenames)).map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
       const sha256 = sha256Sql(sql);
@@ -521,10 +521,12 @@ async function getApplied(client) {
   return new Map(result.rows.map((row) => [row.filename, row]));
 }
 
-function buildStatuses(patches, applied) {
+function buildStatuses(patches, applied, applicability = new Map()) {
   return patches.map((patch) => {
     const row = applied.get(patch.filename);
+    const decision = applicability.get(patch.filename);
     if (!row) {
+      if (decision) return { ...patch, ...decision };
       return { ...patch, status: "pending" };
     }
     if (row.sha256 !== patch.sha256) {
@@ -585,7 +587,12 @@ function printStatuses(statuses) {
   }
 
   console.log("");
-  console.log(`Summary: applied=${counts.applied || 0} pending=${counts.pending || 0} checksum-mismatch=${counts["checksum-mismatch"] || 0}`);
+  console.log(`Summary: applied=${counts.applied || 0} pending=${counts.pending || 0} not-applicable-finance-profile=${counts["not-applicable-finance-profile"] || 0} checksum-mismatch=${counts["checksum-mismatch"] || 0}`);
+}
+
+async function resolvedStatuses(client, patches, applied) {
+  const { resolveClosedSeedApplicability } = require("./migrations/metrology-ged-applicability");
+  return buildStatuses(patches, applied, await resolveClosedSeedApplicability(client, patches, applied));
 }
 
 async function withClient(fn) {
@@ -616,7 +623,7 @@ async function runStatus(client, patches, { check, only }) {
   immutableOnlyPatch(patches, only);
   const applied = await getApplied(client);
   await assertImmutableRealtimeV1Provenance(client, patches, applied);
-  const statuses = buildStatuses(patches, applied);
+  const statuses = await resolvedStatuses(client, patches, applied);
   printStatuses(statuses);
 
   const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
@@ -669,7 +676,7 @@ async function runUp(client, patches, { dryRun, only }) {
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     const selected = only ? statuses.find((item) => item.filename === only) : null;
     const pending = selected
@@ -691,7 +698,7 @@ async function runUp(client, patches, { dryRun, only }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);
@@ -704,6 +711,15 @@ async function runUp(client, patches, { dryRun, only }) {
       : statuses.filter((item) => item.status === "pending");
     if (selected) console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
     for (const patch of pending) {
+      // A compatibility migration can make a later immutable seed explicitly
+      // non-applicable. Re-read the ledger/profile between patches so no
+      // decision is based on the pre-loop snapshot.
+      const currentStatuses = await resolvedStatuses(client, patches, await getApplied(client));
+      const current = currentStatuses.find((item) => item.filename === patch.filename);
+      if (current?.status !== "pending") {
+        console.log(`${current?.status} ${patch.filename}`);
+        continue;
+      }
       console.log(`Applying ${patch.filename}`);
       await applyPatch(client, patch);
     }
@@ -715,7 +731,7 @@ async function runBaseline(client, patches, { dryRun }) {
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     printStatuses(statuses);
     console.log("");
     console.log("Dry-run: patch metadata would be recorded without executing SQL.");
@@ -726,7 +742,7 @@ async function runBaseline(client, patches, { dryRun }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);

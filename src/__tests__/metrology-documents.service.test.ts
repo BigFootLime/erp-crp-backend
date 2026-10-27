@@ -90,6 +90,17 @@ describe("metrology document adapter", () => {
     expect(mocks.uploadDocument).not.toHaveBeenCalled();
   });
 
+  it("links an OTHER scan to the registered canonical metrology equipment type", async () => {
+    mocks.uploadDocument.mockResolvedValue(detail());
+    await uploadEquipmentDocument(actor, equipmentId, { kind: "OTHER", label: "Vérification import" }, {
+      originalname: "proof.pdf", mimetype: "application/pdf",
+    } as Express.Multer.File);
+    expect(mocks.uploadDocument).toHaveBeenCalledWith(actor, expect.objectContaining({
+      class_key: "METROLOGIE_SCAN",
+      link: { entity_type: "METROLOGIE_EQUIPEMENT", entity_id: equipmentId, link_role: "OTHER" },
+    }), expect.anything());
+  });
+
   it("hides a document linked to another instrument", async () => {
     mocks.getSource.mockResolvedValueOnce(null);
     mocks.getDocument.mockResolvedValue(detail({ links: [{ entity_type: "METROLOGIE_EQUIPEMENT", entity_id: otherEquipmentId }] }));

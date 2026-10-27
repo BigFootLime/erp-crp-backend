@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Esprit Carabine 2.0.32 (#1454 / frontend #1775)
+
+- Réunit le socle multi-entreprise avec les correctifs PT, OF et métrologie de la fenêtre urgente.
+- La résolution des documents d’historique métrologie conserve le coffre documentaire canonique sans modifier les droits ni les données métier.
+- Cette préparation reste sans activation d’entreprise, base, stock, facture ou service.
+
 ## Préparé — Esprit Carabine 2.0.31 (#1454 / frontend #1775)
 
 - Réunit le socle commercial multi-entreprise et le correctif PT / OF 2.0.30 dans une même candidate de code.

@@ -18,6 +18,19 @@ const DEPENDENCIES = Object.freeze({
   "20261014_finance_ged_profile_1268.sql": [
     "20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql"
   ],
+  // The SQL files are immutable and their lexical 20261027 names predate the
+  // historical GED bridge. Keep the canonical runner and rehearsal aligned
+  // with the actual schema contracts instead of renaming an applied seed.
+  "20261027_metrology_ged_entity_type_1780.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20260823_authoritative_pdf_ged_compatibility_bridge.sql",
+    "20261027_metrology_ged_entity_type_1780_compat.sql",
+    "20261027_metrology_scan_documents_1780.sql"
+  ],
+  "20261027_metrology_ged_entity_type_1780_compat.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20261014_finance_ged_profile_1268.sql"
+  ],
   "20261014_refund_reversals_1268.sql": [
     "20261014_advance_amount_credits_1268.sql"
   ],
@@ -276,6 +289,16 @@ const DEPENDENCIES = Object.freeze({
   ]
 });
 
+function sortPatchNames(filenames) {
+  return [...filenames].sort((left, right) => {
+    const a = left.slice(0, -4);
+    const b = right.slice(0, -4);
+    if (b.startsWith(`${a}_`)) return -1;
+    if (a.startsWith(`${b}_`)) return 1;
+    return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function orderPatchDependencies(filenames) {
   const present = new Set(filenames);
   const visited = new Set();
@@ -297,4 +320,4 @@ function orderPatchDependencies(filenames) {
   return ordered;
 }
 
-module.exports = { DEPENDENCIES, orderPatchDependencies };
+module.exports = { DEPENDENCIES, orderPatchDependencies, sortPatchNames };
