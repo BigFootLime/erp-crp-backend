@@ -40,7 +40,10 @@
 - Administration centrale versionnée et MFA, politique de modules signée et projetée avec audit, identité légale conservée dans la base de l'entreprise ; mode historique conservé quand la fonctionnalité est désactivée.
 - Clients B2B/B2C ajoutés par patch métier distinct, vérifications de transition atomiques et maintien du libellé historique. Paramétrage commercial sans dépendance aux machines, maintenances ou stock local.
 - Connexion principale et liens de connexion directe par entreprise, avec confirmation du runtime avant saisie des identifiants et récupération explicite d'une cible indisponible.
-- Primitive de création de commande native extraite sans changer ses règles pour permettre une future consommation transactionnelle du bridge. Le transport inter-entreprises et son raccordement aux commandes restent à implémenter.
+- Création native de commande réutilisée après acceptation de la demande fournisseur, avec transaction, notification, liens de lignes et retour de décision. Transport HMAC entre processus et bases fixes, outbox durable, inbox idempotente et retries bornés.
+- Offres fournisseur publiées et versions tarifaires figées ; prix retail propres à l'acheteur, sans transmission au fournisseur. Relations et articles locaux sélectionnés explicitement.
+- Expédition native CRP, document sous identité EC et preuve de livraison externe côté commercial sans mouvement de stock local ; allocations et double facturation natives avec émetteurs et numérotations distincts.
+- Recette PostgreSQL locale du flux et de l'archivage documentaire, migration à froid des 330 patches sans dérive et sélection immuable des neuf patches métier EC. Preuves et limites : `docs/testing/intercompany-native-qualification-1454.md`. Provisionnement réel, accès, catalogue et activation restent distincts de cette recette.
 - Aucun provisionnement, migration réelle, service, publication ou environnement de production modifié. Les patches Directory restent séparés du runner métier ; aucun lancement global de migrations n'est effectué.
 
 ## Charte commune des PDF — #1442
