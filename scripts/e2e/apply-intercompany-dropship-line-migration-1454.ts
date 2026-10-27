@@ -10,6 +10,7 @@ async function main() {
   for (const name of [
     "20261027_zzz_intercompany_dropship_commande_ligne_1454.sql",
     "20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql",
+    "20261027_zzzzz_intercompany_standard_article_locks_1454.sql",
   ]) {
     await db.query(await readFile(resolve(__dirname, "../../db/patches", name), "utf8"));
   }

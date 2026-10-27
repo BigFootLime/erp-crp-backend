@@ -98,6 +98,19 @@ async function main() {
     try { await seller.query("DELETE FROM articles_fabrique WHERE article_id=$1::uuid", [sellerLine?.article_id]); }
     catch (error) { standardSubtypeDeleteDenied = (error as { code?: string }).code === "23503"; }
     if (!standardSubtypeDeleteDenied) throw new Error("TEST STANDARD line lost its articles_fabrique deletion protection");
+    const lockHolder = await seller.connect(); const concurrentDelete = await seller.connect();
+    let concurrentDeleteBlocked = false; let subtypeNoopUpdateAllowed = false;
+    try {
+      await lockHolder.query("BEGIN");
+      await lockHolder.query("UPDATE commande_ligne SET article_id=article_id WHERE commande_id=$1::bigint AND article_id=$2::uuid", [sellerOrderId, sellerLine.article_id]);
+      await concurrentDelete.query("SET lock_timeout='800ms'");
+      try { await concurrentDelete.query("DELETE FROM articles_fabrique WHERE article_id=$1::uuid", [sellerLine.article_id]); }
+      catch (error) { concurrentDeleteBlocked = (error as { code?: string }).code === "55P03"; }
+      await lockHolder.query("ROLLBACK");
+      await concurrentDelete.query("UPDATE articles_fabrique SET article_id=article_id WHERE article_id=$1::uuid", [sellerLine.article_id]);
+      subtypeNoopUpdateAllowed = true;
+    } finally { lockHolder.release(); concurrentDelete.release(); }
+    if (!concurrentDeleteBlocked || !subtypeNoopUpdateAllowed) throw new Error("TEST STANDARD subtype concurrency guard did not preserve FK-era behavior");
     let standardToDropshipDenied = false;
     try { await seller.query("UPDATE commande_client SET fulfilment_mode='SUPPLIER_DROPSHIP' WHERE id=$1::bigint", [sellerOrderId]); }
     catch (error) { standardToDropshipDenied = (error as { code?: string }).code === "23514"; }
@@ -116,7 +129,7 @@ async function main() {
     try { await buyer.query("UPDATE commande_client SET fulfilment_mode='STANDARD' WHERE id=$1::bigint", [buyerOrder.id]); }
     catch (error) { standardTransitionDenied = (error as { code?: string }).code === "23514"; }
     if (!standardTransitionDenied) throw new Error("TEST purchased dropship order was allowed to become STANDARD");
-    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode, standard_transition_denied: standardTransitionDenied, standard_subtype_delete_denied: standardSubtypeDeleteDenied, standard_to_dropship_denied: standardToDropshipDenied, standard_purchased_insert_denied: standardPurchasedInsertDenied })}\n`);
+    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode, standard_transition_denied: standardTransitionDenied, standard_subtype_delete_denied: standardSubtypeDeleteDenied, standard_subtype_concurrent_delete_blocked: concurrentDeleteBlocked, standard_subtype_noop_update_allowed: subtypeNoopUpdateAllowed, standard_to_dropship_denied: standardToDropshipDenied, standard_purchased_insert_denied: standardPurchasedInsertDenied })}\n`);
   } finally { await buyer.end(); await seller.end(); await globalPool.end(); }
 }
 main().catch(error => { process.stderr.write(`E2E_COMMERCIAL_CATALOGUE_V2_FAIL ${error instanceof Error ? error.stack : String(error)}\n`); process.exitCode = 1; });
