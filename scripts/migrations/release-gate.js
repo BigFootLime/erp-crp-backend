@@ -55,13 +55,10 @@ function sha256(content) {
 }
 
 function orderedPatches() {
-  return require('./patch-dependencies').orderPatchDependencies(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
+  const { orderPatchDependencies, sortPatchNames } = require('./patch-dependencies');
+  return orderPatchDependencies(sortPatchNames(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
-    .map((entry) => entry.name)
-    // Keep the inventory/rehearsal seed order exactly identical to
-    // scripts/db-patches.js; explicit dependencies then provide every
-    // intentional departure from lexical filename order.
-    .sort((left, right) => left.localeCompare(right)));
+    .map((entry) => entry.name)));
 }
 
 function expectedRehearsalPatches() {

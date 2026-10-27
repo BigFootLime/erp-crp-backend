@@ -287,6 +287,16 @@ const DEPENDENCIES = Object.freeze({
   ]
 });
 
+function sortPatchNames(filenames) {
+  return [...filenames].sort((left, right) => {
+    const a = left.slice(0, -4);
+    const b = right.slice(0, -4);
+    if (b.startsWith(`${a}_`)) return -1;
+    if (a.startsWith(`${b}_`)) return 1;
+    return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function orderPatchDependencies(filenames) {
   const present = new Set(filenames);
   const visited = new Set();
@@ -308,4 +318,4 @@ function orderPatchDependencies(filenames) {
   return ordered;
 }
 
-module.exports = { DEPENDENCIES, orderPatchDependencies };
+module.exports = { DEPENDENCIES, orderPatchDependencies, sortPatchNames };

@@ -271,9 +271,9 @@ function listPatches(patchDir) {
   }
 
   const filenames = fs.readdirSync(patchDir)
-    .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b));
-  return require("./migrations/patch-dependencies").orderPatchDependencies(filenames).map((filename) => {
+    .filter((name) => name.endsWith(".sql"));
+  const { orderPatchDependencies, sortPatchNames } = require("./migrations/patch-dependencies");
+  return orderPatchDependencies(sortPatchNames(filenames)).map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
       const sha256 = sha256Sql(sql);

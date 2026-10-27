@@ -41,9 +41,8 @@ function orderedPatches() {
   const files = fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
     .map((entry) => entry.name);
-  return require('../migrations/patch-dependencies').orderPatchDependencies(
-    files.sort((left, right) => left.localeCompare(right))
-  );
+  const { orderPatchDependencies, sortPatchNames } = require('../migrations/patch-dependencies');
+  return orderPatchDependencies(sortPatchNames(files));
 }
 
 function runPatch(filename, command, patchDir = PATCH_DIR) {
