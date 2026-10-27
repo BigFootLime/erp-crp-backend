@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé — Esprit Carabine 2.0.33 (#1454)
+
+- Corrige la première migration clients avant son premier déploiement : elle accepte les schémas canoniques, historiques ou mixtes, sans inventer d’identité particulière.
+- Le repli historique TVA/NAF vers les champs canoniques n'est exécuté que lorsque les colonnes historiques existent ; les contraintes B2C restent effectives sur les colonnes présentes.
+
 ## Préparé — Esprit Carabine 2.0.32 (#1454 / frontend #1775)
 
 - Réunit le socle multi-entreprise avec les correctifs PT, OF et métrologie de la fenêtre urgente.
