@@ -39,11 +39,19 @@ l'autorité et des bases métier, pas seulement la copie d'un installateur.
 Le plan détaillé et les frontières d'approbation sont dans
 [`company-site-provisioning-1454.md`](../company-site-provisioning-1454.md).
 
-Le candidat Windows local 2.0.30 est construit depuis le frontend
-`92f6f680b282f738ba89966c6732a652b2430ae8` ; il n'est pas publié. Sa publication
-future doit employer exclusivement `cerp-installation-tools/publish-installation.mjs`,
-d'abord sans `--apply`, puis après qualification avec `--apply`, en conservant
-une unique version Windows et son manifeste cohérent dans `01-Windows`.
+Les installateurs Windows intermédiaires restent privés et ne constituent pas
+l'artefact du candidat final. Après passage de la gate complète, le paquet
+2.0.30 devra utiliser son export frontend qualifié, sans reconstruire le renderer,
+et être vérifié par extraction du payload. Sa publication future doit employer
+exclusivement `cerp-installation-tools/publish-installation.mjs`, d'abord sans
+`--apply`, puis pour la livraison validée avec `--apply`, en conservant une unique
+version Windows et son manifeste cohérent dans `01-Windows`.
+
+Les décisions d'accès sont précisées : KEENAN reste SuperAdmin avec accès aux deux
+entreprises et à tous leurs paramètres; NIZIER et LAMBERT sont prévus mais laissés
+en attente, sans création ni activation. Les droits SuperAdmin configurés dans
+Directory doivent survivre aux mises à jour des accès et instances d'entreprise.
+Ces décisions ne constituent pas une modification déjà appliquée en production.
 
 ## Responsabilités convenues
 

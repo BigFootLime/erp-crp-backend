@@ -2,6 +2,8 @@
 
 État au 27 octobre 2026. Cette recette est exclusivement synthétique et locale.
 Elle ne constitue pas une mise en service d'Esprit Carabine.
+Les preuves locales ci-dessous ne remplacent pas le verdict de la gate complète
+sur le couple de SHAs finalement retenu. La qualification navigateur reste ouverte.
 
 ## Socle conservé
 
@@ -178,13 +180,19 @@ qu'il sera renseigné dans le paramétrage ERP de l'entreprise. Une identité de
 démonstration peut être utilisée pour la recette. Aucun identifiant légal réel
 n'est inventé ou déduit du bon de commande de 2023.
 
-Le candidat Windows 2.0.30 a été reconstruit avec l'environnement officiel de
-livraison : API relative `/api/v1`, socket `/`, SHA frontend exact. L'EXE extrait
-contient les mêmes 482 fichiers renderer que le build vérifié, la version 2.0.30
-et le feed attendu; taille/SHA-512 et blockmap du manifeste sont cohérents.
-Il n'est ni installé ni publié. La recette native et le gate de livraison
-restent des contrôles distincts de cette intégrité du paquet.
+Les paquets Windows intermédiaires ne sont pas retenus comme livraison finale.
+Le paquet final devra contenir l'export renderer de la gate réussie, avec contrôle
+du manifeste, du payload extrait, du SHA de source, de l'API relative et du feed.
+Aucun installateur EC n'a été installé ni publié.
 
-Les affectations réelles des sept utilisateurs demandés, le provisionnement EC,
+L'utilisateur confirme KEENAN SuperAdmin sur CRP/EC et tous leurs paramètres.
+La mise à jour d'une membership ou la réactivation d'une instance opaque préserve
+un rôle SuperAdmin déjà configuré dans Directory; une nouvelle membership reste
+non SuperAdmin tant qu'une attribution explicite auditée n'est pas faite.
+Les tests ciblés des deux UPSERT et le typecheck backend passent. Aucun contrôle
+de membership active, de modules, de session ou de MFA n'est contourné.
+NIZIER et LAMBERT sont différés à sa demande, sans création ni activation.
+
+Les affectations réelles des autres utilisateurs demandés, le provisionnement EC,
 le catalogue réel et la livraison coordonnée restent ouverts. Le site e-commerce
 final fera l'objet du travail ultérieur demandé par l'utilisateur.

@@ -2,6 +2,8 @@
 
 > **Statut : préparation uniquement.** Ce document n'autorise ni migration, ni création de base, ni changement de service, proxy, NAS/GED ou secret. Une fenêtre séparée doit commencer seulement après gel SQL explicite et accord de l'opérateur responsable.
 
+> **Décision utilisateur du 27 octobre 2026 :** NIZIER et LAMBERT sont prévus mais différés. Ne créer, réactiver ni activer aucun compte, profil Directory ou accès pour eux dans cette fenêtre. Conserver leurs anciens comptes locaux.
+
 Ce plan crée une entreprise commerciale EC physiquement et logiquement séparée de CRP. Il est destiné à la candidate `backend-integration-2.0.29`, à reprendre sur le SHA de livraison effectivement retenu. Il ne doit jamais être exécuté depuis une recette locale ou en remplaçant des variables par des valeurs de démonstration.
 
 ## État constaté à recouper avant la fenêtre
@@ -96,9 +98,9 @@ réaliser les memberships explicites au cours de la fenêtre autorisée.
 | Ghislaine | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé; approbatrice des demandes CRP. |
 | Thomas | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
 | Clément | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
-| Keenan | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
+| Keenan | SuperAdmin confirmé par l'utilisateur : accès aux deux entreprises et à tous leurs paramètres. Créer les memberships entreprise explicites et actives, puis configurer explicitement le rôle SuperAdmin des sites EC via l'administration Directory auditée. Vérifier et conserver les droits CRP; les opérations sensibles gardent leurs contrôles de session et de MFA. |
 | Jean-Marie | Profil Directory actif, présent uniquement en test au relevé. L'accès demandé aux deux entreprises en production nécessite une membership/projection explicite supplémentaire, sans réutiliser un ancien ID local par nom. |
-| Nizier et Lambert | Anciens comptes locaux inactifs, sans profil Directory : ne créer ni membership ni compte de substitution. Décision utilisateur requise (réactivation/migration ou maintien inactif). |
+| NIZIER et LAMBERT | Anciens comptes locaux inactifs, sans profil Directory : laisser en attente conformément à la décision utilisateur. Aucun compte, profil ou membership de substitution à créer, réactiver ou activer dans cette fenêtre. |
 | Tout autre accès | Choisir un profil Directory réel avec l'approbation du propriétaire et des modules/capacités explicites. Aucun mapping automatique par nom, e-mail ou ancien `users.id`. |
 
 ### 5. Déployer les runtimes et le routage
