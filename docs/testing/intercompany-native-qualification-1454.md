@@ -19,6 +19,7 @@ libérée par son opérateur ; aucun déploiement EC ne s'est déroulé en paral
 | Commande EC, achat CRP et demande vendeur | Chemins natifs exercés sur deux bases PostgreSQL distinctes : outbox achat, inbox vendeur, notification, décision, création de commande vendeur et retour de décision. Ce helper SQL ne constitue pas à lui seul une preuve du transport HTTP entre processus fixes. |
 | Livraison | Passage natif complet obtenu : AR archivé/envoyé vers un récepteur mail loopback TEST, prélèvement validé, BL SHIPPED et un mouvement POSTED. Reçu externe et historique LIVRE côté acheteur, sans mouvement local. Contre-vérification indépendante via `intercompany-durable-proof-1454.ts`. |
 | Identité et basculement | Vrai Directory RPC puis vraies API Express de deux runtimes fixes : connexion acheteur, création du ticket, échange vendeur et contexte vendeur. Un en-tête d'une autre entreprise est refusé (403) ; le Bearer acheteur présenté au vendeur est refusé (401). Le rejeu avec la même clé est idempotent. |
+| Transport HTTP | Deux processus fixes distincts (18081 acheteur, 18082 vendeur), chacun vérifiant sa propre base v2. Vrai routeur HMAC et worker natif : un achat et deux retours vendeur acquittés durablement, zéro échec. Rejeu de l'inbox vérifié ; signature, destination et environnement modifiés refusés en 403 dans les deux directions. Cette passe transporte des événements déjà appliqués par la recette SQL et exerce donc le rejeu réel, sans recréer les pièces métier. |
 | Tarification publiée | Transaction PostgreSQL annulée : l'ancien prix publié est conservé après hausse du tarif courant ; une révision inexistante est refusée. Helper `intercompany-supplier-price-freeze-1454.ts`, commit `16cfc4ee`. |
 | Interface | Playwright isolé avec API simulée : connexion, administration entreprise, acceptation de demande avec référence/variante/options/prix et adresse, basculement vers l'accueil EC, absence devis/production et création d'un particulier. Ce test visuel ne remplace pas la recette API métier. |
 | Factures | CRP → EC : émission native obtenue, quantité 2 × tarif fournisseur TEST 70 = 140 HT, numéro légal et snapshots persistés, rejeu brouillon vérifié. EC → client et disponibilité finale des documents restent en qualification. |
@@ -35,8 +36,12 @@ La contre-vérification indépendante lit le reçu
 LIVRE acheteur pour une quantité prouvée de 2. Le snapshot officiel du BL
 `1fd65909-8667-42bd-9a3a-dbaa7fb214d7` porte l'émetteur synthétique
 `TEST EC ACHETEUR v2` et le destinataire `TEST final customer`.
-Lors de cette lecture, son archivage PDF final était encore en attente ;
-la conformité de ce snapshot ne prouve pas à elle seule la disponibilité du PDF.
+Lors de la première lecture, son archivage PDF final était encore en attente.
+Le worker natif a ensuite archivé le PDF en GED : 36 909 octets, SHA-256
+`eb491096926a17d716f2944f024e03f1daf0df703389d2f863d8b12a1e030d84`.
+Le read natif a vérifié cette empreinte et exporté une copie TEST privée pour
+contrôle visuel. La conformité du snapshot était une étape distincte de cette
+disponibilité PDF.
 
 Les helpers utilisent le conteneur local dédié `cerp-ec1454-fixture`, son label
 `cerp-task=1454` et le port loopback 15464. Les anciennes bases sont préservées ;
