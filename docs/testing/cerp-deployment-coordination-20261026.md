@@ -1297,3 +1297,17 @@ typechecks et builds locaux réussis après correction ; preuve et limites dans
 [le rapport d'intégration](multi-company-main-integration-1454.md).
 Ces branches restent locales, non activées, sans nouveau déploiement. Elles
 ne complètent pas encore le catalogue/bridge ni la logistique/facturation EC.
+
+## 27 octobre — hotfix 2.0.28 et poursuite EC
+
+L'opérateur du chat « Corriger la fenêtre des nuances et l » a terminé et libéré
+sa fenêtre prioritaire 2.0.28 : web atelier/public et installateur Windows selon
+son reçu `cerp-urgent-material-20261027/.hotfix/delivery-status.json`. Backend et
+bases inchangés dans ce lot. Le commit frontend publié `22ba11e3` est conservé
+dans la branche EC par cherry-pick `a80b160e`. La prochaine version à publier
+devra tenir compte du 2.0.28 déjà distribué ; aucune régression vers 2.0.27.
+
+Le chantier EC reste local. Les preuves natives et leurs limites sont suivies
+dans [la qualification du flux](intercompany-native-qualification-1454.md), qui
+remplace l'ancien état phase 1 pour l'avancement de ce flux. Il n'autorise ni
+activation, ni modification implicite d'une base de production.
