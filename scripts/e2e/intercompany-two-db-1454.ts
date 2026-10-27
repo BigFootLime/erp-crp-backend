@@ -73,8 +73,12 @@ async function seedBuyer(pool: Pool) {
     VALUES($1,$2,'Avenue Fixture','1','69001','Lyon','France','buyer-fixture@example.local')
     ON CONFLICT(biller_id) DO UPDATE SET biller_name=EXCLUDED.biller_name,street=EXCLUDED.street,house_number=EXCLUDED.house_number,postal_code=EXCLUDED.postal_code,city=EXCLUDED.city,country=EXCLUDED.country,email=EXCLUDED.email`,[buyerBiller,buyerLegalName]);
   await pool.query(`INSERT INTO finance_legal_mentions(biller_id,version,effective_from,legal_form,recovery_indemnity,share_capital_currency,extra_mentions)
-    VALUES($1,1,'2026-01-01','TEST',0,'EUR',ARRAY['TEST-only EC buyer identity'])
-    ON CONFLICT(biller_id,version) DO UPDATE SET legal_form=EXCLUDED.legal_form,recovery_indemnity=EXCLUDED.recovery_indemnity,extra_mentions=EXCLUDED.extra_mentions`,[buyerBiller]);
+    SELECT $1,1,'2026-01-01','TEST',0,'EUR',ARRAY['TEST-only EC buyer identity']
+    WHERE NOT EXISTS (SELECT 1 FROM finance_legal_mentions WHERE biller_id=$1 AND version=1)
+    -- Do not overwrite the fixture's complete EC fiscal setup.  The final
+    -- billing qualification uses the same issuer/policy/sequence state that
+    -- has already been configured in buyer_v2.
+    `,[buyerBiller]);
   await pool.query("INSERT INTO erp_settings(key,value_text) VALUES('company.primary_biller_id',$1) ON CONFLICT(key) DO UPDATE SET value_text=EXCLUDED.value_text",[buyerBiller]);
   await pool.query(`INSERT INTO intercompany_supplier_relations(id,buyer_company_id,supplier_company_id,local_role,environment,local_supplier_id,approval_profile_ids,status,currency)
     VALUES($1,$2,$3,'BUYER','cerp_test',$4,ARRAY['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']::uuid[],'ACTIVE','EUR') ON CONFLICT(id) DO NOTHING`,[relation,buyerCompany,sellerCompany,supplier]);
