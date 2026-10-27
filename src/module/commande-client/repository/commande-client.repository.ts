@@ -1202,7 +1202,7 @@ function normalizedCommandeStatusSql(rawExpr: string): string {
     CASE
       WHEN ${rawExpr} IS NULL THEN 'BROUILLON'
       WHEN ${rawExpr} IN (
-        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
+        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_FOURNISSEUR','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
         'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
         'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
       ) THEN ${rawExpr}
@@ -4157,7 +4157,7 @@ export async function repoCreateCommandeNativeTx(
 
     const orderType = input.order_type ?? "FERME";
 
-    const initialWorkflowStatus: CommandeWorkflowStatus = orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
+    const initialWorkflowStatus: CommandeWorkflowStatus = input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "ATTENTE_FOURNISSEUR" : orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
     const insertSql = `
       INSERT INTO commande_client (
         id,
@@ -4259,14 +4259,14 @@ export async function repoCreateCommandeNativeTx(
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
-    await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+    if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
 
     await client.query(
       `
         INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1, $2, $3, $4, $5)
       `,
-      [commandeIdInt, null, null, initialWorkflowStatus, "Commande créée — contrôle stock et lancement à préparer"]
+      [commandeIdInt, null, null, initialWorkflowStatus, input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "Commande créée — attente preuve d'expédition fournisseur" : "Commande créée — contrôle stock et lancement à préparer"]
     );
 
     await insertCommandeEvent(client, {
@@ -4275,12 +4275,12 @@ export async function repoCreateCommandeNativeTx(
       old_values: { statut: null },
       new_values: {
         statut: initialWorkflowStatus,
-        active_checkpoint: orderType === "INTERNE" ? "of_generation" : "stock_check",
+        active_checkpoint: input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "supplier_shipment_sync" : orderType === "INTERNE" ? "of_generation" : "stock_check",
       },
       user_id: null,
     });
 
-    notifications = await notifyWorkflowRole(client, {
+    if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") notifications = await notifyWorkflowRole(client, {
       commande: {
         id: commandeIdInt,
         numero: numeroForInsert,

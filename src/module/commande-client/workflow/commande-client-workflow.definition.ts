@@ -2,6 +2,7 @@ export const COMMANDE_WORKFLOW_STATUSES = [
   "BROUILLON",
   "EN_ANALYSE",
   "ATTENTE_TECHNIQUE",
+  "ATTENTE_FOURNISSEUR",
   "ATTENTE_STOCK",
   "ATTENTE_OF",
   "ATTENTE_PLANNING",
@@ -25,6 +26,7 @@ export const COMMANDE_WORKFLOW_STATUS_LABELS: Record<CommandeWorkflowStatus, str
   BROUILLON: "Brouillon",
   EN_ANALYSE: "En analyse",
   ATTENTE_TECHNIQUE: "Attente technique",
+  ATTENTE_FOURNISSEUR: "Attente fournisseur",
   ATTENTE_STOCK: "Attente contrôle stock",
   ATTENTE_OF: "Attente lancement",
   ATTENTE_PLANNING: "Attente planning",
@@ -46,6 +48,7 @@ export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, numb
   BROUILLON: 0,
   EN_ANALYSE: 1,
   ATTENTE_TECHNIQUE: 2,
+  ATTENTE_FOURNISSEUR: 3,
   ATTENTE_STOCK: 3,
   ATTENTE_OF: 4,
   ATTENTE_PLANNING: 5,
@@ -82,6 +85,7 @@ export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "planning_sync",
   "ar_send",
   "shipment_sync",
+  "supplier_shipment_sync",
   "invoice_sync",
   "block",
   "resume",
@@ -113,6 +117,9 @@ const CHECKPOINT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
   { from: "LIVRE", to: "FACTURE", cause: "checkpoint" },
   { from: "FACTURE", to: "ARCHIVE", cause: "checkpoint" },
 ];
+const SUPPLIER_FULFILMENT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
+  { from: "ATTENTE_FOURNISSEUR", to: "LIVRE", cause: "supplier_shipment_sync" },
+];
 
 const CANCELLATION_TRANSITIONS: CommandeWorkflowTransitionRule[] = COMMANDE_WORKFLOW_STATUSES
   .filter((status) => !["LIVRE", "FACTURE", "ARCHIVE", "ANNULE"].includes(status))
@@ -125,6 +132,7 @@ export const COMMANDE_WORKFLOW_BLOCKABLE_STATUSES = COMMANDE_WORKFLOW_STATUSES.f
 
 export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionRule[] = [
   ...CHECKPOINT_TRANSITIONS,
+  ...SUPPLIER_FULFILMENT_TRANSITIONS,
   ...CANCELLATION_TRANSITIONS,
   // Compatibility repair retires a command checkpoint, never an OF validation.
   { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_STOCK", cause: "technical_review_retired" },
