@@ -15,7 +15,7 @@ Les éléments suivants sont des faits d'exploitation communiqués pour prépare
 | Annuaire privé | `cerp_directory_ae73e92347374b41ab71bab15c3f324a`. |
 | Drapeaux actuels | Directory partagé actif sur production/test/public; `CERP_BUSINESS_COMPANIES_ENABLED=false`. |
 | Registre entreprise | Aucune table `cerp_business_%` à ce relevé; les projections Directory côté entreprise sont déjà présentes. |
-| Nouveau SQL attendu | Le futur 334e patch, livré par le chantier identité, doit être présent dans le candidat gelé et qualifié avant toute étape de production. |
+| Nouveau SQL attendu | Les correctifs additifs de lignes commerciales et leurs gardes doivent être présents dans le candidat gelé, avec inventaire final qualifié avant toute étape de production. |
 
 Un écart sur une ligne bloque la fenêtre : il faut mettre à jour ce plan et refaire les préflights, plutôt que d'adapter une commande sur l'hôte.
 
@@ -33,7 +33,7 @@ L'opérateur renseigne les valeurs suivantes dans un ticket de changement et le 
 | `EC_PROD_ORIGIN`, `EC_TEST_ORIGIN` | Origines fixes privées approuvées. Le manifeste n'accepte que `127.0.0.1` ou l'adresse WireGuard autorisée, avec ports distincts. |
 | `EC_DIRECTORY_CALL_KEY`, `EC_DIRECTORY_ID` | Référence de coffre et identifiant d'autorité; clés nouvelles, générées pour EC, jamais dans PostgreSQL. |
 | `EC_DB_ROLE_SECRET`, `EC_GED_ROOT`, `EC_GED_TENANT` | Références de coffre et chemins/tenant GED dédiés. Ne pas partager un secret applicatif avec CRP. |
-| `EC_ISSUER_*` | Identité légale, mentions, séquences et paramètres de facturation EC. Le SIRET de démonstration est accepté uniquement en recette et doit rester modifiable; le vrai SIRET est en attente et ne doit pas être inventé. |
+| `EC_ISSUER_*` | Identité légale, mentions, séquences et paramètres de facturation EC. Le vrai SIRET est en attente. L'utilisateur autorise une valeur provisoire de démonstration dans le paramétrage, clairement identifiée et modifiable; elle ne constitue pas un identifiant légal confirmé. |
 | `EC_OWNER_PROFILE_ID`, `EC_MEMBER_PROFILE_IDS` | Profils Directory explicitement sélectionnés, avec modules et capacités fermés par défaut. |
 | `CHANGE_ID`, `BACKUP_RECEIPT`, `ROLLBACK_OWNER` | Référence de changement, preuve de sauvegarde/restauration et responsable autorisé à interrompre/revenir en arrière. |
 
@@ -41,7 +41,7 @@ Les DSN administrateur, mots de passe, clés HMAC, JWT, GED et certificats ne so
 
 ## Préconditions bloquantes
 
-1. Geler le SHA backend et frontend, incluant le 334e patch identité; produire l'inventaire `filename:sha256` et la sortie `status --check` pour les bases existantes concernées. Ne jamais modifier un checksum ni fabriquer un ledger.
+1. Geler le SHA backend et frontend, incluant les correctifs de lignes commerciales; produire l'inventaire `filename:sha256` et la sortie `status --check` pour les bases existantes concernées. Ne jamais modifier un checksum ni fabriquer un ledger.
 2. Obtenir un point de restauration testé pour `cerp_prod`, `cerp_test`, le template et l'annuaire privé, avec conservation des preuves et des journaux d'audit. Ce plan n'autorise pas un reset ou une recréation de ces bases.
 3. Vérifier en lecture seule que les migrations Directory de société ne sont pas déjà partiellement installées et que les projections locales annoncées sont présentes. L'absence actuelle de `cerp_business_%` signifie que le script Directory dédié doit être exécuté dans une fenêtre contrôlée; elle ne permet aucun `up` global.
 4. Confirmer les droits d'administration, la MFA récente du propriétaire central, le rôle applicatif, le chemin GED, l'antivirus et le stockage de sauvegarde. Préparer les unités de service EC sans les démarrer.
@@ -63,6 +63,7 @@ Chaque étape a un reçu horodaté, l'identité de l'opérateur et un contrôle 
 - Sur l'annuaire privé seulement, appliquer `db/shared-directory/20261026_business_companies_1454.sql` avec son compte de migration contrôlé, puis son `verify.sql`.
 - Confirmer que les tables de registre restent privées à `cerp_directory_app`; `cerp_app` ne reçoit aucun droit sur elles.
 - Créer via l'API/administration Directory authentifiée l'objet société EC en état inactif, avec `EC_COMPANY_ID`, `EC_CODE`, `EC_NAME`, `COMMERCIAL` et des modules/capacités explicitement limités. La création doit produire une trace d'audit. Ne pas insérer directement des lignes pour contourner les versions, verrous ou audits.
+- Enregistrer également l'entreprise CRP et ses instances historiques avec un UUID canonique propre et le profil `INDUSTRIAL`. Conserver leurs bases physiques `cerp_prod`/`cerp_test`, utilisateurs, documents et paramètres existants. Les projections Directory déjà installées doivent être vérifiées; la fondation opaque EC n'est pas à exécuter sur ces bases historiques.
 
 ### 3. Créer les sites physiques opaques
 
@@ -82,29 +83,35 @@ Chaque étape a un reçu horodaté, l'identité de l'opérateur et un contrôle 
 ### 4. Enregistrer instances, identités et accès
 
 - Déclarer les instances test puis production dans Directory avec les couples stricts `(EC_COMPANY_ID, cerp_test|cerp_prod, EC_*_SITE_ID)`, d'abord inactifs. Une déclaration prépare le raccordement; elle ne crée pas la base.
-- Renseigner dans chaque site l'identité légale EC, la politique et les séquences locales. Conserver le SIRET de démonstration seulement en test s'il est requis par la recette; documenter son remplacement par la vraie valeur, sans valeur fictive en production.
+- Renseigner dans chaque site l'identité EC, la politique et les séquences locales. La valeur de SIRET provisoire demandée par l'utilisateur doit rester identifiable comme démonstration dans le paramétrage, et son remplacement par la valeur officielle doit être suivi sans la présenter comme confirmée.
 - Générer des secrets propres pour chaque runtime et GED, les déposer dans le coffre puis injecter uniquement leurs références dans les unités de service. Ne pas mettre une clé Directory, un blob ou un secret dans le registre métier.
 - Ajouter les memberships via l'administration Directory avec un profil réel, un statut actif explicite, une liste de modules minimale et les capacités de projection commerciale nécessaires. Un nom ne donne jamais un accès.
 
-Résumé des accès connus à appliquer seulement après confirmation :
+L'utilisateur a déjà demandé l'accès aux deux entreprises pour les sept personnes
+ci-dessous. Ne pas redemander cette préférence; vérifier les identifiants et
+réaliser les memberships explicites au cours de la fenêtre autorisée.
 
 | Profil/situation | Décision opérationnelle |
 | --- | --- |
-| Jean-Marie (JM) | Membership EC **test uniquement**; aucune instance production. |
+| Ghislaine | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé; approbatrice des demandes CRP. |
+| Thomas | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
+| Clément | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
+| Keenan | Profil Directory identifié dans le reçu privé; accès CRP/EC test et production demandé. |
+| Jean-Marie | Profil Directory actif, présent uniquement en test au relevé. L'accès demandé aux deux entreprises en production nécessite une membership/projection explicite supplémentaire, sans réutiliser un ancien ID local par nom. |
 | Nizier et Lambert | Anciens comptes locaux inactifs, sans profil Directory : ne créer ni membership ni compte de substitution. Décision utilisateur requise (réactivation/migration ou maintien inactif). |
-| Tout autre accès | Rechercher le profil Directory réel, obtenir l'approbation du propriétaire et choisir modules/capacités explicitement. Aucun mapping par nom, e-mail ou ancien `users.id`. |
+| Tout autre accès | Choisir un profil Directory réel avec l'approbation du propriétaire et des modules/capacités explicites. Aucun mapping automatique par nom, e-mail ou ancien `users.id`. |
 
 ### 5. Déployer les runtimes et le routage
 
 - Construire les deux configurations de runtime fixes avec leur propre pool, base, `CERP_COMPANY_ID`, environnement (`cerp_test`/`cerp_prod`), Directory partagé et clé de site. Un processus ne change jamais de base selon un header.
-- Le flag entreprises reste désactivé sur les services CRP historiques. Il est activé explicitement seulement là où Directory et le runtime EC qualifiés le requièrent, avec la configuration `workers=off` ou `workers=leader` décidée par site. Aucun worker EC n'est démarré implicitement.
+- Avant la bascule, le flag entreprises reste désactivé sur les services CRP historiques. La mise en service complète exige ensuite son activation explicite sur les runtimes fixes **CRP et EC**, avec leur UUID/environnement et leur politique Directory respectifs; sinon le basculement et la réception interentreprises CRP ne sont pas disponibles. La configuration `workers=off` ou `workers=leader` est décidée par site, sans worker implicite.
 - Générer le fragment avec `scripts/entreprises/render-company-proxy.mjs` depuis un manifeste privé qui contient les deux destinations fixes. Examiner le diff; installer le fragment avant les catch-all legacy puis valider la configuration du proxy. Les couples inconnus et les mauvais environnements doivent répondre 403, jamais tomber sur CRP.
 - Démarrer test, vérifier le boot (base/UUID/Directory), l'accès direct et la projection de politique signée. Activer l'instance test seulement après ces preuves. Répéter la séquence production pendant sa fenêtre dédiée.
 
 ### 6. Recette de mise en service et décision
 
 - Vérifier connexion, MFA, sélection d'entreprise, ticket de bascule, refus d'un bearer ou d'un header d'une autre société, modules commerciaux autorisés et refus des capacités industrielles.
-- Vérifier création d'un particulier, identité légale EC, GED tenant EC, livraison/facturation et journal d'audit avec données synthétiques autorisées. Vérifier qu'aucun mouvement, utilisateur ou document historique CRP n'a été réattribué.
+- Vérifier en environnement test création d'un particulier, identité EC, GED tenant EC, livraison/facturation et journal d'audit avec données synthétiques. Ne pas créer de fausses pièces fiscales en production pour un smoke test. Vérifier qu'aucun mouvement, utilisateur ou document historique CRP n'a été réattribué.
 - Vérifier une dernière fois les alias et blobs Métrologie existants, notamment `documents/legacy-import` → `metrologie/legacy-import`.
 - Faire valider les reçus par `ROLLBACK_OWNER`, puis activer l'instance production et la route correspondante. En l'absence de tous les reçus, garder l'instance inactive.
 

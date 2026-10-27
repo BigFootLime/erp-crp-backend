@@ -1,12 +1,49 @@
 # CERP — registre commun des déploiements du 26 octobre 2026
 
 Accord confirmé par les trois chats à la demande de Keenan. Ce registre rapproche
-les preuves des lots livrés et restant à livrer. Le lot Métrologie `2.0.27` est
-livré et distribué, avec reçus et contrôles ci-dessous ; le chantier
+les preuves des lots livrés et restant à livrer. Le lot Métrologie est désormais
+livré en `2.0.29`, avec reçus et contrôles ci-dessous ; le chantier
 multi-entreprises / Esprit Carabine reste local et ouvert.
 Le premier relevé d'exploitation ci-dessous est daté du 26 octobre, vers 19:58–20:00
 à Paris (CET) ; les jalons suivants sont datés dans le journal. Une nouvelle fenêtre exige de nouveaux contrôles et de nouvelles
 preuves sur les SHAs réellement retenus.
+
+## État courant — 27 octobre 2026, préparation EC 2.0.30
+
+Le pilote Métrologie confirme sa livraison 2.0.29 sur les services atelier et
+public, le feed Windows et `Z:\CERP-INSTALLATION\01-Windows`. Les sources publiées
+sont backend `870c7ed07f187860570c0b714e4bb43596131119` et frontend
+`3be3fe7a35d0d2ef26bbddec7543f33f472c89e3`. L'APK Android conserve sa version
+indépendante 2.0.13. Aucun correctif supplémentaire n'a été publié dans ce chat
+depuis cette livraison ; la fenêtre est libérée. Les journaux plus bas gardent
+leur valeur historique, sans remplacer cet état courant.
+
+Le candidat EC 2.0.30 inclut ces deux mains ainsi que le correctif 2.0.28. Ses PRs
+de revue sont les brouillons backend [#1462](https://github.com/BigFootLime/erp-crp-backend/pull/1462)
+et frontend [#1784](https://github.com/BigFootLime/crp-systems-web/pull/1784), ciblant
+`dev` conformément à la gouvernance. Le décalage de `dev` avec les mains publiées
+rend une fusion directe non qualifiée. Aucun déploiement EC, migration de
+production, changement d'accès réel ni publication d'installateur EC n'a eu lieu.
+
+La prochaine livraison doit préserver l'alias natif et VPS
+`documents/legacy-import` vers `metrologie/legacy-import`, associé au stockage
+immuable `uploads/docs/legacy-import`. Les 921 références et 838 blobs vérifiés
+par Métrologie font partie des contrôles de conservation. Ses 364 instruments,
+1 035 historiques et 921 références sont présents en production et test commun ;
+aucune donnée métier n'a été chargée dans le template.
+
+Les préflights en lecture seule montrent l'annuaire partagé déjà activé et le
+multi-entreprises encore désactivé. Aucune table `cerp_business_%` n'est encore
+présente. La mise en service EC nécessite donc le provisionnement séparé de
+l'autorité et des bases métier, pas seulement la copie d'un installateur.
+Le plan détaillé et les frontières d'approbation sont dans
+[`company-site-provisioning-1454.md`](../company-site-provisioning-1454.md).
+
+Le candidat Windows local 2.0.30 est construit depuis le frontend
+`92f6f680b282f738ba89966c6732a652b2430ae8` ; il n'est pas publié. Sa publication
+future doit employer exclusivement `cerp-installation-tools/publish-installation.mjs`,
+d'abord sans `--apply`, puis après qualification avec `--apply`, en conservant
+une unique version Windows et son manifeste cohérent dans `01-Windows`.
 
 ## Responsabilités convenues
 
