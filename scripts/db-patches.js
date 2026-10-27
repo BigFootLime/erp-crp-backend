@@ -711,6 +711,15 @@ async function runUp(client, patches, { dryRun, only }) {
       : statuses.filter((item) => item.status === "pending");
     if (selected) console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
     for (const patch of pending) {
+      // A compatibility migration can make a later immutable seed explicitly
+      // non-applicable. Re-read the ledger/profile between patches so no
+      // decision is based on the pre-loop snapshot.
+      const currentStatuses = await resolvedStatuses(client, patches, await getApplied(client));
+      const current = currentStatuses.find((item) => item.filename === patch.filename);
+      if (current?.status !== "pending") {
+        console.log(`${current?.status} ${patch.filename}`);
+        continue;
+      }
       console.log(`Applying ${patch.filename}`);
       await applyPatch(client, patch);
     }
