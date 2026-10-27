@@ -16,7 +16,7 @@ const INVOICE_LEDGER_STATUSES = ["ISSUED", "PARTIALLY_PAID", "PAID"] as const
 export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: number): Promise<FulfillmentState> {
   const result = await tx.query<FulfillmentState>(
     `
-      WITH shipped_by_line AS (
+      WITH stock_shipped_by_line AS (
         SELECT delivery_line.commande_ligne_id, COALESCE(SUM(delivery_line.quantite), 0)::numeric AS quantity
         FROM public.bon_livraison_ligne delivery_line
         JOIN public.bon_livraison delivery ON delivery.id = delivery_line.bon_livraison_id
@@ -25,6 +25,20 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
           AND delivery.statut IN ('SHIPPED', 'DELIVERED')
           AND delivery_line.commande_ligne_id IS NOT NULL
         GROUP BY delivery_line.commande_ligne_id
+      ),
+      external_shipped_by_line AS (
+        -- A commercial dropship is delivered only by a signed seller receipt.
+        -- The transport inbox alone is intentionally not evidence, and no EC
+        -- stock allocation is ever consulted here.
+        SELECT receipt_line.buyer_sales_order_line_id AS commande_ligne_id,
+               COALESCE(SUM(receipt_line.quantity), 0)::numeric AS quantity
+        FROM public.cerp_intercompany_external_fulfilment_receipt_lines receipt_line
+        JOIN public.cerp_intercompany_external_fulfilment_receipts receipt
+          ON receipt.message_id = receipt_line.message_id
+        JOIN public.commande_ligne order_line
+          ON order_line.id = receipt_line.buyer_sales_order_line_id
+        WHERE order_line.commande_id = $1
+        GROUP BY receipt_line.buyer_sales_order_line_id
       ),
       invoiced_by_delivery_line AS (
         SELECT source.source_line_id, COALESCE(SUM(source.quantity_consumed), 0)::numeric AS quantity
@@ -43,12 +57,22 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
           LEFT JOIN public.commande_ligne order_line ON order_line.id = delivery_line.commande_ligne_id
           WHERE COALESCE(order_line.commande_id, delivery.commande_id) = $1
             AND delivery.statut IN ('READY', 'SHIPPED', 'DELIVERED')
+        ) OR EXISTS(
+          SELECT 1
+          FROM public.cerp_intercompany_external_fulfilment_receipts receipt
+          WHERE receipt.buyer_sales_order_id = $1
         ) AS has_ready_delivery,
         NOT EXISTS(
           SELECT 1 FROM public.commande_ligne line
-          LEFT JOIN shipped_by_line shipped ON shipped.commande_ligne_id = line.id
+          JOIN public.commande_client command ON command.id = line.commande_id
+          LEFT JOIN stock_shipped_by_line stock_shipped ON stock_shipped.commande_ligne_id = line.id
+          LEFT JOIN external_shipped_by_line external_shipped ON external_shipped.commande_ligne_id = line.id
           WHERE line.commande_id = $1
-            AND COALESCE(shipped.quantity, 0) + 0.000000001 < line.quantite
+            AND CASE
+              WHEN command.fulfilment_mode = 'SUPPLIER_DROPSHIP'
+                THEN COALESCE(external_shipped.quantity, 0)
+              ELSE COALESCE(stock_shipped.quantity, 0)
+            END + 0.000000001 < line.quantite
         ) AS fully_shipped,
         NOT EXISTS(
           SELECT 1 FROM public.bon_livraison_ligne delivery_line
@@ -58,6 +82,14 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
           WHERE order_line.commande_id = $1
             AND delivery.statut IN ('SHIPPED', 'DELIVERED')
             AND COALESCE(invoiced.quantity, 0) + 0.000000001 < delivery_line.quantite
+        ) AND NOT EXISTS(
+          -- Until a buyer-side local delivery document has been generated from
+          -- the immutable receipt, an external proof must never masquerade as
+          -- a billed delivery source.
+          SELECT 1
+          FROM public.commande_client command
+          WHERE command.id = $1
+            AND command.fulfilment_mode = 'SUPPLIER_DROPSHIP'
         ) AS fully_invoiced
     `,
     [commandeId, [...INVOICE_LEDGER_STATUSES]],

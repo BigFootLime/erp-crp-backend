@@ -50,6 +50,7 @@ import {
 } from "./delivery-customer-acknowledgement.repository"
 import { lockDeliveryPrepaymentSources, readDeliveryPrepaymentBoundary } from "./delivery-prepayment-boundary.repository"
 import { withDeliveryReadSnapshot } from "./delivery-read-snapshot.repository"
+import { enqueueIntercompanyMessageTx } from "../../entreprises/intercompany/intercompany-outbox.repository"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -134,6 +135,64 @@ type AllocationGroup = {
 }
 
 const EPSILON = 1e-9
+
+async function enqueueIntercompanyShipmentDispatchedTx(
+  tx: Queryable,
+  input: { deliveryId: string; deliveryNumber: string; deliveryRevision: number; commandId: string | null; documentPack: ShipmentPreviewPack | null },
+): Promise<void> {
+  if (!input.commandId) return;
+  const requests = await tx.query<{
+    id: string; buyer_company_id: string; buyer_purchase_order_id: string; buyer_sales_order_id: string; relation_id: string | null; revision: number;
+  }>(
+    `SELECT id::text AS id,buyer_company_id::text AS buyer_company_id,buyer_purchase_order_id,buyer_sales_order_id,
+            payload->>'relation_id' AS relation_id,revision
+       FROM public.cerp_intercompany_requests
+      WHERE supplier_sales_order_id=$1::bigint
+        AND state IN ('ACCEPTED','PARTIALLY_FULFILLED')
+      FOR SHARE`,
+    [input.commandId],
+  );
+  for (const request of requests.rows) {
+    if (!request.relation_id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(request.relation_id)) {
+      throw new HttpError(409, "INTERCOMPANY_RELATION_SNAPSHOT_REQUIRED", "La demande inter-entreprises ne contient pas sa relation fournisseur figée.");
+    }
+    const lines = await tx.query<{
+      buyer_sales_order_line_id: string; buyer_purchase_order_line_id: string; seller_delivery_line_id: string; quantity: string; unit: string;
+    }>(
+      `SELECT link.buyer_sales_order_line_id,link.buyer_purchase_order_line_id,
+              delivery_line.id::text AS seller_delivery_line_id,
+              delivery_line.quantite::text AS quantity,delivery_line.unite AS unit
+         FROM public.bon_livraison_ligne delivery_line
+         JOIN public.cerp_intercompany_order_line_links link
+           ON link.request_id=$2::uuid AND link.supplier_sales_order_line_id=delivery_line.commande_ligne_id
+        WHERE delivery_line.bon_livraison_id=$1::uuid
+        ORDER BY delivery_line.ordre,delivery_line.id`,
+      [input.deliveryId, request.id],
+    );
+    if (!lines.rows.length) continue;
+    if (!input.documentPack) {
+      throw new HttpError(409, "INTERCOMPANY_SHIPMENT_DOCUMENT_REQUIRED", "L'expédition inter-entreprises requiert un pack BL figé.");
+    }
+    await enqueueIntercompanyMessageTx(tx, {
+      destination_company_id: request.buyer_company_id,
+      kind: "SHIPMENT_DISPATCHED",
+      aggregate_id: `${request.id}:${input.deliveryId}`,
+      revision: input.deliveryRevision,
+      payload: {
+        schema_version: 1,
+        receipt_id: crypto.randomUUID(),
+        relation_id: request.relation_id,
+        buyer_sales_order_id: request.buyer_sales_order_id,
+        buyer_purchase_order_id: request.buyer_purchase_order_id,
+        seller_delivery_id: input.deliveryId,
+        seller_delivery_number: input.deliveryNumber,
+        dispatched_at: new Date().toISOString(),
+        document: { id: input.documentPack.version_id, sha256: input.documentPack.checksum_sha256 },
+        lines: lines.rows.map((line) => ({ ...line, quantity: Number(line.quantity) })),
+      },
+    });
+  }
+}
 
 async function loadShipmentSnapshot(
   client: Queryable,
@@ -1540,6 +1599,13 @@ export async function repoShipLivraison(
       actorUserId: userId,
       sourceRevision: `${rowVersion}:${correlationId}`,
     }))
+    await enqueueIntercompanyShipmentDispatchedTx(client, {
+      deliveryId: bonLivraisonId,
+      deliveryNumber: snapshot.header.numero,
+      deliveryRevision: rowVersion,
+      commandId: snapshot.header.commande_id,
+      documentPack: preview.document_pack,
+    })
 
     await insertLivraisonEvent(client, {
       bon_livraison_id: bonLivraisonId,
