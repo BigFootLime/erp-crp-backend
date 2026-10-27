@@ -1,7 +1,10 @@
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { HttpError } from "../../../utils/httpError";
 import { repoCreateArticleTx, type AuditContext as ArticleAuditContext } from "../../stock/repository/stock.repository";
+import { repoCreateFournisseurCatalogueItem } from "../../fournisseurs/repository/fournisseurs.repository";
+import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { repoCreateCommandeFournisseur, type AuditContext as PurchaseAuditContext } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
 import { enqueueIntercompanyMessageTx } from "./intercompany-outbox.repository";
 import { purchaseSubmittedPayloadSchema } from "./intercompany-purchase.contract";
@@ -44,19 +47,58 @@ export async function repoListCommercialCatalogueTx(tx: Tx, buyerCompanyId: stri
 }
 
 export async function repoCreateCommercialCatalogueTx(tx: PoolClient, buyerCompanyId: string, input: CommercialCatalogueCreate, audit: ArticleAuditContext): Promise<CommercialCatalogueItem> {
-  await assertRelationAndCatalogue(tx, input.relation_id, input.supplier_catalogue_id, buyerCompanyId);
+  const published = (await tx.query<Record<string, unknown>>(
+    `SELECT p.supplier_catalogue_mapping_id::text,p.relation_id::text,p.supplier_article_id::text,
+            p.supplier_piece_technique_id::text,p.supplier_piece_technique_version_id::text,p.supplier_reference,
+            p.designation,p.unit,p.variant_code,p.options_snapshot,p.supplier_sale_unit_price::float8,
+            p.purchase_vat_rate::float8,p.currency,p.supplier_mapping_version,r.local_supplier_id::text
+       FROM public.intercompany_supplier_catalogue_projections p
+       JOIN public.intercompany_supplier_relations r ON r.id=p.relation_id
+      WHERE p.supplier_catalogue_mapping_id=$1::uuid AND p.relation_id=$2::uuid
+        AND r.buyer_company_id=$3::uuid AND r.local_role='BUYER' AND r.status='ACTIVE' AND p.active
+      FOR SHARE OF p,r`, [input.supplier_catalogue_mapping_id, input.relation_id, buyerCompanyId]
+  )).rows[0];
+  if (!published) throw new HttpError(409, "INTERCOMPANY_PUBLISHED_OFFER_NOT_AVAILABLE", "L’offre fournisseur publiée est absente, inactive ou hors périmètre.");
+  const same = (left: unknown, right: unknown) => isDeepStrictEqual(left ?? null, right ?? null);
+  if (input.supplier_mapping_version !== Number(published.supplier_mapping_version)
+    || input.supplier_article_id !== String(published.supplier_article_id)
+    || !same(input.supplier_piece_technique_id, published.supplier_piece_technique_id)
+    || !same(input.supplier_piece_technique_version_id, published.supplier_piece_technique_version_id)
+    || !same(input.supplier_reference, published.supplier_reference)
+    || input.designation !== String(published.designation)
+    || input.unit !== String(published.unit)
+    || input.variant_code !== String(published.variant_code)
+    || !same(input.options_snapshot, published.options_snapshot)
+    || input.purchase_unit_price !== Number(published.supplier_sale_unit_price)
+    || input.purchase_vat_rate !== Number(published.purchase_vat_rate)
+    || input.currency !== String(published.currency)) {
+    throw new HttpError(409, "INTERCOMPANY_PUBLISHED_OFFER_CHANGED", "L’offre publiée a changé ; actualisez la sélection avant de créer la liaison.");
+  }
   const localArticleId = input.local_article_id ?? (await repoCreateArticleTx(tx, {
     designation: input.local_article!.designation, article_type: "PURCHASED", article_category: "achat", family_code: input.local_article!.family_code,
     stock_managed: false, lot_tracking: false, is_sold: true, status: "VALIDE", unite: input.local_article!.unit, is_active: true,
   }, audit)).id;
-  const linked = await tx.query<{ article_id: string | null }>(`SELECT article_id::text FROM public.fournisseur_catalogue WHERE id=$1::uuid FOR UPDATE`, [input.supplier_catalogue_id]);
+  const catalogueId = input.supplier_catalogue_id ?? (await repoCreateFournisseurCatalogueItem(
+    String(published.local_supplier_id),
+    createCatalogueSchema.parse({ body: {
+      type: "AUTRE", article_id: localArticleId, designation: String(published.designation),
+      reference_fournisseur: published.supplier_reference == null ? null : String(published.supplier_reference),
+      unite: String(published.unit), prix_unitaire: Number(published.supplier_sale_unit_price), devise: String(published.currency),
+      actif: true,
+    } }).body,
+    audit,
+    tx,
+  ))?.id;
+  if (!catalogueId) throw new HttpError(404, "INTERCOMPANY_LOCAL_SUPPLIER_NOT_FOUND", "Le fournisseur local de la relation n’est plus disponible.");
+  await assertRelationAndCatalogue(tx, input.relation_id, catalogueId, buyerCompanyId);
+  const linked = await tx.query<{ article_id: string | null }>(`SELECT article_id::text FROM public.fournisseur_catalogue WHERE id=$1::uuid FOR UPDATE`, [catalogueId]);
   if (!linked.rows[0] || (linked.rows[0].article_id && linked.rows[0].article_id !== localArticleId))
     throw new HttpError(409, "INTERCOMPANY_CATALOGUE_ARTICLE_CONFLICT", "La référence fournisseur est déjà liée à un autre article local.");
-  await tx.query(`UPDATE public.fournisseur_catalogue SET article_id=$2::uuid,updated_by=$3 WHERE id=$1::uuid`, [input.supplier_catalogue_id, localArticleId, audit.user_id]);
+  await tx.query(`UPDATE public.fournisseur_catalogue SET article_id=$2::uuid,updated_by=$3 WHERE id=$1::uuid`, [catalogueId, localArticleId, audit.user_id]);
   const result = await tx.query<Record<string, unknown>>(
-    `INSERT INTO public.intercompany_commercial_catalogue(relation_id,local_role,local_article_id,supplier_catalogue_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_piece_technique_id,supplier_piece_technique_version_id,supplier_reference,designation,unit,buyer_sale_unit_price,buyer_sale_vat_rate,purchase_unit_price,purchase_vat_rate,currency,created_by,updated_by)
-     VALUES($1::uuid,'BUYER',$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8::uuid,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17,$17) RETURNING id::text,relation_id::text,local_article_id::text,supplier_catalogue_id::text,supplier_catalogue_mapping_id::text,supplier_article_id::text,supplier_piece_technique_id::text,supplier_piece_technique_version_id::text,supplier_reference,designation,unit,supplier_mapping_version,buyer_sale_unit_price::float8,buyer_sale_vat_rate::float8,purchase_unit_price::float8,supplier_sale_unit_price::float8,purchase_vat_rate::float8,currency,version,active,variant_code,options_snapshot`,
-    [input.relation_id, localArticleId, input.supplier_catalogue_id, input.supplier_catalogue_mapping_id, input.supplier_mapping_version, input.supplier_article_id, input.supplier_piece_technique_id ?? null, input.supplier_piece_technique_version_id ?? null, input.supplier_reference ?? null, input.designation, input.unit, input.buyer_sale_unit_price, input.buyer_sale_vat_rate, input.purchase_unit_price, input.purchase_vat_rate, input.currency, audit.user_id]);
+    `INSERT INTO public.intercompany_commercial_catalogue(relation_id,local_role,local_article_id,supplier_catalogue_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_piece_technique_id,supplier_piece_technique_version_id,supplier_reference,designation,unit,variant_code,options_snapshot,buyer_sale_unit_price,buyer_sale_vat_rate,purchase_unit_price,purchase_vat_rate,currency,created_by,updated_by)
+     VALUES($1::uuid,'BUYER',$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::uuid,$8::uuid,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$20,$20) RETURNING id::text,relation_id::text,local_article_id::text,supplier_catalogue_id::text,supplier_catalogue_mapping_id::text,supplier_article_id::text,supplier_piece_technique_id::text,supplier_piece_technique_version_id::text,supplier_reference,designation,unit,supplier_mapping_version,buyer_sale_unit_price::float8,buyer_sale_vat_rate::float8,purchase_unit_price::float8,supplier_sale_unit_price::float8,purchase_vat_rate::float8,currency,version,active,variant_code,options_snapshot`,
+    [input.relation_id, localArticleId, catalogueId, published.supplier_catalogue_mapping_id, published.supplier_mapping_version, published.supplier_article_id, published.supplier_piece_technique_id, published.supplier_piece_technique_version_id, published.supplier_reference, published.designation, published.unit, published.variant_code, JSON.stringify(published.options_snapshot), input.buyer_sale_unit_price, input.buyer_sale_vat_rate, published.supplier_sale_unit_price, published.purchase_vat_rate, published.currency, audit.user_id]);
   return item(result.rows[0]);
 }
 
@@ -64,7 +106,8 @@ export async function repoCreateCommercialCatalogueTx(tx: PoolClient, buyerCompa
 export async function repoCommercialCatalogueOptionsTx(tx: Tx, buyerCompanyId: string) {
   const rows = await repoListCommercialCatalogueTx(tx, buyerCompanyId);
   const offers=await tx.query<Record<string,unknown>>(`SELECT p.supplier_catalogue_mapping_id::text,p.relation_id::text,p.supplier_article_id::text,p.supplier_piece_technique_id::text,p.supplier_piece_technique_version_id::text,p.supplier_reference,p.designation,p.unit,p.variant_code,p.options_snapshot,p.supplier_sale_unit_price::float8,p.purchase_vat_rate::float8,p.currency,p.supplier_mapping_version,p.active FROM public.intercompany_supplier_catalogue_projections p JOIN public.intercompany_supplier_relations r ON r.id=p.relation_id WHERE r.buyer_company_id=$1::uuid AND r.local_role='BUYER' AND p.active ORDER BY p.designation`,[buyerCompanyId]);
-  return { offers: offers.rows.map(row=>({relation_id:String(row.relation_id),supplier_catalogue_mapping_id:String(row.supplier_catalogue_mapping_id),supplier_article_id:String(row.supplier_article_id),supplier_piece_technique_id:row.supplier_piece_technique_id==null?null:String(row.supplier_piece_technique_id),supplier_piece_technique_version_id:row.supplier_piece_technique_version_id==null?null:String(row.supplier_piece_technique_version_id),supplier_reference:row.supplier_reference??null,designation:String(row.designation),unit:String(row.unit),variant_code:String(row.variant_code),options_snapshot:row.options_snapshot??{},supplier_sale_unit_price:Number(row.supplier_sale_unit_price),purchase_vat_rate:Number(row.purchase_vat_rate),currency:String(row.currency),supplier_mapping_version:Number(row.supplier_mapping_version)})), mappings: rows.filter(row => row.active).map(row => ({
+  const publishedOffers = offers.rows.map(row=>({relation_id:String(row.relation_id),supplier_catalogue_mapping_id:String(row.supplier_catalogue_mapping_id),supplier_article_id:String(row.supplier_article_id),supplier_piece_technique_id:row.supplier_piece_technique_id==null?null:String(row.supplier_piece_technique_id),supplier_piece_technique_version_id:row.supplier_piece_technique_version_id==null?null:String(row.supplier_piece_technique_version_id),supplier_reference:row.supplier_reference??null,designation:String(row.designation),unit:String(row.unit),variant_code:String(row.variant_code),options_snapshot:row.options_snapshot??{},supplier_sale_unit_price:Number(row.supplier_sale_unit_price),purchase_vat_rate:Number(row.purchase_vat_rate),currency:String(row.currency),supplier_mapping_version:Number(row.supplier_mapping_version)}));
+  return { items: publishedOffers, offers: publishedOffers, mappings: rows.filter(row => row.active).map(row => ({
     catalogue_mapping_id: row.id,
     relation_id: row.relation_id,
     supplier_catalogue_id: row.supplier_catalogue_id,
@@ -98,7 +141,14 @@ export async function repoPublishSupplierCatalogueTx(tx: Tx, supplierCompanyId: 
   await enqueueIntercompanyMessageTx(tx,{destination_company_id:String(row.buyer_company_id),kind:"CATALOGUE_PUBLISHED",aggregate_id:payload.supplier_catalogue_mapping_id,revision:payload.supplier_mapping_version,payload});
   return payload;
 }
-export async function repoCreateSupplierOfferTx(tx:Tx,supplierCompanyId:string,input:SupplierCommercialOffer,actor:number){const q=await tx.query<Record<string,unknown>>(`INSERT INTO public.intercompany_commercial_catalogue(relation_id,local_role,local_article_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_piece_technique_id,supplier_piece_technique_version_id,supplier_reference,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price,purchase_vat_rate,currency,created_by,updated_by) SELECT $1::uuid,'SUPPLIER',$2::uuid,gen_random_uuid(),1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$13 FROM public.intercompany_supplier_relations r WHERE r.id=$1::uuid AND r.local_role='SUPPLIER' AND r.supplier_company_id=$14::uuid AND r.status='ACTIVE' RETURNING id::text,relation_id::text,supplier_catalogue_mapping_id::text,supplier_article_id::text,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price::float8,purchase_vat_rate::float8,currency,version,active`,[input.relation_id,input.local_article_id,input.supplier_piece_technique_id??null,input.supplier_piece_technique_version_id??null,input.supplier_reference??null,input.designation,input.unit,input.variant_code,JSON.stringify(input.options_snapshot),input.supplier_sale_unit_price,input.purchase_vat_rate,input.currency,actor,supplierCompanyId]);if(!q.rows[0])throw new HttpError(403,"INTERCOMPANY_SUPPLIER_RELATION_DENIED","Relation vendeur active requise.");return q.rows[0]}
+export async function repoCreateSupplierOfferTx(tx:Tx,supplierCompanyId:string,input:SupplierCommercialOffer,actor:number){
+  const article=(await tx.query<{piece_technique_id:string|null}>(`SELECT piece_technique_id::text FROM public.articles WHERE id=$1::uuid FOR SHARE`,[input.local_article_id])).rows[0];
+  if(!article) throw new HttpError(404,"INTERCOMPANY_SUPPLIER_ARTICLE_NOT_FOUND","L’article fournisseur est introuvable.");
+  if(input.supplier_piece_technique_id && input.supplier_piece_technique_id!==article.piece_technique_id) throw new HttpError(409,"INTERCOMPANY_SUPPLIER_TECHNICAL_BINDING_INVALID","La pièce technique ne correspond pas à l’article fournisseur.");
+  const technicalId=article.piece_technique_id;
+  const currentVersion=technicalId?(await tx.query<{id:string}>(`SELECT id::text FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid AND is_current=true ORDER BY version_interne DESC NULLS LAST LIMIT 1 FOR SHARE`,[technicalId])).rows[0]?.id??null:null;
+  if(input.supplier_piece_technique_version_id && input.supplier_piece_technique_version_id!==currentVersion) throw new HttpError(409,"INTERCOMPANY_SUPPLIER_TECHNICAL_VERSION_INVALID","La version technique publiée n’est plus la version courante de l’article.");
+  const q=await tx.query<Record<string,unknown>>(`INSERT INTO public.intercompany_commercial_catalogue(relation_id,local_role,local_article_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_piece_technique_id,supplier_piece_technique_version_id,supplier_reference,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price,purchase_vat_rate,currency,created_by,updated_by) SELECT $1::uuid,'SUPPLIER',$2::uuid,gen_random_uuid(),1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$13 FROM public.intercompany_supplier_relations r WHERE r.id=$1::uuid AND r.local_role='SUPPLIER' AND r.supplier_company_id=$14::uuid AND r.status='ACTIVE' RETURNING id::text,relation_id::text,supplier_catalogue_mapping_id::text,supplier_article_id::text,supplier_piece_technique_id::text,supplier_piece_technique_version_id::text,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price::float8,purchase_vat_rate::float8,currency,version,active`,[input.relation_id,input.local_article_id,technicalId,currentVersion,input.supplier_reference??null,input.designation,input.unit,input.variant_code,JSON.stringify(input.options_snapshot),input.supplier_sale_unit_price,input.purchase_vat_rate,input.currency,actor,supplierCompanyId]);if(!q.rows[0])throw new HttpError(403,"INTERCOMPANY_SUPPLIER_RELATION_DENIED","Relation vendeur active requise.");return q.rows[0]}
 export async function repoListSupplierOffersTx(tx:Tx,companyId:string){return (await tx.query(`SELECT c.id::text,c.relation_id::text,c.supplier_catalogue_mapping_id::text,c.supplier_article_id::text,c.supplier_piece_technique_id::text,c.supplier_piece_technique_version_id::text,c.supplier_reference,c.designation,c.unit,c.variant_code,c.options_snapshot,c.supplier_sale_unit_price::float8,c.purchase_vat_rate::float8,c.currency,c.version,c.active FROM public.intercompany_commercial_catalogue c JOIN public.intercompany_supplier_relations r ON r.id=c.relation_id WHERE c.local_role='SUPPLIER' AND r.local_role='SUPPLIER' AND r.supplier_company_id=$1::uuid ORDER BY c.designation`,[companyId])).rows}
 export async function repoPatchSupplierOfferTx(tx:Tx,companyId:string,id:string,input:SupplierCommercialOfferPatch,actor:number){const allowed=["supplier_reference","designation","unit","variant_code","options_snapshot","supplier_sale_unit_price","purchase_vat_rate","currency","active"] as const;const vals:unknown[]=[id,companyId,input.expected_version];const sets:string[]=[];for(const k of allowed)if(k in input){vals.push(input[k]);sets.push(`${k}=$${vals.length}${k==='options_snapshot'?'::jsonb':''}`)}if(!sets.length)throw new HttpError(400,"INTERCOMPANY_SUPPLIER_OFFER_EMPTY_PATCH","Aucune modification.");vals.push(actor);sets.push(`updated_by=$${vals.length}`,"version=version+1","updated_at=now()");const q=await tx.query(`UPDATE public.intercompany_commercial_catalogue c SET ${sets.join(',')} FROM public.intercompany_supplier_relations r WHERE c.id=$1::uuid AND c.relation_id=r.id AND c.local_role='SUPPLIER' AND r.local_role='SUPPLIER' AND r.supplier_company_id=$2::uuid AND c.version=$3 RETURNING c.id::text,c.version,c.active`,vals);if(!q.rows[0])throw new HttpError(409,"INTERCOMPANY_SUPPLIER_OFFER_CONFLICT","Offre hors périmètre ou modifiée.");return q.rows[0]}
 

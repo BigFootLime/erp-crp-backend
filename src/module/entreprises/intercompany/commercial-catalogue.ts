@@ -18,7 +18,10 @@ const commercialCatalogueObjectSchema = z.object({
     family_code: z.string().trim().min(1).max(40),
     unit: z.string().trim().min(1).max(30),
   }).strict().optional(),
-  supplier_catalogue_id: uuid,
+  // EC can start from a published CRP offer with no local article nor supplier
+  // catalogue reference. The repository creates the local purchase reference
+  // transactionally when this is omitted.
+  supplier_catalogue_id: uuid.optional(),
   supplier_catalogue_mapping_id: uuid,
   supplier_mapping_version: z.number().int().positive(),
   supplier_article_id: uuid,
@@ -27,6 +30,8 @@ const commercialCatalogueObjectSchema = z.object({
   supplier_reference: z.string().trim().min(1).max(120).nullish(),
   designation: z.string().trim().min(1).max(400),
   unit: z.string().trim().min(1).max(30),
+  variant_code: z.string().trim().min(1).max(100),
+  options_snapshot: z.record(z.string().max(80), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null()])),
   buyer_sale_unit_price: money,
   buyer_sale_vat_rate: rate.default(20),
   purchase_unit_price: money,
