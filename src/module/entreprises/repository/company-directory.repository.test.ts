@@ -46,6 +46,12 @@ function db(rows: unknown[][]) {
   const query = vi.fn(async () => ({ rows: rows.shift() ?? [] }));
   return { connect: vi.fn(async () => ({ query })), query };
 }
+function expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(sql: string) {
+  expect(sql).toMatch(/END,false/);
+  const conflictUpdate = sql.split("ON CONFLICT(profile_id,database_id) DO UPDATE SET")[1];
+  expect(conflictUpdate).toBeDefined();
+  expect(conflictUpdate).not.toMatch(/is_superadmin\s*=/);
+}
 describe("business company directory repository", () => {
   it("creates and audits atomically", async () => {
     const d = db([
@@ -131,6 +137,38 @@ describe("business company directory repository", () => {
         actor,
       ),
     ).resolves.toMatchObject({ version: 1 });
+    expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(
+      String((d.query.mock.calls as unknown[][])[3]?.[0]),
+    );
+  });
+
+  it("preserves an explicitly configured site superadmin while an instance is reactivated", async () => {
+    const d = db([
+      [], [], [],
+      [{
+        company_id: company,
+        environment: "cerp_test",
+        site_id: "cerp_company_11111111111141118111111111111111_test",
+        active: true,
+        version: 1,
+      }],
+    ]);
+    await expect(
+      repoSetBusinessCompanyInstance(
+        d as any,
+        {
+          company_id: company,
+          environment: "cerp_test",
+          site_id: "cerp_company_11111111111141118111111111111111_test",
+          active: true,
+          expected_version: 0,
+        },
+        actor,
+      ),
+    ).resolves.toMatchObject({ version: 1 });
+    expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(
+      String((d.query.mock.calls as unknown[][])[2]?.[0]),
+    );
   });
   it("composes only matching company/profile/environment records", async () => {
     const d = db([

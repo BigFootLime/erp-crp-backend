@@ -243,7 +243,7 @@ export async function repoSetBusinessCompanyMembership(
        JOIN public.cerp_business_company_instances i ON i.company_id=c.company_id
        WHERE p.profile_id=$2::uuid AND i.site_id ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
        ON CONFLICT(profile_id,database_id) DO UPDATE SET
-         role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,is_superadmin=false,
+         role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,
          version=public.cerp_directory_memberships.version+1`,
       [input.company_id, input.profile_id, input.status],
     );
@@ -285,7 +285,7 @@ export async function repoSetBusinessCompanyInstance(
        JOIN public.users u ON u.id=p.user_id
        JOIN public.cerp_business_companies c ON c.company_id=m.company_id
        WHERE m.company_id=$1::uuid AND $3 ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
-       ON CONFLICT(profile_id,database_id) DO UPDATE SET role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,is_superadmin=false,
+       ON CONFLICT(profile_id,database_id) DO UPDATE SET role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,
          version=public.cerp_directory_memberships.version+1`,
       [input.company_id, input.environment, input.site_id, input.active],
     );
