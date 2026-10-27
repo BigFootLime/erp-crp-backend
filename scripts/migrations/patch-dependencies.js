@@ -18,6 +18,17 @@ const DEPENDENCIES = Object.freeze({
   "20261014_finance_ged_profile_1268.sql": [
     "20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql"
   ],
+  // The SQL files are immutable and their lexical 20261027 names predate the
+  // historical GED bridge. Keep the canonical runner and rehearsal aligned
+  // with the actual schema contracts instead of renaming an applied seed.
+  "20261027_metrology_ged_entity_type_1780.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20260823_authoritative_pdf_ged_compatibility_bridge.sql"
+  ],
+  "20261027_metrology_ged_entity_type_1780_compat.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20261014_finance_ged_profile_1268.sql"
+  ],
   "20261014_refund_reversals_1268.sql": [
     "20261014_advance_amount_credits_1268.sql"
   ],
