@@ -4,7 +4,7 @@ import { repoCreateArticleTx, type AuditContext as ArticleAuditContext } from ".
 import { repoCreateCommandeFournisseur, type AuditContext as PurchaseAuditContext } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
 import { enqueueIntercompanyMessageTx } from "./intercompany-outbox.repository";
 import { purchaseSubmittedPayloadSchema } from "./intercompany-purchase.contract";
-import type { CommercialCatalogueCreate, CommercialCatalogueItem, CommercialCataloguePatch } from "./commercial-catalogue";
+import type { CommercialCatalogueCreate, CommercialCatalogueItem, CommercialCataloguePatch, SupplierCommercialOffer } from "./commercial-catalogue";
 
 type Tx = Pick<PoolClient, "query">;
 
@@ -94,6 +94,7 @@ export async function repoPublishSupplierCatalogueTx(tx: Tx, supplierCompanyId: 
   await enqueueIntercompanyMessageTx(tx,{destination_company_id:String(row.buyer_company_id),kind:"CATALOGUE_PUBLISHED",aggregate_id:payload.supplier_catalogue_mapping_id,revision:payload.supplier_mapping_version,payload});
   return payload;
 }
+export async function repoCreateSupplierOfferTx(tx:Tx,supplierCompanyId:string,input:SupplierCommercialOffer,actor:number){const q=await tx.query<Record<string,unknown>>(`INSERT INTO public.intercompany_commercial_catalogue(relation_id,local_role,local_article_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_piece_technique_id,supplier_piece_technique_version_id,supplier_reference,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price,purchase_vat_rate,currency,created_by,updated_by) SELECT $1::uuid,'SUPPLIER',$2::uuid,gen_random_uuid(),1,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$13 FROM public.intercompany_supplier_relations r WHERE r.id=$1::uuid AND r.local_role='SUPPLIER' AND r.supplier_company_id=$14::uuid AND r.status='ACTIVE' RETURNING id::text,relation_id::text,supplier_catalogue_mapping_id::text,supplier_article_id::text,designation,unit,variant_code,options_snapshot,supplier_sale_unit_price::float8,purchase_vat_rate::float8,currency,version,active`,[input.relation_id,input.local_article_id,input.supplier_piece_technique_id??null,input.supplier_piece_technique_version_id??null,input.supplier_reference??null,input.designation,input.unit,input.variant_code,JSON.stringify(input.options_snapshot),input.supplier_sale_unit_price,input.purchase_vat_rate,input.currency,actor,supplierCompanyId]);if(!q.rows[0])throw new HttpError(403,"INTERCOMPANY_SUPPLIER_RELATION_DENIED","Relation vendeur active requise.");return q.rows[0]}
 
 export async function repoPatchCommercialCatalogueTx(tx: Tx, buyerCompanyId: string, id: string, input: CommercialCataloguePatch, actorUserId: number): Promise<CommercialCatalogueItem> {
   const allowed = ["supplier_article_id","supplier_piece_technique_id","supplier_piece_technique_version_id","supplier_reference","designation","unit","buyer_sale_unit_price","buyer_sale_vat_rate","purchase_unit_price","purchase_vat_rate","currency","active"] as const;

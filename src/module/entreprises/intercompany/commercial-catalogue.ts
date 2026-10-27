@@ -10,7 +10,7 @@ export const intercompanySupplierRelationSchema = z.object({
 }).strict();
 export type IntercompanySupplierRelationInput = z.infer<typeof intercompanySupplierRelationSchema>;
 
-export const commercialCatalogueCreateSchema = z.object({
+const commercialCatalogueObjectSchema = z.object({
   relation_id: uuid,
   local_article_id: uuid.optional(),
   local_article: z.object({
@@ -32,7 +32,8 @@ export const commercialCatalogueCreateSchema = z.object({
   purchase_unit_price: money,
   purchase_vat_rate: rate.default(20),
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).default("EUR"),
-}).strict().superRefine((value, ctx) => {
+}).strict();
+export const commercialCatalogueCreateSchema = commercialCatalogueObjectSchema.superRefine((value, ctx) => {
   if ((value.local_article_id ? 1 : 0) + (value.local_article ? 1 : 0) !== 1) {
     ctx.addIssue({ code: "custom", path: ["local_article_id"], message: "Provide exactly one local_article_id or local_article." });
   }
@@ -42,12 +43,16 @@ export const commercialCatalogueCreateSchema = z.object({
 });
 export type CommercialCatalogueCreate = z.infer<typeof commercialCatalogueCreateSchema>;
 
-export const commercialCataloguePatchSchema = commercialCatalogueCreateSchema
+export const commercialCataloguePatchSchema = commercialCatalogueObjectSchema
   .omit({ relation_id: true, local_article_id: true, local_article: true, supplier_catalogue_id: true, supplier_mapping_version: true })
   .partial()
   .extend({ expected_version: z.number().int().positive(), active: z.boolean().optional() })
   .strict();
 export type CommercialCataloguePatch = z.infer<typeof commercialCataloguePatchSchema>;
+export const supplierCommercialOfferSchema=z.object({relation_id:uuid,local_article_id:uuid,supplier_piece_technique_id:uuid.nullish(),supplier_piece_technique_version_id:uuid.nullish(),supplier_reference:z.string().trim().min(1).max(160).nullish(),designation:z.string().trim().min(1).max(400),unit:z.string().trim().min(1).max(30),variant_code:z.string().trim().min(1).max(100),options_snapshot:z.record(z.string().max(80),z.union([z.string().max(500),z.number().finite(),z.boolean(),z.null()])).default({}),supplier_sale_unit_price:money,purchase_vat_rate:rate.default(20),currency:z.string().regex(/^[A-Z]{3}$/).default("EUR")}).strict().superRefine((v,c)=>{if(v.supplier_piece_technique_version_id&&!v.supplier_piece_technique_id)c.addIssue({code:"custom",path:["supplier_piece_technique_id"],message:"A technical version requires its piece."})});
+export type SupplierCommercialOffer=z.infer<typeof supplierCommercialOfferSchema>;
+export const supplierCommercialOfferPatchSchema=supplierCommercialOfferSchema.omit({relation_id:true,local_article_id:true}).partial().extend({expected_version:z.number().int().positive(),active:z.boolean().optional()}).strict();
+export type SupplierCommercialOfferPatch=z.infer<typeof supplierCommercialOfferPatchSchema>;
 
 export type CommercialCatalogueItem = {
   id: string; relation_id: string; local_article_id: string; supplier_catalogue_id: string; supplier_catalogue_mapping_id: string;
