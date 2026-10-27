@@ -24,7 +24,7 @@ async function resolveClosedSeedApplicability(client, patches, applied) {
   if (!closed || applied.has(CLOSED_SEED)) return new Map();
   // Before the compatibility seed is recorded this is an ordinary pending
   // closed seed, including source snapshots used by the rehearsal.
-  if (!applied.has(COMPAT_SEED)) return new Map();
+  if (!applied.has(COMPAT_SEED) || !applied.has(SCAN_CLASS)) return new Map();
 
   const state = await client.query(`
     SELECT
