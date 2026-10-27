@@ -9,6 +9,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
 import { COPY_VERSION_PURCHASES_SQL } from "./version-purchases.sql"
+import { canCarryMinorRevisionDocuments, copyMinorRevisionDocumentsTx } from "./minor-revision-documents"
 import type {
   CreateNextVersionBodyDTO,
   CreateVersionBodyDTO,
@@ -653,12 +654,16 @@ export async function repoCreateNextVersion(
       COPY_VERSION_PURCHASES_SQL,
       [pieceTechniqueId, row.id, sourceVersionId]
     )
+    const copiedDocuments = canCarryMinorRevisionDocuments({ changeLevel, sourceIndex: source.indice,
+      targetIndex: body.indice, sourcePlan: source.plan_reference, targetPlan: planReference })
+      ? await copyMinorRevisionDocumentsTx(client, pieceTechniqueId, sourceVersionId, row.id, audit.user_id) : 0
 
     await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,
       indice: row.indice,
       type_changement: row.type_changement,
+      copied_documents: copiedDocuments,
       copied,
     })
     await client.query("COMMIT")
