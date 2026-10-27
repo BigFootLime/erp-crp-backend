@@ -6,6 +6,7 @@ import { repoCreateSupplierOfferTx, repoPublishSupplierCatalogueTx, repoCreateCo
 import { receiveIntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-inbox.repository";
 import { applyCommercialIntercompanyMessageTx } from "../../src/module/entreprises/intercompany/commercial-intercompany-message.repository";
 import { repoCreateCommandeNativeTx, repoGenerateAffairesFromOrder, repoRunCommandeWorkflowAction } from "../../src/module/commande-client/repository/commande-client.repository";
+import { repoCreateArticleTx } from "../../src/module/stock/repository/stock.repository";
 import { applyPurchaseSubmittedTx, decideIntercompanyRequest } from "../../src/module/entreprises/intercompany/intercompany-requests.repository";
 import type { IntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-message";
 
@@ -92,11 +93,30 @@ async function main() {
     if (sellerMode.rows[0]?.fulfilment_mode !== "STANDARD") throw new Error("TEST accepted CRP order is not STANDARD");
     await repoRunCommandeWorkflowAction(sellerOrderId, { action: "check_stock" } as never, 1, "Administrateur Systeme et Reseau");
     await repoGenerateAffairesFromOrder(sellerOrderId, { decision: null, livraison_count: 1, lines: [] } as never, { ...audit, user_role: "Administrateur Systeme et Reseau" });
+    const sellerLine = (await seller.query<{ article_id: string }>("SELECT article_id::text FROM commande_ligne WHERE commande_id=$1::bigint LIMIT 1", [sellerOrderId])).rows[0];
+    let standardSubtypeDeleteDenied = false;
+    try { await seller.query("DELETE FROM articles_fabrique WHERE article_id=$1::uuid", [sellerLine?.article_id]); }
+    catch (error) { standardSubtypeDeleteDenied = (error as { code?: string }).code === "23503"; }
+    if (!standardSubtypeDeleteDenied) throw new Error("TEST STANDARD line lost its articles_fabrique deletion protection");
+    let standardToDropshipDenied = false;
+    try { await seller.query("UPDATE commande_client SET fulfilment_mode='SUPPLIER_DROPSHIP' WHERE id=$1::bigint", [sellerOrderId]); }
+    catch (error) { standardToDropshipDenied = (error as { code?: string }).code === "23514"; }
+    if (!standardToDropshipDenied) throw new Error("TEST STANDARD order became dropship without buyer mappings");
+    const negativeTx = await seller.connect();
+    let standardPurchasedInsertDenied = false;
+    try {
+      await negativeTx.query("BEGIN");
+      const purchased = await repoCreateArticleTx(negativeTx, { designation: `TEST forbidden standard purchase ${suffix}`, article_type: "PURCHASED", article_category: "achat", family_code: "ACHAT", stock_managed: false, lot_tracking: false, is_sold: true, status: "VALIDE", unite: "u", is_active: true }, audit);
+      try { await negativeTx.query("INSERT INTO commande_ligne(commande_id,article_id,designation,quantite,unite,prix_unitaire_ht,taux_tva) VALUES($1::bigint,$2::uuid,'TEST forbidden standard purchase',1,'u',1,20)", [sellerOrderId, purchased.id]); }
+      catch (error) { standardPurchasedInsertDenied = (error as { code?: string }).code === "23514"; }
+      await negativeTx.query("ROLLBACK");
+    } finally { negativeTx.release(); }
+    if (!standardPurchasedInsertDenied) throw new Error("TEST STANDARD order accepted a purchased non-stock line");
     let standardTransitionDenied = false;
     try { await buyer.query("UPDATE commande_client SET fulfilment_mode='STANDARD' WHERE id=$1::bigint", [buyerOrder.id]); }
     catch (error) { standardTransitionDenied = (error as { code?: string }).code === "23514"; }
     if (!standardTransitionDenied) throw new Error("TEST purchased dropship order was allowed to become STANDARD");
-    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode, standard_transition_denied: standardTransitionDenied })}\n`);
+    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode, standard_transition_denied: standardTransitionDenied, standard_subtype_delete_denied: standardSubtypeDeleteDenied, standard_to_dropship_denied: standardToDropshipDenied, standard_purchased_insert_denied: standardPurchasedInsertDenied })}\n`);
   } finally { await buyer.end(); await seller.end(); await globalPool.end(); }
 }
 main().catch(error => { process.stderr.write(`E2E_COMMERCIAL_CATALOGUE_V2_FAIL ${error instanceof Error ? error.stack : String(error)}\n`); process.exitCode = 1; });
