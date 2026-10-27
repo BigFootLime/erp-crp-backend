@@ -83,6 +83,8 @@ import { moduleAccessGate } from "../module/access-control/middlewares/module-ac
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
 import entreprisesRoutes from "../module/entreprises/routes/entreprises.routes";
+import { intercompanyDeliveryRoutes, intercompanyRequestRoutes, intercompanyPurchaseTrackingRoutes } from "../module/entreprises/intercompany/intercompany.routes";
+import intercompanyFulfilmentRoutes from "../module/commande-client/routes/intercompany-fulfilment.routes";
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
@@ -90,6 +92,7 @@ router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
 router.use("/entreprises", entreprisesRoutes)
+router.use("/intercompany", intercompanyDeliveryRoutes)
 router.use("/terminals", terminalRoutes)
 router.use("/portal", clientPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
@@ -123,6 +126,8 @@ router.use("/dashboard-governance", dashboardGovernanceRoutes)
 
 router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
+router.use("/commandes/intercompany/requests", intercompanyRequestRoutes)
+router.use("/commandes/intercompany/fulfilment-receipts", intercompanyFulfilmentRoutes)
 router.use("/commandes", commandeClientRoutes) // ✅  
 router.use("/clients", clientRoutes);
 router.use("/payment-modes", paymentModeRoutes);  
@@ -193,6 +198,7 @@ router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
+router.use("/commandes-fournisseurs", intercompanyPurchaseTrackingRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
 router.use("/subcontract-work-packages", subcontractRoutes); // #626
 router.use("/procurement-reliability", procurementReliabilityRoutes); // SOL-18 — scorecards et rapprochement achats

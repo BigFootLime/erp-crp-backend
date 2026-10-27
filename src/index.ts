@@ -7,6 +7,9 @@ import pool from "./config/database";
 import {assertManagedDatabaseAtStartup} from './config/managed-database';
 import {initializeSharedDirectorySite} from './shared-directory/site-runtime';
 import { assertCompanyRuntimeAtStartup } from './module/entreprises/runtime/company-runtime.service';
+import { resolveCompanyBackgroundProfile, selectCompanyBackgroundStarters } from './module/entreprises/runtime/company-background-profile';
+import { startIntercompanyDeliveryMaintenance } from './module/entreprises/intercompany/intercompany-worker';
+import { intercompanyTransportConfiguration } from './module/entreprises/intercompany/intercompany-transport';
 import { assertE2EIsolation } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
@@ -41,6 +44,8 @@ async function start(): Promise<void> {
   await assertManagedDatabaseAtStartup(pool);
   await initializeSharedDirectorySite(pool);
   await assertCompanyRuntimeAtStartup(pool);
+  const companyBackgroundProfile = await resolveCompanyBackgroundProfile();
+  intercompanyTransportConfiguration();
   // Run the GED identity/RW proof before the generic upload-root preflight:
   // otherwise a missing mount could be replaced by a newly created directory
   // on the system disk before the sentinel has been checked.
@@ -69,20 +74,21 @@ async function start(): Promise<void> {
   const httpServer = createServer(app);
   const backgroundLifecycle = startBackgroundLifecycle({
     pool,
-    starters: [
-      startAuthRateLimitMaintenance,
-      startMfaArtifactMaintenance,
-      startExpiredLockMaintenance,
-      startReminderMaintenance,
-      startElectronicInvoiceMaintenance,
-      startSupplierInvoiceMaintenance,
-      startEReportingMaintenance,
-      startWebhookDeliveryMaintenance,
-      startAuthoritativePdfArchiveMaintenance,
-      startPlanningForecastMaintenance,
-      startDurationLearningMaintenance,
-      startCumpProjectionMaintenance,
-    ],
+    starters: selectCompanyBackgroundStarters(companyBackgroundProfile, [
+      { key: "auth-rate-limit", start: startAuthRateLimitMaintenance },
+      { key: "mfa", start: startMfaArtifactMaintenance },
+      { key: "locks", start: startExpiredLockMaintenance },
+      { key: "reminders", start: startReminderMaintenance },
+      { key: "electronic-invoices", start: startElectronicInvoiceMaintenance },
+      { key: "supplier-invoices", start: startSupplierInvoiceMaintenance },
+      { key: "e-reporting", start: startEReportingMaintenance },
+      { key: "webhooks", start: startWebhookDeliveryMaintenance },
+      { key: "authoritative-documents", start: startAuthoritativePdfArchiveMaintenance },
+      { key: "planning-forecast", start: startPlanningForecastMaintenance },
+      { key: "duration-learning", start: startDurationLearningMaintenance },
+      { key: "cump-projection", start: startCumpProjectionMaintenance },
+      ...(companyBackgroundProfile === "LEGACY" ? [] : [{ key: "intercompany-delivery", start: startIntercompanyDeliveryMaintenance }]),
+    ]),
   });
 
   initSocketServer(httpServer);
