@@ -210,6 +210,10 @@ La lecture des 13 classeurs XLSX et de l'export XLS historique n'a trouvé aucun
 mapping explicite entre les 16 références tarifaires et les anciens plans ECxxxx.
 Les correspondances de noms CAD seules ne sont pas utilisées comme versions
 techniques approuvées.
+L'utilisateur demande de créer les 16 fiches avec leurs tarifs, puis de compléter
+la technique dans l'ERP. La reprise initialise donc des fiches à compléter sans
+inventer de plan, gamme ou variante; les contrôles techniques natifs restent
+applicables avant tout lancement qui en dépend.
 
 L'utilisateur confirme que le SIRET définitif EC n'est pas encore disponible et
 qu'il sera renseigné dans le paramétrage ERP de l'entreprise. Une identité de
