@@ -3810,7 +3810,8 @@ async function insertCommandeLignes(
             reconciliation_sources = $24::jsonb,
             reconciliation_decisions = $25::jsonb,
             reconciliation_resolved_at = $26::timestamptz,
-            reconciliation_resolved_by = $27::bigint
+            reconciliation_resolved_by = $27::bigint,
+            intercompany_catalogue_mapping_id = $29::uuid
           WHERE $28::bigint IS NOT NULL
             AND id = $28::bigint
             AND commande_id = $1::bigint
@@ -3844,6 +3845,7 @@ async function insertCommandeLignes(
           ,reconciliation_decisions
           ,reconciliation_resolved_at
           ,reconciliation_resolved_by
+          ,intercompany_catalogue_mapping_id
           )
           SELECT
           $1,
@@ -3873,6 +3875,7 @@ async function insertCommandeLignes(
           $25::jsonb,
           $26::timestamptz,
           $27::bigint
+          ,$29::uuid
           WHERE $28::bigint IS NULL
           RETURNING id::bigint::text AS id
         )
@@ -3909,6 +3912,7 @@ async function insertCommandeLignes(
         reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
         reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
         requestedLineId,
+        l.intercompany_catalogue_mapping_id ?? null,
       ]
     );
 

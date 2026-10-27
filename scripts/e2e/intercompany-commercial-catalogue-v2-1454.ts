@@ -68,6 +68,10 @@ async function main() {
     const localRow = local.rows[0];
     if (!localRow || localRow.article_type !== "PURCHASED" || localRow.article_category !== "achat" || localRow.stock_managed || localRow.variant_code !== published.variant_code || localRow.supplier_mapping_version !== published.supplier_mapping_version || JSON.stringify(localRow.options_snapshot) !== JSON.stringify(published.options_snapshot)) throw new Error("TEST buyer mapping did not retain the published v2 binding");
 
+    process.env.CERP_BUSINESS_COMPANIES_ENABLED = "true";
+    process.env.CERP_SHARED_DIRECTORY_ENABLED = "true";
+    process.env.CERP_COMPANY_ENVIRONMENT = "cerp_test";
+    process.env.CERP_COMPANY_ID = buyerCompany;
     const commandTx = await buyer.connect();
     let buyerOrder: { id: number };
     try {
@@ -80,15 +84,19 @@ async function main() {
     if (!purchaseMessage) throw new Error("TEST EC purchase submission absent");
     process.env.CERP_COMPANY_ID = sellerCompany;
     await receiveIntercompanyMessage(seller, purchaseMessage, { PURCHASE_SUBMITTED: applyPurchaseSubmittedTx });
-    const request = (await seller.query<{ id: string; version: number }>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1::uuid", [purchaseMessage.aggregate_id])).rows[0];
+    const request = (await seller.query<{ id: string; version: number }>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1", [purchaseMessage.aggregate_id])).rows[0];
     if (!request) throw new Error("TEST CRP purchase request absent");
     const accepted = await decideIntercompanyRequest(seller, { company_id: sellerCompany, environment: "cerp_test", profile: "INDUSTRIAL", module_keys: ["commandes-clients"] } as never, 1, request.id, { action: "ACCEPT", expected_version: Number(request.version), idempotency_key: crypto.randomUUID() });
     const sellerOrderId = String(accepted.supplier_sales_order_id);
     const sellerMode = await seller.query<{ fulfilment_mode: string }>("SELECT fulfilment_mode FROM commande_client WHERE id=$1::bigint", [sellerOrderId]);
     if (sellerMode.rows[0]?.fulfilment_mode !== "STANDARD") throw new Error("TEST accepted CRP order is not STANDARD");
     await repoRunCommandeWorkflowAction(sellerOrderId, { action: "check_stock" } as never, 1, "Administrateur Systeme et Reseau");
-    await repoGenerateAffairesFromOrder(sellerOrderId, { decision: null, livraison_count: 1, lines: [] } as never, audit);
-    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode })}\n`);
+    await repoGenerateAffairesFromOrder(sellerOrderId, { decision: null, livraison_count: 1, lines: [] } as never, { ...audit, user_role: "Administrateur Systeme et Reseau" });
+    let standardTransitionDenied = false;
+    try { await buyer.query("UPDATE commande_client SET fulfilment_mode='STANDARD' WHERE id=$1::bigint", [buyerOrder.id]); }
+    catch (error) { standardTransitionDenied = (error as { code?: string }).code === "23514"; }
+    if (!standardTransitionDenied) throw new Error("TEST purchased dropship order was allowed to become STANDARD");
+    process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_PASS ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, buyer_mapping: mapped.id, buyer_article_type: localRow.article_type, buyer_stock_managed: localRow.stock_managed, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode, standard_transition_denied: standardTransitionDenied })}\n`);
   } finally { await buyer.end(); await seller.end(); await globalPool.end(); }
 }
 main().catch(error => { process.stderr.write(`E2E_COMMERCIAL_CATALOGUE_V2_FAIL ${error instanceof Error ? error.stack : String(error)}\n`); process.exitCode = 1; });
