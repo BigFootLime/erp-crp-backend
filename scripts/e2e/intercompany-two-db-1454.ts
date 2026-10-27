@@ -8,12 +8,13 @@ import { receiveIntercompanyMessage } from "../../src/module/entreprises/interco
 import { applyPurchaseSubmittedTx, decideIntercompanyRequest } from "../../src/module/entreprises/intercompany/intercompany-requests.repository";
 import { applyCommercialIntercompanyMessageTx } from "../../src/module/entreprises/intercompany/commercial-intercompany-message.repository";
 import { repoRunCommandeWorkflowAction, repoGenerateAffairesFromOrder } from "../../src/module/commande-client/repository/commande-client.repository";
-import { repoCreateLivraisonFromCommande } from "../../src/module/livraisons/repository/livraisons.repository";
+import { repoCreateLivraisonFromCommande, repoGetLivraisonDetail } from "../../src/module/livraisons/repository/livraisons.repository";
 import { repoVerifyPreparationLot } from "../../src/module/livraisons/repository/livraisons.repository";
 import { svcGenerateCommandeAr, svcSendCommandeAr } from "../../src/module/commande-client/services/commande-ar.service";
 import { repoGetLivraisonShipmentPreview, repoShipLivraison } from "../../src/module/livraisons/repository/livraisons-shipment.repository";
 import { repoFreezeDeliveryQualityDossier } from "../../src/module/livraisons/repository/quality-dossier.repository";
 import { svcGenerateLivraisonPack } from "../../src/module/livraisons/services/pack.service";
+import { repoGetLivraisonPackPreview } from "../../src/module/livraisons/repository/pack.repository";
 import { repoConfirmLivraisonPreparation, repoGetLivraisonPreparation } from "../../src/module/livraisons/repository/livraisons-preparation.repository";
 import { runAuthoritativePdfArchiveWorkerOnce } from "../../src/shared/authoritative-documents/authoritative-document.worker";
 import { repoFindCommandeArOfficialArchiveId } from "../../src/module/commande-client/repository/commande-ar.repository";
@@ -80,6 +81,22 @@ async function seedBuyer(pool: Pool) {
     -- has already been configured in buyer_v2.
     `,[buyerBiller]);
   await pool.query("INSERT INTO erp_settings(key,value_text) VALUES('company.primary_biller_id',$1) ON CONFLICT(key) DO UPDATE SET value_text=EXCLUDED.value_text",[buyerBiller]);
+  // This is the normal EC customer-record destination used by the commercial
+  // form when no intercompany override is supplied. It is deliberately
+  // distinct from the CRP-side EC master address.
+  await pool.query(`UPDATE public.adresse_livraison address
+    SET name='TEST final customer', street='1 rue Fixture TEST', house_number=NULL,
+        address_complement=NULL, postal_code='69001', city='Lyon', country='France'
+    FROM public.clients customer
+    WHERE customer.client_id='901' AND customer.delivery_address_id=address.delivery_address_id`);
+  // The EC invoice customer is the actual final consumer.  Keep it separate
+  // from the seller-side relation customer seeded below: that customer remains
+  // the professional EC company for the supplier's invoice.
+  await pool.query(`UPDATE public.clients
+    SET company_name='TEST final customer', customer_type='INDIVIDUAL',
+        individual_first_name='TEST', individual_last_name='final customer',
+        siren=NULL, siret=NULL, vat_number=NULL, naf_code=NULL
+    WHERE client_id='901'`);
   await pool.query(`INSERT INTO intercompany_supplier_relations(id,buyer_company_id,supplier_company_id,local_role,environment,local_supplier_id,approval_profile_ids,status,currency)
     VALUES($1,$2,$3,'BUYER','cerp_test',$4,ARRAY['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']::uuid[],'ACTIVE','EUR') ON CONFLICT(id) DO NOTHING`,[relation,buyerCompany,sellerCompany,supplier]);
   await pool.query(`INSERT INTO fournisseur_catalogue(id,fournisseur_id,type,article_id,designation,reference_fournisseur,unite,prix_unitaire,devise,actif)
@@ -88,6 +105,14 @@ async function seedBuyer(pool: Pool) {
     VALUES($1,$2,'BUYER',$3,$4,$5,1,$3,'TEST-CRP-001','TEST article dropship','u',120,20,70,20,'EUR',true) ON CONFLICT(id) DO UPDATE SET local_article_id=EXCLUDED.local_article_id,supplier_article_id=EXCLUDED.supplier_article_id`,[mapping,relation,article,catalogue,mapping]);
 }
 async function seedSeller(pool: Pool) {
+  // The supplier-side relation customer is the EC business, never the final
+  // consumer. Keep its master delivery address untouched: the BL destination
+  // is instead supplied by the immutable intercompany snapshot.
+  await pool.query(`UPDATE public.clients
+    SET company_name='TEST EC ACHETEUR v2', customer_type='PROFESSIONAL',
+        individual_first_name=NULL, individual_last_name=NULL,
+        siren='123456789', siret='12345678900010', vat_number='FR123456789', naf_code='2562B'
+    WHERE client_id='901'`);
   await pool.query("UPDATE users SET directory_profile_id='77777777-7777-4777-8777-777777777777'::uuid WHERE username='KEENAN' AND directory_profile_id IS NULL");
   await pool.query("INSERT INTO app_module_user_access(user_id,module_key,access) VALUES(1,'commandes-clients','GRANTED') ON CONFLICT(user_id,module_key) DO UPDATE SET access='GRANTED'");
   const approver=await pool.query<{directory_profile_id:string}>("SELECT directory_profile_id::text FROM users WHERE username='KEENAN' LIMIT 1");
@@ -124,7 +149,7 @@ async function main() {
     await seedBuyer(buyer); await seedSeller(seller);
     process.env.CERP_BUSINESS_COMPANIES_ENABLED='true'; process.env.CERP_SHARED_DIRECTORY_ENABLED='true'; process.env.CERP_COMPANY_ID=buyerCompany; process.env.CERP_COMPANY_ENVIRONMENT='cerp_test';
     const client=await buyer.connect(); let created:{id:number;numero:string};
-    try { await client.query('BEGIN'); created=await repoCreateCommandeNativeTx(client,{client_id:'901',code_client:'E2E-CLIENT-901',date_commande:'2026-10-27',order_type:'FERME',fulfilment_mode:'SUPPLIER_DROPSHIP',intercompany_delivery_address:{recipient_name:'TEST final customer',address_lines:['1 rue Fixture TEST','69001 Lyon'],country_code:'FR',contact_name:null,contact_phone:null} as never,total_ht:240,total_ttc:288,lignes:[{article_id:article,intercompany_catalogue_mapping_id:mapping,designation:'TEST article dropship',quantite:2,unite:'u',prix_unitaire_ht:120,taux_tva:20}]},1); await client.query('COMMIT'); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+    try { await client.query('BEGIN'); created=await repoCreateCommandeNativeTx(client,{client_id:'901',code_client:'E2E-CLIENT-901',date_commande:'2026-10-27',order_type:'FERME',fulfilment_mode:'SUPPLIER_DROPSHIP',total_ht:240,total_ttc:288,lignes:[{article_id:article,intercompany_catalogue_mapping_id:mapping,designation:'TEST article dropship',quantite:2,unite:'u',prix_unitaire_ht:120,taux_tva:20}]},1); await client.query('COMMIT'); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     const queued=await buyer.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='PURCHASE_SUBMITTED' ORDER BY created_at DESC LIMIT 1"); const message=queued.rows[0]?.message; if(!message) throw new Error('PURCHASE_SUBMITTED outbox message absent');
     // Decision-side helpers resolve the local company from the runtime env.
     // The SQL work below remains on the explicit seller pool.
@@ -141,6 +166,16 @@ async function main() {
     await repoRunCommandeWorkflowAction(sellerOrderId,{action:'check_stock'} as never,1,'Administrateur Systeme et Reseau');
     await repoGenerateAffairesFromOrder(sellerOrderId,{decision:null,livraison_count:1,lines:[]} as never,{user_id:1,user_role:'Administrateur Systeme et Reseau',ip:null,user_agent:null,device_type:null,os:null,browser:null,path:null,page_key:'e2e.intercompany',client_session_id:null});
     const delivery=await repoCreateLivraisonFromCommande(Number(sellerOrderId),1);
+    const assertNativeDestination = (detail: Awaited<ReturnType<typeof repoGetLivraisonDetail>> | null, stage: string) => {
+      const address = detail?.bon_livraison.adresse_livraison;
+      if (!address || address.name !== 'TEST final customer' || address.street !== '1 rue Fixture TEST' || address.postal_code !== '69001' || address.city !== 'Lyon') {
+        throw new Error(`TEST ${stage} native BL destination is not the frozen final customer`);
+      }
+      return address.label;
+    };
+    const nativeDestinationBeforeShipment = assertNativeDestination(await repoGetLivraisonDetail(delivery.id), 'before shipment');
+    const sellerMasterAddress = await seller.query<{name:string;street:string;postal_code:string;city:string}>(`SELECT address.name,address.street,address.postal_code,address.city FROM clients customer JOIN adresse_livraison address ON address.delivery_address_id=customer.delivery_address_id WHERE customer.client_id='901'`);
+    if (sellerMasterAddress.rows[0]?.street === '1 rue Fixture TEST') throw new Error('TEST supplier EC master address was overwritten by final customer destination');
     const ar=await svcGenerateCommandeAr({commande_id:Number(sellerOrderId),user_id:1,user_role:'Administrateur Systeme et Reseau',idempotency_key:delivery.id});
     // The normal worker owns the authoritative GED transition.  Drain its
     // bounded durable queue here instead of fabricating an archived document.
@@ -169,9 +204,13 @@ async function main() {
     if(!shipmentPreview?.quality_release || shipmentPreview.quality_release.state!=='READY') throw new Error(`TEST seller quality release is not ready: ${shipmentPreview?.quality_release?.state ?? 'missing'}`);
     await repoFreezeDeliveryQualityDossier({bonLivraisonId:delivery.id,expectedPreviewSha256:shipmentPreview.quality_release.preview_sha256,reason:'TEST historical OLD quality dossier',actorUserId:1,idempotencyKey:delivery.id});
     await svcGenerateLivraisonPack({bonLivraisonId:delivery.id,actorUserId:1,body:{quality_preview_sha256:shipmentPreview.quality_release.preview_sha256,include_documents:false} as never});
+    const packPreview = await repoGetLivraisonPackPreview(delivery.id);
+    const packAddress = packPreview.bon_livraison.adresse_livraison;
+    if (!packAddress || packAddress.name !== 'TEST final customer' || packAddress.street !== '1 rue Fixture TEST' || packAddress.postal_code !== '69001' || packAddress.city !== 'Lyon') throw new Error('TEST pack reader does not expose the frozen final destination');
     const readyPreview=await repoGetLivraisonShipmentPreview(delivery.id);
     if(!readyPreview?.can_ship) throw new Error(`TEST seller BL remains blocked after native preparation and pack: ${JSON.stringify(readyPreview?.blockers ?? [])}`);
     await repoShipLivraison(delivery.id,{expected_version:readyPreview.row_version,preview_hash:readyPreview.preview_hash,commentaire:'TEST EC shipment'} as never,1,delivery.id);
+    const nativeDestinationAfterShipment = assertNativeDestination(await repoGetLivraisonDetail(delivery.id), 'after shipment');
     const dispatched=(await seller.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='SHIPMENT_DISPATCHED' ORDER BY created_at DESC LIMIT 1")).rows[0]?.message;
     if(!dispatched) throw new Error('SHIPMENT_DISPATCHED outbox message absent');
     const snapshot=dispatched.payload as { document:{id:string;snapshot_sha256?:string}; lines:Array<{quantity:number}> };
@@ -197,7 +236,7 @@ async function main() {
       seller.query<{id:string}>("SELECT id::text FROM commande_ligne WHERE commande_id=$1 ORDER BY id",[sellerOrderId]),
       seller.query<{id:string}>("SELECT id::text FROM bon_livraison_ligne WHERE bon_livraison_id=$1::uuid ORDER BY id",[delivery.id]),
     ]);
-    process.stdout.write(`E2E_DURABLE_PASS ${JSON.stringify({buyer_database:identities[0].rows[0].database,seller_database:identities[1].rows[0].database,buyer_legal_name:documentSnapshot.issuer?.company_name,buyer_order:created!.id,buyer_lines:buyerLines.rows.map(row=>row.id),seller_order:sellerOrderId,seller_lines:sellerLines.rows.map(row=>row.id),seller_delivery:delivery.id,seller_delivery_lines:deliveryLines.rows.map(row=>row.id),shipment_message:dispatched.id,shipment_document:snapshot.document.id,shipment_document_snapshot_sha256:snapshot.document.snapshot_sha256 ?? null,shipment_recipient:documentSnapshot.client_name,shipment_destination:documentSnapshot.address_label,ar_official_archive:arArchiveId,buyer_status:buyerStatus.rows[0]?.statut,receipt_count:receiptCount.rows[0]?.count,buyer_stock_movements_before:initialBuyerStockMovements.rows[0]?.count,buyer_stock_movements_after:finalBuyerStockMovements.rows[0]?.count,stock_movements_posted:finalSeller.rows[0]?.posted})}\n`);
+    process.stdout.write(`E2E_DURABLE_PASS ${JSON.stringify({buyer_database:identities[0].rows[0].database,seller_database:identities[1].rows[0].database,buyer_legal_name:documentSnapshot.issuer?.company_name,buyer_order:created!.id,buyer_lines:buyerLines.rows.map(row=>row.id),seller_order:sellerOrderId,seller_lines:sellerLines.rows.map(row=>row.id),seller_delivery:delivery.id,seller_delivery_lines:deliveryLines.rows.map(row=>row.id),shipment_message:dispatched.id,shipment_document:snapshot.document.id,shipment_document_snapshot_sha256:snapshot.document.snapshot_sha256 ?? null,shipment_recipient:documentSnapshot.client_name,shipment_destination:documentSnapshot.address_label,native_destination_before_shipment:nativeDestinationBeforeShipment,native_destination_after_shipment:nativeDestinationAfterShipment,pack_destination:packAddress.label,seller_ec_master_address:sellerMasterAddress.rows[0] ?? null,ar_official_archive:arArchiveId,buyer_status:buyerStatus.rows[0]?.statut,receipt_count:receiptCount.rows[0]?.count,buyer_stock_movements_before:initialBuyerStockMovements.rows[0]?.count,buyer_stock_movements_after:finalBuyerStockMovements.rows[0]?.count,stock_movements_posted:finalSeller.rows[0]?.posted})}\n`);
   } finally { await buyer.end(); await seller.end(); await globalPool.end(); }
 }
 main().catch(error=>{process.stderr.write(`E2E_DURABLE_FAIL ${error instanceof Error?error.stack:String(error)}\n`);process.exitCode=1});
