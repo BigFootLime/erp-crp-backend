@@ -1220,6 +1220,7 @@ export async function repoInternalListDocumentParentLinks(documentId: string): P
 export async function repoInternalParentLinkExists(entityType: string, entityId: string): Promise<boolean> {
   const key = entityType.trim().toUpperCase();
   const statements: Record<string, { sql: string; values: unknown[] }> = {
+    METROLOGIE_EQUIPEMENT: { sql: "SELECT 1 FROM public.metrologie_equipements WHERE id = $1::uuid AND deleted_at IS NULL LIMIT 1", values: [entityId] },
     CLIENT: { sql: "SELECT 1 FROM public.clients WHERE client_id = $1 LIMIT 1", values: [entityId] },
     FOURNISSEUR: { sql: "SELECT 1 FROM public.fournisseurs WHERE id = $1::uuid LIMIT 1", values: [entityId] },
     DEVIS: { sql: "SELECT 1 FROM public.devis WHERE id = $1::bigint LIMIT 1", values: [entityId] },

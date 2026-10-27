@@ -7,6 +7,7 @@
 import { z } from "zod";
 
 import { findMetrologyEquipmentProfile } from "../domain/metrology-equipment-profiles";
+import { metrologyAdditionalFieldsSchema, metrologyControlSchema } from "../domain/metrology-control-schema";
 import {
   METROLOGY_EQUIPMENT_STATES,
   METROLOGY_IMPACT_DECISIONS,
@@ -57,19 +58,22 @@ const historicalBoolean = z.preprocess((value) => {
   if (["true", "1", "oui"].includes(normalized)) return true;
   if (["false", "0", "non"].includes(normalized)) return false;
   return value;
-}, z.boolean());
+}, z.boolean().nullable());
+const optionalHistoricalDate = z.preprocess((value) => value === "" ? null : value, z.iso.date().nullable().optional());
 
 const historicalSheetSchema = z.object({
-  COCONTR: z.string().trim().max(200).optional(),
-  IDCONTROLE: z.string().trim().max(120).optional(), PRECIS: z.string().trim().max(200).optional(),
-  PERIOD: z.string().trim().max(80).optional(), DATEENTR: isoDate.optional(), DATEDERN: isoDate.optional(),
-  REBUT: historicalBoolean.optional(), ETREF: z.string().trim().max(200).optional(), MIREF: z.string().trim().max(200).optional(),
-  MAREF: z.string().trim().max(200).optional(), APMI: z.string().trim().max(200).optional(), APMA: z.string().trim().max(200).optional(),
-  CODEEMP: z.string().trim().max(120).optional(), COSERVICE: z.string().trim().max(120).optional(), DATESO: isoDate.optional(),
-  TYPEP_RIODE: z.string().trim().max(80).optional(), OBS: z.string().trim().max(5000).optional(),
-}).strict();
+  COCONTR: z.string().trim().max(200).nullable().optional(),
+  IDCONTROLE: z.string().trim().max(120).nullable().optional(), PRECIS: z.string().trim().max(200).nullable().optional(),
+  PERIOD: z.string().trim().max(80).nullable().optional(), DATEENTR: optionalHistoricalDate, DATEDERN: optionalHistoricalDate,
+  REBUT: historicalBoolean.optional(), ETREF: z.string().trim().max(200).nullable().optional(), MIREF: z.string().trim().max(200).nullable().optional(),
+  MAREF: z.string().trim().max(200).nullable().optional(), APMI: z.string().trim().max(200).nullable().optional(), APMA: z.string().trim().max(200).nullable().optional(),
+  CODEEMP: z.string().trim().max(120).nullable().optional(), COSERVICE: z.string().trim().max(120).nullable().optional(), DATESO: optionalHistoricalDate,
+  TYPEP_RIODE: z.string().trim().max(80).nullable().optional(), OBS: z.string().trim().max(5000).nullable().optional(),
+  DESA1: z.string().trim().max(500).nullable().optional(), MARQU: z.string().trim().max(200).nullable().optional(), NUMSERIE: z.string().trim().max(200).nullable().optional(),
+}).catchall(z.unknown());
 const ficheMetrologieSchema = z.object({
   version: z.literal(1), profile_code: z.enum(METROLOGY_PROFILE_CODES), historique: historicalSheetSchema.default({}),
+  control_schema: metrologyControlSchema.nullable().optional(),
 }).strict();
 
 export const paginationSchema = z.object({
@@ -409,6 +413,7 @@ export const createExecutionSchema = z.object({
               visa: shortText(120).nullable().default(null),
               etat_mecanique: longText(500).nullable().default(null),
               entretien: longText(500).nullable().default(null),
+              additional_fields: metrologyAdditionalFieldsSchema.optional(),
             })
             .strict()
             .nullable()
@@ -731,6 +736,26 @@ export const timelineQuerySchema = paginationSchema
   })
   .strict();
 export type TimelineQueryDTO = z.infer<typeof timelineQuerySchema>;
+
+/* Reprise legacy : les classeurs sont préalablement placés dans le coffre
+ * d'import par l'opérateur. Une API ne reçoit jamais un chemin serveur. */
+export const legacyImportRowResolutionSchema = z.object({
+  params: z.object({ id: uuid, childId: uuid }),
+  body: z.object({
+    equipement_id: optionalUuid,
+    disposition: z.enum(["IMPORTED", "AMBIGUOUS", "SKIPPED", "CONFLICT"]),
+    reason: z.string().trim().min(3).max(1000),
+  }).strict(),
+});
+const legacyGroupSchema = z.object({ group_id: z.string().trim().min(1).max(120), group_kind: z.literal("registry-apparatus"), observed_code_verbatim: z.string().trim().min(1).max(120), identity_status: z.enum(["exact", "legacy-dated-code"]), designation: z.string().trim().min(1).max(500), marque: z.string().trim().max(200).nullable().optional(), numero_serie: z.string().trim().max(200).nullable().optional(), historique: z.record(z.string(), z.unknown()).default({}), source_sha256: z.string().regex(/^[a-fA-F0-9]{64}$/) }).strict();
+export const legacyImportPreviewSchema = z.object({ body: z.object({ groups: z.array(legacyGroupSchema).min(1).max(500) }).strict() });
+export const legacyImportApplySchema = z.object({ body: legacyGroupSchema });
+export const legacyImportListQuerySchema = paginationSchema.strict();
+export const legacyImportRowsQuerySchema = paginationSchema.extend({
+  disposition: z.enum(["PENDING", "IMPORTED", "AMBIGUOUS", "SKIPPED", "CONFLICT"]).optional(),
+  source_file_id: uuid.optional(),
+  kind: z.string().trim().min(1).max(80).optional(),
+}).strict();
 
 export const usageQuerySchema = paginationSchema
   .extend({

@@ -44,6 +44,9 @@ import {
   upsertCategorySchema,
   usageQuerySchema,
   validateExecutionSchema,
+  legacyImportRowResolutionSchema,
+  legacyImportListQuerySchema,
+  legacyImportRowsQuerySchema,
 } from "../validators/metrology-360.validators";
 import {
   svcCancelCertificate,
@@ -80,6 +83,13 @@ import {
   svcUploadCertificate,
   svcUpsertCategory,
   svcValidateExecution,
+  svcListLegacyObservations,
+  svcGetLegacyImportBatch,
+  svcResolveLegacyImportRow,
+  svcGetLegacyImportSourceFile,
+  svcRecordLegacySourceRead,
+  svcListLegacyImportRows,
+  svcListLegacyImportBatches,
 } from "../services/metrology-360.service";
 
 /**
@@ -204,6 +214,59 @@ export const getEquipment: RequestHandler = asyncHandler(async (req, res) => {
   const out = await svcGetEquipmentDetail({ id: params.id, actor });
   if (!out) notFound("Équipement");
   res.json(out);
+});
+
+export const listLegacyObservations: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(idParamSchema, { params: req.params });
+  const query = parseOrThrow(timelineQuerySchema, req.query);
+  const out = await svcListLegacyObservations({ equipmentId: params.id, page: query.page, pageSize: query.pageSize });
+  res.json({ ...out, items: out.items.map(({ batch_id, source_file_id, sheet_name, source_coordinate, ...item }) => ({ ...item,
+    flags: { origin: "IMPORTED_LEGACY", cerp_qualified: false, visa_declared: Boolean(item.legacy_visa_text), verdict_declared: Boolean(item.legacy_verdict_text), raw_immutable: true },
+    source: { batch_id, source_file_id, sheet_name, coordinate: source_coordinate },
+  })) });
+});
+
+export const getLegacyImportBatch: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(idParamSchema, { params: req.params });
+  const out = await svcGetLegacyImportBatch(params.id);
+  if (!out) notFound("Import legacy");
+  res.json(out);
+});
+export const listLegacyImportBatches: RequestHandler = asyncHandler(async (req, res) => {
+  const query = parseOrThrow(legacyImportListQuerySchema, req.query);
+  res.json(await svcListLegacyImportBatches(query.page, query.pageSize));
+});
+export const listLegacyImportRows: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(idParamSchema, { params: req.params });
+  const query = parseOrThrow(legacyImportRowsQuerySchema, req.query);
+  res.json(await svcListLegacyImportRows(params.id, query.page, query.pageSize, query));
+});
+
+export const downloadLegacyImportSource: RequestHandler = asyncHandler(async (req, res) => {
+  const { params } = parseOrThrow(idParamSchema, { params: req.params });
+  const source = await svcGetLegacyImportSourceFile(params.id);
+  if (source.av_status !== "CLEAN") {
+    throw new HttpError(409, "METROLOGY_IMPORT_SOURCE_UNAVAILABLE", "La source n'est pas validée par l'antivirus.");
+  }
+  await svcRecordLegacySourceRead(params.id, buildActor(req));
+  res.setHeader("X-CERP-Document-SHA256", source.sha256);
+  res.setHeader("Content-Security-Policy", "sandbox; default-src 'none'");
+  // The stored path is server-owned and opaque to the caller. Secure download
+  // sets attachment/nosniff headers and never discloses it in JSON.
+  await sendSecureStoredFile(res, {
+    filePath: resolveCerpStoragePath(source.storage_path),
+    allowedRoots: [svcMetrologyDocsBaseDir()],
+    filename: source.source_name,
+    mimeType: source.mime_type ?? "application/octet-stream",
+    download: true,
+    expectedSha256: source.sha256,
+  });
+});
+
+export const resolveLegacyImportRow: RequestHandler = asyncHandler(async (req, res) => {
+  const actor = buildActor(req);
+  const { params, body } = parseOrThrow(legacyImportRowResolutionSchema, { params: req.params, body: req.body });
+  res.json(await svcResolveLegacyImportRow({ batchId: params.id, rowId: params.childId, equipmentId: body.equipement_id ?? null, disposition: body.disposition, reason: body.reason, actor }));
 });
 
 export const createEquipment: RequestHandler = asyncHandler(async (req, res) => {
