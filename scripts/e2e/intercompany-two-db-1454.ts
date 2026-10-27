@@ -44,6 +44,9 @@ async function main() {
     const client=await buyer.connect(); let created:{id:number;numero:string};
     try { await client.query('BEGIN'); created=await repoCreateCommandeNativeTx(client,{client_id:'901',code_client:'E2E-CLIENT-901',date_commande:'2026-10-27',order_type:'FERME',fulfilment_mode:'SUPPLIER_DROPSHIP',intercompany_delivery_address:{recipient_name:'TEST final customer',address_lines:['1 rue Fixture TEST','69001 Lyon'],country_code:'FR',contact_name:null,contact_phone:null} as never,total_ht:240,total_ttc:288,lignes:[{article_id:article,intercompany_catalogue_mapping_id:mapping,designation:'TEST article dropship',quantite:2,unite:'u',prix_unitaire_ht:120,taux_tva:20}]},1); await client.query('COMMIT'); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     const queued=await buyer.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='PURCHASE_SUBMITTED' ORDER BY created_at DESC LIMIT 1"); const message=queued.rows[0]?.message; if(!message) throw new Error('PURCHASE_SUBMITTED outbox message absent');
+    // Decision-side helpers resolve the local company from the runtime env.
+    // The SQL work below remains on the explicit seller pool.
+    process.env.CERP_COMPANY_ID=sellerCompany;
     const receipt=await receiveIntercompanyMessage(seller,message,{PURCHASE_SUBMITTED:applyPurchaseSubmittedTx});
     const pending=await seller.query<{id:string;version:number}>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1",[message.aggregate_id]); const request=pending.rows[0]; if(!request) throw new Error('seller request absent');
     const result=await decideIntercompanyRequest(seller,{company_id:sellerCompany,environment:'cerp_test',profile:'INDUSTRIAL',module_keys:['commandes-clients']} as never,1,request.id,{action:'ACCEPT',expected_version:Number(request.version),idempotency_key:'66666666-6666-4666-8666-666666666666'});
