@@ -7,6 +7,12 @@ import {
 } from "../electronic-invoicing/electronic-invoice-regulatory.domain";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD");
+/**
+ * Decimal strings participate in the persisted draft preview hash.  Normalize
+ * their scale at the HTTP boundary so a UI value such as `"0"` cannot become
+ * a different value from the database's `numeric(…, 4)::text` (`"0.0000"`)
+ * when the issued invoice rebuilds its immutable preview.
+ */
 const decimal = (maxDecimals: number, label: string) =>
   z
     .string()
@@ -14,7 +20,11 @@ const decimal = (maxDecimals: number, label: string) =>
     .regex(
       new RegExp(`^(?:0|[1-9]\\d*)(?:\\.\\d{1,${maxDecimals}})?$`),
       `${label} doit être un nombre décimal positif avec au plus ${maxDecimals} décimales`
-    );
+    )
+    .transform((value) => {
+      const [whole, fraction = ""] = value.split(".");
+      return `${whole}.${fraction.padEnd(maxDecimals, "0")}`;
+    });
 
 export const financeUuidParamsSchema = z
   .object({
