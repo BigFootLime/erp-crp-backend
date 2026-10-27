@@ -27,10 +27,13 @@ async function seedBuyer(pool: Pool) {
 }
 async function seedSeller(pool: Pool) {
   await pool.query("UPDATE users SET directory_profile_id='77777777-7777-4777-8777-777777777777'::uuid WHERE username='KEENAN' AND directory_profile_id IS NULL");
+  await pool.query("INSERT INTO app_module_user_access(user_id,module_key,access) VALUES(1,'commandes-clients','GRANTED') ON CONFLICT(user_id,module_key) DO UPDATE SET access='GRANTED'");
   const approver=await pool.query<{directory_profile_id:string}>("SELECT directory_profile_id::text FROM users WHERE username='KEENAN' LIMIT 1");
   const profile=approver.rows[0]?.directory_profile_id; if(!profile) throw new Error("TEST approver unavailable");
   await pool.query(`INSERT INTO intercompany_supplier_relations(id,buyer_company_id,supplier_company_id,local_role,environment,local_customer_id,approval_profile_ids,status,currency)
     VALUES($1,$2,$3,'SUPPLIER','cerp_test','901',ARRAY[$4]::uuid[],'ACTIVE','EUR') ON CONFLICT(id) DO NOTHING`,[relation,buyerCompany,sellerCompany,profile]);
+  await pool.query(`INSERT INTO intercompany_commercial_catalogue(id,relation_id,local_role,local_article_id,supplier_catalogue_mapping_id,supplier_mapping_version,supplier_article_id,supplier_reference,designation,unit,supplier_sale_unit_price,purchase_vat_rate,currency,active)
+    VALUES($1,$2,'SUPPLIER',$3,$1,1,$3,'TEST-CRP-001','TEST article dropship','u',70,20,'EUR',true) ON CONFLICT(id) DO NOTHING`,[mapping,relation,article]);
 }
 
 async function main() {
@@ -42,7 +45,7 @@ async function main() {
     try { await client.query('BEGIN'); created=await repoCreateCommandeNativeTx(client,{client_id:'901',code_client:'E2E-CLIENT-901',date_commande:'2026-10-27',order_type:'FERME',fulfilment_mode:'SUPPLIER_DROPSHIP',intercompany_delivery_address:{recipient_name:'TEST final customer',address_lines:['1 rue Fixture TEST','69001 Lyon'],country_code:'FR',contact_name:null,contact_phone:null} as never,total_ht:240,total_ttc:288,lignes:[{article_id:article,intercompany_catalogue_mapping_id:mapping,designation:'TEST article dropship',quantite:2,unite:'u',prix_unitaire_ht:120,taux_tva:20}]},1); await client.query('COMMIT'); } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
     const queued=await buyer.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='PURCHASE_SUBMITTED' ORDER BY created_at DESC LIMIT 1"); const message=queued.rows[0]?.message; if(!message) throw new Error('PURCHASE_SUBMITTED outbox message absent');
     const receipt=await receiveIntercompanyMessage(seller,message,{PURCHASE_SUBMITTED:applyPurchaseSubmittedTx});
-    const pending=await seller.query<{id:string;version:number}>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1::uuid",[message.aggregate_id]); const request=pending.rows[0]; if(!request) throw new Error('seller request absent');
+    const pending=await seller.query<{id:string;version:number}>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1",[message.aggregate_id]); const request=pending.rows[0]; if(!request) throw new Error('seller request absent');
     const result=await decideIntercompanyRequest(seller,{company_id:sellerCompany,environment:'cerp_test',profile:'INDUSTRIAL',module_keys:['commandes-clients']} as never,1,request.id,{action:'ACCEPT',expected_version:Number(request.version),idempotency_key:'66666666-6666-4666-8666-666666666666'});
     console.log(JSON.stringify({buyer_order:created!,outbox_kind:message.kind,seller_receipt:receipt.status,seller_request:result.state,seller_order:result.supplier_sales_order_id}));
   } finally { await buyer.end(); await seller.end(); }
