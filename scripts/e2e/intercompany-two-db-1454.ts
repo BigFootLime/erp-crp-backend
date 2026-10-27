@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { repoCreateCommandeNativeTx } from "../../src/module/commande-client/repository/commande-client.repository";
 import { receiveIntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-inbox.repository";
 import { applyPurchaseSubmittedTx, decideIntercompanyRequest } from "../../src/module/entreprises/intercompany/intercompany-requests.repository";
+import { applyCommercialIntercompanyMessageTx } from "../../src/module/entreprises/intercompany/commercial-intercompany-message.repository";
 import type { IntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-message";
 
 const buyerUrl = process.env.CERP_E2E_BUYER_DATABASE_URL;
@@ -50,7 +51,12 @@ async function main() {
     const receipt=await receiveIntercompanyMessage(seller,message,{PURCHASE_SUBMITTED:applyPurchaseSubmittedTx});
     const pending=await seller.query<{id:string;version:number}>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1",[message.aggregate_id]); const request=pending.rows[0]; if(!request) throw new Error('seller request absent');
     const result=await decideIntercompanyRequest(seller,{company_id:sellerCompany,environment:'cerp_test',profile:'INDUSTRIAL',module_keys:['commandes-clients']} as never,1,request.id,{action:'ACCEPT',expected_version:Number(request.version),idempotency_key:'66666666-6666-4666-8666-666666666666'});
-    console.log(JSON.stringify({buyer_order:created!,outbox_kind:message.kind,seller_receipt:receipt.status,seller_request:result.state,seller_order:result.supplier_sales_order_id}));
+    const decision=(await seller.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='ORDER_DECIDED' ORDER BY created_at DESC LIMIT 1")).rows[0]?.message; if(!decision) throw new Error('ORDER_DECIDED outbox message absent');
+    process.env.CERP_COMPANY_ID=buyerCompany;
+    const acknowledgement=await receiveIntercompanyMessage(buyer,decision,{ORDER_DECIDED:applyCommercialIntercompanyMessageTx});
+    const replay=await receiveIntercompanyMessage(buyer,decision,{ORDER_DECIDED:applyCommercialIntercompanyMessageTx});
+    const linked=await buyer.query<{supplier_order_state:string;supplier_sales_order_id:string}>("SELECT supplier_order_state,supplier_sales_order_id FROM intercompany_purchase_order_links WHERE buyer_sales_order_id=$1",[created!.id]); if(linked.rows[0]?.supplier_order_state!=='ACCEPTED') throw new Error('buyer decision projection absent');
+    console.log(JSON.stringify({buyer_order:created!,outbox_kind:message.kind,seller_receipt:receipt.status,seller_request:result.state,seller_order:result.supplier_sales_order_id,buyer_acknowledgement:acknowledgement.status,buyer_replay:replay.status}));
   } finally { await buyer.end(); await seller.end(); }
 }
 main().catch(error=>{console.error(error instanceof Error?error.stack:error);process.exitCode=1});
