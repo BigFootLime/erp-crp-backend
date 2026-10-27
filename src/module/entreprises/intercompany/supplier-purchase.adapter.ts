@@ -12,6 +12,8 @@ const lineSchema = z.object({
 }).strict();
 const payloadSchema = z.object({
   schema_version: z.literal(1), buyer_sales_order_id: z.string().regex(/^\d+$/), buyer_purchase_order_id: uuid, relation_id: uuid,
+  buyer_legal_snapshot: z.object({ legal_name: z.string().trim().min(1), registration_number: z.string().trim().min(1).nullish(), vat_number: z.string().trim().min(1).nullish(), address_lines: z.array(z.string().trim().min(1)).min(1).max(8), country_code: z.string().trim().length(2).nullish(), issued_at: z.string().datetime({ offset: true }) }).strict(),
+  final_delivery_address_snapshot: z.object({ recipient_name: z.string().trim().min(1), address_lines: z.array(z.string().trim().min(1)).min(1).max(8), country_code: z.string().trim().length(2).nullish(), contact_name: z.string().trim().min(1).nullish(), contact_phone: z.string().trim().min(1).nullish() }).strict(),
   delivery_address: z.object({ name: z.string().nullish(), house_number: z.string().nullish(), street: z.string().nullish(), address_complement: z.string().nullish(), postal_code: z.string().nullish(), city: z.string().nullish(), country: z.string().nullish() }).strict(),
   lines: z.array(lineSchema).min(1).max(200),
 }).strict();
