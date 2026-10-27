@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "cbf5d3247193fce070d1c313e4997bde8b74828857115f12d6e63120897b4e64";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "135e7e5e79b3c9257579d98b1fa8ab39a94eb6ffa37a263b295a5a49eb4a5388";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -2540,6 +2540,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "middleware": [
       "anonymous",
       "tabletPinLoginRateLimit",
+      "companyLoginTargetMiddleware",
       "tabletPinLogin"
     ],
     "authenticated": false,
@@ -2552,6 +2553,7 @@ export const GENERATED_ROUTE_INVENTORY = [
     "middleware": [
       "anonymous",
       "tabletPinPairRateLimit",
+      "companyLoginTargetMiddleware",
       "tabletPinPair"
     ],
     "authenticated": false,
