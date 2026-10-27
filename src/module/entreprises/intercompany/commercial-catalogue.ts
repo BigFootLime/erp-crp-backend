@@ -20,6 +20,7 @@ export const commercialCatalogueCreateSchema = z.object({
   }).strict().optional(),
   supplier_catalogue_id: uuid,
   supplier_catalogue_mapping_id: uuid,
+  supplier_mapping_version: z.number().int().positive(),
   supplier_article_id: uuid,
   supplier_piece_technique_id: uuid.nullish(),
   supplier_piece_technique_version_id: uuid.nullish(),
@@ -42,7 +43,7 @@ export const commercialCatalogueCreateSchema = z.object({
 export type CommercialCatalogueCreate = z.infer<typeof commercialCatalogueCreateSchema>;
 
 export const commercialCataloguePatchSchema = commercialCatalogueCreateSchema
-  .omit({ relation_id: true, local_article_id: true, local_article: true, supplier_catalogue_id: true })
+  .omit({ relation_id: true, local_article_id: true, local_article: true, supplier_catalogue_id: true, supplier_mapping_version: true })
   .partial()
   .extend({ expected_version: z.number().int().positive(), active: z.boolean().optional() })
   .strict();
@@ -50,10 +51,12 @@ export type CommercialCataloguePatch = z.infer<typeof commercialCataloguePatchSc
 
 export type CommercialCatalogueItem = {
   id: string; relation_id: string; local_article_id: string; supplier_catalogue_id: string; supplier_catalogue_mapping_id: string;
+  supplier_mapping_version?: number;
   supplier_article_id: string; supplier_piece_technique_id: string | null; supplier_piece_technique_version_id: string | null;
   supplier_reference: string | null; designation: string; unit: string;
   buyer_sale_unit_price: number; buyer_sale_vat_rate: number; purchase_unit_price: number; purchase_vat_rate: number;
   currency: string; version: number; active: boolean;
+  supplier_sale_unit_price?: number | null; variant_code?: string; options_snapshot?: Record<string, unknown>;
 };
 
 export const supplierDropshipModeSchema = z.literal("SUPPLIER_DROPSHIP");

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS public.intercompany_commercial_catalogue (
   local_article_id uuid NULL REFERENCES public.articles(id) ON DELETE RESTRICT,
   supplier_catalogue_id uuid NULL REFERENCES public.fournisseur_catalogue(id) ON DELETE RESTRICT,
   supplier_catalogue_mapping_id uuid NOT NULL,
+  supplier_mapping_version integer NOT NULL DEFAULT 1,
   supplier_article_id uuid NOT NULL,
   supplier_piece_technique_id uuid NULL,
   supplier_piece_technique_version_id uuid NULL,
@@ -71,6 +72,7 @@ CREATE TABLE IF NOT EXISTS public.intercompany_commercial_catalogue (
   CONSTRAINT intercompany_commercial_catalogue_party_ck CHECK ((local_role='BUYER' AND local_article_id IS NOT NULL AND supplier_catalogue_id IS NOT NULL AND buyer_sale_unit_price IS NOT NULL AND purchase_unit_price IS NOT NULL) OR (local_role='SUPPLIER' AND local_article_id IS NOT NULL AND supplier_catalogue_id IS NULL AND buyer_sale_unit_price IS NULL AND supplier_sale_unit_price IS NOT NULL)),
   CONSTRAINT intercompany_commercial_catalogue_vat_ck CHECK (buyer_sale_vat_rate BETWEEN 0 AND 100 AND purchase_vat_rate BETWEEN 0 AND 100),
   CONSTRAINT intercompany_commercial_catalogue_version_ck CHECK (version > 0),
+  CONSTRAINT intercompany_commercial_catalogue_supplier_mapping_version_ck CHECK (supplier_mapping_version > 0),
   CONSTRAINT intercompany_commercial_catalogue_currency_ck CHECK (currency ~ '^[A-Z]{3}$'),
   CONSTRAINT intercompany_commercial_catalogue_supplier_binding_uq UNIQUE (relation_id,supplier_reference,variant_code)
 );

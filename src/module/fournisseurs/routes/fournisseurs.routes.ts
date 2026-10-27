@@ -2,7 +2,7 @@ import { Router } from "express"
 import {readSupplierReviews,readSupplierReviewsDue,readSupplierReviewOptions,writeSupplierReview} from "../controllers/supplier-periodic-review.controller"
 import {createClientApprovalRevision,readClientApprovalEvidence,readClientApprovalHistory,readClientApprovals} from "../controllers/client-supplier-approval.controller"
 import { SUPPLIER_WRITE_ROLES } from "../fournisseurs.permissions"
-import { createCommercialCatalogue, listCommercialCatalogue, patchCommercialCatalogue } from "../../entreprises/intercompany/commercial-catalogue.controller"
+import { commercialCatalogueOptions, createCommercialCatalogue, listCommercialCatalogue, patchCommercialCatalogue } from "../../entreprises/intercompany/commercial-catalogue.controller"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
@@ -64,6 +64,7 @@ router.get("/client-approvals", readClientApprovals)
 router.get("/client-approvals/evidence", readClientApprovalEvidence)
 router.get("/client-approvals/:scopeId/history", readClientApprovalHistory)
 router.get("/intercompany/catalogue", listCommercialCatalogue)
+router.get("/intercompany/catalogue/options", commercialCatalogueOptions)
 router.post("/intercompany/catalogue", createCommercialCatalogue)
 router.patch("/intercompany/catalogue/:id", patchCommercialCatalogue)
 router.post("/client-approvals/revisions", authorizeRole(...QUALIF), createClientApprovalRevision)
