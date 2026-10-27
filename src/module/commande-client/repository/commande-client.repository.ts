@@ -1816,9 +1816,24 @@ type CommandeWorkflowHeader = {
   numero: string;
   client_id: string | null;
   order_type: string | null;
+  fulfilment_mode?: string | null;
   statut: CommandeWorkflowStatus;
   raw_statut: string | null;
 };
+
+function isSupplierDropship(fulfilmentMode: unknown): boolean {
+  return String(fulfilmentMode ?? "").trim().toUpperCase() === "SUPPLIER_DROPSHIP";
+}
+
+function assertCommercialOnlyDropship(fulfilmentMode: unknown): void {
+  if (isSupplierDropship(fulfilmentMode)) {
+    throw new HttpError(
+      409,
+      "SUPPLIER_DROPSHIP_INDUSTRIAL_FLOW_FORBIDDEN",
+      "Une commande en dropship fournisseur ne peut pas créer d'affaire, d'OF, de réservation ou d'étape stock locale."
+    );
+  }
+}
 
 type WorkflowCheckpointRow = {
   id: string;
@@ -1896,6 +1911,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
     numero: string;
     client_id: string | null;
     order_type: string | null;
+    fulfilment_mode: string | null;
     raw_statut: string | null;
   }>(
     `
@@ -1904,6 +1920,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
         cc.numero,
         cc.client_id,
         cc.order_type,
+        cc.fulfilment_mode,
         st.nouveau_statut AS raw_statut
       FROM commande_client cc
       LEFT JOIN LATERAL (
@@ -1927,6 +1944,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
     numero: row.numero,
     client_id: row.client_id,
     order_type: row.order_type,
+    fulfilment_mode: row.fulfilment_mode,
     raw_statut: row.raw_statut,
     statut,
   };
@@ -1982,6 +2000,14 @@ export async function repoEnsureCommandeWorkflowCheckpoints(
   commandeId: number,
   currentStatus: CommandeWorkflowStatus
 ) {
+  const fulfilment = await tx.query<{ fulfilment_mode: string | null }>(
+    "SELECT fulfilment_mode FROM public.commande_client WHERE id = $1",
+    [commandeId]
+  );
+  // Supplier dropship commands are commercial-only on the buyer. Shipment and
+  // invoice synchronisation advance their status, but they never receive the
+  // local stock/OF checkpoint template as a side effect of a workflow read.
+  if (isSupplierDropship(fulfilment.rows[0]?.fulfilment_mode)) return;
   const activeAssigned = { value: false };
   for (const checkpoint of COMMANDE_WORKFLOW_CHECKPOINTS) {
     const status = checkpointSeedStatus(checkpoint.status_when_done, currentStatus, activeAssigned);
@@ -2246,6 +2272,7 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
     if (!header) {
       return null;
     }
+    assertCommercialOnlyDropship(header.fulfilment_mode);
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
 
     const existing = await client.query<WorkflowCheckpointRow>(
@@ -2517,6 +2544,7 @@ export async function repoRunCommandeWorkflowAction(
     if (!header) {
       return null;
     }
+    assertCommercialOnlyDropship(header.fulfilment_mode);
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
 
     const checkpointRes = await client.query<{ status: string; responsible_role: string; assigned_user_id: number | null }>(
@@ -4523,6 +4551,7 @@ export async function repoUpdateCommande(
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
       creation_flow_version: number;
+      fulfilment_mode: string | null;
     }>(
       `
       SELECT
@@ -4530,6 +4559,7 @@ export async function repoUpdateCommande(
         client_id,
         devis_id::text AS devis_id,
         order_type,
+        fulfilment_mode,
         adresse_facturation_id::text AS adresse_facturation_id,
         cadre_start_date::text AS cadre_start_date,
         cadre_end_date::text AS cadre_end_date,
@@ -4547,6 +4577,13 @@ export async function repoUpdateCommande(
     const existing = existingRes.rows[0] ?? null;
     if (!existing) {
       return null;
+    }
+    if (isSupplierDropship(existing.fulfilment_mode)) {
+      throw new HttpError(
+        409,
+        "SUPPLIER_DROPSHIP_REVISION_UNSUPPORTED",
+        "La révision locale d'une commande dropship transmise est refusée tant qu'une révision inter-sociétés atomique n'est pas disponible."
+      );
     }
     await assertContractCallMutable(client,id,input);
 
@@ -4719,9 +4756,9 @@ export async function repoDeleteCommande(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const lockedCommande = await client.query<{ order_type: string }>(
+    const lockedCommande = await client.query<{ order_type: string; fulfilment_mode: string | null }>(
       `
-        SELECT order_type
+        SELECT order_type, fulfilment_mode
         FROM public.commande_client
         WHERE id = $1::bigint
         FOR UPDATE
@@ -4732,6 +4769,13 @@ export async function repoDeleteCommande(
     if (!lockedRow) {
       await client.query("ROLLBACK");
       return false;
+    }
+    if (isSupplierDropship(lockedRow.fulfilment_mode)) {
+      throw new HttpError(
+        409,
+        "SUPPLIER_DROPSHIP_CANCELLATION_UNSUPPORTED",
+        "L'annulation locale d'une commande dropship transmise est refusée tant que la demande partenaire n'est pas synchronisée."
+      );
     }
     await assertNoContractCall(client,commandeId);
 
@@ -4873,6 +4917,7 @@ async function analyzeCommandeStockTx(
     id: number;
     client_id: string | null;
     order_type: string;
+    fulfilment_mode: string | null;
     dest_stock_magasin_id: string | null;
     dest_stock_emplacement_id: string | null;
   }>(
@@ -4881,6 +4926,7 @@ async function analyzeCommandeStockTx(
         id::bigint::int AS id,
         client_id,
         order_type,
+        fulfilment_mode,
         dest_stock_magasin_id::text AS dest_stock_magasin_id,
         dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
       FROM commande_client
@@ -4891,6 +4937,7 @@ async function analyzeCommandeStockTx(
   );
   const commande = commandeRes.rows[0] ?? null;
   if (!commande) return null;
+  assertCommercialOnlyDropship(commande.fulfilment_mode);
   const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
     && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
@@ -5013,9 +5060,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       ar_sent_at: string | null;
       updated_at: string | null;
       creation_flow_version: number;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
+      SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero, fulfilment_mode,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
              dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
              ar_sent_at::text AS ar_sent_at,
@@ -5031,6 +5079,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     if (!commande) {
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
     const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
       && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
@@ -7264,9 +7313,9 @@ export async function repoPreviewAffairesFromCommande(id: string) {
   try {
     await client.query("BEGIN");
 
-    const commandeRes = await client.query<{ client_id: string | null }>(
+    const commandeRes = await client.query<{ client_id: string | null; fulfilment_mode: string | null }>(
       `
-      SELECT client_id
+      SELECT client_id, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       `,
@@ -7277,6 +7326,7 @@ export async function repoPreviewAffairesFromCommande(id: string) {
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7324,9 +7374,10 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     const commandeRes = await client.query<{
       client_id: string | null;
       type_affaire: string;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire
+      SELECT client_id, type_affaire, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -7338,6 +7389,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7444,9 +7496,10 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
     const commandeRes = await client.query<{
       client_id: string | null;
       type_affaire: string;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire
+      SELECT client_id, type_affaire, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -7458,6 +7511,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7539,8 +7593,9 @@ export async function repoDuplicateCommande(id: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const source=(await client.query<{order_type:string}>('SELECT order_type FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
+    const source=(await client.query<{order_type:string;fulfilment_mode:string|null}>('SELECT order_type,fulfilment_mode FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
     if(source?.order_type==='CADRE')throw new HttpError(409,'CLIENT_MASTER_CONTRACT_REQUIRED','Créez un nouvel appel depuis le contrat de la fiche client');
+    if(isSupplierDropship(source?.fulfilment_mode))throw new HttpError(409,'SUPPLIER_DROPSHIP_DUPLICATION_UNSUPPORTED',"Dupliquez une commande dropship depuis le flux commercial natif afin de recréer son PO inter-sociétés.");
     await assertNoContractCall(client,originalCommandeId);
 
     const originalRes = await client.query(
