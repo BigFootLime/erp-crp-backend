@@ -32,6 +32,22 @@ export type CompanyInstanceInput = Readonly<{
   active: boolean;
   expected_version: number;
 }>;
+export type CompanySiteAdministrativeLevelInput = Readonly<{
+  company_id: string;
+  profile_id: string;
+  environment: "cerp_prod" | "cerp_test";
+  is_superadmin: boolean;
+  expected_version: number;
+}>;
+export type CompanySiteAdministrativeLevel = Readonly<{
+  company_id: string;
+  profile_id: string;
+  environment: "cerp_prod" | "cerp_test";
+  site_id: string;
+  is_superadmin: boolean;
+  status: string;
+  version: number;
+}>;
 export type CompanyContextRecord = Readonly<{
   company_id: string;
   code: string;

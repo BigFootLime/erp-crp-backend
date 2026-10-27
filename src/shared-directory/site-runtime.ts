@@ -13,6 +13,10 @@ import {synchronizeCompanyPolicy} from './company-policy-projection';
 let client:DirectoryClient|null=null;
 let site:string|null=null;
 let authorityId:string|null=null;
+/** Tenant superadmin is an explicit per-site Directory membership, never a CRP inheritance. */
+export function tenantProjectionIdentity(identity:DirectorySession,currentSite:string|null){
+ return currentSite?.startsWith('cerp_company_')===true?{...identity,is_superadmin:identity.is_superadmin===true}:identity;
+}
 export function sharedDirectoryClient(){return client;}
 export function sharedDirectorySite(){return site;}
 export async function initializeSharedDirectorySite(db:Pool,env:NodeJS.ProcessEnv=process.env){
@@ -130,7 +134,7 @@ export async function directoryAuthenticationResult(db:Pool,result:unknown,meta?
  // central registry.
  const companyTenant=site?.startsWith('cerp_company_')===true;
  const companyConfig=companyRuntimeConfiguration(),companyMode=companyConfig.enabled;
- const projectedIdentity=companyTenant?{...identity,is_superadmin:false}:identity;
+ const projectedIdentity=tenantProjectionIdentity(identity,companyTenant?site:null);
  const projection=await projectDirectoryIdentity(db,projectedIdentity);
  // Common Access is the legacy Production-to-Test projection. A company
  // instance has an explicit company policy and must never inherit CRP ACLs.
@@ -146,7 +150,7 @@ export async function validateSiteDirectoryToken(db:Pool,claims:{id:number;direc
  if(identity.profile_id!==claims.directory_profile_id||identity.global_session_epoch!==claims.directory_global_epoch||identity.membership_version!==claims.directory_membership_version||identity.mfa_factor_id!==(claims.mfa_factor_id??null)||identity.mfa_factor_version!==(claims.mfa_factor_version??null)||(identity.mfa_factor_id!==null)!==(claims.mfa===true)||(identity.mfa_verified_at===null?claims.mfa_verified_at!==undefined:Math.floor(new Date(identity.mfa_verified_at).getTime()/1000)!==claims.mfa_verified_at))throw new Error('DIRECTORY_SESSION_STALE');
  const companyTenant=site?.startsWith('cerp_company_')===true;
  const companyConfig=companyRuntimeConfiguration(),companyMode=companyConfig.enabled;
- const projectedIdentity=companyTenant?{...identity,is_superadmin:false}:identity;
+ const projectedIdentity=tenantProjectionIdentity(identity,companyTenant?site:null);
  const projection=await projectDirectoryIdentity(db,projectedIdentity);
  if(site&&!identity.is_superadmin&&!companyMode)await synchronizeCommonAccess(db,client,site,identity.profile_id);
  if(site&&authorityId&&companyMode)await synchronizeCompanyPolicy(db,client,{session:claims.directory_session,profileId:identity.profile_id,userId:projection.id,site,authorityId,expectedCompanyId:companyConfig.company_id,expectedEnvironment:companyConfig.environment});

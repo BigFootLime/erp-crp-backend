@@ -3,11 +3,16 @@ import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type {
   BusinessCompanyInput,
+  CompanySiteAdministrativeLevel,
+  CompanySiteAdministrativeLevelInput,
   CompanyContextRecord,
   CompanyInstanceInput,
   DirectoryAuditActor,
   MembershipInput,
 } from "./company-directory.types";
+import type { DirectorySession } from "../../../shared-directory/model";
+import { requireDirectoryAdmin } from "../../../shared-directory/authority";
+import { HttpError } from "../../../utils/httpError";
 
 type CompanyRow = {
   company_id: string;
@@ -312,6 +317,135 @@ export async function repoSetBusinessCompanyInstance(
       { site_id: row.site_id, active: row.active, version: row.version },
     );
     return row;
+  });
+}
+
+function companyInstanceSiteId(
+  companyId: string,
+  environment: "cerp_prod" | "cerp_test",
+) {
+  return `cerp_company_${companyId.replace(/-/g, "")}_${
+    environment === "cerp_prod" ? "prod" : "test"
+  }`;
+}
+type CompanySiteAdministrativeLevelRow = CompanySiteAdministrativeLevel & {
+  company_status: string;
+  instance_active: boolean;
+  company_membership_status: string;
+  user_status: string;
+  mfa_reenrollment_required: boolean;
+  active_mfa_factor: boolean;
+};
+async function companySiteAdministrativeLevel(
+  db: Pool | PoolClient,
+  input: Pick<CompanySiteAdministrativeLevelInput, "company_id" | "profile_id" | "environment">,
+  lock = false,
+) {
+  const siteId = companyInstanceSiteId(input.company_id, input.environment);
+  const row = (
+    await db.query<CompanySiteAdministrativeLevelRow>(
+      `SELECT c.company_id::text AS company_id,m.profile_id::text AS profile_id,i.environment,i.site_id,
+        dm.is_superadmin,dm.status,dm.version,c.status AS company_status,i.active AS instance_active,
+        m.status AS company_membership_status,u.status AS user_status,u.mfa_reenrollment_required,
+        EXISTS(SELECT 1 FROM public.user_mfa_factors f WHERE f.user_id=u.id AND f.state='ACTIVE') AS active_mfa_factor
+       FROM public.cerp_business_companies c
+       JOIN public.cerp_business_company_instances i ON i.company_id=c.company_id
+       JOIN public.cerp_business_company_memberships m ON m.company_id=c.company_id
+       JOIN public.cerp_directory_profiles p ON p.profile_id=m.profile_id
+       JOIN public.users u ON u.id=p.user_id
+       JOIN public.cerp_directory_memberships dm ON dm.profile_id=m.profile_id AND dm.database_id=i.site_id
+       WHERE c.company_id=$1::uuid AND m.profile_id=$2::uuid AND i.environment=$3 AND i.site_id=$4
+       ${lock ? "FOR UPDATE OF c,i,m,dm,u" : ""}`,
+      [input.company_id, input.profile_id, input.environment, siteId],
+    )
+  ).rows[0];
+  if (!row)
+    throw new HttpError(404, "BUSINESS_COMPANY_SITE_MEMBERSHIP_NOT_FOUND", "Cette identité n'a pas d'accès explicite à cette entreprise.");
+  if (row.company_status !== "ACTIVE" || !row.instance_active || row.company_membership_status !== "ACTIVE" || row.status !== "Active")
+    throw new HttpError(409, "BUSINESS_COMPANY_SITE_MEMBERSHIP_INACTIVE", "L'entreprise, son instance ou l'accès de ce compte n'est pas actif.");
+  return row;
+}
+function administrativeLevelResult(row: CompanySiteAdministrativeLevelRow): CompanySiteAdministrativeLevel {
+  return { company_id: row.company_id, profile_id: row.profile_id, environment: row.environment, site_id: row.site_id, is_superadmin: row.is_superadmin, status: row.status, version: row.version };
+}
+/**
+ * Re-read the privileged actor under the same transaction after the tenant
+ * lock. This binds the mutation to the current source membership, Production
+ * ownership, factor version and session epoch rather than snapshot claims.
+ */
+async function assertCurrentBusinessCompanyOwner(tx: PoolClient, actor: DirectorySession) {
+  const stillAssured = (
+    await tx.query(
+      `SELECT 1
+       FROM public.cerp_directory_memberships source
+       JOIN public.cerp_directory_memberships owner ON owner.profile_id=source.profile_id
+       JOIN public.cerp_directory_profiles p ON p.profile_id=source.profile_id
+       JOIN public.users u ON u.id=p.user_id
+       JOIN public.user_mfa_factors f ON f.user_id=u.id
+       LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
+       WHERE source.profile_id=$1::uuid AND source.database_id=$2
+         AND source.status='Active' AND source.version=$3
+         AND owner.database_id='cerp_prod' AND owner.status='Active' AND owner.is_superadmin
+         AND u.status='Active' AND NOT u.mfa_reenrollment_required
+         AND f.id=$4::uuid AND f.version=$5 AND f.state='ACTIVE'
+         AND coalesce(e.session_epoch,0)=$6
+       FOR UPDATE OF source,owner,u,f`,
+      [
+        actor.profile_id,
+        actor.database,
+        actor.membership_version,
+        actor.mfa_factor_id,
+        actor.mfa_factor_version,
+        actor.global_session_epoch,
+      ],
+    )
+  ).rows.length > 0;
+  if (!stillAssured)
+    throw new HttpError(
+      403,
+      "DIRECTORY_OWNER_REAUTH_REQUIRED",
+      "Votre autorisation a changé ; reconnectez-vous puis recommencez.",
+    );
+}
+/** The site is derived from the company UUID/environment: CRP global sites cannot match. */
+export async function repoReadBusinessCompanySiteAdministrativeLevel(
+  db: Pool,
+  input: Pick<CompanySiteAdministrativeLevelInput, "company_id" | "profile_id" | "environment">,
+) {
+  return administrativeLevelResult(await companySiteAdministrativeLevel(db, input));
+}
+/** Mutates only an existing explicit tenant membership and revokes prior sessions by version. */
+export async function repoSetBusinessCompanySiteAdministrativeLevel(
+  db: Pool,
+  actor: DirectorySession,
+  input: CompanySiteAdministrativeLevelInput,
+) {
+  requireDirectoryAdmin(actor);
+  return withRealtimeOutboxTransaction(await db.connect(), async (tx) => {
+    await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`business-company-site-superadmin:${input.company_id}:${input.environment}:${input.profile_id}`]);
+    requireDirectoryAdmin(actor);
+    await assertCurrentBusinessCompanyOwner(tx, actor);
+    const current = await companySiteAdministrativeLevel(tx, input, true);
+    // The row locks now prevent revocation races; recheck elapsed MFA time
+    // once more because waiting on these locks can consume the five minutes.
+    requireDirectoryAdmin(actor);
+    if (current.version !== input.expected_version)
+      throw new HttpError(409, "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE", "Les droits de ce compte viennent de changer ; actualisez avant de réessayer.");
+    if (current.is_superadmin === input.is_superadmin) return administrativeLevelResult(current);
+    if (input.is_superadmin && (current.user_status !== "Active" || current.mfa_reenrollment_required || !current.active_mfa_factor))
+      throw new HttpError(409, "BUSINESS_COMPANY_SITE_TARGET_MFA_REQUIRED", "Le compte cible doit être actif et disposer d'un facteur MFA actif.");
+    const updated = (
+      await tx.query<CompanySiteAdministrativeLevel>(
+        `UPDATE public.cerp_directory_memberships SET is_superadmin=$5,version=version+1
+         WHERE profile_id=$1::uuid AND database_id=$2 AND version=$3
+         RETURNING $4::uuid::text AS company_id,profile_id::text AS profile_id,$6::text AS environment,database_id AS site_id,is_superadmin,status,version`,
+        [input.profile_id, current.site_id, input.expected_version, input.company_id, input.is_superadmin, input.environment],
+      )
+    ).rows[0];
+    if (!updated)
+      throw new HttpError(409, "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE", "Les droits de ce compte viennent de changer ; actualisez avant de réessayer.");
+    await audit(tx, { user_id: actor.source_user_id, ip: null, user_agent: null, device_type: null, os: null, browser: null }, "BUSINESS_COMPANY_SITE_SUPERADMIN_CHANGED", "directory_membership", `${updated.company_id}:${updated.environment}:${updated.profile_id}`, { site_id: updated.site_id, previous_is_superadmin: current.is_superadmin, next_is_superadmin: updated.is_superadmin, membership_version: updated.version });
+    return updated;
   });
 }
 

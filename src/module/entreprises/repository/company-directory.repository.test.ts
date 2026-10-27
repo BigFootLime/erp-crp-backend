@@ -18,8 +18,10 @@ import {
   repoListBusinessCompaniesForProfile,
   repoReadBusinessCompanyContext,
   repoReadBusinessCompanyInstanceBySite,
+  repoReadBusinessCompanySiteAdministrativeLevel,
   repoSetBusinessCompanyInstance,
   repoSetBusinessCompanyMembership,
+  repoSetBusinessCompanySiteAdministrativeLevel,
   repoUpdateBusinessCompany,
 } from "./company-directory.repository";
 
@@ -32,6 +34,50 @@ const actor = {
   device_type: null,
   os: null,
   browser: null,
+};
+const ownerSession = {
+  profile_id: profile,
+  source_user_id: 7,
+  database: "cerp_prod",
+  username: "owner",
+  name: "Owner",
+  surname: "Directory",
+  email: "owner@example.test",
+  tel_no: null,
+  avatar_key: null,
+  avatar_asset_id: null,
+  role: "Administrateur Systeme et Reseau",
+  roles: ["Administrateur Systeme et Reseau"],
+  status: "Active",
+  is_superadmin: true,
+  mfa_reenrollment_required: false,
+  mfa_factor_id: "33333333-3333-4333-8333-333333333333",
+  mfa_factor_version: 1,
+  mfa_verified_at: new Date().toISOString(),
+  mfa_method: "totp",
+  global_session_epoch: 1,
+  membership_version: 1,
+  job_title: null,
+  employment_type: null,
+  weekly_hours_target: null,
+  work_profile_incomplete: false,
+  work_profile: null,
+  work_profile_start_date: null,
+};
+const tenantRow = {
+  company_id: company,
+  profile_id: profile,
+  environment: "cerp_prod" as const,
+  site_id: "cerp_company_11111111111141118111111111111111_prod",
+  is_superadmin: false,
+  status: "Active",
+  version: 7,
+  company_status: "ACTIVE",
+  instance_active: true,
+  company_membership_status: "ACTIVE",
+  user_status: "Active",
+  mfa_reenrollment_required: false,
+  active_mfa_factor: true,
 };
 const input = {
   company_id: company,
@@ -243,5 +289,111 @@ describe("business company directory repository", () => {
       profile,
       "cerp_test",
     ]);
+  });
+  it("derives the tenant site, locks the membership, versions the grant and audits it", async () => {
+    const d = db([[], [{ ok: 1 }], [tenantRow], [{ ...tenantRow, is_superadmin: true, version: 8 }]]);
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(d as any, ownerSession as any, {
+        company_id: company,
+        profile_id: profile,
+        environment: "cerp_prod",
+        is_superadmin: true,
+        expected_version: 7,
+      }),
+    ).resolves.toMatchObject({ is_superadmin: true, version: 8, status: "Active" });
+    const sql = (d.query.mock.calls as unknown[][]).map((call) => String(call[0])).join("\n");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("FOR UPDATE OF c,i,m,dm,u");
+    expect(sql).toContain("database_id=$2");
+    expect(sql).toContain("owner.database_id='cerp_prod'");
+    expect(
+      (d.query.mock.calls as unknown[][])
+        .map((call) => String(call[0]))
+        .find((statement) => statement.startsWith("UPDATE public.cerp_directory_memberships")),
+    ).not.toContain("database_id='cerp_prod'");
+    expect((d.query.mock.calls as unknown[][])[2]?.[1]).toContain(tenantRow.site_id);
+    expect(ports.audit).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: 7,
+      body: expect.objectContaining({ action: "BUSINESS_COMPANY_SITE_SUPERADMIN_CHANGED" }),
+    }));
+  });
+  it("refuses stale versions and inactive explicit memberships without auditing", async () => {
+    const stale = db([[], [{ ok: 1 }], [tenantRow]]);
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(stale as any, ownerSession as any, {
+        company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 6,
+      }),
+    ).rejects.toMatchObject({ code: "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE" });
+    const inactive = db([[{ ...tenantRow, company_membership_status: "REVOKED" }]]);
+    await expect(
+      repoReadBusinessCompanySiteAdministrativeLevel(inactive as any, { company_id: company, profile_id: profile, environment: "cerp_prod" }),
+    ).rejects.toMatchObject({ code: "BUSINESS_COMPANY_SITE_MEMBERSHIP_INACTIVE" });
+  });
+  it("fails closed when the owner, factor or session epoch is revoked while waiting for the tenant lock", async () => {
+    for (const revoked of ["owner", "factor", "epoch"] as const) {
+      ports.audit.mockClear();
+      const calls: string[] = [];
+      const query = vi.fn(async (sql: string) => {
+        calls.push(sql);
+        if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+        if (sql.includes("FROM public.cerp_directory_memberships source")) return { rows: [] };
+        throw new Error(`Unexpected ${revoked} query: ${sql}`);
+      });
+      const d = { connect: vi.fn(async () => ({ query })), query };
+      await expect(
+        repoSetBusinessCompanySiteAdministrativeLevel(d as any, ownerSession as any, {
+          company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 7,
+        }),
+      ).rejects.toMatchObject({ code: "DIRECTORY_OWNER_REAUTH_REQUIRED" });
+      expect(calls.some((sql) => sql.startsWith("UPDATE public.cerp_directory_memberships"))).toBe(false);
+      expect(ports.audit).not.toHaveBeenCalled();
+    }
+  });
+  it("rechecks MFA freshness after the tenant lock", async () => {
+    vi.useFakeTimers();
+    const checkedAt = new Date("2026-10-27T20:00:00.000Z");
+    vi.setSystemTime(checkedAt);
+    const calls: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      calls.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) {
+        vi.setSystemTime(new Date(checkedAt.getTime() + 300_001));
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected MFA query: ${sql}`);
+    });
+    const d = { connect: vi.fn(async () => ({ query })), query };
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(d as any, { ...ownerSession, mfa_verified_at: checkedAt.toISOString() } as any, {
+        company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 7,
+      }),
+    ).rejects.toMatchObject({ code: "MFA_STEP_UP_REQUIRED" });
+    expect(calls.some((sql) => sql.startsWith("UPDATE public.cerp_directory_memberships"))).toBe(false);
+    vi.useRealTimers();
+  });
+  it("fails closed when MFA expires while waiting on the locked target membership", async () => {
+    vi.useFakeTimers();
+    const checkedAt = new Date("2026-10-27T20:00:00.000Z");
+    vi.setSystemTime(checkedAt);
+    const calls: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      calls.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (sql.includes("FROM public.cerp_directory_memberships source")) return { rows: [{ ok: 1 }] };
+      if (sql.includes("FROM public.cerp_business_companies c")) {
+        vi.setSystemTime(new Date(checkedAt.getTime() + 300_001));
+        return { rows: [tenantRow] };
+      }
+      throw new Error(`Unexpected locked-target MFA query: ${sql}`);
+    });
+    const d = { connect: vi.fn(async () => ({ query })), query };
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(d as any, { ...ownerSession, mfa_verified_at: checkedAt.toISOString() } as any, {
+        company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 7,
+      }),
+    ).rejects.toMatchObject({ code: "MFA_STEP_UP_REQUIRED" });
+    expect(calls.some((sql) => sql.startsWith("UPDATE public.cerp_directory_memberships"))).toBe(false);
+    expect(ports.audit).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });

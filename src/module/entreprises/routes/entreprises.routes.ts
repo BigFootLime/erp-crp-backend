@@ -283,5 +283,22 @@ router.put(
     company_id: companyIdSchema.parse(req.params.companyId),
   })),
 );
+router.get(
+  "/admin/companies/:companyId/instances/:environment/memberships/:profileId/administrative-level",
+  adminCall("business-companies-admin-site-superadmin-read", (req) => ({
+    company_id: companyIdSchema.parse(req.params.companyId),
+    environment: companyEnvironmentSchema.parse(req.params.environment),
+    profile_id: companyIdSchema.parse(req.params.profileId),
+  })),
+);
+router.put(
+  "/admin/companies/:companyId/instances/:environment/memberships/:profileId/administrative-level",
+  adminCall("business-companies-admin-site-superadmin-set", (req) => ({
+    ...req.body,
+    company_id: companyIdSchema.parse(req.params.companyId),
+    environment: companyEnvironmentSchema.parse(req.params.environment),
+    profile_id: companyIdSchema.parse(req.params.profileId),
+  })),
+);
 
 export default router;

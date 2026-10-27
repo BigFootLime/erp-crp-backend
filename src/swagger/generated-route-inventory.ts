@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "4ef2c5f643029a4e872564f4aafc456c8d57d5b8b183c8a012f8fd7346bc1e30";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "6f5b13ba2d938607db55da65c2eb965466b5dd9f597ebac4855c83ec056012b7";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -6571,6 +6571,30 @@ export const GENERATED_ROUTE_INVENTORY = [
       "anonymous",
       "authenticateToken",
       "adminCall(business-companies-admin-instance,(req) => ({ ...req.body, company_id: companyIdSchema.parse(req.params.companyId))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/admin/companies/{companyId}/instances/{environment}/memberships/{profileId}/administrative-level",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:286",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-site-superadmin-read,(req) => ({ company_id: companyIdSchema.parse(req.params.companyId), environment)"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "put",
+    "path": "/entreprises/admin/companies/{companyId}/instances/{environment}/memberships/{profileId}/administrative-level",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:294",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-site-superadmin-set,(req) => ({ ...req.body, company_id: companyIdSchema.parse(req.params.companyId))"
     ],
     "authenticated": true,
     "rbac": []

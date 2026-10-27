@@ -261,4 +261,31 @@ describe("company HTTP contract", () => {
     ).toBe(403);
     expect(mocks.issue).not.toHaveBeenCalled();
   });
+  it("relays the explicit tenant administrative level contract without using the legacy global endpoint", async () => {
+    const call = vi.fn(async () => ({
+      company_id: companyId,
+      profile_id: otherCompany,
+      environment: "cerp_prod",
+      site_id: "cerp_company_aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa_prod",
+      is_superadmin: true,
+      status: "Active",
+      version: 4,
+    }));
+    vi.spyOn(companyRuntimeService, "directory").mockReturnValue({ call } as never);
+    const path = `/api/v1/entreprises/admin/companies/${companyId}/instances/cerp_prod/memberships/${otherCompany}/administrative-level`;
+    const get = await request(app()).get(path);
+    expect(get.status).toBe(200);
+    const put = await request(app())
+      .put(path)
+      .send({ is_superadmin: true, expected_version: 3 });
+    expect(put.status).toBe(200);
+    expect(call).toHaveBeenNthCalledWith(1, "business-companies-admin-site-superadmin-read", {
+      directory_session: "dir_fixture",
+      input: { company_id: companyId, environment: "cerp_prod", profile_id: otherCompany },
+    });
+    expect(call).toHaveBeenNthCalledWith(2, "business-companies-admin-site-superadmin-set", {
+      directory_session: "dir_fixture",
+      input: { company_id: companyId, environment: "cerp_prod", profile_id: otherCompany, is_superadmin: true, expected_version: 3 },
+    });
+  });
 });
