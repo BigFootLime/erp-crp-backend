@@ -10,6 +10,7 @@ type ParentPolicy = Readonly<{ moduleKey: string; canonicalType: string; identit
 // these explicitly reviewed parent shapes can authorize private bytes. Each
 // alias resolves to the exact canonical parent that is revalidated in SQL.
 const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
+  METROLOGIE_EQUIPEMENT: { moduleKey: "metrologie", canonicalType: "METROLOGIE_EQUIPEMENT", identity: "uuid" },
   CLIENT: { moduleKey: "clients", canonicalType: "CLIENT", identity: "text" },
   FOURNISSEUR: { moduleKey: "fournisseurs", canonicalType: "FOURNISSEUR", identity: "uuid" },
   DEVIS: { moduleKey: "devis", canonicalType: "DEVIS", identity: "integer" },

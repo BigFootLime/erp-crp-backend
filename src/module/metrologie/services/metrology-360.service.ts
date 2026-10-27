@@ -44,6 +44,8 @@ import {
   repoUpsertCategory,
 } from "../repository/metrology-registry.repository";
 import { listSupportedUnits } from "../domain/metrology-units";
+import { repoApplyLegacyRegistryGroup, repoPreviewLegacyRegistryGroups } from "../repository/metrology-legacy-import.repository";
+import { repoGetLegacyImportBatch, repoGetLegacyImportSourceFile, repoListLegacyImportBatches, repoListLegacyImportRows, repoListLegacyObservations, repoResolveLegacyImportRow, repoRecordLegacySourceRead } from "../repository/metrology-legacy-import.repository";
 
 export const svcListCategories = repoListCategories;
 export const svcListEquipmentProfiles = repoListEquipmentProfiles;
@@ -84,6 +86,15 @@ export const svcInstrumentUsage = repoInstrumentUsage;
 export const svcEvaluateEligibility = repoEvaluateEligibility;
 export const svcCenter = repoCenter;
 export const svcTimeline = repoTimeline;
+export const svcListLegacyObservations = repoListLegacyObservations;
+export const svcGetLegacyImportBatch = repoGetLegacyImportBatch;
+export const svcGetLegacyImportSourceFile = repoGetLegacyImportSourceFile;
+export const svcRecordLegacySourceRead = repoRecordLegacySourceRead;
+export const svcListLegacyImportRows = repoListLegacyImportRows;
+export const svcListLegacyImportBatches = repoListLegacyImportBatches;
+export const svcResolveLegacyImportRow = repoResolveLegacyImportRow;
+export const svcPreviewLegacyRegistryGroups = repoPreviewLegacyRegistryGroups;
+export const svcApplyLegacyRegistryGroup = repoApplyLegacyRegistryGroup;
 
 /** Référentiel d'unités supportées : la liste vient du serveur, pas de l'UI. */
 export function svcListUnits() {

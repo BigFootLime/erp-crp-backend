@@ -19,6 +19,7 @@ import { stockLanesOperation } from './stock-lanes-contract';
 import { productionReceiptLanesOperation } from './production-receipt-lanes-contract';
 import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
+import { metrologyDocumentsOperation } from './metrology-documents-contract';
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -231,7 +232,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     };
   }
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched)))))))));
+  return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));
 }
 
 function accountRequestOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
