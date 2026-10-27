@@ -254,7 +254,17 @@ export type CommandeEcheanceInput = {
 
 export type CreateCommandeInput = {
   fulfilment_mode?: CommandeFulfilmentMode;
-  intercompany_delivery_address?: Record<string, string | null> | null;
+  intercompany_delivery_address?: {
+    recipient_name: string;
+    address_line_1?: string;
+    address_line_2?: string;
+    postal_code?: string;
+    city?: string;
+    country_code?: string;
+    contact_name?: string;
+    contact_phone?: string;
+    address_lines?: string[];
+  } | null;
   delivery_prepayment_requirement?: "NOT_REQUIRED" | "PROFORMA";
   client_contract_call?: {contract_id:string;expected_version:number;idempotency_key:string} | null;
   numero?: string;

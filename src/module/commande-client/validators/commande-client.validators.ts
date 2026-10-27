@@ -134,6 +134,25 @@ export const commandeEcheanceInputSchema = z.object({
   montant: z.number().min(0),
 });
 
+const intercompanyDeliveryAddressSchema = z.object({
+  recipient_name: z.string().trim().min(1).max(180),
+  address_line_1: z.string().trim().min(1).max(180).optional(),
+  address_line_2: z.string().trim().max(180).optional(),
+  postal_code: z.string().trim().min(1).max(30).optional(),
+  city: z.string().trim().min(1).max(120).optional(),
+  country_code: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
+  contact_name: z.string().trim().max(200).optional(),
+  contact_phone: z.string().trim().max(60).optional(),
+  // Legacy payloads retain their published lines. New commercial inputs must
+  // use the structured fields above so a carrier never has to guess a city.
+  address_lines: z.array(z.string().trim().min(1).max(180)).min(1).max(8).optional(),
+}).strict().superRefine((value, context) => {
+  const structured = value.address_line_1 && value.postal_code && value.city;
+  if (!structured && !value.address_lines) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["address_line_1"], message: "Adresse structurée ou lignes d'adresse requises." });
+  }
+});
+
 export const createCommandeBodySchema = z.preprocess((value) => {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const v = value as Record<string, unknown>;
@@ -145,7 +164,7 @@ export const createCommandeBodySchema = z.preprocess((value) => {
 },
 z.object({
   fulfilment_mode: z.enum(["STANDARD", "SUPPLIER_DROPSHIP"]).optional().default("STANDARD"),
-  intercompany_delivery_address: z.record(z.string(), z.string().nullable()).optional().nullable(),
+  intercompany_delivery_address: intercompanyDeliveryAddressSchema.optional().nullable(),
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
   client_contract_call: z.object({contract_id:z.string().guid().transform(value=>value.toLowerCase()),
     expected_version:z.number().int().positive().max(2147483646),idempotency_key:z.string().guid().transform(value=>value.toLowerCase())}).strict().optional().nullable(),
@@ -207,7 +226,6 @@ z.object({
     if (val.fulfilment_mode === "SUPPLIER_DROPSHIP") {
       if (val.order_type !== "FERME") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["order_type"], message: "Supplier dropship is only available for firm customer orders." });
       if (val.devis_id != null) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["devis_id"], message: "Supplier dropship orders cannot originate from a quote." });
-      if (!val.intercompany_delivery_address) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["intercompany_delivery_address"], message: "Supplier dropship requires a direct delivery address." });
       if (val.dest_stock_magasin_id || val.dest_stock_emplacement_id) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["dest_stock_magasin_id"], message: "Supplier dropship orders cannot target local stock." });
       val.lignes.forEach((line, index) => {
         if (!line.intercompany_catalogue_mapping_id) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lignes", index, "intercompany_catalogue_mapping_id"], message: "Every supplier dropship line requires an explicit catalogue mapping." });

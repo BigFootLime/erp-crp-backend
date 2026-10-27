@@ -9,6 +9,8 @@ export const intercompanyLegalSnapshotSchema = z.object({
 }).strict();
 export const intercompanyDeliverySnapshotSchema = z.object({
   recipient_name: text, address_lines: z.array(text).min(1).max(8),
+  address_line_1: text.optional(), address_line_2: z.string().trim().max(250).optional(),
+  postal_code: z.string().trim().min(1).max(30).optional(), city: z.string().trim().min(1).max(120).optional(),
   country_code: z.string().regex(/^[A-Z]{2}$/).optional(),
   contact_name: z.string().trim().max(200).optional(), contact_phone: z.string().trim().max(60).optional(),
 }).strict();

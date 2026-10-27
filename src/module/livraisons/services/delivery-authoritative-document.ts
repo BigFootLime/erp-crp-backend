@@ -103,7 +103,7 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
       concat_ws(E'\\n', al.name, concat_ws(' ', al.street, al.house_number), concat_ws(' ', al.postal_code, al.city), al.country) AS address_label,
       bl.date_creation::text, bl.date_expedition::text, bl.transporteur, bl.tracking_number, bl.commentaire_client, bl.updated_at::text,
       request.buyer_legal_snapshot AS intercompany_buyer_legal_snapshot,
-      request.final_delivery_address_snapshot AS intercompany_destination_snapshot
+      COALESCE(bl.intercompany_destination_snapshot, request.final_delivery_address_snapshot) AS intercompany_destination_snapshot
     FROM public.bon_livraison bl
     JOIN public.clients c ON c.client_id = bl.client_id
     LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id

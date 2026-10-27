@@ -701,6 +701,8 @@ type HeaderRow = {
   affaire_reference: string | null
   affaire_references: string[]
   adresse_livraison_id: string | null
+  intercompany_request_id: string | null
+  intercompany_destination_snapshot: Record<string, unknown> | null
   al_name: string | null
   al_street: string | null
   al_house_number: string | null
@@ -727,6 +729,40 @@ type HeaderRow = {
   updated_by_username: string | null
   updated_by_name: string | null
   updated_by_surname: string | null
+}
+
+function intercompanyDestinationAddress(
+  deliveryId: string,
+  snapshot: Record<string, unknown> | null
+): AdresseLivraisonLite {
+  if (!snapshot) return null
+  const required = (key: string) => {
+    const value = snapshot[key]
+    return typeof value === "string" && value.trim() ? value.trim() : null
+  }
+  const recipient = required("recipient_name")
+  const line1 = required("address_line_1")
+  const postalCode = required("postal_code")
+  const city = required("city")
+  if (!recipient || !line1 || !postalCode || !city) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_DESTINATION_INVALID", "La destination fournisseur figée est incomplète.")
+  }
+  const addressLine2 = required("address_line_2")
+  const country = required("country_code")
+  const address = {
+    id: `intercompany:${deliveryId}`,
+    name: recipient,
+    street: line1,
+    house_number: null,
+    address_complement: addressLine2,
+    postal_code: postalCode,
+    city,
+    country,
+  }
+  const label = [recipient, line1, addressLine2, `${postalCode} ${city}`, country]
+    .filter((part): part is string => Boolean(part))
+    .join(", ")
+  return { ...address, label: label || "Adresse de livraison" }
 }
 
 type DirectAllocationSourceRow = {
@@ -979,6 +1015,8 @@ async function getHeader(client: PoolClient, id: string, opts?: { forUpdate?: bo
         ORDER BY reference
       ) AS affaire_references,
       bl.adresse_livraison_id::text AS adresse_livraison_id,
+      bl.intercompany_request_id::text AS intercompany_request_id,
+      bl.intercompany_destination_snapshot,
       al.name AS al_name,
       al.street AS al_street,
       al.house_number AS al_house_number,
@@ -1042,12 +1080,15 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
         }
       : null
 
-    const adresse_livraison: AdresseLivraisonLite = addressRaw
+    const adresse_livraison: AdresseLivraisonLite = intercompanyDestinationAddress(
+      headerRow.id,
+      headerRow.intercompany_destination_snapshot
+    ) ?? (addressRaw
       ? {
           ...addressRaw,
           label: formatAddressInline(addressRaw) || "Adresse de livraison",
         }
-      : null
+      : null)
 
     const createdBy = mapUserLite({
       id: headerRow.created_by_id,
@@ -3217,6 +3258,8 @@ export async function repoCreateLivraisonFromCommande(
       raw_statut: string | null
       dest_stock_magasin_id: string | null
       dest_stock_emplacement_id: number | null
+      intercompany_request_id: string | null
+      intercompany_destination_snapshot: Record<string, unknown> | null
     }>(
       `
         SELECT
@@ -3226,6 +3269,8 @@ export async function repoCreateLivraisonFromCommande(
           cc.order_type,
           cc.dest_stock_magasin_id::text AS dest_stock_magasin_id,
           cc.dest_stock_emplacement_id::int AS dest_stock_emplacement_id,
+          request.id::text AS intercompany_request_id,
+          request.final_delivery_address_snapshot AS intercompany_destination_snapshot,
           st.nouveau_statut AS raw_statut
         FROM public.commande_client cc
         LEFT JOIN LATERAL (
@@ -3235,6 +3280,14 @@ export async function repoCreateLivraisonFromCommande(
           ORDER BY ch.date_action DESC, ch.id DESC
           LIMIT 1
         ) st ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT request.id, request.final_delivery_address_snapshot
+          FROM public.cerp_intercompany_requests request
+          WHERE request.supplier_sales_order_id = cc.id
+            AND request.state IN ('ACCEPTED', 'PARTIALLY_FULFILLED', 'FULFILLED')
+          ORDER BY request.created_at DESC
+          LIMIT 1
+        ) request ON TRUE
         WHERE cc.id = $1
         FOR UPDATE OF cc
       `,
@@ -3289,6 +3342,11 @@ export async function repoCreateLivraisonFromCommande(
     const internalDestination = internalOrder
       ? `Destination stock interne: magasin ${cmd.dest_stock_magasin_id}, emplacement ${cmd.dest_stock_emplacement_id}`
       : null
+    const intercompanyDestination = cmd.intercompany_destination_snapshot
+    if ((cmd.intercompany_request_id === null) !== (intercompanyDestination === null)) {
+      throw new HttpError(409, "INTERCOMPANY_DELIVERY_DESTINATION_INVALID", "La destination fournisseur figée est incohérente.")
+    }
+    if (intercompanyDestination) intercompanyDestinationAddress("pending", intercompanyDestination)
 
     const hasRoleColumn = await hasCommandeToAffaireRoleColumn(db)
     const affaireSql = hasRoleColumn
@@ -3321,7 +3379,23 @@ export async function repoCreateLivraisonFromCommande(
 
     try {
       const ins = await db.query<{ id: string }>(
-        `
+        intercompanyDestination ? `
+        INSERT INTO bon_livraison (
+          numero,
+          client_id,
+          commande_id,
+          affaire_id,
+          adresse_livraison_id,
+          commentaire_interne,
+          intercompany_request_id,
+          intercompany_destination_snapshot,
+          statut,
+          date_creation,
+          created_by,
+          updated_by
+        ) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7::uuid,$8::jsonb,'DRAFT',CURRENT_DATE,$9,$9)
+        RETURNING id::text AS id
+        ` : `
         INSERT INTO bon_livraison (
           numero,
           client_id,
@@ -3336,7 +3410,9 @@ export async function repoCreateLivraisonFromCommande(
         ) VALUES ($1,$2,$3,$4,$5::uuid,$6,'DRAFT',CURRENT_DATE,$7,$7)
         RETURNING id::text AS id
         `,
-        [numero, deliveryClientId, cmd.id, affaireId, deliveryAddressId, internalDestination, userId]
+        intercompanyDestination
+          ? [numero, deliveryClientId, cmd.id, affaireId, deliveryAddressId, internalDestination, cmd.intercompany_request_id, JSON.stringify(intercompanyDestination), userId]
+          : [numero, deliveryClientId, cmd.id, affaireId, deliveryAddressId, internalDestination, userId]
       )
 
       id = ins.rows[0]?.id ?? ""

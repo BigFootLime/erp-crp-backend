@@ -66,6 +66,27 @@ describe("structured order prepayment decision", () => {
   });
 });
 
+describe("supplier dropship destination", () => {
+  it("accepts the ordinary commercial form without a bespoke address and accepts structured overrides", () => {
+    const input = {
+      ...payload(),
+      fulfilment_mode: "SUPPLIER_DROPSHIP" as const,
+      creation_flow_version: 1,
+      devis_id: null,
+      lignes: [{ ...payload().lignes[0], intercompany_catalogue_mapping_id: "44444444-4444-4444-8444-444444444444" }],
+    };
+    expect(createCommandeBodySchema.safeParse(input).success).toBe(true);
+    const override = createCommandeBodySchema.parse({
+      ...input,
+      intercompany_delivery_address: {
+        recipient_name: "Destinataire final", address_line_1: "12 rue Finale",
+        postal_code: "69003", city: "Lyon", country_code: "FR",
+      },
+    });
+    expect(override.intercompany_delivery_address).toMatchObject({ address_line_1: "12 rue Finale", city: "Lyon" });
+  });
+});
+
 describe("createCommandeBodySchema — reconciled customer order", () => {
   it("accepts a fully arbitrated line with its pinned technical version", () => {
     expect(createCommandeBodySchema.safeParse(payload()).success).toBe(true);

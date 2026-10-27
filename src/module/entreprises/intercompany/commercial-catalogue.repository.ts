@@ -147,13 +147,19 @@ export async function repoCreateDropshipPurchaseOrderTx(tx: PoolClient, params: 
     throw new HttpError(409, "INTERCOMPANY_SNAPSHOT_REQUIRED", "La destination persistée et l'identité légale active sont requises avant l'envoi interentreprises.");
   const delivery = header.delivery as Record<string, unknown>;
   const recipient = typeof delivery.recipient_name === "string" ? delivery.recipient_name : typeof delivery.name === "string" ? delivery.name : null;
+  const addressLine1 = typeof delivery.address_line_1 === "string" ? delivery.address_line_1.trim() : null;
+  const postalCode = typeof delivery.postal_code === "string" ? delivery.postal_code.trim() : null;
+  const city = typeof delivery.city === "string" ? delivery.city.trim() : null;
+  if (!recipient || !addressLine1 || !postalCode || !city) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_ADDRESS_STRUCTURED_REQUIRED", "La destination fournisseur doit contenir rue, code postal et ville structurés.");
+  }
   const addressLines = Array.isArray(delivery.address_lines)
     ? delivery.address_lines.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [delivery.house_number, delivery.street, delivery.address_complement, delivery.postal_code, delivery.city].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
   const payload = purchaseSubmittedPayloadSchema.parse({
     schema_version: 1, relation_id: first.relation_id, buyer_sales_order_id: String(params.buyerSalesOrderId), buyer_purchase_order_id: po.id,
     buyer_legal_snapshot: { legal_name: header.legal_name, registration_number: header.registration_number ?? undefined, vat_number: header.vat_number ?? undefined, address_lines: [`${header.house_number ?? ""} ${header.street}`.trim(), `${header.postal_code} ${header.city}`], issued_at: new Date().toISOString() },
-    final_delivery_address_snapshot: { recipient_name: recipient, address_lines: addressLines, country_code: typeof delivery.country_code === "string" ? delivery.country_code.toUpperCase() : undefined, contact_name: typeof delivery.contact_name === "string" ? delivery.contact_name : undefined, contact_phone: typeof delivery.contact_phone === "string" ? delivery.contact_phone : undefined },
+    final_delivery_address_snapshot: { recipient_name: recipient, address_lines: addressLines, address_line_1: addressLine1, address_line_2: typeof delivery.address_line_2 === "string" ? delivery.address_line_2.trim() : undefined, postal_code: postalCode, city, country_code: typeof delivery.country_code === "string" ? delivery.country_code.toUpperCase() : undefined, contact_name: typeof delivery.contact_name === "string" ? delivery.contact_name : undefined, contact_phone: typeof delivery.contact_phone === "string" ? delivery.contact_phone : undefined },
     lines: lines.rows.map((line, index) => ({ buyer_sales_order_line_id: line.id, buyer_purchase_order_line_id: poLines.rows[index].id, catalogue_mapping_id: line.mapping_id, supplier_catalogue_mapping_id: line.supplier_catalogue_mapping_id, mapping_version: line.version, supplier_mapping_version: line.supplier_mapping_version, supplier_article_id: line.supplier_article_id, supplier_piece_technique_id: line.supplier_piece_technique_id, supplier_piece_technique_version_id: line.supplier_piece_technique_version_id, supplier_reference: line.supplier_reference, variant_code: line.variant_code || "standard", options_snapshot: line.options_snapshot ?? {}, quantity: line.quantite, unit: line.unite, purchase_unit_price: line.purchase_unit_price, purchase_vat_rate: line.purchase_vat_rate, currency: line.currency })),
   });
   await enqueueIntercompanyMessageTx(tx, { destination_company_id: header.destination_company_id, kind: "PURCHASE_SUBMITTED", aggregate_id: po.id, revision: 1, payload });

@@ -148,6 +148,69 @@ function hasOwn(obj: object, key: string): boolean {
 
 type Queryable = Pick<PoolClient, "query">;
 
+type IntercompanyDeliveryAddress = NonNullable<CreateCommandeInput["intercompany_delivery_address"]>;
+
+function structuredIntercompanyDeliveryAddress(value: IntercompanyDeliveryAddress): IntercompanyDeliveryAddress {
+  if (!value.address_line_1 || !value.postal_code || !value.city) {
+    throw new HttpError(
+      400,
+      "INTERCOMPANY_DELIVERY_ADDRESS_STRUCTURED_REQUIRED",
+      "La livraison directe exige rue, code postal et ville structurés pour le transporteur."
+    );
+  }
+  return {
+    ...value,
+    recipient_name: value.recipient_name.trim(),
+    address_line_1: value.address_line_1.trim(),
+    ...(value.address_line_2?.trim() ? { address_line_2: value.address_line_2.trim() } : {}),
+    postal_code: value.postal_code.trim(),
+    city: value.city.trim(),
+    ...(value.country_code?.trim() ? { country_code: value.country_code.trim().toUpperCase() } : {}),
+    address_lines: [
+      value.address_line_1.trim(),
+      ...(value.address_line_2?.trim() ? [value.address_line_2.trim()] : []),
+      `${value.postal_code.trim()} ${value.city.trim()}`,
+    ],
+  };
+}
+
+async function resolveIntercompanyDeliveryAddress(
+  db: Queryable,
+  input: CreateCommandeInput
+): Promise<IntercompanyDeliveryAddress> {
+  if (input.intercompany_delivery_address) {
+    return structuredIntercompanyDeliveryAddress(input.intercompany_delivery_address);
+  }
+  if (!input.client_id) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_ADDRESS_REQUIRED", "Un client avec une adresse de livraison est requis pour la livraison directe.");
+  }
+  const result = await db.query<{
+    recipient_name: string | null; street: string | null; house_number: string | null;
+    address_complement: string | null; postal_code: string | null; city: string | null; country: string | null;
+  }>(`
+    SELECT COALESCE(NULLIF(btrim(address.name), ''), NULLIF(btrim(client.company_name), '')) AS recipient_name,
+      address.street, address.house_number, address.address_complement,
+      address.postal_code, address.city, address.country
+    FROM public.clients client
+    JOIN public.adresse_livraison address ON address.delivery_address_id = client.delivery_address_id
+    WHERE client.client_id = $1
+    FOR SHARE OF client, address
+  `, [input.client_id]);
+  const row = result.rows[0];
+  const line1 = [row?.house_number, row?.street].filter((part): part is string => Boolean(part?.trim())).join(" ");
+  if (!row?.recipient_name || !line1 || !row.postal_code?.trim() || !row.city?.trim()) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_ADDRESS_REQUIRED", "Le client doit posséder une adresse de livraison complète avant la soumission fournisseur.");
+  }
+  return structuredIntercompanyDeliveryAddress({
+    recipient_name: row.recipient_name,
+    address_line_1: line1,
+    ...(row.address_complement?.trim() ? { address_line_2: row.address_complement.trim() } : {}),
+    postal_code: row.postal_code,
+    city: row.city,
+    ...(row.country?.trim().length === 2 ? { country_code: row.country.trim().toUpperCase() } : {}),
+  });
+}
+
 type CommandeLineArticleResolution = {
   article_id: string;
   article_code: string;
@@ -4185,6 +4248,14 @@ export async function repoCreateCommandeNativeTx(
 
     const orderType = input.order_type ?? "FERME";
 
+    // A commercial company may submit its normal customer-order form without a
+    // special dropship address field. Resolve that customer's persisted delivery
+    // address while this transaction owns the creation, then persist the exact
+    // structured snapshot before the supplier PO/outbox is created.
+    const resolvedIntercompanyDeliveryAddress = input.fulfilment_mode === "SUPPLIER_DROPSHIP"
+      ? await resolveIntercompanyDeliveryAddress(client, input)
+      : input.intercompany_delivery_address ?? null;
+
     const initialWorkflowStatus: CommandeWorkflowStatus = input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "ATTENTE_FOURNISSEUR" : orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
     const insertSql = `
       INSERT INTO commande_client (
@@ -4259,7 +4330,7 @@ export async function repoCreateCommandeNativeTx(
       input.creation_flow_version ?? 1,
       orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
       input.fulfilment_mode ?? "STANDARD",
-      JSON.stringify(input.intercompany_delivery_address ?? null),
+      JSON.stringify(resolvedIntercompanyDeliveryAddress),
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;

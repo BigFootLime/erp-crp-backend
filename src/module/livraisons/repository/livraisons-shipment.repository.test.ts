@@ -168,6 +168,41 @@ describe("internal order delivery gate", () => {
     expect(String(event?.[1]?.[3])).toContain(`\"magasin_id\":\"${warehouseId}\"`);
     expect(String(event?.[1]?.[3])).toContain("\"emplacement_id\":42");
   });
+
+  it("binds the frozen final recipient to a supplier direct-delivery BL", async () => {
+    const deliveryId = "33333333-3333-4333-8333-333333333333";
+    const requestId = "44444444-4444-4444-8444-444444444444";
+    const destination = {
+      recipient_name: "Final recipient", address_line_1: "12 rue finale",
+      postal_code: "69003", city: "Lyon", country_code: "FR",
+    };
+    const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
+      const sql = String(rawSql);
+      if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] };
+      if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "EC-CUSTOMER" }] };
+      if (sql.includes("WITH delivery_lines AS")) return { rows: [{ commande_id: "12", client_id: "EC-CUSTOMER", order_type: "FERME", contract_id: null, has_unbound_lines: false }] };
+      if (sql.includes("FROM public.commande_client cc")) return { rows: [{ id: 12, numero: "CMD-12", client_id: "EC-CUSTOMER", order_type: "FERME", raw_statut: "PRET_LIVRAISON", dest_stock_magasin_id: null, dest_stock_emplacement_id: null, intercompany_request_id: requestId, intercompany_destination_snapshot: destination }] };
+      if (sql.includes("SELECT delivery_address_id::text AS delivery_address_id")) return { rows: [{ delivery_address_id: "55555555-5555-4555-8555-555555555555" }] };
+      if (sql.includes("FROM pg_attribute")) return { rows: [{ ok: 1 }] };
+      if (sql.includes("FROM commande_to_affaire") || sql.includes("FROM public.commande_to_affaire")) return { rows: [{ affaire_id: 91 }] };
+      if (sql.includes("bon_livraison_no_seq")) return { rows: [{ n: "9" }] };
+      if (sql.includes("INSERT INTO bon_livraison (")) return { rows: [{ id: deliveryId }] };
+      if (sql.includes("v_bon_livraison_reliquats_226")) return { rows: [{ id: 501, designation: "Pièce directe", code_piece: "DIR-01", quantite: 2, unite: "u", delai_client: null }] };
+      if (sql.includes("FROM public.bon_livraison_ligne delivery_line")) return { rows: [] };
+      if (sql.includes("SELECT NOT EXISTS(")) return { rows: [{ complete: false }] };
+      if (sql.includes("INSERT INTO bon_livraison_event_log")) return { rows: [{ id: "event-created", created_at: "2026-08-04T12:00:00.000Z" }] };
+      return { rows: [] };
+    }));
+
+    await expect(repoCreateLivraisonFromCommande(12, 7, { query } as unknown as PoolClient)).resolves.toEqual({ id: deliveryId });
+
+    const insert = query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO bon_livraison ("));
+    expect(String(insert?.[0])).toContain("intercompany_destination_snapshot");
+    expect(insert?.[1]).toEqual([
+      "BL-00000009", "EC-CUSTOMER", 12, 91, "55555555-5555-4555-8555-555555555555", null,
+      requestId, JSON.stringify(destination), 7,
+    ]);
+  });
 });
 
 describe("prepareLivraisonInTransaction", () => {
