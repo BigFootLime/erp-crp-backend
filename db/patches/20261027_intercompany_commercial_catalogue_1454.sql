@@ -44,10 +44,12 @@ ALTER TABLE public.intercompany_supplier_relations DROP CONSTRAINT IF EXISTS int
 ALTER TABLE public.intercompany_supplier_relations ADD CONSTRAINT intercompany_supplier_relation_approval_profiles_ck CHECK (status <> 'ACTIVE' OR local_role='BUYER' OR cardinality(approval_profile_ids) > 0);
 CREATE TABLE IF NOT EXISTS public.intercompany_relation_proposals (
  relation_id uuid PRIMARY KEY,source_company_id uuid NOT NULL,destination_company_id uuid NOT NULL,environment text NOT NULL,
- currency text NOT NULL,proposed_role text NOT NULL,received_at timestamptz NOT NULL DEFAULT now(),accepted_at timestamptz NULL,
+ buyer_company_id uuid NOT NULL,supplier_company_id uuid NOT NULL,currency text NOT NULL,proposed_role text NOT NULL,received_at timestamptz NOT NULL DEFAULT now(),accepted_at timestamptz NULL,
  CONSTRAINT intercompany_relation_proposal_role_ck CHECK(proposed_role IN ('BUYER','SUPPLIER')),
  CONSTRAINT intercompany_relation_proposal_environment_ck CHECK(environment IN ('cerp_prod','cerp_test'))
 );
+ALTER TABLE public.intercompany_relation_proposals ADD COLUMN IF NOT EXISTS buyer_company_id uuid NULL;
+ALTER TABLE public.intercompany_relation_proposals ADD COLUMN IF NOT EXISTS supplier_company_id uuid NULL;
 
 CREATE TABLE IF NOT EXISTS public.intercompany_commercial_catalogue (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
