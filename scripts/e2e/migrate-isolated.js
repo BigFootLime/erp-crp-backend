@@ -8,6 +8,11 @@ const { Client } = require('pg');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PATCH_DIR = path.join(ROOT, 'db', 'patches');
+const TEST_ONLY_PATCH_DIR = path.join(ROOT, 'db', 'test-only-patches');
+const TEST_ONLY_OUTILLAGE_PATCHES = [
+  '20261025_outillage_supplier_master_offers_test.sql',
+  '20261025_outillage_indicative_catalogue_prices_test_only.sql',
+];
 const BOOTSTRAP = path.join(ROOT, 'db', 'e2e', 'legacy-bootstrap.sql');
 const NORMALIZE = path.join(ROOT, 'db', 'e2e', 'normalize-empty-uuid-spine.sql');
 const HISTORICAL_RUNTIME_CONTRACT = path.join(ROOT, 'db', 'e2e', 'historical-runtime-contract.sql');
@@ -45,10 +50,10 @@ function orderedPatches() {
   }));
 }
 
-function runPatch(filename, command) {
+function runPatch(filename, command, patchDir = PATCH_DIR) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerp-sol05-patch-'));
   try {
-    fs.copyFileSync(path.join(PATCH_DIR, filename), path.join(tempDir, filename));
+    fs.copyFileSync(path.join(patchDir, filename), path.join(tempDir, filename));
     const result = spawnSync(
       process.execPath,
       [path.join(ROOT, 'scripts', 'db-patches.js'), command, '--patch-dir', tempDir],
@@ -62,6 +67,29 @@ function runPatch(filename, command) {
     if (process.env.CERP_E2E_QUIET !== '1' && result.stdout) process.stdout.write(result.stdout);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function assertTestOnlyOutillageSchema() {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const result = await client.query(`
+      SELECT coalesce(array_agg(required.name ORDER BY required.name)
+        FILTER (WHERE to_regclass('public.' || required.name) IS NULL), '{}') AS missing
+      FROM unnest(ARRAY[
+        'outillage_fabricant_fournisseur_master',
+        'outillage_tool_actual_purchase_prices',
+        'outillage_tool_fournisseur_master',
+        'outillage_tool_indicative_catalogue_price',
+        'outillage_tool_receipt_idempotence',
+        'outillage_tool_supplier_catalogue'
+      ]) AS required(name)
+    `);
+    const missing = result.rows[0]?.missing ?? [];
+    if (missing.length > 0) fail(`test-only outillage schema is incomplete: ${missing.join(', ')}`);
+  } finally {
+    await client.end();
   }
 }
 
@@ -156,6 +184,10 @@ async function main() {
     }
   } finally {
     await contract.end();
+  }
+  if (!stopBefore) {
+    for (const filename of TEST_ONLY_OUTILLAGE_PATCHES) runPatch(filename, 'up', TEST_ONLY_PATCH_DIR);
+    await assertTestOnlyOutillageSchema();
   }
   const status = spawnSync(
     process.execPath,

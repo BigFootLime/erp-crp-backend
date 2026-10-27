@@ -304,7 +304,7 @@ describe("Outillage staging avant handler", () => {
     expect(repository.assertCatalogueProvenanceSchema).toHaveBeenCalledOnce()
     expect(repository.createCatalogueProvenance).toHaveBeenCalledWith(
       expect.anything(), 42, expect.objectContaining({ selectionId: "source-1" }),
-      { id: 1, username: "test-admin" }
+      { id: 1, username: "test-admin" }, undefined
     )
     expect(database.clientQuery.mock.calls.map(([sql]) => sql)).toEqual(["BEGIN", "COMMIT"])
   })

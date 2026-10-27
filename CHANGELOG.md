@@ -1,5 +1,16 @@
 # Changelog
 
+## Préparé — Métrologie MD15 et codes du registre qualité (#1452)
+
+- Profils documentaires par famille, reprise contrôlée de codes tels que `PC-01` et compteurs indépendants réservant les numéros historiques, y compris TFD.
+- Fiches, champs historiques et contexte MD15 d'exécution versionnés sans modifier les décisions d'éligibilité, de qualification ou l'identité de l'opérateur.
+- Patch PostgreSQL rejoué, vérifié, concurrencé et retourné sur une fixture PostgreSQL 17 isolée ; les séquences consommées restent préservées.
+
+## Lectures de contrôle temps réel sans verrou exclusif — #1450
+
+- La validation du journal lit un snapshot REPEATABLE READ sans verrouiller l'allocateur global ; les lecteurs sains ne bloquent plus les autres instances et les publications.
+- Vérification complète, quarantaine, barrière de resynchronisation et rollback sur conflit conservés. Aucun changement de schéma.
+
 ## Préparé — Catalogue outillage privé, traçabilité et inventaire — #1762
 
 - Le catalogue fournisseur et ses extraits image sont lus par des routes Outillage authentifiées, avec contrôle de capacité `read`; aucune source n'est publiée par les fichiers statiques. Les créations, modifications et suppressions de fiches ainsi que les référentiels exigent `configure`; les six opérations de stock exigent `operate`.

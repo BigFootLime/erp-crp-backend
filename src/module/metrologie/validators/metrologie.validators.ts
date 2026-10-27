@@ -76,6 +76,8 @@ export const patchEquipementSchema = z.object({
     note: z.string().trim().min(1).max(2000).optional().nullable(),
     patch: z
       .object({
+        // Les anciens écrans renvoient le code courant dans le payload complet.
+        // Le dépôt le compare sous verrou et n'autorise jamais son changement.
         code: z.string().trim().min(1).max(80).optional().nullable(),
         designation: z.string().trim().min(1).max(400).optional(),
         categorie: z.string().trim().min(1).max(120).optional().nullable(),
