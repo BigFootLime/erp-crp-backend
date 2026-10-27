@@ -115,3 +115,15 @@ existants. L'Accueil commercial garde l'interface CERP commune, sans bureau
 EC ni ERP parallèle. La boutique finale reste ultérieure. Aucun compte des
 sept utilisateurs, base EC, service, migration réelle ou installateur de ce
 lot n'est créé. Issues #1454/#1775 ouvertes ; aucun push/PR de ces branches.
+
+## Candidate locale EC 2.0.30 après conservation de Métrologie 2.0.29
+
+Le 27 octobre 2026, la base publiée Métrologie 2.0.29 a été fusionnée dans la
+candidate locale `feature/1454-company-main-2.0.29` (merge `8c4f1104`). Les
+migrations immuables EC et les ajouts Métrologie sont conservés ; l'inventaire
+OpenAPI est régénéré à 1 628 opérations, couverture 100 %. Les garde-fous
+commerciaux EC (`a64359db`) interdisent les transitions stock/OF et les actions
+incohérentes. `npm run typecheck` et `npm run build` ont réussi localement.
+
+Cette branche prépare la prochaine candidate EC 2.0.30, sans publication 2.0.29 :
+aucun service, base, migration, installateur, push ou déploiement n'a été exécuté.
