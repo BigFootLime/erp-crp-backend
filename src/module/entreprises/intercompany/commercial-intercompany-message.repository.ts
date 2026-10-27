@@ -8,6 +8,12 @@ const publishedSchema=z.object({schema_version:z.literal(1),relation_id:z.string
 
 /** Applies an authenticated supplier decision to opaque buyer-local PO links only. */
 export async function applyCommercialIntercompanyMessageTx(tx:Pick<PoolClient,"query">,message:IntercompanyMessage):Promise<void>{
+  if(message.kind==="RELATION_PROPOSED"){
+    const p=z.object({schema_version:z.literal(1),relation_id:z.string().uuid(),buyer_company_id:z.string().uuid(),supplier_company_id:z.string().uuid(),currency:z.string().regex(/^[A-Z]{3}$/)}).strict().parse(message.payload);
+    if(message.aggregate_id!==p.relation_id||message.source_company_id===message.destination_company_id||(message.source_company_id!==p.buyer_company_id&&message.source_company_id!==p.supplier_company_id)||message.destination_company_id===message.source_company_id)throw new HttpError(400,"INTERCOMPANY_RELATION_PROPOSAL_INVALID","Proposition de relation invalide.");
+    await tx.query(`INSERT INTO public.intercompany_relation_proposals(relation_id,source_company_id,destination_company_id,environment,currency,proposed_role) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6) ON CONFLICT(relation_id) DO NOTHING`,[p.relation_id,message.source_company_id,message.destination_company_id,message.environment,p.currency,message.destination_company_id===p.buyer_company_id?'BUYER':'SUPPLIER']);return;
+  }
+  if(message.kind==="RELATION_ACCEPTED") return;
   if(message.kind==="CATALOGUE_PUBLISHED"){
     const p=publishedSchema.parse(message.payload);
     if(message.aggregate_id!==p.supplier_catalogue_mapping_id||message.revision!==p.supplier_mapping_version) throw new HttpError(400,"INTERCOMPANY_CATALOGUE_ENVELOPE_INVALID","La révision catalogue ne correspond pas à son enveloppe.");

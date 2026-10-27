@@ -2,7 +2,7 @@ import { Router } from "express"
 import {readSupplierReviews,readSupplierReviewsDue,readSupplierReviewOptions,writeSupplierReview} from "../controllers/supplier-periodic-review.controller"
 import {createClientApprovalRevision,readClientApprovalEvidence,readClientApprovalHistory,readClientApprovals} from "../controllers/client-supplier-approval.controller"
 import { SUPPLIER_WRITE_ROLES } from "../fournisseurs.permissions"
-import { commercialCatalogueOptions, createCommercialCatalogue, listCommercialCatalogue, patchCommercialCatalogue, publishSupplierCatalogue, relationOptions, createRelation, listRelations } from "../../entreprises/intercompany/commercial-catalogue.controller"
+import { commercialCatalogueOptions, createCommercialCatalogue, listCommercialCatalogue, patchCommercialCatalogue, publishSupplierCatalogue, relationOptions, createRelation, listRelations, listRelationProposals } from "../../entreprises/intercompany/commercial-catalogue.controller"
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
@@ -67,6 +67,7 @@ router.get("/intercompany/catalogue", listCommercialCatalogue)
 router.get("/intercompany/catalogue/options", commercialCatalogueOptions)
 router.get("/intercompany/relations/options", relationOptions)
 router.get("/intercompany/relations", listRelations)
+router.get("/intercompany/relations/proposals", listRelationProposals)
 router.post("/intercompany/relations", createRelation)
 router.post("/intercompany/catalogue", createCommercialCatalogue)
 router.patch("/intercompany/catalogue/:id", patchCommercialCatalogue)
