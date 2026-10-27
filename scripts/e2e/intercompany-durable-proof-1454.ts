@@ -40,6 +40,19 @@ async function main() {
     if (shipment?.status !== "SHIPPED" || shipment.posted !== "1" ||
         workflow?.status !== "LIVRE" || !quantity || Number(quantity.quantity) <= 0)
       throw new Error("DURABLE_SHIPMENT_PROOF_INCOMPLETE");
+    const invoices: Record<string, unknown> = {};
+    for (const [role, db, ht, ttc] of [["buyer", buyer, 240, 288], ["seller", seller, 140, 168]] as const) {
+      const invoice = (await db.query<{ id: string; legal_number: string; issuer: string; total_ht: string; total_ttc: string; archived: boolean }>(`
+        SELECT f.id::text,f.legal_number,f.issuer_snapshot->>'company_name' AS issuer,
+               f.total_ht::text,f.total_ttc::text,
+               EXISTS(SELECT 1 FROM authoritative_pdf_archives a WHERE a.entity_type='facture'
+                 AND a.entity_id=f.uuid::text AND a.document_kind='FINANCE_INVOICE_LEGAL_PDF'
+                 AND a.archived_at IS NOT NULL AND a.pdf_sha256 IS NOT NULL) AS archived
+        FROM facture f WHERE f.statut='ISSUED' ORDER BY f.id DESC LIMIT 1`)).rows[0];
+      if (!invoice || Number(invoice.total_ht) !== ht || Number(invoice.total_ttc) !== ttc || !invoice.archived)
+        throw new Error(`DURABLE_${role.toUpperCase()}_INVOICE_PROOF_INCOMPLETE`);
+      invoices[role] = invoice;
+    }
     process.stdout.write(`READ_ONLY_DURABLE_PROOF ${JSON.stringify({
       receipt_message: receipt.message_id,
       seller_delivery: receipt.seller_delivery_id,
@@ -52,6 +65,7 @@ async function main() {
       document_issuer: document?.issuer ?? null,
       document_recipient: document?.recipient ?? null,
       document_archived: document?.archived ?? false,
+      invoices,
     })}\n`);
   } finally {
     await Promise.all([buyer.end(), seller.end()]);

@@ -43,6 +43,19 @@ const md15PatchFilename = "20261026_metrology_md15_profile_codes.sql";
 const md15PatchChecksum =
   "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d";
 
+it("accepts only the frozen business-company cohort and rejects content substitutions", () => {
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const companies = patches.filter(patch => patch.filename.endsWith("_1454.sql"));
+  expect(companies).toHaveLength(9);
+  for (const patch of companies) {
+    expect(runner.parseArgs(["up", "--dry-run", "--only", patch.filename]).only).toBe(patch.filename);
+    expect(runner.immutableOnlyPatch(patches, patch.filename)).toBe(patch);
+    expect(() => runner.immutableOnlyPatch([{ ...patch, sha256: "0".repeat(64) }], patch.filename)).toThrow(/checksum mismatch/);
+  }
+  // Shared identity and private site routing are separate inventories, never business patches.
+  expect(() => runner.parseArgs(["up", "--only", "20261026_business_companies_1454.sql"])).toThrow(/not registered/);
+});
+
 it("permits only the exact MD15 patch with its canonical LF checksum", async () => {
   const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
   const selected = runner.immutableOnlyPatch(patches, md15PatchFilename)!;

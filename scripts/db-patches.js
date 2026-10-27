@@ -11,6 +11,15 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261026_client_person_types_1454.sql": "735153a0942657b254e3abbae0e792fc1353eae5f2891e5f8df23a6ecd25adb9",
+  "20261026_company_policy_projections_1454.sql": "f3d449774c7985471d243f7a815dbc182c76389f6587f4087f35d6f263e523b0",
+  "20261027_00_intercompany_transport_1454.sql": "4c2bf40462097374641ca078fc1c824789a91651f22d2a7f6686bebc9f158a8b",
+  "20261027_intercompany_commercial_catalogue_1454.sql": "3fa46f424c9a58e12a4ded839e74079c087e20ba80b6018298db1302f7495b2f",
+  "20261027_intercompany_external_fulfilment_receipts_1454.sql": "9804bb818b48c1ec0c8f0a04c2ecc54c82877e352275e8563d0c5009d04936c5",
+  "20261027_intercompany_invoice_sources_1454.sql": "b9bda5ab995fd01a9b4785ec1bc0e3aff40e859f94aaeb1016eb160abe345488",
+  "20261027_intercompany_supplier_offer_revisions_1454.sql": "af127653cb6ee15c4270e00cc17cc453e9fa37241fcd2d666a129ff44db0caa8",
+  "20261027_intercompany_transport_immutability_1454.sql": "bb48dcffcb237b3b3b99cd6d79de2620beb64e91672cc93f5a99b862b05b3d44",
+  "20261027_z_intercompany_external_invoice_guard_1454.sql": "ba64015d06015167dcd1d3339d5d4595b2e90709d43bc52c98c134af814cfc3f",
   "20261026_metrology_md15_profile_codes.sql": "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d",
   "20261025_outillage_catalogue_provenance.sql": "634a2197b1218936d51fbdd48b57d8940ba02706b0de0ab8d690bccb94560bf8",
   "20260921_articles_purchase_flow.sql": "82d747a678c59591404ec0d272fe96f50b400e08a14e7d1e70bac75298e0bfd0",
