@@ -1,5 +1,136 @@
-# Company site provisioning
+# Plan de provisionnement d'un site EC — #1454
 
-For a new opaque `cerp_company_<uuid>_(prod|test)` database, provision the approved schema-qualified template first. Apply the dedicated `db/company-sites/20261026_company_directory_sites_1454.sql` foundation and only the additive patches required by that template, including the company policy projection patch. Run each matching preflight and verify script. The company-only foundation is intentionally outside the automatic business patch runner: its database-name guard would reject an ordinary CRP database.
+> **Statut : préparation uniquement.** Ce document n'autorise ni migration, ni création de base, ni changement de service, proxy, NAS/GED ou secret. Une fenêtre séparée doit commencer seulement après gel SQL explicite et accord de l'opérateur responsable.
 
-Do not run the historical shared-directory-sites patch against a company database, modify patch checksums, forge a migration ledger, import users, or put directory secrets in the database. This patch creates projection metadata only; it neither creates databases nor grants a business membership.
+Ce plan crée une entreprise commerciale EC physiquement et logiquement séparée de CRP. Il est destiné à la candidate `backend-integration-2.0.29`, à reprendre sur le SHA de livraison effectivement retenu. Il ne doit jamais être exécuté depuis une recette locale ou en remplaçant des variables par des valeurs de démonstration.
+
+## État constaté à recouper avant la fenêtre
+
+Les éléments suivants sont des faits d'exploitation communiqués pour préparer la fenêtre, pas des garanties réutilisables sans lecture fraîche :
+
+| Sujet | État attendu au préflight |
+| --- | --- |
+| Versions actuellement publiées | Production `2.0.29`; baselines `main` backend `870c7ed07`, frontend `3be3fe7a`. |
+| Bases métier existantes | `cerp_prod`, `cerp_test`, et template `cerp_test_template_204_139385585b8a`. |
+| Annuaire privé | `cerp_directory_ae73e92347374b41ab71bab15c3f324a`. |
+| Drapeaux actuels | Directory partagé actif sur production/test/public; `CERP_BUSINESS_COMPANIES_ENABLED=false`. |
+| Registre entreprise | Aucune table `cerp_business_%` à ce relevé; les projections Directory côté entreprise sont déjà présentes. |
+| Nouveau SQL attendu | Le futur 334e patch, livré par le chantier identité, doit être présent dans le candidat gelé et qualifié avant toute étape de production. |
+
+Un écart sur une ligne bloque la fenêtre : il faut mettre à jour ce plan et refaire les préflights, plutôt que d'adapter une commande sur l'hôte.
+
+## Variables à décider et à consigner hors Git
+
+L'opérateur renseigne les valeurs suivantes dans un ticket de changement et le coffre de secrets. Aucune ne doit figurer dans le dépôt, un log, une commande historisée ou la base comme substitut d'un secret.
+
+| Variable | Décision requise |
+| --- | --- |
+| `EC_COMPANY_ID` | UUID canonique nouveau, réservé une fois pour l'entreprise EC. |
+| `EC_CODE`, `EC_NAME` | Code et raison sociale affichée, approuvés par le métier. |
+| `EC_PROFILE` | `COMMERCIAL`; aucun profil industriel implicite. |
+| `EC_PROD_DB`, `EC_TEST_DB` | Respectivement `cerp_company_<uuid-sans-tirets>_prod` et `cerp_company_<uuid-sans-tirets>_test`. |
+| `EC_PROD_SITE_ID`, `EC_TEST_SITE_ID` | Identifiants Directory distincts des noms de bases; créés/confirmés par Directory. |
+| `EC_PROD_ORIGIN`, `EC_TEST_ORIGIN` | Origines fixes privées approuvées. Le manifeste n'accepte que `127.0.0.1` ou l'adresse WireGuard autorisée, avec ports distincts. |
+| `EC_DIRECTORY_CALL_KEY`, `EC_DIRECTORY_ID` | Référence de coffre et identifiant d'autorité; clés nouvelles, générées pour EC, jamais dans PostgreSQL. |
+| `EC_DB_ROLE_SECRET`, `EC_GED_ROOT`, `EC_GED_TENANT` | Références de coffre et chemins/tenant GED dédiés. Ne pas partager un secret applicatif avec CRP. |
+| `EC_ISSUER_*` | Identité légale, mentions, séquences et paramètres de facturation EC. Le SIRET de démonstration est accepté uniquement en recette et doit rester modifiable; le vrai SIRET est en attente et ne doit pas être inventé. |
+| `EC_OWNER_PROFILE_ID`, `EC_MEMBER_PROFILE_IDS` | Profils Directory explicitement sélectionnés, avec modules et capacités fermés par défaut. |
+| `CHANGE_ID`, `BACKUP_RECEIPT`, `ROLLBACK_OWNER` | Référence de changement, preuve de sauvegarde/restauration et responsable autorisé à interrompre/revenir en arrière. |
+
+Les DSN administrateur, mots de passe, clés HMAC, JWT, GED et certificats ne sont indiqués que par des références de coffre à accès minimal.
+
+## Préconditions bloquantes
+
+1. Geler le SHA backend et frontend, incluant le 334e patch identité; produire l'inventaire `filename:sha256` et la sortie `status --check` pour les bases existantes concernées. Ne jamais modifier un checksum ni fabriquer un ledger.
+2. Obtenir un point de restauration testé pour `cerp_prod`, `cerp_test`, le template et l'annuaire privé, avec conservation des preuves et des journaux d'audit. Ce plan n'autorise pas un reset ou une recréation de ces bases.
+3. Vérifier en lecture seule que les migrations Directory de société ne sont pas déjà partiellement installées et que les projections locales annoncées sont présentes. L'absence actuelle de `cerp_business_%` signifie que le script Directory dédié doit être exécuté dans une fenêtre contrôlée; elle ne permet aucun `up` global.
+4. Confirmer les droits d'administration, la MFA récente du propriétaire central, le rôle applicatif, le chemin GED, l'antivirus et le stockage de sauvegarde. Préparer les unités de service EC sans les démarrer.
+5. Recenser les objets documentaires et blobs existants. L'alias `documents/legacy-import` vers `metrologie/legacy-import`, ses objets GED et ses blobs restent inchangés : pas de déplacement, renommage, déduplication, purge ou rattachement à EC dans cette fenêtre.
+6. Réserver les origines, ports et règles de proxy sans collision. Le générateur de proxy sera exécuté sur un manifeste privé, inspecté, puis seulement inclus à l'emplacement approuvé avant les règles legacy. Aucun proxy actif n'est modifié pendant le préflight.
+
+## Exécution proposée, après feu vert explicite
+
+Chaque étape a un reçu horodaté, l'identité de l'opérateur et un contrôle de sortie. À la première erreur, arrêter la phase courante sans compenser par SQL manuel.
+
+### 1. Préflight et sauvegarde
+
+- Consigner les versions effectives, hashes de sources, services en cours, inventaires de bases, tables Directory, routes proxy et paramètres sans en afficher les valeurs sensibles.
+- Réaliser la sauvegarde approuvée et tester la restauration dans un espace isolé. Enregistrer `BACKUP_RECEIPT` avant une mutation.
+- Lancer les préflights en lecture seule appropriés : `db/shared-directory/20261026_business_companies_1454.preflight.sql` sur `EC_DIRECTORY_DB`, puis les préflights du site seulement après création de la base opaque. Les gardes de nom doivent refuser toute base CRP classique.
+
+### 2. Préparer le registre Directory, sans rendre EC accessible
+
+- Sur l'annuaire privé seulement, appliquer `db/shared-directory/20261026_business_companies_1454.sql` avec son compte de migration contrôlé, puis son `verify.sql`.
+- Confirmer que les tables de registre restent privées à `cerp_directory_app`; `cerp_app` ne reçoit aucun droit sur elles.
+- Créer via l'API/administration Directory authentifiée l'objet société EC en état inactif, avec `EC_COMPANY_ID`, `EC_CODE`, `EC_NAME`, `COMMERCIAL` et des modules/capacités explicitement limités. La création doit produire une trace d'audit. Ne pas insérer directement des lignes pour contourner les versions, verrous ou audits.
+
+### 3. Créer les sites physiques opaques
+
+- Créer `EC_TEST_DB` d'abord, depuis le template qualifié approuvé; ne jamais cloner `cerp_prod`, importer des données métier CRP, ni copier son ledger.
+- Vérifier le nom opaque, le propriétaire, le rôle `cerp_app`, le schéma attendu, les tables `users` et `operator_device_sessions`, ainsi que l'absence de données métier non autorisées.
+- Exécuter, sur cette seule base, dans cet ordre :
+
+  ```text
+  db/company-sites/20261026_company_directory_sites_1454.preflight.sql
+  db/company-sites/20261026_company_directory_sites_1454.sql
+  db/company-sites/20261026_company_directory_sites_1454.verify.sql
+  ```
+
+  Cette fondation est hors du runner métier automatique. Les patches applicatifs additionnels doivent être uniquement ceux prescrits par le template et le SHA gelé; aucun `db-patches up` global ne sert de raccourci.
+- Créer `EC_PROD_DB` avec le même procédé après recette test signée, jamais par promotion de données de `EC_TEST_DB`. Refaire les trois contrôles et conserver les inventaires séparés.
+
+### 4. Enregistrer instances, identités et accès
+
+- Déclarer les instances test puis production dans Directory avec les couples stricts `(EC_COMPANY_ID, cerp_test|cerp_prod, EC_*_SITE_ID)`, d'abord inactifs. Une déclaration prépare le raccordement; elle ne crée pas la base.
+- Renseigner dans chaque site l'identité légale EC, la politique et les séquences locales. Conserver le SIRET de démonstration seulement en test s'il est requis par la recette; documenter son remplacement par la vraie valeur, sans valeur fictive en production.
+- Générer des secrets propres pour chaque runtime et GED, les déposer dans le coffre puis injecter uniquement leurs références dans les unités de service. Ne pas mettre une clé Directory, un blob ou un secret dans le registre métier.
+- Ajouter les memberships via l'administration Directory avec un profil réel, un statut actif explicite, une liste de modules minimale et les capacités de projection commerciale nécessaires. Un nom ne donne jamais un accès.
+
+Résumé des accès connus à appliquer seulement après confirmation :
+
+| Profil/situation | Décision opérationnelle |
+| --- | --- |
+| Jean-Marie (JM) | Membership EC **test uniquement**; aucune instance production. |
+| Nizier et Lambert | Anciens comptes locaux inactifs, sans profil Directory : ne créer ni membership ni compte de substitution. Décision utilisateur requise (réactivation/migration ou maintien inactif). |
+| Tout autre accès | Rechercher le profil Directory réel, obtenir l'approbation du propriétaire et choisir modules/capacités explicitement. Aucun mapping par nom, e-mail ou ancien `users.id`. |
+
+### 5. Déployer les runtimes et le routage
+
+- Construire les deux configurations de runtime fixes avec leur propre pool, base, `CERP_COMPANY_ID`, environnement (`cerp_test`/`cerp_prod`), Directory partagé et clé de site. Un processus ne change jamais de base selon un header.
+- Le flag entreprises reste désactivé sur les services CRP historiques. Il est activé explicitement seulement là où Directory et le runtime EC qualifiés le requièrent, avec la configuration `workers=off` ou `workers=leader` décidée par site. Aucun worker EC n'est démarré implicitement.
+- Générer le fragment avec `scripts/entreprises/render-company-proxy.mjs` depuis un manifeste privé qui contient les deux destinations fixes. Examiner le diff; installer le fragment avant les catch-all legacy puis valider la configuration du proxy. Les couples inconnus et les mauvais environnements doivent répondre 403, jamais tomber sur CRP.
+- Démarrer test, vérifier le boot (base/UUID/Directory), l'accès direct et la projection de politique signée. Activer l'instance test seulement après ces preuves. Répéter la séquence production pendant sa fenêtre dédiée.
+
+### 6. Recette de mise en service et décision
+
+- Vérifier connexion, MFA, sélection d'entreprise, ticket de bascule, refus d'un bearer ou d'un header d'une autre société, modules commerciaux autorisés et refus des capacités industrielles.
+- Vérifier création d'un particulier, identité légale EC, GED tenant EC, livraison/facturation et journal d'audit avec données synthétiques autorisées. Vérifier qu'aucun mouvement, utilisateur ou document historique CRP n'a été réattribué.
+- Vérifier une dernière fois les alias et blobs Métrologie existants, notamment `documents/legacy-import` → `metrologie/legacy-import`.
+- Faire valider les reçus par `ROLLBACK_OWNER`, puis activer l'instance production et la route correspondante. En l'absence de tous les reçus, garder l'instance inactive.
+
+## Commandes de fenêtre (gabarits, non exécutables tels quels)
+
+Les valeurs sont fournies par l'environnement sécurisé de l'opérateur. Les placeholders ne sont pas des identifiants ni des secrets à inventer.
+
+```powershell
+# Lecture seule; échoue si le nom d'annuaire ou de site n'est pas celui attendu.
+psql $env:EC_DIRECTORY_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/shared-directory/20261026_business_companies_1454.preflight.sql
+psql $env:EC_SITE_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/company-sites/20261026_company_directory_sites_1454.preflight.sql
+
+# Après approbation de la phase et sauvegarde validée seulement.
+psql $env:EC_DIRECTORY_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/shared-directory/20261026_business_companies_1454.sql
+psql $env:EC_DIRECTORY_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/shared-directory/20261026_business_companies_1454.verify.sql
+psql $env:EC_SITE_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/company-sites/20261026_company_directory_sites_1454.sql
+psql $env:EC_SITE_ADMIN_DSN -v ON_ERROR_STOP=1 -f db/company-sites/20261026_company_directory_sites_1454.verify.sql
+
+# Génère un fragment à inspecter, sans modifier la configuration active.
+node scripts/entreprises/render-company-proxy.mjs --input <manifest-prive.json> --output <workspace>/ec-company-proxy.conf
+```
+
+## Retour arrière et limites
+
+Avant l'activation, arrêter les unités EC non publiées, retirer le fragment proxy non activé et révoquer les secrets de site créés, en conservant les journaux. Ne pas supprimer une base, un tenant GED ou une clé tant que la sauvegarde et la décision de rétention n'ont pas été approuvées.
+
+Après création d'une société, d'une membership, d'une instance ou d'une trace d'audit, les rollbacks SQL fournis doivent normalement **refuser** : ils protègent la preuve historique. Dans ce cas, le retour arrière est fonctionnel : désactiver l'instance dans Directory, retirer la route, arrêter le runtime, révoquer les secrets et conserver base, blobs, GED et audit en quarantaine. Une suppression ultérieure requiert une décision de rétention distincte, un reçu de sauvegarde et une procédure approuvée; jamais `DROP DATABASE`, purge GED ou modification de ledger improvisés.
+
+Les bases CRP (`cerp_prod`, `cerp_test`), leur template, l'annuaire existant et les documents/blobs antérieurs restent hors portée du rollback EC.
