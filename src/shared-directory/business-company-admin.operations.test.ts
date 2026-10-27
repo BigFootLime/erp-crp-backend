@@ -12,6 +12,8 @@ const ports = vi.hoisted(() => ({
   list: vi.fn(),
   detail: vi.fn(),
   profiles: vi.fn(),
+  siteLevelRead: vi.fn(),
+  siteLevelSet: vi.fn(),
   query: vi.fn(),
 }));
 
@@ -29,6 +31,8 @@ vi.mock(
     repoUpdateBusinessCompany: ports.update,
     repoReadBusinessCompanyAdministration: ports.detail,
     repoSearchBusinessCompanyProfiles: ports.profiles,
+    repoReadBusinessCompanySiteAdministrativeLevel: ports.siteLevelRead,
+    repoSetBusinessCompanySiteAdministrativeLevel: ports.siteLevelSet,
   }),
 );
 
@@ -306,5 +310,47 @@ describe("business company Directory administration", () => {
       );
     expect(invalid.status).toBe(400);
     expect(ports.instance).not.toHaveBeenCalled();
+  });
+  it("requires the same live owner and MFA boundary for a site-scoped superadmin grant", async () => {
+    ports.siteLevelSet.mockResolvedValue({
+      company_id: companyId,
+      profile_id: profileId,
+      environment: "cerp_prod",
+      site_id: "cerp_company_22222222222242228222222222222222_prod",
+      is_superadmin: true,
+      status: "Active",
+      version: 8,
+    });
+    const response = await request(fixture())
+      .post("/internal/directory/business-companies-admin-site-superadmin-set")
+      .send(body({
+        company_id: companyId,
+        profile_id: profileId,
+        environment: "cerp_prod",
+        is_superadmin: true,
+        expected_version: 7,
+      }));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ is_superadmin: true, version: 8 });
+    expect(ports.requireOwner).toHaveBeenCalled();
+    expect(ports.siteLevelSet).toHaveBeenCalledWith(
+      expect.anything(),
+      owner,
+      expect.objectContaining({ expected_version: 7 }),
+    );
+  });
+  it("rejects a global CRP reference before a tenant repository is reached", async () => {
+    const response = await request(fixture())
+      .post("/internal/directory/business-companies-admin-site-superadmin-set")
+      .send(body({
+        company_id: companyId,
+        profile_id: profileId,
+        environment: "cerp_prod",
+        site_id: "cerp_prod",
+        is_superadmin: true,
+        expected_version: 0,
+      }));
+    expect(response.status).toBe(400);
+    expect(ports.siteLevelSet).not.toHaveBeenCalled();
   });
 });

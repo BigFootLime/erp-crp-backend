@@ -12,9 +12,11 @@ import {
   repoCreateBusinessCompany,
   repoListBusinessCompanies,
   repoReadBusinessCompanyAdministration,
+  repoReadBusinessCompanySiteAdministrativeLevel,
   repoSearchBusinessCompanyProfiles,
   repoSetBusinessCompanyInstance,
   repoSetBusinessCompanyMembership,
+  repoSetBusinessCompanySiteAdministrativeLevel,
   repoUpdateBusinessCompany,
 } from "../module/entreprises/repository/company-directory.repository";
 import { MODULE_CATALOG } from "../module/access-control/domain/module-catalog";
@@ -83,6 +85,19 @@ const instanceSchema = z
         message: "Instance environment mismatch",
       });
   });
+const siteAdministrativeLevelSchema = z
+  .object({
+    company_id: uuid,
+    profile_id: uuid,
+    environment: z.enum(["cerp_prod", "cerp_test"]),
+    is_superadmin: z.boolean(),
+    expected_version: z.number().int().min(0).max(2_147_483_646),
+  })
+  .strict();
+const siteAdministrativeLevelReadSchema = siteAdministrativeLevelSchema.omit({
+  is_superadmin: true,
+  expected_version: true,
+});
 
 /** Central management only: it registers metadata and never provisions a DB. */
 export function mountDirectoryBusinessCompanyAdministration(
@@ -246,4 +261,17 @@ export function mountDirectoryBusinessCompanyAdministration(
       );
     return repoSetBusinessCompanyInstance(db, parsed, audit(actor));
   });
+  endpoint("business-companies-admin-site-superadmin-read", async (input) =>
+    repoReadBusinessCompanySiteAdministrativeLevel(
+      db,
+      siteAdministrativeLevelReadSchema.parse(input),
+    ),
+  );
+  endpoint("business-companies-admin-site-superadmin-set", async (input, actor) =>
+    repoSetBusinessCompanySiteAdministrativeLevel(
+      db,
+      actor,
+      siteAdministrativeLevelSchema.parse(input),
+    ),
+  );
 }

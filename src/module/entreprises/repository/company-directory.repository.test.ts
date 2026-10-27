@@ -18,8 +18,10 @@ import {
   repoListBusinessCompaniesForProfile,
   repoReadBusinessCompanyContext,
   repoReadBusinessCompanyInstanceBySite,
+  repoReadBusinessCompanySiteAdministrativeLevel,
   repoSetBusinessCompanyInstance,
   repoSetBusinessCompanyMembership,
+  repoSetBusinessCompanySiteAdministrativeLevel,
   repoUpdateBusinessCompany,
 } from "./company-directory.repository";
 
@@ -32,6 +34,50 @@ const actor = {
   device_type: null,
   os: null,
   browser: null,
+};
+const ownerSession = {
+  profile_id: profile,
+  source_user_id: 7,
+  database: "cerp_prod",
+  username: "owner",
+  name: "Owner",
+  surname: "Directory",
+  email: "owner@example.test",
+  tel_no: null,
+  avatar_key: null,
+  avatar_asset_id: null,
+  role: "Administrateur Systeme et Reseau",
+  roles: ["Administrateur Systeme et Reseau"],
+  status: "Active",
+  is_superadmin: true,
+  mfa_reenrollment_required: false,
+  mfa_factor_id: "33333333-3333-4333-8333-333333333333",
+  mfa_factor_version: 1,
+  mfa_verified_at: new Date().toISOString(),
+  mfa_method: "totp",
+  global_session_epoch: 1,
+  membership_version: 1,
+  job_title: null,
+  employment_type: null,
+  weekly_hours_target: null,
+  work_profile_incomplete: false,
+  work_profile: null,
+  work_profile_start_date: null,
+};
+const tenantRow = {
+  company_id: company,
+  profile_id: profile,
+  environment: "cerp_prod" as const,
+  site_id: "cerp_company_11111111111141118111111111111111_prod",
+  is_superadmin: false,
+  status: "Active",
+  version: 7,
+  company_status: "ACTIVE",
+  instance_active: true,
+  company_membership_status: "ACTIVE",
+  user_status: "Active",
+  mfa_reenrollment_required: false,
+  active_mfa_factor: true,
 };
 const input = {
   company_id: company,
@@ -243,5 +289,39 @@ describe("business company directory repository", () => {
       profile,
       "cerp_test",
     ]);
+  });
+  it("derives the tenant site, locks the membership, versions the grant and audits it", async () => {
+    const d = db([[], [tenantRow], [{ ...tenantRow, is_superadmin: true, version: 8 }]]);
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(d as any, ownerSession as any, {
+        company_id: company,
+        profile_id: profile,
+        environment: "cerp_prod",
+        is_superadmin: true,
+        expected_version: 7,
+      }),
+    ).resolves.toMatchObject({ is_superadmin: true, version: 8, status: "Active" });
+    const sql = (d.query.mock.calls as unknown[][]).map((call) => String(call[0])).join("\n");
+    expect(sql).toContain("pg_advisory_xact_lock");
+    expect(sql).toContain("FOR UPDATE OF c,i,m,dm,u");
+    expect(sql).toContain("database_id=$2");
+    expect(sql).not.toContain("database_id='cerp_prod'");
+    expect((d.query.mock.calls as unknown[][])[1]?.[1]).toContain(tenantRow.site_id);
+    expect(ports.audit).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: 7,
+      body: expect.objectContaining({ action: "BUSINESS_COMPANY_SITE_SUPERADMIN_CHANGED" }),
+    }));
+  });
+  it("refuses stale versions and inactive explicit memberships without auditing", async () => {
+    const stale = db([[], [tenantRow]]);
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(stale as any, ownerSession as any, {
+        company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 6,
+      }),
+    ).rejects.toMatchObject({ code: "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE" });
+    const inactive = db([[{ ...tenantRow, company_membership_status: "REVOKED" }]]);
+    await expect(
+      repoReadBusinessCompanySiteAdministrativeLevel(inactive as any, { company_id: company, profile_id: profile, environment: "cerp_prod" }),
+    ).rejects.toMatchObject({ code: "BUSINESS_COMPANY_SITE_MEMBERSHIP_INACTIVE" });
   });
 });
