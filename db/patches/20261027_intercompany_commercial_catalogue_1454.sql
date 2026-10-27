@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS public.intercompany_purchase_order_links (
   CONSTRAINT intercompany_purchase_order_buyer_sales_uq UNIQUE (buyer_sales_order_id),
   CONSTRAINT intercompany_purchase_order_buyer_purchase_uq UNIQUE (buyer_purchase_order_id)
 );
+ALTER TABLE public.intercompany_purchase_order_links
+  ADD COLUMN IF NOT EXISTS supplier_request_id uuid NULL,
+  ADD COLUMN IF NOT EXISTS supplier_request_revision integer NULL,
+  ADD COLUMN IF NOT EXISTS supplier_decision_version integer NULL,
+  ADD COLUMN IF NOT EXISTS supplier_order_state text NULL,
+  ADD COLUMN IF NOT EXISTS supplier_sales_order_id text NULL;
 
 CREATE TABLE IF NOT EXISTS public.intercompany_purchase_order_line_links (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
