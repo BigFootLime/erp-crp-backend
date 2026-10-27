@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Esprit Carabine 2.0.31 (#1454 / frontend #1775)
+
+- Réunit le socle commercial multi-entreprise et le correctif PT / OF 2.0.30 dans une même candidate de code.
+- L’annuaire, les contrôles MFA, les accès par entreprise et les privilèges SuperAdmin restent contrôlés côté serveur.
+- Cette préparation ne crée aucune entreprise, base, utilisateur, commande, stock ou facture ; l’activation reste une opération séparée et auditée.
+
 ## Préparé — Reprise complète Métrologie (#1460)
 
 - Lots d’import immuables, fichiers sources contrôlés par empreinte et antivirus, vingt champs du registre et observations historiques avec provenance.
