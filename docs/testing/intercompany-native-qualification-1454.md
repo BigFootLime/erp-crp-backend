@@ -19,7 +19,7 @@ aucune nouvelle publication dans ce chat n'est annoncée depuis.
 
 | Contrôle | Résultat et portée |
 | --- | --- |
-| Migration métier à froid | 336 patches de l'inventaire candidat intégré présents, zéro manquant et zéro mismatch après recréation du seul baseline synthétique PostgreSQL 17. Le ledger contient aussi deux patches explicitement TEST outillage, soit 338 lignes. |
+| Migration métier à froid | 337 patches de l'inventaire candidat intégré présents, zéro manquant et zéro mismatch après recréation du seul baseline synthétique PostgreSQL 17. Le ledger contient aussi deux patches explicitement TEST outillage, soit 339 lignes. |
 | Commande EC, achat CRP et demande vendeur | Chemins natifs exercés sur deux bases PostgreSQL distinctes : outbox achat, inbox vendeur, notification, décision, création de commande vendeur et retour de décision. Ce helper SQL ne constitue pas à lui seul une preuve du transport HTTP entre processus fixes. |
 | Livraison | Passage natif complet obtenu : AR archivé/envoyé vers un récepteur mail loopback TEST, prélèvement validé, BL SHIPPED et un mouvement POSTED. Reçu externe et historique LIVRE côté acheteur, sans mouvement local. Contre-vérification indépendante via `intercompany-durable-proof-1454.ts`. |
 | Identité et basculement | Vrai Directory RPC puis vraies API Express de deux runtimes fixes : connexion acheteur, création du ticket, échange vendeur et contexte vendeur. Un en-tête d'une autre entreprise est refusé (403) ; le Bearer acheteur présenté au vendeur est refusé (401). Le rejeu avec la même clé est idempotent. |
@@ -94,8 +94,11 @@ Helpers : `intercompany-commercial-catalogue-v2-1454.ts` avec
 `intercompany-billing-1454.ts`, `intercompany-invoice-archive-1454.ts` et
 `intercompany-durable-proof-1454.ts` avec les montants attendus explicites.
 
-Inventaire SQL candidat (filename:SHA-256 canonical LF trié) :
-`9a64bfad5c4646c66a238067cbb6253e80e8651c6740d57eb81e2644a0f08593`.
+Inventaire SQL candidat, format explicite v2 : prendre les couples
+`filename:sha256` renvoyés par `scripts/db-patches.js`, les trier avec
+`Array.sort()` lexical JavaScript, joindre par LF et ajouter un LF final, puis
+hacher le texte UTF-8 en SHA-256. Empreinte des 337 patches :
+`fe17625705276099fd628190eab8155f67d087606db648afdc0ea5dca2e217e4`.
 Les deux lignes TEST supplémentaires sont
 `20261025_outillage_indicative_catalogue_prices_test_only.sql` et
 `20261025_outillage_supplier_master_offers_test.sql` ; elles ne sont pas une
@@ -115,15 +118,36 @@ signature, mot de passe, document client ou tarif réel n'est versionné.
 - Backend global après les correctifs de catalogue et de finance : 883 fichiers,
   8 828 tests réussis, 261 ignorés et zéro échec. Les derniers ajouts SQL de
   verrouillage sont aussi vérifiés dans PostgreSQL réel et les 27 tests du runner
-  avec la cohorte figée de 13 patches entreprise. Build complet réussi.
+  avec la cohorte figée de 14 patches entreprise. Build complet réussi.
 - Frontend : typecheck et build réussis ; 24 tests ciblés API demande/facturation
   réussis ; scénario Playwright sans retry réussi. La suite complète avant la
-  dernière fusion a passé 633 fichiers / 4 336 tests. La passe frontend finale est
-  en cours. Une première passe a révélé un chemin de corpus de fixture manquant
-  et un timeout de test sous charge ; les deux fichiers passent avec le chemin
-  correct. Ce résultat ciblé ne remplace pas le verdict global final.
+  dernière fusion a passé 633 fichiers / 4 336 tests. La passe frontend finale
+  passe 637 fichiers / 4 351 tests, zéro échec et zéro test ignoré, avec le chemin
+  de corpus explicite et la concurrence CI bornée. Les deux parcours natifs
+  Electron (Accueil et reprise API/session) passent sans retry après alignement
+  de leur réponse de fixture sur le vrai contrat `LEGACY`.
 - Le scénario navigateur a permis de corriger le type de l'identifiant natif
   de commande et l'affichage automatique du tutoriel par-dessus la demande.
+
+### Protection des paiements et remboursements historiques
+
+Le premier gate complet a détecté une régression SQL : la nouvelle source EC
+avait remplacé le validateur d'allocations sans conserver le calcul cash/avoirs/
+remboursements de CUSTOMER-REFUND-1268. La migration additive
+`20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql` restaure ce corps
+canonique et conserve la branche dédiée aux reçus externes. Aucun patch déjà
+appliqué ni checksum historique n'a été modifié.
+
+La recette PostgreSQL transactionnelle crée un avoir de 100 et son remboursement
+de 100, accepte le paiement net de 102,60, puis refuse une sur-allocation, une
+conversion de paiement legacy et un avoir lié à un autre client. Elle se termine
+par ROLLBACK sans désactivation des triggers. Le reçu EC déjà consommé est
+également refusé par le preview (`SOURCE_FULLY_INVOICED` et
+`SOURCE_QUANTITY_EXCEEDED`). La preuve indépendante du BL et des deux factures
+archivées reste passante. Le support verifier 1268 et la répétition officielle
+de migration/rejeu/restauration passent après le correctif. Le gate global reste
+à terminer sur le dernier candidat figé, sans présenter ces contrôles partiels
+comme son verdict final.
 
 Commandes locales sans secret, exécutées depuis leurs worktrees respectifs :
 
