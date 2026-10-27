@@ -31,6 +31,7 @@ type OpenApiOperation = Record<string, unknown>;
 type OpenApiPathItem = Record<string, OpenApiOperation>;
 
 const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
+  "post /intercompany/messages": "Transport entre entreprises authentifié par HMAC-SHA256 avec clé propre au pair, empreinte du message canonique, cible/environnement fixes, horodatage de 60 secondes et nonce ; traitement transactionnel de l’inbox et rejeu idempotent par identifiant et empreinte. Aucun jeton utilisateur n’est accepté comme preuve du pair.",
   "get /entreprises/sign-in-context": "Contexte minimal de connexion d'une instance entreprise active. La cible et l'environnement doivent correspondre au runtime fixe ; aucune liste d'entreprises, session ou donnée privée n'est exposée.",
   "post /entreprises/switches/exchange": "Ticket opaque de changement d'entreprise valable au plus 60 secondes, lié au profil, à la session source, à la cible et aux versions d'adhésion ; limitation IP/ticket persistée, aucun Bearer source accepté, consommation et émission de session idempotentes par la même clé.",
   "get /auth/test-registration": "Disponibilité du formulaire test, désactivé par défaut et limité à current_database()=cerp_test avec opt-in serveur.",
@@ -176,20 +177,27 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const key = operationKey(route);
   const publicReason = PUBLIC_ROUTE_POLICIES[key];
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
+  const intercompanySigned = key === "post /intercompany/messages";
   const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
   const terminalSession = TERMINAL_SESSION_OPERATIONS.has(key);
   const terminalDevice = TERMINAL_DEVICE_OPERATIONS.has(key) || terminalSession;
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
   const parameters = pathParameters(route);
+  if (intercompanySigned) {
+    for (const suffix of ["Source", "Destination", "Environment", "Time", "Nonce"]) {
+      parameters.push({ name: `X-CERP-Intercompany-${suffix}`, in: "header", required: true, schema: { type: "string" } });
+    }
+  }
   if (idempotent) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
   const operation: OpenApiOperation = {
     tags: [tagFor(route)],
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice),
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice || intercompanySigned),
     security: terminalSession ? [{terminalDevice:[], terminalSession:[]}]
       : terminalDevice ? [{terminalDevice:[]}]
+      : intercompanySigned ? [{intercompanySignature:[]}]
       : route.authenticated
       ? [{ bearerAuth: [] }]
       : clientPortalAuthenticated
@@ -200,6 +208,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     "x-cerp-source": route.source,
     "x-cerp-authentication": terminalSession ? "Appareil appairé + session PIN active liée à cet appareil + compte et droits vérifiés"
       : terminalDevice ? "Secret d’appareil appairé et non révoqué"
+      : intercompanySigned ? "HMAC-SHA256 du pair + message canonique + cible/environnement fixes + fenêtre de 60 secondes"
       : route.authenticated
       ? "JWT Bearer + compte actif"
       : clientPortalAuthenticated
@@ -207,7 +216,8 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
-    "x-cerp-rbac": terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+    "x-cerp-rbac": intercompanySigned ? ["configuredPeerScope", "fixedCompanyEnvironmentScope", "transactionalInboxIdentity"]
+      : terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
       : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
@@ -403,6 +413,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
   return {
     ...legacyComponents,
     securitySchemes: {
+      intercompanySignature: { type: "apiKey", in: "header", name: "X-CERP-Intercompany-Signature", description: "HMAC-SHA256 hexadécimal du cadre signé incluant méthode, chemin, entreprises, environnement, horodatage, nonce et empreinte canonique. Les autres en-têtes X-CERP-Intercompany sont obligatoires." },
       terminalDevice: {type:"apiKey",in:"header",name:"X-Terminal-Device",description:"Secret aléatoire du terminal appairé."},
       terminalSession: {type:"apiKey",in:"header",name:"X-Station-Session",description:"Jeton opérateur en mémoire, lié au terminal."},
       bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
