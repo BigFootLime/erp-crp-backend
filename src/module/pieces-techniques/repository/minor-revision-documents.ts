@@ -8,7 +8,7 @@ export function canCarryMinorRevisionDocuments(input: { changeLevel: string; sou
 /** Preserve existing approved files for an internal revision, never for a new client drawing. */
 export async function copyMinorRevisionDocumentsTx(tx: Pick<PoolClient, "query">, pieceId: string, sourceId: string, targetId: string, actorId: number): Promise<number> {
   const result = await tx.query(`INSERT INTO public.ged_document_links(document_id,entity_type,entity_id,link_role,created_by)
-    SELECT DISTINCT l.document_id,'PIECE_TECHNIQUE_VERSION',target.id::text,l.link_role,$4
+    SELECT DISTINCT l.document_id,'PIECE_TECHNIQUE_VERSION',target.id::text,l.link_role,$4::integer
       FROM public.piece_technique_versions source
       JOIN public.piece_technique_versions target ON target.id=$3::uuid AND target.piece_technique_id=source.piece_technique_id
         AND target.change_level='MINOR' AND target.copied_from_version_id=source.id
