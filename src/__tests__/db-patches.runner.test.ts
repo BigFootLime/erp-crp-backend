@@ -46,7 +46,7 @@ const md15PatchChecksum =
 it("accepts only the frozen business-company cohort and rejects content substitutions", () => {
   const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
   const companies = patches.filter(patch => patch.filename.endsWith("_1454.sql"));
-  expect(companies).toHaveLength(9);
+  expect(companies).toHaveLength(10);
   for (const patch of companies) {
     expect(runner.parseArgs(["up", "--dry-run", "--only", patch.filename]).only).toBe(patch.filename);
     expect(runner.immutableOnlyPatch(patches, patch.filename)).toBe(patch);
