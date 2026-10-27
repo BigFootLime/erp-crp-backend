@@ -19,6 +19,7 @@ type DeliverySnapshot = {
    * frozen when the intercompany request was accepted, never CRP's live client. */
   intercompany_buyer_legal_snapshot: Record<string, unknown> | null;
   intercompany_destination_snapshot: Record<string, unknown> | null;
+  is_intercompany_dropship: boolean;
   lines: Array<{ ordre: number; designation: string; code_piece: string | null; quantite: number; unite: string | null; delai_client: string | null; lot_codes: string[] }>;
 };
 
@@ -62,7 +63,7 @@ async function loadIssuerSnapshot(tx: Queryable, at: string | null): Promise<Leg
 
 /** Reads only persisted delivery data while the business transaction still owns its lock. */
 export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryId: string): Promise<DeliverySnapshot> {
-  const header = await tx.query<Omit<DeliverySnapshot, "lines" | "issuer">>(`
+  const header = await tx.query<Omit<DeliverySnapshot, "lines" | "issuer" | "is_intercompany_dropship">>(`
     SELECT bl.numero, bl.statut::text, c.company_name AS client_name, cc.numero AS commande_numero,
       a.reference AS affaire_reference,
       ARRAY(
@@ -142,6 +143,7 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
     client_name: isIntercompanyDropship ? destinationRecipientName(destination as Record<string, unknown>) : row.client_name,
     address_label: isIntercompanyDropship ? destinationAddressLabel(destination as Record<string, unknown>) : row.address_label,
     issuer,
+    is_intercompany_dropship: isIntercompanyDropship,
     lines: lines.rows.map((line) => ({ ...line, lot_codes: Array.isArray(line.lot_codes) ? line.lot_codes : [] })),
   };
 }
@@ -207,7 +209,7 @@ export async function buildShippedDeliveryArtifactInput(tx: Queryable, input: { 
   if (snapshot.statut !== "SHIPPED") throw new Error("DELIVERY_SHIPPED_ARTIFACT_INVALID_STATE");
   return {
     entityType: "bon-livraison", entityId: input.deliveryId, documentKind: "DELIVERY_NOTE_SHIPPED", documentVersion: 1,
-    renderVersion: "delivery-note-shipped-v1", idempotencyKey: `delivery:${input.deliveryId}:shipped:v1`,
+    renderVersion: "delivery-note-shipped-v2", idempotencyKey: `delivery:${input.deliveryId}:shipped:v1`,
     title: `Bon de livraison expédié — ${snapshot.numero}`,
     originalName: authoritativePdfFilename(["bon-livraison", snapshot.numero, "expedie"]), sourceRevision: input.sourceRevision,
     sourceSnapshot: { type: "DELIVERY_NOTE_SHIPPED_SNAPSHOT", ...snapshot }, actorUserId: input.actorUserId,
@@ -223,6 +225,11 @@ export async function renderShippedDeliveryOfficialPdf({ archive }: { archive: A
   return renderBonLivraisonDocument({
     version: archive.documentVersion, company: source.issuer && typeof source.issuer === "object" ? pickMention(source.issuer, "company_name") : null,
     issuer: source.issuer && typeof source.issuer === "object" ? source.issuer : {},
+    // v1 archives deliberately retain their exact historical CRP presentation. New v2
+    // intercompany snapshots are the only path that uses the buyer's frozen brand.
+    branding: archive.renderVersion === "delivery-note-shipped-v2" && source.is_intercompany_dropship === true && source.issuer && typeof source.issuer === "object"
+      ? (() => { const name = pickMention(source.issuer, "company_name"); return name ? { name } : null })()
+      : null,
     header: {
       id: archive.entityId, numero: source.numero, statut: "SHIPPED", client: { client_id: "", company_name: source.client_name },
       commande: source.commande_numero ? { id: 0, numero: source.commande_numero } : null,

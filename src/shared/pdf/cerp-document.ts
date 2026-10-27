@@ -322,6 +322,11 @@ function documentBrandName(header: CerpDocumentHeader): string {
   return header.branding?.name.trim() || "CROIX ROUSSE PRECISION"
 }
 
+/** Preserve historic PDF metadata casing when no explicit issuer brand is supplied. */
+function documentBrandMetadataName(header: CerpDocumentHeader): string {
+  return header.branding?.name.trim() || "Croix Rousse Precision"
+}
+
 function documentBrandLogo(header: CerpDocumentHeader): Buffer | null {
   return header.branding ? readableRaster(header.branding.logo) : CERP_LOGO_PNG
 }
@@ -1108,9 +1113,9 @@ export async function renderCerpDocument(
     margins: { top: MARGIN_TOP, bottom: geometry.reserve, left: MARGIN_X, right: MARGIN_X },
     info: {
       Title: toPdfSafeText(header.title),
-      Author: documentBrandName(header),
+      Author: documentBrandMetadataName(header),
       Subject: toPdfSafeText(header.subject),
-      Creator: `CERP - ${documentBrandName(header)}`,
+      Creator: `CERP - ${documentBrandMetadataName(header)}`,
       Producer: "CERP",
       ...(header.appearance === "module-v1" ? { Keywords: `CERP charter=module-v1; module=${header.module}` } : {}),
       CreationDate: header.creationDate,

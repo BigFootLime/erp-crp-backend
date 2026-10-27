@@ -413,6 +413,7 @@ describe("bon de livraison PDF — rendu reel", () => {
       version: 1,
       company: "TEST EC ACHETEUR v2",
       issuer: externalIssuer,
+      branding: { name: "TEST EC ACHETEUR v2" },
     })
     keep("58-bl-intercompany-branding", bytes)
 
@@ -423,6 +424,23 @@ describe("bon de livraison PDF — rendu reel", () => {
     expect((bytes.toString("latin1").match(/\/Subtype \/Image\b/g) ?? [])).toHaveLength(0)
     expect(pdf.getAuthor()).toBe("TEST EC ACHETEUR v2")
     expect(pdf.getCreator()).toBe("CERP - TEST EC ACHETEUR v2")
+  }, 60_000)
+
+  it("keeps the established CRP logo, footer, and metadata for an ordinary delivery", async () => {
+    const p = preview()
+    const bytes = await renderBonLivraisonDocument({
+      header: p.bon_livraison,
+      lignes: p.lignes,
+      version: 1,
+      company: "CROIX ROUSSE PRECISION",
+      issuer: ISSUER,
+    })
+    const text = drawnText(bytes)
+    const pdf = await PDFDocument.load(bytes)
+    expect(text).toContain("CROIX ROUSSE PRECISION")
+    expect((bytes.toString("latin1").match(/\/Subtype \/Image\b/g) ?? []).length).toBeGreaterThan(0)
+    expect(pdf.getAuthor()).toBe("Croix Rousse Precision")
+    expect(pdf.getCreator()).toBe("CERP - Croix Rousse Precision")
   }, 60_000)
 
   it("les mentions ne coutent aucune page et ne repoussent pas le cadre de réception", async () => {
