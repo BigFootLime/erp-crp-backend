@@ -12,21 +12,24 @@ l'ordre des champs corrigés. La fenêtre urgente de publication 2.0.28 a été
 libérée par son opérateur ; aucun déploiement EC ne s'est déroulé en parallèle.
 Les candidats d'intégration conservent désormais aussi les mains Métrologie
 2.0.29 : backend `870c7ed0`, frontend `3be3fe7a`. La candidate EC est préparée en
-2.0.30 ; la fenêtre Métrologie 2.0.29 reste prioritaire jusqu'à sa libération.
+2.0.30. La livraison Métrologie 2.0.29 est confirmée et sa fenêtre libérée ;
+aucune nouvelle publication dans ce chat n'est annoncée depuis.
 
 ## Frontières réellement exercées
 
 | Contrôle | Résultat et portée |
 | --- | --- |
-| Migration métier à froid | 332 patches de l'inventaire candidat intégré présents, zéro manquant et zéro mismatch après recréation du seul baseline synthétique PostgreSQL 17. Le ledger contient aussi deux patches explicitement TEST outillage, soit 334 lignes. |
+| Migration métier à froid | 336 patches de l'inventaire candidat intégré présents, zéro manquant et zéro mismatch après recréation du seul baseline synthétique PostgreSQL 17. Le ledger contient aussi deux patches explicitement TEST outillage, soit 338 lignes. |
 | Commande EC, achat CRP et demande vendeur | Chemins natifs exercés sur deux bases PostgreSQL distinctes : outbox achat, inbox vendeur, notification, décision, création de commande vendeur et retour de décision. Ce helper SQL ne constitue pas à lui seul une preuve du transport HTTP entre processus fixes. |
 | Livraison | Passage natif complet obtenu : AR archivé/envoyé vers un récepteur mail loopback TEST, prélèvement validé, BL SHIPPED et un mouvement POSTED. Reçu externe et historique LIVRE côté acheteur, sans mouvement local. Contre-vérification indépendante via `intercompany-durable-proof-1454.ts`. |
 | Identité et basculement | Vrai Directory RPC puis vraies API Express de deux runtimes fixes : connexion acheteur, création du ticket, échange vendeur et contexte vendeur. Un en-tête d'une autre entreprise est refusé (403) ; le Bearer acheteur présenté au vendeur est refusé (401). Le rejeu avec la même clé est idempotent. |
 | Transport HTTP | Deux processus fixes distincts (18081 acheteur, 18082 vendeur), chacun vérifiant sa propre base v2. Vrai routeur HMAC et worker natif : un achat et deux retours vendeur acquittés durablement, zéro échec. Rejeu de l'inbox vérifié ; signature, destination et environnement modifiés refusés en 403 dans les deux directions. Cette passe transporte des événements déjà appliqués par la recette SQL et exerce donc le rejeu réel, sans recréer les pièces métier. |
 | Tarification publiée | Transaction PostgreSQL annulée : l'ancien prix publié est conservé après hausse du tarif courant ; une révision inexistante est refusée. Helper `intercompany-supplier-price-freeze-1454.ts`, commit `16cfc4ee`. |
+| Premier catalogue EC | Publication CRP v2 avec variante/options et liaison technique résolue côté serveur, projection EC, création automatique du vrai article local `PURCHASED/achat/stock_managed=false` et de la référence fournisseur. Commande EC puis acceptation CRP `STANDARD`. La continuation de ces mêmes commandes passe jusqu'à la livraison et aux deux factures. Aucun faux sous-type fabriqué EC n'est créé. |
 | Interface | Playwright isolé avec API simulée : connexion, administration entreprise, acceptation de demande avec référence/variante/options/prix et adresse, basculement vers l'accueil EC, absence devis/production et création d'un particulier. Ce test visuel ne remplace pas la recette API métier. |
 | Factures | Deux émissions natives sur le même scénario : CRP → EC, 2 × 70 = 140 HT / 168 TTC ; EC → particulier, 2 × 120 = 240 HT / 288 TTC, fiscalité professionnelle du particulier absente. Numérotations et émetteurs distincts, allocations consommées une fois, deux PDF archivés et récupérables. Prix exclusivement synthétiques. |
 | Profil purement commercial | Preuve PostgreSQL : lecture workflow et tentatives industrielles EC laissent checkpoints, affaires, réservations et OF à zéro ; workflow CRP standard conservé. Édition, duplication, suppression/annulation locale non synchronisées d'une commande transmise sont refusées explicitement. L'interface et les guides EC suivent cette limite. |
+| Invariants industriels | Les lignes `STANDARD` exigent toujours le sous-type fabriqué. Les inserts achetés et bascules sans mapping sont refusés. Suppression du sous-type référencé refusée, y compris après blocage concurrent `KEY SHARE`; update sans changement d'identifiant permis. Les gardes sont des migrations additives, sans modification des anciens checksums. |
 
 Un premier résultat livraison annoncé sur la seule sortie du processus a été
 rétracté après contrôle direct des bases : les BL étaient encore READY et
@@ -56,8 +59,43 @@ un mouvement POSTED, LIVRE et quantité prouvée 2. Les factures émises sont
 Le nouveau PDF EC émis nativement porte la marque, le pied de page et les
 métadonnées EC, sans occurrence CRP. Les anciens PDF de test restent immuables.
 
+### Scénario final depuis une offre publiée
+
+La commande EC **23** utilise un nouvel article acheté et non stocké créé depuis
+l'offre publiée, au tarif synthétique de vente 149,50 HT. Son achat transmet
+85,50 HT à CRP, avec la référence technique, la variante et les options publiées.
+L'acceptation crée la commande CRP **19** en mode `STANDARD`.
+La fixture fournit un vrai lot OLD qualifié **avant** le contrôle stock natif,
+puis utilise AR, planning, prélèvement, dossier qualité, pack et expédition.
+Une précédente tentative avait légitimement déclenché un OF faute de stock ;
+ses états n'ont pas été réécrits pour contourner ce comportement.
+
+Le BL `d635655e-67b5-4d8c-b203-b14d0e51e92e` est `SHIPPED`, avec un unique
+mouvement stock `POSTED`. Le reçu EC
+`feca9e57-bab9-478a-a2b0-6d72034ad551` est unique, prouve une quantité de 1 et
+place la commande en `LIVRE`, avec zéro mouvement stock local EC. Les lecteurs
+natifs de livraison et pack utilisent le destinataire final figé :
+`TEST final customer`, `1 rue Fixture TEST`, `69001 Lyon`. L'adresse maître EC
+chez CRP reste distincte et intacte.
+
+Les factures sources de ces mêmes pièces sont `E2E-F-000007` côté CRP
+(85,50 HT / 102,60 TTC) et `EC-V2-F-000008` côté EC
+(149,50 HT / 179,40 TTC). Les allocations sont consommées une seule fois sur
+le BL/reçu concerné, leurs PDF sont archivés et les parties fiscales sont
+distinctes : CRP → EC professionnel, puis EC → particulier final. Le vrai schéma
+HTTP finance canonicalise la remise UI `"0"` et les quantités à trois décimales
+avant preview, brouillon et émission. Le contrôle indépendant ne sélectionne
+pas simplement les deux dernières factures : il impose leurs sources communes
+avec le reçu et le BL testés.
+
+Helpers : `intercompany-commercial-catalogue-v2-1454.ts` avec
+`--defer-industrial-launch`, puis
+`intercompany-catalogue-existing-delivery-1454.ts`,
+`intercompany-billing-1454.ts`, `intercompany-invoice-archive-1454.ts` et
+`intercompany-durable-proof-1454.ts` avec les montants attendus explicites.
+
 Inventaire SQL candidat (filename:SHA-256 canonical LF trié) :
-`fd161e2fb3c312351311afb4768edd5ee4d9a27ade62460ae17f081db4e41fd9`.
+`9a64bfad5c4646c66a238067cbb6253e80e8651c6740d57eb81e2644a0f08593`.
 Les deux lignes TEST supplémentaires sont
 `20261025_outillage_indicative_catalogue_prices_test_only.sql` et
 `20261025_outillage_supplier_master_offers_test.sql` ; elles ne sont pas une
@@ -74,13 +112,16 @@ signature, mot de passe, document client ou tarif réel n'est versionné.
 - Backend intégré : build complet réussi, contrat OpenAPI valide, 1 628 opérations
   inventoriées. La réception interentreprises déclare explicitement la signature
   HMAC du pair, indépendamment du Bearer utilisateur.
-- Backend : 12 fichiers / 105 tests ciblés réussis, incluant entreprises,
-  transport, reçus de livraison et contrat OpenAPI.
+- Backend global après les correctifs de catalogue et de finance : 883 fichiers,
+  8 828 tests réussis, 261 ignorés et zéro échec. Les derniers ajouts SQL de
+  verrouillage sont aussi vérifiés dans PostgreSQL réel et les 27 tests du runner
+  avec la cohorte figée de 13 patches entreprise. Build complet réussi.
 - Frontend : typecheck et build réussis ; 24 tests ciblés API demande/facturation
   réussis ; scénario Playwright sans retry réussi. La suite complète avant la
-  dernière fusion a passé 633 fichiers / 4 336 tests. Une nouvelle passe globale
-  des deux candidats intégrés est en cours ; ces résultats ne sont pas encore
-  présentés comme une validation globale de la candidate.
+  dernière fusion a passé 633 fichiers / 4 336 tests. La passe frontend finale est
+  en cours. Une première passe a révélé un chemin de corpus de fixture manquant
+  et un timeout de test sous charge ; les deux fichiers passent avec le chemin
+  correct. Ce résultat ciblé ne remplace pas le verdict global final.
 - Le scénario navigateur a permis de corriger le type de l'identifiant natif
   de commande et l'affichage automatique du tutoriel par-dessus la demande.
 
@@ -112,6 +153,13 @@ L'utilisateur confirme que le SIRET définitif EC n'est pas encore disponible et
 qu'il sera renseigné dans le paramétrage ERP de l'entreprise. Une identité de
 démonstration peut être utilisée pour la recette. Aucun identifiant légal réel
 n'est inventé ou déduit du bon de commande de 2023.
+
+Le candidat Windows 2.0.30 a été reconstruit avec l'environnement officiel de
+livraison : API relative `/api/v1`, socket `/`, SHA frontend exact. L'EXE extrait
+contient les mêmes 482 fichiers renderer que le build vérifié, la version 2.0.30
+et le feed attendu; taille/SHA-512 et blockmap du manifeste sont cohérents.
+Il n'est ni installé ni publié. La recette native et le gate de livraison
+restent des contrôles distincts de cette intégrité du paquet.
 
 Les affectations réelles des sept utilisateurs demandés, le provisionnement EC,
 le catalogue réel et la livraison coordonnée restent ouverts. Le site e-commerce
