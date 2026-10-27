@@ -1,5 +1,6 @@
 /* Run in a fresh fixture child: --kind seller|buyer --client <id> --source <id> --line <source-line-id> --expected-price <decimal> */
 import { repoPreviewFacture, repoCreateFactureDraft } from "../../src/module/facturation/repository/facture-workflow.repository";
+import { svcRequestFactureValidation, svcValidateFacture, svcIssueFacture } from "../../src/module/facturation/services/facture-workflow.service";
 
 const args=process.argv.slice(2); const value=(name:string)=>{const i=args.indexOf(name);return i>=0?args[i+1]:undefined};
 const kind=value("--kind"); const clientId=value("--client"); const sourceId=value("--source"); const lineId=value("--line"); const expected=value("--expected-price");
@@ -18,6 +19,9 @@ async function main(){
   const drafted=await repoCreateFactureDraft({input:{...input,preview_hash:preview.preview_hash} as never,actor,idempotencyKey:`e2e-1454-${kind}-${sourceId}`});
   const replay=await repoCreateFactureDraft({input:{...input,preview_hash:preview.preview_hash} as never,actor,idempotencyKey:`e2e-1454-${kind}-${sourceId}`});
   if(!replay.idempotent_replay)throw new Error("DRAFT_REPLAY_NOT_IDEMPOTENT");
-  console.log(JSON.stringify({kind,source_type:sourceType,source_id:sourceId,unit_price_ex_tax:price,draft:drafted,replay:true}));
+  const requested=await svcRequestFactureValidation({factureId:Number(drafted.id),input:{expected_version:drafted.row_version,preview_hash:preview.preview_hash} as never,actor,idempotencyKey:`e2e-1454-request-${kind}-${sourceId}`});
+  const approved=await svcValidateFacture({factureId:Number(drafted.id),input:{decision:"APPROVE",expected_version:requested.row_version,reason:"E2E TEST approval"} as never,actor,idempotencyKey:`e2e-1454-approve-${kind}-${sourceId}`});
+  const issued=await svcIssueFacture({factureId:Number(drafted.id),input:{expected_version:approved.row_version,preview_hash:preview.preview_hash} as never,actor,idempotencyKey:`e2e-1454-issue-${kind}-${sourceId}`});
+  console.log(JSON.stringify({kind,source_type:sourceType,source_id:sourceId,unit_price_ex_tax:price,draft:drafted,requested,approved,issued,replay:true}));
 }
 main().catch(error=>{console.error(error instanceof Error?error.stack:error);process.exitCode=1});
