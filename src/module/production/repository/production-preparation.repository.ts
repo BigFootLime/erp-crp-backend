@@ -1,4 +1,5 @@
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { importedInspection } from "../domain/imported-inspection";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -84,6 +85,7 @@ export type PreparationOrder = {
   };
 };
 type TechnicalSources = {
+  improvement_returns?: number;
   version: {
     id: string;
     statut: string;
@@ -98,6 +100,8 @@ type TechnicalSources = {
   purchases: PurchaseEvidence[];
   documents: Array<{
     id: string;
+    original_name?: string;
+    mime_type?: string;
     version_id: string;
     role: string;
     sha256: string | null;
@@ -260,12 +264,18 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     `
     WITH v AS (SELECT * FROM public.piece_technique_versions WHERE id=$1::uuid AND piece_technique_id=$2::uuid),
     g AS (SELECT * FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current ORDER BY created_at DESC,id LIMIT 1),
-    docs AS (SELECT d.id::text,dv.id::text AS version_id,l.link_role AS role,blob.sha256
+    docs AS (SELECT DISTINCT d.id::text,dv.id::text AS version_id,
+      CASE WHEN l.entity_type='PIECE_TECHNIQUE' AND d.class_key='RELEVE_CONTROLE'
+        AND lower(d.title) ~ 'fiche.*auto.?contr' THEN 'FICHE_AUTOCONTROLE' ELSE l.link_role END AS role,
+      blob.sha256,dv.original_name,blob.mime_type
       FROM public.ged_document_links l JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
       JOIN public.ged_document_versions dv ON dv.id=d.current_version_id AND dv.status='APPLICABLE'
       JOIN public.ged_blobs blob ON blob.id=dv.blob_id
       JOIN public.ged_upload_sessions us ON us.id=dv.upload_session_id AND us.scan_status='clean' AND us.quarantine_status='released'
-      WHERE l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=$1::text),
+      WHERE (l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=$1::text)
+        OR (l.entity_type='PIECE_TECHNIQUE' AND l.entity_id=$2::text
+          AND ((l.link_role='DOSSIER_TECHNIQUE' AND d.class_key='RELEVE_CONTROLE' AND lower(d.title) ~ 'fiche.*auto.?contr'
+            AND (SELECT count(DISTINCT COALESCE(indice_externe_original,indice)) FROM public.piece_technique_versions WHERE piece_technique_id=$2::uuid)=1)))),
     qp AS (SELECT q.* FROM public.quality_control_plan q WHERE q.piece_version_id=$1::uuid AND q.status='PUBLISHED'
       AND q.archived_at IS NULL AND (q.effective_from IS NULL OR q.effective_from<=now()) AND (q.effective_to IS NULL OR q.effective_to>now())
       AND q.trigger_type IN ('IN_PROCESS','FINAL','FIRST_ARTICLE') ORDER BY q.published_at DESC,q.id LIMIT 1)
@@ -279,6 +289,12 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
       'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')}),'[]'),
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
+      'improvement_returns',(SELECT count(DISTINCT d.id) FROM public.ged_document_links l
+        JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
+        JOIN public.ged_document_versions dv ON dv.id=d.current_version_id AND dv.status<>'OBSOLETE'
+        JOIN public.ged_upload_sessions us ON us.id=dv.upload_session_id AND us.scan_status='clean' AND us.quarantine_status='released'
+        WHERE l.entity_type='PIECE_TECHNIQUE' AND l.entity_id=$2::text AND l.link_role='FICHE_AMELIORATION'
+          AND dv.created_at>=(SELECT created_at FROM v)),
       'characteristics',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.position,c.id) FROM public.quality_control_plan_characteristic c WHERE c.plan_id=(SELECT id FROM qp)),'[]'),
       'missing_documents',(SELECT count(*) FROM public.piece_version_document_requirements r WHERE r.piece_technique_version_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM docs WHERE role=r.document_type_code)),
       'programming_task_valid',EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id AND u.status='Active' WHERE p.id=$3::uuid AND p.piece_technique_version_id=$1::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) AND p.estimated_hours>0)
@@ -375,9 +391,23 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       (of.technical_snapshot_sha256
         ? Boolean(stockReview)
         : stockReview?.source_hash === stockHash),
-    sheet_current: sheet?.state === "READY",
+    sheet_current: sheet?.state === "READY" || (rulesVersion >= 2 && Boolean(importedInspection(sources.documents))),
   };
   const items = evaluatePreparation(f, rulesVersion);
+  const importedSheet = importedInspection(sources.documents);
+  if (importedSheet && sheet?.state !== "READY") {
+    const item = items.find((entry) => entry.key === "self_inspection");
+    if (item) item.detail = `Fiche importée depuis la pièce technique : ${importedSheet.original_name ?? "document GED"}. Aucun nouvel import requis.`;
+    const quality = items.find((entry) => entry.key === "quality");
+    if (quality && !f.quality_plan_id) {
+      quality.label = "Contrôles numériques";
+      quality.detail = "La fiche importée est disponible. Les caractéristiques numériques ne sont nécessaires que pour la saisie des mesures dans CERP.";
+    }
+  }
+  if ((rows[0].sources.improvement_returns ?? 0) > 0) {
+    items.push({ key: "index_review", label: "Retour opérateur · indice à vérifier", status: "MISSING", required: false,
+      detail: "Une fiche blanche d’amélioration a été déposée. Vérifiez si une évolution de l’indice client est nécessaire.", scope: "VERSION" });
+  }
   const sharedReady = isPreparationReady(
     items.filter((i) => i.scope === "VERSION"),
   );
@@ -442,6 +472,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     stock_candidates: candidates,
     stock_review: stockReview,
     sheet,
+    imported_inspection: importedSheet,
     sources,
     programming_task: programmingTask,
     programming_assignment_allowed: Boolean(of.technical_snapshot_sha256 && !programmingDecisionDefined(decisions.programming)
