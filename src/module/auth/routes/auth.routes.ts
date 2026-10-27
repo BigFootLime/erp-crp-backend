@@ -41,8 +41,8 @@ router.get('/test-registration', testRegistrationOptions);
 router.post('/test-registration', registerRateLimit, testRegistration);
 
 router.post('/login', loginRateLimit, companyLoginTargetMiddleware, login);
-router.post('/tablet-pin/login', tabletPinLoginRateLimit, tabletPinLogin);
-router.post('/tablet-pin/pair', tabletPinPairRateLimit, tabletPinPair);
+router.post('/tablet-pin/login', tabletPinLoginRateLimit, companyLoginTargetMiddleware, tabletPinLogin);
+router.post('/tablet-pin/pair', tabletPinPairRateLimit, companyLoginTargetMiddleware, tabletPinPair);
 router.post('/mfa/verify', mfaRateLimit, companyLoginTargetMiddleware, verifyChallenge);
 router.post('/forgot-password', forgotPasswordRateLimit, forgotPassword);
 router.post('/reset-password', resetPasswordRateLimit, resetPassword);
