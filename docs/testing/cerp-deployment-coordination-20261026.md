@@ -27,8 +27,8 @@ effectivement publiée. Aucun contenu de secret n'est enregistré ici.
 |---|---|---|
 | Notifications / temps réel | Backend `f15d7738e8881dbb3c8a067fceb56eba84bd3143`, PR dev backend [#1451](https://github.com/BigFootLime/erp-crp-backend/pull/1451). Supervision `b347cdf6`, dernier rapport documentaire `73cc310bb629c4620d59d81052238b33beadad2d`, PR dev frontend [#1772](https://github.com/BigFootLime/crp-systems-web/pull/1772). | Correctifs conservés et vérifiés sur les vrais points d'entrée après livraison. À 07:21:59 CET le 27 octobre : 42 contrôles sains, aucun incident actif constaté. Observations transitoires détaillées ci-dessous ; PR de traçabilité distinctes. |
 | Métrologie / livraison `2.0.27` | Candidate frontend `2d5442b17e0482bd69b3221f5a5c6a3c66586d0f` / backend `15c5fc3951756fb7245e3a0111678b8cdf7fd8be`. PR main frontend [#1777](https://github.com/BigFootLime/crp-systems-web/pull/1777) / backend [#1455](https://github.com/BigFootLime/erp-crp-backend/pull/1455) fusionnées ; mains publiées `d743bd48fa70de36b200e986043c2498085bd399` / `f796d2e504f2d60417778524ead41ca9a0f596eb`. | **Livré et distribué, vérifié le 27 octobre.** Gate production PASSED, MD15 seule appliquée test → template → prod, API/UI Hyper et VPS, feed Windows et partage Z publiés. Reçus, contrôles indépendants et empreintes ci-dessous. Tous les lots entreprise/B2C/bridge restent exclus. |
-| Socle multi-entreprises | Backend code `700ea159`, frontend code `bcf033dc`, issues backend [#1454](https://github.com/BigFootLime/erp-crp-backend/issues/1454) / frontend [#1775](https://github.com/BigFootLime/crp-systems-web/issues/1775). | Local, tests ciblés réussis. Non inclus dans `2.0.27`, pas de qualification à deux bases/services ni de mise en service. |
-| B2C et primitive de commande native | Backend B2C `16f65b9e`, frontend B2C `1729b7ca`, extraction native `35f7abb6`. | Parties identifiées du chantier précédent, non incluses dans `2.0.27`. B2C a une dépendance DDL même si le flag entreprise reste désactivé. |
+| Socle multi-entreprises | Sources réintégrées sur main : backend `b599449e`, frontend `e89dcb09`, issues backend [#1454](https://github.com/BigFootLime/erp-crp-backend/issues/1454) / frontend [#1775](https://github.com/BigFootLime/crp-systems-web/issues/1775). | Local, tests ciblés/typechecks/builds réussis, correctif de portée PIN inclus. Non inclus dans la livraison `2.0.27`, pas de qualification à deux bases/services ni de mise en service. |
+| B2C et primitive de commande native | Sur main : backend B2C `3aae2c1f`, frontend B2C `1d343c7a`, extraction native `7d49aab4`. Sources initiales : `16f65b9e`, `1729b7ca`, `35f7abb6`. | Parties identifiées du chantier précédent, non incluses dans `2.0.27`. B2C a une dépendance DDL même si le flag entreprise reste désactivé. |
 | Catalogue / bridge EC → CRP | Issues #1454 / #1775, pas de nouveau code après les références ci-dessus au relevé. | En conception : tarif fournisseur par référence/variante confirmé, références/variantes à importer ou créer chez CRP. Achat EC, notification/acceptation CRP, stock unique, livraison directe/documents EC et deux facturations restent à raccorder. |
 | Réconciliation des compteurs | Backend [#1458](https://github.com/BigFootLime/erp-crp-backend/issues/1458), ouverte au relevé. | Suivi distinct : d'anciens patches pending pourraient retirer `MTR` après MD15. Aucun `up` global, modification de checksum ou ledger artificiel. |
 | Catégories après création de base vide | Backend [#1456](https://github.com/BigFootLime/erp-crp-backend/issues/1456), ouverte au relevé. | Suivi séparé ; pas de seed ponctuel implicite dans la livraison MD15. |
@@ -1290,9 +1290,10 @@ Cette clôture n'autorise aucune mise en service implicite du chantier EC.
 ## Suite locale EC — intégration sur les sources publiées du 27 octobre
 
 Le socle est réintégré sélectivement sur les mains publiées, sans dev/cutover :
-backend `feature/1454-company-main-2.0.27` (`634d1dec`) et frontend
-`feature/1775-company-main-2.0.27` (`03b4054d`). Tests ciblés, typechecks et
-builds locaux réussis ; preuve et limites dans
+backend `feature/1454-company-main-2.0.27` (`b599449e`) et frontend
+`feature/1775-company-main-2.0.27` (`e89dcb09`). La relecture a aussi produit
+un correctif local du scope entreprise pour PIN/appairage/MFA. Tests ciblés,
+typechecks et builds locaux réussis après correction ; preuve et limites dans
 [le rapport d'intégration](multi-company-main-integration-1454.md).
 Ces branches restent locales, non activées, sans nouveau déploiement. Elles
 ne complètent pas encore le catalogue/bridge ni la logistique/facturation EC.

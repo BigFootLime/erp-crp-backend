@@ -9,8 +9,8 @@ Métrologie 2.0.27, distincte, est clôturée dans le
 
 | Dépôt | Base publiée | Branche locale / résultat source |
 |---|---|---|
-| Backend | `f796d2e504f2d60417778524ead41ca9a0f596eb` | `feature/1454-company-main-2.0.27`, `634d1dec` |
-| Frontend | `d743bd48fa70de36b200e986043c2498085bd399` | `feature/1775-company-main-2.0.27`, `03b4054d6afa0a318713acac51de6692d940d7ac` |
+| Backend | `f796d2e504f2d60417778524ead41ca9a0f596eb` | `feature/1454-company-main-2.0.27`, `b599449e8876fc64a67edc37e34df302c08c33ef` |
+| Frontend | `d743bd48fa70de36b200e986043c2498085bd399` | `feature/1775-company-main-2.0.27`, `e89dcb09` |
 
 Worktrees sous `cerp-multi-company-20261026` : `backend-main-2.0.27` et
 `frontend-main-2.0.27`. Les anciens `backend` / `frontend` et leurs branches
@@ -39,10 +39,11 @@ tablettes. Aucun correctif Notifications déjà publié n'est réappliqué.
   B2C/login/onboarding 22). Typecheck explicite
   `node node_modules/typescript/bin/tsc -b --pretty false` et build
   `node node_modules/vite/bin/vite.js build` réussis, codes 0.
-- L'échec initial de `pnpm typecheck` provenait du chemin/shim d'exécution.
-  Versions locales et lock concordent avec le clone qualifié : TypeScript
-  5.8.3, Vite 7.3.7, Vitest 4.1.11. Configurations identiques ; aucun changement
-  de tsconfig n'a masqué ce diagnostic.
+- L'échec initial de `pnpm typecheck` n'a pas été reproduit par l'invocation
+  explicite locale. `pnpm exec tsc --version` et le binaire local renvoient
+  tous deux 5.8.3 : l'hypothèse initiale PATH/shim n'est pas démontrée, cause
+  exacte indéterminée. Versions et lock concordent avec le clone qualifié
+  (Vite 7.3.7, Vitest 4.1.11), configurations identiques, tsconfig inchangé.
 - Le registreur a vérifié par diff contre les bases publiées que Métrologie,
   Outillage, correctif temps réel, lifecycle/background, supervision, Android,
   Electron, dépendances, Dockerfile et patch MD15 restent inchangés dans les
@@ -52,6 +53,34 @@ Ces tests ciblés ne constituent pas un gate complet de release. Les anciens
 comptes rendus de fondation décrivent leurs anciens SHAs ; leurs nombres ne
 sont pas additionnés ici. Aucun test réel à deux services/bases, transport,
 restauration métier EC ou nouveau parcours navigateur n'est revendiqué.
+
+## Correctif de portée PIN issu de la relecture indépendante
+
+La relecture a identifié l'absence de validation de cible entreprise sur les
+routes publiques PIN, alors que login/MFA la validaient. Backend `2cd7afc5`
+ajoute `companyLoginTargetMiddleware` à `/auth/tablet-pin/login` et
+`/auth/tablet-pin/pair` : en mode entreprise, contexte absent, UUID altéré et
+environnement erroné donnent `403 COMPANY_LOGIN_TARGET_MISMATCH`. La cible
+fixe confirmée est acceptée ; le mode legacy reste compatible sans header.
+Les endpoints PIN authentifiés passaient déjà par l'enforcement commun.
+
+Frontend `e89dcb09` transmet la cible confirmée de sign-in-context, figée au
+submit, aux appels appairage/PIN puis au challenge MFA et à la vérification
+de session. Aucun choix depuis un ancien stockage ; un environnement
+contradictoire est rejeté avant requête. Une cible expirée n'envoie pas de PIN.
+
+Après correction : 10 tests backend de routes auth et 27 tests frontend
+API/login/MFA réussis, typechecks locaux réussis. Les nombres recouvrent des
+tests précédents et ne sont pas additionnés aux totaux initiaux. Le registreur
+a relancé les deux builds après ce changement : build backend complet réussi
+(OpenAPI, compilation et frontière données source/dist), build web réussi
+(Vite et frontière données source/dist). Inventaire actualisé dans
+`b599449e`, 1 596 opérations, source `135e7e5e79b3`. Warnings tiers Zod et
+taille de chunks conservés, aucun masquage de configuration.
+
+Ce correctif local n'a pas été publié sur les services 2.0.27 existants ; le
+mode multi-entreprises reste désactivé. La qualification native réelle à deux
+entreprises demeure à faire.
 
 ## Raccordements indispensables avant fonctionnement EC
 
