@@ -306,7 +306,8 @@ async function insertCommandeEvent(db: Queryable, params: {
 async function resolveCommandeLineArticle(
   db: Queryable,
   line: CreateCommandeInput["lignes"][number],
-  lineIndex: number
+  lineIndex: number,
+  allowDropshipPurchasedArticle = false,
 ): Promise<CommandeLineArticleResolution> {
   const requestedArticleId = typeof line.article_id === "string" && line.article_id.trim() ? line.article_id.trim() : null;
   const requestedCode = typeof line.code_piece === "string" && line.code_piece.trim() ? line.code_piece.trim() : null;
@@ -374,7 +375,11 @@ async function resolveCommandeLineArticle(
     article.commande_client_eligible === true
       ? null
       : article.commande_client_ineligibility_code ?? commandeArticleIneligibilityFromState(article);
-  if (ineligibilityCode) {
+  // The commercial buyer deliberately creates a PURCHASED, non-stock article
+  // for a supplier-direct mapping. The mapping is verified later in the same
+  // transaction before a PO/outbox message can exist; ordinary CRP orders
+  // keep the stock-managed eligibility rule.
+  if (ineligibilityCode && !(allowDropshipPurchasedArticle && line.intercompany_catalogue_mapping_id && ineligibilityCode === "ARTICLE_NOT_STOCK_MANAGED")) {
     throw commandeArticleEligibilityError({
       code: ineligibilityCode,
       articleId: article.article_id,
@@ -3338,6 +3343,7 @@ type InsertCommandeLignesOptions = {
   actor_user_id: number | null;
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
+  fulfilment_mode?: string;
   existing_line_ids?: ReadonlySet<number>;
 };
 
@@ -3680,7 +3686,8 @@ async function insertCommandeLignes(
       resolved = await resolveCommandeLineArticle(
         client,
         { ...l, article_id: promoted.article_id, code_piece: undefined },
-        lineIndex
+        lineIndex,
+        isSupplierDropship(options.fulfilment_mode)
       );
       // Le resolver canonique doit rester l'autorité sur l'éligibilité et son
       // contrat d'erreur. Une fois l'article accepté, garantir le sous-type
@@ -3692,7 +3699,7 @@ async function insertCommandeLignes(
         resolved.piece_technique_id
       );
     } else {
-      resolved = await resolveCommandeLineArticle(client, l, lineIndex);
+      resolved = await resolveCommandeLineArticle(client, l, lineIndex, isSupplierDropship(options.fulfilment_mode));
     }
 
     let effectiveVersionId = l.piece_technique_version_id ?? null;
@@ -4342,6 +4349,7 @@ export async function repoCreateCommandeNativeTx(
       actor_user_id: actorUserId,
       creation_flow_version: input.creation_flow_version ?? 1,
       save_intent: input.save_intent ?? "VALIDATE",
+      fulfilment_mode: input.fulfilment_mode,
     });
     if (input.fulfilment_mode === "SUPPLIER_DROPSHIP") {
       if (actorUserId == null) throw new HttpError(401, "UNAUTHORIZED", "Un acteur authentifié est requis pour une commande fournisseur directe.");
@@ -4797,6 +4805,7 @@ export async function repoUpdateCommande(
       actor_user_id: actorUserId,
       creation_flow_version: existingFlowVersion,
       save_intent: input.save_intent ?? "VALIDATE",
+      fulfilment_mode: input.fulfilment_mode,
       existing_line_ids: existingLineIds,
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
