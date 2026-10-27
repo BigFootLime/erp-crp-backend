@@ -31,13 +31,15 @@ CREATE TABLE IF NOT EXISTS public.intercompany_supplier_relations (
   updated_by integer NULL REFERENCES public.users(id) ON DELETE SET NULL,
   CONSTRAINT intercompany_supplier_relation_distinct_ck CHECK (buyer_company_id <> supplier_company_id),
   CONSTRAINT intercompany_supplier_relation_environment_ck CHECK (environment IN ('cerp_prod','cerp_test')),
-  CONSTRAINT intercompany_supplier_relation_status_ck CHECK (status IN ('ACTIVE','SUSPENDED','RETIRED')),
+  CONSTRAINT intercompany_supplier_relation_status_ck CHECK (status IN ('PENDING_PEER','ACTIVE','SUSPENDED','RETIRED')),
   CONSTRAINT intercompany_supplier_relation_role_ck CHECK (local_role IN ('BUYER','SUPPLIER')),
   CONSTRAINT intercompany_supplier_relation_local_party_ck CHECK ((local_role='BUYER' AND local_supplier_id IS NOT NULL AND local_customer_id IS NULL) OR (local_role='SUPPLIER' AND local_customer_id IS NOT NULL AND local_supplier_id IS NULL)),
   CONSTRAINT intercompany_supplier_relation_currency_ck CHECK (currency ~ '^[A-Z]{3}$'),
   CONSTRAINT intercompany_supplier_relation_approval_profiles_ck CHECK (status <> 'ACTIVE' OR cardinality(approval_profile_ids) > 0),
   CONSTRAINT intercompany_supplier_relation_pair_uq UNIQUE (buyer_company_id,supplier_company_id,environment)
 );
+ALTER TABLE public.intercompany_supplier_relations DROP CONSTRAINT IF EXISTS intercompany_supplier_relation_status_ck;
+ALTER TABLE public.intercompany_supplier_relations ADD CONSTRAINT intercompany_supplier_relation_status_ck CHECK (status IN ('PENDING_PEER','ACTIVE','SUSPENDED','RETIRED'));
 
 CREATE TABLE IF NOT EXISTS public.intercompany_commercial_catalogue (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
