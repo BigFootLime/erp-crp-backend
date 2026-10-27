@@ -261,6 +261,15 @@ export type CerpDocumentHeader = {
   monogramName?: string | null
   /** Image GED PNG/JPEG exacte de l'entite. Le monogramme reste le repli sûr. */
   entityImage?: Buffer | null
+  /**
+   * Marque de l'emetteur figee avec le document commercial.
+   *
+   * Son absence conserve strictement la charte CERP historique. Lorsqu'elle est renseignee,
+   * son nom remplace toute occurrence de CRP et son logo est utilise seulement s'il a deja
+   * ete resolu par l'appelant autorise. Sans logo, le nom est imprime : un document EC ne
+   * doit jamais reprendre le logo CRP par defaut.
+   */
+  branding?: { name: string; logo?: Buffer | null } | null
   generatedAt: string
   generatedBy?: string | null
   /**
@@ -307,6 +316,14 @@ export type CerpDocumentHeader = {
   title: string
   subject: string
   creationDate: Date
+}
+
+function documentBrandName(header: CerpDocumentHeader): string {
+  return header.branding?.name.trim() || "CROIX ROUSSE PRECISION"
+}
+
+function documentBrandLogo(header: CerpDocumentHeader): Buffer | null {
+  return header.branding ? readableRaster(header.branding.logo) : CERP_LOGO_PNG
 }
 
 export type CerpLineColumn = {
@@ -837,7 +854,10 @@ export class CerpDocumentContext {
 
 function drawMasthead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): number {
   const logoHeight = LOGO_WIDTH / CERP_LOGO_RATIO
-  doc.image(CERP_LOGO_PNG, MARGIN_X, MARGIN_TOP, { width: LOGO_WIDTH })
+  const brandLogo = documentBrandLogo(header)
+  if (brandLogo) doc.image(brandLogo, MARGIN_X, MARGIN_TOP, { width: LOGO_WIDTH })
+  else doc.font(documentFont(doc, true)).fontSize(13).fillColor(CERP_DOC_COLORS.ink)
+    .text(toPdfSafeText(documentBrandName(header)), MARGIN_X, MARGIN_TOP + 7, { width: LOGO_WIDTH })
 
   doc.font(documentFont(doc, true)).fontSize(9.5).fillColor(CERP_DOC_COLORS.brand)
   const type = toPdfSafeText(header.documentType.toUpperCase())
@@ -1050,7 +1070,7 @@ function drawFooter(
   doc.restore()
 
   doc.font(documentFont(doc)).fontSize(7).fillColor(CERP_DOC_COLORS.graphite)
-  doc.text("CROIX ROUSSE PRECISION", MARGIN_X, y, { lineBreak: false, characterSpacing: 0.7 })
+  doc.text(toPdfSafeText(documentBrandName(header)), MARGIN_X, y, { lineBreak: false, characterSpacing: 0.7 })
 
   const author = header.generatedBy && header.generatedBy.trim() ? ` par ${header.generatedBy.trim()}` : ""
   const middle = toPdfSafeText(`Généré le ${header.generatedAt}${author}`)
@@ -1088,9 +1108,9 @@ export async function renderCerpDocument(
     margins: { top: MARGIN_TOP, bottom: geometry.reserve, left: MARGIN_X, right: MARGIN_X },
     info: {
       Title: toPdfSafeText(header.title),
-      Author: "Croix Rousse Precision",
+      Author: documentBrandName(header),
       Subject: toPdfSafeText(header.subject),
-      Creator: "CERP - Croix Rousse Precision",
+      Creator: `CERP - ${documentBrandName(header)}`,
       Producer: "CERP",
       ...(header.appearance === "module-v1" ? { Keywords: `CERP charter=module-v1; module=${header.module}` } : {}),
       CreationDate: header.creationDate,

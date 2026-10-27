@@ -1,5 +1,5 @@
 import { renderCerpDocument, type CerpAddressCard, type CerpLineRow } from "../../../shared/pdf/cerp-document"
-import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions"
+import { issuerIdentityLine, issuerLegalMentions, pickMention, type LegalParty } from "../../../shared/pdf/legal-mentions"
 
 import type { BonLivraisonHeader, BonLivraisonLigne, BonLivraisonLigneAllocation } from "../types/livraisons.types"
 
@@ -29,6 +29,8 @@ export type BonLivraisonDocumentInput = {
    * jusqu'ici qu'une raison sociale.
    */
   issuer?: LegalParty
+  /** Optional logo already resolved by the authorised company configuration caller. */
+  branding?: { logo?: Buffer | null } | null
 }
 
 export function formatDateFR(iso: string | null | undefined): string {
@@ -97,6 +99,7 @@ function references(values: Array<string | null | undefined>): string[] {
 export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInput): Promise<Buffer> {
   const { header: bl, company, version } = input
   const issuer = input.issuer ?? {}
+  const issuerName = company ?? pickMention(issuer, "company_name", "name", "raison_sociale", "biller_name")
   const clientName = clean(bl.client.company_name) ?? "Client"
   const commandes = references([...(bl.commande_numeros ?? []), bl.commande?.numero])
   const affaires = references([...(bl.affaire_references ?? []), bl.affaire?.reference])
@@ -138,6 +141,10 @@ export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInpu
       subtitle: clientName,
       status: clean(bl.date_expedition) ? "Expédié" : "À expédier",
       monogramName: clientName,
+      // The delivery can be physically shipped by CRP for another legal issuer. Freeze the
+      // issuer brand alongside its legal snapshot so the customer-facing document cannot
+      // display CRP's logo, footer, or PDF metadata by accident.
+      branding: issuerName ? { name: issuerName, logo: input.branding?.logo } : null,
       generatedAt: formatDateFR(bl.date_expedition ?? bl.date_creation),
       generatedBy: null,
       title: `Bon de livraison ${bl.numero}`,

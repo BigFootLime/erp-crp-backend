@@ -12,6 +12,7 @@ import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
 
 import { mkdirSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { PDFDocument } from "pdf-lib"
 
 import { describe, expect, it, vi } from "vitest"
 import { getGeneratedRootPath } from "../../../utils/cerpStorage"
@@ -393,6 +394,35 @@ describe("bon de livraison PDF — rendu reel", () => {
     expect(text).toContain("Escompte pour paiement anticipé : 1,5 % par mois")
     // La reserve de propriete a sa portee la plus forte au moment de la livraison.
     expect(text).toContain("Nous nous réservons la propriété des marchandises")
+  }, 60_000)
+
+  it("uses the frozen external issuer brand instead of the CRP logo, footer, or metadata", async () => {
+    const p = preview()
+    const externalIssuer = {
+      ...ISSUER,
+      company_name: "TEST EC ACHETEUR v2",
+      legal_form: "SAS",
+      siret: "123 456 789 00010",
+      rcs_number: "123 456 789",
+      rcs_city: "Lyon",
+      vat_number: "FR00123456789",
+    }
+    const bytes = await renderBonLivraisonDocument({
+      header: p.bon_livraison,
+      lignes: p.lignes,
+      version: 1,
+      company: "TEST EC ACHETEUR v2",
+      issuer: externalIssuer,
+    })
+    keep("58-bl-intercompany-branding", bytes)
+
+    const text = drawnText(bytes)
+    const pdf = await PDFDocument.load(bytes)
+    expect(text).toContain("TEST EC ACHETEUR v2")
+    expect(text).not.toContain("CROIX ROUSSE PRECISION")
+    expect((bytes.toString("latin1").match(/\/Subtype \/Image\b/g) ?? [])).toHaveLength(0)
+    expect(pdf.getAuthor()).toBe("TEST EC ACHETEUR v2")
+    expect(pdf.getCreator()).toBe("CERP - TEST EC ACHETEUR v2")
   }, 60_000)
 
   it("les mentions ne coutent aucune page et ne repoussent pas le cadre de réception", async () => {
