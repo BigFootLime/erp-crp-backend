@@ -29,7 +29,9 @@ vi.mock("../module/ged/services/ged.service", () => ({
   recordVersionDownloadAuthorized: (...args: unknown[]) => mocks.authorized(...args),
   recordVersionDownload: (...args: unknown[]) => mocks.downloaded(...args),
 }));
-vi.mock("../utils/cerpStorage", () => ({ resolveCerpStoragePath: (value: string) => `resolved:${value}` }));
+vi.mock("../utils/cerpStorage", () => ({
+  resolveMetrologyDocumentStoragePath: (value: string, root: string) => `resolved:${root}:${value}`,
+}));
 vi.mock("../module/metrologie/services/metrology-360.service", () => ({ svcMetrologyDocsBaseDir: () => "metrology-root" }));
 
 import { errorHandler } from "../middlewares/errorHandler";
@@ -88,7 +90,7 @@ describe("metrology document routes", () => {
     expect(response.headers["x-cerp-document-sha256"]).toBe("f".repeat(64));
     expect(mocks.audit).toHaveBeenCalledOnce();
     expect(mocks.send).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      filePath: "resolved:legacy/input.xlsx", allowedRoots: ["metrology-root"], expectedSha256: "f".repeat(64), download: true,
+      filePath: "resolved:metrology-root:legacy/input.xlsx", allowedRoots: ["metrology-root"], expectedSha256: "f".repeat(64), download: true,
     }));
     expect(mocks.audit.mock.invocationCallOrder[0]).toBeLessThan(mocks.send.mock.invocationCallOrder[0]);
   });

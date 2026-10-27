@@ -8,7 +8,7 @@ import type { Request, RequestHandler } from "express";
 import { ZodError, type ZodTypeAny, type z } from "zod";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveCerpStoragePath, resolveMetrologyDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
@@ -254,7 +254,7 @@ export const downloadLegacyImportSource: RequestHandler = asyncHandler(async (re
   // The stored path is server-owned and opaque to the caller. Secure download
   // sets attachment/nosniff headers and never discloses it in JSON.
   await sendSecureStoredFile(res, {
-    filePath: resolveCerpStoragePath(source.storage_path),
+    filePath: resolveMetrologyDocumentStoragePath(source.storage_path, svcMetrologyDocsBaseDir()),
     allowedRoots: [svcMetrologyDocsBaseDir()],
     filename: source.source_name,
     mimeType: source.mime_type ?? "application/octet-stream",

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { resolveCerpStoragePath } from "../../../utils/cerpStorage";
+import { resolveMetrologyDocumentStoragePath } from "../../../utils/cerpStorage";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
@@ -68,7 +68,7 @@ router.get("/equipements/:id/documents/:docId/file", requireMetrologyCapability(
     });
     res.setHeader("X-CERP-Document-SHA256", content.source.sha256);
     await sendSecureStoredFile(res, {
-      filePath: resolveCerpStoragePath(content.source.storage_path),
+      filePath: resolveMetrologyDocumentStoragePath(content.source.storage_path, svcMetrologyDocsBaseDir()),
       allowedRoots: [svcMetrologyDocsBaseDir()],
       filename: content.source.source_name, mimeType: content.source.mime_type ?? "application/octet-stream",
       download: true, expectedSha256: content.source.sha256,
