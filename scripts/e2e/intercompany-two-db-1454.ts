@@ -1,6 +1,8 @@
 /* Synthetic two-company qualification. All IDs, identities and prices are TEST-only. */
 import { Pool } from "pg";
 import crypto from "node:crypto";
+import { createServer } from "node:http";
+import globalPool from "../../src/config/database";
 import { repoCreateCommandeNativeTx } from "../../src/module/commande-client/repository/commande-client.repository";
 import { receiveIntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-inbox.repository";
 import { applyPurchaseSubmittedTx, decideIntercompanyRequest } from "../../src/module/entreprises/intercompany/intercompany-requests.repository";
@@ -12,12 +14,19 @@ import { svcGenerateCommandeAr, svcSendCommandeAr } from "../../src/module/comma
 import { repoGetLivraisonShipmentPreview, repoShipLivraison } from "../../src/module/livraisons/repository/livraisons-shipment.repository";
 import { repoFreezeDeliveryQualityDossier } from "../../src/module/livraisons/repository/quality-dossier.repository";
 import { svcGenerateLivraisonPack } from "../../src/module/livraisons/services/pack.service";
+import { repoConfirmLivraisonPreparation, repoGetLivraisonPreparation } from "../../src/module/livraisons/repository/livraisons-preparation.repository";
+import { runAuthoritativePdfArchiveWorkerOnce } from "../../src/shared/authoritative-documents/authoritative-document.worker";
+import { repoFindCommandeArOfficialArchiveId } from "../../src/module/commande-client/repository/commande-ar.repository";
 import { applyIntercompanyFulfilmentMessageTx } from "../../src/module/entreprises/intercompany/intercompany-fulfilment.repository";
 import type { IntercompanyMessage } from "../../src/module/entreprises/intercompany/intercompany-message";
 
 const buyerUrl = process.env.CERP_E2E_BUYER_DATABASE_URL;
 const sellerUrl = process.env.CERP_E2E_SELLER_DATABASE_URL;
 if (!buyerUrl || !sellerUrl) throw new Error("CERP_E2E_BUYER_DATABASE_URL and CERP_E2E_SELLER_DATABASE_URL are required");
+for (const [label, value, database] of [["buyer", buyerUrl, "cerp_ec1454_buyer_v2"], ["seller", sellerUrl, "cerp_ec1454_seller_v2"]] as const) {
+  const parsed = new URL(value);
+  if (!['127.0.0.1','localhost','::1'].includes(parsed.hostname) || parsed.port !== '15464' || parsed.pathname !== `/${database}`) throw new Error(`Unsafe ${label} fixture URL`);
+}
 const buyerCompany = "11111111-1111-4111-8111-111111111111";
 const sellerCompany = "22222222-2222-4222-8222-222222222222";
 const relation = "33333333-3333-4333-8333-333333333333";
@@ -31,9 +40,42 @@ const stockMagasin = "25000000-0000-4000-8000-000000000145";
 const stockLevel = "30000000-0000-4000-8000-000000000145";
 const stockBatch = "40000000-0000-4000-8000-000000000145";
 const stockLot = "41000000-0000-4000-8000-000000000145";
+const buyerBiller = "b7000000-0000-4000-8000-000000000145";
+const buyerLegalName = "TEST EC ACHETEUR v2";
+
+async function startFixtureEmailSink(): Promise<{ close: () => Promise<void>; baseUrl: string }> {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.once("end", () => {
+      if (request.method !== "POST" || request.url !== "/emails") {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "fixture-ar-send" }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("TEST email sink address unavailable");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())),
+  };
+}
 
 async function seedBuyer(pool: Pool) {
-  await pool.query("INSERT INTO erp_settings(key,value_text) VALUES('company.primary_biller_id','b7c1e5a2-3f4d-4e8b-9a06-380569012000') ON CONFLICT(key) DO UPDATE SET value_text=EXCLUDED.value_text");
+  // A separate synthetic buyer identity is essential: the supplier's BL must
+  // display the buyer's frozen legal identity, never the seller's baseline one.
+  await pool.query(`INSERT INTO factureur(biller_id,biller_name,street,house_number,postal_code,city,country,email)
+    VALUES($1,$2,'Avenue Fixture','1','69001','Lyon','France','buyer-fixture@example.local')
+    ON CONFLICT(biller_id) DO UPDATE SET biller_name=EXCLUDED.biller_name,street=EXCLUDED.street,house_number=EXCLUDED.house_number,postal_code=EXCLUDED.postal_code,city=EXCLUDED.city,country=EXCLUDED.country,email=EXCLUDED.email`,[buyerBiller,buyerLegalName]);
+  await pool.query(`INSERT INTO finance_legal_mentions(biller_id,version,effective_from,legal_form,recovery_indemnity,share_capital_currency,extra_mentions)
+    VALUES($1,1,'2026-01-01','TEST',0,'EUR',ARRAY['TEST-only EC buyer identity'])
+    ON CONFLICT(biller_id,version) DO UPDATE SET legal_form=EXCLUDED.legal_form,recovery_indemnity=EXCLUDED.recovery_indemnity,extra_mentions=EXCLUDED.extra_mentions`,[buyerBiller]);
+  await pool.query("INSERT INTO erp_settings(key,value_text) VALUES('company.primary_biller_id',$1) ON CONFLICT(key) DO UPDATE SET value_text=EXCLUDED.value_text",[buyerBiller]);
   await pool.query(`INSERT INTO intercompany_supplier_relations(id,buyer_company_id,supplier_company_id,local_role,environment,local_supplier_id,approval_profile_ids,status,currency)
     VALUES($1,$2,$3,'BUYER','cerp_test',$4,ARRAY['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa']::uuid[],'ACTIVE','EUR') ON CONFLICT(id) DO NOTHING`,[relation,buyerCompany,sellerCompany,supplier]);
   await pool.query(`INSERT INTO fournisseur_catalogue(id,fournisseur_id,type,article_id,designation,reference_fournisseur,unite,prix_unitaire,devise,actif)
@@ -53,16 +95,17 @@ async function seedSeller(pool: Pool) {
   const offer={supplier_article_id:article,supplier_piece_technique_id:null,supplier_piece_technique_version_id:null,unit:'u',supplier_sale_unit_price:70,purchase_vat_rate:20,currency:'EUR',designation:'TEST article dropship'};
   await pool.query(`INSERT INTO intercompany_supplier_offer_revisions(relation_id,supplier_catalogue_mapping_id,version,snapshot,snapshot_sha256) VALUES($1,$2,1,$3::jsonb,$4) ON CONFLICT(relation_id,supplier_catalogue_mapping_id,version) DO NOTHING`,[relation,mapping,JSON.stringify(offer),crypto.createHash('sha256').update(JSON.stringify(offer)).digest('hex')]);
 }
-async function seedSellerShipmentStock(pool: Pool) {
+async function seedSellerShipmentStock(pool: Pool, technicalVersionId: string) {
   // Explicitly TEST-only OLD provenance: it has a real persisted lot, balance and
   // historical document reference, so the native OLD -> NEW policy may reserve it.
   await pool.query(`INSERT INTO warehouses(id,code,name) VALUES($1,'E2E-EC-OLD','TEST EC historical stock') ON CONFLICT(id) DO UPDATE SET code=EXCLUDED.code,name=EXCLUDED.name`, [stockWarehouse]);
   await pool.query(`INSERT INTO locations(id,warehouse_id,code,description) VALUES($1,$2,'E2E-EC-OLD','TEST EC historical location') ON CONFLICT(id) DO UPDATE SET warehouse_id=EXCLUDED.warehouse_id`, [stockLocation,stockWarehouse]);
   await pool.query(`INSERT INTO magasins(id,code,name,is_active,code_magasin,libelle,actif,warehouse_id,stock_scope) VALUES($1,'E2E-EC-OLD','TEST EC historical store',true,'E2E-EC-OLD','TEST EC historical store',true,$2,'OLD') ON CONFLICT(id) DO UPDATE SET warehouse_id=EXCLUDED.warehouse_id,stock_scope='OLD',actif=true,is_active=true`,[stockMagasin,stockWarehouse]);
   await pool.query(`INSERT INTO emplacements(id,magasin_id,code,name,is_active,location_id,location_type,allow_inbound,allow_outbound) VALUES(900145,$1,'E2E-EC-OLD','TEST EC historical bin',true,$2,'STORAGE',true,true) ON CONFLICT(id) DO UPDATE SET magasin_id=EXCLUDED.magasin_id,location_id=EXCLUDED.location_id,is_active=true,allow_outbound=true`,[stockMagasin,stockLocation]);
-  await pool.query(`INSERT INTO pieces_techniques(id,client_id,name_piece,code_piece,designation,statut,en_fabrication,root_piece_technique_id,version_number,piece_critique) VALUES('21000000-0000-4000-8000-000000000145','901','TEST EC piece','TEST-EC-PT','TEST EC shipment article','ACTIVE',true,'21000000-0000-4000-8000-000000000145',1,false) ON CONFLICT(id) DO UPDATE SET statut='ACTIVE',deleted_at=NULL`);
-  await pool.query(`INSERT INTO articles(id,code,designation,article_type,piece_technique_id,unite,lot_tracking,is_active,article_category,stock_managed,family_code,root_article_id,version_number,plan_index,status,is_sold,row_version) VALUES($1,'TEST-EC-ARTICLE','TEST EC shipment article','PIECE_TECHNIQUE','21000000-0000-4000-8000-000000000145','u',true,true,'fabrique',true,'piece_finie',$1,1,1,'VALIDE',true,1) ON CONFLICT(id) DO UPDATE SET piece_technique_id=EXCLUDED.piece_technique_id,unite='u',status='VALIDE',is_active=true`,[article]);
-  await pool.query(`INSERT INTO lots(id,article_id,lot_code,lot_status,source_scope,origin_stock_scope) VALUES($1,$2,'TEST-EC-OLD-145','LIBERE','OLD','OLD') ON CONFLICT(id) DO UPDATE SET lot_status='LIBERE',source_scope='OLD',origin_stock_scope='OLD'`,[stockLot,article]);
+  // The seller order fixes its article/version when it is accepted.  The test
+  // lot deliberately uses that same real fixture lineage, not an invented
+  // article or compatibility bypass.
+  await pool.query(`INSERT INTO lots(id,article_id,lot_code,lot_status,piece_technique_version_id,source_scope,stock_scope,origin_stock_scope) VALUES($1,$2,'TEST-EC-OLD-145','LIBERE',$3::uuid,'OLD','OLD','OLD') ON CONFLICT(id) DO UPDATE SET article_id=EXCLUDED.article_id,lot_status='LIBERE',piece_technique_version_id=EXCLUDED.piece_technique_version_id,source_scope='OLD',stock_scope='OLD',origin_stock_scope='OLD'`,[stockLot,article,technicalVersionId]);
   await pool.query(`INSERT INTO stock_levels(id,article_id,unit_id,warehouse_id,location_id,managed_in_stock,qty_total,qty_reserved,qty_depreciated) SELECT $1,$2,u.id,$3,$4,true,2,0,0 FROM units u WHERE u.code='u' ON CONFLICT(id) DO UPDATE SET qty_total=2,qty_reserved=0,qty_depreciated=0`,[stockLevel,article,stockWarehouse,stockLocation]);
   await pool.query(`INSERT INTO stock_batches(id,stock_level_id,batch_code,qty_total,qty_reserved,qty_depreciated,lot_id) VALUES($1,$2,'TEST-EC-OLD-145',2,0,0,$3) ON CONFLICT(id) DO UPDATE SET qty_total=2,qty_reserved=0,qty_depreciated=0,lot_id=EXCLUDED.lot_id`,[stockBatch,stockLevel,stockLot]);
   await pool.query(`INSERT INTO old_stock_document_references(lot_id,type,label,location,reason,created_by,idempotency_key,request_hash) VALUES($1,'CERTIFICAT_MP','TEST EC historical certificate','fixture://intercompany-1454','TEST-only historical quality provenance',1,'42000000-0000-4000-8000-000000000145',$2) ON CONFLICT DO NOTHING`,[stockLot,'a'.repeat(64)]);
@@ -71,6 +114,9 @@ async function seedSellerShipmentStock(pool: Pool) {
 async function main() {
   const buyer=new Pool({connectionString:buyerUrl}); const seller=new Pool({connectionString:sellerUrl});
   try {
+    const identities=await Promise.all([buyer.query<{database:string}>('SELECT current_database() AS database'),seller.query<{database:string}>('SELECT current_database() AS database')]);
+    if(identities[0].rows[0]?.database!=='cerp_ec1454_buyer_v2'||identities[1].rows[0]?.database!=='cerp_ec1454_seller_v2') throw new Error('fixture database identity mismatch');
+    const initialBuyerStockMovements=await buyer.query<{count:string}>('SELECT count(*)::text AS count FROM stock_movements');
     await seedBuyer(buyer); await seedSeller(seller);
     process.env.CERP_BUSINESS_COMPANIES_ENABLED='true'; process.env.CERP_SHARED_DIRECTORY_ENABLED='true'; process.env.CERP_COMPANY_ID=buyerCompany; process.env.CERP_COMPANY_ENVIRONMENT='cerp_test';
     const client=await buyer.connect(); let created:{id:number;numero:string};
@@ -82,18 +128,39 @@ async function main() {
     const receipt=await receiveIntercompanyMessage(seller,message,{PURCHASE_SUBMITTED:applyPurchaseSubmittedTx});
     const pending=await seller.query<{id:string;version:number}>("SELECT id::text,version FROM cerp_intercompany_requests WHERE buyer_purchase_order_id=$1",[message.aggregate_id]); const request=pending.rows[0]; if(!request) throw new Error('seller request absent');
     const result=await decideIntercompanyRequest(seller,{company_id:sellerCompany,environment:'cerp_test',profile:'INDUSTRIAL',module_keys:['commandes-clients']} as never,1,request.id,{action:'ACCEPT',expected_version:Number(request.version),idempotency_key:'66666666-6666-4666-8666-666666666666'});
-    await seedSellerShipmentStock(seller);
     const sellerOrderId = String(result.supplier_sales_order_id);
+    const sellerOrderVersion=(await seller.query<{version:string}>("SELECT piece_technique_version_id::text AS version FROM commande_ligne WHERE commande_id=$1 AND article_id=$2::uuid LIMIT 1",[sellerOrderId,article])).rows[0]?.version;
+    if(!sellerOrderVersion) throw new Error('TEST seller order technical version absent');
+    await seedSellerShipmentStock(seller,sellerOrderVersion);
     // The process was launched seller-scoped before imports: these are the real
     // command, reservation, BL preparation and shipment repositories.
     await repoRunCommandeWorkflowAction(sellerOrderId,{action:'check_stock'} as never,1,'Administrateur Systeme et Reseau');
     await repoGenerateAffairesFromOrder(sellerOrderId,{decision:null,livraison_count:1,lines:[]} as never,{user_id:1,user_role:'Administrateur Systeme et Reseau',ip:null,user_agent:null,device_type:null,os:null,browser:null,path:null,page_key:'e2e.intercompany',client_session_id:null});
     const delivery=await repoCreateLivraisonFromCommande(Number(sellerOrderId),1);
     const ar=await svcGenerateCommandeAr({commande_id:Number(sellerOrderId),user_id:1,user_role:'Administrateur Systeme et Reseau',idempotency_key:delivery.id});
-    await svcSendCommandeAr({commande_id:Number(sellerOrderId),user_id:1,user_role:'Administrateur Systeme et Reseau',body:{ar_id:ar.ar_id,recipient_emails:['fixture@example.invalid'],recipient_contact_ids:[],idempotency_key:delivery.id,email_body:null,message:null} as never});
+    // The normal worker owns the authoritative GED transition.  Drain its
+    // bounded durable queue here instead of fabricating an archived document.
+    let arArchiveId: string | null = null;
+    for(let attempt=0;attempt<20&&!arArchiveId;attempt+=1) {
+      await runAuthoritativePdfArchiveWorkerOnce(undefined,`fixture-pdf-worker:${process.pid}`);
+      arArchiveId=await repoFindCommandeArOfficialArchiveId(Number(sellerOrderId),ar.ar_id);
+    }
+    if(!arArchiveId) throw new Error('TEST seller AR official archive was not produced by the native worker');
+    const emailSink=await startFixtureEmailSink();
+    try {
+      process.env.CERP_E2E_EMAIL_SINK='1';
+      process.env.RESEND_API_KEY='fixture-local-only';
+      process.env.RESEND_FROM='sender@example.local';
+      process.env.RESEND_API_BASE_URL=emailSink.baseUrl;
+      await svcSendCommandeAr({commande_id:Number(sellerOrderId),user_id:1,user_role:'Administrateur Systeme et Reseau',body:{ar_id:ar.ar_id,recipient_emails:['fixture@example.local'],recipient_contact_ids:[],idempotency_key:delivery.id,email_body:null,message:null} as never});
+    } finally { await emailSink.close(); }
     const reservation=(await seller.query<{id:string}>(`SELECT reservation.id::text AS id FROM stock_reservations reservation JOIN bon_livraison_ligne line ON line.id=reservation.bon_livraison_ligne_id WHERE line.bon_livraison_id=$1::uuid AND reservation.status='ACTIVE' LIMIT 1`,[delivery.id])).rows[0]?.id;
     if(!reservation) throw new Error('TEST seller reservation absent');
     await repoVerifyPreparationLot({reservation_id:reservation,qty:2,scanned_lot_code:'TEST-EC-OLD-145'} as never,1);
+    const preparation=await repoGetLivraisonPreparation(delivery.id);
+    const preparationTask=preparation?.tasks.find(task=>task.reservation_status==='ACTIVE'&&task.lot_code==='TEST-EC-OLD-145');
+    if(!preparation||!preparationTask?.can_confirm) throw new Error('TEST seller physical preparation task unavailable');
+    await repoConfirmLivraisonPreparation(delivery.id,preparationTask.allocation_id,{expected_version:preparation.row_version,input_method:'SCANNER',scan_code:'TEST-EC-OLD-145'} as never,1,`${delivery.id}:pick`);
     const shipmentPreview=await repoGetLivraisonShipmentPreview(delivery.id);
     if(!shipmentPreview?.quality_release || shipmentPreview.quality_release.state!=='READY') throw new Error(`TEST seller quality release is not ready: ${shipmentPreview?.quality_release?.state ?? 'missing'}`);
     await repoFreezeDeliveryQualityDossier({bonLivraisonId:delivery.id,expectedPreviewSha256:shipmentPreview.quality_release.preview_sha256,reason:'TEST historical OLD quality dossier',actorUserId:1,idempotencyKey:delivery.id});
@@ -103,8 +170,11 @@ async function main() {
     await repoShipLivraison(delivery.id,{expected_version:readyPreview.row_version,preview_hash:readyPreview.preview_hash,commentaire:'TEST EC shipment'} as never,1,delivery.id);
     const dispatched=(await seller.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='SHIPMENT_DISPATCHED' ORDER BY created_at DESC LIMIT 1")).rows[0]?.message;
     if(!dispatched) throw new Error('SHIPMENT_DISPATCHED outbox message absent');
-    const snapshot=dispatched.payload as { document:{id:string}; lines:Array<{quantity:number}> };
+    const snapshot=dispatched.payload as { document:{id:string;snapshot_sha256?:string}; lines:Array<{quantity:number}> };
     if(snapshot.lines.reduce((sum,line)=>sum+Number(line.quantity),0)!==2) throw new Error('shipment snapshot is not complete');
+    const legalSnapshot=await seller.query<{snapshot:{issuer?:{company_name?:string};client_name?:string;address_label?:string}}>("SELECT source_snapshot AS snapshot FROM authoritative_pdf_archives WHERE id=$1::uuid AND document_kind='DELIVERY_NOTE_SHIPPED'",[snapshot.document.id]);
+    const documentSnapshot=legalSnapshot.rows[0]?.snapshot;
+    if(documentSnapshot?.issuer?.company_name!==buyerLegalName||documentSnapshot.client_name!=='TEST final customer'||!documentSnapshot.address_label?.includes('1 rue Fixture TEST')) throw new Error('seller shipment snapshot does not retain TEST buyer identity and final destination');
     const decision=(await seller.query<{message:IntercompanyMessage}>("SELECT message FROM cerp_intercompany_outbox WHERE kind='ORDER_DECIDED' ORDER BY created_at DESC LIMIT 1")).rows[0]?.message; if(!decision) throw new Error('ORDER_DECIDED outbox message absent');
     process.env.CERP_COMPANY_ID=buyerCompany;
     const acknowledgement=await receiveIntercompanyMessage(buyer,decision,{ORDER_DECIDED:applyCommercialIntercompanyMessageTx});
@@ -112,10 +182,18 @@ async function main() {
     const fulfilment=await receiveIntercompanyMessage(buyer,dispatched,{SHIPMENT_DISPATCHED:applyIntercompanyFulfilmentMessageTx});
     const fulfilmentReplay=await receiveIntercompanyMessage(buyer,dispatched,{SHIPMENT_DISPATCHED:applyIntercompanyFulfilmentMessageTx});
     const receiptCount=await buyer.query<{count:string}>("SELECT count(*)::text AS count FROM cerp_intercompany_external_fulfilment_receipts WHERE message_id=$1",[dispatched.id]);
-    const buyerStatus=await buyer.query<{statut:string}>("SELECT statut FROM commande_client WHERE id=$1",[created!.id]);
-    if(receiptCount.rows[0]?.count!=='1'||buyerStatus.rows[0]?.statut!=='LIVRE') throw new Error('buyer receipt did not complete dropship delivery exactly once');
+    const buyerStatus=await buyer.query<{statut:string}>("SELECT nouveau_statut AS statut FROM commande_historique WHERE commande_id=$1 ORDER BY date_action DESC,id DESC LIMIT 1",[created!.id]);
+    const finalBuyerStockMovements=await buyer.query<{count:string}>('SELECT count(*)::text AS count FROM stock_movements');
+    if(receiptCount.rows[0]?.count!=='1'||buyerStatus.rows[0]?.statut!=='LIVRE'||finalBuyerStockMovements.rows[0]?.count!==initialBuyerStockMovements.rows[0]?.count) throw new Error('buyer receipt did not complete dropship delivery exactly once without local stock movement');
     const linked=await buyer.query<{supplier_order_state:string;supplier_sales_order_id:string}>("SELECT supplier_order_state,supplier_sales_order_id FROM intercompany_purchase_order_links WHERE buyer_sales_order_id=$1",[created!.id]); if(linked.rows[0]?.supplier_order_state!=='ACCEPTED') throw new Error('buyer decision projection absent');
-    console.log(JSON.stringify({buyer_order:created!,outbox_kind:message.kind,seller_receipt:receipt.status,seller_request:result.state,seller_order:result.supplier_sales_order_id,seller_delivery:delivery.id,shipment_receipt:snapshot.document.id,buyer_acknowledgement:acknowledgement.status,buyer_replay:replay.status,fulfilment:fulfilment.status,fulfilment_replay:fulfilmentReplay.status}));
-  } finally { await buyer.end(); await seller.end(); }
+    const finalSeller=await seller.query<{status:string;posted:string}>(`SELECT bl.statut AS status,COUNT(m.id)::text AS posted FROM bon_livraison bl LEFT JOIN stock_movements m ON m.source_document_id=bl.id::text AND m.status='POSTED' WHERE bl.id=$1::uuid GROUP BY bl.statut`,[delivery.id]);
+    if(finalSeller.rows[0]?.status!=='SHIPPED'||finalSeller.rows[0]?.posted!=='1') throw new Error('seller shipment durable assertions failed');
+    const [buyerLines,sellerLines,deliveryLines]=await Promise.all([
+      buyer.query<{id:string}>("SELECT id::text FROM commande_ligne WHERE commande_id=$1 ORDER BY id",[created!.id]),
+      seller.query<{id:string}>("SELECT id::text FROM commande_ligne WHERE commande_id=$1 ORDER BY id",[sellerOrderId]),
+      seller.query<{id:string}>("SELECT id::text FROM bon_livraison_ligne WHERE bon_livraison_id=$1::uuid ORDER BY id",[delivery.id]),
+    ]);
+    process.stdout.write(`E2E_DURABLE_PASS ${JSON.stringify({buyer_database:identities[0].rows[0].database,seller_database:identities[1].rows[0].database,buyer_legal_name:documentSnapshot.issuer?.company_name,buyer_order:created!.id,buyer_lines:buyerLines.rows.map(row=>row.id),seller_order:sellerOrderId,seller_lines:sellerLines.rows.map(row=>row.id),seller_delivery:delivery.id,seller_delivery_lines:deliveryLines.rows.map(row=>row.id),shipment_message:dispatched.id,shipment_document:snapshot.document.id,shipment_document_snapshot_sha256:snapshot.document.snapshot_sha256 ?? null,shipment_recipient:documentSnapshot.client_name,shipment_destination:documentSnapshot.address_label,ar_official_archive:arArchiveId,buyer_status:buyerStatus.rows[0]?.statut,receipt_count:receiptCount.rows[0]?.count,buyer_stock_movements_before:initialBuyerStockMovements.rows[0]?.count,buyer_stock_movements_after:finalBuyerStockMovements.rows[0]?.count,stock_movements_posted:finalSeller.rows[0]?.posted})}\n`);
+  } finally { await buyer.end(); await seller.end(); await globalPool.end(); }
 }
-main().catch(error=>{console.error(error instanceof Error?error.stack:error);process.exitCode=1});
+main().catch(error=>{process.stderr.write(`E2E_DURABLE_FAIL ${error instanceof Error?error.stack:String(error)}\n`);process.exitCode=1});

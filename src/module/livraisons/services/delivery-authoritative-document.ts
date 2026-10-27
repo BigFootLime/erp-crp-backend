@@ -163,12 +163,13 @@ function snapshotLines(snapshot: Record<string, unknown>): string[] {
 function intercompanyBuyerAsIssuer(snapshot: Record<string, unknown>): LegalParty {
   const legalName = requiredSnapshotString(snapshot, "legal_name");
   const lines = snapshotLines(snapshot);
+  const addressLine2 = lines.slice(1).join(", ");
   return {
-    company_name: legalName,
-    address_line_1: lines[0], address_line_2: lines.slice(1).join(", ") || undefined,
-    country: typeof snapshot.country_code === "string" ? snapshot.country_code : undefined,
-    registration_number: typeof snapshot.registration_number === "string" ? snapshot.registration_number : undefined,
-    vat_number: typeof snapshot.vat_number === "string" ? snapshot.vat_number : undefined,
+    company_name: legalName, address_line_1: lines[0],
+    ...(addressLine2 ? { address_line_2: addressLine2 } : {}),
+    ...(typeof snapshot.country_code === "string" ? { country: snapshot.country_code } : {}),
+    ...(typeof snapshot.registration_number === "string" ? { registration_number: snapshot.registration_number } : {}),
+    ...(typeof snapshot.vat_number === "string" ? { vat_number: snapshot.vat_number } : {}),
   } as LegalParty;
 }
 
