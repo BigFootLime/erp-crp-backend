@@ -244,6 +244,7 @@ describe("Assistant d’import CLIPPER", () => {
     expect(result.normalized_data).not.toHaveProperty("contacts");
     expect(result.normalized_data).not.toHaveProperty("payment_mode_ids");
     expect(result.normalized_data).not.toHaveProperty("quality_levels");
+    expect(result.normalized_data).not.toHaveProperty("customer_type");
   });
 
   it("valide un contact client avec sa clé parent et bloque les coordonnées incomplètes", () => {

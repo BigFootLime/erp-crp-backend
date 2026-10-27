@@ -309,6 +309,10 @@ export type CreateClientDTO = z.infer<typeof createClientSchema>;
 // after `.partial()`, which would turn omitted collection fields into empty
 // arrays and erase existing client data.
 export const clientPatchSchema = clientCreateBaseSchema.partial().extend({
+  // `.partial()` preserves the create schema's default. A PATCH/import
+  // enrichment that does not mention the type must not turn an existing
+  // individual into a professional.
+  customer_type: z.enum(["PROFESSIONAL", "INDIVIDUAL"]).optional(),
   payment_mode_ids: z.array(z.string().guid("Le mode de règlement est invalide")).optional(),
   quality_levels: z.array(z.enum(QUALITY_LEVELS)).optional(),
   contacts: z.array(normalizedContactSchema).transform((contacts) => contacts.filter(isDefined)).optional(),
