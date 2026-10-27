@@ -23,7 +23,7 @@ export async function resolveSupplierPurchaseTx(tx: Pick<PoolClient, "query">, p
     }
     if (customerId && customerId !== row.local_customer_id) throw new HttpError(409, "INTERCOMPANY_RELATION_CUSTOMER_CONFLICT", "La relation ne désigne pas un client vendeur unique.");
     customerId = row.local_customer_id;
-    outputLines.push({ article_id: row.supplier_article_id, piece_technique_id: row.supplier_piece_technique_id, piece_technique_version_id: row.supplier_piece_technique_version_id, designation: row.designation, code_piece: line.supplier_reference ?? null, quantite: line.quantity, unite: line.unit, prix_unitaire_ht: row.supplier_sale_unit_price, taux_tva: row.purchase_vat_rate, delai_client: "Intercompany", reference_price_decision: "KEEP" });
+    outputLines.push({ article_id: row.supplier_article_id, piece_technique_id: row.supplier_piece_technique_id, piece_technique_version_id: row.supplier_piece_technique_version_id, designation: row.designation, code_piece: line.supplier_reference ?? null, quantite: line.quantity, unite: line.unit, prix_unitaire_ht: row.supplier_sale_unit_price, taux_tva: row.purchase_vat_rate, delai_client: null, reference_price_decision: "KEEP" });
   }
   if (!customerId) throw new HttpError(409, "INTERCOMPANY_RELATION_CUSTOMER_REQUIRED", "La relation vendeur ne désigne aucun client local.");
   const totalHt = outputLines.reduce((sum, line) => sum + line.quantite * line.prix_unitaire_ht, 0);
