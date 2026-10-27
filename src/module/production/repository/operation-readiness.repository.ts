@@ -11,6 +11,7 @@ import {readOfComponentCoverageTx} from './of-component-coverage.repository';
 import {readSubcontractFlows,readExternalTransfers,subcontractFlowInstalled} from '../../subcontract/subcontract-flow.repository';
 import {assertMaterialOriginLimit,missingPhysicalMaterial} from '../domain/of-material-policy';
 import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
+import { IMPORTED_INSPECTION_EVIDENCE_SQL } from './imported-inspection.sql';
 
 type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
@@ -43,11 +44,11 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       (EXISTS(SELECT 1 FROM public.non_conformity nc WHERE nc.of_id=o.id AND nc.status::text NOT IN ('CLOSED','CANCELLED'))
         OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'preparation_evidence'->'documents','[]')) doc
           WHERE NOT EXISTS(SELECT 1 FROM public.ged_document_versions v WHERE v.id::text=doc->>'version_id' AND v.status='APPLICABLE'))
-        OR (frozen.value->>'type_operation'='CONTROLE' AND NOT EXISTS(SELECT 1 FROM public.quality_control_plan p
+        OR (frozen.value->>'type_operation'='CONTROLE' AND NOT (${IMPORTED_INSPECTION_EVIDENCE_SQL}) AND NOT EXISTS(SELECT 1 FROM public.quality_control_plan p
            WHERE p.id::text=COALESCE(o.technical_snapshot->'preparation_evidence'->'quality_plan'->>'id',o.technical_preparation->'execution_quality'->'quality_plan'->>'id')
              AND p.piece_version_id=o.piece_technique_version_id AND p.status='PUBLISHED' AND p.archived_at IS NULL
              AND (p.effective_from IS NULL OR p.effective_from<=now()) AND (p.effective_to IS NULL OR p.effective_to>now())))) AS quality_blocked,
-       (o.preparation_rules_version IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s
+       (o.preparation_rules_version IS NOT NULL AND NOT (${IMPORTED_INSPECTION_EVIDENCE_SQL}) AND NOT EXISTS(SELECT 1 FROM public.of_self_inspection_sheets s
          WHERE s.id::text=o.technical_preparation->>'self_inspection_sheet_id' AND s.of_id=o.id AND s.state='READY'
            AND s.piece_technique_version_id=o.piece_technique_version_id AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) AS inspection_missing
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id LEFT JOIN public.machines m ON m.id=op.machine_id
