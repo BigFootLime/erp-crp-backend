@@ -26,6 +26,7 @@ aucune nouvelle publication dans ce chat n'est annoncée depuis.
 | Livraison | Passage natif complet obtenu : AR archivé/envoyé vers un récepteur mail loopback TEST, prélèvement validé, BL SHIPPED et un mouvement POSTED. Reçu externe et historique LIVRE côté acheteur, sans mouvement local. Contre-vérification indépendante via `intercompany-durable-proof-1454.ts`. |
 | Identité et basculement | Vrai Directory RPC puis vraies API Express de deux runtimes fixes : connexion acheteur, création du ticket, échange vendeur et contexte vendeur. Un en-tête d'une autre entreprise est refusé (403) ; le Bearer acheteur présenté au vendeur est refusé (401). Le rejeu avec la même clé est idempotent. |
 | Transport HTTP | Deux processus fixes distincts (18081 acheteur, 18082 vendeur), chacun vérifiant sa propre base v2. Vrai routeur HMAC et worker natif : un achat et deux retours vendeur acquittés durablement, zéro échec. Rejeu de l'inbox vérifié ; signature, destination et environnement modifiés refusés en 403 dans les deux directions. Cette passe transporte des événements déjà appliqués par la recette SQL et exerce donc le rejeu réel, sans recréer les pièces métier. |
+| Transport HTTP, première application fraîche | Nouvelle commande acheteur 24, commande vendeur 20. `PURCHASE_SUBMITTED`, retour `ORDER_DECIDED`, puis `SHIPMENT_DISPATCHED` livrés par les vrais workers HTTP. Pour chacun, absence de l'enveloppe cible avant son transport, puis application unique constatée. L'acceptation utilise le flux natif CRP, sans appliquer directement l'événement au destinataire. Livraison et deux factures de cette même paire sont prouvées ci-dessous. |
 | Tarification publiée | Transaction PostgreSQL annulée : l'ancien prix publié est conservé après hausse du tarif courant ; une révision inexistante est refusée. Helper `intercompany-supplier-price-freeze-1454.ts`, commit `16cfc4ee`. |
 | Premier catalogue EC | Publication CRP v2 avec variante/options et liaison technique résolue côté serveur, projection EC, création automatique du vrai article local `PURCHASED/achat/stock_managed=false` et de la référence fournisseur. Commande EC puis acceptation CRP `STANDARD`. La continuation de ces mêmes commandes passe jusqu'à la livraison et aux deux factures. Aucun faux sous-type fabriqué EC n'est créé. |
 | Interface | Playwright isolé avec API simulée : connexion, administration entreprise, acceptation de demande avec référence/variante/options/prix et adresse, basculement vers l'accueil EC, absence devis/production et création d'un particulier. Ce test visuel ne remplace pas la recette API métier. |
@@ -114,6 +115,37 @@ signature, mot de passe, document client ou tarif réel n'est versionné.
 
 ## Vérifications de code et d'interface
 
+### Parcours frais complet par transport HTTP
+
+Sur le backend source `cf52bfc7`, le run synthétique
+`d40cf269-e35d-461c-bc39-eb8ffa6aaf86` crée la commande EC 24, son achat et la
+demande CRP; la décision native crée la commande CRP 20. Les processus pairs
+restent fixés chacun à leur propre base. Les préconditions de première
+application distinguent cette preuve des replays historiques du tableau.
+
+Le BL `a1a9318b-bf55-471b-8a2a-a7c4f394d801` est réellement expédié avant
+transport de `f7d27202-72c0-4b05-a87e-13b54080e309`. Juste avant le worker, EC
+ne possède ni cette inbox ni ce reçu; après, chacun existe une fois, la commande
+EC est LIVRE, le BL CRP est SHIPPED, avec un mouvement POSTED côté CRP et aucun
+mouvement EC. Les documents portent l'émetteur EC et la destination finale
+synthétique; la destination native du colis correspond au snapshot.
+
+Les deux factures natives sont émises et leurs PDF officiels archivés puis
+récupérés avec vérification SHA-256 et signature PDF : CRP `E2E-F-000008`,
+85,50 HT / 102,60 TTC, source DELIVERY_LINE; EC `EC-V2-F-000009`,
+149,50 HT / 179,40 TTC, source EXTERNAL_FULFILMENT_RECEIPT_LINE.
+Chaque allocation consomme exactement la quantité 1 de ce BL/reçu, avec
+émetteurs, destinataires et numérotations distincts. Les montants restent
+strictement synthétiques.
+
+La contre-vérification versionnée `intercompany-durable-proof-1454.ts`, exécutée
+indépendamment en lecture seule, passe sur ce reçu frais et sur l'ancien reçu
+`feca9e57-bab9-478a-a2b0-6d72034ad551`. L'ancien BL et ses deux factures restent
+intacts après le drainage des outboxes. Les reçus d'exécution, adaptations TEST
+et PDF sont conservés hors Git, sans donnée ni secret de production.
+
+### Contrôles de code déjà acquis
+
 - Backend intégré : build complet réussi, contrat OpenAPI valide, 1 628 opérations
   inventoriées. La réception interentreprises déclare explicitement la signature
   HMAC du pair, indépendamment du Bearer utilisateur.
@@ -174,6 +206,10 @@ Le dossier source fourni contient 16 lignes avec prix fournisseur explicite.
 Un aperçu d'import privé a été préparé ; les références techniques et variantes
 doivent être créées ou liées avant publication. Aucun tarif manquant n'est
 déduit et aucun stock historique n'est chargé depuis les anciens classeurs.
+La lecture des 13 classeurs XLSX et de l'export XLS historique n'a trouvé aucun
+mapping explicite entre les 16 références tarifaires et les anciens plans ECxxxx.
+Les correspondances de noms CAD seules ne sont pas utilisées comme versions
+techniques approuvées.
 
 L'utilisateur confirme que le SIRET définitif EC n'est pas encore disponible et
 qu'il sera renseigné dans le paramétrage ERP de l'entreprise. Une identité de
