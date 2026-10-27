@@ -7,6 +7,7 @@ import pool from "../../../config/database";
 import { readCommandeDuplicateLinesTx } from "./commande-duplicate-lines.repository";
 import { readFullyReservedCommandeCoverage } from "./commande-reserved-coverage.repository";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { repoCreateDropshipPurchaseOrderTx } from "../../entreprises/intercompany/commercial-catalogue.repository";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
@@ -4189,9 +4190,11 @@ export async function repoCreateCommandeNativeTx(
         devis_id,
         source_devis_version_id,
         creation_flow_version,
-        delivery_prepayment_requirement
+        delivery_prepayment_requirement,
+        fulfilment_mode,
+        intercompany_delivery_address
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33::jsonb
       )
       RETURNING id::text AS id
     `;
@@ -4227,6 +4230,8 @@ export async function repoCreateCommandeNativeTx(
       input.source_devis_version_id ?? input.devis_id ?? null,
       input.creation_flow_version ?? 1,
       orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+      input.fulfilment_mode ?? "STANDARD",
+      JSON.stringify(input.intercompany_delivery_address ?? null),
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
@@ -4239,6 +4244,17 @@ export async function repoCreateCommandeNativeTx(
       creation_flow_version: input.creation_flow_version ?? 1,
       save_intent: input.save_intent ?? "VALIDATE",
     });
+    if (input.fulfilment_mode === "SUPPLIER_DROPSHIP") {
+      if (actorUserId == null) throw new HttpError(401, "UNAUTHORIZED", "Un acteur authentifié est requis pour une commande fournisseur directe.");
+      const runtime = (await import("../../entreprises/runtime/company-runtime.config")).companyRuntimeConfiguration();
+      if (!runtime.enabled) throw new HttpError(409, "INTERCOMPANY_RUNTIME_REQUIRED", "Le flux fournisseur direct exige une instance entreprise configurée.");
+      await repoCreateDropshipPurchaseOrderTx(client, {
+        buyerCompanyId: runtime.company_id,
+        buyerSalesOrderId: commandeIdInt,
+        mappingIds: input.lignes.map(line => line.intercompany_catalogue_mapping_id!).filter(Boolean),
+        audit: { user_id: actorUserId, role: null, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: "commandes", client_session_id: null },
+      });
+    }
     await recordContractCall(client,contractCall,commandeId,input);
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);

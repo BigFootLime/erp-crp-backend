@@ -71,6 +71,7 @@ const boolFromQuery = z.preprocess((value) => {
 }, z.boolean());
 
 export const commandeLigneInputSchema = z.object({
+  intercompany_catalogue_mapping_id: z.string().guid().transform(value => value.toLowerCase()).optional().nullable(),
   client_forecast_allocations: z.array(z.object({forecast_id:z.string().guid().transform(value=>value.toLowerCase()),
     expected_version:z.number().int().positive().max(2147483645),
     quantity:z.number().positive().max(1_000_000_000).refine(value=>Number(value.toFixed(3))===value,'3 décimales maximum')}).strict()).max(36).optional(),
@@ -143,6 +144,8 @@ export const createCommandeBodySchema = z.preprocess((value) => {
   return value;
 },
 z.object({
+  fulfilment_mode: z.enum(["STANDARD", "SUPPLIER_DROPSHIP"]).optional().default("STANDARD"),
+  intercompany_delivery_address: z.record(z.string(), z.string().nullable()).optional().nullable(),
   order_type: commandeOrderTypeSchema.optional().default("FERME"),
   client_contract_call: z.object({contract_id:z.string().guid().transform(value=>value.toLowerCase()),
     expected_version:z.number().int().positive().max(2147483646),idempotency_key:z.string().guid().transform(value=>value.toLowerCase())}).strict().optional().nullable(),
@@ -201,6 +204,15 @@ z.object({
   echeances: z.array(commandeEcheanceInputSchema).optional().default([]),
 }))
   .superRefine((val, ctx) => {
+    if (val.fulfilment_mode === "SUPPLIER_DROPSHIP") {
+      if (val.order_type !== "FERME") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["order_type"], message: "Supplier dropship is only available for firm customer orders." });
+      if (val.devis_id != null) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["devis_id"], message: "Supplier dropship orders cannot originate from a quote." });
+      if (!val.intercompany_delivery_address) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["intercompany_delivery_address"], message: "Supplier dropship requires a direct delivery address." });
+      if (val.dest_stock_magasin_id || val.dest_stock_emplacement_id) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["dest_stock_magasin_id"], message: "Supplier dropship orders cannot target local stock." });
+      val.lignes.forEach((line, index) => {
+        if (!line.intercompany_catalogue_mapping_id) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lignes", index, "intercompany_catalogue_mapping_id"], message: "Every supplier dropship line requires an explicit catalogue mapping." });
+      });
+    }
     if (val.order_type === "INTERNE" && val.delivery_prepayment_requirement === "PROFORMA") {
       ctx.addIssue({code:z.ZodIssueCode.custom,path:["delivery_prepayment_requirement"],message:"Une commande interne ne reçoit pas de proforma client."});
     }

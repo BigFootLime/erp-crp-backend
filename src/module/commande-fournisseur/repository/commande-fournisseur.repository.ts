@@ -906,16 +906,18 @@ async function recordIdempotence(
 
 export async function repoCreateCommandeFournisseur(
   body: CreateCommandeBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?: PoolClient,
 ): Promise<{ id: string; code: string; idempotent_replay: boolean }> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
 
     if (body.idempotency_key) {
       const replay = await readIdempotentReplay(client, body.idempotency_key, "CREATE");
       if (replay) {
-        await client.query("COMMIT");
+        if (ownsTransaction) await client.query("COMMIT");
         return replay as { id: string; code: string; idempotent_replay: boolean };
       }
     }
@@ -984,10 +986,10 @@ export async function repoCreateCommandeFournisseur(
     if (body.idempotency_key) {
       await recordIdempotence(client, body.idempotency_key, "CREATE", id, { id, code });
     }
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return resultat;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     // Double-clic concurrent : la même clé a gagné dans une autre transaction -> rejouer.
     if (body.idempotency_key && isPgUniqueViolation(err)) {
       const replayRes = await db.query<{ id: string; code: string }>(
@@ -999,7 +1001,7 @@ export async function repoCreateCommandeFournisseur(
     }
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 

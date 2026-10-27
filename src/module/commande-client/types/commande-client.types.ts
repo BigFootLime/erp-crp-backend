@@ -10,6 +10,7 @@ export type ClientLite = {
 };
 
 export type CommandeOrderType = "FERME" | "CADRE" | "INTERNE";
+export type CommandeFulfilmentMode = "STANDARD" | "SUPPLIER_DROPSHIP";
 export type CommandeCreationFlowVersion = 1 | 2;
 export type CommandeReconciliationSource = "ORDER" | "QUOTE" | "CERP";
 
@@ -192,6 +193,7 @@ export type CommandeToAffaire = {
 };
 
 export type CommandeLigneInput = {
+  intercompany_catalogue_mapping_id?: string | null;
   client_forecast_allocations?: Array<{forecast_id:string;expected_version:number;quantity:number}>;
   client_contract_line_id?: string | null;
   id?: number;
@@ -251,6 +253,8 @@ export type CommandeEcheanceInput = {
 };
 
 export type CreateCommandeInput = {
+  fulfilment_mode?: CommandeFulfilmentMode;
+  intercompany_delivery_address?: Record<string, string | null> | null;
   delivery_prepayment_requirement?: "NOT_REQUIRED" | "PROFORMA";
   client_contract_call?: {contract_id:string;expected_version:number;idempotency_key:string} | null;
   numero?: string;
