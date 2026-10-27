@@ -64,7 +64,7 @@ test("vault is content addressed, scans each digest once, and rejects tampering"
   assert.equal(results.length, 2);
   assert.equal(scans, 1);
   assert.equal(results[0].storagePath, results[1].storagePath);
-  assert.match(results[0].storagePath, /^uploads\/docs\/legacy-import\//);
+  assert.match(results[0].storagePath, /^uploads\/docs\/metrologie\/legacy-import\//);
   await writeFile(results[0].physicalPath, "evil");
   await assert.rejects(prepareSourceVault({ sourceRoot, docsRoot, files, sourceSetSha256: set, scan: clean }), /vault copy integrity failure/);
 });

@@ -130,9 +130,10 @@ export async function prepareSourceVault({ sourceRoot, docsRoot, vaultRoot, file
       verdicts.set(source.sha256, verdict);
     }
     if (await fileSha256(stored.filename) !== source.sha256) refuse("vault changed during scan");
-    // This legacy storage prefix resolves against each runtime's configured
-    // document root, including the native API and its public container.
-    const reference = "uploads/docs/" + path.relative(trusted, stored.filename).split(path.sep).join("/");
+    // New imports use the canonical metrology namespace. Historical rows keep
+    // their immutable uploads/docs/legacy-import references for the API
+    // compatibility resolver.
+    const reference = "uploads/docs/metrologie/" + path.relative(trusted, stored.filename).split(path.sep).join("/");
     results.push({ ...source, storagePath: reference, physicalPath: stored.filename, scan: verdict });
     progress(index + 1, files.length);
   }
