@@ -23,7 +23,9 @@ const DEPENDENCIES = Object.freeze({
   // with the actual schema contracts instead of renaming an applied seed.
   "20261027_metrology_ged_entity_type_1780.sql": [
     "20260227_metrologie_calibration.sql",
-    "20260823_authoritative_pdf_ged_compatibility_bridge.sql"
+    "20260823_authoritative_pdf_ged_compatibility_bridge.sql",
+    "20261027_metrology_ged_entity_type_1780_compat.sql",
+    "20261027_metrology_scan_documents_1780.sql"
   ],
   "20261027_metrology_ged_entity_type_1780_compat.sql": [
     "20260227_metrologie_calibration.sql",

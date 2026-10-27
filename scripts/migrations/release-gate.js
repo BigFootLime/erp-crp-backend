@@ -246,7 +246,21 @@ async function patchLedger(client) {
     `SELECT filename,sha256,applied_at::text AS applied_at
      FROM public.cerp_schema_migrations ORDER BY filename`
   );
-  return classifyPatchLedgerRows(appliedResult.rows);
+  const report = classifyPatchLedgerRows(appliedResult.rows);
+  const patches = inventory().patches;
+  const { resolveClosedSeedApplicability } = require("./metrology-ged-applicability");
+  const applicability = await resolveClosedSeedApplicability(
+    client,
+    patches,
+    new Map(appliedResult.rows.map((row) => [row.filename, row]))
+  );
+  const notApplicable = [...applicability]
+    .filter(([, decision]) => decision.status === "not-applicable-finance-profile")
+    .map(([filename, decision]) => ({ filename, reason: decision.reason }));
+  if (notApplicable.length) {
+    report.pending = report.pending.filter((filename) => !applicability.has(filename));
+  }
+  return { ...report, not_applicable: notApplicable };
 }
 
 async function verifyKnownExternalAppliedPatches(client, ledger) {
