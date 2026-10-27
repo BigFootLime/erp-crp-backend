@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { createHash } from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { repoCreateArticleTx, type AuditContext as ArticleAuditContext } from "../../stock/repository/stock.repository";
 import { repoCreateCommandeFournisseur, type AuditContext as PurchaseAuditContext } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
@@ -91,6 +92,9 @@ export async function repoPublishSupplierCatalogueTx(tx: Tx, supplierCompanyId: 
   const payload={schema_version:1,relation_id:String(row.relation_id),supplier_catalogue_mapping_id:String(row.id),supplier_article_id:String(row.supplier_article_id),supplier_piece_technique_id:row.supplier_piece_technique_id==null?null:String(row.supplier_piece_technique_id),supplier_piece_technique_version_id:row.supplier_piece_technique_version_id==null?null:String(row.supplier_piece_technique_version_id),supplier_reference:row.supplier_reference==null?null:String(row.supplier_reference),designation:String(row.designation),unit:String(row.unit),variant_code:String(row.variant_code||"standard"),options_snapshot:(row.options_snapshot as Record<string,string|number|boolean|null>)??{},supplier_sale_unit_price:Number(row.supplier_sale_unit_price),purchase_vat_rate:Number(row.purchase_vat_rate),currency:String(row.currency),supplier_mapping_version:Number(row.version),active:Boolean(row.active)};
   const { purchaseSubmittedPayloadSchema }=await import("./intercompany-purchase.contract"); // retained runtime dependency boundary
   void purchaseSubmittedPayloadSchema;
+  const snapshot={supplier_article_id:payload.supplier_article_id,supplier_piece_technique_id:payload.supplier_piece_technique_id,supplier_piece_technique_version_id:payload.supplier_piece_technique_version_id,supplier_reference:payload.supplier_reference,designation:payload.designation,unit:payload.unit,variant_code:payload.variant_code,options_snapshot:payload.options_snapshot,supplier_sale_unit_price:payload.supplier_sale_unit_price,purchase_vat_rate:payload.purchase_vat_rate,currency:payload.currency};
+  const hash=createHash("sha256").update(JSON.stringify(snapshot),"utf8").digest("hex");
+  await tx.query(`INSERT INTO public.intercompany_supplier_offer_revisions(relation_id,supplier_catalogue_mapping_id,version,snapshot,snapshot_sha256) VALUES($1::uuid,$2::uuid,$3,$4::jsonb,$5) ON CONFLICT(relation_id,supplier_catalogue_mapping_id,version) DO NOTHING`,[payload.relation_id,payload.supplier_catalogue_mapping_id,payload.supplier_mapping_version,JSON.stringify(snapshot),hash]);
   await enqueueIntercompanyMessageTx(tx,{destination_company_id:String(row.buyer_company_id),kind:"CATALOGUE_PUBLISHED",aggregate_id:payload.supplier_catalogue_mapping_id,revision:payload.supplier_mapping_version,payload});
   return payload;
 }
