@@ -18,6 +18,7 @@ const sellerCompany = "22222222-2222-4222-8222-222222222222";
 const relationId = "33333333-3333-4333-8333-333333333333";
 const sellerArticleId = "22000000-0000-4000-8000-000000000001";
 const audit = { user_id: 1, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: "e2e.intercompany-catalogue-v2", page_key: "e2e.intercompany-catalogue-v2", client_session_id: null };
+const deferIndustrialLaunch = process.argv.includes("--defer-industrial-launch");
 
 async function main() {
   const buyer = new Pool({ connectionString: buyerUrl });
@@ -91,6 +92,10 @@ async function main() {
     const sellerOrderId = String(accepted.supplier_sales_order_id);
     const sellerMode = await seller.query<{ fulfilment_mode: string }>("SELECT fulfilment_mode FROM commande_client WHERE id=$1::bigint", [sellerOrderId]);
     if (sellerMode.rows[0]?.fulfilment_mode !== "STANDARD") throw new Error("TEST accepted CRP order is not STANDARD");
+    if (deferIndustrialLaunch) {
+      process.stdout.write(`E2E_COMMERCIAL_CATALOGUE_V2_DEFERRED ${JSON.stringify({ buyer_database: buyerDb.rows[0]?.database, seller_database: sellerDb.rows[0]?.database, global_database: globalDb.rows[0]?.database, relation_id: relationId, supplier_mapping_id: published.supplier_catalogue_mapping_id, supplier_mapping_version: published.supplier_mapping_version, variant_code: published.variant_code, supplier_sale_unit_price: published.supplier_sale_unit_price, purchase_vat_rate: published.purchase_vat_rate, quantity: 1, buyer_mapping: mapped.id, buyer_order: buyerOrder.id, seller_order: sellerOrderId, seller_fulfilment_mode: sellerMode.rows[0]?.fulfilment_mode })}\n`);
+      return;
+    }
     await repoRunCommandeWorkflowAction(sellerOrderId, { action: "check_stock" } as never, 1, "Administrateur Systeme et Reseau");
     await repoGenerateAffairesFromOrder(sellerOrderId, { decision: null, livraison_count: 1, lines: [] } as never, { ...audit, user_role: "Administrateur Systeme et Reseau" });
     const sellerLine = (await seller.query<{ article_id: string }>("SELECT article_id::text FROM commande_ligne WHERE commande_id=$1::bigint LIMIT 1", [sellerOrderId])).rows[0];
