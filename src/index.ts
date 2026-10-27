@@ -7,7 +7,7 @@ import pool from "./config/database";
 import {assertManagedDatabaseAtStartup} from './config/managed-database';
 import {initializeSharedDirectorySite} from './shared-directory/site-runtime';
 import { assertCompanyRuntimeAtStartup } from './module/entreprises/runtime/company-runtime.service';
-import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
+import { assertE2EIsolation } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service";

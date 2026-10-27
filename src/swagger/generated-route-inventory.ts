@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "c0523f41e90746cfaa11736c672765fdc4da12096744c3f94a1476ce02e6da10";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "cbf5d3247193fce070d1c313e4997bde8b74828857115f12d6e63120897b4e64";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -2146,7 +2146,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/access-profile",
-    "source": "src/module/auth/routes/auth.routes.ts:58",
+    "source": "src/module/auth/routes/auth.routes.ts:59",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2182,7 +2182,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/activate",
-    "source": "src/module/auth/routes/auth.routes.ts:48",
+    "source": "src/module/auth/routes/auth.routes.ts:49",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -2194,7 +2194,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/forgot-password",
-    "source": "src/module/auth/routes/auth.routes.ts:46",
+    "source": "src/module/auth/routes/auth.routes.ts:47",
     "middleware": [
       "anonymous",
       "forgotPasswordRateLimit",
@@ -2206,10 +2206,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/login",
-    "source": "src/module/auth/routes/auth.routes.ts:42",
+    "source": "src/module/auth/routes/auth.routes.ts:43",
     "middleware": [
       "anonymous",
       "loginRateLimit",
+      "companyLoginTargetMiddleware",
       "login"
     ],
     "authenticated": false,
@@ -2218,7 +2219,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me",
-    "source": "src/module/auth/routes/auth.routes.ts:50",
+    "source": "src/module/auth/routes/auth.routes.ts:51",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2230,7 +2231,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/avatar",
-    "source": "src/module/auth/routes/auth.routes.ts:61",
+    "source": "src/module/auth/routes/auth.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2243,7 +2244,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:62",
+    "source": "src/module/auth/routes/auth.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2255,7 +2256,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/navigation-preferences",
-    "source": "src/module/auth/routes/auth.routes.ts:71",
+    "source": "src/module/auth/routes/auth.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2267,7 +2268,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me/profile",
-    "source": "src/module/auth/routes/auth.routes.ts:59",
+    "source": "src/module/auth/routes/auth.routes.ts:60",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2279,7 +2280,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/auth/me/profile",
-    "source": "src/module/auth/routes/auth.routes.ts:60",
+    "source": "src/module/auth/routes/auth.routes.ts:61",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2291,7 +2292,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/auth/me/tablet-pin",
-    "source": "src/module/auth/routes/auth.routes.ts:65",
+    "source": "src/module/auth/routes/auth.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2303,7 +2304,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/me/tablet-pin",
-    "source": "src/module/auth/routes/auth.routes.ts:63",
+    "source": "src/module/auth/routes/auth.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2315,7 +2316,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/me/tablet-pin",
-    "source": "src/module/auth/routes/auth.routes.ts:64",
+    "source": "src/module/auth/routes/auth.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2327,7 +2328,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/enrollment",
-    "source": "src/module/auth/routes/auth.routes.ts:74",
+    "source": "src/module/auth/routes/auth.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2340,7 +2341,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:78",
+    "source": "src/module/auth/routes/auth.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2355,7 +2356,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/auth/mfa/policy",
-    "source": "src/module/auth/routes/auth.routes.ts:79",
+    "source": "src/module/auth/routes/auth.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2371,7 +2372,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/recovery-codes",
-    "source": "src/module/auth/routes/auth.routes.ts:76",
+    "source": "src/module/auth/routes/auth.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2384,7 +2385,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/replacement",
-    "source": "src/module/auth/routes/auth.routes.ts:75",
+    "source": "src/module/auth/routes/auth.routes.ts:76",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2397,7 +2398,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/revoke",
-    "source": "src/module/auth/routes/auth.routes.ts:77",
+    "source": "src/module/auth/routes/auth.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2410,7 +2411,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/mfa/status",
-    "source": "src/module/auth/routes/auth.routes.ts:72",
+    "source": "src/module/auth/routes/auth.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2422,7 +2423,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/step-up",
-    "source": "src/module/auth/routes/auth.routes.ts:73",
+    "source": "src/module/auth/routes/auth.routes.ts:74",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2435,10 +2436,11 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/mfa/verify",
-    "source": "src/module/auth/routes/auth.routes.ts:45",
+    "source": "src/module/auth/routes/auth.routes.ts:46",
     "middleware": [
       "anonymous",
       "mfaRateLimit",
+      "companyLoginTargetMiddleware",
       "verifyChallenge"
     ],
     "authenticated": false,
@@ -2447,7 +2449,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/reset-password",
-    "source": "src/module/auth/routes/auth.routes.ts:47",
+    "source": "src/module/auth/routes/auth.routes.ts:48",
     "middleware": [
       "anonymous",
       "resetPasswordRateLimit",
@@ -2459,7 +2461,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/tablet-pin/devices",
-    "source": "src/module/auth/routes/auth.routes.ts:66",
+    "source": "src/module/auth/routes/auth.routes.ts:67",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2474,7 +2476,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/tablet-pin/devices",
-    "source": "src/module/auth/routes/auth.routes.ts:67",
+    "source": "src/module/auth/routes/auth.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2489,7 +2491,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/auth/tablet-pin/devices/{deviceId}",
-    "source": "src/module/auth/routes/auth.routes.ts:70",
+    "source": "src/module/auth/routes/auth.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2504,7 +2506,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/auth/tablet-pin/devices/{deviceId}",
-    "source": "src/module/auth/routes/auth.routes.ts:69",
+    "source": "src/module/auth/routes/auth.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2519,7 +2521,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/tablet-pin/devices/{deviceId}/pairing",
-    "source": "src/module/auth/routes/auth.routes.ts:68",
+    "source": "src/module/auth/routes/auth.routes.ts:69",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2534,7 +2536,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/tablet-pin/login",
-    "source": "src/module/auth/routes/auth.routes.ts:43",
+    "source": "src/module/auth/routes/auth.routes.ts:44",
     "middleware": [
       "anonymous",
       "tabletPinLoginRateLimit",
@@ -2546,7 +2548,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/tablet-pin/pair",
-    "source": "src/module/auth/routes/auth.routes.ts:44",
+    "source": "src/module/auth/routes/auth.routes.ts:45",
     "middleware": [
       "anonymous",
       "tabletPinPairRateLimit",
@@ -2558,7 +2560,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/auth/test-registration",
-    "source": "src/module/auth/routes/auth.routes.ts:39",
+    "source": "src/module/auth/routes/auth.routes.ts:40",
     "middleware": [
       "anonymous",
       "testRegistrationOptions"
@@ -2569,7 +2571,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/auth/test-registration",
-    "source": "src/module/auth/routes/auth.routes.ts:40",
+    "source": "src/module/auth/routes/auth.routes.ts:41",
     "middleware": [
       "anonymous",
       "registerRateLimit",
@@ -6314,6 +6316,138 @@ export const GENERATED_ROUTE_INVENTORY = [
       "anonymous",
       "electronicInvoiceWebhookRateLimit",
       "receiveElectronicInvoiceWebhook"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/admin/companies",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:244",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-list,() => ({}))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/entreprises/admin/companies",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:260",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-create,(req) => req.body)"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/admin/companies/{companyId}",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:254",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-detail,(req) => ({ company_id: companyIdSchema.parse(req.params.companyId), }))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "patch",
+    "path": "/entreprises/admin/companies/{companyId}",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:264",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-update,(req) => ({ ...req.body, id: companyIdSchema.parse(req.params.companyId), }))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "put",
+    "path": "/entreprises/admin/companies/{companyId}/instances",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:279",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-instance,(req) => ({ ...req.body, company_id: companyIdSchema.parse(req.params.companyId))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "put",
+    "path": "/entreprises/admin/companies/{companyId}/memberships/{profileId}",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:271",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-membership,(req) => ({ ...req.body, company_id: companyIdSchema.parse(req.params.companyId))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/admin/options",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:248",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "adminCall(business-companies-admin-options,(req) => ({ search: req.query.search ?? \"\", }))"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/context",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:197",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "asyncHandler(async (req, res) => { res.json( await companyRuntimeService.view(req.user!, req.)"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/entreprises/sign-in-context",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:94",
+    "middleware": [
+      "anonymous",
+      "companySignInLimit",
+      "asyncHandler(async (req, res) => { const target = assertCompanyLoginTarget(req, true); if (!t)"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/entreprises/switches",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:205",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "asyncHandler(async (req, res) => { const input = switchSchema.parse(req.body); res.json( awai)"
+    ],
+    "authenticated": true,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/entreprises/switches/exchange",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:136",
+    "middleware": [
+      "anonymous",
+      "companySignInLimit",
+      "asyncHandler(async (req, res) => { const config = companyRuntimeService.configuration(); if ()"
     ],
     "authenticated": false,
     "rbac": []

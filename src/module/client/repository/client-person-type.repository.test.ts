@@ -5,11 +5,13 @@ const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   release: vi.fn(),
   audit: vi.fn(),
+  queuePdf: vi.fn(),
 }));
 
 vi.mock("../../../config/database", () => ({ default: { connect: mocks.connect } }));
 vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: mocks.audit }));
 vi.mock("../../../shared/codes/code-generator.service", () => ({ generateClientCode: vi.fn().mockResolvedValue("CLI-001") }));
+vi.mock("../../../shared/authoritative-documents/authoritative-document.service", () => ({ queueCreationPdfArchive: mocks.queuePdf }));
 
 import { repoCreateClient, repoPatchClient } from "./client.repository";
 import { clientPatchSchema, createClientSchema } from "../validators/client.validators";
@@ -36,6 +38,7 @@ beforeEach(() => {
     return { rows: [] };
   });
   mocks.audit.mockResolvedValue(undefined);
+  mocks.queuePdf.mockResolvedValue(undefined);
 });
 
 describe("repoPatchClient — identité particulier (#1454)", () => {
@@ -45,6 +48,10 @@ describe("repoPatchClient — identité particulier (#1454)", () => {
       if (sql.includes("INSERT INTO adresse_facturation")) return { rows: [{ bill_address_id: "bill-1" }] };
       if (sql.includes("INSERT INTO adresse_livraison")) return { rows: [{ delivery_address_id: "delivery-1" }] };
       if (sql.includes("INSERT INTO clients")) return { rows: [{ client_id: clientId }] };
+      if (sql.includes("SELECT updated_at::text AS updated_at FROM clients")) return { rows: [{ updated_at: "2026-10-27T00:00:00.000Z" }] };
+      if (sql.includes("FROM clients c") && sql.includes("FOR UPDATE OF c")) {
+        return { rows: [{ client_id: clientId, client_code: "CLI-001", company_name: "Ana Martin", source_revision: "2026-10-27T00:00:00.000Z", blocked: false }] };
+      }
       return { rows: [] };
     });
     const dto = createClientSchema.parse({
@@ -53,7 +60,7 @@ describe("repoPatchClient — identité particulier (#1454)", () => {
       bill_address: { name: "Facturation", street: "1 rue", postal_code: "42000", city: "Saint-Étienne", country: "France" },
       delivery_address: { name: "Livraison", street: "1 rue", postal_code: "42000", city: "Saint-Étienne", country: "France" },
     });
-    await repoCreateClient(dto, audit, null, { client: { query: mocks.query } as never, sideEffects: "none" });
+    await repoCreateClient(dto, audit, null);
     const insert = mocks.query.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO clients"));
     expect(insert?.[0]).toContain("$1, $2, $3, NULLIF($4,''), NULLIF($5,''), $6");
     expect(insert?.[0]).toContain("$33, $33");
