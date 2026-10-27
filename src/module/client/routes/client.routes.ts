@@ -1,6 +1,6 @@
 // src/module/clients/routes/clients.routes.ts
 import { Router } from "express";
-import { createSupplierOffer, publishSupplierCatalogue, relationOptions, listRelations } from "../../entreprises/intercompany/commercial-catalogue.controller";
+import { createSupplierOffer, publishSupplierCatalogue, relationOptions, listRelations, listSupplierOffers, patchSupplierOffer } from "../../entreprises/intercompany/commercial-catalogue.controller";
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
 import {
   archiveClient,
@@ -41,7 +41,9 @@ import { getClientUrgencyFee, putClientUrgencyFee } from "../controllers/client-
 const router = Router();
 router.get("/intercompany/relations/options", authenticateToken, relationOptions);
 router.get("/intercompany/relations", authenticateToken, listRelations);
+router.get("/intercompany/offers", authenticateToken, listSupplierOffers);
 router.post("/intercompany/offers", authenticateToken, createSupplierOffer);
+router.patch("/intercompany/offers/:id", authenticateToken, patchSupplierOffer);
 router.post("/intercompany/offers/:id/publish", authenticateToken, publishSupplierCatalogue);
 
 // Les fiches clients portent des PII (emails, téléphones, SIRET) et des données
