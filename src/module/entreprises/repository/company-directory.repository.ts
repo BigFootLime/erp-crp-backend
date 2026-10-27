@@ -426,6 +426,9 @@ export async function repoSetBusinessCompanySiteAdministrativeLevel(
     requireDirectoryAdmin(actor);
     await assertCurrentBusinessCompanyOwner(tx, actor);
     const current = await companySiteAdministrativeLevel(tx, input, true);
+    // The row locks now prevent revocation races; recheck elapsed MFA time
+    // once more because waiting on these locks can consume the five minutes.
+    requireDirectoryAdmin(actor);
     if (current.version !== input.expected_version)
       throw new HttpError(409, "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE", "Les droits de ce compte viennent de changer ; actualisez avant de réessayer.");
     if (current.is_superadmin === input.is_superadmin) return administrativeLevelResult(current);

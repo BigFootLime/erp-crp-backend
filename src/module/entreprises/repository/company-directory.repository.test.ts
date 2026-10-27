@@ -371,4 +371,29 @@ describe("business company directory repository", () => {
     expect(calls.some((sql) => sql.startsWith("UPDATE public.cerp_directory_memberships"))).toBe(false);
     vi.useRealTimers();
   });
+  it("fails closed when MFA expires while waiting on the locked target membership", async () => {
+    vi.useFakeTimers();
+    const checkedAt = new Date("2026-10-27T20:00:00.000Z");
+    vi.setSystemTime(checkedAt);
+    const calls: string[] = [];
+    const query = vi.fn(async (sql: string) => {
+      calls.push(sql);
+      if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (sql.includes("FROM public.cerp_directory_memberships source")) return { rows: [{ ok: 1 }] };
+      if (sql.includes("FROM public.cerp_business_companies c")) {
+        vi.setSystemTime(new Date(checkedAt.getTime() + 300_001));
+        return { rows: [tenantRow] };
+      }
+      throw new Error(`Unexpected locked-target MFA query: ${sql}`);
+    });
+    const d = { connect: vi.fn(async () => ({ query })), query };
+    await expect(
+      repoSetBusinessCompanySiteAdministrativeLevel(d as any, { ...ownerSession, mfa_verified_at: checkedAt.toISOString() } as any, {
+        company_id: company, profile_id: profile, environment: "cerp_prod", is_superadmin: true, expected_version: 7,
+      }),
+    ).rejects.toMatchObject({ code: "MFA_STEP_UP_REQUIRED" });
+    expect(calls.some((sql) => sql.startsWith("UPDATE public.cerp_directory_memberships"))).toBe(false);
+    expect(ports.audit).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });
