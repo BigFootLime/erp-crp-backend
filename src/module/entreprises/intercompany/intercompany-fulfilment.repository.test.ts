@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
+const workflowMocks = vi.hoisted(() => ({
+  ensure: vi.fn(),
+  state: vi.fn(),
+}));
+vi.mock("../../commande-client/repository/commande-client.repository", () => ({
+  repoEnsureCommandeWorkflowStatus: workflowMocks.ensure,
+}));
+vi.mock("../../commande-client/repository/commande-fulfillment-guards.repository", () => ({
+  loadCommandeFulfillmentState: workflowMocks.state,
+}));
+
 import {
   applyIntercompanyFulfilmentMessageTx,
 } from "./intercompany-fulfilment.repository";
@@ -69,6 +80,7 @@ function txForAppliedReceipt() {
 describe("intercompany fulfilment receipt", () => {
   it("accepts a partial signed shipment without writing stock", async () => {
     const tx = txForAppliedReceipt();
+    workflowMocks.state.mockResolvedValue({ fully_shipped: false });
 
     await expect(applyIntercompanyFulfilmentMessageTx(tx as never, shipment())).resolves.toEqual({
       applied: true,
@@ -80,10 +92,28 @@ describe("intercompany fulfilment receipt", () => {
       expect.arrayContaining([ids.message, 1, "420", ids.purchaseLine, "seller-line-1", 2, "EA"]),
     );
     expect(tx.query.mock.calls.map(([sql]) => String(sql)).join("\n")).not.toMatch(/stock_levels|stock_movements|bon_livraison_ligne_allocations/i);
+    expect(workflowMocks.ensure).not.toHaveBeenCalled();
+  });
+
+  it("advances only a fully evidenced dropship order through supplier shipment sync", async () => {
+    const tx = txForAppliedReceipt();
+    workflowMocks.state.mockResolvedValue({ fully_shipped: true });
+    workflowMocks.ensure.mockResolvedValue({ changed: true, nouveau_statut: "LIVRE" });
+
+    await applyIntercompanyFulfilmentMessageTx(tx as never, shipment());
+
+    expect(workflowMocks.ensure).toHaveBeenCalledWith(expect.objectContaining({
+      tx,
+      commande_id: 42,
+      nouveau_statut: "LIVRE",
+      cause: "supplier_shipment_sync",
+      user_id: null,
+    }));
   });
 
   it("replays a delivery receipt without adding proof lines twice", async () => {
     const tx = txForAppliedReceipt();
+    workflowMocks.state.mockResolvedValue({ fully_shipped: true });
     tx.query.mockImplementation((async (sql: string) => {
       if (sql.includes("FROM public.intercompany_purchase_order_links")) return { rows: [{ id: "42", fulfilment_mode: "SUPPLIER_DROPSHIP" }] };
       if (sql.includes("FROM public.intercompany_purchase_order_line_links")) return { rows: [{ id: "420", buyer_purchase_order_line_id: ids.purchaseLine, quantity: "3" }] };
@@ -100,6 +130,8 @@ describe("intercompany fulfilment receipt", () => {
   });
 
   it("rejects cancellation and duplicate proof lines before persisting a receipt", async () => {
+    workflowMocks.state.mockReset();
+    workflowMocks.ensure.mockReset();
     const tx = txForAppliedReceipt();
     await expect(applyIntercompanyFulfilmentMessageTx(tx as never, shipment({ kind: "CANCEL_REQUESTED" }))).rejects.toMatchObject({
       code: "INTERCOMPANY_FULFILMENT_KIND_UNSUPPORTED",

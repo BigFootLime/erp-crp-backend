@@ -2,6 +2,8 @@ import type { PoolClient } from "pg";
 import { z } from "zod";
 
 import { HttpError } from "../../../utils/httpError";
+import { repoEnsureCommandeWorkflowStatus } from "../../commande-client/repository/commande-client.repository";
+import { loadCommandeFulfillmentState } from "../../commande-client/repository/commande-fulfillment-guards.repository";
 import type { IntercompanyMessage } from "./intercompany-message";
 
 type Queryable = Pick<PoolClient, "query">;
@@ -164,6 +166,21 @@ export async function applyIntercompanyFulfilmentMessageTx(
        ) VALUES ($1::uuid,$2,$3::bigint,$4::uuid,$5,$6,$7)`,
       [message.id, index + 1, line.buyer_sales_order_line_id, line.buyer_purchase_order_line_id, line.seller_delivery_line_id, line.quantity, line.unit],
     );
+  }
+
+  // A dropship order never receives local stock/OF evidence.  Advance it only
+  // once every EC order line is covered by authenticated supplier receipts;
+  // partial shipments deliberately leave ATTENTE_FOURNISSEUR untouched.
+  const fulfilment = await loadCommandeFulfillmentState(tx, Number(payload.buyer_sales_order_id));
+  if (fulfilment.fully_shipped) {
+    await repoEnsureCommandeWorkflowStatus({
+      tx,
+      commande_id: Number(payload.buyer_sales_order_id),
+      nouveau_statut: "LIVRE",
+      cause: "supplier_shipment_sync",
+      commentaire: "Statut synchronisé automatiquement après preuve complète d'expédition fournisseur",
+      user_id: null,
+    });
   }
   return { applied: true, receipt_id: payload.receipt_id };
 }
