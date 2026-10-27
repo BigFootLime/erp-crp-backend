@@ -1,5 +1,14 @@
 # Changelog
 
+## Préparé — Reprise complète Métrologie (#1460)
+
+- Lots d’import immuables, fichiers sources contrôlés par empreinte et antivirus, vingt champs du registre et observations historiques avec provenance.
+- Import transactionnel et répétable, codes issus de COCONTR, profils et catégories existants ; les références d’étalon sont distinguées de l’identité de l’appareil.
+- Documents et scans d’instruments reliés à la GED, contrôlés par les capacités métrologie et par le parent ; aucune pièce jointe ne qualifie automatiquement un instrument.
+- Revue paginée des lignes et rattachements à clarifier, motif audité et protection des observations déjà reprises.
+- Deux migrations additives sélectives avec préflight, vérification des droits et des preuves immuables, rollback protégé avant import.
+- Validation ciblée et répétition réelle sur PostgreSQL 17 isolé ; le déploiement et la reprise en bases communes sont suivis séparément.
+
 ## Préparé — Métrologie MD15 et codes du registre qualité (#1452)
 
 - Profils documentaires par famille, reprise contrôlée de codes tels que `PC-01` et compteurs indépendants réservant les numéros historiques, y compris TFD.

@@ -117,8 +117,9 @@ export function metrologyProfileCodeFromSpecifications(specifications: unknown):
   return typeof code === "string" && code.trim() ? code.trim().toUpperCase() : null;
 }
 
-/** Fusion superficielle volontairement non destructive des métadonnées JSON.
- * Une fiche MD15 est atomique et validée en entier par le DTO avant écriture. */
+/** Fusion non destructive des métadonnées JSON.  La fiche MD15 conserve les
+ * colonnes historiques inconnues lors d'un PATCH partiel, afin que l'éditeur
+ * contrôlé ne puisse pas effacer une colonne importée qu'il n'affiche pas. */
 export function mergeMetrologySpecifications(existing: unknown, incoming: unknown): Record<string, unknown> {
   const prior = typeof existing === "object" && existing !== null && !Array.isArray(existing)
     ? existing as Record<string, unknown>
@@ -126,7 +127,16 @@ export function mergeMetrologySpecifications(existing: unknown, incoming: unknow
   const next = typeof incoming === "object" && incoming !== null && !Array.isArray(incoming)
     ? incoming as Record<string, unknown>
     : {};
-  return { ...prior, ...next };
+  const priorFiche = typeof prior.fiche_metrologie === "object" && prior.fiche_metrologie !== null && !Array.isArray(prior.fiche_metrologie)
+    ? prior.fiche_metrologie as Record<string, unknown> : null;
+  const nextFiche = typeof next.fiche_metrologie === "object" && next.fiche_metrologie !== null && !Array.isArray(next.fiche_metrologie)
+    ? next.fiche_metrologie as Record<string, unknown> : null;
+  if (!priorFiche || !nextFiche) return { ...prior, ...next };
+  const priorHistory = typeof priorFiche.historique === "object" && priorFiche.historique !== null && !Array.isArray(priorFiche.historique)
+    ? priorFiche.historique as Record<string, unknown> : {};
+  const nextHistory = typeof nextFiche.historique === "object" && nextFiche.historique !== null && !Array.isArray(nextFiche.historique)
+    ? nextFiche.historique as Record<string, unknown> : {};
+  return { ...prior, ...next, fiche_metrologie: { ...priorFiche, ...nextFiche, historique: { ...priorHistory, ...nextHistory } } };
 }
 
 /** Une exécution sans profil reste possible pour les instruments historiques;

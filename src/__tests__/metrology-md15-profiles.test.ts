@@ -77,11 +77,31 @@ describe("profils MD15 de métrologie", () => {
     expect(() => assertLegacyEquipmentCodeUnchanged("PC-01", "PC-02")).toThrow(/immuable/i);
   });
 
-  it("refuse un champ historique inconnu au lieu de le rendre silencieusement traçable", () => {
-    expect(createEquipmentSchema.safeParse({ body: {
+  it("préserve les métadonnées historiques supplémentaires sans les qualifier", () => {
+    const parsed = createEquipmentSchema.safeParse({ body: {
       ...equipment,
       specifications: { fiche_metrologie: { version: 1, profile_code: "PC", historique: { INCONNU: "x" } } },
-    } }).success).toBe(false);
+    } });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.body.specifications.fiche_metrologie?.historique.INCONNU).toBe("x");
+  });
+
+  it("conserve les cellules absentes comme inconnues et refuse les types invalides des champs connus", () => {
+    const historique = {
+      IDCONTROLE: null, COCONTR: "PC-01", DESA1: null, MARQU: null, NUMSERIE: "0000",
+      PRECIS: null, PERIOD: null, DATEENTR: null, DATEDERN: null, REBUT: null,
+      ETREF: null, MIREF: null, MAREF: null, APMI: null, APMA: null, OBS: null,
+      CODEEMP: null, COSERVICE: null, DATESO: null, TYPEP_RIODE: null,
+    };
+    const parse = (values: Record<string, unknown>) => createEquipmentSchema.safeParse({ body: {
+      ...equipment, specifications: { fiche_metrologie: { version: 1, profile_code: "PC", historique: values } },
+    } });
+    const accepted = parse(historique);
+    expect(accepted.success).toBe(true);
+    if (accepted.success) expect(accepted.data.body.specifications.fiche_metrologie?.historique).toEqual(historique);
+    expect(parse({ ...historique, NUMSERIE: 0 }).success).toBe(false);
+    expect(parse({ ...historique, REBUT: "peut-être" }).success).toBe(false);
+    expect(parse({ ...historique, DATEDERN: "2026-02-31" }).success).toBe(false);
   });
 
   it("enregistre le visa MD15 comme contexte d'exécution sans verdict", () => {
