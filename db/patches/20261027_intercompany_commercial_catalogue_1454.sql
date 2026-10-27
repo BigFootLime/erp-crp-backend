@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS public.intercompany_commercial_catalogue (
   CONSTRAINT intercompany_commercial_catalogue_currency_ck CHECK (currency ~ '^[A-Z]{3}$'),
   CONSTRAINT intercompany_commercial_catalogue_supplier_binding_uq UNIQUE (relation_id,supplier_reference,variant_code)
 );
+ALTER TABLE public.intercompany_commercial_catalogue ADD COLUMN IF NOT EXISTS supplier_mapping_version integer NOT NULL DEFAULT 1;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='intercompany_commercial_catalogue_supplier_mapping_version_ck') THEN
+    ALTER TABLE public.intercompany_commercial_catalogue ADD CONSTRAINT intercompany_commercial_catalogue_supplier_mapping_version_ck CHECK (supplier_mapping_version > 0);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS intercompany_commercial_catalogue_relation_idx ON public.intercompany_commercial_catalogue(relation_id) WHERE active;
 CREATE INDEX IF NOT EXISTS intercompany_commercial_catalogue_article_idx ON public.intercompany_commercial_catalogue(local_article_id) WHERE active;
 

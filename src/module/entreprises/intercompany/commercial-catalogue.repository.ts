@@ -2,6 +2,8 @@ import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { repoCreateArticleTx, type AuditContext as ArticleAuditContext } from "../../stock/repository/stock.repository";
 import { repoCreateCommandeFournisseur, type AuditContext as PurchaseAuditContext } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
+import { enqueueIntercompanyMessageTx } from "./intercompany-outbox.repository";
+import { purchaseSubmittedPayloadSchema } from "./intercompany-purchase.contract";
 import type { CommercialCatalogueCreate, CommercialCatalogueItem, CommercialCataloguePatch } from "./commercial-catalogue";
 
 type Tx = Pick<PoolClient, "query">;
@@ -95,9 +97,9 @@ export async function repoPatchCommercialCatalogueTx(tx: Tx, buyerCompanyId: str
 
 /** Creates the buyer-local supplier PO from explicit catalogue mappings only. */
 export async function repoCreateDropshipPurchaseOrderTx(tx: PoolClient, params: { buyerCompanyId: string; buyerSalesOrderId: number; mappingIds: string[]; audit: PurchaseAuditContext }): Promise<{ id: string; code: string }> {
-  const lines = await tx.query<{ id: string; article_id: string; quantite: number; designation: string; unite: string; mapping_id: string; relation_id: string; supplier_id: string; catalogue_id: string; purchase_unit_price: number; purchase_vat_rate: number; currency: string; version: number; supplier_reference: string | null }>(
+  const lines = await tx.query<{ id: string; article_id: string; quantite: number; designation: string; unite: string; mapping_id: string; relation_id: string; supplier_id: string; catalogue_id: string; purchase_unit_price: number; purchase_vat_rate: number; currency: string; version: number; supplier_mapping_version: number; supplier_catalogue_mapping_id: string; supplier_article_id: string; supplier_piece_technique_id: string | null; supplier_piece_technique_version_id: string | null; supplier_reference: string | null; variant_code: string; options_snapshot: Record<string, string | number | boolean | null> }>(
     `SELECT line.id::text,line.article_id::text,line.quantite::float8,line.designation,line.unite,m.id::text AS mapping_id,
-            m.relation_id::text,r.local_supplier_id::text AS supplier_id,m.supplier_catalogue_id::text AS catalogue_id,m.purchase_unit_price::float8,m.purchase_vat_rate::float8,m.currency,m.version,m.supplier_reference
+            m.relation_id::text,r.local_supplier_id::text AS supplier_id,m.supplier_catalogue_id::text AS catalogue_id,m.purchase_unit_price::float8,m.purchase_vat_rate::float8,m.currency,m.version,m.supplier_mapping_version,m.supplier_catalogue_mapping_id::text,m.supplier_article_id::text,m.supplier_piece_technique_id::text,m.supplier_piece_technique_version_id::text,m.supplier_reference,m.variant_code,m.options_snapshot
        FROM public.commande_ligne line JOIN public.intercompany_commercial_catalogue m ON m.id=ANY($2::uuid[]) JOIN public.intercompany_supplier_relations r ON r.id=m.relation_id
       WHERE line.commande_id=$1::bigint AND line.article_id=m.local_article_id AND r.buyer_company_id=$3::uuid AND r.local_role='BUYER' AND m.local_role='BUYER' AND r.status='ACTIVE' AND m.active
       ORDER BY line.id`, [params.buyerSalesOrderId, params.mappingIds, params.buyerCompanyId]);
@@ -108,5 +110,35 @@ export async function repoCreateDropshipPurchaseOrderTx(tx: PoolClient, params: 
   const poLines = await tx.query<{ id: string }>(`SELECT id::text FROM public.commande_fournisseur_ligne WHERE commande_id=$1::uuid ORDER BY position`, [po.id]);
   if (poLines.rows.length !== lines.rows.length) throw new Error("INTERCOMPANY_PURCHASE_LINE_CREATION_INCOMPLETE");
   for (const [index, line] of lines.rows.entries()) await tx.query(`INSERT INTO public.intercompany_purchase_order_line_links(buyer_sales_order_line_id,buyer_purchase_order_line_id,catalogue_mapping_id,mapping_version) VALUES($1::bigint,$2::uuid,$3::uuid,$4)`, [line.id, poLines.rows[index].id, line.mapping_id, line.version]);
+  const snapshot = await tx.query<{ delivery: unknown; legal_name: string | null; street: string | null; house_number: string | null; postal_code: string | null; city: string | null; country: string | null; registration_number: string | null; vat_number: string | null; destination_company_id: string }>(
+    `SELECT command.intercompany_delivery_address AS delivery,
+            biller.biller_name AS legal_name,biller.street,biller.house_number,biller.postal_code,biller.city,biller.country,
+            COALESCE(mentions.siret,mentions.siren) AS registration_number,mentions.vat_number,
+            relation.supplier_company_id::text AS destination_company_id
+       FROM public.commande_client command
+       JOIN public.intercompany_supplier_relations relation ON relation.id=$2::uuid
+       JOIN public.erp_settings setting ON setting.key='company.primary_biller_id'
+       JOIN public.factureur biller ON biller.biller_id::text=setting.value_text
+       LEFT JOIN LATERAL(SELECT * FROM public.finance_legal_mentions legal WHERE legal.biller_id=biller.biller_id AND legal.effective_to IS NULL ORDER BY legal.version DESC LIMIT 1) mentions ON true
+      WHERE command.id=$1::bigint FOR SHARE OF command,relation,biller`, [params.buyerSalesOrderId, first.relation_id]);
+  const header = snapshot.rows[0];
+  if (!header || !header.legal_name || !header.street || !header.postal_code || !header.city || !header.country || !header.delivery)
+    throw new HttpError(409, "INTERCOMPANY_SNAPSHOT_REQUIRED", "La destination persistée et l'identité légale active sont requises avant l'envoi interentreprises.");
+  const delivery = header.delivery as Record<string, unknown>;
+  const recipient = typeof delivery.recipient_name === "string" ? delivery.recipient_name : typeof delivery.name === "string" ? delivery.name : null;
+  const addressLines = Array.isArray(delivery.address_lines)
+    ? delivery.address_lines.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [delivery.house_number, delivery.street, delivery.address_complement, delivery.postal_code, delivery.city].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const payload = purchaseSubmittedPayloadSchema.parse({
+    schema_version: 1, relation_id: first.relation_id, buyer_sales_order_id: String(params.buyerSalesOrderId), buyer_purchase_order_id: po.id,
+    buyer_legal_snapshot: { legal_name: header.legal_name, registration_number: header.registration_number ?? undefined, vat_number: header.vat_number ?? undefined, address_lines: [`${header.house_number ?? ""} ${header.street}`.trim(), `${header.postal_code} ${header.city}`], issued_at: new Date().toISOString() },
+    final_delivery_address_snapshot: { recipient_name: recipient, address_lines: addressLines, country_code: typeof delivery.country_code === "string" ? delivery.country_code.toUpperCase() : undefined, contact_name: typeof delivery.contact_name === "string" ? delivery.contact_name : undefined, contact_phone: typeof delivery.contact_phone === "string" ? delivery.contact_phone : undefined },
+    lines: lines.rows.map((line, index) => ({ buyer_sales_order_line_id: line.id, buyer_purchase_order_line_id: poLines.rows[index].id, catalogue_mapping_id: line.mapping_id, supplier_catalogue_mapping_id: line.supplier_catalogue_mapping_id, mapping_version: line.version, supplier_mapping_version: line.supplier_mapping_version, supplier_article_id: line.supplier_article_id, supplier_piece_technique_id: line.supplier_piece_technique_id, supplier_piece_technique_version_id: line.supplier_piece_technique_version_id, supplier_reference: line.supplier_reference, variant_code: line.variant_code || "standard", options_snapshot: line.options_snapshot ?? {}, quantity: line.quantite, unit: line.unite, purchase_unit_price: line.purchase_unit_price, purchase_vat_rate: line.purchase_vat_rate, currency: line.currency })),
+  });
+  await enqueueIntercompanyMessageTx(tx, { destination_company_id: header.destination_company_id, kind: "PURCHASE_SUBMITTED", aggregate_id: po.id, revision: 1, payload });
+  // The durable outbox row is the actual transmission intent.  Keep the native
+  // PO lifecycle truthful without fabricating a supplier email/document.
+  await tx.query(`UPDATE public.commande_fournisseur SET statut='ENVOYEE',date_envoi=now(),sent_by=$2,updated_by=$2 WHERE id=$1::uuid AND statut='BROUILLON'`, [po.id, params.audit.user_id]);
+  await tx.query(`INSERT INTO public.commande_fournisseur_transition(commande_id,from_statut,to_statut,motif,acteur_id) VALUES($1::uuid,'BROUILLON','A_VALIDER','Soumission interentreprises automatique',$2),($1::uuid,'A_VALIDER','APPROUVEE','Approbation du flux interentreprises',$2),($1::uuid,'APPROUVEE','ENVOYEE','Message PURCHASE_SUBMITTED inscrit dans l''outbox',$2)`, [po.id, params.audit.user_id]);
   return po;
 }
