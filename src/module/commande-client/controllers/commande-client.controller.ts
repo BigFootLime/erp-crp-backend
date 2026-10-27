@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
 import { companyRuntimeService } from "../../entreprises/runtime/company-runtime.service";
+import { companyRuntimeConfiguration } from "../../entreprises/runtime/company-runtime.config";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { sendSecureStoredFile } from "../../../shared/uploads/secure-download";
 import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
@@ -175,8 +176,8 @@ export const createCommande: RequestHandler = async (req, res, next) => {
     }
 
     const access=await companyRuntimeService.access(req.user!);
-    if(!access) throw new HttpError(403,"COMPANY_CONTEXT_REQUIRED","Le contexte entreprise est requis.");
-    const commercial=access.context.profile==="COMMERCIAL";
+    if(!access && companyRuntimeConfiguration().enabled) throw new HttpError(403,"COMPANY_CONTEXT_REQUIRED","Le contexte entreprise est requis.");
+    const commercial=access?.context.profile==="COMMERCIAL";
     if(commercial&&!access.context.module_keys.includes("commandes-fournisseurs")) throw new HttpError(403,"INTERCOMPANY_PURCHASE_MODULE_REQUIRED","Le module commandes fournisseurs est requis.");
     if(!commercial&&payload.fulfilment_mode==="SUPPLIER_DROPSHIP") throw new HttpError(403,"INTERCOMPANY_DROPSHIP_PROFILE_DENIED","Ce profil ne peut pas demander une livraison fournisseur directe.");
     const resolved={...payload,fulfilment_mode:commercial?"SUPPLIER_DROPSHIP":"STANDARD"} as typeof payload;
