@@ -85,6 +85,17 @@ END $$;
 CREATE INDEX IF NOT EXISTS intercompany_commercial_catalogue_relation_idx ON public.intercompany_commercial_catalogue(relation_id) WHERE active;
 CREATE INDEX IF NOT EXISTS intercompany_commercial_catalogue_article_idx ON public.intercompany_commercial_catalogue(local_article_id) WHERE active;
 
+CREATE TABLE IF NOT EXISTS public.intercompany_supplier_catalogue_projections (
+  supplier_catalogue_mapping_id uuid PRIMARY KEY,
+  relation_id uuid NOT NULL REFERENCES public.intercompany_supplier_relations(id) ON DELETE RESTRICT,
+  supplier_article_id uuid NOT NULL, supplier_piece_technique_id uuid NULL, supplier_piece_technique_version_id uuid NULL,
+  supplier_reference text NULL, designation text NOT NULL, unit text NOT NULL, variant_code text NOT NULL,
+  options_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb, supplier_sale_unit_price numeric(14,4) NOT NULL,
+  purchase_vat_rate numeric(5,2) NOT NULL, currency text NOT NULL, supplier_mapping_version integer NOT NULL,
+  active boolean NOT NULL, published_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT intercompany_supplier_catalogue_projection_version_ck CHECK (supplier_mapping_version>0)
+);
+
 ALTER TABLE public.commande_client ADD COLUMN IF NOT EXISTS fulfilment_mode text NOT NULL DEFAULT 'STANDARD';
 ALTER TABLE public.commande_client ADD COLUMN IF NOT EXISTS intercompany_delivery_address jsonb NULL;
 DO $$ BEGIN
