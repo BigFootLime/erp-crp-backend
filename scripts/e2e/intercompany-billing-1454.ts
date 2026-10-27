@@ -15,7 +15,7 @@ const regulatory={billing_frame_code:frame,operation_category:category,transacti
 async function main(){
   // Explicit source IDs are preferred. The API intentionally never scans across companies.
   process.stdout.write(JSON.stringify({marker:"BILLING_FIXTURE_STARTED",kind,sourceId,lineId})+"\n");
-  const input={client_id:clientId,currency:"EUR",sources:[{source_type:sourceType,source_id:sourceId,source_line_id:lineId,quantity}],due_dates:[{due_date:"2026-12-31",label:"E2E TEST solde"}],regulatory};
+  const input={client_id:clientId,currency:"EUR",global_discount_percent:"0",sources:[{source_type:sourceType,source_id:sourceId,source_line_id:lineId,quantity}],due_dates:[{due_date:"2026-12-31",label:"E2E TEST solde"}],regulatory};
   const preview=await repoPreviewFacture(input as never);
   if(preview.blockers.length)throw new Error(`BILLING_BLOCKED:${preview.blockers.map(x=>x.code).join(",")}`);
   const price=preview.lines[0]?.unit_price_ex_tax;
