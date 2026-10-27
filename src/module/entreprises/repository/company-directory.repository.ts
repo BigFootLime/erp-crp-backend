@@ -368,6 +368,45 @@ async function companySiteAdministrativeLevel(
 function administrativeLevelResult(row: CompanySiteAdministrativeLevelRow): CompanySiteAdministrativeLevel {
   return { company_id: row.company_id, profile_id: row.profile_id, environment: row.environment, site_id: row.site_id, is_superadmin: row.is_superadmin, status: row.status, version: row.version };
 }
+/**
+ * Re-read the privileged actor under the same transaction after the tenant
+ * lock. This binds the mutation to the current source membership, Production
+ * ownership, factor version and session epoch rather than snapshot claims.
+ */
+async function assertCurrentBusinessCompanyOwner(tx: PoolClient, actor: DirectorySession) {
+  const stillAssured = (
+    await tx.query(
+      `SELECT 1
+       FROM public.cerp_directory_memberships source
+       JOIN public.cerp_directory_memberships owner ON owner.profile_id=source.profile_id
+       JOIN public.cerp_directory_profiles p ON p.profile_id=source.profile_id
+       JOIN public.users u ON u.id=p.user_id
+       JOIN public.user_mfa_factors f ON f.user_id=u.id
+       LEFT JOIN public.realtime_session_epochs e ON e.user_id=u.id
+       WHERE source.profile_id=$1::uuid AND source.database_id=$2
+         AND source.status='Active' AND source.version=$3
+         AND owner.database_id='cerp_prod' AND owner.status='Active' AND owner.is_superadmin
+         AND u.status='Active' AND NOT u.mfa_reenrollment_required
+         AND f.id=$4::uuid AND f.version=$5 AND f.state='ACTIVE'
+         AND coalesce(e.session_epoch,0)=$6
+       FOR UPDATE OF source,owner,u,f`,
+      [
+        actor.profile_id,
+        actor.database,
+        actor.membership_version,
+        actor.mfa_factor_id,
+        actor.mfa_factor_version,
+        actor.global_session_epoch,
+      ],
+    )
+  ).rows.length > 0;
+  if (!stillAssured)
+    throw new HttpError(
+      403,
+      "DIRECTORY_OWNER_REAUTH_REQUIRED",
+      "Votre autorisation a changé ; reconnectez-vous puis recommencez.",
+    );
+}
 /** The site is derived from the company UUID/environment: CRP global sites cannot match. */
 export async function repoReadBusinessCompanySiteAdministrativeLevel(
   db: Pool,
@@ -385,6 +424,7 @@ export async function repoSetBusinessCompanySiteAdministrativeLevel(
   return withRealtimeOutboxTransaction(await db.connect(), async (tx) => {
     await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`business-company-site-superadmin:${input.company_id}:${input.environment}:${input.profile_id}`]);
     requireDirectoryAdmin(actor);
+    await assertCurrentBusinessCompanyOwner(tx, actor);
     const current = await companySiteAdministrativeLevel(tx, input, true);
     if (current.version !== input.expected_version)
       throw new HttpError(409, "BUSINESS_COMPANY_SITE_MEMBERSHIP_STALE", "Les droits de ce compte viennent de changer ; actualisez avant de réessayer.");
