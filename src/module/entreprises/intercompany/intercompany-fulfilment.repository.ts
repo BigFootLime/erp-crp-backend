@@ -20,7 +20,8 @@ const shipmentDispatchedPayload = z.object({
   dispatched_at: z.string().datetime({ offset: true }),
   document: z.object({
     id: z.string().trim().min(1).max(200),
-    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    kind: z.literal("AUTHORITATIVE_SNAPSHOT"),
+    snapshot_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict(),
   lines: z.array(z.object({
     buyer_sales_order_line_id: nativeId,
@@ -133,15 +134,15 @@ export async function applyIntercompanyFulfilmentMessageTx(
     `INSERT INTO public.cerp_intercompany_external_fulfilment_receipts (
        message_id, receipt_id, source_company_id, destination_company_id,
        environment, relation_id, buyer_sales_order_id, buyer_purchase_order_id, seller_delivery_id,
-       seller_delivery_number, dispatched_at, document_id, document_sha256, raw_payload
-     ) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::bigint,$8::uuid,$9,$10,$11::timestamptz,$12,$13,$14::jsonb)
+       seller_delivery_number, dispatched_at, document_id, document_kind, document_snapshot_sha256, raw_payload
+     ) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7::bigint,$8::uuid,$9,$10,$11::timestamptz,$12,$13,$14,$15::jsonb)
      ON CONFLICT (message_id) DO NOTHING
      RETURNING message_id::text AS message_id`,
     [
       message.id, payload.receipt_id, message.source_company_id, message.destination_company_id,
       message.environment, payload.relation_id, payload.buyer_sales_order_id, payload.buyer_purchase_order_id,
       payload.seller_delivery_id, payload.seller_delivery_number, payload.dispatched_at,
-      payload.document.id, payload.document.sha256, JSON.stringify(payload),
+      payload.document.id, payload.document.kind, payload.document.snapshot_sha256, JSON.stringify(payload),
     ],
   );
   if (!inserted.rows[0]) {

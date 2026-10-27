@@ -44,7 +44,7 @@ export type EligibleSourcesQueryDTO = z.infer<typeof eligibleSourcesQuerySchema>
 
 const sourceSelectionSchema = z
   .object({
-    source_type: z.enum(["DELIVERY_LINE", "MILESTONE", "DEPOSIT"]),
+    source_type: z.enum(["DELIVERY_LINE", "EXTERNAL_FULFILMENT_RECEIPT_LINE", "MILESTONE", "DEPOSIT"]),
     source_id: z.string().trim().min(1).max(200),
     source_line_id: z.string().trim().min(1).max(200),
     quantity: decimal(3, "Quantité").optional(),

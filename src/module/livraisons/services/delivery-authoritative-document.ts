@@ -15,6 +15,10 @@ type DeliverySnapshot = {
   tracking_number: string | null; commentaire_client: string | null; updated_at: string;
   /** Issuer terms are source data too: a later legal-profile edit must not alter an issued BL. */
   issuer: LegalParty;
+  /** For supplier dropshipments, these are the buyer company and final recipient
+   * frozen when the intercompany request was accepted, never CRP's live client. */
+  intercompany_buyer_legal_snapshot: Record<string, unknown> | null;
+  intercompany_destination_snapshot: Record<string, unknown> | null;
   lines: Array<{ ordre: number; designation: string; code_piece: string | null; quantite: number; unite: string | null; delai_client: string | null; lot_codes: string[] }>;
 };
 
@@ -96,12 +100,22 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
         ORDER BY reference
       ) AS affaire_references,
       concat_ws(E'\\n', al.name, concat_ws(' ', al.street, al.house_number), concat_ws(' ', al.postal_code, al.city), al.country) AS address_label,
-      bl.date_creation::text, bl.date_expedition::text, bl.transporteur, bl.tracking_number, bl.commentaire_client, bl.updated_at::text
+      bl.date_creation::text, bl.date_expedition::text, bl.transporteur, bl.tracking_number, bl.commentaire_client, bl.updated_at::text,
+      request.buyer_legal_snapshot AS intercompany_buyer_legal_snapshot,
+      request.final_delivery_address_snapshot AS intercompany_destination_snapshot
     FROM public.bon_livraison bl
     JOIN public.clients c ON c.client_id = bl.client_id
     LEFT JOIN public.commande_client cc ON cc.id = bl.commande_id
     LEFT JOIN public.affaire a ON a.id = bl.affaire_id
     LEFT JOIN public.adresse_livraison al ON al.delivery_address_id = bl.adresse_livraison_id
+    LEFT JOIN LATERAL (
+      SELECT buyer_legal_snapshot, final_delivery_address_snapshot
+      FROM public.cerp_intercompany_requests
+      WHERE supplier_sales_order_id = cc.id
+        AND state IN ('ACCEPTED', 'PARTIALLY_FULFILLED', 'FULFILLED')
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) request ON TRUE
     WHERE bl.id = $1::uuid`, [deliveryId]);
   const row = header.rows[0];
   if (!row) throw new Error("DELIVERY_AUTHORITATIVE_SNAPSHOT_NOT_FOUND");
@@ -114,12 +128,56 @@ export async function loadDeliveryAuthoritativeSnapshot(tx: Queryable, deliveryI
     WHERE line.bon_livraison_id = $1::uuid
     GROUP BY line.id, line.ordre, line.designation, line.code_piece, line.quantite, line.unite, line.delai_client
     ORDER BY line.ordre, line.id`, [deliveryId]);
-  const issuer = await loadIssuerSnapshot(tx, row.date_expedition ?? row.date_creation);
+  const buyer = row.intercompany_buyer_legal_snapshot;
+  const destination = row.intercompany_destination_snapshot;
+  const isIntercompanyDropship = buyer != null || destination != null;
+  if (isIntercompanyDropship && (!buyer || !destination || typeof buyer !== "object" || typeof destination !== "object")) {
+    throw new Error("INTERCOMPANY_DELIVERY_SNAPSHOT_MISSING");
+  }
+  const issuer = isIntercompanyDropship
+    ? intercompanyBuyerAsIssuer(buyer as Record<string, unknown>)
+    : await loadIssuerSnapshot(tx, row.date_expedition ?? row.date_creation);
   return {
     ...row,
+    client_name: isIntercompanyDropship ? destinationRecipientName(destination as Record<string, unknown>) : row.client_name,
+    address_label: isIntercompanyDropship ? destinationAddressLabel(destination as Record<string, unknown>) : row.address_label,
     issuer,
     lines: lines.rows.map((line) => ({ ...line, lot_codes: Array.isArray(line.lot_codes) ? line.lot_codes : [] })),
   };
+}
+
+function requiredSnapshotString(snapshot: Record<string, unknown>, key: string): string {
+  const value = snapshot[key];
+  if (typeof value !== "string" || !value.trim()) throw new Error("INTERCOMPANY_DELIVERY_SNAPSHOT_INVALID");
+  return value.trim();
+}
+
+function snapshotLines(snapshot: Record<string, unknown>): string[] {
+  const lines = snapshot.address_lines;
+  if (!Array.isArray(lines) || !lines.length || lines.some((line) => typeof line !== "string" || !line.trim())) {
+    throw new Error("INTERCOMPANY_DELIVERY_SNAPSHOT_INVALID");
+  }
+  return lines.map((line) => String(line).trim());
+}
+
+function intercompanyBuyerAsIssuer(snapshot: Record<string, unknown>): LegalParty {
+  const legalName = requiredSnapshotString(snapshot, "legal_name");
+  const lines = snapshotLines(snapshot);
+  return {
+    company_name: legalName,
+    address_line_1: lines[0], address_line_2: lines.slice(1).join(", ") || undefined,
+    country: typeof snapshot.country_code === "string" ? snapshot.country_code : undefined,
+    registration_number: typeof snapshot.registration_number === "string" ? snapshot.registration_number : undefined,
+    vat_number: typeof snapshot.vat_number === "string" ? snapshot.vat_number : undefined,
+  } as LegalParty;
+}
+
+function destinationRecipientName(snapshot: Record<string, unknown>): string {
+  return requiredSnapshotString(snapshot, "recipient_name");
+}
+
+function destinationAddressLabel(snapshot: Record<string, unknown>): string {
+  return snapshotLines(snapshot).concat(typeof snapshot.country_code === "string" ? [snapshot.country_code] : []).join("\n");
 }
 
 export async function buildDeliveryCreationSnapshotInput(tx: Queryable, input: { deliveryId: string; actorUserId: number | null }): Promise<AuthoritativePdfCreationInput> {

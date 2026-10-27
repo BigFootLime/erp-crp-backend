@@ -13,7 +13,7 @@ export type FinanceBlocker = {
 };
 
 export type EligibleDeliverySource = {
-  source_type: "DELIVERY_LINE";
+  source_type: "DELIVERY_LINE" | "EXTERNAL_FULFILMENT_RECEIPT_LINE";
   source_id: string;
   source_line_id: string;
   delivery_number: string;
@@ -42,7 +42,7 @@ export type EligibleDeliverySource = {
 };
 
 export type FacturePreviewLine = {
-  source_type: "DELIVERY_LINE" | "MILESTONE" | "DEPOSIT" | "ORDER_CHARGE";
+  source_type: "DELIVERY_LINE" | "EXTERNAL_FULFILMENT_RECEIPT_LINE" | "MILESTONE" | "DEPOSIT" | "ORDER_CHARGE";
   source_id: string;
   source_line_id: string;
   designation: string;

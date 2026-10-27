@@ -48,6 +48,15 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
           AND source.allocation_status = 'CONSUMED'
           AND invoice.statut = ANY($2::text[])
         GROUP BY source.source_line_id
+      ),
+      invoiced_by_external_receipt_line AS (
+        SELECT source.source_line_id, COALESCE(SUM(source.quantity_consumed), 0)::numeric AS quantity
+        FROM public.facture_source_allocations source
+        JOIN public.facture invoice ON invoice.id = source.facture_id
+        WHERE source.source_type = 'EXTERNAL_FULFILMENT_RECEIPT_LINE'
+          AND source.allocation_status = 'CONSUMED'
+          AND invoice.statut = ANY($2::text[])
+        GROUP BY source.source_line_id
       )
       SELECT
         EXISTS(SELECT 1 FROM public.commande_ligne line WHERE line.commande_id = $1) AS has_lines,
@@ -83,13 +92,16 @@ export async function loadCommandeFulfillmentState(tx: Queryable, commandeId: nu
             AND delivery.statut IN ('SHIPPED', 'DELIVERED')
             AND COALESCE(invoiced.quantity, 0) + 0.000000001 < delivery_line.quantite
         ) AND NOT EXISTS(
-          -- Until a buyer-side local delivery document has been generated from
-          -- the immutable receipt, an external proof must never masquerade as
-          -- a billed delivery source.
           SELECT 1
           FROM public.commande_client command
+          JOIN public.commande_ligne line ON line.commande_id = command.id
+          JOIN public.cerp_intercompany_external_fulfilment_receipt_lines receipt_line
+            ON receipt_line.buyer_sales_order_line_id = line.id
+          LEFT JOIN invoiced_by_external_receipt_line invoiced
+            ON invoiced.source_line_id = concat(receipt_line.message_id::text, ':', receipt_line.line_no::text)
           WHERE command.id = $1
             AND command.fulfilment_mode = 'SUPPLIER_DROPSHIP'
+            AND COALESCE(invoiced.quantity, 0) + 0.000000001 < receipt_line.quantity
         ) AS fully_invoiced
     `,
     [commandeId, [...INVOICE_LEDGER_STATUSES]],

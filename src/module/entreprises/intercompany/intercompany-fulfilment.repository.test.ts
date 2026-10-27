@@ -35,7 +35,7 @@ function shipment(overrides: Partial<IntercompanyMessage> = {}): IntercompanyMes
       seller_delivery_id: "seller-delivery-42",
       seller_delivery_number: "BL-42",
       dispatched_at: "2026-10-27T08:00:00.000Z",
-      document: { id: "seller-bl-pdf-42", sha256: "b".repeat(64) },
+      document: { id: "seller-bl-snapshot-42", kind: "AUTHORITATIVE_SNAPSHOT", snapshot_sha256: "b".repeat(64) },
       lines: [{
         buyer_sales_order_line_id: "420",
         buyer_purchase_order_line_id: ids.purchaseLine,

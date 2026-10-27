@@ -138,14 +138,14 @@ const EPSILON = 1e-9
 
 async function enqueueIntercompanyShipmentDispatchedTx(
   tx: Queryable,
-  input: { deliveryId: string; deliveryNumber: string; deliveryRevision: number; commandId: string | null; documentPack: ShipmentPreviewPack | null },
+  input: { deliveryId: string; deliveryNumber: string; deliveryRevision: number; commandId: string | null; authoritativeSnapshot: { id: string; snapshotSha256: string } },
 ): Promise<void> {
   if (!input.commandId) return;
   const requests = await tx.query<{
     id: string; buyer_company_id: string; buyer_purchase_order_id: string; buyer_sales_order_id: string; relation_id: string | null; revision: number;
   }>(
     `SELECT id::text AS id,buyer_company_id::text AS buyer_company_id,buyer_purchase_order_id,buyer_sales_order_id,
-            payload->>'relation_id' AS relation_id,revision
+            relation_id::text AS relation_id,revision
        FROM public.cerp_intercompany_requests
       WHERE supplier_sales_order_id=$1::bigint
         AND state IN ('ACCEPTED','PARTIALLY_FULFILLED')
@@ -170,9 +170,6 @@ async function enqueueIntercompanyShipmentDispatchedTx(
       [input.deliveryId, request.id],
     );
     if (!lines.rows.length) continue;
-    if (!input.documentPack) {
-      throw new HttpError(409, "INTERCOMPANY_SHIPMENT_DOCUMENT_REQUIRED", "L'expédition inter-entreprises requiert un pack BL figé.");
-    }
     await enqueueIntercompanyMessageTx(tx, {
       destination_company_id: request.buyer_company_id,
       kind: "SHIPMENT_DISPATCHED",
@@ -187,7 +184,9 @@ async function enqueueIntercompanyShipmentDispatchedTx(
         seller_delivery_id: input.deliveryId,
         seller_delivery_number: input.deliveryNumber,
         dispatched_at: new Date().toISOString(),
-        document: { id: input.documentPack.version_id, sha256: input.documentPack.checksum_sha256 },
+        // This is the immutable authoritative *source* digest. It is not a
+        // PDF byte checksum: the renderer archives those bytes asynchronously.
+        document: { id: input.authoritativeSnapshot.id, kind: "AUTHORITATIVE_SNAPSHOT", snapshot_sha256: input.authoritativeSnapshot.snapshotSha256 },
         lines: lines.rows.map((line) => ({ ...line, quantity: Number(line.quantity) })),
       },
     });
@@ -1594,7 +1593,7 @@ export async function repoShipLivraison(
     await captureShipmentPromises(client, bonLivraisonId)
     // SHIPPED is the legal/operational boundary. Queue exactly one official
     // artifact from the locked, persisted rows before the shipment commits.
-    await queueCreationPdfArchive(client, await buildShippedDeliveryArtifactInput(client, {
+    const authoritativeSnapshot = await queueCreationPdfArchive(client, await buildShippedDeliveryArtifactInput(client, {
       deliveryId: bonLivraisonId,
       actorUserId: userId,
       sourceRevision: `${rowVersion}:${correlationId}`,
@@ -1604,7 +1603,7 @@ export async function repoShipLivraison(
       deliveryNumber: snapshot.header.numero,
       deliveryRevision: rowVersion,
       commandId: snapshot.header.commande_id,
-      documentPack: preview.document_pack,
+      authoritativeSnapshot: { id: authoritativeSnapshot.id, snapshotSha256: authoritativeSnapshot.snapshotSha256 },
     })
 
     await insertLivraisonEvent(client, {

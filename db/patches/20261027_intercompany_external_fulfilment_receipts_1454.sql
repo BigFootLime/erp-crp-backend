@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS public.cerp_intercompany_external_fulfilment_receipts
   seller_delivery_number text NOT NULL CHECK (length(btrim(seller_delivery_number)) > 0),
   dispatched_at timestamptz NOT NULL,
   document_id text NOT NULL CHECK (length(btrim(document_id)) > 0),
-  document_sha256 text NOT NULL CHECK (document_sha256 ~ '^[a-f0-9]{64}$'),
+  document_kind text NOT NULL CHECK (document_kind = 'AUTHORITATIVE_SNAPSHOT'),
+  -- Digest of the durable authoritative source snapshot, deliberately not a
+  -- PDF-byte digest: PDF rendering/archival is an asynchronous second step.
+  document_snapshot_sha256 text NOT NULL CHECK (document_snapshot_sha256 ~ '^[a-f0-9]{64}$'),
   raw_payload jsonb NOT NULL,
   received_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (source_company_id, receipt_id)
