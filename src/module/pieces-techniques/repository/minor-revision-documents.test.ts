@@ -11,4 +11,10 @@ describe("Internal revision document continuity", () => {
     expect(await copyMinorRevisionDocumentsTx({ query }, "piece", "source", "target", 7)).toBe(2);
     expect(query).toHaveBeenCalledWith(expect.any(String), ["piece", "source", "target", 7]);
   });
+  it("types the actor parameter before DISTINCT resolves an unknown parameter as text", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+    expect(await copyMinorRevisionDocumentsTx({ query }, "piece", "source", "target", 7)).toBe(0);
+    expect(query.mock.calls[0][0]).toMatch(/l\.link_role,\$4::integer/);
+    expect(query.mock.calls[0][1][3]).toBe(7);
+  });
 });
