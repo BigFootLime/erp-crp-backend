@@ -1818,6 +1818,12 @@ async function ensureArticleCanDisableStockManagement(client: Pick<PoolClient, "
   }
 }
 
+// client_id is a technical key; only the linked customer's business code is displayed.
+// Preserve a historical code only when it is distinct from that technical key.
+function pieceClientCodeSql(pieceAlias = "pt"): string {
+  return `COALESCE(NULLIF(btrim(piece_client.client_code), ''), NULLIF(NULLIF(btrim(${pieceAlias}.code_client), ''), btrim(${pieceAlias}.client_id)))`;
+}
+
 function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
   switch (sortBy) {
     case "created_at":
@@ -1829,7 +1835,7 @@ function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {
     case "plan_reference":
       return "latest_version.plan_reference";
     case "client_code":
-      return "pt.code_client";
+      return pieceClientCodeSql();
     case "qty_total":
       return "COALESCE(bs.qty_total, 0)";
     case "qty_available":
@@ -2818,6 +2824,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       OR COALESCE(pt.code_piece, '') ILIKE ${p}
       OR COALESCE(pt.designation, '') ILIKE ${p}
       OR COALESCE(pt.designation_2, '') ILIKE ${p}
+      OR ${pieceClientCodeSql()} ILIKE ${p}
       OR EXISTS (
         SELECT 1 FROM public.article_procurement_profile app
         WHERE app.article_id = a.id
@@ -2842,8 +2849,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     )`);
   }
   if (filters.client_code) {
-    where.push(`EXISTS(SELECT 1 FROM public.article_client_links acl JOIN public.clients cl ON cl.client_id=acl.client_id
-      WHERE acl.article_id=a.id AND LOWER(TRIM(cl.client_code))=LOWER(TRIM(${push(filters.client_code)})))`);
+    const p = push(filters.client_code);
+    where.push(`(LOWER(TRIM(${pieceClientCodeSql()}))=LOWER(TRIM(${p}))
+      OR EXISTS(SELECT 1 FROM public.article_client_links acl JOIN public.clients cl ON cl.client_id=acl.client_id
+      WHERE acl.article_id=a.id AND LOWER(TRIM(cl.client_code))=LOWER(TRIM(${p}))))`);
   }
   if (filters.article_type) {
     where.push(
@@ -2890,6 +2899,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       SELECT COUNT(*)::int AS total
       FROM public.articles a
       LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+      LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id
       ${whereSql}
     `,
     values
@@ -2938,10 +2948,10 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       a.piece_technique_id::text AS piece_technique_id,
       pt.code_piece AS piece_code,
       pt.designation AS piece_designation,
-      pt.code_client AS piece_client_code,
+      ${pieceClientCodeSql()} AS piece_client_code,
       latest_version.plan_reference AS piece_plan_reference,
       latest_version.indice AS piece_indice,
-      pt.code_client AS client_code,
+      ${pieceClientCodeSql()} AS client_code,
       latest_version.plan_reference AS plan_reference,
       COALESCE(NULLIF(btrim(a.unite), ''), CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'matiere'
         THEN CASE WHEN article_material.barre_a_decouper THEN 'mm' ELSE 'u' END END) AS unite,
@@ -2979,6 +2989,7 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
     FROM public.articles a
     LEFT JOIN public.pieces_techniques pt
       ON pt.id = a.piece_technique_id
+    LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id
     LEFT JOIN public.articles_matiere article_material
       ON article_material.article_id = a.id
     LEFT JOIN public.stock_nuances material_nuance
@@ -3115,8 +3126,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         a.piece_technique_id::text AS piece_technique_id,
         pt.code_piece AS piece_code,
         pt.designation AS piece_designation,
-        pt.code_client AS piece_client_code,
-        pt.code_client AS client_code,
+        ${pieceClientCodeSql()} AS piece_client_code,
+        ${pieceClientCodeSql()} AS client_code,
         latest_version.plan_reference AS piece_plan_reference,
         latest_version.indice AS piece_indice,
         latest_version.plan_reference AS plan_reference,
@@ -3191,6 +3202,7 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
        FROM public.articles a
        LEFT JOIN public.pieces_techniques pt
          ON pt.id = a.piece_technique_id
+       LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id
        LEFT JOIN public.articles_matiere am
          ON am.article_id = a.id
        LEFT JOIN public.articles_achat aa
@@ -5905,6 +5917,7 @@ export async function repoListConsolidatedInventory(
     FROM public.v_stock_availability_225 b
     JOIN public.articles a ON a.id = b.article_id
     LEFT JOIN public.pieces_techniques piece ON piece.id = a.piece_technique_id
+    LEFT JOIN public.clients piece_client ON piece_client.client_id = piece.client_id
     LEFT JOIN LATERAL (
       SELECT version.plan_reference, version.indice
       FROM public.piece_technique_versions version
@@ -5968,7 +5981,7 @@ export async function repoListConsolidatedInventory(
        b.article_id::text AS article_id, a.code AS article_code, a.designation AS article_designation,
        article_version.plan_reference AS article_reference,
        article_version.indice AS piece_indice,
-       piece.code_client AS client_code,
+       ${pieceClientCodeSql("piece")} AS client_code,
        a.article_category::text AS material_article_category,
        a.designation AS material_designation,
        COALESCE(article_material.family_code, a.family_code)::text AS material_profile_code,
@@ -6123,9 +6136,10 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       if (body.article_id) {
         const selected = await client.query<{ id: string; category: string; is_active: boolean; piece_technique_id: string | null; client_code: string | null }>(
           `SELECT a.id::text AS id, ${normalizedArticleCategorySql("a.article_category")} AS category,
-                  a.is_active, a.piece_technique_id::text AS piece_technique_id, pt.code_client AS client_code
+                  a.is_active, a.piece_technique_id::text AS piece_technique_id, ${pieceClientCodeSql()} AS client_code
            FROM public.articles a
            LEFT JOIN public.pieces_techniques pt ON pt.id = a.piece_technique_id
+           LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id
            WHERE a.id = $1::uuid
            FOR UPDATE OF a`,
           [body.article_id]

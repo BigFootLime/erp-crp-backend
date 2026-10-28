@@ -1,5 +1,10 @@
 # Changelog
 
+## Correctif — Code client des articles (#1485)
+
+- La fiche article, la liste, son tri/filtre/recherche et les inventaires lisent le code métier du client lié à la pièce technique. Un identifiant technique ancien ne remplace plus le code client affiché.
+- Le contrôle du client lors de la reprise PF utilise la même résolution. Les références historiques distinctes restent disponibles ; aucune donnée ni référence de pièce n'est réécrite.
+
 ## Préparé — Unité de gestion matière automatique (frontend #1802)
 
 - Les transactions de création et de modification des matières imposent `mm` pour une barre à découper, `u` sinon, indépendamment de l’unité envoyée par le client. Le journal d’audit conserve l’unité appliquée.
