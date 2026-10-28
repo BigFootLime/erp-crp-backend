@@ -89,9 +89,9 @@ describe("operator configuration and worker isolation", () => {
   });
   it("preserves industrial/legacy starters and excludes industrial tasks for commercial sites", () => {
     const finance = () => () => undefined; const stock = () => () => undefined; const planning = () => () => undefined;
-    const entries = [{ key: "electronic-invoices", start: finance }, { key: "cump-projection", start: stock }, { key: "planning-forecast", start: planning }, { key: "future-industrial-task", start: planning }];
+    const mfa = () => () => undefined; const entries = [{ key: "electronic-invoices", start: finance }, { key: "mfa", start: mfa }, { key: "cump-projection", start: stock }, { key: "planning-forecast", start: planning }, { key: "future-industrial-task", start: planning }];
     expect(selectCompanyBackgroundStarters("COMMERCIAL", entries)).toEqual([finance]);
-    expect(selectCompanyBackgroundStarters("INDUSTRIAL", entries)).toEqual([finance, stock, planning, planning]);
-    expect(selectCompanyBackgroundStarters("LEGACY", entries)).toEqual([finance, stock, planning, planning]);
+    expect(selectCompanyBackgroundStarters("INDUSTRIAL", entries)).toEqual([finance, mfa, stock, planning, planning]);
+    expect(selectCompanyBackgroundStarters("LEGACY", entries)).toEqual([finance, mfa, stock, planning, planning]);
   });
 });
