@@ -1,7 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ issue: vi.fn() }));
+const mocks = vi.hoisted(() => ({ issue: vi.fn(), site: null as string | null }));
 vi.mock("../../auth/middlewares/auth.middleware", () => ({
   authenticateToken: (
     req: express.Request,
@@ -29,9 +29,9 @@ vi.mock("../../auth/middlewares/auth-rate-limit.middleware", () => ({
 vi.mock("../../../shared-directory/site-runtime", () => ({
   directoryAuthenticationResult: mocks.issue,
   sharedDirectoryClient: () => null,
-  sharedDirectorySite: () => null,
+  sharedDirectorySite: () => mocks.site,
 }));
-import router from "./entreprises.routes";
+import router, { companyLoginTargetMiddleware } from "./entreprises.routes";
 import { companyRuntimeService } from "../runtime/company-runtime.service";
 
 const companyId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -55,11 +55,119 @@ function app() {
   );
   return server;
 }
+function loginTargetApp() {
+  const server = express();
+  server.post("/login", companyLoginTargetMiddleware, (_req, res) =>
+    res.status(200).json({ accepted: true }),
+  );
+  server.use(
+    (
+      error: { status?: number; code?: string },
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => res.status(error.status ?? 500).json({ code: error.code }),
+  );
+  return server;
+}
 beforeEach(() => {
   vi.restoreAllMocks();
   mocks.issue.mockReset();
+  mocks.site = null;
 });
 describe("company HTTP contract", () => {
+  it("permits the bare legacy login target only for the two fixed CRP sites", async () => {
+    const target = loginTargetApp();
+    const configuration = vi.spyOn(companyRuntimeService, "configuration");
+    const primaryCases: Array<[
+      "cerp_prod" | "cerp_test",
+      "cerp_prod" | "cerp_test",
+    ]> = [
+      ["cerp_prod", "cerp_prod"],
+      ["cerp_test", "cerp_test"],
+    ];
+    for (const [site, environment] of primaryCases) {
+      mocks.site = site;
+      configuration.mockReturnValue({
+        enabled: true,
+        company_id: companyId,
+        environment,
+      });
+      expect((await request(target).post("/login")).status).toBe(200);
+      expect(
+        (
+          await request(target)
+            .post("/login")
+            .set("X-CERP-Database", environment)
+        ).status,
+      ).toBe(200);
+    }
+
+    mocks.site = "cerp_prod";
+    configuration.mockReturnValue({
+      enabled: true,
+      company_id: companyId,
+      environment: "cerp_prod",
+    });
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Database", "cerp_test")
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Database", "")
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Company", otherCompany)
+          .set("X-CERP-Database", "cerp_prod")
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Company", "not-a-uuid")
+          .set("X-CERP-Database", "cerp_prod")
+      ).status,
+    ).toBe(403);
+
+    mocks.site = "cerp_company_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_prod";
+    configuration.mockReturnValue({
+      enabled: true,
+      company_id: companyId,
+      environment: "cerp_prod",
+    });
+    expect((await request(target).post("/login")).status).toBe(403);
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Company", companyId)
+          .set("X-CERP-Database", "cerp_prod")
+      ).status,
+    ).toBe(200);
+
+    mocks.site = null;
+    expect((await request(target).post("/login")).status).toBe(403);
+    configuration.mockReturnValue({ enabled: false });
+    expect((await request(target).post("/login")).status).toBe(200);
+    expect(
+      (
+        await request(target)
+          .post("/login")
+          .set("X-CERP-Company", companyId)
+      ).status,
+    ).toBe(503);
+  });
   it("relays only the user's own validated session when creating a switch", async () => {
     const create = vi
       .spyOn(companyRuntimeService, "createSwitch")

@@ -6,7 +6,10 @@ import { createAuthRateLimitMiddleware } from "../../auth/middlewares/auth-rate-
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
-import { directoryAuthenticationResult } from "../../../shared-directory/site-runtime";
+import {
+  directoryAuthenticationResult,
+  sharedDirectorySite,
+} from "../../../shared-directory/site-runtime";
 import {
   COMPANY_HEADER,
   companyEnvironmentSchema,
@@ -84,7 +87,14 @@ export const companyLoginTargetMiddleware: import("express").RequestHandler = (
   next,
 ) => {
   try {
-    assertCompanyLoginTarget(req);
+    // The two fixed CRP sites keep supporting existing login forms and clients
+    // which predate the company header. Tenant runtimes never receive this
+    // compatibility default: their fixed company header remains mandatory.
+    const site = sharedDirectorySite();
+    assertCompanyLoginTarget(
+      req,
+      site === "cerp_prod" || site === "cerp_test",
+    );
     next();
   } catch (error) {
     next(error);
