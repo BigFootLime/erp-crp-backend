@@ -1,6 +1,6 @@
 # Changelog
 
-## Préparé — Entreprises autorisées depuis la gestion des comptes
+## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 
 - La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.
 - La fiche d’un compte existant reprend ses droits effectifs depuis sa source Production ou Test authentifiée ; refus explicites, versions et statut SuperAdmin propre à chaque entreprise sont conservés.
