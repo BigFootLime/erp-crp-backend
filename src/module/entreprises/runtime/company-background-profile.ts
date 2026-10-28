@@ -15,7 +15,7 @@ export async function resolveCompanyBackgroundProfile(): Promise<CompanyBackgrou
 }
 
 const COMMERCIAL_TASKS = new Set([
-  "auth-rate-limit", "mfa", "locks", "reminders", "electronic-invoices", "supplier-invoices",
+  "auth-rate-limit", "locks", "reminders", "electronic-invoices", "supplier-invoices",
   "e-reporting", "webhooks", "authoritative-documents", "intercompany-delivery",
 ]);
 export function selectCompanyBackgroundStarters(profile: CompanyBackgroundProfile, entries: readonly { key: string; start: BackgroundStarter }[]): BackgroundStarter[] {
