@@ -112,13 +112,20 @@ describe("business company Directory administration", () => {
     ports.query.mockResolvedValue({ rows: [] });
     ports.create.mockResolvedValue({ company_id: companyId, version: 1 });
     ports.membership.mockResolvedValue({
-      company_id: companyId,
       profile_id: profileId,
+      username: "operator",
+      name: "Operator",
+      surname: "Directory",
+      status: "ACTIVE",
+      allowed_module_keys: [],
+      denied_module_keys: [],
+      enabled_commercial_projection_capabilities: [],
       version: 1,
     });
     ports.instance.mockResolvedValue({
-      company_id: companyId,
       environment: "cerp_prod",
+      site_id: "cerp_company_22222222222242228222222222222222_prod",
+      active: true,
       version: 1,
     });
   });
@@ -275,6 +282,38 @@ describe("business company Directory administration", () => {
       expect.objectContaining({ expected_version: 0 }),
       expect.objectContaining({ user_id: owner.source_user_id }),
     );
+    expect(response.body).toEqual({
+      profile_id: profileId,
+      username: "operator",
+      name: "Operator",
+      surname: "Directory",
+      status: "ACTIVE",
+      allowed_module_keys: [],
+      denied_module_keys: [],
+      enabled_commercial_projection_capabilities: [],
+      version: 1,
+    });
+  });
+
+  it("returns only the published instance DTO after an update", async () => {
+    const response = await request(fixture())
+      .post("/internal/directory/business-companies-admin-instance")
+      .send(
+        body({
+          company_id: companyId,
+          environment: "cerp_prod",
+          site_id: "cerp_company_22222222222242228222222222222222_prod",
+          active: true,
+          expected_version: 0,
+        }),
+      );
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      environment: "cerp_prod",
+      site_id: "cerp_company_22222222222242228222222222222222_prod",
+      active: true,
+      version: 1,
+    });
   });
 
   it("maps optimistic conflicts and rejects invalid instance environment bindings", async () => {

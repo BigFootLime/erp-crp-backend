@@ -2,6 +2,7 @@
 
 ## Préparé — Esprit Carabine 2.0.33 (#1454)
 
+- Corrige le contrat de réponse des mutations d'administration des sociétés : une adhésion renvoie désormais l'identité annuaire attendue, et les réponses d'adhésion ou d'instance n'exposent plus `company_id` hors DTO public.
 - Corrige la première migration clients avant son premier déploiement : elle accepte les schémas canoniques, historiques ou mixtes, sans inventer d’identité particulière.
 - Le repli historique TVA/NAF vers les champs canoniques n'est exécuté que lorsque les colonnes historiques existent ; les contraintes B2C restent effectives sur les colonnes présentes.
 

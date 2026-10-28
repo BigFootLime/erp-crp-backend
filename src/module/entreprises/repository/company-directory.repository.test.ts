@@ -158,8 +158,10 @@ describe("business company directory repository", () => {
       [],
       [
         {
-          company_id: company,
           profile_id: profile,
+          username: "ec-admin",
+          name: "Keenan",
+          surname: "Martin",
           status: "ACTIVE",
           allowed_module_keys: [],
           denied_module_keys: [],
@@ -182,7 +184,20 @@ describe("business company directory repository", () => {
         },
         actor,
       ),
-    ).resolves.toMatchObject({ version: 1 });
+    ).resolves.toEqual({
+      profile_id: profile,
+      username: "ec-admin",
+      name: "Keenan",
+      surname: "Martin",
+      status: "ACTIVE",
+      allowed_module_keys: [],
+      denied_module_keys: [],
+      enabled_commercial_projection_capabilities: [],
+      version: 1,
+    });
+    expect(String((d.query.mock.calls as unknown[][])[2]?.[0])).toContain(
+      "SELECT upserted.profile_id,u.username,u.name,u.surname",
+    );
     expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(
       String((d.query.mock.calls as unknown[][])[3]?.[0]),
     );
@@ -192,7 +207,6 @@ describe("business company directory repository", () => {
     const d = db([
       [], [], [],
       [{
-        company_id: company,
         environment: "cerp_test",
         site_id: "cerp_company_11111111111141118111111111111111_test",
         active: true,
@@ -211,7 +225,12 @@ describe("business company directory repository", () => {
         },
         actor,
       ),
-    ).resolves.toMatchObject({ version: 1 });
+    ).resolves.toEqual({
+      environment: "cerp_test",
+      site_id: "cerp_company_11111111111141118111111111111111_test",
+      active: true,
+      version: 1,
+    });
     expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(
       String((d.query.mock.calls as unknown[][])[2]?.[0]),
     );
