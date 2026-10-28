@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé — Profil personnel des entreprises (#1454)
+
+- La lecture et la mise à jour du profil personnel utilisent uniquement les colonnes d’identité projetées et l’avatar de l’annuaire en mode annuaire partagé. Les instances d’entreprise n’accèdent plus à la ligne utilisateur complète ni à l’avatar local, sans élargir leurs droits SQL.
+- Le lecteur historique reste utilisé hors annuaire ; une projection absente ou indisponible ne déclenche aucun repli vers l’identité locale.
+
 ## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 
 - La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.
