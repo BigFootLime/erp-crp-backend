@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "d562538c42d2530d0009cd554e09ecd968575af77d538dd8b1b5d0fabf062397";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "5ac7619881b355eb16e490473e0bfacee79ff4bb909292834fe27fe05f619323";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -476,7 +476,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/admin/account-requests/{id}",
-    "source": "src/module/account-requests/account-requests.routes.ts:22",
+    "source": "src/module/account-requests/account-requests.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -496,7 +496,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/account-requests/{id}/approve",
-    "source": "src/module/account-requests/account-requests.routes.ts:20",
+    "source": "src/module/account-requests/account-requests.routes.ts:16",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -536,7 +536,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/account-requests/{id}/reject",
-    "source": "src/module/account-requests/account-requests.routes.ts:21",
+    "source": "src/module/account-requests/account-requests.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -698,46 +698,6 @@ export const GENERATED_ROUTE_INVENTORY = [
       "requireSuperadmin",
       "requireRecentMfaForMutations",
       "controller.revokeAdminPublication"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/company-access/{profileId}",
-    "source": "src/module/account-requests/account-requests.routes.ts:16",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations",
-      "controller.approvedCompanyAccess"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations"
-    ]
-  },
-  {
-    "method": "put",
-    "path": "/admin/company-access/{profileId}",
-    "source": "src/module/account-requests/account-requests.routes.ts:17",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations",
-      "controller.setApprovedCompanyAccess"
     ],
     "authenticated": true,
     "rbac": [
@@ -1388,46 +1348,6 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireSensitiveCapability(hr.sensitive.write)"
-    ]
-  },
-  {
-    "method": "get",
-    "path": "/admin/users/{userId}/company-access",
-    "source": "src/module/account-requests/account-requests.routes.ts:18",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations",
-      "controller.approvedCompanyAccessForUser"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations"
-    ]
-  },
-  {
-    "method": "put",
-    "path": "/admin/users/{userId}/company-access",
-    "source": "src/module/account-requests/account-requests.routes.ts:19",
-    "middleware": [
-      "anonymous",
-      "authenticateToken",
-      "moduleAccessGate",
-      "authenticateToken",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations",
-      "controller.setApprovedCompanyAccessForUser"
-    ],
-    "authenticated": true,
-    "rbac": [
-      "moduleAccessGate",
-      "requireSuperadmin",
-      "requireRecentMfaForMutations"
     ]
   },
   {

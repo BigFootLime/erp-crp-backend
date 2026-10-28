@@ -12,7 +12,7 @@ export type AccountRequestApproval = {
   roles: string[];
   administrative_kind: 'STANDARD' | 'BUSINESS_ADMIN';
   module_keys: string[];
-  company_access: ApprovedCompanyAccess[];
+  company_access?: ApprovedCompanyAccess[];
 };
 type RequestRow = {
   id: string; status: AccountRequestStatus; version: number; name: string; surname: string; email: string;
@@ -169,8 +169,9 @@ export async function listDirectoryAccountRequestCompanyOptions(db: Pool, reques
 export async function approveDirectoryAccountRequest(db: Pool, actor: DirectorySession, id: string, input: AccountRequestApproval, idempotencyKey: string) {
   const tx = await db.connect(); await tx.query('BEGIN');
   try {
-    let selections = [...input.company_access].sort((left, right) => left.company_id.localeCompare(right.company_id));
-    const payloadHash = mutationHash({ expected_version: input.expected_version, primary_role: input.primary_role, roles: unique(input.roles), administrative_kind: input.administrative_kind, module_keys: unique(input.module_keys), company_access: selections });
+    const requestedCompanyAccess = input.company_access;
+    let selections = [...(requestedCompanyAccess ?? [])].sort((left, right) => left.company_id.localeCompare(right.company_id));
+    const payloadHash = mutationHash({ expected_version: input.expected_version, primary_role: input.primary_role, roles: unique(input.roles), administrative_kind: input.administrative_kind, module_keys: unique(input.module_keys), company_access: requestedCompanyAccess === undefined ? null : selections });
     // Lock the request before consulting the idempotency record: a successful
     // activation may have happened since the original PREPARED response.
     const row = await locked(tx, id);
@@ -215,7 +216,7 @@ export async function approveDirectoryAccountRequest(db: Pool, actor: DirectoryS
     // Historic approvals predate the company picker.  When CRP has been
     // registered as a company, retain that approved global access as an
     // explicit CRP membership rather than silently stranding the account.
-    if (!selections.length) {
+    if (requestedCompanyAccess === undefined) {
       const crp = (await tx.query<{ company_id: string }>(
         `SELECT company_id::text FROM public.cerp_business_companies WHERE code='CRP' AND status='ACTIVE'`,
       )).rows[0];

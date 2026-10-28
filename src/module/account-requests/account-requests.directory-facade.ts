@@ -95,16 +95,6 @@ export async function listDirectoryRequestCompanyAccessOptions(req: Request, req
     directory_session: session(req), input: { request_id: requestId },
   });
 }
-export async function readDirectoryApprovedCompanyAccess(req: Request, profileId: string) {
-  return callDirectoryAccountRequest('business-company-approved-access-options', {
-    directory_session: session(req), input: { profile_id: profileId },
-  });
-}
-export async function setDirectoryApprovedCompanyAccess(req: Request, profileId: string, companyAccess: unknown) {
-  return callDirectoryAccountRequest('business-company-approved-access-set', {
-    directory_session: session(req), input: { profile_id: profileId, company_access: companyAccess },
-  });
-}
 function sensitiveCapabilitiesForApproval(
   administrativeKind: unknown,
   selected: readonly string[],

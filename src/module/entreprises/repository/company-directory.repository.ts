@@ -13,7 +13,6 @@ import type {
 import type { DirectorySession } from "../../../shared-directory/model";
 import { requireDirectoryAdmin } from "../../../shared-directory/authority";
 import { HttpError } from "../../../utils/httpError";
-import { deriveApprovedCompanyAccess, type ApprovedCompanyAccess, type CompanyAccessCeiling } from "../../../shared-directory/account-request-company-access";
 
 type CompanyRow = {
   company_id: string;
@@ -108,46 +107,6 @@ export async function repoSearchBusinessCompanyProfiles(
   ).rows;
 }
 
-/** Read-only picker for an already validated account.  ACLs are resolved here,
- * from the canonical Production module decision, never supplied by the UI. */
-export async function repoReadApprovedCompanyAccessOptions(db: Pool, profileId: string) {
-  const source = (await db.query<{ user_id: number; module_keys: string[] }>(
-    `SELECT p.user_id,coalesce((SELECT array_agg(m.module_key ORDER BY m.module_key)
-       FROM public.app_modules m LEFT JOIN public.app_module_user_access a ON a.module_key=m.module_key AND a.user_id=p.user_id
-       WHERE m.is_active AND NOT m.is_protected AND coalesce(a.access='GRANTED',false)),ARRAY[]::text[]) AS module_keys
-     FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id AND u.status='Active' WHERE p.profile_id=$1::uuid`, [profileId],
-  )).rows[0];
-  if (!source) throw new HttpError(404, "BUSINESS_COMPANY_PROFILE_NOT_FOUND", "Profil introuvable.");
-  const companies = (await db.query<CompanyAccessCeiling & { denied_module_keys: string[] }>(
-    `SELECT c.company_id::text,c.code,c.name,c.profile,c.status,c.enabled_module_keys,c.enabled_commercial_projection_capabilities,
-      coalesce(m.version,0) AS membership_version,coalesce(m.denied_module_keys,ARRAY[]::text[]) AS denied_module_keys
-     FROM public.cerp_business_companies c LEFT JOIN public.cerp_business_company_memberships m ON m.company_id=c.company_id AND m.profile_id=$1::uuid
-     WHERE c.status='ACTIVE' ORDER BY c.code`, [profileId],
-  )).rows;
-  const derived = deriveApprovedCompanyAccess(source.module_keys, companies.map(company => ({ company_id: company.company_id, expected_membership_version: company.membership_version })), companies);
-  return { profile_id: profileId, source: "PRODUCTION_APPROVED_MODULE_ACCESS" as const, companies: derived.map((company, index) => ({ ...company, denied_module_keys: companies[index].denied_module_keys, expected_membership_version: companies[index].membership_version })) };
-}
-
-/** Versioned server-derived resynchronisation for an existing account. */
-export async function repoSetApprovedCompanyAccess(db: Pool, profileId: string, selections: readonly ApprovedCompanyAccess[], actor: DirectoryAuditActor) {
-  const options = await repoReadApprovedCompanyAccessOptions(db, profileId);
-  const byId = new Map(options.companies.map(company => [company.company_id, company]));
-  for (const selection of selections) {
-    const current = byId.get(selection.company_id);
-    if (!current || current.expected_membership_version !== selection.expected_membership_version)
-      throw new HttpError(409, "BUSINESS_COMPANY_MEMBERSHIP_VERSION_CONFLICT", "Cette configuration a changé. Rechargez-la avant de réessayer.");
-    // Explicit denies are account-specific exceptions and survive a normal
-    // refresh of the global approved module decision.
-    await repoSetBusinessCompanyMembership(db, {
-      company_id: current.company_id, profile_id: profileId, status: "ACTIVE",
-      allowed_module_keys: current.allowed_module_keys,
-      denied_module_keys: current.denied_module_keys,
-      enabled_commercial_projection_capabilities: current.enabled_commercial_projection_capabilities,
-      expected_version: selection.expected_membership_version,
-    }, actor);
-  }
-  return repoReadApprovedCompanyAccessOptions(db, profileId);
-}
 export async function repoListBusinessCompaniesForProfile(
   db: Pool,
   profileId: string,

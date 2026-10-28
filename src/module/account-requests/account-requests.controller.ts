@@ -44,42 +44,6 @@ export const companyAccessOptions: RequestHandler = asyncHandler(async (req, res
   res.json(await directory.listDirectoryRequestCompanyAccessOptions(req, id));
 });
 
-const companyAccessBody = z.object({ company_access: z.array(z.object({
-  company_id: z.string().uuid(), expected_membership_version: z.number().int().min(0),
-}).strict()).max(100) }).strict();
-async function directoryProfileForLocalUser(userId: number) {
-  const row = (await pool.query<{ profile_id: string }>(
-    "SELECT directory_profile_id::text AS profile_id FROM public.users WHERE id=$1 AND directory_profile_id IS NOT NULL", [userId],
-  )).rows[0];
-  if (!row) throw new HttpError(404, "DIRECTORY_PROFILE_NOT_FOUND", "Le compte n’est pas rattaché à l’annuaire.");
-  return row.profile_id;
-}
-export const approvedCompanyAccess: RequestHandler = asyncHandler(async (req, res) => {
-  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
-  const profileId = z.string().uuid().parse(req.params.profileId);
-  res.setHeader("Cache-Control", "no-store");
-  res.json(await directory.readDirectoryApprovedCompanyAccess(req, profileId));
-});
-export const setApprovedCompanyAccess: RequestHandler = asyncHandler(async (req, res) => {
-  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
-  const profileId = z.string().uuid().parse(req.params.profileId);
-  const body = companyAccessBody.parse(req.body);
-  res.setHeader("Cache-Control", "no-store");
-  res.json(await directory.setDirectoryApprovedCompanyAccess(req, profileId, body.company_access));
-});
-export const approvedCompanyAccessForUser: RequestHandler = asyncHandler(async (req, res) => {
-  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
-  const profileId = await directoryProfileForLocalUser(z.coerce.number().int().positive().parse(req.params.userId));
-  res.setHeader("Cache-Control", "no-store");
-  res.json(await directory.readDirectoryApprovedCompanyAccess(req, profileId));
-});
-export const setApprovedCompanyAccessForUser: RequestHandler = asyncHandler(async (req, res) => {
-  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
-  const profileId = await directoryProfileForLocalUser(z.coerce.number().int().positive().parse(req.params.userId));
-  const body = companyAccessBody.parse(req.body);
-  res.setHeader("Cache-Control", "no-store");
-  res.json(await directory.setDirectoryApprovedCompanyAccess(req, profileId, body.company_access));
-});
 
 export const approve: RequestHandler = asyncHandler(async (req, res) => {
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");

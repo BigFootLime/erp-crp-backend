@@ -52,7 +52,7 @@ export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap
     const parsed = approveAccountRequestSchema.parse({ params: { id: envelope.id }, headers: { idempotencyKey: envelope.key }, body: envelope.approval });
     if (parsed.body.module_keys.length === 0) throw new HttpError(422, 'ACCOUNT_REQUEST_MODULE_REQUIRED', 'Sélectionnez au moins un module.');
     if (parsed.body.link_historical_user_id !== null && parsed.body.link_historical_user_id !== undefined) throw new HttpError(422, 'HISTORICAL_LINK_REQUIRES_OWNER_OPERATION', 'Le rattachement historique exige une opération administrateur distincte.');
-    const prepared = await approveDirectoryAccountRequest(db, actor, envelope.id, { ...parsed.body, company_access: parsed.body.company_access ?? [] }, envelope.key);
+    const prepared = await approveDirectoryAccountRequest(db, actor, envelope.id, parsed.body, envelope.key);
     return { ...prepared, profile: await directoryProfileForSite(db, actor.database, prepared.profile_id) };
   });
   endpoint('account-request-activate', async (actor, raw) => {
