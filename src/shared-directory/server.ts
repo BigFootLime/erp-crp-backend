@@ -49,7 +49,7 @@ export function createDirectoryServer(options:Options){
  const wrap=(work:(req:express.Request,res:express.Response)=>Promise<void>):express.RequestHandler=>(req,res,next)=>{void work(req,res).catch(next);};
  mountDirectoryCommonAccess(app,options.db,options.directoryId,async()=>typeof options.keys==='function'?await options.keys():options.keys,wrap,options.commonAccessTransport);
  mountDirectoryBusinessCompanies(app,options.db,wrap,{enabled:businessCompaniesEnabled,sourceJwtSecret:options.sourceJwtSecret,directoryId:options.directoryId,keys:async()=>typeof options.keys==='function'?await options.keys():options.keys});
- mountDirectoryBusinessCompanyAdministration(app,options.db,wrap,businessCompaniesEnabled);
+ mountDirectoryBusinessCompanyAdministration(app,options.db,wrap,businessCompaniesEnabled,{authorityId:options.directoryId,keys:async()=>typeof options.keys==='function'?await options.keys():options.keys,transport:options.commonAccessTransport});
  app.post('/internal/directory/info',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({directory_id:options.directoryId,schema_version:1,capabilities:['shared-auth-mfa','shared-users','shared-company','shared-avatar'],import_mode:'EMPTY_NO_LEGACY_IMPORT'});}));
  app.post('/internal/directory/registration-options',wrap(async(req,res)=>{z.object({}).strict().parse(req.body);res.json({enabled:!businessCompaniesEnabled&&!!options.registrationOpen&&req.directoryCaller!=='cerp_prod'&&!req.directoryCaller?.startsWith('cerp_company_'),database:req.directoryCaller,avatars:AVATAR_KEYS,role:'superAdmin'});}));
  app.post('/internal/directory/register',wrap(async(req,res)=>{

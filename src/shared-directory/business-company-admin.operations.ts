@@ -21,6 +21,9 @@ import {
 } from "../module/entreprises/repository/company-directory.repository";
 import { MODULE_CATALOG } from "../module/access-control/domain/module-catalog";
 import { HttpError } from "../utils/httpError";
+import { readApprovedAccountAccessSource } from "./approved-account-access-source";
+import { repoReadApprovedSourceBinding, repoReadApprovedCompanyOptions, repoApplyApprovedCompanyAccess } from "../module/entreprises/repository/approved-company-access.repository";
+import { approvedCompanyAccessUpdateSchema } from "../module/entreprises/domain/approved-company-access";
 
 type Wrap = (
   work: (req: Request, res: Response) => Promise<void>,
@@ -105,6 +108,11 @@ export function mountDirectoryBusinessCompanyAdministration(
   db: Pool,
   wrap: Wrap,
   enabled: boolean,
+  approvedSource?: {
+    authorityId: string;
+    keys: () => Promise<ReadonlyMap<string, string>>;
+    transport?: typeof fetch;
+  },
 ) {
   if (!enabled) return;
   const endpoint = (
@@ -158,6 +166,25 @@ export function mountDirectoryBusinessCompanyAdministration(
     device_type: null,
     os: null,
     browser: null,
+  });
+  const approvedSnapshot = async (profileId: string) => {
+    if (!approvedSource) throw new HttpError(503, "DIRECTORY_UNAVAILABLE", "Les droits approuvés sont momentanément indisponibles.");
+    const binding = await repoReadApprovedSourceBinding(db, profileId);
+    const key = (await approvedSource.keys()).get(binding.site);
+    if (!key) throw new HttpError(503, "DIRECTORY_UNAVAILABLE", "Les droits approuvés sont momentanément indisponibles.");
+    const snapshot = await readApprovedAccountAccessSource({ authority_id: approvedSource.authorityId, profile_id: profileId, source_site: binding.site }, key, approvedSource.transport);
+    return { binding, snapshot };
+  };
+  endpoint("business-companies-admin-approved-access-options", async input => {
+    const parsed = z.object({ profile_id: uuid }).strict().parse(input);
+    const { binding, snapshot } = await approvedSnapshot(parsed.profile_id);
+    return repoReadApprovedCompanyOptions(db, binding, snapshot);
+  });
+  endpoint("business-companies-admin-approved-access-set", async (input, actor) => {
+    const parsed = approvedCompanyAccessUpdateSchema.extend({ profile_id: uuid }).strict().parse(input);
+    const { profile_id, ...selection } = parsed;
+    const { binding, snapshot } = await approvedSnapshot(profile_id);
+    return repoApplyApprovedCompanyAccess(db, binding, snapshot, selection, actor);
   });
   endpoint("business-companies-admin-list", async (input) => {
     z.object({}).strict().parse(input);

@@ -5,6 +5,15 @@ export type ApprovedCompanyAccess = Readonly<{
   company_id: string;
   expected_membership_version: number;
 }>;
+export type ApprovedCompanyDecision = Readonly<{ provided: boolean; selections: readonly ApprovedCompanyAccess[] }>;
+export function approvedCompanyDecision(value: readonly ApprovedCompanyAccess[] | undefined): ApprovedCompanyDecision {
+  return { provided: value !== undefined, selections: [...(value ?? [])].map(row => ({ ...row, company_id: row.company_id.toLowerCase() })).sort((a, b) => a.company_id.localeCompare(b.company_id)) };
+}
+/** Omission while resuming means keep the immutable prior decision; it never
+ * asks to replace an explicit selection with the legacy default. */
+export function sameApprovedCompanyDecision(value: readonly ApprovedCompanyAccess[] | undefined, stored: ApprovedCompanyDecision): boolean {
+  return value === undefined || JSON.stringify(approvedCompanyDecision(value)) === JSON.stringify(stored);
+}
 export type CompanyAccessCeiling = Readonly<{
   company_id: string;
   code: string;

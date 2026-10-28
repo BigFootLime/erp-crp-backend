@@ -223,7 +223,17 @@ export async function repoSetBusinessCompanyMembership(
   input: MembershipInput,
   actor: DirectoryAuditActor,
 ) {
-  return withRealtimeOutboxTransaction(await db.connect(), async (tx) => {
+  return withRealtimeOutboxTransaction(await db.connect(), (tx) =>
+    repoSetBusinessCompanyMembershipTx(tx, input, actor),
+  );
+}
+
+/** Shared by single-company edits and atomic account eligibility changes. */
+export async function repoSetBusinessCompanyMembershipTx(
+  tx: PoolClient,
+  input: MembershipInput,
+  actor: DirectoryAuditActor,
+) {
     await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [
       `business-company-membership:${input.company_id}:${input.profile_id}`,
     ]);
@@ -285,7 +295,6 @@ export async function repoSetBusinessCompanyMembership(
       { status: row.status, version: row.version },
     );
     return row;
-  });
 }
 export async function repoSetBusinessCompanyInstance(
   db: Pool,
@@ -397,7 +406,7 @@ function administrativeLevelResult(row: CompanySiteAdministrativeLevelRow): Comp
  * lock. This binds the mutation to the current source membership, Production
  * ownership, factor version and session epoch rather than snapshot claims.
  */
-async function assertCurrentBusinessCompanyOwner(tx: PoolClient, actor: DirectorySession) {
+export async function assertCurrentBusinessCompanyOwner(tx: PoolClient, actor: DirectorySession) {
   const stillAssured = (
     await tx.query(
       `SELECT 1

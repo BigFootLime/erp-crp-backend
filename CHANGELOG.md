@@ -1,5 +1,12 @@
 # Changelog
 
+## Préparé — Entreprises autorisées depuis la gestion des comptes
+
+- La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.
+- La fiche d’un compte existant reprend ses droits effectifs depuis sa source Production ou Test authentifiée ; refus explicites, versions et statut SuperAdmin propre à chaque entreprise sont conservés.
+- Une modification de plusieurs entreprises partage une transaction unique. Les anciennes validations restent compatibles et une décision déjà préparée ne peut pas changer silencieusement de sélection.
+- Les paramètres métier restent ceux du Paramétrage ERP de l’entreprise active ; les identifiants de déploiement relèvent du registre technique.
+
 ## Préparé — Esprit Carabine 2.0.33 (#1454)
 
 - Le profil commercial ne lance plus le nettoyage MFA local : les facteurs et challenges restent gérés par l’annuaire commun, sans élargir les droits SQL du site commercial.
