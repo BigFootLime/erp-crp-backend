@@ -13,7 +13,7 @@ export class DirectoryClient {
   this.base=base;
  }
  async call<T>(operation:string,payload:unknown):Promise<T>{
-  if(!/^[a-z][a-z0-9-]{0,40}$/.test(operation))throw new Error('DIRECTORY_OPERATION_INVALID');
+  if(!/^[a-z][a-z0-9-]{0,63}$/.test(operation))throw new Error('DIRECTORY_OPERATION_INVALID');
   const path=`/internal/directory/${operation}`,body=Buffer.from(JSON.stringify(payload));
   let response:Response,result:any;
   try{
