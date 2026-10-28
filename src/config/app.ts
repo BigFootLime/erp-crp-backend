@@ -21,6 +21,7 @@ import { createOriginPolicy } from "./origins";
 import { deploymentIdentity } from "./deployment-security";
 import { createRequestBudget } from "../middlewares/request-budget";
 import { mountCommonAccessSource } from "../shared-directory/common-access";
+import { mountApprovedAccountAccessSource } from "../shared-directory/approved-account-access-source";
 import { companyRuntimeConfiguration } from "../module/entreprises/runtime/company-runtime.config";
 import { sharedDirectorySite } from "../shared-directory/site-runtime";
 
@@ -129,6 +130,7 @@ app.use(
 );
 
 mountCommonAccessSource(app, pool);
+mountApprovedAccountAccessSource(app, pool);
 
 /* ------------------ 3) Swagger / Docs ------------------ */
 

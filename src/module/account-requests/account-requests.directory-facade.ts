@@ -37,8 +37,11 @@ const DIRECTORY_ACCOUNT_REQUEST_ERRORS = new Map<string, {
   ['409:ACCOUNT_REQUEST_EMAIL_CONFLICT', { status: 409, message: 'Cette adresse ne peut plus être approuvée.' }],
   ['409:ACCOUNT_REQUEST_PROJECTION_CONFLICT', { status: 409, message: 'La projection doit être reprise avant activation.' }],
   ['409:ACCOUNT_REQUEST_MEMBERSHIP_CONFLICT', { status: 409, message: 'L’adhésion ne peut pas être activée.' }],
+  ['409:ACCOUNT_REQUEST_COMPANY_MEMBERSHIP_CONFLICT', { status: 409, message: 'Le rattachement entreprise a changé. Rechargez la validation.' }],
+  ['409:BUSINESS_COMPANY_MEMBERSHIP_VERSION_CONFLICT', { status: 409, message: 'Cette configuration a changé. Rechargez-la avant de réessayer.' }],
   ['409:ACCOUNT_REQUEST_DELETE_CONFLICT', { status: 409, message: 'Seule une demande terminale peut être supprimée.' }],
   ['422:ACCOUNT_REQUEST_MODULE_REQUIRED', { status: 422, message: 'Sélectionnez au moins un module.' }],
+  ['422:ACCOUNT_REQUEST_COMPANY_UNAVAILABLE', { status: 422, message: 'Cette entreprise n’est pas disponible.' }],
   ['422:HISTORICAL_LINK_REQUIRES_OWNER_OPERATION', { status: 422, message: 'Le rattachement historique exige une opération administrateur distincte.' }],
   ['428:MFA_STEP_UP_REQUIRED', { status: 428, message: 'Confirmez votre double authentification pour cette opération.' }],
   ['401:DIRECTORY_SESSION_REQUIRED', { status: 401, message: 'Une nouvelle connexion est requise.' }],
@@ -48,6 +51,7 @@ const DIRECTORY_ACCOUNT_REQUEST_ERRORS = new Map<string, {
   ['403:DIRECTORY_ADMIN_REQUIRED', { status: 403, message: 'Accès administrateur requis.' }],
   ['403:DIRECTORY_OWNER_REQUIRED', { status: 403, message: 'Cette modification commune exige un administrateur de Production.' }],
   ['403:ACCOUNT_REQUEST_PRODUCTION_ONLY', { status: 403, message: 'Cette opération est réservée à la Production.' }],
+  ['404:BUSINESS_COMPANY_PROFILE_NOT_FOUND', { status: 404, message: 'Profil introuvable.' }],
 ]);
 
 export function mapDirectoryAccountRequestError(error: unknown): HttpError {
@@ -85,6 +89,11 @@ export async function readDirectoryRequestStatus(receipt: string) {
 }
 export async function listDirectoryRequests(req: Request, input: unknown) {
   return callDirectoryAccountRequest('account-request-list', { directory_session: session(req), input });
+}
+export async function listDirectoryRequestCompanyAccessOptions(req: Request, requestId: string) {
+  return callDirectoryAccountRequest('account-request-company-access-options', {
+    directory_session: session(req), input: { request_id: requestId },
+  });
 }
 function sensitiveCapabilitiesForApproval(
   administrativeKind: unknown,

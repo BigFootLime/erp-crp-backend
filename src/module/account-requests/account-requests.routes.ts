@@ -12,6 +12,7 @@ export const adminAccountRequestRouter = Router();
 // wide guard here would also run for unrelated parent routes after the mount.
 // Standalone fixtures must compose the same three parent guards explicitly.
 adminAccountRequestRouter.get("/account-requests", controller.list);
+adminAccountRequestRouter.get("/account-requests/:id/company-access-options", controller.companyAccessOptions);
 adminAccountRequestRouter.post("/account-requests/:id/approve", controller.approve);
 adminAccountRequestRouter.post("/account-requests/:id/reject", controller.reject);
 adminAccountRequestRouter.delete("/account-requests/:id", controller.purge);
