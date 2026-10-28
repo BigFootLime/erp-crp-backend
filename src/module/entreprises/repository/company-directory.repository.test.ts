@@ -234,6 +234,17 @@ describe("business company directory repository", () => {
     expectDirectoryMembershipUpsertToPreserveConfiguredSuperadmin(
       String((d.query.mock.calls as unknown[][])[2]?.[0]),
     );
+    expect(String((d.query.mock.calls as unknown[][])[2]?.[0])).toContain(
+      "SELECT p.profile_id,$2,u.role",
+    );
+    expect(String((d.query.mock.calls as unknown[][])[2]?.[0])).toContain(
+      "AND $3 THEN 'Active' ELSE 'Inactive' END,false",
+    );
+    expect((d.query.mock.calls as unknown[][])[2]?.[1]).toEqual([
+      company,
+      "cerp_company_11111111111141118111111111111111_test",
+      true,
+    ]);
   });
   it("composes only matching company/profile/environment records", async () => {
     const d = db([

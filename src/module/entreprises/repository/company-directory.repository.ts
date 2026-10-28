@@ -305,17 +305,17 @@ export async function repoSetBusinessCompanyInstance(
     // ACTIVE company member, never by a role/name match.
     await tx.query(
       `INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
-       SELECT p.profile_id,$3,u.role,
+       SELECT p.profile_id,$2,u.role,
          coalesce((SELECT array_agg(ra.role_key ORDER BY ra.role_key) FROM public.user_role_assignments ra WHERE ra.user_id=u.id),ARRAY[u.role]::text[]),
-         CASE WHEN m.status='ACTIVE' AND c.status='ACTIVE' AND $4 THEN 'Active' ELSE 'Inactive' END,false
+         CASE WHEN m.status='ACTIVE' AND c.status='ACTIVE' AND $3 THEN 'Active' ELSE 'Inactive' END,false
        FROM public.cerp_business_company_memberships m
        JOIN public.cerp_directory_profiles p ON p.profile_id=m.profile_id
        JOIN public.users u ON u.id=p.user_id
        JOIN public.cerp_business_companies c ON c.company_id=m.company_id
-       WHERE m.company_id=$1::uuid AND $3 ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
+       WHERE m.company_id=$1::uuid AND $2 ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
        ON CONFLICT(profile_id,database_id) DO UPDATE SET role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,
          version=public.cerp_directory_memberships.version+1`,
-      [input.company_id, input.environment, input.site_id, input.active],
+      [input.company_id, input.site_id, input.active],
     );
     if ((existing?.version ?? 0) !== input.expected_version)
       throw new Error("BUSINESS_COMPANY_INSTANCE_VERSION_CONFLICT");
