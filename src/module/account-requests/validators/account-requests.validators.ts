@@ -9,6 +9,11 @@ const personName = z.string().trim().min(2).max(80);
 const requestId = z.string().guid();
 const version = z.number().int().min(0);
 const moduleKey = z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/);
+const companyAccess = z.object({
+  company_id: z.string().uuid(),
+  /** Zero creates an explicit membership; a later change must name its version. */
+  expected_membership_version: version,
+}).strict();
 
 export const submitAccountRequestSchema = z.object({
   body: z.object({
@@ -43,6 +48,12 @@ export const approveAccountRequestSchema = z.object({
     roles: z.array(z.enum(ASSIGNABLE_USER_ROLES)).min(1).max(ASSIGNABLE_USER_ROLES.length),
     administrative_kind: z.enum(["STANDARD", "BUSINESS_ADMIN"]),
     module_keys: z.array(moduleKey).max(100).refine((values) => new Set(values).size === values.length, "Modules dupliqués"),
+    // This is deliberately only a company selection.  The server derives the
+    // effective modules from the reviewed decision and the company ceiling.
+    company_access: z.array(companyAccess).max(100).refine(
+      (values) => new Set(values.map((value) => value.company_id.toLowerCase())).size === values.length,
+      "Entreprises dupliquées",
+    ).optional(),
     link_historical_user_id: z.number().int().positive().nullable().optional(),
   }).strict().superRefine((value, ctx) => {
     if (!value.roles.includes(value.primary_role)) {

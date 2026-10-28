@@ -7,7 +7,7 @@ import { directoryProfileForSite } from './admin.repository';
 import { HttpError } from '../utils/httpError';
 import {
   activateDirectoryAccountRequest, approveDirectoryAccountRequest, deleteDirectoryAccountRequest, listDirectoryAccountRequests,
-  rejectDirectoryAccountRequest, statusDirectoryAccountRequest, submitDirectoryAccountRequest,
+  rejectDirectoryAccountRequest, statusDirectoryAccountRequest, submitDirectoryAccountRequest, listDirectoryAccountRequestCompanyOptions,
 } from './account-request.repository';
 import { usernameBaseFromGivenName } from '../module/account-requests/validators/account-requests.validators';
 import { approveAccountRequestSchema, submitAccountRequestSchema } from '../module/account-requests/validators/account-requests.validators';
@@ -38,6 +38,12 @@ export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap
     const input = z.object({ status: z.enum(['PENDING', 'PROJECTION_PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']).default('PENDING'), limit: z.number().int().min(1).max(100).default(50), cursor: requestId.optional() }).strict().parse(raw);
     return { ...await listDirectoryAccountRequests(db, input.status, input.limit, input.cursor), historical_link_supported: false };
   });
+  endpoint('account-request-company-access-options', async (actor, raw) => {
+    if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
+    if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
+    await requireDirectoryOwner(db, actor);
+    return listDirectoryAccountRequestCompanyOptions(db, z.object({ request_id: requestId }).strict().parse(raw).request_id);
+  });
   endpoint('account-request-approve', async (actor, raw) => {
     if (!actor) throw new HttpError(401, 'DIRECTORY_SESSION_REQUIRED', 'Une nouvelle connexion est requise.');
     if (actor.database !== 'cerp_prod') throw new HttpError(403, 'ACCOUNT_REQUEST_PRODUCTION_ONLY', 'Cette opération est réservée à la Production.');
@@ -46,7 +52,7 @@ export function mountDirectoryAccountRequests(app: Express, db: Pool, wrap: Wrap
     const parsed = approveAccountRequestSchema.parse({ params: { id: envelope.id }, headers: { idempotencyKey: envelope.key }, body: envelope.approval });
     if (parsed.body.module_keys.length === 0) throw new HttpError(422, 'ACCOUNT_REQUEST_MODULE_REQUIRED', 'Sélectionnez au moins un module.');
     if (parsed.body.link_historical_user_id !== null && parsed.body.link_historical_user_id !== undefined) throw new HttpError(422, 'HISTORICAL_LINK_REQUIRES_OWNER_OPERATION', 'Le rattachement historique exige une opération administrateur distincte.');
-    const prepared = await approveDirectoryAccountRequest(db, actor, envelope.id, parsed.body, envelope.key);
+    const prepared = await approveDirectoryAccountRequest(db, actor, envelope.id, { ...parsed.body, company_access: parsed.body.company_access ?? [] }, envelope.key);
     return { ...prepared, profile: await directoryProfileForSite(db, actor.database, prepared.profile_id) };
   });
   endpoint('account-request-activate', async (actor, raw) => {
