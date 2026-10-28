@@ -62,13 +62,59 @@ restent inchangés. Le fichier d'origine n'a pas été écrasé.
 
 Preuves privées :
 `/var/lib/cerp-alerting-1771/backup-1480-20261028T110412Z/`.
-Retour arrière : retirer uniquement ce drop-in et relire systemd ; l'outil
+Retour arrière : réconcilier d'abord la liste de configuration en retirant
+uniquement les trois entrées ajoutées par cette remédiation (preuve
+`configuration-coverage.json`, copie `config-paths.before`), puis retirer le
+drop-in exact et relire systemd. Ne pas écraser des ajouts ultérieurs. L'outil
 d'origine est toujours présent. Ce retour arrière réintroduit le défaut des
 921 références et ne doit pas être confondu avec une correction.
 
-La nouvelle sauvegarde, sa restauration isolée et le rétablissement de la
-supervision sont en cours de vérification. Aucun résultat final n'est encore
-annoncé dans cette version du relevé.
+La sauvegarde canonique réussit à 12:10:21 CET, durée 193 s, 369 124 014
+octets, 921 références vérifiées et contrôle restic sans erreur. Snapshot :
+`bc2236cddaf9791e849b6ebf86b78412390b24acee6ca95e44d3a1d550185bb3`.
+
+Restauration isolée depuis cette archive chiffrée réussie à 12:14:11 CET :
+restic `restore --verify`, manifeste, SHA/taille de l'archive PostgreSQL 17 et
+catalogue conformes, 921 documents vérifiés avec SHA/taille, zéro échec.
+Le dossier cible est privé et séparé des fichiers actifs ; aucune base réelle
+n'a été restaurée ou modifiée. Cela prouve la restauration des fichiers et la
+lisibilité/intégrité de l'archive SQL, sans prétendre avoir rejoué cette SQL
+dans une base.
+
+À 12:14, les critiques backup et quotas UI ont disparu. Les deux timers et
+les envois restent actifs, outboxes vides ; seul l'avertissement disque VPS
+12 % est encore présent. Aucun seuil, programme de surveillance ou pin API
+n'a été changé par cette remédiation.
+
+La couverture des configurations est ensuite étendue de quatre à sept
+fichiers, sans retirer les entrées précédentes : outil corrigé, drop-in et
+liste de configuration elle-même. Le second passage canonique réussit à
+12:19:44 CET, durée 65 s, 369 150 163 octets et 921 références vérifiées :
+`c6479861cba67f0b5060ebf126d456dbce611512e6da7beae6730acbbceb618a`.
+
+Sa restauration isolée intégrale réussit à 12:22:54 CET : manifeste,
+vérification restic, archive SQL et catalogue PG17 conformes, 921 références
+vérifiées (taille et SHA), zéro échec. Les trois fichiers ajoutés à la
+configuration sont également restaurés et comparés exactement à leurs
+sources. Les 838 fichiers Métrologie sont ainsi récupérables à partir de
+l'archive chiffrée, et le correctif de sauvegarde est lui-même conservé.
+Reçu privé final : `restore-c6479861cba6-receipt.json` dans le dossier de
+preuves ci-dessus. Aucun document actif ni base réelle n'a été restauré.
+
+À 12:21, tous les endpoints configurés CRP/EC sont HTTP 200, dépendances
+requises `up` ; quotas UI conformes, pas de redémarrage de ce conteneur.
+Le relevé de supervision est sans critique et les outboxes sont vides ; le
+seul avertissement restant est l'espace disque VPS à 12 %. Les programmes,
+profils et pins API n'ont pas été modifiés par ce correctif. Aucun nouveau
+mail CERP n'est retourné par la recherche Outlook depuis 12:07 CET jusqu'au
+relevé de 12:23, sans pagination restante.
+
+Les 28 tests du résolveur de restauration et des documents intégrés sont
+également repassés sur la branche destinée à `dev`. Les huit tests du
+résolveur API et le typecheck global ont été vérifiés sur la base main
+publiée ; le fichier de sauvegarde est identique sur les deux bases.
+Le registre Project Office n'a pas été synchronisé : aucun jeton de session
+n'était disponible. Issue, branche, tests et ce relevé portent les preuves.
 
 ## Autre alerte de ressources traitée
 
