@@ -24,6 +24,23 @@ type CompanyRow = {
   enabled_commercial_projection_capabilities: string[];
   version: number;
 };
+type CompanyMembershipAdminRow = {
+  profile_id: string;
+  username: string;
+  name: string;
+  surname: string;
+  status: string;
+  allowed_module_keys: string[];
+  denied_module_keys: string[];
+  enabled_commercial_projection_capabilities: string[];
+  version: number;
+};
+type CompanyInstanceAdminRow = {
+  environment: "cerp_prod" | "cerp_test";
+  site_id: string;
+  active: boolean;
+  version: number;
+};
 const audit = (
   tx: PoolClient,
   actor: DirectoryAuditActor,
@@ -218,10 +235,16 @@ export async function repoSetBusinessCompanyMembership(
     if ((current?.version ?? 0) !== input.expected_version)
       throw new Error("BUSINESS_COMPANY_MEMBERSHIP_VERSION_CONFLICT");
     const row = (
-      await tx.query(
-        `INSERT INTO public.cerp_business_company_memberships(company_id,profile_id,status,allowed_module_keys,denied_module_keys,enabled_commercial_projection_capabilities,created_by_user_id,updated_by_user_id)
+      await tx.query<CompanyMembershipAdminRow>(
+        `WITH upserted AS (
+          INSERT INTO public.cerp_business_company_memberships(company_id,profile_id,status,allowed_module_keys,denied_module_keys,enabled_commercial_projection_capabilities,created_by_user_id,updated_by_user_id)
       VALUES($1::uuid,$2::uuid,$3,$4::text[],$5::text[],$6::text[],$7,$7) ON CONFLICT(company_id,profile_id) DO UPDATE SET status=excluded.status,allowed_module_keys=excluded.allowed_module_keys,denied_module_keys=excluded.denied_module_keys,enabled_commercial_projection_capabilities=excluded.enabled_commercial_projection_capabilities,version=public.cerp_business_company_memberships.version+1,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()
-      RETURNING company_id::text,profile_id::text,status,allowed_module_keys,denied_module_keys,enabled_commercial_projection_capabilities,version`,
+          RETURNING profile_id::text,status,allowed_module_keys,denied_module_keys,enabled_commercial_projection_capabilities,version
+        )
+        SELECT upserted.profile_id,u.username,u.name,u.surname,upserted.status,upserted.allowed_module_keys,upserted.denied_module_keys,upserted.enabled_commercial_projection_capabilities,upserted.version
+        FROM upserted
+        JOIN public.cerp_directory_profiles p ON p.profile_id=upserted.profile_id::uuid
+        JOIN public.users u ON u.id=p.user_id`,
         [
           input.company_id,
           input.profile_id,
@@ -257,7 +280,7 @@ export async function repoSetBusinessCompanyMembership(
       actor,
       "BUSINESS_COMPANY_MEMBERSHIP_SET",
       "business_company_membership",
-      `${row.company_id}:${row.profile_id}`,
+      `${input.company_id}:${row.profile_id}`,
       { status: row.status, version: row.version },
     );
     return row;
@@ -297,8 +320,8 @@ export async function repoSetBusinessCompanyInstance(
     if ((existing?.version ?? 0) !== input.expected_version)
       throw new Error("BUSINESS_COMPANY_INSTANCE_VERSION_CONFLICT");
     const row = (
-      await tx.query(
-        `INSERT INTO public.cerp_business_company_instances(company_id,environment,site_id,active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,$2,$3,$4,$5,$5) ON CONFLICT(company_id,environment) DO UPDATE SET site_id=excluded.site_id,active=excluded.active,version=public.cerp_business_company_instances.version+1,updated_by_user_id=excluded.updated_by_user_id,updated_at=now() RETURNING company_id::text,environment,site_id,active,version`,
+      await tx.query<CompanyInstanceAdminRow>(
+        `INSERT INTO public.cerp_business_company_instances(company_id,environment,site_id,active,created_by_user_id,updated_by_user_id) VALUES($1::uuid,$2,$3,$4,$5,$5) ON CONFLICT(company_id,environment) DO UPDATE SET site_id=excluded.site_id,active=excluded.active,version=public.cerp_business_company_instances.version+1,updated_by_user_id=excluded.updated_by_user_id,updated_at=now() RETURNING environment,site_id,active,version`,
         [
           input.company_id,
           input.environment,
@@ -313,7 +336,7 @@ export async function repoSetBusinessCompanyInstance(
       actor,
       "BUSINESS_COMPANY_INSTANCE_SET",
       "business_company_instance",
-      `${row.company_id}:${row.environment}`,
+      `${input.company_id}:${row.environment}`,
       { site_id: row.site_id, active: row.active, version: row.version },
     );
     return row;
