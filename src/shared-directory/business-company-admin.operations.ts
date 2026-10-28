@@ -18,6 +18,8 @@ import {
   repoSetBusinessCompanyMembership,
   repoSetBusinessCompanySiteAdministrativeLevel,
   repoUpdateBusinessCompany,
+  repoReadApprovedCompanyAccessOptions,
+  repoSetApprovedCompanyAccess,
 } from "../module/entreprises/repository/company-directory.repository";
 import { MODULE_CATALOG } from "../module/access-control/domain/module-catalog";
 import { HttpError } from "../utils/httpError";
@@ -98,6 +100,13 @@ const siteAdministrativeLevelReadSchema = siteAdministrativeLevelSchema.omit({
   is_superadmin: true,
   expected_version: true,
 });
+const approvedCompanyAccessSchema = z.object({
+  profile_id: uuid,
+  company_access: z.array(z.object({
+    company_id: uuid,
+    expected_membership_version: z.number().int().min(0).max(2_147_483_646),
+  }).strict()).max(100).refine((items) => new Set(items.map((item) => item.company_id)).size === items.length, "Duplicate company"),
+}).strict();
 
 /** Central management only: it registers metadata and never provisions a DB. */
 export function mountDirectoryBusinessCompanyAdministration(
@@ -185,6 +194,13 @@ export function mountDirectoryBusinessCompanyAdministration(
         ).includes(module.module_key),
       })),
     };
+  });
+  endpoint("business-company-approved-access-options", async (input) =>
+    repoReadApprovedCompanyAccessOptions(db, z.object({ profile_id: uuid }).strict().parse(input).profile_id),
+  );
+  endpoint("business-company-approved-access-set", async (input, actor) => {
+    const parsed = approvedCompanyAccessSchema.parse(input);
+    return repoSetApprovedCompanyAccess(db, parsed.profile_id, parsed.company_access, audit(actor));
   });
   endpoint("business-companies-admin-create", async (input, actor) => {
     const { id, ...company } = adminCompanySchema.parse(input);
