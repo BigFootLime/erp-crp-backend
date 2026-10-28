@@ -40,7 +40,7 @@ import {
   type MaterialCodeResult,
   type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
-import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { canonicalizeStockUnitCode, materialManagementUnit } from "../../../shared/stock-unit";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -2943,7 +2943,8 @@ export async function repoListArticles(filters: ListArticlesQueryDTO): Promise<P
       latest_version.indice AS piece_indice,
       pt.code_client AS client_code,
       latest_version.plan_reference AS plan_reference,
-      a.unite,
+      COALESCE(NULLIF(btrim(a.unite), ''), CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'matiere'
+        THEN CASE WHEN article_material.barre_a_decouper THEN 'mm' ELSE 'u' END END) AS unite,
       a.lot_tracking,
       a.is_sold,
       a.is_active,
@@ -3119,7 +3120,8 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
         latest_version.plan_reference AS piece_plan_reference,
         latest_version.indice AS piece_indice,
         latest_version.plan_reference AS plan_reference,
-        a.unite,
+        COALESCE(NULLIF(btrim(a.unite), ''), CASE WHEN ${normalizedArticleCategorySql("a.article_category")} = 'matiere'
+          THEN CASE WHEN am.barre_a_decouper THEN 'mm' ELSE 'u' END END) AS unite,
          a.lot_tracking,
          a.is_sold,
          a.is_active,
@@ -3665,8 +3667,6 @@ export async function repoCreateArticleTx(
   body: CreateArticleBodyDTO,
   audit: AuditContext
 ): Promise<CreatedArticleSummary> {
-  const canonicalUnit = await assertCanonicalArticleUnit(client, body.unite);
-
   const normalized = await normalizeArticleState({
     article_type: body.article_type,
     article_category: body.article_category,
@@ -3685,6 +3685,9 @@ export async function repoCreateArticleTx(
     designation: body.designation ?? "",
     client,
   });
+  const canonicalUnit = await assertCanonicalArticleUnit(client,
+    normalized.article_category === "matiere" ? materialManagementUnit(body.article_matiere?.barre_a_decouper) : body.unite
+  );
   /**
    * Matière première : la référence est DÉRIVÉE de la configuration matière,
    * jamais séquencée. Deux matières identiques doivent porter la même
@@ -3818,6 +3821,7 @@ export async function repoCreateArticleTx(
       projet_id: normalized.projet_id,
       stock_managed: normalized.stock_managed,
       is_sold: body.is_sold,
+      unite: canonicalUnit,
       sale_price_reference: body.sale_price_reference ?? null,
     },
   });
@@ -3996,6 +4000,8 @@ export async function repoUpdateArticle(
       row_version: number;
       designation_secondary: string | null;
       is_sold: boolean;
+      unite: string | null;
+      barre_a_decouper: boolean | null;
     }>(
       `
         SELECT
@@ -4020,7 +4026,9 @@ export async function repoUpdateArticle(
           lot_tracking,
           row_version::int AS row_version,
           designation_secondary,
-          is_sold
+          is_sold,
+          unite,
+          (SELECT m.barre_a_decouper FROM public.articles_matiere m WHERE m.article_id = public.articles.id) AS barre_a_decouper
         FROM public.articles
         WHERE id = $1::uuid
         FOR UPDATE
@@ -4100,7 +4108,11 @@ export async function repoUpdateArticle(
       await ensureArticleCanDisableStockManagement(client, id);
     }
 
-    const canonicalUnit = patch.unite !== undefined
+    const canonicalUnit = normalized.article_category === "matiere"
+      ? await assertCanonicalArticleUnit(client, materialManagementUnit(
+          patch.article_matiere ? patch.article_matiere.barre_a_decouper : current.barre_a_decouper
+        ))
+      : patch.unite !== undefined
       ? await assertCanonicalArticleUnit(client, patch.unite)
       : undefined;
 
@@ -4115,7 +4127,7 @@ export async function repoUpdateArticle(
     sets.push(`family_code = ${push(normalized.family_code)}`);
     sets.push(`stock_managed = ${push(normalized.stock_managed)}`);
     sets.push(`piece_technique_id = ${push(normalized.piece_technique_id)}::uuid`);
-    if (patch.unite !== undefined) sets.push(`unite = ${push(canonicalUnit ?? null)}`);
+    if (canonicalUnit !== undefined) sets.push(`unite = ${push(canonicalUnit)}`);
     sets.push(`lot_tracking = ${push(normalized.lot_tracking)}`);
     if (patch.is_sold !== undefined) sets.push(`is_sold = ${push(patch.is_sold)}`);
     if (patch.notes !== undefined) sets.push(`notes = ${push(patch.notes)}`);
@@ -4166,7 +4178,7 @@ export async function repoUpdateArticle(
       entity_id: id,
       details: {
         before: current,
-        after: { ...normalized, ...consumablePolicyPatch(patch), designation_secondary: patch.designation_secondary ?? current.designation_secondary, is_sold: patch.is_sold ?? current.is_sold },
+        after: { ...normalized, ...consumablePolicyPatch(patch), unite: canonicalUnit === undefined ? current.unite : canonicalUnit, designation_secondary: patch.designation_secondary ?? current.designation_secondary, is_sold: patch.is_sold ?? current.is_sold },
       },
     });
 

@@ -27,3 +27,8 @@ export function canonicalizeStockUnitCode(unitCode: string | null | undefined): 
   if (!token) return null;
   return STOCK_UNIT_ALIASES[token] ?? token;
 }
+
+/** Management units are determined by the material configuration, never by supplier pricing. */
+export function materialManagementUnit(barToCut: boolean | null | undefined): "mm" | "u" {
+  return barToCut ? "mm" : "u";
+}

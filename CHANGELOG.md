@@ -1,5 +1,10 @@
 # Changelog
 
+## Préparé — Unité de gestion matière automatique (frontend #1802)
+
+- Les transactions de création et de modification des matières imposent `mm` pour une barre à découper, `u` sinon, indépendamment de l’unité envoyée par le client. Le journal d’audit conserve l’unité appliquée.
+- Les lectures stock déduisent l’unité d’une matière historique dont le champ est vide. Les unités déjà renseignées restent intactes à la lecture, sans migration ni conversion des quantités.
+
 ## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 
 - La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.
