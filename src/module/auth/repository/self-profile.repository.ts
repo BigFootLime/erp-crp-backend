@@ -7,6 +7,18 @@ import {readUserAvatar} from './avatar.repository';
 import type {SelfProfilePatch} from '../validators/self-profile.validator';
 import type {MfaAuditMeta} from '../services/mfa.service';
 
+/** Read only the projected identity columns granted to a company runtime. */
+export async function readDirectorySelfProfile(userId:number,q:Pick<PoolClient,'query'>=pool){
+ const row=(await q.query(`SELECT u.id,coalesce(u.directory_username,u.username) AS username,u.name,u.surname,
+  coalesce(u.directory_email,u.email) AS email,u.tel_no,
+  u.directory_profile_metadata->>'job_title' AS job_title,
+  u.directory_profile_metadata->>'employment_type' AS employment_type,
+  (u.directory_profile_metadata->>'weekly_hours_target')::float AS weekly_hours_target
+  FROM public.users u WHERE u.id=$1 AND u.status='Active' AND u.directory_profile_id IS NOT NULL`,[userId])).rows[0];
+ if(!row)throw new HttpError(403,'PROFILE_UNAVAILABLE','Ce profil n’est plus disponible.');
+ return row;
+}
+
 export async function readSelfProfile(userId:number,q:Pick<PoolClient,'query'>=pool){
  const row=(await q.query(`SELECT u.id,coalesce(to_jsonb(u)->>'directory_username',u.username) AS username,u.name,u.surname,
   coalesce(to_jsonb(u)->>'directory_email',u.email) AS email,u.tel_no,
