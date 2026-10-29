@@ -144,10 +144,18 @@ export function materialPropertiesFingerprint(value:unknown):string{
   return coverageFingerprint(canonical(value));
 }
 
-export type DebitRule={form:"UNIT"|"BAR"|"SHEET";stockUnit:string;unitsPerBlank:number;kerfPerBlank:number;yieldValidated:boolean};
+export type DebitRule={form:"UNIT"|"BAR"|"SHEET";stockUnit:string;unitsPerBlank:number;kerfPerBlank:number;yieldValidated:boolean;piecesPerBlank?:number};
 export function debitQuantity(rule:DebitRule,blanks:number){
   if(!Number.isSafeInteger(blanks)||blanks<=0||!Number.isFinite(rule.unitsPerBlank)||rule.unitsPerBlank<=0||!Number.isFinite(rule.kerfPerBlank)||rule.kerfPerBlank<0)throw new Error("Invalid debit rule or quantity");
   if(!rule.stockUnit.trim())throw new Error("Stock unit missing");
   if(rule.form==="SHEET"&&!rule.yieldValidated)throw new Error("Le rendement de la tôle doit être confirmé par les méthodes.");
   return quantity(blanks*(rule.unitsPerBlank+rule.kerfPerBlank));
+}
+/** Converts an OF finished-piece quantity into whole physical raw blanks. */
+export function materialRequirementForPieces(rule:DebitRule,finishedPieces:number){
+  const piecesPerBlank=rule.piecesPerBlank??1;
+  if(!Number.isSafeInteger(finishedPieces)||finishedPieces<=0||!Number.isFinite(piecesPerBlank)||piecesPerBlank<=0)throw new Error("Invalid material yield or quantity");
+  // The canonical reciprocal (e.g. 1 / 3) must not create a fourth blank through
+  // floating point noise when the mathematical quotient is exactly an integer.
+  return debitQuantity(rule,Math.ceil(finishedPieces/piecesPerBlank-1e-9));
 }

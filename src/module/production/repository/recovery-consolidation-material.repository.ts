@@ -4,7 +4,7 @@ import { readMaterialTx } from './of-material.repository';
 import { readMaterialReservationAvailabilityTx } from './material-reservation-availability.repository';
 import { readMaterialOriginPolicyTx } from './of-material-policy.repository';
 import { assertMaterialOriginLimit } from '../domain/of-material-policy';
-import { debitQuantity, materialPropertiesFingerprint, quantity } from '../domain/of-material';
+import { materialRequirementForPieces, materialPropertiesFingerprint, quantity } from '../domain/of-material';
 import type { RecoveryGroupingIssue } from '../../planning/domain/recovery-consolidation-preview';
 
 /** Unlike draft regrouping, the producer can already have consumed material.
@@ -39,7 +39,7 @@ export async function readRecoveryConsolidationMaterialTx(tx: Pick<PoolClient,'q
     if(blockers.length)issue('GROUPING_MATERIAL_BLOCKED',`${need.designation} : ${[...new Set(blockers)].join(' ')}`);
     let required=0;
     try { if(!need.debitRule)throw new Error('Missing debit rule');
-      required=quantity(Math.max(0,debitQuantity(need.debitRule,quantity(producer.quantity+recovery.quantity))+need.consumptionAdjustment));
+      required=quantity(Math.max(0,materialRequirementForPieces(need.debitRule,quantity(producer.quantity+recovery.quantity))+need.consumptionAdjustment));
     }catch {issue('GROUPING_MATERIAL_QUANTITY',`${need.designation} : quantité ou règle de débit à vérifier.`);}
     const usableProducer=available?.usable??0,usableRecovery=extraAvailable?.usable??0;
     const missing=quantity(Math.max(0,required-need.consumed-usableProducer-usableRecovery));

@@ -5,7 +5,7 @@ import { readMaterialTx } from './of-material.repository';
 import { readMaterialReservationAvailabilityTx } from './material-reservation-availability.repository';
 import { readMaterialOriginPolicyTx } from './of-material-policy.repository';
 import { assertMaterialOriginLimit, missingPhysicalMaterial } from '../domain/of-material-policy';
-import { debitQuantity, materialPropertiesFingerprint, proposeMaterialCoverage, quantity } from '../domain/of-material';
+import { materialRequirementForPieces, materialPropertiesFingerprint, proposeMaterialCoverage, quantity } from '../domain/of-material';
 import { repoCreateStockReservation } from '../../stock/repository/stock-reservation.repository';
 import { HttpError } from '../../../utils/httpError';
 import { aggregateConsolidationHoldsTx } from './consolidation-material-holds.repository';
@@ -51,7 +51,7 @@ export async function previewConsolidationMaterialTx(tx: DossierDb, sourceIds: n
         throw new HttpError(409, 'CONSOLIDATION_MATERIAL_INCOMPATIBLE', 'Les exigences matière ou les règles de débit des OF diffèrent.', { ofId: m.ofId, sourceRef: need.key });
       return { ofId: m.ofId, need: n };
     });
-    const required = debitQuantity(need.debitRule!, producerQuantity);
+    const required = materialRequirementForPieces(need.debitRule!, producerQuantity);
     const held = quantity(matching.reduce((sum, m) => sum + m.need.reserved, 0));
     const candidates = need.candidates.map(c => ({ ...c.lot, available: remainingBatches.get(c.lot.batchId) ?? 0,
       qualityAvailable: remainingQuality.get(c.lot.id) ?? 0,

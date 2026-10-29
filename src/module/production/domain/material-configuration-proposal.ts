@@ -20,6 +20,8 @@ export type MaterialPurchaseDefaults = {
     unite_prix: string | null;
     longueur_mm?: number | null;
     quantite_brut_mm?: number | null;
+    /** Canonical PT yield: finished pieces produced by one raw blank. */
+    quantite_pieces?: number | null;
 };
 export type MaterialConfigurationProposal = {
     operationId: string | null;
@@ -53,9 +55,17 @@ export function proposeMaterialConfiguration(purchase: MaterialPurchaseDefaults,
     const raw = positive(purchase.quantite);
     const sameUnit = purchase.unite_prix?.trim().toUpperCase() === normalized;
     // Never use a 3 m stock bar as the per-piece consumption of a 110 mm blank.
-    const unitsPerBlank = lengthUnit && ptLength !== null ? ptLength / (normalized === 'M' ? 1000 : 1) : sameUnit ? raw : null;
+    const piecesPerBlank = positive(purchase.quantite_pieces);
+    // Keep the physical blank length intact.  The yield is kept separately so
+    // requirement calculation rounds whole blanks before consuming stock.
+    const unitsPerBlank = lengthUnit && ptLength !== null
+        ? ptLength / (normalized === 'M' ? 1000 : 1)
+        // The PT quantity is per finished piece. Restore a physical blank unit
+        // when a yield is supplied (for instance 0.5 u x 2 pieces/brut = 1 u).
+        : sameUnit && raw !== null ? raw * (piecesPerBlank ?? 1) : null;
     const debitRule: DebitRule | null = stockUnit && unitsPerBlank !== null ? {
         form: lengthUnit ? 'BAR' : ['M2', 'M²', 'MM2', 'MM²'].includes(normalized) ? 'SHEET' : 'UNIT', stockUnit, unitsPerBlank, kerfPerBlank: 0, yieldValidated: false,
+        ...(piecesPerBlank !== null ? { piecesPerBlank } : {}),
     } : null;
     const owner = article?.client_proprietaire_id === clientId ? clientId : null;
     const sources: string[] = [];

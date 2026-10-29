@@ -1,5 +1,11 @@
 # Changelog
 
+## Correctif — Consignes de découpe PT / OF (#1487)
+
+- Le rendement de la nomenclature distingue les pièces par brut et les bruts par pièce. Le besoin de l’OF arrondit les bruts avant de calculer le linéaire.
+- L’aperçu et le nouveau gabarit PDF OF 1.8 présentent la longueur de coupe, le rendement, les bruts et le linéaire pour chaque matière. Les réimpressions anciennes conservent leur gabarit.
+- Réutilise les colonnes et les règles JSON existantes ; aucune migration ni réécriture de stock.
+
 ## Correctif — Code client des articles (#1485)
 
 - La fiche article, la liste, son tri/filtre/recherche et les inventaires lisent le code métier du client lié à la pièce technique. Un identifiant technique ancien ne remplace plus le code client affiché.

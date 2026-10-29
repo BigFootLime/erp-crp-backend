@@ -1,6 +1,6 @@
 import type { DbQueryer, OfRevisionRow } from "./of-versioning.repository";
 import {
-  documentUuid, ofDocumentComponent, ofDocumentExecution, ofDocumentFrozenDocuments, ofDocumentFrozenMaterialExemption,
+  documentUuid, ofDocumentComponent, ofDocumentExecution, ofDocumentFrozenDocuments, ofDocumentFrozenMaterialExemption, ofDocumentMaterialCutting,
   ofDocumentFrozenNomenclature, ofDocumentFrozenPurchases,
   resolveOfDocumentTechnicalSource, type WorkshopDocumentMaterial, type WorkshopDocumentMaterialDebit, type WorkshopDocumentTechnicalEvidence,
 } from "../domain/of-document-technical-source";
@@ -71,6 +71,7 @@ export async function readOfDocumentTechnical(tx: DbQueryer, ofId: number, revis
       dimensions: need?.requirements?.dimensions ?? {}, certificates: need?.requirements?.certificates ?? [], manualChecks: need?.requirements?.manualChecks ?? [],
       form: rule?.form ?? null, debitPerBlank: rule?.unitsPerBlank !== undefined && Number.isFinite(rule.unitsPerBlank)
         ? Number(rule.unitsPerBlank) + Number(rule.kerfPerBlank ?? 0) : null, confirmed: need?.confirmed === true,
+      cutting: ofDocumentMaterialCutting(purchase, root?.quantity),
     };
   });
   const needIds = materials.flatMap(material => material.needId ? [material.needId] : []);

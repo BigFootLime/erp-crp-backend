@@ -7,7 +7,7 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
-import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {physicalMaterialInventoryBlockers} from '../domain/of-material-bars';
 import {readMaterialBarCoverageTx} from './material-bar-coverage.repository';
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
@@ -24,10 +24,17 @@ import {proposeMaterialConfiguration} from '../domain/material-configuration-pro
 import {readMaterialConfigurationDefaults} from './material-configuration-defaults.repository';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
-type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null};
+type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null;quantite_pieces?:number|null};
 type NeedRow={id:string;source_ref:string;designation:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
 export type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
+const cuttingForPurchase=(purchase:Purchase,finishedPieces:number)=>{
+  const longueurCoupeMm=Number(purchase.longueur_mm),piecesParBrut=Number(purchase.quantite_pieces);
+  if(!Number.isSafeInteger(finishedPieces)||finishedPieces<0||!Number.isFinite(piecesParBrut)||piecesParBrut<=0)return null;
+  const nombreBruts=Math.ceil(finishedPieces/piecesParBrut-1e-9);
+  const cut=Number.isFinite(longueurCoupeMm)&&longueurCoupeMm>0?longueurCoupeMm:null;
+  return {longueurCoupeMm:cut,piecesParBrut,brutsParPiece:1/piecesParBrut,nombreBruts,longueurTotaleMm:cut===null?null:quantity(nombreBruts*cut)};
+};
 
 export async function readMaterialTx(tx:DossierDb,ofId:number){
   const dossier=await readOfDossierTx(tx,ofId);
@@ -123,8 +130,14 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     attached.filter(r=>!r.material_need_id).forEach(r=>usedLegacy.add(r.id));
     const expected=promises.filter(b=>effectiveNeed(b.material_need_id)===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
     const customer=customerCalls.filter(c=>c.need_id===row?.id&&c.status!=='CANCELLED');
+    const configurationProposal=proposeMaterialConfiguration(p,article,defaults.operations,of.client_id);
     let required=Number(p.quantite)*dossier.quantity;
-    if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
+    // Before methods confirm the proposal, a complete PT cutting yield is still
+    // authoritative enough to reserve whole blanks. Keep every legacy line and
+    // every confirmed/reserved rule on its current path.
+    if(row?.debit_rule)required=materialRequirementForPieces(row.debit_rule,dossier.quantity);
+    else if(configurationProposal.debitRule?.piecesPerBlank !== undefined && configurationProposal.debitRule.form!=="SHEET")
+      required=materialRequirementForPieces(configurationProposal.debitRule,dossier.quantity);
     const consumptionAdjustment=row?.id?adjustmentsByNeed.get(row.id)??0:0;
     required=quantity(Math.max(0,required+consumptionAdjustment));
     const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
@@ -145,7 +158,8 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule:row?.debit_rule??null,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:row?.destination_id??null,
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
-      configurationProposal:proposeMaterialConfiguration(p,article,defaults.operations,of.client_id),
+      configurationProposal,
+      cutting:cuttingForPurchase(p,dossier.quantity),
       rowVersion:row?.row_version??null,consumptionAdjustment};
   });
   const originPolicy=await readMaterialOriginPolicyTx(tx,[ofId],lots.map(l=>l.id));
@@ -250,7 +264,7 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
     if(c.supplyMode==="PURCHASE"&&c.requirements.ownerClientId)throw new HttpError(422,"MATERIAL_OWNER_INVALID","La matière achetée par CERP ne peut pas utiliser les lots appartenant à un client.");
     const article=(await tx.query("SELECT unite FROM public.articles WHERE id=$1::uuid",[need.articleId])).rows[0];
     if(!article||c.debitRule.stockUnit!==article.unite)throw new HttpError(422,"MATERIAL_STOCK_UNIT_REQUIRED","La conversion doit aboutir à l’unité de stock de l’article.");
-    const total=debitQuantity(c.debitRule,(await readOfDossierTx(tx,ofId)).quantity);
+    const total=materialRequirementForPieces(c.debitRule,(await readOfDossierTx(tx,ofId)).quantity);
     const before={operationId:need.operationId,requirements:need.requirements,supplyMode:need.supplyMode,debitRule:need.debitRule,allowPartial:need.allowPartial,supplierId:need.supplierId,destinationId:need.destinationId};
     const hasCommitments=need.reserved+need.consumed+need.expected+need.receivedBlocked>0;
     if(need.id&&hasCommitments&&materialPropertiesFingerprint(before)!==materialPropertiesFingerprint(c))

@@ -7,7 +7,7 @@ export const materialCommandSchema=z.object({expectedVersion:z.string().regex(/^
 const text=z.string().trim().min(1).max(300);
 export const materialConfigurationSchema=materialCommandSchema.extend({configuration:z.object({
   operationId:z.string().guid(),requirements:z.object({grade:text.nullable(),condition:text.nullable(),ownerClientId:z.string().trim().min(1).max(80).nullable(),dimensions:z.record(z.string().min(1).max(40),z.number().finite().positive().max(1e9)),certificates:z.array(text).max(20),manualChecks:z.array(text).max(20)}).strict(),
-  supplyMode:z.enum(["PURCHASE","CUSTOMER"]),debitRule:z.object({form:z.enum(["UNIT","BAR","SHEET"]),stockUnit:z.string().trim().min(1).max(20),unitsPerBlank:z.number().finite().positive().max(1e9),kerfPerBlank:z.number().finite().min(0).max(1e9),yieldValidated:z.boolean()}).strict(),
+  supplyMode:z.enum(["PURCHASE","CUSTOMER"]),debitRule:z.object({form:z.enum(["UNIT","BAR","SHEET"]),stockUnit:z.string().trim().min(1).max(20),unitsPerBlank:z.number().finite().positive().max(1e9),kerfPerBlank:z.number().finite().min(0).max(1e9),yieldValidated:z.boolean(),piecesPerBlank:z.number().finite().positive().max(1e9).optional()}).strict(),
   allowPartial:z.boolean(),supplierId:z.string().guid().nullable(),destinationId:z.string().guid().nullable(),
 }).strict()}).strict();
 export const materialConfirmationSchema=materialCommandSchema.extend({

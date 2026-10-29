@@ -20,7 +20,7 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(result.sha256).toBe("82940ca701317f2ffb5809ca1dde34901d8c43f34fd90888448cd23afa029fef");
   });
   it("shows the original internal deadline instead of an inapplicable client AR", async () => {
-    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7",
       commercialScope: "INTERNAL", commandeNumero: null, affaires: [], internalDueDate: "2026-09-30", quantiteLancee: 20 }));
     const text = content((await renderOfDocument(payload)).buffer);
     expect(text).toContain("Délaiinterne");
@@ -29,7 +29,7 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text).not.toContain("Nonapplicable");
   });
   it("keeps the client AR first and removes redundant header fields", async () => {
-    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7",
       internalDueDate: "2026-06-20", technicalEvidence: {
         source: { kind: "REVISION_SNAPSHOT", hash: "fixture", technicalVersionId: null },
         materialNotRequired: false, correctionCount: 0, nomenclature: [], documents: [], purchases: [], debits: [],
@@ -46,6 +46,18 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text).not.toContain("pertesincluses");
     expect(text.split("Nomenclature")[0]).not.toContain("Gammeapplicable");
     expect(text).toContain("Gammeapplicable-opérations");
+  });
+  it("prints the frozen per-material cutting calculation with whole raw blanks", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 101,
+      technicalEvidence: { source: { kind: "REVISION_SNAPSHOT", hash: "cutting", technicalVersionId: null }, materialNotRequired: false,
+        correctionCount: 0, nomenclature: [], documents: [], purchases: [], debits: [], materials: [{
+          needId: "need", form: "BAR", reference: "MP-CUT", designation: "Barre", grade: null, condition: null,
+          dimensions: {}, requiredQuantity: 5100, debitPerBlank: 100, unit: "mm", phase: 10, confirmed: true, certificates: [], manualChecks: [],
+          cutting: { longueurCoupeMm: 100, piecesParBrut: 2, brutsParPiece: .5, nombreBruts: 51, longueurTotaleMm: 5100 },
+        }] },
+    }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    for (const expected of ["Longueurdecoupe", "Pièces/brut", "Nombredebruts", "Linéairetotal", "5100mm"]) expect(text).toContain(expected);
   });
   it("keeps a saved 1.4 PDF byte-identical to the deployed renderer", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.4" }));

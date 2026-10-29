@@ -37,7 +37,7 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  */
 export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.3" as const;
 /** Opt-in while the modern commercial/material read models are being corrected. */
-export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.7" as const;
+export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.8" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage
@@ -313,6 +313,8 @@ export type OfDocumentDecoupe = {
   /** Section ou diamètre du brut, tel que saisi (« Ø 40 », « 40 x 20 »). */
   dimensions: string | null;
   longueurBrutMm: number | null;
+  /** Modern cutting contract: physical length consumed by one raw blank. */
+  longueurCoupeMm?: number | null;
   /** Longueur réellement exploitable d'un brut, hors prise en pince et chute. */
   longueurUtileMm: number | null;
   /** Épaisseur du trait de scie, en mm. `null` si l'atelier ne l'a pas renseigné. */
@@ -321,6 +323,8 @@ export type OfDocumentDecoupe = {
   chuteMm: number | null;
   nombreBruts: number | null;
   piecesParBrut: number | null;
+  /** Reciprocal displayed for cutters; persisted canonically as pieces per blank. */
+  brutsParPiece?: number | null;
   longueurTotaleMm: number | null;
   masseTotaleKg: number | null;
   /** Unité de la matière : 'MM', 'KG', 'U'… telle que le référentiel la porte. */
@@ -494,7 +498,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
   const familles = input.familles;
   const avertissements: OfDocumentWarning[] = [];
   const templateVersion = input.templateVersion ?? OF_DOCUMENT_TEMPLATE_VERSION;
-  const workshop = templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.6" || templateVersion === "of-ordre-fabrication/1.5" || templateVersion === "of-ordre-fabrication/1.4";
+  const workshop = templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.7" || templateVersion === "of-ordre-fabrication/1.6" || templateVersion === "of-ordre-fabrication/1.5" || templateVersion === "of-ordre-fabrication/1.4";
 
   const phases = operations.map<OfDocumentPhase>((operation) => {
     const { fabricationHours: fabrication, finalHours: final } = documentOperationLoad(operation, workshop ? input.quantiteLancee : undefined);
@@ -665,7 +669,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     ...(workshop && input.commercialScope ? { commercialScope: input.commercialScope } : {}),
     ...(workshop && input.commandes ? { commandes: structuredClone(input.commandes) } : {}),
     ...(workshop && input.sourceOrders ? { sourceOrders: structuredClone(input.sourceOrders) } : {}),
-    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.6" ? { internalDueDate: input.internalDueDate ?? null } : {}),
+    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.7" || input.templateVersion === "of-ordre-fabrication/1.6" ? { internalDueDate: input.internalDueDate ?? null } : {}),
     cadenceProduction: [...input.cadenceProduction].sort((a, b) => a.date.localeCompare(b.date)),
     derniereFabrication: input.derniereFabrication,
 

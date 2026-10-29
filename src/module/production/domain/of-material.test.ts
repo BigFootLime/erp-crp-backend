@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,type MaterialNeed,type MaterialLot} from "./of-material";
+import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,materialRequirementForPieces,type MaterialNeed,type MaterialLot} from "./of-material";
 const need:MaterialNeed={key:"n",articleId:"a",unit:"u",required:100,reserved:0,consumed:0,expected:0,receivedBlocked:0,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]}};
 const lot:MaterialLot={id:"l",batchId:"b",articleId:"a",code:"LOT-1",unit:"u",quality:"LIBERE",available:60,receivedAt:"2026-09-01",grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false};
 describe("Material coverage",()=>{
@@ -25,4 +25,9 @@ describe("Material coverage",()=>{
   it("shows procurement surplus without assigning it",()=>{expect(purchaseQuantity(15,20,12)).toEqual({ordered:24,assigned:15,surplus:9});expect(purchaseQuantity(0,20,12)).toEqual({ordered:0,assigned:0,surplus:0});});
   it("keeps decimal balances exact",()=>{expect(materialBalance({...need,required:.3,reserved:.1,consumed:.1,expected:.1}).missing).toBe(0);});
   it("requires a methods decision for sheets and an explicit debit conversion",()=>{expect(()=>debitQuantity({form:"SHEET",stockUnit:"mm²",unitsPerBlank:100,kerfPerBlank:2,yieldValidated:false},3)).toThrow(/méthodes/);expect(debitQuantity({form:"BAR",stockUnit:"mm",unitsPerBlank:35,kerfPerBlank:2,yieldValidated:true},20)).toBe(740);});
+  it("rounds raw blanks before calculating a cutting requirement",()=>{
+    const rule={form:"BAR" as const,stockUnit:"mm",unitsPerBlank:100,kerfPerBlank:0,yieldValidated:true,piecesPerBlank:2};
+    expect(materialRequirementForPieces(rule,101)).toBe(5100);
+    expect(materialRequirementForPieces({...rule,piecesPerBlank:1/3},101)).toBe(30300);
+  });
 });
