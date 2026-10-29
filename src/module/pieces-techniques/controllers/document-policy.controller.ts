@@ -19,6 +19,7 @@ import {
   buildPieceDocumentDossier,
   createDocumentTypeSVC,
   getClientDocumentPolicySVC,
+  listCurrentPieceTechniqueThreeDModelsSVC,
   listDocumentTypesSVC,
   listFrozenRequirementsSVC,
   setClientDocumentPolicySVC,
@@ -165,6 +166,25 @@ export const getPieceDocumentDossier: RequestHandler = async (req, res, next) =>
       return;
     }
     res.json({ ...dossier, permissions: describePieceTechniquePermissions(req.user) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Projection GED privée pour le visualiseur CAO de la fiche PT. Cette route
+ * ne télécharge rien et ne décide jamais quel fichier afficher lorsque la
+ * révision contient plusieurs modèles : le client doit alors demander un
+ * choix à l'utilisateur avant d'appeler le contenu GED authentifié.
+ */
+export const listPieceTechniqueThreeDModels: RequestHandler = async (req, res, next) => {
+  try {
+    const result = await listCurrentPieceTechniqueThreeDModelsSVC(routeParam(req, "id"));
+    if (!result) {
+      res.status(404).json({ error: "Pièce technique introuvable" });
+      return;
+    }
+    res.json(result);
   } catch (err) {
     next(err);
   }

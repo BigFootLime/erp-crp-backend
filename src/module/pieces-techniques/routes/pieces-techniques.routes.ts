@@ -7,6 +7,7 @@ import {
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
+import { requireGedCapability } from "../../ged/middlewares/require-ged-capability"
 import { createSecureUpload } from "../../../shared/uploads/secure-upload"
 import { HttpError } from "../../../utils/httpError"
 import {
@@ -21,6 +22,7 @@ import {
   downloadPieceDocumentDossierPdf,
   getClientDocumentPolicy,
   getPieceDocumentDossier,
+  listPieceTechniqueThreeDModels,
   getPieceDraft,
   getPieceTechniquePermissions,
   listDocumentTypes,
@@ -192,6 +194,12 @@ router.get("/by-affaire/:affaireId", validate(affaireOnlyParamSchema), listAffai
 router.get("/:id/arborescence", validate(idParamSchema), getPieceTechniqueFabricationTree)
 router.get("/:id/document-dossier", validate(idParamSchema), getPieceDocumentDossier)
 router.get("/:id/document-dossier/pdf", validate(idParamSchema), downloadPieceDocumentDossierPdf)
+// La fiche PT reste le point d'entrée autorisé : la GED ne reçoit jamais un
+// identifiant de révision choisi par le navigateur pour résoudre les modèles.
+// Le visualiseur charge ensuite les octets via `/ged/versions/:id/content`,
+// qui exige aussi la capacité GED `download`. Garder le même seuil ici évite
+// d'annoncer un modèle à un profil qui ne peut jamais l'ouvrir.
+router.get("/:id/models-3d", requireGedCapability("download"), validate(idParamSchema), listPieceTechniqueThreeDModels)
 router.post("/:id/piece-critique", validate(idParamSchema), validate(setPieceCritiqueSchema), setPieceCritique)
 // Root-only immutable creation snapshot. No child version/BOM/operation route
 // may create or reissue this archive artifact.
