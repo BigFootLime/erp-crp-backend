@@ -1,7 +1,8 @@
+import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
+
 export const OF_COMPONENT_CONTEXT_SQL = `
   SELECT o.numero AS number, o.quantite_lancee::float8 AS quantity, o.statut::text AS "executionStatus",
-    COALESCE(o.piece_technique_version_id, NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-      NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid)::text AS "versionId",
+    ${effectivePreparationVersionSql("o")}::text AS "versionId",
     (COALESCE(v.manufacturing_mode='ASSEMBLY',false) OR EXISTS(
       SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) op
       WHERE op->>'type_operation'='ASSEMBLAGE')) AS assembly,
@@ -9,8 +10,7 @@ export const OF_COMPONENT_CONTEXT_SQL = `
       JOIN public.production_consolidations c ON c.id=a.consolidation_id
       WHERE a.source_of_id=o.id AND a.state='ACTIVE' AND c.state='ACTIVE') AS "producerId"
   FROM public.ordres_fabrication o LEFT JOIN public.piece_technique_versions v
-    ON v.id=COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-      NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid)
+    ON v.id=${effectivePreparationVersionSql("o")}
   WHERE o.id=$1
 `;
 

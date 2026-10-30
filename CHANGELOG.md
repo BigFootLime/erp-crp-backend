@@ -1,5 +1,12 @@
 # Changelog
 
+## Préparé — Révisions du dossier pendant la préparation OF (#1493)
+
+- Donne priorité au dossier sélectionné pour un OF encore en préparation, même si une ancienne version demeure dans la référence physique. Gamme, nomenclature, achats et besoins matière utilisent cette sélection.
+- Suit les nouvelles révisions mineures compatibles du même indice, uniquement pour les OF brouillons non validés et non figés en suivi automatique. Les choix manuels, nouveaux indices et évolutions majeures sont exclus.
+- Expose le mode automatique ou manuel dans le dossier OF. Le choix explicite reste manuel, avec possibilité de réactiver le suivi des prochaines révisions.
+- Invalide les évaluations concernées et trace les OF suivis dans l’audit de création. Préserve les choix manuels des sous-OF et leur synchronisation explicite. Aucune migration ni reprise des données existantes.
+
 ## Correctif — Même fichier pour les deux plans (#1491)
 
 - Autorise un fichier déjà présent dans la GED lorsqu’il est déposé comme plan client ou plan de fabrication d’une pièce technique ou de son indice.

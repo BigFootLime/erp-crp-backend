@@ -160,6 +160,9 @@ describe.skipIf(!isolated)(
         raison_changement: "Compléter le dossier de recette sans modifier les OF figés",
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
+      // A legacy physical reference must not hide the revision explicitly
+      // selected during an editable preparation.
+      await pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]);
       const selected = await repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,
         version_id: revision.id,
@@ -167,10 +170,11 @@ describe.skipIf(!isolated)(
       expect(selected.of.version_id).toBe(revision.id);
       expect(selected.sources.version?.statut).toBe("BROUILLON");
       const row = (await pool.query(`SELECT piece_technique_version_id,technical_snapshot,
-        technical_snapshot_sha256,technical_snapshot_at,technical_preparation->>'selected_version_id' AS selected
+        technical_snapshot_sha256,technical_snapshot_at,technical_preparation->>'selected_version_id' AS selected,
+        technical_preparation->>'version_selection_mode' AS mode
         FROM public.ordres_fabrication WHERE id=$1`, [id])).rows[0];
-      expect(row).toMatchObject({ piece_technique_version_id: null, technical_snapshot: null,
-        technical_snapshot_sha256: null, technical_snapshot_at: null, selected: revision.id });
+      expect(row).toMatchObject({ piece_technique_version_id: f.version, technical_snapshot: null,
+        technical_snapshot_sha256: null, technical_snapshot_at: null, selected: revision.id, mode: "MANUAL" });
       expect((await pool.query("SELECT is_current FROM public.piece_technique_versions WHERE id=$1", [f.version])).rows[0].is_current).toBe(true);
       await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,

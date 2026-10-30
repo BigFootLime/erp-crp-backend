@@ -63,7 +63,7 @@ export const savePreparationDecisionsSchema = z
   })
   .strict();
 export const preparationVersionSchema = z
-  .object({ expected_updated_at: z.string().min(1), version_id: uuid })
+  .object({ expected_updated_at: z.string().min(1), version_id: uuid, version_selection_mode: z.enum(["AUTO", "MANUAL"]).optional() })
   .strict();
 export const preparationReviewSchema = z
   .object({

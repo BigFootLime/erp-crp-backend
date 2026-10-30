@@ -22,6 +22,7 @@ import {readPurchasePreparationsTx,savePurchasePreparationsTx} from './purchase-
 import {fetchFournisseurMini,assertFournisseurCommandable} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
 import {proposeMaterialConfiguration} from '../domain/material-configuration-proposal';
 import {readMaterialConfigurationDefaults} from './material-configuration-defaults.repository';
+import {effectivePreparationVersionSql} from './effective-preparation-version.sql';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
 type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null;quantite_pieces?:number|null};
@@ -38,9 +39,9 @@ const cuttingForPurchase=(purchase:Purchase,finishedPieces:number)=>{
 
 export async function readMaterialTx(tx:DossierDb,ofId:number){
   const dossier=await readOfDossierTx(tx,ofId);
-  const of=(await tx.query(`SELECT o.piece_technique_version_id::text AS revision,o.technical_snapshot_sha256 AS hash,o.client_id,
+  const of=(await tx.query(`SELECT ${effectivePreparationVersionSql("o")}::text AS revision,o.technical_snapshot_sha256 AS hash,o.client_id,
     COALESCE(o.technical_snapshot->'preparation_evidence'->'purchases',
-      (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=o.piece_technique_version_id),'[]'::jsonb) AS purchases
+      (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=${effectivePreparationVersionSql("o")}),'[]'::jsonb) AS purchases
     FROM public.ordres_fabrication o WHERE o.id=$1`,[ofId])).rows[0];
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 AND need_kind='MATIERE' ORDER BY created_at,id",[ofId])).rows;

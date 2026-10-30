@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { HttpError } from "../../../utils/httpError";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { PREPARATION_RULES_VERSION } from "../domain/preparation-rules";
@@ -18,6 +19,7 @@ type Order = {
   quantite_lancee: number;
   statut: string;
   technical_snapshot_sha256: string | null;
+  technical_readiness: string | null;
 };
 type Line = {
   id: string;
@@ -39,8 +41,8 @@ export async function synchronizeDraftChildrenTx(
   const walk = async (ofId: number, ancestors: string[]): Promise<void> => {
     const o = (
       await tx.query<Order>(
-        `SELECT id::bigint::int,piece_technique_id::text,COALESCE(piece_technique_version_id,NULLIF(technical_preparation->>'selected_version_id','')::uuid,NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)::text AS version_id,
-      client_id,commande_id::bigint::int,commande_ligne_id::bigint::int,affaire_id::bigint::int,COALESCE(root_of_id,id)::bigint::int AS root_of_id,generation_level,quantity_cumulative::float8,quantite_lancee::float8,statut::text,technical_snapshot_sha256
+        `SELECT id::bigint::int,piece_technique_id::text,${effectivePreparationVersionSql("ordres_fabrication")}::text AS version_id,
+      client_id,commande_id::bigint::int,commande_ligne_id::bigint::int,affaire_id::bigint::int,COALESCE(root_of_id,id)::bigint::int AS root_of_id,generation_level,quantity_cumulative::float8,quantite_lancee::float8,statut::text,technical_snapshot_sha256,technical_readiness
       FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE`,
         [ofId],
       )
@@ -54,6 +56,7 @@ export async function synchronizeDraftChildrenTx(
       );
     if (!o.version_id) return;
     if (o.technical_snapshot_sha256) return;
+    if (o.technical_readiness === "VALIDATED") return;
     if (o.statut !== "BROUILLON")
       throw new HttpError(409, "CHILD_OF_ENGAGED", "Un OF est déjà engagé.");
     await tx.query(
@@ -126,8 +129,9 @@ export async function synchronizeDraftChildrenTx(
               quantite_lancee: number;
               statut: string;
               technical_snapshot_sha256: string | null;
+              technical_preparation: { version_selection_mode?: "AUTO" | "MANUAL" } | null;
             }>(
-              `SELECT id::bigint::int,COALESCE(piece_technique_version_id,NULLIF(technical_preparation->>'selected_version_id','')::uuid)::text AS version_id,quantite_lancee::float8,statut::text,technical_snapshot_sha256 FROM public.ordres_fabrication WHERE parent_of_id=$1 AND source_bom_line_id=$2::uuid AND statut<>'ANNULE' ORDER BY id FOR UPDATE`,
+              `SELECT id::bigint::int,${effectivePreparationVersionSql("ordres_fabrication")}::text AS version_id,quantite_lancee::float8,statut::text,technical_snapshot_sha256,technical_preparation FROM public.ordres_fabrication WHERE parent_of_id=$1 AND source_bom_line_id=$2::uuid AND statut<>'ANNULE' ORDER BY id FOR UPDATE`,
               [ofId, line.id],
             )
           ).rows;
@@ -153,6 +157,12 @@ export async function synchronizeDraftChildrenTx(
                   "CHILD_OF_ENGAGED",
                   "Une modification touche un sous-OF déjà préparé. Révisez ce sous-OF avant de synchroniser.",
                 );
+              if (child.version_id !== childVersion && child.technical_preparation?.version_selection_mode === "MANUAL")
+                throw new HttpError(
+                  409,
+                  "CHILD_OF_MANUAL_VERSION",
+                  "La révision du sous-OF a été choisie manuellement. Révisez ce choix avant de synchroniser.",
+                );
               if (
                 (
                   await tx.query(
@@ -167,7 +177,7 @@ export async function synchronizeDraftChildrenTx(
                   "Un sous-OF possède des réservations à réviser.",
                 );
               await tx.query(
-                `UPDATE public.ordres_fabrication SET quantite_lancee=$2,technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$3::text),technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,updated_at=now(),updated_by=$4 WHERE id=$1`,
+                `UPDATE public.ordres_fabrication SET quantite_lancee=$2,technical_preparation=technical_preparation||CASE WHEN technical_preparation->>'version_selection_mode'='MANUAL' THEN '{}'::jsonb ELSE jsonb_build_object('selected_version_id',$3::text,'version_selection_mode','AUTO') END,technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,updated_at=now(),updated_by=$4 WHERE id=$1`,
                 [child.id, manufactureQty, childVersion, userId],
               );
               affected.push(child.id);
@@ -185,7 +195,7 @@ export async function synchronizeDraftChildrenTx(
             });
             await tx.query(
               `INSERT INTO public.ordres_fabrication(id,numero,client_id,article_id,piece_technique_id,commande_id,commande_ligne_id,affaire_id,parent_of_id,root_of_id,generation_level,source_bom_line_id,structure_path,quantity_per_parent,quantity_cumulative,quantite_lancee,statut,technical_preparation,preparation_rules_version,created_by,updated_by)
-            VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$18,$15,'BROUILLON',jsonb_build_object('selected_version_id',$16::text),$19,$17,$17)`,
+            VALUES($1,$2,$3,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$18,$15,'BROUILLON',jsonb_build_object('selected_version_id',$16::text,'version_selection_mode','AUTO'),$19,$17,$17)`,
               [
                 childId,
                 numero,

@@ -47,4 +47,26 @@ describe("#755 — clonage d'assemblage", () => {
     expect(mocks.audit).not.toHaveBeenCalled()
     expect(mocks.release).toHaveBeenCalledOnce()
   })
+  it("retargets only compatible AUTO drafts for a minor clone", async () => {
+    const normal = mocks.query.getMockImplementation()!
+    mocks.query.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes("INSERT INTO public.piece_technique_versions"))
+        return Promise.resolve({ rows: [{ id: "new", indice: "B", change_level: "MINOR", impact_interchangeabilite: false }], rowCount: 1 })
+      return normal(sql, params)
+    })
+    await repoCreateNextVersion("piece", "source", { indice: "B", change_level: "MINOR" }, audit)
+    const retarget = mocks.query.mock.calls.find(([sql]) => sql.includes("version_selection_mode','AUTO'"))!
+    expect(retarget[0]).toContain("target.change_level='MINOR'")
+    expect(retarget[1]).toEqual(["piece", "new", 42, "source"])
+  })
+  it("does not retarget a major clone", async () => {
+    const normal = mocks.query.getMockImplementation()!
+    mocks.query.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes("INSERT INTO public.piece_technique_versions"))
+        return Promise.resolve({ rows: [{ id: "new", indice: "B", change_level: "MAJOR", impact_interchangeabilite: false }], rowCount: 1 })
+      return normal(sql, params)
+    })
+    await repoCreateNextVersion("piece", "source", { indice: "B", change_level: "MAJOR" }, audit)
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("version_selection_mode','AUTO'"))).toBe(false)
+  })
 })
