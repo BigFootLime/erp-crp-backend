@@ -1,5 +1,11 @@
 # Changelog
 
+## Correctif — Même fichier pour les deux plans (#1491)
+
+- Autorise un fichier déjà présent dans la GED lorsqu’il est déposé comme plan client ou plan de fabrication d’une pièce technique ou de son indice.
+- Conserve la détection des doublons des autres documents, les contrôles d’accès et antivirus, et la déduplication physique du stockage.
+- Applique la même exception à la libération de quarantaine ; aucune migration de base.
+
 ## Correctif — Consignes de découpe PT / OF (#1487)
 
 - Le rendement de la nomenclature distingue les pièces par brut et les bruts par pièce. Le besoin de l’OF arrondit les bruts avant de calculer le linéaire.

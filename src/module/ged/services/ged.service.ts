@@ -110,6 +110,20 @@ type DeferredScan = Readonly<{
   releaseFile: UploadedFile & { path: string };
 }>;
 
+/**
+ * Plans are the only GED documents that may be deposited again with identical
+ * bytes: the business parent remains validated before reaching this exception.
+ */
+function allowsPlanDuplicate(
+  classKey: string,
+  link: { link_role?: string | null } | null | undefined,
+  parent: { entityType: string } | null
+): boolean {
+  if (!parent || !["PIECE_TECHNIQUE", "PIECE_TECHNIQUE_VERSION"].includes(parent.entityType)) return false;
+  return (classKey === "PLAN_CLIENT" && link?.link_role === "PLAN_CLIENT")
+    || (classKey === "GAMME_DOC" && link?.link_role === "PLAN_FABRICATION");
+}
+
 async function queueIdentityPdfAfterImageUpload(input: {
   classKey: string;
   entityType: string | null | undefined;
@@ -612,6 +626,12 @@ export async function releaseQuarantine(actor: GedActor, sessionId: string): Pro
   const metadata = releaseMetadata(session);
   const documentClass = await repoGetClass(session.class_key);
   if (!documentClass) throw new HttpError(400, "GED_CLASS_UNKNOWN", "Classe documentaire inconnue.");
+  const allowsDuplicatePlan = metadata.kind === "new_document"
+    && allowsPlanDuplicate(
+      session.class_key,
+      metadata.link,
+      metadata.link ? { entityType: metadata.link.entity_type } : null
+    );
   if (metadata.kind === "new_version") {
     const existing = await repoGetDocumentDetail(metadata.document_id);
     if (!existing || existing.archived_at) {
@@ -648,7 +668,7 @@ export async function releaseQuarantine(actor: GedActor, sessionId: string): Pro
       await repoLockGedBlobSha256(tx, sha256);
       if (metadata.kind === "new_document") {
         const duplicate = await repoFindDocumentByBlobHash(tx, sha256);
-        if (duplicate) {
+        if (duplicate && !allowsDuplicatePlan) {
           throw new HttpError(409, "GED_FILE_DUPLICATE", `Ce fichier existe déjà sous le code ${duplicate.code}.`);
         }
       }
@@ -799,6 +819,7 @@ export async function uploadDocument(
   if (!documentClass) {
     throw new HttpError(400, "GED_CLASS_UNKNOWN", `Classe documentaire inconnue : ${input.class_key}.`);
   }
+  const allowsDuplicatePlan = allowsPlanDuplicate(documentClass.class_key, input.link, canonicalLink);
 
   const accepted = await assertAcceptedFileOnDisk(file, {
     class_key: documentClass.class_key,
@@ -844,7 +865,7 @@ export async function uploadDocument(
       promotionCompleted = true;
 
       const duplicate = await repoFindDocumentByBlobHash(tx, written.sha256);
-      if (duplicate) {
+      if (duplicate && !allowsDuplicatePlan) {
         throw new HttpError(
           409,
           "GED_FILE_DUPLICATE",
