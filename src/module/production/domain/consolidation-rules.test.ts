@@ -92,6 +92,15 @@ describe("Production consolidation conservation", () => {
       ),
     ).toThrow(/rendement figé/i);
   });
+  it("refuses a pilot source whose frozen yield produces no good piece", () => {
+    expect(() => buildConsolidationPlan([
+      { ...source(1, 0.001), industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1", launched_quantity: 1,
+        required_good_quantity: 1, expected_good_quantity: 1, yield_percent: 1,
+      } },
+      source(2, 1),
+    ], 0)).toThrow(/aucune pièce conforme/i);
+  });
   it("projects the same frozen yield token after a manual gross change", () => {
     const pilot = (id: number, launched: number): ConsolidationSource => ({
       ...source(id, launched),

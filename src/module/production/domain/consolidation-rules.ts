@@ -89,7 +89,15 @@ export function sourceCommercialQuantity(source: ConsolidationSource): number {
     yieldPercent,
     unit: source.unit,
   });
-  return Math.min(required, expected, projected);
+  const good = Math.min(required, expected, projected);
+  if (good <= 0)
+    throw new HttpError(
+      422,
+      "CONSOLIDATION_YIELD_ZERO_GOOD_OUTPUT",
+      "Le rendement figé de l’OF ne permet aucune pièce conforme à affecter au regroupement.",
+      { of_id: source.id },
+    );
+  return good;
 }
 export function buildConsolidationPlan(
   sources: ConsolidationSource[],

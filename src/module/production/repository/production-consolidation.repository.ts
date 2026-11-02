@@ -270,8 +270,8 @@ export async function repoCreateConsolidation(
       );
     const group = (
       await tx.query<{ id: string }>(
-        `INSERT INTO public.production_consolidations(producer_of_id,idempotency_key,request_hash,surplus_quantity,reason,created_by)
-      VALUES($1,$2::uuid,$3,$4,$5,$6) RETURNING id::text`,
+        `INSERT INTO public.production_consolidations(producer_of_id,idempotency_key,request_hash,surplus_quantity,reason,created_by,quantity_semantics)
+      VALUES($1,$2::uuid,$3,$4,$5,$6,$7) RETURNING id::text`,
         [
           producerId,
           input.idempotency_key,
@@ -279,6 +279,7 @@ export async function repoCreateConsolidation(
           input.request.surplus_quantity,
           input.request.reason,
           audit.user_id,
+          preview.sources.some(source => source.industrial_semantics != null) ? "GOOD_OUTPUT_V1" : "LEGACY_ALLOCATION_V1",
         ],
       )
     ).rows[0];

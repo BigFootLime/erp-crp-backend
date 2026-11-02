@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-02T07:00:23.413Z",
+  "generated_at": "2026-11-02T07:24:33.939Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 360,
-  "support_file_count": 762,
-  "recent_patch_count": 302,
+  "patch_count": 363,
+  "support_file_count": 765,
+  "recent_patch_count": 305,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -742,6 +742,22 @@
       }
     },
     {
+      "filename": "20261102_consolidation_good_output_trigger_fix_1810.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
       "filename": "20261102_supplier_treatment_estimate_commands_1807.sql",
       "support": {
         "preflight": false,
@@ -753,8 +769,8 @@
   "risk_totals": {
     "destructive_ddl": 3,
     "destructive_dml": 38,
-    "data_rewrite": 233,
-    "table_lock": 244,
+    "data_rewrite": 234,
+    "table_lock": 245,
     "blocking_index": 228,
     "enum_change": 2
   },
@@ -6821,6 +6837,51 @@
     },
     {
       "order": 357,
+      "filename": "20261102_consolidation_good_output_invariants_1809.sql",
+      "sha256": "252b6507b82ad32efdc9bd04c66744a2b912ac804d86f01f3d8a2b7ade3f6868",
+      "bytes": 5317,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 358,
+      "filename": "20261102_consolidation_good_output_trigger_fix_1810.sql",
+      "sha256": "59b215e30053a5634e8f3bdc6d194847129f78d5f25d72a13672cb7fe4f3dc09",
+      "bytes": 4045,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 359,
+      "filename": "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql",
+      "sha256": "ec2fb673822486bde011a19d8d4b194d54f923596420c715bc73a0cb4873d2b2",
+      "bytes": 4045,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 360,
       "filename": "20261102_industrial_yield_qualification_1032.sql",
       "sha256": "8b0a8737c3baa84cc029f763350020377bd6bd8e340e1e37693b80d91f227e3a",
       "bytes": 708,
@@ -6837,7 +6898,7 @@
       ]
     },
     {
-      "order": 358,
+      "order": 361,
       "filename": "20261102_supplier_portal_pilot_1806.sql",
       "sha256": "b976ed77318a015238964d17f6be8df650ec84494e8910ee92b7abea1f3f8cb6",
       "bytes": 5179,
@@ -6855,7 +6916,7 @@
       ]
     },
     {
-      "order": 359,
+      "order": 362,
       "filename": "20261102_supplier_portal_recovery_request_1808.sql",
       "sha256": "ea849e872e5dae4a3010c0215ecf562d6753080fa8c3bd4dc74744453f801451",
       "bytes": 280,
@@ -6872,7 +6933,7 @@
       ]
     },
     {
-      "order": 360,
+      "order": 363,
       "filename": "20261102_supplier_treatment_estimate_commands_1807.sql",
       "sha256": "026a3d4f47ec0ef8df76e39637f79ccc37bc8ae9a53c5a2d773e9e66d8761134",
       "bytes": 535,
