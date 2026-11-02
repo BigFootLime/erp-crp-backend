@@ -4,27 +4,7 @@ import {
   parseCumpDecimal,
 } from "../../stock/domain/cump-decimal";
 
-const PIECE_UNITS = new Set([
-  "u",
-  "pc",
-  "pce",
-  "pces",
-  "pcs",
-  "piece",
-  "pieces",
-  "pièce",
-  "pièces",
-  "unit",
-  "units",
-  "unite",
-  "unites",
-  "unité",
-  "unités",
-]);
-
-export function isDiscreteProductionUnit(unit: string) {
-  return PIECE_UNITS.has(unit.trim().toLocaleLowerCase("fr-FR"));
-}
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 
 /**
  * Project good output from the immutable yield percentage and the current
@@ -50,7 +30,7 @@ export function frozenYieldGoodOutput(input: {
     throw new Error("FROZEN_YIELD_INVALID");
   const availableGross = launched > scrap ? launched - scrap : 0n;
   const projected = (launched * yieldPercent) / (100n * CUMP_DECIMAL_SCALE);
-  const precision = isDiscreteProductionUnit(input.unit)
+  const precision = canonicalizeStockUnitCode(input.unit) === "u"
     ? CUMP_DECIMAL_SCALE
     : CUMP_DECIMAL_SCALE / 1000n;
   const roundedDown = (projected / precision) * precision;

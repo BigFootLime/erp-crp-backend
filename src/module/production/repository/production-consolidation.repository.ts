@@ -351,16 +351,18 @@ export async function repoCreateConsolidation(
     // The surplus input is a physical launch quantity.  It is intentionally
     // not an additional commercial promise: only the source allocations are
     // guaranteed good output until an actual receipt exists in stock.
-    await tx.query(
-      `UPDATE public.ordres_fabrication
-          SET technical_preparation=technical_preparation||jsonb_build_object(
-            'consolidation_good_output',jsonb_build_object(
-              'coverage_semantics','CONSOLIDATION_GOOD_OUTPUT_V1',
-              'allocated_good_quantity',$2::numeric,
-              'raw_surplus_quantity',$3::numeric))
-        WHERE id=$1`,
-      [producerId, preview.demand_quantity, input.request.surplus_quantity],
-    );
+    if (preview.sources.some(source => source.industrial_semantics != null)) {
+      await tx.query(
+        `UPDATE public.ordres_fabrication
+            SET technical_preparation=technical_preparation||jsonb_build_object(
+              'consolidation_good_output',jsonb_build_object(
+                'coverage_semantics','CONSOLIDATION_GOOD_OUTPUT_V1',
+                'allocated_good_quantity',$2::numeric,
+                'raw_surplus_quantity',$3::numeric))
+          WHERE id=$1`,
+        [producerId, preview.demand_quantity, input.request.surplus_quantity],
+      );
+    }
     const producerEvaluation = await evaluateOfPreparation(tx, producerId);
     await tx.query(
       `INSERT INTO public.of_stock_reviews(of_id,source_hash,decision,reason,reviewed_by) VALUES($1,$2,'NO_REUSE',$3,$4)`,

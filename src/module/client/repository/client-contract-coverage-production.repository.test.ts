@@ -1,5 +1,12 @@
+import { parseCumpDecimal } from "../../stock/domain/cump-decimal";
 import { describe, expect, it } from "vitest";
-import { remainingIndustrialGoodOutput } from "./client-contract-coverage-production.repository";
+import { remainingConsolidationGoodOutput, remainingIndustrialGoodOutput } from "./client-contract-coverage-production.repository";
+
+it("retire du regroupement les bonnes pièces déjà reçues même après des rebuts supérieurs à la marge", () => {
+  expect(remainingConsolidationGoodOutput(parseCumpDecimal("200"), {
+    launched: "224", scrap: "40", good: "100", received: "100",
+  })).toBe(parseCumpDecimal("84"));
+});
 
 describe("yield-aware industrial OF coverage", () => {
   const tagged = {

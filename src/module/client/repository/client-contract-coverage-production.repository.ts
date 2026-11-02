@@ -1,47 +1,23 @@
-import type { PoolClient } from "pg";
-import { HttpError } from "../../../utils/httpError";
-import {
-  CUMP_DECIMAL_SCALE,
-  formatCumpDecimal,
-  parseCumpDecimal,
-} from "../../stock/domain/cump-decimal";
-import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
-import { readCentralSnapshot } from "../../planning/repository/planning-central.repository";
-import { readOfComponentCoverageTx } from "../../production/repository/of-component-coverage.repository";
-import type {
-  ContractCoverageIssue,
-  ContractCoverageSupply,
-} from "../types/client-contract-coverage.types";
+import type { PoolClient } from 'pg';
+import { HttpError } from '../../../utils/httpError';
+import { CUMP_DECIMAL_SCALE, formatCumpDecimal, parseCumpDecimal } from '../../stock/domain/cump-decimal';
+import { frozenYieldGoodOutput } from '../../production/domain/frozen-yield';
+import { readCentralSnapshot } from '../../planning/repository/planning-central.repository';
+import { readOfComponentCoverageTx } from '../../production/repository/of-component-coverage.repository';
+import type { ContractCoverageIssue, ContractCoverageSupply } from '../types/client-contract-coverage.types';
 
-type Queryer = Pick<PoolClient, "query">;
-type Owner = {
-  id: string;
-  order_line_id: string | null;
-  quantity: string;
-  received: string;
-};
+type Queryer = Pick<PoolClient, 'query'>;
+type Owner = { id: string; order_line_id: string | null; quantity: string; received: string };
 type Producer = {
-  id: number;
-  number: string;
-  article_id: string;
-  unit: string;
-  launched: string;
-  received: string;
-  good: string;
-  scrap: string;
-  status: string;
-  order_line_id: string | null;
-  owners: Owner[];
-  surplus: string | null;
-  operation_count: number;
-  task_ids: string[];
-  forecast_issues: string[];
-  industrial_semantics: unknown | null;
+  id: number; number: string; article_id: string; unit: string; launched: string; received: string; good: string; scrap: string;
+  status: string; order_line_id: string | null; owners: Owner[]; surplus: string | null;
+  operation_count: number; task_ids: string[]; forecast_issues: string[]; industrial_semantics: unknown | null;
   consolidation_semantics: unknown | null;
 };
-const positive = (value: bigint) => (value > 0n ? value : 0n);
-const minimum = (a: bigint, b: bigint) => (a < b ? a : b);
-const maximum = (a: bigint, b: bigint) => (a > b ? a : b);
+const positive = (value: bigint) => value > 0n ? value : 0n;
+const minimum = (a: bigint, b: bigint) => a < b ? a : b;
+
+const maximum = (a: bigint, b: bigint) => a > b ? a : b;
 
 type IndustrialGoodOutputSemantics = {
   coverage_semantics: "GOOD_OUTPUT_V1";
@@ -56,28 +32,9 @@ type ConsolidationGoodOutputSemantics = {
   raw_surplus_quantity: string | number;
 };
 
-function expectedGoodFromCurrentLaunch(
-  launched: bigint,
-  yieldPercent: bigint,
-  unit: string | undefined,
-) {
-  const precision =
-    canonicalizeStockUnitCode(unit) === "u"
-      ? CUMP_DECIMAL_SCALE
-      : CUMP_DECIMAL_SCALE / 1_000n;
-  return (
-    (launched * yieldPercent) /
-    (100n * CUMP_DECIMAL_SCALE * precision) *
-    precision
-  );
-}
-
 function allocatedConsolidationGoodOutput(semantics: unknown | null) {
   const token = semantics as Partial<ConsolidationGoodOutputSemantics> | null;
-  if (
-    token?.coverage_semantics !== "CONSOLIDATION_GOOD_OUTPUT_V1" ||
-    token.allocated_good_quantity === undefined
-  )
+  if (token?.coverage_semantics !== "CONSOLIDATION_GOOD_OUTPUT_V1" || token.allocated_good_quantity === undefined)
     return null;
   try {
     return positive(parseCumpDecimal(String(token.allocated_good_quantity)));
@@ -120,18 +77,16 @@ export function remainingIndustrialGoodOutput(input: {
     if (yieldPercent <= 0n || yieldPercent > 100n * CUMP_DECIMAL_SCALE)
       return 0n;
 
-    const initialLaunch =
-      token.launched_quantity === undefined
-        ? null
-        : positive(parseCumpDecimal(String(token.launched_quantity)));
+    const initialLaunch = token.launched_quantity === undefined
+      ? null
+      : positive(parseCumpDecimal(String(token.launched_quantity)));
     const currentLaunch = parseCumpDecimal(input.launched);
-    // The immutable expected output is retained for the unmodified OF. When
+    // The immutable expected output is retained for the unmodified OF.  When
     // its draft quantity changes, recompute from that current gross quantity
     // and the frozen yield; never from a mutable article setting.
-    const recalculatedExpected =
-      initialLaunch !== null && currentLaunch !== initialLaunch
-        ? expectedGoodFromCurrentLaunch(currentLaunch, yieldPercent, input.unit)
-        : expected;
+    const recalculatedExpected = initialLaunch !== null && currentLaunch !== initialLaunch
+      ? frozenYieldGoodOutput({ launched: input.launched, yieldPercent: token.yield_percent, unit: input.unit ?? "" })
+      : expected;
     // The margin embedded in `expected` already covers the planned yield
     // loss.  A confirmed scrap only reduces it once it exceeds that margin:
     // `min(expected good, launched - scrap)`.  `quantite_bonne` and output
@@ -148,6 +103,12 @@ export function remainingIndustrialGoodOutput(input: {
   } catch {
     return 0n;
   }
+}
+
+export function remainingConsolidationGoodOutput(allocated: bigint, producer: Pick<Producer, 'launched' | 'scrap' | 'received' | 'good'>): bigint {
+  const achievable = positive(parseCumpDecimal(producer.launched) - parseCumpDecimal(producer.scrap));
+  const completed = maximum(parseCumpDecimal(producer.received), parseCumpDecimal(producer.good));
+  return positive(minimum(achievable, allocated) - completed);
 }
 
 export const CONTRACT_COVERAGE_PRODUCERS_SQL = `SELECT o.id::bigint::int,o.numero AS number,o.article_id::text,
@@ -187,249 +148,88 @@ export const CONTRACT_COVERAGE_PRODUCERS_SQL = `SELECT o.id::bigint::int,o.numer
       WHERE share.source_of_id=o.id AND share.state='ACTIVE' AND grouped.state='ACTIVE')
   ORDER BY o.id LIMIT 501`;
 
-export async function readContractCoverageProduction(
-  db: Queryer,
-  input: { articleIds: readonly string[]; now: string; endDate: string },
-) {
-  const producers = (
-    await db.query<Producer>(CONTRACT_COVERAGE_PRODUCERS_SQL, [
-      input.articleIds,
-    ])
-  ).rows;
-  if (producers.length > 500)
-    throw new HttpError(
-      422,
-      "CONTRACT_COVERAGE_SCOPE_TOO_LARGE",
-      "Le calcul dépasse 500 producteurs OF.",
-    );
-  const taskIds = producers.flatMap((producer) => producer.task_ids);
-  if (taskIds.length > 5000)
-    throw new HttpError(
-      422,
-      "CONTRACT_COVERAGE_SCOPE_TOO_LARGE",
-      "Le calcul dépasse 5 000 opérations.",
-    );
-  const sources: ContractCoverageSupply[] = [],
-    issues: ContractCoverageIssue[] = [];
+export async function readContractCoverageProduction(db: Queryer, input: { articleIds: readonly string[]; now: string; endDate: string }) {
+  const producers = (await db.query<Producer>(CONTRACT_COVERAGE_PRODUCERS_SQL, [input.articleIds])).rows;
+  if (producers.length > 500) throw new HttpError(422, 'CONTRACT_COVERAGE_SCOPE_TOO_LARGE', 'Le calcul dépasse 500 producteurs OF.');
+  const taskIds = producers.flatMap(producer => producer.task_ids);
+  if (taskIds.length > 5000) throw new HttpError(422, 'CONTRACT_COVERAGE_SCOPE_TOO_LARGE', 'Le calcul dépasse 5 000 opérations.');
+  const sources: ContractCoverageSupply[] = [], issues: ContractCoverageIssue[] = [];
   if (!taskIds.length) {
-    if (producers.length)
-      issues.push({
-        code: "UNPLANNED_PRODUCTION_EXCLUDED",
-        message:
-          "Les OF sans opérations engagées restent exclus de la couverture.",
-      });
+    if (producers.length) issues.push({ code: 'UNPLANNED_PRODUCTION_EXCLUDED', message: 'Les OF sans opérations engagées restent exclus de la couverture.' });
     return { sources, issues, revision: null };
   }
-  if (input.endDate < input.now.slice(0, 10))
-    return {
-      sources,
-      issues: [
-        {
-          code: "HISTORICAL_PRODUCTION_EXCLUDED",
-          message:
-            "Les OF actuels ne constituent pas une couverture historique des mois déjà passés.",
-        },
-      ],
-      revision: null,
-    };
+  if (input.endDate < input.now.slice(0, 10)) return { sources, issues: [{ code: 'HISTORICAL_PRODUCTION_EXCLUDED',
+    message: 'Les OF actuels ne constituent pas une couverture historique des mois déjà passés.' }], revision: null };
   // Coverage checks dated commitments and whether their resources are enabled.
   // It never searches for new slots across the long PIC horizon.
-  const snapshot = await readCentralSnapshot(
-    {
-      from: input.now,
-      to: `${input.endDate}T23:59:59Z`,
-      limit: 5000,
-      includeTaskIds: taskIds,
-      taskIdsOnly: true,
-      includeResourceAvailability: false,
-    },
-    db,
-  );
-  if (snapshot.nextCursor)
-    throw new HttpError(
-      422,
-      "CONTRACT_COVERAGE_SCOPE_TOO_LARGE",
-      "Le planning dépasse le périmètre complet de la synthèse.",
-    );
-  const resourceById = new Map(
-    snapshot.resources.map((resource) => [resource.id, resource]),
-  );
+  const snapshot = await readCentralSnapshot({ from: input.now, to: `${input.endDate}T23:59:59Z`, limit: 5000,
+    includeTaskIds: taskIds, taskIdsOnly: true, includeResourceAvailability: false }, db);
+  if (snapshot.nextCursor) throw new HttpError(422, 'CONTRACT_COVERAGE_SCOPE_TOO_LARGE', 'Le planning dépasse le périmètre complet de la synthèse.');
+  const resourceById = new Map(snapshot.resources.map(resource => [resource.id, resource]));
   for (const producer of producers) {
-    const exclude = (code: string, message: string) =>
-      issues.push({ code, message });
-    if (!["PLANIFIE", "EN_COURS", "EN_PAUSE"].includes(producer.status)) {
-      exclude(
-        "DRAFT_PRODUCTION_EXCLUDED",
-        "Les OF brouillons ne sont pas une couverture engagée.",
-      );
-      continue;
+    const exclude = (code: string, message: string) => issues.push({ code, message });
+    if (!['PLANIFIE','EN_COURS','EN_PAUSE'].includes(producer.status)) {
+      exclude('DRAFT_PRODUCTION_EXCLUDED', 'Les OF brouillons ne sont pas une couverture engagée.'); continue;
     }
-    const tasks = snapshot.tasks.filter((task) => task.ofId === producer.id);
-    const operationTasks = tasks.filter((task) => task.source === "OPERATION");
-    if (
-      !producer.operation_count ||
-      operationTasks.length !== producer.operation_count ||
-      tasks.length !== producer.task_ids.length ||
-      producer.forecast_issues.length ||
-      tasks.some(
-        (task) =>
-          task.readiness !== "READY" ||
-          task.blockers.length ||
-          task.commitment === "FORECAST",
-      )
-    ) {
-      exclude(
-        "UNSECURED_PRODUCTION_EXCLUDED",
-        "Des OF attendent une définition, un engagement ou la résolution de blocages au planning.",
-      );
-      continue;
+    const tasks = snapshot.tasks.filter(task => task.ofId === producer.id);
+    const operationTasks = tasks.filter(task => task.source === 'OPERATION');
+    if (!producer.operation_count || operationTasks.length !== producer.operation_count
+      || tasks.length !== producer.task_ids.length || producer.forecast_issues.length
+      || tasks.some(task => task.readiness !== 'READY' || task.blockers.length || task.commitment === 'FORECAST')) {
+      exclude('UNSECURED_PRODUCTION_EXCLUDED', 'Des OF attendent une définition, un engagement ou la résolution de blocages au planning.'); continue;
     }
-    const expectedReleasedGood = remainingIndustrialGoodOutput({
-      launched: producer.launched,
-      received: "0",
-      good: "0",
-      scrap: producer.scrap,
-      unit: producer.unit,
-      semantics: producer.industrial_semantics,
-    });
-    if (
-      parseCumpDecimal(producer.good) > parseCumpDecimal(producer.received) ||
-      (operationTasks.every((task) => task.commitment === "DONE") &&
-        parseCumpDecimal(producer.received) < expectedReleasedGood)
-    ) {
-      exclude(
-        "UNRELEASED_OUTPUT_EXCLUDED",
-        "Des pièces déjà fabriquées attendent leur réception ou leur libération et restent exclues.",
-      );
-      continue;
+    if (parseCumpDecimal(producer.good) > parseCumpDecimal(producer.received)
+      || (operationTasks.every(task => task.commitment === 'DONE') &&
+        parseCumpDecimal(producer.received) < remainingIndustrialGoodOutput({ ...producer, received: '0', good: '0', semantics: producer.industrial_semantics }))) {
+      exclude('UNRELEASED_OUTPUT_EXCLUDED', 'Des pièces déjà fabriquées attendent leur réception ou leur libération et restent exclues.'); continue;
     }
-    let end = "";
+    let end = '';
     let invalid = false;
     for (const task of tasks) {
-      const finished = task.commitment === "DONE";
+      const finished = task.commitment === 'DONE';
       const candidate = finished ? task.actual?.end : task.committed?.end;
-      if (
-        !candidate ||
-        (!finished && (candidate <= input.now || !task.resourceIds.length)) ||
-        (!finished &&
-          task.resourceIds.some(
-            (id) =>
-              !resourceById.has(id) ||
-              resourceById.get(id)!.capacityEnabled === false,
-          ))
-      ) {
-        invalid = true;
-        break;
+      if (!candidate || (!finished && (candidate <= input.now || !task.resourceIds.length))
+        || (!finished && task.resourceIds.some(id => !resourceById.has(id) || resourceById.get(id)!.capacityEnabled === false))) {
+        invalid = true; break;
       }
-      const realizable =
-        !finished && task.forecast?.end && task.forecast.end > candidate
-          ? task.forecast.end
-          : candidate;
+      const realizable = !finished && task.forecast?.end && task.forecast.end > candidate ? task.forecast.end : candidate;
       if (realizable > end) end = realizable;
     }
-    const material = snapshot.demands.flatMap((demand) =>
-      demand.coverage?.ofId === producer.id ? [demand.coverage] : [],
-    );
-    if (
-      !snapshot.coverageAvailable ||
-      material.some((coverage) => {
-        const start = operationTasks.find(
-          (task) => task.operationId === coverage.operationId,
-        )?.committed?.start;
-        return (
-          coverage.unsecured > 0 ||
-          coverage.issues.length ||
-          (coverage.availableAt && start && coverage.availableAt > start)
-        );
-      })
-    )
-      invalid = true;
+    const material = snapshot.demands.flatMap(demand => demand.coverage?.ofId === producer.id ? [demand.coverage] : []);
+    if (!snapshot.coverageAvailable || material.some(coverage => {
+      const start = operationTasks.find(task => task.operationId === coverage.operationId)?.committed?.start;
+      return coverage.unsecured > 0 || coverage.issues.length || (coverage.availableAt && start && coverage.availableAt > start);
+    })) invalid = true;
     const components = await readOfComponentCoverageTx(db, producer.id);
     if (!components.ready) invalid = true;
     if (invalid || !end) {
-      exclude(
-        "PRODUCTION_DATE_REVIEW_REQUIRED",
-        "Des OF doivent être replanifiés ou sécurisés en matière et composants avant de couvrir le besoin.",
-      );
-      continue;
+      exclude('PRODUCTION_DATE_REVIEW_REQUIRED', 'Des OF doivent être replanifiés ou sécurisés en matière et composants avant de couvrir le besoin.'); continue;
     }
-    const availableDate = new Intl.DateTimeFormat("sv-SE", {
-      timeZone: "Europe/Paris",
-    }).format(new Date(end));
-    const consolidationAllocation = allocatedConsolidationGoodOutput(
-      producer.consolidation_semantics,
-    );
-    let remaining =
-      consolidationAllocation === null
-        ? remainingIndustrialGoodOutput({
-            launched: producer.launched,
-            received: producer.received,
-            good: producer.good,
-            scrap: producer.scrap,
-            unit: producer.unit,
-            semantics: producer.industrial_semantics,
-          })
-        : minimum(
-            remainingIndustrialGoodOutput({
-              launched: producer.launched,
-              received: "0",
-              good: "0",
-              scrap: producer.scrap,
-              unit: producer.unit,
-              semantics: producer.industrial_semantics,
-            }),
-            consolidationAllocation,
-          );
+    const availableDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Paris' }).format(new Date(end));
+    const consolidationAllocation = allocatedConsolidationGoodOutput(producer.consolidation_semantics);
+    let remaining = consolidationAllocation === null
+      ? remainingIndustrialGoodOutput({ ...producer, semantics: producer.industrial_semantics })
+      : remainingConsolidationGoodOutput(consolidationAllocation, producer);
     const add = (id: string, quantity: bigint, lineId: string | null) => {
       const accepted = minimum(remaining, quantity);
       if (!accepted) return;
       remaining -= accepted;
-      sources.push({
-        id,
-        kind: "PRODUCTION",
-        article_id: producer.article_id,
-        unit: producer.unit,
-        quantity: formatCumpDecimal(accepted),
-        available_date: availableDate,
-        order_line_id: lineId,
-        allocation_id: null,
-        reference_id: String(producer.id),
-        label: producer.number,
-      });
+      sources.push({ id, kind: 'PRODUCTION', article_id: producer.article_id, unit: producer.unit,
+        quantity: formatCumpDecimal(accepted), available_date: availableDate, order_line_id: lineId,
+        allocation_id: null, reference_id: String(producer.id), label: producer.number });
     };
     if (consolidationAllocation !== null) {
-      // Consolidated surplus is gross input, not future good output. Shares
+      // Consolidated surplus is gross input, not future good output.  Shares
       // alone carry the allocated good quantity; already received shares are
       // covered by stock rather than by this future-production source.
-      for (const owner of producer.owners)
-        add(
-          `production:${producer.id}:share:${owner.id}`,
-          positive(
-            parseCumpDecimal(owner.quantity) - parseCumpDecimal(owner.received),
-          ),
-          owner.order_line_id,
-        );
+      for (const owner of producer.owners) add(`production:${producer.id}:share:${owner.id}`,
+        positive(parseCumpDecimal(owner.quantity) - parseCumpDecimal(owner.received)), owner.order_line_id);
     } else if (producer.surplus !== null) {
-      for (const owner of producer.owners)
-        add(
-          `production:${producer.id}:share:${owner.id}`,
-          positive(
-            parseCumpDecimal(owner.quantity) - parseCumpDecimal(owner.received),
-          ),
-          owner.order_line_id,
-        );
-      const attributedReceived = producer.owners.reduce(
-        (sum, owner) => sum + parseCumpDecimal(owner.received),
-        0n,
-      );
-      const surplusReceived = positive(
-        parseCumpDecimal(producer.received) - attributedReceived,
-      );
-      add(
-        `production:${producer.id}:surplus`,
-        positive(parseCumpDecimal(producer.surplus) - surplusReceived),
-        null,
-      );
+      for (const owner of producer.owners) add(`production:${producer.id}:share:${owner.id}`,
+        positive(parseCumpDecimal(owner.quantity) - parseCumpDecimal(owner.received)), owner.order_line_id);
+      const attributedReceived = producer.owners.reduce((sum, owner) => sum + parseCumpDecimal(owner.received), 0n);
+      const surplusReceived = positive(parseCumpDecimal(producer.received) - attributedReceived);
+      add(`production:${producer.id}:surplus`, positive(parseCumpDecimal(producer.surplus) - surplusReceived), null);
     } else add(`production:${producer.id}`, remaining, producer.order_line_id);
   }
   return { sources, issues, revision: snapshot.revision };
