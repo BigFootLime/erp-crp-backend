@@ -36,6 +36,12 @@ describe("industrial settings yield qualification", () => {
     expect(() => industrialSettingsSchema.parse({
       client_id: "042", articles: [{ article_id: articleId, family: "VS", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 0 }], contracts: [],
     })).toThrow();
+    expect(industrialSettingsSchema.parse({
+      client_id: "042", articles: [{ article_id: articleId, family: "VS", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 0.001 }], contracts: [],
+    }).articles[0].yield_percent).toBe(0.001);
+    expect(() => industrialSettingsSchema.parse({
+      client_id: "042", articles: [{ article_id: articleId, family: "VS", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 0.0001 }], contracts: [],
+    })).toThrow(/trois décimales/);
   });
 
   it("does not update the qualification timestamp when no yield was supplied", async () => {

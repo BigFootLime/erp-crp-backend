@@ -40,6 +40,15 @@ export const industrialPolicySchema = z
   })
   .strict();
 const positive = z.number().finite().positive().max(1e9);
+// PostgreSQL stores this percentage as numeric(7,3).  Refuse excess
+// precision at the boundary: PostgreSQL rounding a tiny positive value to
+// zero would otherwise violate its positive check after validation succeeded.
+const yieldPercent = positive
+  .max(100)
+  .refine(
+    (value) => Math.abs(value * 1_000 - Math.round(value * 1_000)) < 1e-9,
+    "Le rendement accepte au maximum trois décimales.",
+  );
 export const industrialSettingsSchema = z
   .object({
     client_id: industrialClient,
@@ -54,7 +63,7 @@ export const industrialSettingsSchema = z
             // Omission means "do not review the yield".  In particular it
             // must not turn the database default of 100% into an approved
             // manufacturing assumption.
-            yield_percent: positive.max(100).optional(),
+            yield_percent: yieldPercent.optional(),
             lot_size: positive.nullable(),
           })
           .strict(),
