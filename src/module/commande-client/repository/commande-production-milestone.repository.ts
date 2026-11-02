@@ -16,7 +16,7 @@ export async function reconcileCommandeProductionMilestonesInTransaction(params:
       SELECT o.statut::text AS statut FROM public.ordres_fabrication o
       LEFT JOIN public.commande_ligne l ON l.id=o.commande_ligne_id
       WHERE (o.commande_id=$1::bigint OR l.commande_id=$1::bigint)
-        AND o.statut::text <> 'ANNULE' ORDER BY o.id FOR SHARE`, [orderId]);
+        AND o.statut::text <> 'ANNULE' ORDER BY o.id`, [orderId]);
     const total = facts.rows.length;
     if (!total) continue;
     const started = facts.rows.every(({ statut }) => ["EN_COURS", "EN_PAUSE", "TERMINE", "CLOTURE"].includes(statut));
