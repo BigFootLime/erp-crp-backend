@@ -25,8 +25,9 @@ function requireIsolatedDatabase() {
     throw new Error("DATABASE_URL must exactly match CERP_AR_GUARD_TEST_DATABASE_URL");
   }
   const url = new URL(integrationUrl);
-  if (!(url.hostname === "127.0.0.1" || url.hostname === "localhost") || url.port !== "56144" || url.pathname !== "/cerp_test") {
-    throw new Error("AR readiness integration tests only run on 127.0.0.1:56144/cerp_test");
+  const allowedPort = process.env.CERP_AR_GUARD_TEST_PORT ?? "56144";
+  if (!(url.hostname === "127.0.0.1" || url.hostname === "localhost") || url.port !== allowedPort || url.pathname !== "/cerp_test") {
+    throw new Error(`AR readiness integration tests only run on loopback:${allowedPort}/cerp_test`);
   }
 }
 
@@ -117,7 +118,7 @@ describePg("AR readiness barrier — isolated PostgreSQL", () => {
   it("accepts a fully reserved 100% stock order but rejects partial and expired reservations", async () => {
     if (!tx) throw new Error("transaction unavailable");
     const orderId = await seedCommande(tx, "104", "PLANNING_VALIDE", "ar_preparation");
-    const article = await tx.query<{ id: string }>("SELECT id::text AS id FROM public.articles ORDER BY id LIMIT 1");
+    const article = await tx.query<{ id: string }>("SELECT f.article_id::text AS id FROM public.articles_fabrique f JOIN public.articles a ON a.id=f.article_id WHERE NOT a.lot_tracking ORDER BY f.article_id LIMIT 1");
     const location = await tx.query<{ id: string }>("SELECT id::text AS id FROM public.locations ORDER BY id LIMIT 1");
     const actor = await tx.query<{ id: number }>("SELECT id::int AS id FROM public.users ORDER BY id LIMIT 1");
     if (!article.rows[0] || !location.rows[0] || !actor.rows[0]) throw new Error("Fixture requires an article, stock location and actor");

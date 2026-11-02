@@ -25,6 +25,7 @@ import {
   getCommandeFournisseur,
   getCommandeFournisseurKpis,
   listSupplierPromiseExceptions,
+  listInternalTreatmentEstimates,
   listSupplierSandboxProposals,
   reviewSupplierSandboxProposal,
   saveInternalTreatmentEstimate,
@@ -154,6 +155,11 @@ router.get(
   "/:id/qualification",
   requireCapability("read"),
   readPurchaseQualification,
+);
+router.get(
+  "/:id/treatment-estimates",
+  requireCapability("read"),
+  listInternalTreatmentEstimates,
 );
 router.get(
   "/:id/open-contracts",

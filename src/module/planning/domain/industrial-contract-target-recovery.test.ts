@@ -11,7 +11,8 @@ const source = (): IndustrialInput => ({
   clientId: "VISION",
   clientRisk: "1000",
   openingExposure: "0",
-  articles: [],
+  articles: [{id:"vision-part",code:"VS-PART",unit:"PCE",family:"Pilote",kind:"MAKE",leadDays:2,
+    lot:"1",cost:"5",yieldPercent:"100",minStock:"0",targetStock:"0",technicalIssues:[]}],
   bom: [],
   demand: [{
     id: "firm-s44",
@@ -84,6 +85,19 @@ const prepared = [{
 }];
 
 describe("overdue Vision contract target recovery", () => {
+  it("keeps firm schedules separate and escalates an open unconfirmed order or a lot surplus", () => {
+    const data = source(), net = result();
+    data.demand.push({...data.demand[0],id:"firm-next",quantity:"2",due:"2026-10-27"});
+    net.proposals.push({...net.proposals[0],source_ids:["firm-next"],quantity:5,due:"2026-10-27"});
+    const projections = proposeIndustrialContractTargetRecovery({
+      source:data,result:net,prepared:[...prepared,{...prepared[0],target_date:"2026-08-31"}],placements:[],
+      commitments:[{source:"production:17",article:"vision-part",reference:"OF-TEST",order_line:"order-line",contract_line:"vision-contract-line"}],
+    });
+    expect(projections).toHaveLength(2);
+    expect(projections.map(p=>p.proposed_quantity)).toEqual([7,2]);
+    expect(projections.every(p=>p.status==="ARBITRATION_REQUIRED" && p.risks.some(r=>r.includes("OF-TEST")))).toBe(true);
+    expect(projections[1].risks.some(r=>r.includes("surplus"))).toBe(true);
+  });
   it("makes one S44 proposal only when the net PDP shortage has a safe finite-capacity slot", () => {
     const out = proposeIndustrialContractTargetRecovery({
       source: source(),
@@ -103,7 +117,7 @@ describe("overdue Vision contract target recovery", () => {
       mode: "PROPOSAL_ONLY",
       target_month: "2026-09",
       need_date: "2026-10-24",
-      quantity_needed: 7,
+      quantity_needed: 12,
       reserved_quantity: 3,
       open_supply_quantity: 2,
       proposed_quantity: 7,

@@ -123,6 +123,9 @@ export type IndustrialContractTargetRecovery = {
   open_supply_quantity: number;
   proposed_quantity: number;
   earliest_safe_date: string | null;
+  proposed_start_date: string | null;
+  projected_finish_date: string | null;
+  estimated_receipt_date: string | null;
   frozen_until: string;
   status: "PROPOSED" | "ARBITRATION_REQUIRED";
   risks: string[];

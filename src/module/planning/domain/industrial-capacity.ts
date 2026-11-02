@@ -27,6 +27,7 @@ export function placeIndustrialProposals(input: {
   snapshot: CentralSnapshot;
   today: string;
   through: string;
+  protectedSlots?: { resource: string; start: string; end: string }[];
 }) {
   const occupied = new Map<string, Interval[]>(),
     resources = new Map(input.snapshot.resources.map((r) => [r.id, r]));
@@ -36,6 +37,7 @@ export function placeIndustrialProposals(input: {
     booked.push(slot);
     occupied.set(capacity, booked);
   }
+  for (const slot of input.protectedSlots ?? []) reserve(slot.resource, slot);
   for (const task of input.snapshot.tasks) {
     const slot =
       task.actual?.start && task.actual?.end

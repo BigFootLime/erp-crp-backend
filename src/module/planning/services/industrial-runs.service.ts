@@ -7,6 +7,7 @@ import { calculateIndustrialPlan } from "../domain/industrial-plan";
 import { placeIndustrialProposals } from "../domain/industrial-capacity";
 import {
   readOverdueContractTargetPreparations,
+  readRecoveryCommitments,
   readPicTargets,
 } from "../repository/industrial-targets.repository";
 import { industrialExceptions } from "../domain/industrial-exceptions";
@@ -18,7 +19,7 @@ import { projectMasterPlan } from "../domain/planning-master-plan";
 import { readMasterPlanSourceTx } from "../repository/planning-master-plan.repository";
 import { readIndustrialInput } from "../repository/industrial-input.repository";
 import { readIndustrialPolicy } from "../repository/industrial-policy.repository";
-import { proposeIndustrialContractTargetRecovery } from "../domain/industrial-contract-target-recovery";
+import { proposeIndustrialContractTargetRecovery, simulateRecoverySlots } from "../domain/industrial-contract-target-recovery";
 import type { z } from "zod";
 import type { industrialRunSchema } from "../validators/industrial-plan.validators";
 
@@ -80,11 +81,18 @@ async function compute(tx: PoolClient, run: Run) {
     run.client_id,
     source.today,
   );
+  const policy = await readIndustrialPolicy(tx, run.client_id);
+  const recoverySlots = simulateRecoverySlots(source,projection,preparedContractTargets,placements,
+    {routing,snapshot:master.snapshot,through});
+  const recoveryCommitments = await readRecoveryCommitments(tx,[...new Set(preparedContractTargets.map(p=>p.article_id))],run.client_id);
   const contractTargetRecovery = proposeIndustrialContractTargetRecovery({
     source,
     result: projection,
     prepared: preparedContractTargets,
-    placements,
+    placements: recoverySlots,
+    commitments: recoveryCommitments,
+    transitDays: policy.transit_calendar_days,
+    capacityPercent: run.capacity_percent,
   });
   const capacity =
     master.snapshot.activation === "OBSERVE"
@@ -122,7 +130,6 @@ async function compute(tx: PoolClient, run: Run) {
       projection.issues.push(
         "Surcharge " + row.resource + " · semaine du " + row.week + ".",
       );
-  const policy = await readIndustrialPolicy(tx, run.client_id);
   const targets = await readPicTargets(
     tx,
     run.client_id,
@@ -148,11 +155,12 @@ async function compute(tx: PoolClient, run: Run) {
         source,
         capacity,
         placements,
-        contract_target_recovery: contractTargetRecovery,
         routing,
         abc,
         targets,
         preparedContractTargets,
+        recoveryCommitments,
+        recoverySlots,
         contractTargetRecovery,
         planningRevision: master.snapshot.revision,
         policy,

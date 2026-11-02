@@ -35,8 +35,13 @@ import {
   updateCommandeSchema,
   updateLigneSchema,
   supplierPromiseExceptionsQuerySchema,
+  treatmentEstimateSchema,
 } from "../validators/commande-fournisseur.validators";
 import { getSupplierPromiseExceptions } from "../services/supplier-promise-monitor.service";
+import {
+  getSupplierTreatmentEstimates,
+  saveSupplierTreatmentEstimate,
+} from "../services/supplier-treatment-estimates.service";
 import {
   accuseReceptionSVC,
   addLigneSVC,
@@ -215,44 +220,44 @@ export const saveInternalTreatmentEstimate: RequestHandler = async (
   next,
 ) => {
   try {
-    const parsed = z
-      .object({
-        params: z.object({ id: z.string().uuid(), ligneId: z.string().uuid() }),
-        body: z
-          .object({
-            estimated_return_date: z.string().date(),
-            reason: z.string().trim().min(3).max(1000),
-            source_version: z.string().trim().min(8).max(128),
-          })
-          .strict(),
-      })
-      .parse({ params: req.params, body: req.body });
-    const actor = buildAuditContext(req).user_id;
-    const { default: pool } = await import("../../../config/database");
-    const row = (
-      await pool.query(
-        `INSERT INTO supplier_internal_treatment_estimates(supplier_id,order_id,line_id,estimated_return_date,reason,source_version,created_by)
-      SELECT c.fournisseur_id,c.id,l.id,$3::date,$4,$5,$6 FROM commande_fournisseur c JOIN commande_fournisseur_ligne l ON l.commande_id=c.id
-      WHERE c.id=$1::uuid AND l.id=$2::uuid AND c.statut IN('ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE') AND l.statut_ligne='ACTIVE'
-      ON CONFLICT(line_id) DO UPDATE SET estimated_return_date=EXCLUDED.estimated_return_date,reason=EXCLUDED.reason,source_version=EXCLUDED.source_version,created_by=EXCLUDED.created_by,updated_at=now()
-      RETURNING id::text,estimated_return_date::text,status,reason,source_version,updated_at::text`,
-        [
-          parsed.params.id,
-          parsed.params.ligneId,
-          parsed.body.estimated_return_date,
-          parsed.body.reason,
-          parsed.body.source_version,
-          actor,
-        ],
-      )
-    ).rows[0];
-    if (!row)
+    const parsed = treatmentEstimateSchema.parse({
+      params: req.params,
+      body: req.body,
+    });
+    const idempotencyKey = idempotencyKeyFrom(req);
+    if (!idempotencyKey)
       throw new HttpError(
-        404,
-        "SUPPLIER_TREATMENT_LINE_NOT_FOUND",
-        "Commande ou ligne de traitement introuvable.",
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "La clé Idempotency-Key est requise.",
       );
-    res.json({ ...row, promise_state: "ESTIMATED_NOT_CONFIRMED" });
+    const actor = buildAuditContext(req).user_id;
+    const row = await saveSupplierTreatmentEstimate({
+      orderId: parsed.params.id,
+      lineId: parsed.params.ligneId,
+      estimatedReturnDate: parsed.body.estimated_return_date,
+      reason: parsed.body.reason,
+      sourceVersion: parsed.body.source_version,
+      idempotencyKey,
+      actorId: actor,
+    });
+    if (row.idempotency_replayed) res.setHeader("Idempotency-Replayed", "true");
+    res.json(row);
+  } catch (error) {
+    next(error);
+  }
+};
+export const listInternalTreatmentEstimates: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    res.json(
+      await getSupplierTreatmentEstimates(
+        commandeIdParamSchema.parse({ params: req.params }).params.id,
+      ),
+    );
   } catch (error) {
     next(error);
   }

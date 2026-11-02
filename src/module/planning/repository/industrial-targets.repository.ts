@@ -86,7 +86,7 @@ export async function readOverdueContractTargetPreparations(
           COALESCE(proposal.article_snapshot->>'code',proposal.article_id::text) AS article,
           upper(COALESCE(proposal.article_snapshot->>'unit','')) AS unit,
           to_char(proposal.month,'YYYY-MM') AS month,proposal.target_date::text,
-          proposal.target_overdue,proposal.proposed_quantity::float8
+          (proposal.target_date<$2::date) AS target_overdue,proposal.proposed_quantity::float8
          FROM public.client_contract_replenishment_proposals proposal
          JOIN public.client_contract_replenishment_plans plan ON plan.id=proposal.plan_id
          JOIN public.client_contracts contract ON contract.id=plan.contract_id
@@ -99,4 +99,29 @@ export async function readOverdueContractTargetPreparations(
       [clientId, runToday],
     )
   ).rows;
+}
+
+/** Also inspect orders too uncertain to count as available supply. They must
+ * be reconciled before proposing a second launch against the same shortfall. */
+export type RecoveryCommitment = {
+  source: string; article: string; reference: string; order_line: string | null; contract_line: string | null;
+};
+export async function readRecoveryCommitments(tx: Pick<PoolClient, "query">, articles: string[], client: string) {
+  if (!articles.length) return [];
+  return (await tx.query<RecoveryCommitment>(`
+    SELECT 'production:'||o.id AS source, o.article_id::text AS article,o.numero AS reference,
+      o.commande_ligne_id::text AS order_line,cp.contract_line_id::text AS contract_line
+    FROM public.ordres_fabrication o
+    LEFT JOIN public.client_contract_replenishment_roots r ON r.root_of_id=o.id
+    LEFT JOIN public.client_contract_replenishment_proposals cp ON cp.id=r.proposal_id
+    WHERE o.article_id=ANY($1::uuid[]) AND (o.client_id=$2 OR o.client_id IS NULL)
+      AND o.parent_of_id IS NULL AND o.statut::text NOT IN ('TERMINE','CLOTURE','ANNULE')
+      AND o.quantite_lancee>o.quantite_rebut+COALESCE((SELECT sum(out.qty_ok) FROM public.of_output_lots out WHERE out.of_id=o.id),0)
+    UNION ALL
+    SELECT 'oa:'||l.id, l.article_id::text, p.code, null,null
+    FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur p ON p.id=l.commande_id
+    WHERE l.article_id=ANY($1::uuid[]) AND l.statut_ligne='ACTIVE' AND p.statut NOT IN ('RECUE','CLOTUREE','ANNULEE')
+      AND l.quantite>l.qty_annulee+COALESCE((SELECT sum(x.qty_received) FROM public.reception_fournisseur_lignes x
+        JOIN public.receptions_fournisseurs h ON h.id=x.reception_id WHERE h.status<>'CANCELLED' AND x.commande_fournisseur_ligne_id=l.id),0)
+    ORDER BY source`, [articles,client])).rows;
 }
