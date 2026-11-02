@@ -162,19 +162,21 @@ export async function tryLaunchSimpleFirmOrderViaNativeWorkflowTx(
       },
       audit,
     );
-    const roots = (await tx.query<{ id: number; correct_quantity: boolean }>(
-      `SELECT id::int, quantite_lancee=$3::numeric AS correct_quantity FROM public.ordres_fabrication
+    const roots = (await tx.query<{ id: number; correct_quantity: boolean; editable_draft: boolean }>(
+      `SELECT id::int, quantite_lancee=$3::numeric AS correct_quantity,
+         (statut='BROUILLON' AND preparation_rules_version IS NOT NULL AND technical_snapshot_sha256 IS NULL) AS editable_draft
+       FROM public.ordres_fabrication
        WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND parent_of_id IS NULL
          AND statut::text<>'ANNULE'`,
       [input.order_id, input.order_line_id, input.qty_to_produce],
     )).rows;
-    if (roots.length !== 1 || !roots[0].correct_quantity) {
+    if (roots.length !== 1 || !roots[0].correct_quantity || !roots[0].editable_draft) {
       await tx.query("ROLLBACK TO SAVEPOINT industrial_native_order_launch");
       await tx.query("RELEASE SAVEPOINT industrial_native_order_launch");
       return {
         status: "REVIEW",
         reason:
-          "Le lancement natif n’a pas produit exactement un OF racine vérifiable.",
+          "Vérifiez que la préparation intégrée des OF est activée et que la commande produit un seul OF brouillon modifiable à la quantité proposée.",
       };
     }
     await tx.query("RELEASE SAVEPOINT industrial_native_order_launch");
