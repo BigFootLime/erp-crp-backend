@@ -229,7 +229,7 @@ type CommandeLineArticleResolution = {
   commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
 };
 
-type AuditContext = {
+export type AuditContext = {
   user_id: number;
   user_role: string | null;
   ip: string | null;
@@ -4245,7 +4245,8 @@ async function transitionLinkedDevisArticlesToValide(
 export async function repoCreateCommandeDraftTx(
   client: PoolClient,
   input: CreateCommandeInput,
-  actorUserId: number
+  actorUserId: number,
+  origin: "cutover" | "client_demand" = "cutover",
 ): Promise<{ id: number; numero: string }> {
   const contractCall = await prepareContractCall(client, input, actorUserId, []);
   await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
@@ -4255,7 +4256,7 @@ export async function repoCreateCommandeDraftTx(
   const commandeIdInt = toInt(rawId, "commande_client.id");
   const numero = await generateCommandeCode(client, { client_code: input.code_client ?? input.client_id ?? "CMD", date: input.date_commande ? new Date(input.date_commande) : undefined });
   const orderType = input.order_type ?? "FERME";
-  const initialWorkflowStatus: CommandeWorkflowStatus = "ATTENTE_TECHNIQUE";
+  const initialWorkflowStatus: CommandeWorkflowStatus = origin === "client_demand" ? "BROUILLON" : "ATTENTE_TECHNIQUE";
   const inserted = await client.query<{ id: string }>(`
     INSERT INTO commande_client (id,numero,client_id,contact_id,destinataire_id,adresse_facturation_id,emetteur,code_client,date_commande,arc_edi,arc_date_envoi,compteur_affaire_id,type_affaire,order_type,cadre_start_date,cadre_end_date,dest_stock_magasin_id,dest_stock_emplacement_id,mode_port_id,mode_reglement_id,conditions_paiement_id,biller_id,compte_vente_id,commentaire,remise_globale,total_ht,total_ttc,devis_id,source_devis_version_id,creation_flow_version,delivery_prepayment_requirement)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING id::text AS id`, [
@@ -4268,8 +4269,8 @@ export async function repoCreateCommandeDraftTx(
   await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
   await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
   await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
-  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, "Commande de reprise creee - brouillon a verifier"]);
-  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: "technical_analysis", cutover_draft: true }, user_id: actorUserId });
+  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, origin === "client_demand" ? "Brouillon issu du programme client, à vérifier par l’ADV" : "Commande de reprise creee - brouillon a verifier"]);
+  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: origin === "client_demand" ? "order_intake" : "technical_analysis", cutover_draft: origin === "cutover" }, user_id: actorUserId });
   return { id: commandeIdInt, numero };
 }
 
@@ -5180,9 +5181,20 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
 }
 
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
-  const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
-  return withRealtimeOutboxTransaction(client, async (client) => {
+  return withRealtimeOutboxTransaction(client, (tx) =>
+    repoGenerateAffairesFromOrderTx(tx, id, body, audit),
+  );
+}
+
+/** Native order launch inside an existing transaction. */
+export async function repoGenerateAffairesFromOrderTx(
+  client: PoolClient,
+  id: string,
+  body: GenerateAffairesV3BodyDTO,
+  audit: AuditContext,
+) {
+    const commandeId = toInt(id, "commande_id");
     let recoveredInvalidPlanningState = false;
 
     const commandeRes = await client.query<{
@@ -6143,7 +6155,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         ...generationWarnings,
       ])],
     };
-  });
 }
 
 type AffaireCreationInput = {
