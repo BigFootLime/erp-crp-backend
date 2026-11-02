@@ -23,7 +23,7 @@ describe("supplier portal pilot gate", () => {
     vi.stubEnv("SUPPLIER_PORTAL_PILOT", "0");
     vi.stubEnv("SUPPLIER_PORTAL_ENABLED", "1");
     vi.stubEnv("SUPPLIER_PORTAL_MODE", "PILOT");
-    vi.stubEnv("DATABASE_URL", "postgres://postgres:postgres@db.internal/cerp");
+    vi.stubEnv("DATABASE_URL", "postgres://unreachable.invalid/cerp");
     expect(supplierPortalPilotEnabled()).toBe(false);
     vi.unstubAllEnvs();
   });
