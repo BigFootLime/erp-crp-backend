@@ -12,6 +12,7 @@ vi.mock("../config/database", () => ({
 import {
   repoCreatePortalAccount,
   repoGetPortalDocumentDownload,
+  repoListPortalDeliveries,
   repoListPortalInvoices,
   repoListPortalOrders,
 } from "../module/client-portal/repository/client-portal.repository";
@@ -63,6 +64,7 @@ describe("client portal repository tenant isolation", () => {
 
   it.each([
     ["orders", repoListPortalOrders],
+    ["deliveries", repoListPortalDeliveries],
     ["invoices", repoListPortalInvoices],
   ] as const)("always binds the authenticated client for %s", async (_label, loader) => {
     mocked.query
@@ -71,8 +73,10 @@ describe("client portal repository tenant isolation", () => {
     await loader(identity, 1, 20);
     expect(mocked.query).toHaveBeenCalledTimes(2);
     for (const [sql, values] of mocked.query.mock.calls) {
-      expect(String(sql)).toContain("WHERE client_id=$1");
-      expect(values[0]).toBe("042");
+      expect(String(sql)).toContain("WHERE projection.client_id=$1 AND EXISTS");
+      expect(String(sql)).toContain("public.client_portal_delivery_site_bindings binding");
+      expect(String(sql)).toContain("binding.account_id=$2::uuid");
+      expect(values.slice(0, 2)).toEqual([identity.clientId, identity.accountId]);
     }
   });
 

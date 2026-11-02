@@ -62,7 +62,16 @@ describe("SOL-28 generated OpenAPI contract", () => {
         expect(operation["x-cerp-rbac"]).toBeTruthy();
       } else if (route.middleware.includes("authenticateClientPortal")) {
         expect(security, `${route.method} ${route.path}`).toEqual([{ clientPortalBearerAuth: [] }]);
-        expect(operation["x-cerp-rbac"]).toEqual(["clientPortalTenantBoundary"]);
+        expect(operation["x-cerp-rbac"]).toEqual([
+          "clientPortalTenantBoundary",
+          ...(route.middleware.includes("requireClientTransactions") ? ["requireClientTransactions"] : []),
+        ]);
+      } else if (route.middleware.includes("authenticateSupplierPortal")) {
+        expect(security).toEqual([{ supplierPortalBearerAuth: [] }]);
+        expect(operation["x-cerp-rbac"]).toEqual(expect.arrayContaining(["supplierPortalTenantBoundary", "supplierPortalPilotOnly"]));
+      } else if (route.middleware.includes("authenticateSupplierSandbox")) {
+        expect(security).toEqual([{ supplierSandboxBearerAuth: [] }]);
+        expect(operation["x-cerp-rbac"]).toEqual(expect.arrayContaining(["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly"]));
       } else if (route.middleware.includes("requireTerminalDevice")) {
         const sessionRequired = route.middleware.includes("requireTerminalSession");
         expect(security, `${route.method} ${route.path}`).toEqual([

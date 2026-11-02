@@ -57,13 +57,14 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /portal/auth/forgot-password": "Demande de récupération portail non révélatrice avec limitation de débit persistée.",
   "post /portal/auth/login": "Échange d’identifiants portail contre une session courte avec limitation de débit persistée.",
   "post /portal/auth/reset-password": "Réinitialisation portail par jeton à usage unique avec limitation de débit persistée.",
-  "post /supplier-portal/auth/login": "Recette isolée explicitement opt-in uniquement, compte fournisseur actif et jeton à audience dédiée ; 404 hors de cerp_test local.",
-  "post /supplier-portal/auth/activate": "Recette isolée : invitation hachée à usage unique, expiration et consentement de politique requis.",
-  "post /supplier-portal/auth/recover": "Recette isolée : réponse 202 uniforme, sans diffusion d’e-mail ni révélation de compte.",
-  "post /supplier-portal/auth/reset": "Recette isolée : jeton de récupération haché à usage unique et expirant.",
-  "get /supplier-portal/portal-context": "Recette isolée : session fournisseur dédiée, audience distincte et compte actif requis.",
-  "get /supplier-portal/orders": "Recette isolée : session fournisseur dédiée et commandes explicitement accordées seulement.",
-  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise": "Recette isolée : proposition idempotente soumise à revue Achats, If-Match obligatoire et aucune promesse officielle modifiée.",
+  "post /supplier-sandbox/auth/login": "Connexion au bac à sable fournisseur, disponible uniquement en recette locale isolée.",
+  "post /supplier-portal/auth/login": "Pilote fournisseur désactivé par défaut. Son ouverture hors recette locale exige les preuves et habilitations configurées chez CRP.",
+  "post /supplier-portal/auth/activate": "Invitation de pilote à usage unique, expiration et consentement de politique requis.",
+  "post /supplier-portal/auth/recover": "Récupération de compte de pilote avec réponse uniforme.",
+  "post /supplier-portal/auth/reset": "Jeton de récupération haché à usage unique et expirant.",
+  "get /supplier-portal/portal-context": "Session de pilote fournisseur dédiée, audience distincte et compte actif requis.",
+  "get /supplier-portal/orders": "Session de pilote fournisseur et commandes explicitement accordées.",
+  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise": "Proposition idempotente soumise aux Achats avec contrôle de version.",
 };
 
 const CLIENT_PORTAL_AUTH_OPERATIONS = new Set([
@@ -266,26 +267,23 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
           : supplierSandboxCredentialExchange
             ? "Échange d’identifiants uniquement dans le bac à sable local opt-in ; indisponible (404) hors recette isolée"
             : supplierPortalSession
-              ? "JWT Bearer fournisseur de pilote local, audience dédiée, compte actif et session_epoch"
+              ? "JWT Bearer fournisseur de pilote, audience dédiée, compte actif et session_epoch"
               : supplierPortalCredentialExchange
-                ? "Échange de pilote local isolé, invitation ou récupération à usage unique, indisponible (404) hors recette isolée"
+                ? "Échange limité au pilote autorisé, indisponible (404) si le pilote est fermé"
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
     "x-cerp-rbac": intercompanySigned ? ["configuredPeerScope", "fixedCompanyEnvironmentScope", "transactionalInboxIdentity"]
       : terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+      : clientPortalAuthenticated ? ["clientPortalTenantBoundary", ...route.rbac]
+      : supplierSandboxSession ? ["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly", ...route.rbac]
+      : supplierPortalSession ? ["supplierPortalTenantBoundary", "supplierPortalPilotOnly", ...route.rbac]
       : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
         ? ["moduleAccessGate"]
-        : clientPortalAuthenticated
-          ? ["clientPortalTenantBoundary"]
-          : supplierSandboxSession
-            ? ["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly"]
-            : supplierPortalSession
-              ? ["supplierPortalTenantBoundary", "supplierPortalPilotOnly"]
-            : supplierSandboxCredentialExchange
-              ? ["supplierSandboxLocalOnly", "credentialExchange"]
+        : supplierSandboxCredentialExchange
+          ? ["supplierSandboxLocalOnly", "credentialExchange"]
           : [],
     "x-cerp-rate-limit-policy": route.middleware.filter((name) => /RateLimit/i.test(name)),
     "x-cerp-idempotency": idempotent ? "required" : "not-declared",
@@ -495,7 +493,7 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
         type: "http",
         scheme: "bearer",
         bearerFormat: "JWT",
-        description: "Jeton fournisseur de pilote local : audience cerp-supplier-portal-pilot, durée 15 minutes, session_epoch vérifié.",
+        description: "Jeton du pilote fournisseur, audience cerp-supplier-portal-pilot, durée 15 minutes et session_epoch vérifié.",
       },
       providerSignature: {
         type: "apiKey",
