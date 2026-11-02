@@ -192,14 +192,14 @@ export async function readIndustrialInput(
   ]);
   const rules = await readIndustrialRules(db, ids);
   const firmIds = coverage.firm.map((f) => f.id);
-  const prices = (
-    await db.query<{ id: string; price: string | null }>(
-      `SELECT l.id::text,CASE WHEN c.currency='EUR' THEN l.prix_unitaire_ht::text END AS price
+  const firmLines = (
+    await db.query<{ id: string; price: string | null; updated_at: string }>(
+      `SELECT l.id::text,c.updated_at::text,CASE WHEN c.currency='EUR' THEN l.prix_unitaire_ht::text END AS price
  FROM public.commande_ligne l JOIN public.commande_client c ON c.id=l.commande_id WHERE l.id=ANY($1::bigint[])`,
       [firmIds],
     )
   ).rows;
-  const byLine = new Map(prices.map((p) => [p.id, p.price]));
+  const byLine = new Map(firmLines.map((line) => [line.id, line]));
   const demand: IndustrialDemand[] = coverage.demands.map((d) => ({
     id: d.id,
     article: d.article_id,
@@ -210,7 +210,8 @@ export async function readIndustrialInput(
     kind: d.kind,
     quantity: d.quantity,
     due: d.due_date,
-    priceEur: byLine.get(d.order_line_id ?? "") ?? null,
+    priceEur: byLine.get(d.order_line_id ?? "")?.price ?? null,
+    orderUpdatedAt: byLine.get(d.order_line_id ?? "")?.updated_at,
   }));
   const internal = (
     await db.query<{

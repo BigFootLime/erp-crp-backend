@@ -344,6 +344,8 @@ export function calculateIndustrialPlan(
         unit: article.unit,
         kind: article.kind,
         quantity: numeric(launch),
+        ...(make && n.orderLine ? { order_line_id: n.orderLine } : {}),
+        ...(make && n.orderUpdatedAt ? { order_updated_at: n.orderUpdatedAt } : {}),
         ...(make ? {
           required_good_quantity: numeric(missing),
           expected_good_quantity: numeric(good),

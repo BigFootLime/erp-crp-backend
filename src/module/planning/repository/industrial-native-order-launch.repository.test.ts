@@ -33,8 +33,8 @@ describe("industrial native firm order launch", () => {
     query.mockReset();
     mocks.launch.mockReset();
     query.mockImplementation((sql: string) => {
-      if (sql.includes("count(*)::int AS count"))
-        return Promise.resolve({ rows: [{ count: 1 }] });
+      if (sql.includes("AS correct_quantity FROM public.ordres_fabrication"))
+        return Promise.resolve({ rows: [{ id: 41, correct_quantity: true }] });
       if (sql.includes("SELECT c.updated_at"))
         return Promise.resolve({
           rows: [

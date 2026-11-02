@@ -20,6 +20,7 @@ export type IndustrialDemand = {
   unit: string;
   contractLine: string | null;
   orderLine: string | null;
+  orderUpdatedAt?: string;
   allocation: string | null;
   kind: "FIRM" | "FORECAST" | "INTERNAL";
   quantity: string;
@@ -83,6 +84,8 @@ export type IndustrialProposal = {
   unit: string;
   kind: IndustrialKind;
   quantity: number;
+  order_line_id?: string;
+  order_updated_at?: string;
   /** Sizing evidence on new MAKE proposals. Older runs may not contain it. */
   required_good_quantity?: number;
   expected_good_quantity?: number;

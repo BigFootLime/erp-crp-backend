@@ -219,7 +219,7 @@ export async function prepareFirmDraft(
       lignes: lines,
       client_contract_call: contractCall,
     };
-    const created = await repoCreateCommandeDraftTx(tx, command, actorId);
+    const created = await repoCreateCommandeDraftTx(tx, command, actorId, "client_demand");
     const draft = (
       await tx.query<any>(
         `INSERT INTO public.demand_pilot_firm_drafts(intent_key,request_hash,client_id,external_site,external_order_key,commande_id,created_by_user_id) VALUES($1::uuid,$2,$3,$4,$5,$6::bigint,$7) RETURNING id::text`,

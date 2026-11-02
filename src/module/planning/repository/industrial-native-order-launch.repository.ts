@@ -19,7 +19,7 @@ export type NativeFirmOrderLaunchResult =
   | { status: "REVIEW"; reason: string }
   | {
       status: "LAUNCHED";
-      result: Awaited<ReturnType<typeof repoGenerateAffairesFromOrderTx>>;
+      root_of_id: number;
     };
 
 /**
@@ -76,7 +76,7 @@ export async function tryLaunchSimpleFirmOrderViaNativeWorkflowTx(
     }>(
       `SELECT c.updated_at::text,l.delai_client::text AS due_date,c.order_type::text,c.creation_flow_version,
       (SELECT count(*)::int FROM public.commande_ligne all_lines WHERE all_lines.commande_id=c.id) AS line_count,
-      (SELECT count(DISTINCT COALESCE(part.due_date,l.delai_client))::int
+      (SELECT count(*)::int
          FROM public.commande_ligne_affaire_allocation allocation
          LEFT JOIN public.delivery_promise_roots root ON root.allocation_id=allocation.id
          LEFT JOIN public.delivery_promise_parts part ON part.root_id=root.id AND part.retired_at IS NULL
@@ -145,7 +145,7 @@ export async function tryLaunchSimpleFirmOrderViaNativeWorkflowTx(
 
   await tx.query("SAVEPOINT industrial_native_order_launch");
   try {
-    const result = await repoGenerateAffairesFromOrderTx(
+    await repoGenerateAffairesFromOrderTx(
       tx,
       String(input.order_id),
       {
@@ -162,17 +162,15 @@ export async function tryLaunchSimpleFirmOrderViaNativeWorkflowTx(
       },
       audit,
     );
-    const created =
-      (
-        await tx.query<{ count: number }>(
-          `SELECT count(*)::int AS count FROM public.ordres_fabrication
-        WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND parent_of_id IS NULL
-          AND statut::text<>'ANNULE' AND quantite_lancee=$3::numeric`,
-          [input.order_id, input.order_line_id, input.qty_to_produce],
-        )
-      ).rows[0]?.count ?? 0;
-    if (created !== 1) {
+    const roots = (await tx.query<{ id: number; correct_quantity: boolean }>(
+      `SELECT id::int, quantite_lancee=$3::numeric AS correct_quantity FROM public.ordres_fabrication
+       WHERE commande_id=$1::bigint AND commande_ligne_id=$2::bigint AND parent_of_id IS NULL
+         AND statut::text<>'ANNULE'`,
+      [input.order_id, input.order_line_id, input.qty_to_produce],
+    )).rows;
+    if (roots.length !== 1 || !roots[0].correct_quantity) {
       await tx.query("ROLLBACK TO SAVEPOINT industrial_native_order_launch");
+      await tx.query("RELEASE SAVEPOINT industrial_native_order_launch");
       return {
         status: "REVIEW",
         reason:
@@ -180,9 +178,10 @@ export async function tryLaunchSimpleFirmOrderViaNativeWorkflowTx(
       };
     }
     await tx.query("RELEASE SAVEPOINT industrial_native_order_launch");
-    return { status: "LAUNCHED", result };
+    return { status: "LAUNCHED", root_of_id: roots[0].id };
   } catch (error) {
     await tx.query("ROLLBACK TO SAVEPOINT industrial_native_order_launch");
+    await tx.query("RELEASE SAVEPOINT industrial_native_order_launch");
     if (
       error instanceof HttpError &&
       [400, 403, 409, 422].includes(error.status)

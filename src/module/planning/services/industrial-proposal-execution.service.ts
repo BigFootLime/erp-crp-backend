@@ -22,6 +22,7 @@ import type {
 } from "../types/industrial-plan.types";
 import type { IndustrialExecutionCommand } from "../validators/industrial-execution.validators";
 import type { AuditContext } from "../repository/planning.repository";
+import { tryLaunchSimpleFirmOrderViaNativeWorkflowTx } from "../repository/industrial-native-order-launch.repository";
 import { findOpenIndustrialOrder } from "../repository/industrial-open-executions.repository";
 
 type Run = {
@@ -109,6 +110,17 @@ async function article(tx: PoolClient, id: string) {
     )
   ).rows[0];
 }
+/** Link a direct need to its actual order. Component proposals carry the parent
+ * origin for explanation but have no customer line of their own. */
+async function directMakeSource(tx: PoolClient, run: Run, p: IndustrialProposal) {
+  if (p.kind !== "MAKE" || p.contract_line_id || !p.order_line_id) return null;
+  return (await tx.query<{ order_id: number; line_id: number }>(
+    `SELECT c.id::int AS order_id, l.id::int AS line_id
+     FROM public.commande_ligne l JOIN public.commande_client c ON c.id=l.commande_id
+     WHERE l.id=$1::bigint AND l.article_id=$2::uuid AND c.client_id=$3 FOR SHARE OF c,l`,
+    [p.order_line_id, p.article_id, run.client_id])).rows[0] ?? null;
+}
+
 async function persist(
   tx: PoolClient,
   input: {
@@ -332,7 +344,10 @@ async function executeIndustrialProposalsOnce(
           "PROPOSAL_ALREADY_DECIDED",
           "Cette proposition a déjà été traitée. Actualisez le calcul.",
         );
-      const blocked = unsafe(proposal, run.result, index);
+      const source = await directMakeSource(tx, run, proposal);
+      const blocked = unsafe(proposal, run.result, index) ??
+        (proposal.kind === "MAKE" && !proposal.contract_line_id && proposal.order_line_id && !source
+          ? "Ligne de commande ou affectation hors périmètre. Vérifiez la demande avant le lancement." : null);
       const key = `${command.request_key}:${index}`;
       const openOrder =
         !blocked && proposal.kind !== "SUBCONTRACT"
@@ -432,24 +447,44 @@ async function executeIndustrialProposalsOnce(
           outcomes.push({ proposal_index: index, status: "REVIEW", reason });
           continue;
         }
-        const generated = await createRecursiveOrdresFabrication(tx, {
-          source_type: "MANUAL",
-          commande_id: null,
-          commande_numero: null,
-          commande_ligne_id: null,
-          livraison_affaire_id: null,
-          client_id: run.client_id,
-          root_article_id: proposal.article_id,
-          root_piece_technique_id: a.piece,
-          root_pinned_version_id: a.version,
-          qty_to_produce: proposal.quantity,
-          user_id: audit.user_id,
-          force_preparation: true,
-          idempotency_key: randomUUID(),
-          request_hash: createHash("sha256")
-            .update(`industrial:${runId}:${index}`)
-            .digest("hex"),
-        });
+        let rootId: number;
+        let batchId: string | null = null;
+        if (source) {
+          const launch = await tryLaunchSimpleFirmOrderViaNativeWorkflowTx(tx, {
+            order_id: source.order_id, order_line_id: source.line_id,
+            qty_to_produce: proposal.quantity, firm_source_ids: proposal.source_ids,
+            expected_updated_at: proposal.order_updated_at,
+          }, { ...audit, user_role: audit.role ?? null });
+          if (launch.status === "REVIEW") {
+            await persist(tx, { run, index, action: "REVIEW", status: "REVIEW", key, hash, audit, reason: launch.reason });
+            outcomes.push({ proposal_index: index, status: "REVIEW", reason: launch.reason });
+            continue;
+          }
+          rootId = launch.root_of_id;
+        } else {
+          const generated = await createRecursiveOrdresFabrication(tx, {
+            source_type: "MANUAL",
+            commande_id: null,
+            commande_numero: null,
+            commande_ligne_id: null,
+            livraison_affaire_id: null,
+            client_id: run.client_id,
+            root_article_id: proposal.article_id,
+            root_piece_technique_id: a.piece,
+            root_pinned_version_id: a.version,
+            qty_to_produce: proposal.quantity,
+            user_id: audit.user_id,
+            force_preparation: true,
+            idempotency_key: randomUUID(),
+            request_hash: createHash("sha256")
+              .update(`industrial:${runId}:${index}`)
+              .digest("hex"),
+          });
+          rootId = generated.root_of_id;
+          batchId = generated.batch_id;
+        }
+        await tx.query("UPDATE public.ordres_fabrication SET date_fin_prevue=$2::date WHERE id=$1",
+          [rootId, proposal.due]);
         await persist(tx, {
           run,
           index,
@@ -461,10 +496,10 @@ async function executeIndustrialProposalsOnce(
           reason:
             "OF créé depuis une proposition PDP validée et capacité finie vérifiée.",
           targetType: "OF",
-          targetId: String(generated.root_of_id),
+          targetId: String(rootId),
           result: {
-            root_of_id: generated.root_of_id,
-            batch_id: generated.batch_id,
+            root_of_id: rootId,
+            batch_id: batchId,
             industrial_proposal: industrialProposalSnapshot(proposal),
           },
         });
@@ -472,7 +507,7 @@ async function executeIndustrialProposalsOnce(
           proposal_index: index,
           status: "EXECUTED",
           target_type: "OF",
-          target_id: generated.root_of_id,
+          target_id: rootId,
         });
         continue;
       }
