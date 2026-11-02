@@ -1,3 +1,4 @@
+import { clientTransactionsEnabled } from "../domain/transactional-rollout";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 
@@ -289,7 +290,7 @@ function sourceMeta(freshnessAt: string | null) {
 export async function getPortalProfile(identity: ClientPortalIdentity) {
   const profile = await repo.repoGetPortalProfile(identity);
   if (!profile) throw new HttpError(404, "CLIENT_PORTAL_ACCOUNT_NOT_FOUND", "Compte portail introuvable.");
-  return { data: profile, meta: sourceMeta(new Date().toISOString()) };
+  return { data: { ...profile, transactional_enabled: clientTransactionsEnabled() }, meta: sourceMeta(new Date().toISOString()) };
 }
 
 async function listPortalProjection(
