@@ -162,7 +162,7 @@ const exigenceQualiteSchema = z
   })
   .strict();
 
-export const ligneInputSchema = z
+const ligneInputObjectSchema = z
   .object({
     type: z.enum(LIGNE_TYPES).default("ARTICLE"),
     article_id: uuid.nullish(),
@@ -211,8 +211,9 @@ export const ligneInputSchema = z
       .max(20)
       .default([]),
   })
-  .strict()
-  .superRefine((val, ctx) => {
+  .strict();
+
+export const ligneInputSchema = ligneInputObjectSchema.superRefine((val, ctx) => {
     if (
       val.type !== "LIBRE_CONTROLEE" &&
       val.type !== "PRESTATION" &&
@@ -234,7 +235,26 @@ export const ligneInputSchema = z
           "Conversion d'unité incomplète : fournir l'unité de stock ET le coefficient.",
       });
     }
-  });
+});
+
+// A PATCH must preserve omission. `partial()` alone retains Zod defaults from
+// the creation schema, which would silently rewrite prices, quantities' type
+// or requirements that the caller did not send.
+const lignePatchSchema = ligneInputObjectSchema.partial().extend({
+  type: z.enum(LIGNE_TYPES).optional(),
+  prix_unitaire_ht: money.nullable().optional(),
+  remise_pct: pct.optional(),
+  tva_pct: pct.optional(),
+  frais_ht: money.optional(),
+  exigences_qualite: z.array(exigenceQualiteSchema).max(20).optional(),
+  documents_attendus: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+  besoins: z.array(z.object({
+    besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL", "MANUEL"]),
+    besoin_ref: z.string().trim().min(1).max(120),
+    of_id: z.number().int().positive().nullish(),
+    quantite_couverte: qty,
+  }).strict()).max(20).optional(),
+}).strict();
 
 /* --------------------------------- création -------------------------------- */
 
@@ -308,7 +328,7 @@ export const updateLigneSchema = z.object({
   body: z
     .object({
       expected_updated_at: revisionToken.optional(),
-      patch: ligneInputSchema.partial().strict(),
+      patch: lignePatchSchema,
     })
     .strict(),
 });
