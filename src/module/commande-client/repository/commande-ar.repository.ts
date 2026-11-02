@@ -12,6 +12,7 @@ import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
 import { assertOrderArReady, readOrderArCoverage } from "./commande-ar-readiness.repository";
+import { reconcileCommandeProductionMilestonesInTransaction } from "./commande-production-milestone.repository";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import {
@@ -1306,6 +1307,9 @@ async function repoFinalizeCommandeArSendLegacy(params: {
       },
       { deduplicationKey: `commande-ar:${params.ar_id}:sent` }
     );
+    if (!stockOnlyFlow) {
+      await reconcileCommandeProductionMilestonesInTransaction({ client: tx, actorUserId: params.sent_by, orderIds: [params.commande_id] });
+    }
 
     return {
       result: {
@@ -1679,6 +1683,9 @@ export async function repoFinalizeCommandeArSend(params: {
       at: sentAt,
       invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
     }, { deduplicationKey: `commande-ar:${params.ar_id}:sent` });
+    if (!stockOnlyFlow) {
+      await reconcileCommandeProductionMilestonesInTransaction({ client: tx, actorUserId: params.sent_by, orderIds: [params.commande_id] });
+    }
     return {
       result: {
         ar_id: draft.ar_id,

@@ -180,9 +180,10 @@ export async function assertCommandeQualityReleased(tx: Queryable, commandeId: n
   const result = await tx.query<{ total: number; unreleased: number; open_nc: number }>(
     `
       WITH active_of AS (
-        SELECT id, GREATEST(COALESCE(quantite_bonne, 0), 0)::numeric AS qty_required
-        FROM public.ordres_fabrication
-        WHERE commande_id = $1 AND statut::text <> 'ANNULE'
+        SELECT o.id, GREATEST(COALESCE(o.quantite_bonne, 0), 0)::numeric AS qty_required
+        FROM public.ordres_fabrication o
+        LEFT JOIN public.commande_ligne l ON l.id = o.commande_ligne_id
+        WHERE (o.commande_id = $1 OR l.commande_id = $1) AND o.statut::text <> 'ANNULE'
       ), release_evidence AS (
         SELECT decision.object_id AS of_id,
                decision.qty,

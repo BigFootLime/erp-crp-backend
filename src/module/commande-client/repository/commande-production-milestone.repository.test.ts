@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import type { PoolClient } from "pg";
 
 const mocks = vi.hoisted(() => ({ apply: vi.fn(), quality: vi.fn() }));
-vi.mock("./commande-client.repository", () => ({ repoApplyCommandeWorkflowMilestone: mocks.apply }));
+vi.mock("./commande-client.repository", () => ({ repoApplyCommandeWorkflowMilestone: mocks.apply, repoEnsureCommandeWorkflowCheckpoints: vi.fn() }));
 vi.mock("./commande-quality-milestone.repository", () => ({ reconcileCommandeQualityMilestoneInTransaction: mocks.quality }));
 
 import { reconcileCommandeProductionMilestonesInTransaction } from "./commande-production-milestone.repository";
@@ -10,8 +11,9 @@ function tx(ofs: string[], checkpoints: Array<{ checkpoint_code: string; status:
   return { query: vi.fn(async (sql: string) => {
     if (sql.includes("FROM public.ordres_fabrication o")) return { rows: ofs.map(statut => ({ statut })) };
     if (sql.includes("workflow_checkpoint")) return { rows: checkpoints };
+    if (sql.includes("commande_historique")) return { rows: [{ nouveau_statut: "AR_ENVOYE" }] };
     return { rows: [] };
-  }) } as any;
+  }) } as unknown as Pick<PoolClient, "query">;
 }
 
 describe("production milestone reconciliation", () => {
@@ -31,6 +33,6 @@ describe("production milestone reconciliation", () => {
     const client = tx(["TERMINE"], [{ checkpoint_code: "production_launch", status: "blocked" }, { checkpoint_code: "production_completion", status: "blocked" }]);
     await reconcileCommandeProductionMilestonesInTransaction({ client, actorUserId: 7, orderIds: [12] });
     expect(mocks.apply).not.toHaveBeenCalled();
-    expect(mocks.quality).toHaveBeenCalledWith(client, 12, 7);
+    expect(mocks.quality).not.toHaveBeenCalled();
   });
 });
