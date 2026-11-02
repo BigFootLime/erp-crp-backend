@@ -1,5 +1,10 @@
 # Changelog
 
+## En recette — commandes ouvertes et dépôts CARCO
+
+- Une ouverture sur contrat actif conserve le numéro du cadre, la version du contrat et l’auteur. Les ouvertures simultanées retrouvent le même dossier. Les appels fermes et les OF suivent leurs circuits existants.
+- Les dépôts CARCO internes et portail partagent le même contrôle des versions. L’ADV peut confirmer le contrat des lignes ouvertes sans référence et qualifier la nature d’une échéance identifiée. Le portail vérifie le client, le compte et le site avant chaque dépôt.
+
 ## En recette — préparation de l’ordre de fabrication (#1498)
 
 - La validation technique exige le rôle Qualité. Le serveur vérifie le visa et conserve l’auteur dans l’OF.

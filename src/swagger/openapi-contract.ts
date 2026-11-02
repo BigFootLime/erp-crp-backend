@@ -74,6 +74,8 @@ const CLIENT_PORTAL_AUTH_OPERATIONS = new Set([
   "post /client-portal/demand/imports",
   "post /client-portal/demand/manual",
   "post /client-portal/demand/preview",
+  "post /client-portal/demand/carco",
+  "get /client-portal/demand/carco",
   "get /portal/deliveries",
   "get /portal/commercial-overview",
   "post /portal/deliveries/{deliveryId}/receipt",
