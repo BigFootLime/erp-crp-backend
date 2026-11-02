@@ -72,12 +72,14 @@ import {
 import {
   assertCommandeFullyInvoiced,
   assertCommandeFullyShipped,
-  assertCommandeHasActiveOf,
   assertCommandeHasPreparedDelivery,
   assertCommandeProductionCompleted,
   assertCommandeProductionStarted,
   assertCommandeQualityReleased,
 } from "./commande-fulfillment-guards.repository";
+import {
+  assertOrderManufacturingPlanned,
+} from "./commande-ar-readiness.repository";
 import {
   allocateCompatibleStock,
 } from "../domain/stock-scope-allocation";
@@ -2180,7 +2182,7 @@ function buildWorkflowView(
     checkpoints,
     can_act: canAct,
     action_forbidden_reason: actionForbiddenReason,
-    available_actions: action && activeCheckpoint?.status === "active" && canAct
+    available_actions: action && action.key !== "prepare_ar" && action.key !== "mark_ar_sent" && activeCheckpoint?.status === "active" && canAct
       ? [{
           key: action.key,
           label: action.label,
@@ -2381,11 +2383,12 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       throw new HttpError(403, "WORKFLOW_CHECKPOINT_FORBIDDEN", "This checkpoint is assigned to another role or user.");
     }
 
-    if (body.metadata && Object.prototype.hasOwnProperty.call(body.metadata, "previous_status_before_block")) {
+    if (body.metadata && ["previous_status_before_block", "stock_only_flow", "flow_version", "commercial_validation"]
+      .some(key => Object.prototype.hasOwnProperty.call(body.metadata, key))) {
       throw new HttpError(
         400,
         "RESERVED_CHECKPOINT_METADATA",
-        "previous_status_before_block is managed by the workflow engine."
+        "Les preuves de progression et de couverture sont gérées par CERP."
       );
     }
 
@@ -2595,6 +2598,13 @@ export async function repoRunCommandeWorkflowAction(
       "Utilisez Vérifier le stock et lancer : cette étape doit réserver OLD/NEW, préparer le BL ou créer les OF du manquant."
     );
   }
+  if (action.key === "prepare_ar") {
+    throw new HttpError(
+      409,
+      "COMMAND_AR_DOCUMENT_REQUIRED",
+      "Générez l’AR depuis le dossier de commande. Sa préparation et son planning seront vérifiés avant édition.",
+    );
+  }
   if (action.key === "mark_ar_sent") {
     throw new HttpError(
       409,
@@ -2655,7 +2665,7 @@ export async function repoRunCommandeWorkflowAction(
     // Expensive/domain assertions are intentionally after the locked replay
     // check: the second identical request must be a read-only success even if
     // downstream state has already moved on.
-    if (action.key === "validate_planning") await assertCommandeHasActiveOf(client, commandeId);
+    if (action.key === "validate_planning") await assertOrderManufacturingPlanned(client, commandeId);
     if (action.key === "start_production") await assertCommandeProductionStarted(client, commandeId);
     if (action.key === "complete_production") await assertCommandeProductionCompleted(client, commandeId);
     if (action.key === "validate_quality") await assertCommandeQualityReleased(client, commandeId);

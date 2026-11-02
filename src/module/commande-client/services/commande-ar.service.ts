@@ -633,6 +633,7 @@ export async function svcListCommandeArVersions(params: {
 }): Promise<CommandeArVersionsResult> {
   await repoAuthorizeCommandeArGeneration({
     tx: pool,
+    stage: "history",
     commande_id: params.commande_id,
     user_id: params.user_id,
     user_role: params.user_role,

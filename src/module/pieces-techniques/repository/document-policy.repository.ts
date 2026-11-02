@@ -22,6 +22,94 @@ import { CANONICAL_PIECE_PLANS_SQL } from "./canonical-piece-plans.sql";
 
 type Queryer = Pick<PoolClient, "query">;
 
+/**
+ * Projection de consultation CAO d'une PT. Le modèle reste un document GED
+ * versionné : cette requête ne révèle jamais sa clé de coffre et ne choisit
+ * volontairement pas un modèle parmi plusieurs candidats.
+ */
+export type PieceTechniqueThreeDModels = {
+  piece_technique_version_id: string | null;
+  indice: string | null;
+  models: Array<{
+    document_id: string;
+    version_id: string;
+    original_name: string;
+    mime_type: string;
+    sha256: string;
+    size_bytes: number;
+  }>;
+};
+
+export async function repoListCurrentPieceTechniqueThreeDModels(
+  pieceTechniqueId: string,
+  tx: Queryer = db
+): Promise<PieceTechniqueThreeDModels | null> {
+  const piece = await tx.query<{ id: string }>(
+    `SELECT id::text AS id
+       FROM public.pieces_techniques
+      WHERE id = $1::uuid AND deleted_at IS NULL`,
+    [pieceTechniqueId]
+  );
+  if (!piece.rows[0]) return null;
+
+  const version = await tx.query<{ id: string; indice: string | null }>(
+    `SELECT id::text AS id, indice
+       FROM public.piece_technique_versions
+      WHERE piece_technique_id = $1::uuid
+      ORDER BY is_current DESC,
+               CASE statut WHEN 'APPLICABLE' THEN 0 WHEN 'EN_VALIDATION' THEN 1 WHEN 'BROUILLON' THEN 2 ELSE 3 END,
+               created_at DESC
+      LIMIT 1`,
+    [pieceTechniqueId]
+  );
+  const current = version.rows[0];
+  if (!current) {
+    return { piece_technique_version_id: null, indice: null, models: [] };
+  }
+
+  const models = await tx.query<{
+    document_id: string;
+    version_id: string;
+    original_name: string;
+    mime_type: string;
+    sha256: string;
+    size_bytes: string;
+  }>(
+    `SELECT DISTINCT
+            d.id::text AS document_id,
+            v.id::text AS version_id,
+            v.original_name,
+            b.mime_type,
+            b.sha256,
+            b.size_bytes::text AS size_bytes
+       FROM public.ged_documents d
+       JOIN public.ged_document_versions v
+         ON v.id = d.current_version_id AND v.status = 'APPLICABLE'
+       JOIN public.ged_blobs b ON b.id = v.blob_id
+       JOIN public.ged_upload_sessions s
+         ON s.id = v.upload_session_id
+        AND s.scan_status = 'clean'
+        AND s.quarantine_status = 'released'
+       JOIN public.ged_document_links l ON l.document_id = d.id
+      WHERE d.archived_at IS NULL
+        AND d.class_key = 'MODELE_3D'
+        AND l.entity_type = 'PIECE_TECHNIQUE_VERSION'
+        AND l.entity_id = $1::uuid::text
+        AND l.link_role = 'MODELE_3D'
+      -- DISTINCT impose que chaque expression de tri soit aussi projetée.
+      -- document_id est la projection texte de d.id : ne pas trier sur le
+      -- UUID brut, PostgreSQL rejetterait la requête (42P10).
+      ORDER BY original_name ASC, document_id ASC`,
+    [current.id]
+  );
+
+  return {
+    piece_technique_version_id: current.id,
+    indice: current.indice,
+    models: models.rows.map((model) => ({ ...model, size_bytes: Number(model.size_bytes) })),
+  };
+}
+
 async function insertAudit(
   tx: Queryer,
   audit: AuditContext,

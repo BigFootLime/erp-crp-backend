@@ -1,5 +1,34 @@
 # Changelog
 
+## Préparé — Révisions du dossier pendant la préparation OF (#1493)
+
+- Donne priorité au dossier sélectionné pour un OF encore en préparation, même si une ancienne version demeure dans la référence physique. Gamme, nomenclature, achats et besoins matière utilisent cette sélection.
+- Suit les nouvelles révisions mineures compatibles du même indice, uniquement pour les OF brouillons non validés et non figés en suivi automatique. Les choix manuels, nouveaux indices et évolutions majeures sont exclus.
+- Expose le mode automatique ou manuel dans le dossier OF. Le choix explicite reste manuel, avec possibilité de réactiver le suivi des prochaines révisions.
+- Invalide les évaluations concernées et trace les OF suivis dans l’audit de création. Préserve les choix manuels des sous-OF et leur synchronisation explicite. Aucune migration ni reprise des données existantes.
+
+## Correctif — Même fichier pour les deux plans (#1491)
+
+- Autorise un fichier déjà présent dans la GED lorsqu’il est déposé comme plan client ou plan de fabrication d’une pièce technique ou de son indice.
+- Conserve la détection des doublons des autres documents, les contrôles d’accès et antivirus, et la déduplication physique du stockage.
+- Applique la même exception à la libération de quarantaine ; aucune migration de base.
+
+## Correctif — Consignes de découpe PT / OF (#1487)
+
+- Le rendement de la nomenclature distingue les pièces par brut et les bruts par pièce. Le besoin de l’OF arrondit les bruts avant de calculer le linéaire.
+- L’aperçu et le nouveau gabarit PDF OF 1.8 présentent la longueur de coupe, le rendement, les bruts et le linéaire pour chaque matière. Les réimpressions anciennes conservent leur gabarit.
+- Réutilise les colonnes et les règles JSON existantes ; aucune migration ni réécriture de stock.
+
+## Correctif — Code client des articles (#1485)
+
+- La fiche article, la liste, son tri/filtre/recherche et les inventaires lisent le code métier du client lié à la pièce technique. Un identifiant technique ancien ne remplace plus le code client affiché.
+- Le contrôle du client lors de la reprise PF utilise la même résolution. Les références historiques distinctes restent disponibles ; aucune donnée ni référence de pièce n'est réécrite.
+
+## Préparé — Unité de gestion matière automatique (frontend #1802)
+
+- Les transactions de création et de modification des matières imposent `mm` pour une barre à découper, `u` sinon, indépendamment de l’unité envoyée par le client. Le journal d’audit conserve l’unité appliquée.
+- Les lectures stock déduisent l’unité d’une matière historique dont le champ est vide. Les unités déjà renseignées restent intactes à la lecture, sans migration ni conversion des quantités.
+
 ## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 
 - La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.

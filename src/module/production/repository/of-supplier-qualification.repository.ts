@@ -1,4 +1,5 @@
 import pool from '../../../config/database';
+import { effectivePreparationVersionSql } from './effective-preparation-version.sql';
 import { HttpError } from '../../../utils/httpError';
 import { readSupplierPurchaseQualificationTx } from '../../commande-fournisseur/repository/purchase-qualification.repository';
 import { readOfPurchaseClientContextsTx } from '../../commande-fournisseur/repository/purchase-client-context.repository';
@@ -8,8 +9,7 @@ export const OF_PURCHASE_SCOPE_SQL = `WITH dossier AS (
   SELECT COALESCE(o.technical_snapshot->'preparation_evidence'->'purchases',
     (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p
      WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=
-       COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-         NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid)), '[]') AS purchases
+       ${effectivePreparationVersionSql("o")}), '[]') AS purchases
   FROM public.ordres_fabrication o WHERE o.id=$1
 ) SELECT $2::uuid::text AS id,1 AS position,
   CASE WHEN p->>'type_achat' IN ('SOUS_TRAITANCE','TRAITEMENT') THEN 'SOUS_TRAITANCE'

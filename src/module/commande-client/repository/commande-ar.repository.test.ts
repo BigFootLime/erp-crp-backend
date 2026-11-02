@@ -83,6 +83,7 @@ describe("commande AR durable send claim", () => {
   it("commits SENDING before returning control to the email provider", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if (q.includes("WITH lines AS")) return { rows: [{ has_of: false, complete: true }] };
       if (q.includes("SELECT client_id FROM public.commande_client")) return { rows: [{ client_id: null }] };
       if (q.includes("FROM public.commande_ar_log ar")) return { rows: [draftRow] };
       if (q.includes("checkpoint_status")) {
@@ -103,6 +104,7 @@ describe("commande AR durable send claim", () => {
   it("does not reclaim a live SENDING attempt", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
+      if (q.includes("WITH lines AS")) return { rows: [{ has_of: false, complete: true }] };
       if (q.includes("SELECT client_id FROM public.commande_client")) return { rows: [{ client_id: null }] };
       if (q.includes("FROM public.commande_ar_log ar")) return { rows: [{ ...draftRow, status: "SENDING" }] };
       if (q.includes("checkpoint_status")) {
@@ -173,7 +175,11 @@ describe("commande AR generation authorization", () => {
   });
 
   it("allows the explicitly assigned user", async () => {
-    const tx = { query: vi.fn().mockResolvedValue({ rows: [accessRow(7)] }) };
+    const tx = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [accessRow(7)] })
+        .mockResolvedValueOnce({ rows: [{ has_of: false, complete: true }] }),
+    };
     await expect(repoAuthorizeCommandeArGeneration({
       tx: tx as never,
       commande_id: 123,

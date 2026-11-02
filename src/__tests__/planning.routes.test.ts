@@ -533,7 +533,10 @@ describe("/api/v1/planning", () => {
     expect(mocks.clientQuery).not.toHaveBeenCalled();
   });
 
-  it("POST /api/v1/planning/events promotes commande to PLANIFIEE and creates notifications", async () => {
+  it.each([
+    ["when every active operation is planned", 0, true],
+    ["when another active operation is still unplanned", 1, false],
+  ])("POST /api/v1/planning/events advances the order only %s", async (_caseName, incomplete, advances) => {
     mocks.poolQuery.mockResolvedValueOnce({
       rows: [
         {
@@ -657,6 +660,13 @@ describe("/api/v1/planning", () => {
       if (q.includes("UPDATE public.of_operations")) {
         return { rows: [] };
       }
+      // The planning promotion now recomputes every active OF operation under
+      // the order lock. This fixture represents the one-operation, fully
+      // planned case; a mere first event must not be treated as enough when
+      // the readiness query reports an incomplete sibling operation.
+      if (q.includes("WITH manufacturing AS") && q.includes("AS incomplete")) {
+        return { rows: [{ orders: 1, incomplete }] };
+      }
       if (q.includes("FROM public.ordres_fabrication o") && q.includes("active_events")) {
         return {
           rows: [
@@ -742,8 +752,8 @@ describe("/api/v1/planning", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(true);
-    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toHaveLength(1);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(advances);
+    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toHaveLength(advances ? 1 : 0);
   });
 
   it("POST /api/v1/planning/events rejects a blocked machine", async () => {

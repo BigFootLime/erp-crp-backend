@@ -19,6 +19,7 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { repoApplyCommandeWorkflowMilestone } from "../../commande-client/repository/commande-client.repository";
 import { canActOnCommandeWorkflowCheckpoint } from "../../commande-client/domain/commande-client-rbac";
+import { assertOrderManufacturingPlanned } from "../../commande-client/repository/commande-ar-readiness.repository";
 import type { AppNotification } from "../../notifications/types/notifications.types";
 import { roleCanForcePlanningOverlap } from "../domain/planning-rbac";
 import type {
@@ -1030,6 +1031,18 @@ async function maybePromoteOfAndCommandeAfterPlanning(params: {
   if (!commandeId || row.active_events <= 0) return [];
   const internalOrder = String(row.order_type ?? "").toUpperCase() === "INTERNE";
 
+  // Scheduling an operation is durable on its own. Do not roll it back or
+  // promote the order when another active operation is still missing a valid
+  // slot; a later planning event will retry the promotion from fresh evidence.
+  try {
+    await assertOrderManufacturingPlanned(params.tx, commandeId);
+  } catch (error) {
+    if (error instanceof HttpError && ["PLANNING_REQUIRES_OF", "PLANNING_REQUIRES_PLANNED_OF"].includes(error.code)) {
+      return [];
+    }
+    throw error;
+  }
+
   await repoAssertPlanningCheckpointAccess({
     tx: params.tx,
     commande_id: commandeId,
@@ -1270,6 +1283,7 @@ export async function repoValidatePlanningForAr(params: {
         user_role: params.audit.role,
       });
       try {
+        await assertOrderManufacturingPlanned(client, commandeId);
         transition = await repoApplyCommandeWorkflowMilestone({
           tx: client,
           commande_id: commandeId,
@@ -1286,7 +1300,7 @@ export async function repoValidatePlanningForAr(params: {
           skipped.push({
             commande_id: commandeId,
             numero: row.numero,
-            reason: "WORKFLOW_NOT_ADVANCED",
+            reason: err.code === "PLANNING_REQUIRES_PLANNED_OF" ? "OPERATIONS_NOT_FULLY_PLANNED" : "WORKFLOW_NOT_ADVANCED",
             message: err.message,
           });
           continue;

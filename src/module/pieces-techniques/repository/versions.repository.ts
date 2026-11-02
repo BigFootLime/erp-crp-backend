@@ -10,6 +10,7 @@ import { freezePieceVersionRequirements } from "../services/document-policy.serv
 import type { AuditContext } from "./pieces-techniques.repository"
 import { COPY_VERSION_PURCHASES_SQL } from "./version-purchases.sql"
 import { canCarryMinorRevisionDocuments, copyMinorRevisionDocumentsTx } from "./minor-revision-documents"
+import { canAutoFollowCompatibleRevision } from "../../production/repository/effective-preparation-version.sql"
 import type {
   CreateNextVersionBodyDTO,
   CreateVersionBodyDTO,
@@ -658,12 +659,49 @@ export async function repoCreateNextVersion(
       targetIndex: body.indice, sourcePlan: source.plan_reference, targetPlan: planReference })
       ? await copyMinorRevisionDocumentsTx(client, pieceTechniqueId, sourceVersionId, row.id, audit.user_id) : 0
 
+    // Draft OFs follow a new revision only while they have not been frozen and
+    // the client index did not change.  An explicit MANUAL choice is never
+    // replaced; legacy records intentionally default to AUTO for this policy.
+    const autoFollowedOfIds: number[] = []
+    const compatibleAutoTarget = canAutoFollowCompatibleRevision({
+      state: { statut: "BROUILLON", technicalSnapshotSha256: null, technicalReadiness: "INCOMPLETE" },
+      effectiveVersionId: sourceVersionId,
+      sourceVersionId,
+      sourceClientIndex: source.indice_externe_original?.trim() || source.indice.trim() || null,
+      targetClientIndex: row.indice_externe_original?.trim() || row.indice.trim() || null,
+      targetChangeLevel: row.change_level,
+      targetInterchangeable: row.impact_interchangeabilite === true,
+    })
+    if (compatibleAutoTarget) {
+      const synchronized = await client.query<{ id: number }>(
+        `UPDATE public.ordres_fabrication o SET
+          technical_preparation=COALESCE(o.technical_preparation,'{}'::jsonb)||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode','AUTO'),
+          technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,updated_at=now(),updated_by=$3
+        WHERE o.piece_technique_id=$1::uuid AND o.statut='BROUILLON'
+          AND o.technical_snapshot_sha256 IS NULL AND COALESCE(o.technical_readiness,'')<>'VALIDATED'
+          AND COALESCE(o.technical_preparation->>'version_selection_mode','AUTO')='AUTO'
+          AND COALESCE(NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,o.piece_technique_version_id)=$4::uuid
+          AND EXISTS(SELECT 1 FROM public.piece_technique_versions source, public.piece_technique_versions target
+            WHERE source.id=$4::uuid AND target.id=$2::uuid
+              AND target.change_level='MINOR' AND COALESCE(target.impact_interchangeabilite,false)=false
+              AND COALESCE(NULLIF(btrim(source.indice_externe_original),''),NULLIF(btrim(source.indice),'')) IS NOT NULL
+              AND COALESCE(NULLIF(btrim(source.indice_externe_original),''),NULLIF(btrim(source.indice),''))=
+                  COALESCE(NULLIF(btrim(target.indice_externe_original),''),NULLIF(btrim(target.indice),'')))
+        RETURNING o.id::bigint::int AS id`,
+        [pieceTechniqueId, row.id, audit.user_id, sourceVersionId],
+      )
+      if (synchronized.rowCount)
+        await client.query("DELETE FROM public.of_preparation_evaluations WHERE of_id=ANY($1::bigint[])", [synchronized.rows.map((of) => of.id)])
+      autoFollowedOfIds.push(...synchronized.rows.map((of) => of.id))
+    }
+
     await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,
       indice: row.indice,
       type_changement: row.type_changement,
       copied_documents: copiedDocuments,
+      auto_followed_of_ids: autoFollowedOfIds,
       copied,
     })
     await client.query("COMMIT")

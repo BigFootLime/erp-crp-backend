@@ -46,10 +46,11 @@ vi.mock("../module/access-control/middlewares/module-access-gate", () => ({
 import {
   assertCanonicalArticleUnit,
   repoCreateArticleTx,
+  repoUpdateArticle,
   resolveUnitIdForArticle,
 } from "../module/stock/repository/stock.repository";
 import { canonicalizeStockUnitCode } from "../shared/stock-unit";
-import { createArticleSchema } from "../module/stock/validators/stock.validators";
+import { createArticleSchema, updateArticleSchema } from "../module/stock/validators/stock.validators";
 import app from "../config/app";
 
 const ARTICLE_ID = "11111111-1111-4111-8111-111111111111";
@@ -73,6 +74,57 @@ beforeEach(() => {
 });
 
 describe("#475 article/stock unit contract", () => {
+  it.each([true, false])("derives the persisted material unit from barToCut=%s, ignoring a stale supplied unit", async (barToCut) => {
+    const query = vi.fn(async (sql: string, values?: unknown[]) => {
+      if (sql.includes("SELECT a.commercial_scope")) return { rows: [{ commercial_scope: null, internal_reference: null, article_category: "matiere", client_ids: [], categories: ["matiere_premiere"], tool_id: null, consumption_mode: "UNIT" }] };
+      if (sql.includes("FROM public.units")) return { rows: [{ id: MILLIMETRE_UNIT_ID }] };
+      if (sql.includes("FROM public.stock_nuances")) return { rows: [{ code: "5754" }] };
+      if (sql.includes("FROM public.stock_etats")) return { rows: [{ code: "H111" }] };
+      if (sql.includes("information_schema.columns")) return { rows: [{ present: true }] };
+      if (sql.includes("INSERT INTO public.articles (")) return { rows: [{ id: ARTICLE_ID }] };
+      return { rows: [] };
+    });
+    const body = createArticleSchema.parse({ body: {
+      article_category: "matiere", article_categories: ["matiere_premiere"], family_code: "PL",
+      unite: barToCut ? "u" : "mm",
+      article_matiere: { barre_a_decouper: barToCut, nuance_id: 1, etat_id: 2, largeur_mm: 57, epaisseur_mm: 1 },
+    } }).body;
+    const result = await repoCreateArticleTx({ query } as never, body, { user_id: 1 } as never);
+    expect(result.unite).toBe(barToCut ? "mm" : "u");
+    const insert = query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.articles ("));
+    expect(insert?.[1]?.[9]).toBe(result.unite);
+  });
+
+  it.each([
+    { currentBar: true, nextBar: false, unit: "u" },
+    { currentBar: false, nextBar: true, unit: "mm" },
+    { currentBar: true, nextBar: undefined, unit: "mm" },
+  ])("keeps the material flag authoritative on PATCH: %o", async ({ currentBar, nextBar, unit }) => {
+    routeDb.clientQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes("SELECT a.commercial_scope")) return { rows: [{ commercial_scope: null, internal_reference: null, article_category: "matiere", client_ids: [], categories: ["matiere_premiere"], tool_id: null, consumption_mode: "UNIT" }] };
+      if (sql.includes("FROM public.articles") && sql.includes("FOR UPDATE")) return { rows: [{
+        id: ARTICLE_ID, code: "MP-PL-5754-H111-57x1", designation: "Tôle", article_type: "PURCHASED",
+        article_category: "matiere", article_categories: ["matiere_premiere"], family_code: "PL",
+        row_version: 1, stock_managed: true, lot_tracking: true, barre_a_decouper: currentBar,
+        unite: currentBar ? "mm" : "u", piece_technique_id: null,
+      }] };
+      if (sql.includes("FROM public.units")) return { rows: [{ id: MILLIMETRE_UNIT_ID }] };
+      if (sql.includes("information_schema.columns")) return { rows: [{ present: true }] };
+      if (sql.includes("UPDATE public.articles\n")) return { rows: [{ id: ARTICLE_ID }] };
+      return { rows: [] };
+    });
+    routeDb.poolQuery.mockResolvedValue({ rows: [] });
+    const patch = updateArticleSchema.parse({ body: {
+      expected_row_version: 1, unite: "kg",
+      ...(nextBar === undefined ? {} : { article_matiere: { barre_a_decouper: nextBar, largeur_mm: 57, epaisseur_mm: 1 } }),
+    } }).body;
+    await repoUpdateArticle(ARTICLE_ID, patch, { user_id: 1 } as never);
+    const update = routeDb.clientQuery.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.articles\n"));
+    expect(update).toBeDefined();
+    const position = Number(String(update![0]).match(/unite = \$(\d+)/)?.[1]);
+    expect(update![1][position - 1]).toBe(unit);
+    expect(routeDb.clientQuery).toHaveBeenCalledWith("COMMIT");
+  });
   it.each([
     ["PCE", "u"], ["pcs", "u"], ["PC", "u"], [" unite ", "u"], ["U", "u"], ["MM", "mm"], ["Kg", "kg"], ["M", "m"],
   ])("canonicalizes the historical stock unit %s as %s", (input, expected) => {

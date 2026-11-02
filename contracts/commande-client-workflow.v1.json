@@ -334,6 +334,26 @@
       "cause": "planning_sync"
     },
     {
+      "from": "AR_ENVOYE",
+      "to": "EN_PRODUCTION",
+      "cause": "production_sync"
+    },
+    {
+      "from": "EN_PRODUCTION",
+      "to": "PRODUCTION_TERMINEE",
+      "cause": "production_sync"
+    },
+    {
+      "from": "PRODUCTION_TERMINEE",
+      "to": "PRET_LIVRAISON",
+      "cause": "quality_sync"
+    },
+    {
+      "from": "CONTROLE_QUALITE",
+      "to": "PRET_LIVRAISON",
+      "cause": "quality_sync"
+    },
+    {
       "from": "AR_PRET",
       "to": "AR_ENVOYE",
       "cause": "ar_send"

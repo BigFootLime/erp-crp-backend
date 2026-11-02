@@ -22,6 +22,7 @@ import {
   repoDocumentPolicyInfrastructureReady,
   repoFreezeVersionRequirements,
   repoGetClientDocumentPolicy,
+  repoListCurrentPieceTechniqueThreeDModels,
   repoGetPieceDocumentContext,
   repoListDocumentTypes,
   repoListFrozenRequirements,
@@ -70,6 +71,14 @@ export type PieceDocumentDossier = {
   policy_infrastructure_ready: boolean;
   generated_at: string;
 };
+
+/**
+ * Liste les candidats 3D exacts de l'indice courant. Le consommateur doit
+ * demander un choix explicite si plusieurs modèles sont présents.
+ */
+export async function listCurrentPieceTechniqueThreeDModelsSVC(pieceTechniqueId: string) {
+  return repoListCurrentPieceTechniqueThreeDModels(pieceTechniqueId);
+}
 
 /** Politique neutre servie quand le référentiel n'est pas installé sur la base. */
 const NEUTRAL_POLICY: PieceDocumentDossier["policy"] = {

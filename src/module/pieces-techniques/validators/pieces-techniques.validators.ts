@@ -183,6 +183,17 @@ const achatInputSchema = z.object({
   designation_3: z.string().optional().nullable(),
 })
 
+function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: string | null; quantite_pieces?: number | null; longueur_mm?: number | null }, ctx: z.RefinementCtx, path: Array<string | number> = []) {
+  if (achat.type_achat !== "MATIERE" || achat.quantite_pieces == null) return
+  if (!Number.isFinite(achat.quantite_pieces) || achat.quantite_pieces <= 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, "quantite_pieces"], message: "Le rendement pièces par brut doit être strictement positif." })
+  }
+  const linearUnit = ["MM", "M"].includes(achat.unite_prix?.trim().toUpperCase() ?? "")
+  if (linearUnit && (achat.longueur_mm == null || !Number.isFinite(achat.longueur_mm) || achat.longueur_mm <= 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, "longueur_mm"], message: "La longueur de coupe est requise avec un rendement pièces par brut." })
+  }
+}
+
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
     article_id: uuid.optional().nullable(),
@@ -226,6 +237,7 @@ export const createPieceTechniqueSchema = z.object({
     if (body.plan_reference && !body.sans_indice && !body.indice_externe) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["indice_externe"], message: "Indice externe requis ou cochez Sans indice" })
     }
+    body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
   }),
 })
 
@@ -326,7 +338,7 @@ export const updateOperationSchema = z.object({
 export type UpdateOperationBodyDTO = z.infer<typeof updateOperationSchema>["body"]
 
 export const addAchatSchema = z.object({
-  body: achatInputSchema,
+  body: achatInputSchema.superRefine((achat, ctx) => validateMaterialCutting(achat, ctx)),
 })
 
 export type AddAchatBodyDTO = z.infer<typeof addAchatSchema>["body"]

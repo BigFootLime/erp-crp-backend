@@ -1,4 +1,5 @@
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { importedInspection } from "../domain/imported-inspection";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
@@ -75,7 +76,9 @@ export type PreparationOrder = {
   updated_at: string;
   technical_snapshot_sha256: string | null;
   preparation_rules_version: number | null;
+  version_selection_mode?: "AUTO" | "MANUAL";
   technical_preparation?: {
+    version_selection_mode?: "AUTO" | "MANUAL";
     execution_programming?: NonNullable<PreparationDecisions['programming']>;
     execution_quality?: Pick<TechnicalSources, 'quality_plan' | 'characteristics'>;
   };
@@ -186,8 +189,7 @@ export async function loadPreparationOrder(
   const row = (
     await tx.query<PreparationOrder>(
       `SELECT o.id::bigint::int AS id,o.numero,o.statut::text,o.technical_readiness,o.piece_technique_id::text,o.article_id::text,o.client_id,
-    COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-      NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,
+    COALESCE(${effectivePreparationVersionSql("o")},
       (SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=o.piece_technique_id
        AND v.statut<>'OBSOLETE' ORDER BY v.is_current DESC,v.created_at DESC,v.id LIMIT 1))::text AS version_id,
     o.quantite_lancee::float8,o.updated_at::text,o.technical_snapshot_sha256,o.preparation_rules_version,o.technical_snapshot,o.technical_preparation
@@ -439,10 +441,10 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   ).rows;
   const sharedImpact = (
     await tx.query<{ mutable_of_ids: number[]; frozen_count: number }>(
-      `SELECT COALESCE(array_agg(o.id::bigint::int ORDER BY o.id) FILTER(WHERE o.statut='BROUILLON' AND o.technical_snapshot_sha256 IS NULL),'{}'::int[]) AS mutable_of_ids,
+      `SELECT COALESCE(array_agg(o.id::bigint::int ORDER BY o.id) FILTER(WHERE o.statut='BROUILLON' AND o.technical_snapshot_sha256 IS NULL AND COALESCE(o.technical_readiness,'')<>'VALIDATED'),'{}'::int[]) AS mutable_of_ids,
       count(*) FILTER(WHERE o.technical_snapshot_sha256 IS NOT NULL)::int AS frozen_count
      FROM public.ordres_fabrication o WHERE o.piece_technique_id=$1::uuid AND o.statut NOT IN ('ANNULE','TERMINE','CLOTURE')
-     AND COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
+     AND COALESCE(${effectivePreparationVersionSql("o")},
        (SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=$1::uuid AND v.statut<>'OBSOLETE' ORDER BY v.is_current DESC,v.created_at DESC,v.id LIMIT 1))=$2::uuid`,
       [of.piece_technique_id, of.version_id],
     )
@@ -454,7 +456,12 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     )
   ).rows[0];
   return {
-    of,
+    of: {
+      ...of,
+      // Existing drafts predate the flag and deliberately follow the
+      // compatible revision by default; only an explicit value locks it.
+      version_selection_mode: of.technical_preparation?.version_selection_mode === "MANUAL" ? "MANUAL" : "AUTO",
+    },
     version: sources.version,
     profile_version: profile?.version ?? 0,
     decisions,
@@ -588,8 +595,8 @@ export async function invalidateCompatibleDrafts(
   const rows = (
     await tx.query<{ id: number }>(
       `UPDATE public.ordres_fabrication SET technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,
-    updated_at=now(),updated_by=$3 WHERE piece_technique_id=$1::uuid AND statut='BROUILLON' AND technical_snapshot_sha256 IS NULL
-    AND COALESCE(NULLIF(technical_preparation->>'selected_version_id','')::uuid,NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)=$2::uuid
+    updated_at=now(),updated_by=$3 WHERE piece_technique_id=$1::uuid AND statut='BROUILLON' AND technical_snapshot_sha256 IS NULL AND COALESCE(technical_readiness,'')<>'VALIDATED'
+    AND ${effectivePreparationVersionSql("ordres_fabrication")}=$2::uuid
     RETURNING id::bigint::int AS id`,
       [pieceId, versionId, audit.user_id],
     )
@@ -603,7 +610,7 @@ export async function invalidateCompatibleDrafts(
 
 export async function repoSelectPreparationVersion(
   id: number,
-  input: { expected_updated_at: string; version_id: string },
+  input: { expected_updated_at: string; version_id: string; version_selection_mode?: "AUTO" | "MANUAL" },
   audit: AuditContext,
 ) {
   return withRealtimeOutboxTransaction(await pool.connect(), async (tx) => {
@@ -631,9 +638,9 @@ export async function repoSelectPreparationVersion(
       // The physical snapshot identity is populated atomically during validation.
       // A draft selection must not partially attach that immutable snapshot.
       `UPDATE public.ordres_fabrication SET
-      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text),
+      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode',COALESCE($5::text,'MANUAL')),
       preparation_rules_version=$3,technical_readiness='INCOMPLETE',updated_at=now(),updated_by=$4 WHERE id=$1`,
-      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id],
+      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id, input.version_selection_mode],
     );
     await preparationAudit(
       tx,

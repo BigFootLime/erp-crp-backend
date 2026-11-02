@@ -83,6 +83,8 @@ export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "internal_production_launch",
   "internal_archive",
   "planning_sync",
+  "production_sync",
+  "quality_sync",
   "ar_send",
   "shipment_sync",
   "supplier_shipment_sync",
@@ -160,6 +162,10 @@ export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionR
   { from: "PLANNING_VALIDE", to: "EN_PRODUCTION", cause: "internal_production_launch" },
   { from: "LIVRE", to: "ARCHIVE", cause: "internal_archive" },
   { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "planning_sync" },
+  { from: "AR_ENVOYE", to: "EN_PRODUCTION", cause: "production_sync" },
+  { from: "EN_PRODUCTION", to: "PRODUCTION_TERMINEE", cause: "production_sync" },
+  { from: "PRODUCTION_TERMINEE", to: "PRET_LIVRAISON", cause: "quality_sync" },
+  { from: "CONTROLE_QUALITE", to: "PRET_LIVRAISON", cause: "quality_sync" },
   { from: "AR_PRET", to: "AR_ENVOYE", cause: "ar_send" },
   // Le flux 100 % stock n'a ni OF ni contrôle de fin de fabrication. Une fois
   // l'AR effectivement envoyé, la livraison préparée devient exploitable.

@@ -1,3 +1,4 @@
+import { reconcileCommandeForOf } from "../../commande-client/repository/commande-production-milestone.repository";
 // Repository du suivi et pointage de production (#274).
 //
 // Règles structurantes appliquées ici et nulle part ailleurs :
@@ -1281,6 +1282,7 @@ export async function repoStartExecution(params: {
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
     await params.transactionHooks?.beforeCommit(client, { id });
+    if (materialAuthorization) await reconcileCommandeForOf(client, params.body.of_id, params.audit.user_id);
     await client.query("COMMIT");
 
     const created = await repoGetExecution({ id });

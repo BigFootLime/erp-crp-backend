@@ -71,6 +71,7 @@ import {
   createInternalContractDraft,
   persistAndReserveAssemblyComponents,
 } from "../../commande-client/repository/commande-client.repository";
+import { reconcileCommandeForOf } from "../../commande-client/repository/commande-production-milestone.repository";
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
@@ -329,6 +330,7 @@ export async function repoReleaseOrdreFabrication(params: { id: number; body: Re
        WHERE id = $1::bigint`,
       [params.id, params.audit.user_id]
     );
+    await reconcileCommandeForOf(client, params.id, params.audit.user_id);
     // Freeze source references as a recorded evidence snapshot. The OF's own
     // technical hash is already immutable after launch; this captures the exact
     // release decision without mutating the original technical entities.
@@ -3983,6 +3985,9 @@ export async function repoUpdateOrdreFabrication(params: {
         ...(cancelledPurchaseAllocations.length ? { cancelled_purchase_allocations: cancelledPurchaseAllocations, physical_stock_unchanged: true } : {}),
       },
     });
+    if (statutChanges && ["EN_COURS", "TERMINE", "CLOTURE", "ANNULE"].includes(requestedStatut)) {
+      await reconcileCommandeForOf(client, params.id, params.audit.user_id);
+    }
 
     for (const purchaseId of [...new Set(cancelledPurchaseAllocations.map(allocation => allocation.purchase_order_id))].sort()) {
       const change = await insertAuditLog(client, params.audit, {
@@ -4105,6 +4110,9 @@ export async function repoUpdateOrdreFabricationOperation(params: {
         machine_id: p.machine_id,
       },
     });
+    if (p.status === "RUNNING" || p.status === "DONE") {
+      await reconcileCommandeForOf(client, params.of_id, params.audit.user_id);
+    }
 
     return true;
   });
