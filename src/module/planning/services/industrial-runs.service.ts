@@ -14,6 +14,7 @@ import { industrialExceptions } from "../domain/industrial-exceptions";
 import {
   readIndustrialRouting,
   readIndustrialAbc,
+  readTreatmentAssumptions,
 } from "../repository/industrial-analysis.repository";
 import { projectMasterPlan } from "../domain/planning-master-plan";
 import { readMasterPlanSourceTx } from "../repository/planning-master-plan.repository";
@@ -64,6 +65,16 @@ async function compute(tx: PoolClient, run: Run) {
   const ids = source.articles.map((a) => a.id);
   const routing = await readIndustrialRouting(tx, ids);
   const abc = await readIndustrialAbc(tx, ids, source.today);
+  const treatmentEstimates = await readTreatmentAssumptions(tx, run.client_id);
+  for (const estimate of treatmentEstimates) {
+    const delay = estimate.need_date && estimate.estimated_return_date > estimate.need_date
+      ? ` Le besoin du ${estimate.need_date} serait dépassé.`
+      : "";
+    const confirmation = estimate.confirmed_date
+      ? ` Promesse fournisseur enregistrée au ${estimate.confirmed_date}.`
+      : " En attente de confirmation fournisseur.";
+    projection.issues.push(`Traitement ${estimate.order_code} : retour estimé au ${estimate.estimated_return_date}.${confirmation}${delay}`);
+  }
   const through = new Date(
     Date.parse(source.today + "T12:00:00Z") + 41 * 86400000,
   )
@@ -161,6 +172,7 @@ async function compute(tx: PoolClient, run: Run) {
         targets,
         preparedContractTargets,
         recoveryCommitments,
+        treatmentEstimates,
         recoverySlots,
         contractTargetRecovery,
         planningRevision: master.snapshot.revision,
@@ -176,6 +188,7 @@ async function compute(tx: PoolClient, run: Run) {
       capacity,
       placements,
       contract_target_recovery: contractTargetRecovery,
+      treatment_estimates: treatmentEstimates,
       abc,
       exceptions: industrialExceptions(source, projection),
       planning_revision: master.snapshot.revision,

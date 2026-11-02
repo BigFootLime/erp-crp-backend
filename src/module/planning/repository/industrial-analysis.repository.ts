@@ -11,6 +11,37 @@ export type TreatmentAssumption = {
 };
 
 /** Internal what-if dates. These rows never enter the stock or CBN supply arrays. */
+export async function readTreatmentAssumptions(db: Db, clientId: string) {
+  const { rows } = await db.query<TreatmentAssumption>(
+    `SELECT line.id::text AS line_id, po.code AS order_code,
+       estimate.estimated_return_date::text,
+       COALESCE(line.date_besoin,po.date_besoin)::text AS need_date,
+       COALESCE(line.date_promesse,po.date_promesse)::text AS confirmed_date,
+       (line.quantite-line.qty_annulee-received.quantity)::float8 AS remaining_quantity
+     FROM public.supplier_internal_treatment_estimates estimate
+     JOIN public.commande_fournisseur_ligne line ON line.id=estimate.line_id AND line.commande_id=estimate.order_id
+     JOIN public.commande_fournisseur po ON po.id=line.commande_id
+     LEFT JOIN public.ordres_fabrication work ON work.id=line.of_id
+     LEFT JOIN public.commande_ligne customer_line ON customer_line.id=work.commande_ligne_id
+     LEFT JOIN public.commande_client customer_order
+       ON customer_order.id=COALESCE(line.commande_client_id,work.commande_id,customer_line.commande_id)
+     CROSS JOIN LATERAL (
+       SELECT COALESCE(sum(rl.qty_received),0) AS quantity
+       FROM public.reception_fournisseur_lignes rl
+       JOIN public.receptions_fournisseurs receipt ON receipt.id=rl.reception_id
+       WHERE rl.commande_fournisseur_ligne_id=line.id AND receipt.status<>'CANCELLED'
+     ) received
+     WHERE COALESCE(customer_order.client_id,work.client_id)=$1
+       AND estimate.status='ESTIMATED' AND line.statut_ligne='ACTIVE'
+       AND (line.type='SOUS_TRAITANCE' OR line.operation_libelle IS NOT NULL)
+       AND po.statut IN ('ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE')
+       AND line.quantite-line.qty_annulee>received.quantity
+     ORDER BY po.code,line.position,line.id`,
+    [clientId],
+  );
+  return rows;
+}
+
 export async function readIndustrialRouting(db: Db, articles: string[]) {
   return (
     await db.query<RoutingStep>(

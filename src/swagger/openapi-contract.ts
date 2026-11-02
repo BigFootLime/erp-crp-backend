@@ -57,16 +57,56 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /portal/auth/forgot-password": "Demande de récupération portail non révélatrice avec limitation de débit persistée.",
   "post /portal/auth/login": "Échange d’identifiants portail contre une session courte avec limitation de débit persistée.",
   "post /portal/auth/reset-password": "Réinitialisation portail par jeton à usage unique avec limitation de débit persistée.",
+  "post /supplier-sandbox/auth/login": "Connexion au bac à sable fournisseur, disponible uniquement en recette locale isolée.",
+  "post /supplier-portal/auth/login": "Pilote fournisseur désactivé par défaut. Son ouverture hors recette locale exige les preuves et habilitations configurées chez CRP.",
+  "post /supplier-portal/auth/activate": "Invitation de pilote à usage unique, expiration et consentement de politique requis.",
+  "post /supplier-portal/auth/recover": "Récupération de compte de pilote avec réponse uniforme.",
+  "post /supplier-portal/auth/reset": "Jeton de récupération haché à usage unique et expirant.",
+  "get /supplier-portal/portal-context": "Session de pilote fournisseur dédiée, audience distincte et compte actif requis.",
+  "get /supplier-portal/orders": "Session de pilote fournisseur et commandes explicitement accordées.",
+  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise": "Proposition idempotente soumise aux Achats avec contrôle de version.",
 };
 
 const CLIENT_PORTAL_AUTH_OPERATIONS = new Set([
+  "get /client-portal/demand",
+  "get /client-portal/demand/{id}",
+  "post /client-portal/demand/{id}/response",
+  "post /client-portal/demand/imports",
+  "post /client-portal/demand/manual",
+  "post /client-portal/demand/preview",
   "get /portal/deliveries",
+  "get /portal/commercial-overview",
+  "post /portal/deliveries/{deliveryId}/receipt",
+  "get /portal/deliveries/dashboard",
   "get /portal/documents",
   "post /portal/documents/{publicationId}/acknowledgements",
   "get /portal/documents/{publicationId}/download",
   "get /portal/invoices",
   "get /portal/me",
   "get /portal/orders",
+]);
+
+// This surface is physically mounted before the ERP JWT middleware because it
+// uses an isolated supplier-session issuer.  It is nevertheless never a
+// public business API: availability is fail-closed and the read/write routes
+// require a short-lived, audience-bound supplier JWT.
+const SUPPLIER_SANDBOX_SESSION_OPERATIONS = new Set([
+  "get /supplier-sandbox/purchase-lines",
+  "post /supplier-sandbox/promise-proposals",
+]);
+const SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS = new Set([
+  "post /supplier-sandbox/auth/login",
+]);
+const SUPPLIER_PORTAL_SESSION_OPERATIONS = new Set([
+  "get /supplier-portal/portal-context",
+  "get /supplier-portal/orders",
+  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise",
+]);
+const SUPPLIER_PORTAL_CREDENTIAL_OPERATIONS = new Set([
+  "post /supplier-portal/auth/login",
+  "post /supplier-portal/auth/activate",
+  "post /supplier-portal/auth/recover",
+  "post /supplier-portal/auth/reset",
 ]);
 
 const IDEMPOTENT_OPERATIONS = new Set([
@@ -180,6 +220,10 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
   const intercompanySigned = key === "post /intercompany/messages";
   const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
+  const supplierSandboxSession = SUPPLIER_SANDBOX_SESSION_OPERATIONS.has(key);
+  const supplierSandboxCredentialExchange = SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS.has(key);
+  const supplierPortalSession = SUPPLIER_PORTAL_SESSION_OPERATIONS.has(key);
+  const supplierPortalCredentialExchange = SUPPLIER_PORTAL_CREDENTIAL_OPERATIONS.has(key);
   const terminalSession = TERMINAL_SESSION_OPERATIONS.has(key);
   const terminalDevice = TERMINAL_DEVICE_OPERATIONS.has(key) || terminalSession;
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
@@ -195,7 +239,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice || intercompanySigned),
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || supplierSandboxSession || supplierSandboxCredentialExchange || supplierPortalSession || supplierPortalCredentialExchange || terminalDevice || intercompanySigned),
     security: terminalSession ? [{terminalDevice:[], terminalSession:[]}]
       : terminalDevice ? [{terminalDevice:[]}]
       : intercompanySigned ? [{intercompanySignature:[]}]
@@ -203,6 +247,10 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       ? [{ bearerAuth: [] }]
       : clientPortalAuthenticated
         ? [{ clientPortalBearerAuth: [] }]
+      : supplierSandboxSession
+        ? [{ supplierSandboxBearerAuth: [] }]
+      : supplierPortalSession
+        ? [{ supplierPortalBearerAuth: [] }]
       : providerSigned
         ? [{ providerSignature: [] }]
         : [],
@@ -214,17 +262,28 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       ? "JWT Bearer + compte actif"
       : clientPortalAuthenticated
         ? "JWT Bearer portail + compte client actif + session_epoch"
+        : supplierSandboxSession
+          ? "JWT Bearer fournisseur court, audience cerp-supplier-sandbox, compte actif et session_epoch"
+          : supplierSandboxCredentialExchange
+            ? "Échange d’identifiants uniquement dans le bac à sable local opt-in ; indisponible (404) hors recette isolée"
+            : supplierPortalSession
+              ? "JWT Bearer fournisseur de pilote, audience dédiée, compte actif et session_epoch"
+              : supplierPortalCredentialExchange
+                ? "Échange limité au pilote autorisé, indisponible (404) si le pilote est fermé"
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
     "x-cerp-rbac": intercompanySigned ? ["configuredPeerScope", "fixedCompanyEnvironmentScope", "transactionalInboxIdentity"]
       : terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+      : clientPortalAuthenticated ? ["clientPortalTenantBoundary", ...route.rbac]
+      : supplierSandboxSession ? ["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly", ...route.rbac]
+      : supplierPortalSession ? ["supplierPortalTenantBoundary", "supplierPortalPilotOnly", ...route.rbac]
       : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
         ? ["moduleAccessGate"]
-        : clientPortalAuthenticated
-          ? ["clientPortalTenantBoundary"]
+        : supplierSandboxCredentialExchange
+          ? ["supplierSandboxLocalOnly", "credentialExchange"]
           : [],
     "x-cerp-rate-limit-policy": route.middleware.filter((name) => /RateLimit/i.test(name)),
     "x-cerp-idempotency": idempotent ? "required" : "not-declared",
@@ -423,6 +482,18 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
         scheme: "bearer",
         bearerFormat: "JWT",
         description: "Jeton de session court du portail client, audience cerp-client-portal.",
+      },
+      supplierSandboxBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Jeton fournisseur de recette uniquement : audience cerp-supplier-sandbox, durée 15 minutes, session_epoch vérifié.",
+      },
+      supplierPortalBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Jeton du pilote fournisseur, audience cerp-supplier-portal-pilot, durée 15 minutes et session_epoch vérifié.",
       },
       providerSignature: {
         type: "apiKey",
@@ -666,6 +737,8 @@ export function assertOpenApiRouteSecurity(): void {
       && !TERMINAL_DEVICE_OPERATIONS.has(operationKey(route))
       && !TERMINAL_SESSION_OPERATIONS.has(operationKey(route))
       && !CLIENT_PORTAL_AUTH_OPERATIONS.has(operationKey(route))
+      && !SUPPLIER_SANDBOX_SESSION_OPERATIONS.has(operationKey(route))
+      && !SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS.has(operationKey(route))
       && !PUBLIC_ROUTE_POLICIES[operationKey(route)])
     .map((route) => operationKey(route));
   if (undocumentedPublic.length > 0) {

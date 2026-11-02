@@ -259,12 +259,21 @@ describe("commande workflow canonical state machine", () => {
     })).toBe(false)
   })
 
-  it("does not let a module grant pass a workflow checkpoint", () => {
-    let allowed = true;
+  it("does not let an administrator or a module grant bypass a workflow checkpoint", () => {
+    expect(canActOnCommandeWorkflowCheckpoint({
+      user_id: 3,
+      user_role: "Administrateur Systeme et Reseau",
+      responsible_role: "secretariat",
+    })).toBe(false)
+    let allowed = true
     runWithAccountModuleAccess({ userId: 3, moduleKey: "commandes-clients" }, () => {
-      allowed = canActOnCommandeWorkflowCheckpoint({ user_id: 3, user_role: "Planification", responsible_role: "secretariat" });
-    });
-    expect(allowed).toBe(false);
+      allowed = canActOnCommandeWorkflowCheckpoint({
+        user_id: 3,
+        user_role: "Planification",
+        responsible_role: "secretariat",
+      })
+    })
+    expect(allowed).toBe(false)
   })
   it("uses the checkpoint policy for both AR generation and sending", () => {
     for (const role of ["Secretaire", "Commercial", "Comptabilite"]) {

@@ -27,6 +27,7 @@ import {
 import { industrialExecutionSchema } from "../validators/industrial-execution.validators";
 import { executeIndustrialProposals } from "../services/industrial-proposal-execution.service";
 import { buildAuditContext } from "../controllers/planning.controller";
+import { saveArticleMapping } from "../../demand-pilot/repository/demand-mapping.repository";
 import {
   targetSchema,
   savePicTarget,
@@ -57,6 +58,44 @@ router.put(
     res.json(
       await industrialTx((tx) =>
         savePicTarget(tx, req.user!.id, targetSchema.parse(req.body)),
+      ),
+    );
+  }),
+);
+const mapping = z
+  .object({
+    client_id: industrialClient,
+    external_code: z.string().trim().min(1).max(160),
+    external_unit: z.string().trim().min(1).max(32),
+    article_id: z.string().uuid(),
+    units_per_external: z.number().positive().max(1e9),
+  })
+  .strict();
+router.get(
+  "/article-mappings",
+  requirePlanningCapability("read_capacity"),
+  asyncHandler(async (req, res) => {
+    const id = industrialClient.parse(req.query.client_id);
+    res.json({
+      items: await industrialTx(
+        async (tx) =>
+          (
+            await tx.query(
+              "SELECT external_code,external_unit,article_id,units_per_external::float8 FROM public.demand_pilot_article_mappings WHERE client_id=$1 ORDER BY external_code,external_unit",
+              [id],
+            )
+          ).rows,
+      ),
+    });
+  }),
+);
+router.put(
+  "/article-mappings",
+  requireSuperadmin,
+  asyncHandler(async (req, res) => {
+    res.json(
+      await industrialTx((tx) =>
+        saveArticleMapping(tx, mapping.parse(req.body), req.user!.id),
       ),
     );
   }),

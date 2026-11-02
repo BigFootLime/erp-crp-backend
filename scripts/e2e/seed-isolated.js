@@ -215,11 +215,11 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.adresse_livraison (
-         delivery_address_id,name,street,postal_code,city,country
+         delivery_address_id,name,address,street,postal_code,city,country
        ) VALUES (
-         '91000000-0000-4000-8000-000000000001','Client preuve SOL-05','1 rue E2E','69001','Lyon','France'
+         '91000000-0000-4000-8000-000000000001','Client preuve SOL-05','1 rue E2E','1 rue E2E','69001','Lyon','France'
        ) ON CONFLICT (delivery_address_id) DO UPDATE SET
-         name=EXCLUDED.name,street=EXCLUDED.street,postal_code=EXCLUDED.postal_code,
+         name=EXCLUDED.name,address=EXCLUDED.address,street=EXCLUDED.street,postal_code=EXCLUDED.postal_code,
          city=EXCLUDED.city,country=EXCLUDED.country`
     );
     await client.query(
@@ -426,9 +426,7 @@ async function main() {
          '23000000-0000-4000-8000-000000000002','21000000-0000-4000-8000-000000000002',
          'A','E2E-PLAN-ARTICLE-NEW','APPLICABLE',true,now(),now(),CURRENT_DATE,1,
          'E2E-PT-ARTICLE-NEW-A','E2E-PT-ARTICLE-NEW-A',now(),'NONE'
-       ) ON CONFLICT (id) DO UPDATE SET
-         plan_reference=EXCLUDED.plan_reference,statut='APPLICABLE',is_current=true,date_validation=EXCLUDED.date_validation,
-         date_application=EXCLUDED.date_application`
+       ) ON CONFLICT (id) DO NOTHING`
     );
     // This applicable routing is a baseline production prerequisite, not a
     // SOL-20-only document fixture.  Keeping it outside the optional SOL-20
@@ -673,7 +671,13 @@ async function main() {
          (SELECT id FROM public.users WHERE username='KEENAN')
        ) ON CONFLICT (code,version) DO NOTHING`
     );
-    await client.query(
+    const qualityPlanPublished = await client.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM public.quality_control_plan
+         WHERE code='SOL05-LOT-RELEASE' AND version=1 AND status='PUBLISHED'
+       ) AS published`
+    );
+    if (!qualityPlanPublished.rows[0]?.published) await client.query(
       `INSERT INTO public.quality_control_plan_characteristic (
          id,plan_id,characteristic_key,position,label,characteristic_type,value_kind,
          unit,nominal,tolerance_min,tolerance_max,precision_digits,criticality,mandatory,

@@ -21,8 +21,9 @@ import { startSupplierInvoiceMaintenance } from "./module/supplier-invoices/supp
 import { startEReportingMaintenance } from "./module/facturation/electronic-invoicing/electronic-invoice-reporting.service";
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
-import { startIndustrialPlanMaintenance } from "./module/planning/services/industrial-runs.service";
 import { startPlanningForecastMaintenance } from "./module/planning/services/planning-forecast.worker";
+import { startIndustrialPlanMaintenance } from "./module/planning/services/industrial-runs.service";
+import { startDemandAutomation } from "./module/demand-pilot/services/demand-auto.worker";
 import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
 import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
@@ -85,8 +86,9 @@ async function start(): Promise<void> {
       { key: "e-reporting", start: startEReportingMaintenance },
       { key: "webhooks", start: startWebhookDeliveryMaintenance },
       { key: "authoritative-documents", start: startAuthoritativePdfArchiveMaintenance },
-      { key: "industrial-plan", start: startIndustrialPlanMaintenance },
       { key: "planning-forecast", start: startPlanningForecastMaintenance },
+      { key: "industrial-plan", start: startIndustrialPlanMaintenance },
+      { key: "demand-decisions", start: startDemandAutomation },
       { key: "duration-learning", start: startDurationLearningMaintenance },
       { key: "cump-projection", start: startCumpProjectionMaintenance },
       ...(companyBackgroundProfile === "LEGACY" ? [] : [{ key: "intercompany-delivery", start: startIntercompanyDeliveryMaintenance }]),

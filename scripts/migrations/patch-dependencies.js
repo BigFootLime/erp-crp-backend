@@ -1,20 +1,74 @@
 // Deployed filenames and checksums stay immutable. Dependencies take precedence
 // over their historical filename order in every migration entry point.
 const DEPENDENCIES = Object.freeze({
-  "20261031_industrial_planning_1032.sql": [
-    "20261009_client_contract_forecasts_1032.sql"
-  ],
-  "20261101_industrial_assumptions_1032.sql": ["20261031_industrial_planning_1032.sql"],
-  "20261101_industrial_proposal_execution_1032.sql": [
-    "20261031_industrial_planning_1032.sql"
-  ],
+  "20261102_supplier_portal_pilot_1806.sql": ["20260721_commandes_fournisseurs_core.sql"],
+  "20261102_supplier_treatment_estimate_commands_1807.sql": ["20261102_supplier_portal_pilot_1806.sql"],
+  "20261102_supplier_portal_recovery_request_1808.sql": ["20261102_supplier_portal_pilot_1806.sql"],
+  "20261102_carco_review_1032.sql": ["20261101_demand_reference_mapping_1032.sql","20261031_demand_revision_receipts_1032.sql"],
+  "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql": ["20261102_consolidation_good_output_trigger_fix_1810.sql"],
+  "20261102_consolidation_good_output_trigger_fix_1810.sql": ["20261102_consolidation_good_output_invariants_1809.sql"],
   "20261102_consolidation_good_output_invariants_1809.sql": [
     "20260905_production_preparation_consolidation_01.sql",
     "20261101_industrial_proposal_execution_1032.sql"
   ],
-  "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql": ["20261102_consolidation_good_output_trigger_fix_1810.sql"],
-  "20261102_consolidation_good_output_trigger_fix_1810.sql": ["20261102_consolidation_good_output_invariants_1809.sql"],
+  "20261101_demand_reference_mapping_1032.sql": ["20261031_demand_pilot_1801.sql","20261031_industrial_planning_1032.sql"],
+  "20261101_industrial_assumptions_1032.sql": ["20261031_industrial_planning_1032.sql"],
   "20261102_industrial_yield_qualification_1032.sql": ["20261031_industrial_planning_1032.sql"],
+  // 2026-10-31/11-01 demand and portal pilot release.  Keep this explicit:
+  // lexical filenames alone do not express cross-module foreign keys.
+  "20261031_client_portal_delivery_receipts_1802.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20260724_expedition_deliveries_226.sql"
+  ],
+  "20261031_demand_pilot_1801.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261031_demand_revision_receipts_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261031_industrial_planning_1032.sql": [
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261031_supplier_sandbox_1803.sql": [
+    "20260721_commandes_fournisseurs_core.sql"
+  ],
+  "20261101_client_portal_commercial_cockpit_1804.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261101_client_portal_operational_notices_1805.sql": [
+    "20261031_client_portal_delivery_receipts_1802.sql"
+  ],
+  "20261101_delivery_service_evidence_1803.sql": [
+    "20261031_client_portal_delivery_receipts_1802.sql",
+    "20261007_delivery_promises_821.sql"
+  ],
+  "20261101_demand_firm_bindings_1032.sql": [
+    "20261031_demand_pilot_1801.sql",
+    "20261007_delivery_promises_821.sql"
+  ],
+  "20261101_demand_firm_drafts_1032.sql": [
+    "20261101_demand_firm_bindings_1032.sql"
+  ],
+  "20261101_demand_materialization_operations_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261101_demand_auto_decisions_1032.sql": [
+    "20261031_demand_pilot_1801.sql",
+    "20261031_industrial_planning_1032.sql"
+  ],
+  "20261101_demand_counter_offers_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261101_demand_acknowledgement_queue_1032.sql": [
+    "20261101_demand_firm_bindings_1032.sql",
+    "20261101_demand_materialization_operations_1032.sql",
+    "20261031_industrial_planning_1032.sql"
+  ],
+  "20261101_industrial_proposal_execution_1032.sql": [
+    "20261031_industrial_planning_1032.sql"
+  ],
   "20261016_account_mfa_requirement_1372.sql": [
     "20260815_privileged_mfa_sol32.sql"
   ],

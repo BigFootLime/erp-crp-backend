@@ -16,6 +16,7 @@ import { readFutureMaterialSupplyTx } from "../../production/repository/material
 import { readIndustrialPolicy } from "./industrial-policy.repository";
 import { historySuggestions } from "./industrial-history.repository";
 import {
+  expandPilotForecasts,
   consumeGrossForecasts,
 } from "./industrial-forecast.repository";
 
@@ -368,7 +369,7 @@ export async function readIndustrialInput(
     );
   const retained = await consumeGrossForecasts(
     db,
-    demand,
+    await expandPilotForecasts(db, demand, issues),
     issues,
   );
   retained.push(

@@ -27,9 +27,9 @@ export const industrialPolicySchema = z
   .object({
     client_id: industrialClient,
     expected_version: z.number().int().nonnegative(),
-    auto_enabled: z.literal(false),
+    auto_enabled: z.boolean(),
     risk_limit_eur: z.number().finite().nonnegative().max(1e12).nullable(),
-    auto_ar_contact_id: z.null().optional(),
+    auto_ar_contact_id: z.string().uuid().nullable().optional(),
     transit_calendar_days: z
       .number()
       .int()

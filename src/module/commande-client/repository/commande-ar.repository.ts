@@ -130,6 +130,7 @@ type CommandeArLine = {
   total_ttc: number;
   delai_client: string | null;
   delai_interne: string | null;
+  promise_schedule?: {quantity:string;due_date:string}[];
 };
 
 export type CommandeArAllocation = {
@@ -431,6 +432,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
     total_ttc: number;
     delai_client: string | null;
     delai_interne: string | null;
+    promise_schedule: {quantity:string;due_date:string}[] | null;
   }>(
     `
       SELECT
@@ -444,6 +446,15 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
         cl.total_ttc::float8 AS total_ttc
         ,cl.delai_client::text AS delai_client
         ,cl.delai_interne::text AS delai_interne
+        ,CASE WHEN EXISTS(SELECT 1 FROM public.delivery_promise_events ev JOIN public.delivery_promise_roots root ON root.id=ev.root_id WHERE root.line_id=cl.id)
+         THEN (SELECT jsonb_agg(jsonb_build_object('quantity',q.quantity::text,'due_date',q.due_date::text) ORDER BY q.due_date) FROM
+          (SELECT due_date,sum(quantity) AS quantity FROM (
+            SELECT p.due_date,p.quantity FROM public.delivery_promise_roots root JOIN public.delivery_promise_parts p ON p.root_id=root.id
+             WHERE root.line_id=cl.id AND p.retired_at IS NULL
+            UNION ALL SELECT sh.due_date_at_shipment,sh.quantity FROM public.delivery_promise_roots root JOIN public.delivery_promise_parts p ON p.root_id=root.id
+             JOIN public.delivery_promise_shipments sh ON sh.part_id=p.id WHERE root.line_id=cl.id AND p.retired_at IS NOT NULL
+          ) promised GROUP BY due_date) q)
+         END AS promise_schedule
       FROM public.commande_ligne cl
       WHERE cl.commande_id = $1
       ORDER BY cl.id ASC
@@ -500,6 +511,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
       total_ttc: Number(row.total_ttc),
       delai_client: row.delai_client,
       delai_interne: row.delai_interne,
+      ...(row.promise_schedule?.length?{promise_schedule:row.promise_schedule}:{}),
     })),
     allocations: allocationsRes.rows.map((row) => ({
       ...row,

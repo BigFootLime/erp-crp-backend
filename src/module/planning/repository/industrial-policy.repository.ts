@@ -26,7 +26,7 @@ export async function readIndustrialPolicy(
         risk_limit_eur: number | null;
         frozen_days: 14;
       }>(
-        "SELECT client_id,version,auto_enabled,CASE WHEN auto_enabled THEN updated_by END AS auto_actor_id,NULL::uuid AS auto_ar_contact_id,transit_calendar_days,risk_limit_eur::float8,14 AS frozen_days FROM public.industrial_policies WHERE client_id=$1",
+        "SELECT client_id,version,auto_enabled,CASE WHEN auto_enabled THEN updated_by END AS auto_actor_id,auto_ar_contact_id,transit_calendar_days,risk_limit_eur::float8,14 AS frozen_days FROM public.industrial_policies WHERE client_id=$1",
         [clientId],
       )
     ).rows[0] ?? {
@@ -60,14 +60,34 @@ export async function setIndustrialPolicy(
       "POLICY_CHANGED",
       "La politique a été modifiée. Rechargez-la.",
     );
+  const contact =
+    input.auto_ar_contact_id === undefined
+      ? before.auto_ar_contact_id
+      : input.auto_ar_contact_id;
+  if (
+    contact &&
+    !(
+      await db.query(
+        "SELECT 1 FROM public.contacts WHERE client_id=$1 AND contact_id=$2 AND NULLIF(trim(email),'') IS NOT NULL FOR SHARE",
+        [input.client_id, contact],
+      )
+    ).rowCount
+  )
+    throw new HttpError(
+      422,
+      "AR_CONTACT_SCOPE",
+      "Contact AR sans adresse ou étranger au client.",
+    );
   await db.query(
-    `INSERT INTO public.industrial_policies(client_id,version,auto_enabled,risk_limit_eur,updated_by,transit_calendar_days) VALUES($1,1,false,$2,$3,$4)
-   ON CONFLICT(client_id) DO UPDATE SET version=industrial_policies.version+1,
-   risk_limit_eur=excluded.risk_limit_eur,updated_by=excluded.updated_by,transit_calendar_days=excluded.transit_calendar_days,updated_at=now()`,
+    `INSERT INTO public.industrial_policies(client_id,version,auto_enabled,risk_limit_eur,updated_by,auto_ar_contact_id,transit_calendar_days) VALUES($1,1,$2,$3,$4,$5,$6)
+   ON CONFLICT(client_id) DO UPDATE SET version=industrial_policies.version+1,auto_enabled=excluded.auto_enabled,
+   risk_limit_eur=excluded.risk_limit_eur,updated_by=excluded.updated_by,auto_ar_contact_id=excluded.auto_ar_contact_id,transit_calendar_days=excluded.transit_calendar_days,updated_at=now()`,
     [
       input.client_id,
+      input.auto_enabled,
       input.risk_limit_eur,
       actor,
+      contact,
       input.transit_calendar_days === undefined
         ? before.transit_calendar_days
         : input.transit_calendar_days,

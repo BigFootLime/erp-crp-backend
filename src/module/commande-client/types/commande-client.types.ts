@@ -349,6 +349,7 @@ export type UpdateCadreReleaseLinePatch = {
 };
 
 export type UploadedDocument = {
+  sha256?: string;
   originalname: string;
   path: string;
   mimetype: string;

@@ -1274,7 +1274,7 @@ function normalizedCommandeStatusSql(rawExpr: string): string {
       WHEN ${rawExpr} IN (
         'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_FOURNISSEUR','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
         'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
-        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
+        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE','ANNULE'
       ) THEN ${rawExpr}
       WHEN ${rawExpr} = 'ENREGISTREE' THEN 'EN_ANALYSE'
       WHEN ${rawExpr} = 'PLANIFIEE' THEN 'PLANNING_VALIDE'
@@ -1946,6 +1946,7 @@ function mapWorkflowCheckpoint(row: WorkflowCheckpointRow) {
 }
 
 function checkpointSeedStatus(definitionStatus: CommandeWorkflowStatus, currentStatus: CommandeWorkflowStatus, activeAssigned: { value: boolean }) {
+  if (currentStatus === "ANNULE") return "skipped" as const;
   if (currentStatus !== "BLOQUE" && COMMANDE_WORKFLOW_STATUS_ORDER[definitionStatus] <= COMMANDE_WORKFLOW_STATUS_ORDER[currentStatus]) {
     return "done" as CommandeCheckpointStatus;
   }
@@ -2665,6 +2666,9 @@ export async function repoRunCommandeWorkflowAction(
     // Expensive/domain assertions are intentionally after the locked replay
     // check: the second identical request must be a read-only success even if
     // downstream state has already moved on.
+    // These milestones cannot be completed by the role panel alone. The
+    // readiness proof is recomputed under the command lock, so a direct API
+    // call has exactly the same gates as the official planning/AR flows.
     if (action.key === "validate_planning") await assertOrderManufacturingPlanned(client, commandeId);
     if (action.key === "start_production") await assertCommandeProductionStarted(client, commandeId);
     if (action.key === "complete_production") await assertCommandeProductionCompleted(client, commandeId);
@@ -3353,6 +3357,7 @@ type InsertCommandeLignesOptions = {
   actor_user_id: number | null;
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
+  skip_sale_price_reference?: boolean;
   fulfilment_mode?: string;
   existing_line_ids?: ReadonlySet<number>;
 };
@@ -3779,7 +3784,9 @@ async function insertCommandeLignes(
         );
       }
     }
-    const referencePrice = await applyOrderLineSalePriceTx(client, {
+    const referencePrice = options.skip_sale_price_reference
+      ? { reference_price: null, reference_source: null, decision: "KEEP" as const, history_id: null }
+      : await applyOrderLineSalePriceTx(client, {
       article_id: resolved.article_id,
       proposed_price: l.prix_unitaire_ht,
       decision: l.reference_price_decision ?? null,
@@ -4105,6 +4112,27 @@ async function insertCommandeDocuments(
   for (const doc of documents) {
     const documentId = crypto.randomUUID();
     const isPdf = doc.originalname.toLowerCase().endsWith(".pdf");
+    if (isPdf && doc.sha256) {
+      // The order is locked throughout the create/update transaction.
+      const existing = await client.query<{id: string; sha256: string | null}>(
+        `SELECT d.id::text, cd.upload_sha256 AS sha256 FROM commande_documents cd
+         JOIN documents_clients d ON d.id=cd.document_id
+         WHERE cd.commande_id=$1 AND cd.type='PDF'
+           AND (cd.upload_sha256=$2 OR (cd.upload_sha256 IS NULL AND d.document_name=$3))`,
+        [commandeId, doc.sha256, doc.originalname],
+      );
+      let matched = false;
+      for (const stored of existing.rows) {
+        if (stored.sha256 === doc.sha256) { matched = true; break; }
+        try {
+          const bytes = await fs.readFile(path.join(ensureDocumentStoragePath(), stored.id + ".pdf"));
+          if (crypto.createHash("sha256").update(bytes).digest("hex") === doc.sha256) { matched = true; break; }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      if (matched) continue;
+    }
     const docType = isPdf ? "PDF" : doc.mimetype;
 
     const extCandidate = path.extname(doc.originalname).toLowerCase();
@@ -4126,10 +4154,10 @@ async function insertCommandeDocuments(
 
     await client.query(
       `
-      INSERT INTO commande_documents (commande_id, document_id, type)
-      VALUES ($1, $2, $3)
+      INSERT INTO commande_documents (commande_id, document_id, type, upload_sha256)
+      VALUES ($1, $2, $3, $4)
       `,
-      [commandeId, documentId, isPdf ? "PDF" : null]
+      [commandeId, documentId, isPdf ? "PDF" : null, isPdf ? doc.sha256 ?? null : null]
     );
   }
 }
@@ -4234,6 +4262,47 @@ async function transitionLinkedDevisArticlesToValide(
   return updated.rowCount ?? 0;
 }
 
+/**
+ * Cutover-only transaction primitive. It deliberately reuses the same native
+ * header/line/checkpoint writes as order creation, but never emits an AR,
+ * notification or creation PDF. The caller owns BEGIN/COMMIT together with
+ * its durable cutover crosswalk.
+ */
+export async function repoCreateCommandeDraftTx(
+  client: PoolClient,
+  input: CreateCommandeInput,
+  actorUserId: number,
+  origin: "cutover" | "client_demand" = "cutover",
+): Promise<{ id: number; numero: string }> {
+  const contractCall = await prepareContractCall(client, input, actorUserId, []);
+  await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
+  const idRes = await client.query<{ id: string }>("SELECT nextval('public.commande_client_id_seq')::bigint::text AS id");
+  const rawId = idRes.rows[0]?.id;
+  if (!rawId) throw new Error("Failed to allocate commande id");
+  const commandeIdInt = toInt(rawId, "commande_client.id");
+  const numero = await generateCommandeCode(client, { client_code: input.code_client ?? input.client_id ?? "CMD", date: input.date_commande ? new Date(input.date_commande) : undefined });
+  const orderType = input.order_type ?? "FERME";
+  const initialWorkflowStatus: CommandeWorkflowStatus = origin === "client_demand" ? "BROUILLON" : "ATTENTE_TECHNIQUE";
+  const inserted = await client.query<{ id: string }>(`
+    INSERT INTO commande_client (id,numero,client_id,contact_id,destinataire_id,adresse_facturation_id,emetteur,code_client,date_commande,arc_edi,arc_date_envoi,compteur_affaire_id,type_affaire,order_type,cadre_start_date,cadre_end_date,dest_stock_magasin_id,dest_stock_emplacement_id,mode_port_id,mode_reglement_id,conditions_paiement_id,biller_id,compte_vente_id,commentaire,remise_globale,total_ht,total_ttc,devis_id,source_devis_version_id,creation_flow_version,delivery_prepayment_requirement)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING id::text AS id`, [
+      commandeIdInt, numero, input.client_id ?? null, input.contact_id ?? null, input.destinataire_id ?? null, input.adresse_facturation_id ?? null, input.emetteur ?? null, input.code_client ?? null, input.date_commande, input.arc_edi ?? false, input.arc_date_envoi ?? null, input.compteur_affaire_id ?? null, "livraison", orderType, input.cadre_start_date ?? null, input.cadre_end_date ?? null, input.dest_stock_magasin_id ?? null, input.dest_stock_emplacement_id ?? null, input.mode_port_id ?? null, input.mode_reglement_id ?? null, input.conditions_paiement_id ?? null, input.biller_id ?? null, input.compte_vente_id ?? null, input.commentaire ?? null, input.remise_globale ?? 0, input.total_ht ?? 0, input.total_ttc ?? 0, input.devis_id ?? null, input.source_devis_version_id ?? input.devis_id ?? null, input.creation_flow_version ?? 1, orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+    ]);
+  const commandeId = inserted.rows[0]?.id;
+  if (!commandeId) throw new Error("Failed to create commande");
+  await insertCommandeLignes(client, commandeId, input.lignes, { officialize_preparatory_data: input.officialize_preparatory_data ?? false, commande_id_int: commandeIdInt, actor_user_id: actorUserId, creation_flow_version: input.creation_flow_version ?? 1, save_intent: "DRAFT", skip_sale_price_reference: orderType === "INTERNE" });
+  await recordContractCall(client, contractCall, commandeId, input);
+  await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
+  await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
+  await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, origin === "client_demand" ? "Brouillon issu du programme client, à vérifier par l’ADV" : "Commande de reprise creee - brouillon a verifier"]);
+  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: origin === "client_demand" ? "order_intake" : "technical_analysis", cutover_draft: origin === "cutover" }, user_id: actorUserId });
+  return { id: commandeIdInt, numero };
+}
+
+/** @deprecated compatibility name for data-cutover callers. */
+export const repoCreateCommandeCutoverDraftTx = repoCreateCommandeDraftTx;
+/** Compatibility alias for transactional intercompany creation. */
 /**
  * The ordinary customer-order creation writes, joined to the caller's transaction.
  * Keeps technical, price, workflow, notification and document rules identical to

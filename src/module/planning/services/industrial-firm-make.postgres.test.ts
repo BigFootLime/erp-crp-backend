@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 import { authorizationRole } from "../../auth/domain/roles";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
-import { createPilotFixtureArticle, createPilotFixtureClient } from "../../../__tests__/fixtures/demand-pilot.fixture";
+import { createPilotFixtureArticle } from "../../../__tests__/fixtures/demand-pilot.fixture";
 import { seedWorkbenchStock } from "../../../__tests__/fixtures/production-workbench.fixture";
 import { reservePilotOfMaterial } from "../../../__tests__/fixtures/industrial-pilot-material.fixture";
 import { releasePilotOf } from "../../../__tests__/fixtures/industrial-pilot-release.fixture";
+import { importDemand } from "../../demand-pilot/repository/demand-ingest.repository";
+import { saveArticleMapping } from "../../demand-pilot/repository/demand-mapping.repository";
+import { prepareFirmDraft } from "../../demand-pilot/services/demand-pilot-firm-draft.service";
 import { enqueueIndustrialRun, industrialRunById, industrialTx, processIndustrialRun, validateIndustrialRun } from "../services/industrial-runs.service";
 import { executeIndustrialProposals } from "../services/industrial-proposal-execution.service";
 import { evaluateOfPreparation, repoReviewPreparationStock, repoSavePreparationDecisions } from "../../production/repository/production-preparation.repository";
@@ -15,14 +18,14 @@ import { configureStockLane } from "../../stock/repository/stock-lanes.repositor
 import type { AuditContext } from "../repository/planning.repository";
 import type { IndustrialProposal } from "../types/industrial-plan.types";
 import { updateIndustrialSettings } from "../repository/industrial-settings.repository";
-import { repoAnalyzeCommandeStock, repoRunCommandeWorkflowAction, repoCreateCommandeNativeTx } from "../../commande-client/repository/commande-client.repository";
+import { repoAnalyzeCommandeStock, repoRunCommandeWorkflowAction } from "../../commande-client/repository/commande-client.repository";
 
 const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/off");
 const isolated = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_DEMAND_POSTGRES_TEST === "1" && ["127.0.0.1", "localhost", "[::1]"].includes(databaseUrl.hostname) && databaseUrl.pathname === "/cerp_test";
 const externalCode = process.env.CERP_VISION_PILOT_ARTICLE_CODE ?? "VISION-MAKE-SYNTHETIC";
 const quantity = Number(process.env.CERP_VISION_PILOT_QUANTITY ?? "1");
 const launchQuantity = Math.ceil(quantity * 100 / 90);
-let client: string;
+const client = "V" + randomUUID().replace(/-/g, "").slice(0, 2);
 const suffix = randomUUID().slice(0, 8);
 const article = randomUUID();
 const materialArticle = randomUUID();
@@ -70,9 +73,10 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
       // The isolated validation database starts without the commercial unit used by
       // this Vision fixture.  Seed the reference data before creating its lot.
       await tx.query("INSERT INTO public.units(code,label) VALUES('PCE','Pièce') ON CONFLICT(code) DO NOTHING");
-      client = await createPilotFixtureClient(tx, "V", "Recette interne OF");
+      await tx.query("INSERT INTO public.clients(client_id,client_code,company_name) VALUES($1,$2,'Vision isolate') ON CONFLICT(client_id) DO NOTHING", [client, client]);
       const technical = await createPilotFixtureArticle(tx, client, actor, article, "SYN-" + suffix, { publish: false });
       productTechnical = technical;
+      await saveArticleMapping(tx, { client_id: client, article_id: article, external_code: externalCode, external_unit: "PCE", units_per_external: 1 }, actor);
       await tx.query("UPDATE public.pieces_techniques SET article_id=$2::uuid WHERE id=$1::uuid", [technical.piece, article]);
       await tx.query("INSERT INTO public.articles(id,root_article_id,version_number,plan_index,code,designation,article_type,unite,article_category,status,commercial_scope,internal_reference,is_sold,stock_managed,family_code) VALUES($1,$1,1,1,$2,'Matière Vision isolée','PURCHASED','PCE','matiere','VALIDE','CRP',$2,false,true,$2)", [materialArticle, "MAT-" + suffix]);
       const calendar = randomUUID(), machine = randomUUID(), gamme = randomUUID(), qualityPlan = randomUUID(), centre = randomUUID();
@@ -112,19 +116,22 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
       request_id: randomUUID(),
       reason: "Zone libre de la matière de recette Vision",
     }, actor);
-    const order = await industrialTx(tx => repoCreateCommandeNativeTx(tx, {
-      client_id: client, code_client: client, date_commande: new Date().toISOString().slice(0, 10),
-      order_type: "FERME", creation_flow_version: 1, total_ht: quantity, total_ttc: quantity * 1.2,
-      lignes: [{ article_id: article, piece_technique_id: productTechnical.piece, piece_technique_version_id: productTechnical.version,
-        designation: externalCode, code_piece: externalCode, quantite: quantity, unite: "PCE", prix_unitaire_ht: 1,
-        taux_tva: 20, remise_ligne: 0, delai_client: due, reference_price_decision: "SET" }],
-    }, secretaryActor));
-    const stock = await repoAnalyzeCommandeStock(String(order.id), {
+    const imported = await importDemand({ clientId: client, completeSnapshot: false, idempotencyKey: randomUUID(), actor: { userId: actor }, rows: [{ external_site: "SITE-" + suffix, external_order_key: "OF-" + suffix, external_line_key: "10", external_schedule_key: "S1", source_version: "W44", source_as_of: new Date().toISOString(), kind: "FIRM", quantity, unit: "PCE", quantity_basis: "REMAINING", need_date: due, article_code: externalCode }] });
+    const revision = (await pool.query<{ id: string }>("SELECT id::text FROM public.demand_pilot_revisions WHERE import_id=$1::uuid", [imported.import_id])).rows[0];
+    await prepareFirmDraft({ client_id: client, revision_ids: [revision.id], lines: [{ revision_id: revision.id, designation: externalCode, prix_unitaire_ht: 1, taux_tva: 20, remise_ligne: 0 }] }, secretaryActor, randomUUID());
+    const order = (await pool.query<{ id: string }>(
+      "SELECT id::text FROM public.commande_client WHERE client_id=$1 ORDER BY id DESC LIMIT 1",
+      [client],
+    )).rows[0];
+    if (!order) throw new Error("The pilot firm order was not materialized.");
+    await repoRunCommandeWorkflowAction(order.id, { action: "start_analysis", commentaire: "Recette secrétaire" }, secretaryActor, "Secretaire");
+    await repoRunCommandeWorkflowAction(order.id, { action: "request_stock_check", commentaire: "Contrôle OLD/NEW demandé" }, secretaryActor, "Secretaire");
+    const stock = await repoAnalyzeCommandeStock(order.id, {
       user_id: technicalActor, user_role: technicalRole, ip: null, user_agent: null,
       device_type: null, os: null, browser: null, path: "/commandes/stock", page_key: "commandes.stock", client_session_id: null,
     });
     expect(stock?.suggested_scenario).toBe("LIVRAISON_AND_OF");
-    await repoRunCommandeWorkflowAction(String(order.id), { action: "check_stock", commentaire: "Contrôle stock technique validé" }, technicalActor, technicalRole);
+    await repoRunCommandeWorkflowAction(order.id, { action: "check_stock", commentaire: "Contrôle stock technique validé" }, technicalActor, "Method | Responsable Programmation");
     await industrialTx(tx => updateIndustrialSettings(tx, actor, {
       client_id: client, contracts: [], articles: [{
         article_id: article, family: "Vision", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 90,
