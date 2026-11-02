@@ -215,11 +215,20 @@ async function main() {
     );
     await client.query(
       `INSERT INTO public.adresse_livraison (
-         delivery_address_id,address,postal_code,city,country
+         delivery_address_id,name,address,street,postal_code,city,country
        ) VALUES (
-         '91000000-0000-4000-8000-000000000001','1 rue E2E','69001','Lyon','France'
+         '91000000-0000-4000-8000-000000000001','Client preuve SOL-05','1 rue E2E','1 rue E2E','69001','Lyon','France'
        ) ON CONFLICT (delivery_address_id) DO UPDATE SET
-         address=EXCLUDED.address,postal_code=EXCLUDED.postal_code,
+         name=EXCLUDED.name,address=EXCLUDED.address,street=EXCLUDED.street,postal_code=EXCLUDED.postal_code,
+         city=EXCLUDED.city,country=EXCLUDED.country`
+    );
+    await client.query(
+      `INSERT INTO public.adresse_facturation (
+         bill_address_id,name,street,postal_code,city,country
+       ) VALUES (
+         '92000000-0000-4000-8000-000000000001','Client preuve SOL-05','1 rue E2E','69001','Lyon','France'
+       ) ON CONFLICT (bill_address_id) DO UPDATE SET
+         name=EXCLUDED.name,street=EXCLUDED.street,postal_code=EXCLUDED.postal_code,
          city=EXCLUDED.city,country=EXCLUDED.country`
     );
     await client.query(
@@ -235,6 +244,7 @@ async function main() {
       `UPDATE public.clients SET
          email='client.e2e@invalid.example',phone='0102030405',
          delivery_address_id='91000000-0000-4000-8000-000000000001',
+         bill_address_id='92000000-0000-4000-8000-000000000001',
          contact_id='93000000-0000-4000-8000-000000000001'
        WHERE client_id='901'`
     );
