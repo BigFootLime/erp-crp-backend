@@ -12,11 +12,12 @@ import { enqueueIndustrialRun, industrialRunById, industrialTx, processIndustria
 import { executeIndustrialProposals } from "../services/industrial-proposal-execution.service";
 import { evaluateOfPreparation, repoReviewPreparationStock, repoSavePreparationDecisions } from "../../production/repository/production-preparation.repository";
 import { repoGenerateSelfInspection } from "../../production/repository/self-inspection.repository";
-import { repoSubmitOfTechnicalPreparation, repoValidateOfTechnicalPreparation } from "../../production/repository/production.repository";
+import { repoGetOrdreFabrication, repoUpdateOrdreFabrication, repoSubmitOfTechnicalPreparation, repoValidateOfTechnicalPreparation } from "../../production/repository/production.repository";
 import { configureStockLane } from "../../stock/repository/stock-lanes.repository";
 import type { AuditContext } from "../repository/planning.repository";
 import type { IndustrialProposal } from "../types/industrial-plan.types";
 import { updateIndustrialSettings } from "../repository/industrial-settings.repository";
+import { repoAnalyzeCommandeStock, repoRunCommandeWorkflowAction } from "../../commande-client/repository/commande-client.repository";
 
 const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/off");
 const isolated = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_DEMAND_POSTGRES_TEST === "1" && ["127.0.0.1", "localhost", "[::1]"].includes(databaseUrl.hostname) && databaseUrl.pathname === "/cerp_test";
@@ -27,12 +28,14 @@ const client = "V" + randomUUID().replace(/-/g, "").slice(0, 2);
 const suffix = randomUUID().slice(0, 8);
 const article = randomUUID();
 const materialArticle = randomUUID();
-let actor = 0, due = "";
+let actor = 0, secretaryActor = 0, technicalActor = 0, due = "";
 let materialStock: Awaited<ReturnType<typeof seedWorkbenchStock>>;
 let productTechnical!: { piece: string; version: string };
 let beforePlanning: { activation: string; workshop_calendar_id: string | null };
 let beforeMaterialWorkflow = false;
+let beforeProductionWorkbench = false;
 const audit = (): AuditContext => ({ user_id: actor, role: "Directeur", ip: null, user_agent: null, device_type: null, os: null, browser: null, path: "/planning/industrial", page_key: "planning.industrial", client_session_id: null });
+const technicalAudit = (): AuditContext => ({ ...audit(), user_id: technicalActor, role: "Method | Responsable Programmation" });
 async function waitRun(id: string) {
   for (let index = 0; index < 12; index++) {
     const run = await industrialRunById(id);
@@ -44,13 +47,27 @@ async function waitRun(id: string) {
 
 describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
   beforeAll(async () => {
-    if (!(quantity > 0) || !Number.isFinite(quantity)) throw new Error("CERP_VISION_PILOT_QUANTITY must be positive.");
+    if (!(quantity > 0) || !Number.isSafeInteger(quantity)) throw new Error("CERP_VISION_PILOT_QUANTITY must be a positive whole number of pieces.");
     actor = Number((await pool.query("SELECT id FROM public.users WHERE is_superadmin LIMIT 1")).rows[0].id);
+    secretaryActor = Number((await pool.query<{ id: number }>(
+      "INSERT INTO public.users(username,password,role,status,email) VALUES($1,'DISABLED_TEST_CREDENTIAL','Secretaire','Active',$2) RETURNING id",
+      ["SEC-" + suffix, "sec-" + suffix + "@example.invalid"],
+    )).rows[0].id);
+    technicalActor = Number((await pool.query<{ id: number }>(
+      "INSERT INTO public.users(username,password,role,status,email) VALUES($1,'DISABLED_TEST_CREDENTIAL','Employee','Active',$2) RETURNING id",
+      ["TECH-" + suffix, "tech-" + suffix + "@example.invalid"],
+    )).rows[0].id);
+    await pool.query(
+      "INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by) VALUES($1,'Secretaire',$3),($2,'Employee',$3),($2,'Études-Méthodes',$3)",
+      [secretaryActor, technicalActor, actor],
+    );
     due = (await pool.query<{ due: string }>("SELECT (CURRENT_DATE + 28)::text AS due")).rows[0].due;
     beforePlanning = (await pool.query("SELECT activation,workshop_calendar_id::text FROM public.planning_central_settings WHERE singleton")).rows[0];
     beforeMaterialWorkflow = (await pool.query<{ enabled: boolean }>("SELECT enabled FROM public.app_feature_flags WHERE key='PRODUCTION_MATERIAL_WORKFLOW'")).rows[0].enabled;
+    beforeProductionWorkbench = (await pool.query<{ enabled: boolean }>("SELECT enabled FROM public.app_feature_flags WHERE key='PRODUCTION_WORKBENCH'")).rows[0].enabled;
     await industrialTx(async (tx) => {
       await tx.query("UPDATE public.app_feature_flags SET enabled=true WHERE key='PRODUCTION_MATERIAL_WORKFLOW'");
+      await tx.query("UPDATE public.app_feature_flags SET enabled=true WHERE key='PRODUCTION_WORKBENCH'");
       // The isolated validation database starts without the commercial unit used by
       // this Vision fixture.  Seed the reference data before creating its lot.
       await tx.query("INSERT INTO public.units(code,label) VALUES('PCE','Pièce') ON CONFLICT(code) DO NOTHING");
@@ -99,7 +116,20 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     }, actor);
     const imported = await importDemand({ clientId: client, completeSnapshot: false, idempotencyKey: randomUUID(), actor: { userId: actor }, rows: [{ external_site: "SITE-" + suffix, external_order_key: "OF-" + suffix, external_line_key: "10", external_schedule_key: "S1", source_version: "W44", source_as_of: new Date().toISOString(), kind: "FIRM", quantity, unit: "PCE", quantity_basis: "REMAINING", need_date: due, article_code: externalCode }] });
     const revision = (await pool.query<{ id: string }>("SELECT id::text FROM public.demand_pilot_revisions WHERE import_id=$1::uuid", [imported.import_id])).rows[0];
-    await prepareFirmDraft({ client_id: client, revision_ids: [revision.id], lines: [{ revision_id: revision.id, designation: externalCode, prix_unitaire_ht: 1, taux_tva: 20, remise_ligne: 0 }] }, actor, randomUUID());
+    await prepareFirmDraft({ client_id: client, revision_ids: [revision.id], lines: [{ revision_id: revision.id, designation: externalCode, prix_unitaire_ht: 1, taux_tva: 20, remise_ligne: 0 }] }, secretaryActor, randomUUID());
+    const order = (await pool.query<{ id: string }>(
+      "SELECT id::text FROM public.commande_client WHERE client_id=$1 ORDER BY id DESC LIMIT 1",
+      [client],
+    )).rows[0];
+    if (!order) throw new Error("The pilot firm order was not materialized.");
+    await repoRunCommandeWorkflowAction(order.id, { action: "start_analysis", commentaire: "Recette secrétaire" }, secretaryActor, "Secretaire");
+    await repoRunCommandeWorkflowAction(order.id, { action: "request_stock_check", commentaire: "Contrôle OLD/NEW demandé" }, secretaryActor, "Secretaire");
+    const stock = await repoAnalyzeCommandeStock(order.id, {
+      user_id: technicalActor, user_role: "Method | Responsable Programmation", ip: null, user_agent: null,
+      device_type: null, os: null, browser: null, path: "/commandes/stock", page_key: "commandes.stock", client_session_id: null,
+    });
+    expect(stock?.suggested_scenario).toBe("LIVRAISON_AND_OF");
+    await repoRunCommandeWorkflowAction(order.id, { action: "check_stock", commentaire: "Contrôle stock technique validé" }, technicalActor, "Method | Responsable Programmation");
     await industrialTx(tx => updateIndustrialSettings(tx, actor, {
       client_id: client, contracts: [], articles: [{
         article_id: article, family: "Vision", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 90,
@@ -107,8 +137,11 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     }));
   });
   afterAll(async () => {
-    await pool.query("UPDATE public.app_feature_flags SET enabled=$1 WHERE key='PRODUCTION_MATERIAL_WORKFLOW'", [beforeMaterialWorkflow]);
-    await pool.query("UPDATE public.planning_central_settings SET activation=$1,workshop_calendar_id=$2::uuid WHERE singleton", [beforePlanning.activation, beforePlanning.workshop_calendar_id]);
+    if (beforePlanning) {
+      await pool.query("UPDATE public.app_feature_flags SET enabled=$1 WHERE key='PRODUCTION_MATERIAL_WORKFLOW'", [beforeMaterialWorkflow]);
+      await pool.query("UPDATE public.app_feature_flags SET enabled=$1 WHERE key='PRODUCTION_WORKBENCH'", [beforeProductionWorkbench]);
+      await pool.query("UPDATE public.planning_central_settings SET activation=$1,workshop_calendar_id=$2::uuid WHERE singleton", [beforePlanning.activation, beforePlanning.workshop_calendar_id]);
+    }
     await pool.end();
   });
   it("creates, prepares and releases an OF from the validated capacity proposal", async () => {
@@ -124,31 +157,40 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     expect(ready.result.placements).toEqual(expect.arrayContaining([expect.objectContaining({ article_id: article, requested: due, status: "CAPACITY_SIMULATED" })]));
     await validateIndustrialRun(queued.id, actor);
     const executionKey = randomUUID();
-    const execution = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, audit());
+    const execution = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, technicalAudit());
     expect(execution).toMatchObject({ outcomes: [expect.objectContaining({ status: "EXECUTED", target_type: "OF" })] });
     const ofId = Number((execution.outcomes[0] as { target_id: string }).target_id);
     const sizes = await pool.query<{ launched: number; ordered: number }>(
       `SELECT of.quantite_lancee::float8 AS launched, line.quantite::float8 AS ordered
-       FROM public.ordres_fabrication of JOIN public.commande_ligne line ON line.article_id=of.article_id
+       FROM public.ordres_fabrication of JOIN public.commande_ligne line ON line.id=of.commande_ligne_id
        WHERE of.id=$1`, [ofId],
     );
     expect(sizes.rows).toEqual([{ launched: launchQuantity, ordered: quantity }]);
-    const replay = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, audit());
+    const replay = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, technicalAudit());
     expect(replay.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ status: "EXECUTED", target_type: "OF", target_id: String(ofId) })]));
+    // The native OF editor can change a draft without overwriting the customer demand.
+    const draft = await repoGetOrdreFabrication({ id: ofId, user_id: actor });
+    const editAudit = { ...audit(), user_role: "Production" };
+    const adjusted = await repoUpdateOrdreFabrication({ id: ofId, audit: editAudit,
+      patch: { quantite_lancee: launchQuantity + 8, expected_updated_at: draft!.updated_at } });
+    expect(adjusted?.quantite_lancee).toBe(launchQuantity + 8);
+    const orderLine = await pool.query("SELECT quantite::float8 AS ordered FROM public.commande_ligne WHERE commande_id=$1 AND article_id=$2", [draft!.commande_id, article]);
+    expect(orderLine.rows).toEqual([{ ordered: quantity }]);
+    await repoUpdateOrdreFabrication({ id: ofId, audit: editAudit,
+      patch: { quantite_lancee: launchQuantity, expected_updated_at: adjusted!.updated_at } });
     let preparation = await evaluateOfPreparation(pool, ofId);
-    expect(preparation.of.technical_readiness).toBe("INCOMPLETE");
-    preparation = await repoSavePreparationDecisions(ofId, { expected_updated_at: preparation.of.updated_at, version_id: productTechnical.version, expected_version: preparation.profile_version, decisions: { material: { mode: "REQUIRED" }, treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement" }, subcontract: { mode: "NOT_REQUIRED", reason: "Interne" }, programming: { mode: "NONE", reason: "Non requis" } } }, audit());
-    preparation = await repoReviewPreparationStock(ofId, { expected_updated_at: preparation.of.updated_at, source_hash: preparation.stock_hash, reason: "Stock de recette contrôlé avant gel technique" }, audit());
-    preparation = await repoGenerateSelfInspection(ofId, preparation.of.updated_at, audit());
+    preparation = await repoSavePreparationDecisions(ofId, { expected_updated_at: preparation.of.updated_at, version_id: productTechnical.version, expected_version: preparation.profile_version, decisions: { material: { mode: "REQUIRED" }, treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement" }, subcontract: { mode: "NOT_REQUIRED", reason: "Interne" }, programming: { mode: "NONE", reason: "Non requis" } } }, technicalAudit());
+    preparation = await repoReviewPreparationStock(ofId, { expected_updated_at: preparation.of.updated_at, source_hash: preparation.stock_hash, reason: "Stock de recette contrôlé avant gel technique" }, technicalAudit());
+    preparation = await repoGenerateSelfInspection(ofId, preparation.of.updated_at, technicalAudit());
     expect(preparation.ready, JSON.stringify(preparation)).toBe(true);
-    await repoSubmitOfTechnicalPreparation({ id: ofId, body: { expected_updated_at: preparation.of.updated_at }, audit: audit() });
+    await repoSubmitOfTechnicalPreparation({ id: ofId, body: { expected_updated_at: preparation.of.updated_at }, audit: technicalAudit() });
     preparation = await evaluateOfPreparation(pool, ofId);
-    await repoValidateOfTechnicalPreparation({ id: ofId, body: { expected_updated_at: preparation.of.updated_at }, audit: audit() });
+    await repoValidateOfTechnicalPreparation({ id: ofId, body: { expected_updated_at: preparation.of.updated_at }, audit: technicalAudit() });
     const validated = await evaluateOfPreparation(pool, ofId);
     expect(validated.of.technical_readiness).toBe("VALIDATED");
     const operation = (await pool.query<{ id: string }>("SELECT id::text FROM public.of_operations WHERE of_id=$1 ORDER BY phase,id LIMIT 1", [ofId])).rows[0];
     expect(operation).toBeDefined();
-    const reserved = await reservePilotOfMaterial(ofId, audit(), {
+    const reserved = await reservePilotOfMaterial(ofId, technicalAudit(), {
       batchId: materialStock.batch,
       quantity: launchQuantity,
       configuration: { operationId: operation.id, requirements: { grade: null, condition: null, ownerClientId: null, dimensions: {}, certificates: [], manualChecks: [] }, supplyMode: "PURCHASE", supplierId: null, destinationId: null, allowPartial: false, debitRule: { form: "UNIT", stockUnit: "PCE", unitsPerBlank: 1, kerfPerBlank: 0, yieldValidated: true } },
@@ -165,7 +207,7 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
       .filter((entry: { proposal: IndustrialProposal }) => entry.proposal.kind === "MAKE" && entry.proposal.article_id === article && entry.proposal.due === due);
     const repeatedMakeIndexes = repeatedEntries.map((entry: { proposal: IndustrialProposal; proposalIndex: number }) => entry.proposalIndex);
     if (repeatedMakeIndexes.length) {
-      const repeated = await executeIndustrialProposals(queuedAgain.id, { proposal_indexes: repeatedMakeIndexes, request_key: randomUUID() }, audit());
+      const repeated = await executeIndustrialProposals(queuedAgain.id, { proposal_indexes: repeatedMakeIndexes, request_key: randomUUID() }, technicalAudit());
       const repeatedOutcomes = repeated.outcomes as Array<{ status: string; target_id?: string | null }>;
       expect(repeatedOutcomes).toHaveLength(repeatedMakeIndexes.length);
       for (const outcome of repeatedOutcomes) {

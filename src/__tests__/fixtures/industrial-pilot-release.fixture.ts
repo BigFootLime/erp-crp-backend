@@ -28,6 +28,53 @@ type Placement = {
   end: string;
 };
 
+async function seedPrimaryRolesForIsolatedReadiness(actorId: number) {
+  const missing = await pool.query<{ user_id: number; role_key: string }>(
+    `SELECT u.id::int AS user_id,u.role::text AS role_key
+       FROM public.users u
+      WHERE u.status='Active'
+        AND NOT EXISTS(
+          SELECT 1 FROM public.user_role_assignments assigned
+          JOIN public.app_roles catalogue ON catalogue.role_key=assigned.role_key AND catalogue.is_active
+          WHERE assigned.user_id=u.id AND assigned.role_key=u.role
+        )
+      ORDER BY u.id`,
+  );
+  if (!missing.rows.length) return async () => {};
+  const unavailable = await pool.query<{ role_key: string }>(
+    `SELECT DISTINCT missing.role_key
+       FROM unnest($1::text[]) AS missing(role_key)
+      WHERE NOT EXISTS(
+        SELECT 1 FROM public.app_roles catalogue
+        WHERE catalogue.role_key=missing.role_key AND catalogue.is_active
+      )
+      ORDER BY missing.role_key`,
+    [missing.rows.map((row) => row.role_key)],
+  );
+  if (unavailable.rows.length)
+    throw new Error(
+      "Isolated readiness fixture lacks active catalogue roles: " +
+        unavailable.rows.map((row) => row.role_key).join(", "),
+    );
+  const added: Array<{ user_id: number; role_key: string }> = [];
+  for (const row of missing.rows) {
+    const inserted = await pool.query<{ user_id: number; role_key: string }>(
+      `INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by)
+       VALUES($1,$2,$3) ON CONFLICT DO NOTHING
+       RETURNING user_id::int,role_key`,
+      [row.user_id, row.role_key, actorId],
+    );
+    if (inserted.rows[0]) added.push(inserted.rows[0]);
+  }
+  return async () => {
+    for (const row of added)
+      await pool.query(
+        "DELETE FROM public.user_role_assignments WHERE user_id=$1 AND role_key=$2",
+        [row.user_id, row.role_key],
+      );
+  };
+}
+
 async function instructionPdf() {
   const document = new PDFDocument();
   const chunks: Buffer[] = [];
@@ -70,6 +117,7 @@ export async function releasePilotOf(
     CERP_TMP_ROOT: process.env.CERP_TMP_ROOT,
   };
   const secret = randomBytes(48).toString("hex");
+  let removeReadinessSeed: (() => Promise<void>) | null = null;
   Object.assign(process.env, {
     JWT_SECRET: secret,
     CERP_STORAGE_ROOT: root,
@@ -79,6 +127,22 @@ export async function releasePilotOf(
   try {
     const { user, token } = await signPilotFixtureSession(actorId);
     const authorization = "Bearer " + token;
+    const planner = (
+      await pool.query<{ id: number }>(
+        "INSERT INTO public.users(username,password,role,status,email) VALUES($1,'DISABLED_TEST_CREDENTIAL','Employee','Active',$2) RETURNING id",
+        [
+          "PLAN-" + ofId + "-" + randomUUID().slice(0, 8),
+          randomUUID() + "@example.invalid",
+        ],
+      )
+    ).rows[0];
+    await pool.query(
+      "INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by) VALUES($1,'Employee',$2),($1,'Planification',$2)",
+      [planner.id, actorId],
+    );
+    const planningAuthorization =
+      "Bearer " + (await signPilotFixtureSession(planner.id)).token;
+    removeReadinessSeed = await seedPrimaryRolesForIsolatedReadiness(actorId);
     const audit = {
       user_id: actorId,
       role: user.role,
@@ -176,7 +240,7 @@ export async function releasePilotOf(
         throw new Error("Missing simulated machine slot for phase " + op.phase);
       const planned = await request(app)
         .post("/api/v1/planning/events")
-        .set("Authorization", authorization)
+        .set("Authorization", planningAuthorization)
         .send({
           of_id: ofId,
           of_operation_id: op.id,
@@ -267,6 +331,7 @@ export async function releasePilotOf(
     expect(logs.rows).toEqual([{ id: accepted.body.id, status: "RUNNING" }]);
     return saved;
   } finally {
+    await removeReadinessSeed?.();
     for (const [name, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
