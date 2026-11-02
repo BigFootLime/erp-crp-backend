@@ -58,7 +58,7 @@ async function readSources(
     );
   const sources = (
     await tx.query<ConsolidationSource>(
-      `SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.client_id,o.article_id::text,o.piece_technique_id::text,o.piece_technique_version_id::text,
+      `SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.client_id,o.article_id::text,upper(btrim(article.unite)) AS unit,o.piece_technique_id::text,o.piece_technique_version_id::text,
     o.technical_snapshot_sha256,o.technical_snapshot,o.quantite_lancee::float8,o.quantite_bonne::float8,o.quantite_rebut::float8,o.statut::text,o.technical_readiness,
     o.updated_at::text,o.planning_wait_started_at::text,o.date_fin_prevue::text,o.parent_of_id::bigint::int,o.root_of_id::bigint::int,
     (SELECT execution.result->'industrial_proposal'
@@ -71,7 +71,7 @@ async function readSources(
     (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id=o.id AND op.status::text NOT IN ('TODO','READY')) AS started_count,
     EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE') AS covered,
     EXISTS(SELECT 1 FROM public.production_consolidations c WHERE c.producer_of_id=o.id) AS producer
-    FROM public.ordres_fabrication o WHERE o.id=ANY($1::bigint[]) ORDER BY o.id`,
+    FROM public.ordres_fabrication o JOIN public.articles article ON article.id=o.article_id WHERE o.id=ANY($1::bigint[]) ORDER BY o.id`,
       [ids],
     )
   ).rows;

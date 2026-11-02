@@ -10,6 +10,7 @@ function source(id: number, qty: number): ConsolidationSource {
     numero: `OF-${id}`,
     client_id: "ABC",
     article_id: "a",
+    unit: "PCE",
     piece_technique_id: "p",
     piece_technique_version_id: "v2",
     technical_snapshot_sha256: "same",
@@ -44,6 +45,7 @@ describe("Production consolidation conservation", () => {
       ...source(id, 112),
       industrial_semantics: {
         coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
         required_good_quantity: 100,
         expected_good_quantity: 100,
         yield_percent: 90,
@@ -78,6 +80,7 @@ describe("Production consolidation conservation", () => {
             ...source(1, 112),
             industrial_semantics: {
               coverage_semantics: "GOOD_OUTPUT_V1",
+              launched_quantity: 112,
               required_good_quantity: 100,
               expected_good_quantity: 100,
               yield_percent: 0,
@@ -89,28 +92,42 @@ describe("Production consolidation conservation", () => {
       ),
     ).toThrow(/rendement figé/i);
   });
-  it("caps an optimistic yield margin at the firm need and caps a short forecast below it", () => {
-    const pilot = (
-      id: number,
-      launched: number,
-      expected: number,
-    ): ConsolidationSource => ({
+  it("projects the same frozen yield token after a manual gross change", () => {
+    const pilot = (id: number, launched: number): ConsolidationSource => ({
       ...source(id, launched),
       industrial_semantics: {
         coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
         required_good_quantity: 100,
-        expected_good_quantity: expected,
+        expected_good_quantity: 100,
         yield_percent: 90,
       },
     });
     expect(
-      buildConsolidationPlan([pilot(1, 120, 108), source(2, 10)], 0)
-        .allocations[0],
+      buildConsolidationPlan([pilot(1, 120), source(2, 10)], 0).allocations[0],
     ).toMatchObject({ quantity: 100, launched_quantity: 120 });
     expect(
-      buildConsolidationPlan([pilot(1, 100, 90), source(2, 10)], 0)
-        .allocations[0],
+      buildConsolidationPlan([pilot(1, 100), source(2, 10)], 0).allocations[0],
     ).toMatchObject({ quantity: 90, launched_quantity: 100 });
+    expect(
+      buildConsolidationPlan([pilot(1, 85), source(2, 10)], 0).allocations[0],
+    ).toMatchObject({ quantity: 76, launched_quantity: 85 });
+  });
+  it("uses millesimal floor for continuous units", () => {
+    const pilot: ConsolidationSource = {
+      ...source(1, 85.999),
+      unit: "kg",
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
+        required_good_quantity: 100,
+        expected_good_quantity: 100,
+        yield_percent: 90,
+      },
+    };
+    expect(
+      buildConsolidationPlan([pilot, source(2, 1)], 0).allocations[0],
+    ).toMatchObject({ quantity: 77.399 });
   });
   it.each([
     ["client_id", "DEF"],

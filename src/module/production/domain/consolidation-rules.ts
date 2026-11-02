@@ -1,10 +1,12 @@
 import { HttpError } from "../../../utils/httpError";
+import { frozenYieldGoodOutputNumber } from "./frozen-yield";
 export type ConsolidationSource = {
   id: number;
   numero: string;
   priority?: string;
   client_id: string | null;
   article_id: string | null;
+  unit: string;
   piece_technique_id: string;
   piece_technique_version_id: string | null;
   technical_snapshot_sha256: string | null;
@@ -29,6 +31,7 @@ export type ConsolidationSource = {
 
 type GoodOutputSemantics = {
   coverage_semantics: "GOOD_OUTPUT_V1";
+  launched_quantity: string | number;
   required_good_quantity: string | number;
   expected_good_quantity: string | number;
   yield_percent: string | number;
@@ -56,10 +59,13 @@ export function sourceCommercialQuantity(source: ConsolidationSource): number {
       "Le rendement figé de l’OF est illisible.",
       { of_id: source.id },
     );
+  const originalLaunched = Number(token.launched_quantity);
   const required = Number(token.required_good_quantity);
   const expected = Number(token.expected_good_quantity);
   const yieldPercent = Number(token.yield_percent);
   if (
+    !Number.isFinite(originalLaunched) ||
+    originalLaunched <= 0 ||
     !Number.isFinite(required) ||
     required <= 0 ||
     !Number.isFinite(expected) ||
@@ -67,7 +73,7 @@ export function sourceCommercialQuantity(source: ConsolidationSource): number {
     !Number.isFinite(yieldPercent) ||
     yieldPercent <= 0 ||
     yieldPercent > 100 ||
-    expected > source.quantite_lancee
+    expected > originalLaunched
   )
     throw new HttpError(
       422,
@@ -75,9 +81,15 @@ export function sourceCommercialQuantity(source: ConsolidationSource): number {
       "Le rendement figé de l’OF ne permet pas de promettre une quantité conforme.",
       { of_id: source.id },
     );
-  // The customer never receives a yield/lot margin.  If the frozen forecast
-  // is weaker than the firm need, it is also the conservative upper bound.
-  return Math.min(required, expected);
+  // Recalculate from the *current* gross quantity with the frozen rate. A
+  // manual decrease therefore reduces good coverage; an increase cannot turn
+  // the original firm need or the frozen expected output into a new promise.
+  const projected = frozenYieldGoodOutputNumber({
+    launched: source.quantite_lancee,
+    yieldPercent,
+    unit: source.unit,
+  });
+  return Math.min(required, expected, projected);
 }
 export function buildConsolidationPlan(
   sources: ConsolidationSource[],
