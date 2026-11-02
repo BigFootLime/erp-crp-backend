@@ -353,6 +353,9 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
         ar_id: generated.body.ar_id,
       });
       expect(receivedEmails).toHaveLength(1);
+      const versions = await request(app).get(`/api/v1/commandes/${orderId}/ar`)
+        .set("Authorization", `Bearer ${authToken()}`).expect(200);
+      expect(versions.body.versions).toEqual([expect.objectContaining({ ar_id: generated.body.ar_id, status: "SENT" })]);
       const history = await db.query<{
         status: string;
         sent_at: string | null;

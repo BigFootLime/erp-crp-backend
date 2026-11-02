@@ -272,7 +272,7 @@ export async function repoAuthorizeCommandeArGeneration(params: {
   commande_id: number;
   user_id: number;
   user_role: string | null | undefined;
-  stage?: "preview" | "generate" | "send";
+  stage?: "preview" | "generate" | "send" | "history";
 }): Promise<void> {
   const access = await params.tx.query<{
     raw_statut: string | null;
@@ -329,6 +329,12 @@ export async function repoAuthorizeCommandeArGeneration(params: {
   });
 
   const preparing = currentStatus === "PLANNING_VALIDE" && params.stage !== "send";
+  // Existing versions are readable by their authorized role after the checkpoint moves on.
+  // Only GET history supplies this stage; generation and send still require current evidence.
+  if (params.stage === "history") {
+    const existing = await params.tx.query("SELECT 1 FROM public.commande_ar_log WHERE commande_id=$1 LIMIT 1", [params.commande_id]);
+    if (existing.rows.length) return;
+  }
   if ((!preparing && currentStatus !== "AR_PRET") || row.checkpoint_status !== "active") {
     throw new HttpError(
       409,
