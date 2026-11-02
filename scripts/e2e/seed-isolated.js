@@ -40,6 +40,7 @@ const USERS = [
   ["E2E_QUALITY", "Qualite", "E2E", "quality.e2e@invalid.example", "Responsable Qualité", false, "Qualité"],
   ["E2E_PURCHASING", "Achats", "E2E", "purchasing.e2e@invalid.example", "Directeur", false, "Achats"],
   ["E2E_ACCOUNTANT", "Comptabilite", "E2E", "accounting.e2e@invalid.example", "Directeur", false, "RH-Financier"],
+  ["E2E_OF_QUALITY", "Visa Qualité", "E2E", "of-quality.e2e@invalid.example", "Responsable Qualité", false, "Qualité"],
 ];
 
 const SOL20_PLAN_CONTENT = Buffer.from(
