@@ -51,7 +51,10 @@ export const industrialSettingsSchema = z
             family: z.string().trim().min(1).max(100),
             lead_days: z.number().int().min(0).max(730).nullable(),
             unit_cost_eur: positive.nullable(),
-            yield_percent: positive.max(100).default(100),
+            // Omission means "do not review the yield".  In particular it
+            // must not turn the database default of 100% into an approved
+            // manufacturing assumption.
+            yield_percent: positive.max(100).optional(),
             lot_size: positive.nullable(),
           })
           .strict(),

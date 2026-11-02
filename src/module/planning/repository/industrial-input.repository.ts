@@ -35,7 +35,10 @@ const catalogSql = `SELECT a.id::text,COALESCE(a.root_article_id,a.id)::text AS 
  COALESCE(r.family,a.family_code,a.article_type) AS family, CASE WHEN a.piece_technique_id IS NOT NULL THEN 'MAKE'
  WHEN a.article_category='traitement' THEN 'SUBCONTRACT' ELSE 'BUY' END AS kind,
  a.piece_technique_id::text AS piece,v.id::text AS version,r.lead_days AS "leadDays",COALESCE(r.lot_size,sl.lot)::text AS lot,
- r.unit_cost_eur::text AS cost,COALESCE(r.yield_percent,100)::text AS "yieldPercent",
+ r.unit_cost_eur::text AS cost,
+ CASE WHEN a.piece_technique_id IS NOT NULL
+             AND (r.article_id IS NULL OR r.yield_qualified_at IS NULL)
+      THEN NULL ELSE COALESCE(r.yield_percent,100)::text END AS "yieldPercent",
  COALESCE(sl.minimum,0)::text AS "minStock",GREATEST(COALESCE(sl.minimum,0),COALESCE(sl.target,0))::text AS "targetStock"
  FROM public.articles a LEFT JOIN public.industrial_article_rules r ON r.article_id=a.id
  LEFT JOIN LATERAL(SELECT sum(s.safety_stock_qty) AS minimum,sum(s.target_stock_qty) AS target,max(s.order_lot_size) AS lot

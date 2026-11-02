@@ -11,7 +11,11 @@ export async function getIndustrialSettings(
   const articles = (
     await db.query(
       `SELECT DISTINCT a.id::text AS article_id,a.code,a.designation,COALESCE(r.family,a.family_code,a.article_type) AS family,
- r.lead_days,r.unit_cost_eur::float8,r.yield_percent::float8,r.lot_size::float8 FROM public.articles a
+ r.lead_days,r.unit_cost_eur::float8,
+ CASE WHEN a.piece_technique_id IS NOT NULL
+             AND (r.article_id IS NULL OR r.yield_qualified_at IS NULL)
+      THEN NULL ELSE r.yield_percent::float8 END AS yield_percent,
+ r.lot_size::float8 FROM public.articles a
  LEFT JOIN public.industrial_article_rules r ON r.article_id=a.id WHERE EXISTS(SELECT 1 FROM public.article_client_links x WHERE x.client_id=$1 AND x.article_id=a.id)
  OR EXISTS(SELECT 1 FROM public.commande_ligne l JOIN public.commande_client c ON c.id=l.commande_id WHERE l.article_id=a.id AND c.client_id=$1)
  ORDER BY a.code,a.id::text LIMIT 501`,
@@ -55,9 +59,12 @@ export async function updateIndustrialSettings(
     );
   for (const a of body.articles)
     await db.query(
-      `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size)
- VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(article_id) DO UPDATE SET family=excluded.family,lead_days=excluded.lead_days,unit_cost_eur=excluded.unit_cost_eur,
- yield_percent=excluded.yield_percent,lot_size=excluded.lot_size`,
+      `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size,yield_qualified_at)
+ VALUES($1,$2,$3,$4,COALESCE($5::numeric,100),$6,CASE WHEN $5::numeric IS NULL THEN NULL ELSE now() END)
+ ON CONFLICT(article_id) DO UPDATE SET family=excluded.family,lead_days=excluded.lead_days,unit_cost_eur=excluded.unit_cost_eur,
+ yield_percent=CASE WHEN $5::numeric IS NULL THEN industrial_article_rules.yield_percent ELSE excluded.yield_percent END,
+ yield_qualified_at=CASE WHEN $5::numeric IS NULL THEN industrial_article_rules.yield_qualified_at ELSE excluded.yield_qualified_at END,
+ lot_size=excluded.lot_size`,
       [
         a.article_id,
         a.family,

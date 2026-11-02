@@ -3,6 +3,7 @@
 const DEPENDENCIES = Object.freeze({
   "20261101_demand_reference_mapping_1032.sql": ["20261031_demand_pilot_1801.sql","20261031_industrial_planning_1032.sql"],
   "20261101_industrial_assumptions_1032.sql": ["20261031_industrial_planning_1032.sql"],
+  "20261102_industrial_yield_qualification_1032.sql": ["20261031_industrial_planning_1032.sql"],
   // 2026-10-31/11-01 demand and portal pilot release.  Keep this explicit:
   // lexical filenames alone do not express cross-module foreign keys.
   "20261031_client_portal_delivery_receipts_1802.sql": [
