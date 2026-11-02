@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
 import { seedProductionWorkbenchFixture } from "../../../__tests__/fixtures/production-workbench.fixture";
+import { loadApplicableTechnicalSnapshot } from "../domain/of-generation";
 import { evaluateOfPreparation } from "./production-preparation.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
 
@@ -46,7 +47,14 @@ describe.skipIf(!managed)("PT documents in a managed disposable workbench", () =
         expect(data.improvement_returns.map(doc => doc.version_id)).toEqual([scan.version]);
         expect(data.items.find(i => i.key === "index_review")?.required).toBe(false);
       }
-      expect((await evaluateOfPreparation(tx,f.ids[0])).source_hash).toBe(before.source_hash);
+      const after = await evaluateOfPreparation(tx,f.ids[0]);
+      expect(after.source_hash).toBe(before.source_hash);
+      // Consolidation re-reads the evidence from the JSONB snapshot after the quality visa.
+      const persisted = (await tx.query("SELECT $1::jsonb AS evidence", [JSON.stringify(after.sources)])).rows[0].evidence;
+      const snapshotFor = (evidence: unknown) => loadApplicableTechnicalSnapshot(tx, f.piece, {
+        pinned_version_id: f.version, preparation_evidence: evidence,
+      });
+      expect((await snapshotFor(persisted)).sha256).toBe((await snapshotFor(after.sources)).sha256);
       await tx.query("COMMIT");
     } catch (error) {
       await tx.query("ROLLBACK");

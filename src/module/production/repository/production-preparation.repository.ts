@@ -298,6 +298,9 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
       'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')}),'[]'),
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
+      -- Keep the historical empty feedback counter in PostgreSQL's JSONB order.
+      -- Live scans are returned separately and never change the signed definition.
+      'improvement_returns',0,
       'characteristics',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.position,c.id) FROM public.quality_control_plan_characteristic c WHERE c.plan_id=(SELECT id FROM qp)),'[]'),
       'missing_documents',(SELECT count(*) FROM public.piece_version_document_requirements r WHERE r.piece_technique_version_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM docs WHERE role=r.document_type_code)),
       'programming_task_valid',EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id AND u.status='Active' WHERE p.id=$3::uuid AND p.piece_technique_version_id=$1::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) AND p.estimated_hours>0)
@@ -317,9 +320,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
         quality_plan: rows[0].sources.quality_plan,
         characteristics: rows[0].sources.characteristics,
       })}
-    // Keep the historical empty counter in new evidence for hash compatibility.
-    // Live returns are delivered separately and cannot invalidate a signed dossier.
-    : frozenSources ?? { ...rows[0].sources, improvement_returns: 0 };
+    : frozenSources ?? rows[0].sources;
   const sharedHash = sourceHash({
     rules: rulesVersion,
     sources,
