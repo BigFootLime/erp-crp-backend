@@ -8,7 +8,7 @@ export type IndustrialArticle = {
   leadDays: number | null;
   lot: string | null;
   cost: string | null;
-  yieldPercent: string;
+  yieldPercent: string | null;
   minStock: string;
   targetStock: string;
   technicalIssues: string[];
@@ -83,6 +83,10 @@ export type IndustrialProposal = {
   unit: string;
   kind: IndustrialKind;
   quantity: number;
+  /** Sizing evidence on new MAKE proposals. Older runs may not contain it. */
+  required_good_quantity?: number;
+  expected_good_quantity?: number;
+  yield_percent?: number;
   due: string;
   release: string | null;
   source_ids: string[];

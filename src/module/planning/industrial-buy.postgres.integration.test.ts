@@ -236,13 +236,13 @@ describe.skipIf(!enabled)(
         [supplierId, `SUP-${unique.slice(0, 8)}`, actorId],
       );
       await pool.query(
-        `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size)
-         VALUES($1,'VISION',5,12.5,100,1)`,
+        `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size,yield_qualified_at)
+         VALUES($1,'VISION',5,12.5,100,1,now())`,
         [articleId],
       );
       await pool.query(
-        `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size)
-         VALUES($1,'VISION',5,12.5,100,1)`,
+        `INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size,yield_qualified_at)
+         VALUES($1,'VISION',5,12.5,100,1,now())`,
         [componentArticleId],
       );
     });

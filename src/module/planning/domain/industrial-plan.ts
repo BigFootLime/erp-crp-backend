@@ -3,6 +3,7 @@ import {
   formatCumpDecimal as fmt,
   parseCumpDecimal as qty,
 } from "../../stock/domain/cump-decimal";
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import type {
   IndustrialArticle,
   IndustrialCell,
@@ -17,6 +18,9 @@ const min = (a: bigint, b: bigint) => (a < b ? a : b);
 const max = (a: bigint, b: bigint) => (a > b ? a : b);
 const ceil = (a: bigint, b: bigint) => (a + b - 1n) / b;
 const numeric = (a: bigint) => Number(fmt(a));
+function grossLaunch(netGood: bigint, yieldRatio: bigint, batch: bigint) {
+  return ceil(netGood * 100n * SCALE, yieldRatio * batch) * batch;
+}
 const plus = (day: string, n: number) =>
   new Date(Date.parse(day + "T12:00:00Z") + n * 86400000)
     .toISOString()
@@ -197,6 +201,19 @@ export function calculateIndustrialPlan(
       );
   }
   for (const article of sequence) {
+    const make = article.kind === "MAKE";
+    const yieldRatio = article.yieldPercent == null
+      ? (make ? null : 100n * SCALE)
+      : qty(article.yieldPercent);
+    // OF quantities are stored to three decimals. A discrete piece is always whole.
+    const precision = !make ? 1n : canonicalizeStockUnitCode(article.unit) === "u" ? SCALE : SCALE / 1000n;
+    const batch = article.lot ? qty(article.lot) : precision;
+    let sizingIssue: string | null = null;
+    if (yieldRatio === null || yieldRatio <= 0n || yieldRatio > 100n * SCALE) {
+      sizingIssue = "Rendement à qualifier avant de calculer le lancement.";
+    } else if (batch <= 0n || batch % precision !== 0n) {
+      sizingIssue = "Taille de lot incompatible avec l’unité de fabrication.";
+    }
     const entries = needs.get(article.id) ?? [];
     const sources = ledger.get(article.id) ?? [];
     const candidates = entries.sort(
@@ -256,16 +273,19 @@ export function calculateIndustrialPlan(
         approved = min(gross, cover + extra);
         const extraQty = max(0n, approved - cover);
         // Charge the complete lot, including yield loss. A lot that cannot fit is not authorised.
-        const lot = article.lot ? qty(article.lot) : 0n;
-        const starts = ceil(extraQty * 100n * SCALE, qty(article.yieldPercent));
-        const launch = lot ? ceil(starts, lot) * lot : starts;
-        const value = ceil(launch * cost, SCALE);
-        if (value > budget) approved = min(gross, cover);
-        else if (exposure !== null && rule) {
-          exposure += value;
-          riskByLine.set(rule.id, (riskByLine.get(rule.id) ?? 0n) + value);
+        if (yieldRatio === null || sizingIssue) {
+          if (gross > cover) issues.add(article.code + " : " + sizingIssue);
+          approved = min(gross, cover);
+        } else {
+          const launch = grossLaunch(extraQty, yieldRatio, batch);
+          const value = ceil(launch * cost, SCALE);
+          if (value > budget) approved = min(gross, cover);
+          else if (exposure !== null && rule) {
+            exposure += value;
+            riskByLine.set(rule.id, (riskByLine.get(rule.id) ?? 0n) + value);
+          }
         }
-        if (approved < gross)
+        if (approved < gross && !sizingIssue)
           issues.add("Prévision hors enveloppe : " + n.id + ".");
       }
       if (!target)
@@ -302,13 +322,13 @@ export function calculateIndustrialPlan(
         missing -= take;
       }
       if (!missing) return;
-      const yieldRatio = qty(article.yieldPercent);
-      if (yieldRatio === 0n || yieldRatio > 100n * SCALE)
-        throw new Error("Rendement article invalide.");
-      const starts = ceil(missing * 100n * SCALE, yieldRatio);
-      const lot = article.lot ? qty(article.lot) : 0n,
-        launch = lot ? ceil(starts, lot) * lot : starts;
-      const good = (launch * yieldRatio) / (100n * SCALE);
+      if (yieldRatio === null || sizingIssue) {
+        issues.add(article.code + " : " + sizingIssue);
+        addEvent(article.id, { day: due, shortage: missing });
+        return;
+      }
+      const launch = grossLaunch(missing, yieldRatio, batch);
+      const good = (launch * yieldRatio) / (100n * SCALE * precision) * precision;
       const release = releaseDay(input.workdays, due, article.leadDays);
       const blockers = [...article.technicalIssues];
       if (target)
@@ -324,6 +344,11 @@ export function calculateIndustrialPlan(
         unit: article.unit,
         kind: article.kind,
         quantity: numeric(launch),
+        ...(make ? {
+          required_good_quantity: numeric(missing),
+          expected_good_quantity: numeric(good),
+          yield_percent: numeric(yieldRatio),
+        } : {}),
         due,
         release,
         source_ids: n.origins,

@@ -87,6 +87,62 @@ function source(): IndustrialInput {
   };
 }
 describe("Industrial PIC/PDP/CBN", () => {
+  it("grosses up only the net good pieces, rounds to whole starts and sizes components from the gross OF", () => {
+    const input = source();
+    input.articles[0].yieldPercent = "90";
+    input.articles.push(article("BLANK", "BUY"));
+    input.bom = [{ parent: "ASSEMBLY", child: "BLANK", factor: "2" }];
+    input.demand = [demand("line", "110")];
+    input.supplies = [supply("reserved-good", "10")];
+    const result = calculateIndustrialPlan(input);
+    expect(result.proposals[0]).toMatchObject({
+      quantity: 112, required_good_quantity: 100, expected_good_quantity: 100, yield_percent: 90,
+    });
+    expect(result.proposals[1]).toMatchObject({ article: "BLANK", quantity: 224 });
+    expect(result.pdp.filter(cell => cell.article === "ASSEMBLY" && cell.planned > 0)).toEqual([
+      expect.objectContaining({ firm: 110, planned: 100, projected_stock: 0 }),
+    ]);
+  });
+
+  it("charges the same rounded launch to the forecast risk limit as to the actual proposal", () => {
+    const input = source();
+    input.articles[0].yieldPercent = "80";
+    input.articles[0].lot = "10";
+    input.demand = [demand("forecast", "100", "FORECAST")];
+    input.clientRisk = "1300";
+    input.rules[0].riskEur = "1300";
+    const result = calculateIndustrialPlan(input);
+    expect(result.proposals[0]).toMatchObject({ quantity: 130, expected_good_quantity: 104, required_good_quantity: 100 });
+    expect(result.forecast_exposure_eur).toBe(1300);
+    input.clientRisk = "1299";
+    expect(calculateIndustrialPlan(input).proposals).toEqual([]);
+  });
+
+  it("retains stock cover and the uncovered demand when a manufactured reference has no qualified yield", () => {
+    const input = source();
+    input.articles[0].yieldPercent = null;
+    input.demand = [demand("line", "5")];
+    input.supplies = [supply("available", "2")];
+    const result = calculateIndustrialPlan(input);
+    expect(result.proposals).toEqual([]);
+    expect(result.allocations).toEqual([{ demand_id: "line", source_id: "available", quantity: 2 }]);
+    expect(result.pdp.some(row => row.firm === 5 && row.shortage === 3)).toBe(true);
+    expect(result.issues).toContain("ASSEMBLY : Rendement à qualifier avant de calculer le lancement.");
+    input.demand = [demand("forecast", "5", "FORECAST")];
+    expect(calculateIndustrialPlan(input).forecast_exposure_eur).toBe(0);
+    input.articles[0].yieldPercent = "100";
+    input.demand = [demand("line", "5")];
+    expect(calculateIndustrialPlan(input).proposals[0]).toMatchObject({ quantity: 3, expected_good_quantity: 3 });
+  });
+
+  it("retains fractional units of manufacture at the supported OF precision", () => {
+    const input = source();
+    input.articles[0].unit = "KG";
+    input.articles[0].yieldPercent = "90";
+    input.demand = [{ ...demand("weighed", "1"), unit: "KG" }];
+    expect(calculateIndustrialPlan(input).proposals[0]).toMatchObject({ quantity: 1.112, expected_good_quantity: 1 });
+  });
+
   it("preserves months and weeks, consumes residual forecast only once, and never double-spends a physical source", () => {
     const input = source();
     input.demand = [

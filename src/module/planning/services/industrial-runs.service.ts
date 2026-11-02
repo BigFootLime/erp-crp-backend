@@ -163,6 +163,7 @@ async function compute(tx: PoolClient, run: Run) {
   const digest = createHash("sha256")
     .update(
       JSON.stringify({
+        sizingPolicy: "qualified-article-yield-v1",
         source,
         capacity,
         placements,

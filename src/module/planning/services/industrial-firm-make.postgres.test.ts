@@ -16,11 +16,13 @@ import { repoSubmitOfTechnicalPreparation, repoValidateOfTechnicalPreparation } 
 import { configureStockLane } from "../../stock/repository/stock-lanes.repository";
 import type { AuditContext } from "../repository/planning.repository";
 import type { IndustrialProposal } from "../types/industrial-plan.types";
+import { updateIndustrialSettings } from "../repository/industrial-settings.repository";
 
 const databaseUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/off");
 const isolated = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_DEMAND_POSTGRES_TEST === "1" && ["127.0.0.1", "localhost", "[::1]"].includes(databaseUrl.hostname) && databaseUrl.pathname === "/cerp_test";
 const externalCode = process.env.CERP_VISION_PILOT_ARTICLE_CODE ?? "VISION-MAKE-SYNTHETIC";
 const quantity = Number(process.env.CERP_VISION_PILOT_QUANTITY ?? "1");
+const launchQuantity = Math.ceil(quantity * 100 / 90);
 const client = "V" + randomUUID().replace(/-/g, "").slice(0, 2);
 const suffix = randomUUID().slice(0, 8);
 const article = randomUUID();
@@ -74,7 +76,6 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
       await tx.query("INSERT INTO public.quality_control_plan_characteristic(plan_id,characteristic_key,position,label,value_kind,unit,tolerance_min,tolerance_max) VALUES($1,'DIM',1,'Dimension de recette','NUMERIC','mm',0,100)", [qualityPlan]);
       await tx.query("UPDATE public.quality_control_plan SET status='PUBLISHED',published_at=now(),published_by=$2 WHERE id=$1", [qualityPlan, actor]);
       await tx.query("UPDATE public.piece_technique_versions SET statut='APPLICABLE' WHERE id=$1::uuid", [technical.version]);
-      await tx.query("INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size) VALUES($1,'Vision',2,1,100,1)", [article]);
     });
     materialStock = await seedWorkbenchStock({
       article: materialArticle,
@@ -84,7 +85,7 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
       piece: productTechnical.piece,
       audit: audit(),
       code: "MAT-" + suffix,
-    }, quantity, "LIBERE", {
+    }, launchQuantity, "LIBERE", {
       articleId: materialArticle,
       stockUnit: "PCE",
       technicalVersionId: null,
@@ -99,6 +100,11 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     const imported = await importDemand({ clientId: client, completeSnapshot: false, idempotencyKey: randomUUID(), actor: { userId: actor }, rows: [{ external_site: "SITE-" + suffix, external_order_key: "OF-" + suffix, external_line_key: "10", external_schedule_key: "S1", source_version: "W44", source_as_of: new Date().toISOString(), kind: "FIRM", quantity, unit: "PCE", quantity_basis: "REMAINING", need_date: due, article_code: externalCode }] });
     const revision = (await pool.query<{ id: string }>("SELECT id::text FROM public.demand_pilot_revisions WHERE import_id=$1::uuid", [imported.import_id])).rows[0];
     await prepareFirmDraft({ client_id: client, revision_ids: [revision.id], lines: [{ revision_id: revision.id, designation: externalCode, prix_unitaire_ht: 1, taux_tva: 20, remise_ligne: 0 }] }, actor, randomUUID());
+    await industrialTx(tx => updateIndustrialSettings(tx, actor, {
+      client_id: client, contracts: [], articles: [{
+        article_id: article, family: "Vision", lead_days: 2, unit_cost_eur: 1, lot_size: 1, yield_percent: 90,
+      }],
+    }));
   });
   afterAll(async () => {
     await pool.query("UPDATE public.app_feature_flags SET enabled=$1 WHERE key='PRODUCTION_MATERIAL_WORKFLOW'", [beforeMaterialWorkflow]);
@@ -112,12 +118,21 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     expect(ready.status).toBe("READY");
     const index = ready.result.proposals.findIndex((proposal: IndustrialProposal) => proposal.kind === "MAKE" && proposal.article_id === article && proposal.due === due);
     expect(index).toBeGreaterThanOrEqual(0);
+    expect(ready.result.proposals[index]).toMatchObject({
+      quantity: launchQuantity, required_good_quantity: quantity, expected_good_quantity: quantity, yield_percent: 90,
+    });
     expect(ready.result.placements).toEqual(expect.arrayContaining([expect.objectContaining({ article_id: article, requested: due, status: "CAPACITY_SIMULATED" })]));
     await validateIndustrialRun(queued.id, actor);
     const executionKey = randomUUID();
     const execution = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, audit());
     expect(execution).toMatchObject({ outcomes: [expect.objectContaining({ status: "EXECUTED", target_type: "OF" })] });
     const ofId = Number((execution.outcomes[0] as { target_id: string }).target_id);
+    const sizes = await pool.query<{ launched: number; ordered: number }>(
+      `SELECT of.quantite_lancee::float8 AS launched, line.quantite::float8 AS ordered
+       FROM public.ordres_fabrication of JOIN public.commande_ligne line ON line.article_id=of.article_id
+       WHERE of.id=$1`, [ofId],
+    );
+    expect(sizes.rows).toEqual([{ launched: launchQuantity, ordered: quantity }]);
     const replay = await executeIndustrialProposals(queued.id, { proposal_indexes: [index], request_key: executionKey }, audit());
     expect(replay.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ status: "EXECUTED", target_type: "OF", target_id: String(ofId) })]));
     let preparation = await evaluateOfPreparation(pool, ofId);
@@ -135,7 +150,7 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     expect(operation).toBeDefined();
     const reserved = await reservePilotOfMaterial(ofId, audit(), {
       batchId: materialStock.batch,
-      quantity,
+      quantity: launchQuantity,
       configuration: { operationId: operation.id, requirements: { grade: null, condition: null, ownerClientId: null, dimensions: {}, certificates: [], manualChecks: [] }, supplyMode: "PURCHASE", supplierId: null, destinationId: null, allowPartial: false, debitRule: { form: "UNIT", stockUnit: "PCE", unitsPerBlank: 1, kerfPerBlank: 0, yieldValidated: true } },
     });
     expect(reserved.material_required).toBe(true);

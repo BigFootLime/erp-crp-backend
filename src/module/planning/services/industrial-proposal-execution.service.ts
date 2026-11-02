@@ -31,35 +31,30 @@ type Run = {
   result: IndustrialResult;
 };
 
-type YieldAwareProposal = IndustrialProposal & {
-  required_good_quantity?: number;
-  expected_good_quantity?: number;
-  yield_percent?: number;
-};
+function isPositiveQuantity(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
 
-/** Persist the calculation's immutable output semantics alongside the OF link.
- * Do not infer them later from mutable article settings.  Older proposals have
- * no token and deliberately retain legacy read-model behaviour. */
+/** Freeze the output expected at launch so later article settings cannot change OF coverage. */
 export function industrialProposalSnapshot(proposal: IndustrialProposal) {
-  const source = proposal as YieldAwareProposal;
-  const required = source.required_good_quantity;
-  const expected = source.expected_good_quantity;
-  const yieldPercent = source.yield_percent;
+  const required = proposal.required_good_quantity;
+  const expected = proposal.expected_good_quantity;
+  const yieldPercent = proposal.yield_percent;
   if (
-    ![required, expected, yieldPercent].every(
-      (value) =>
-        typeof value === "number" && Number.isFinite(value) && value > 0,
-    ) ||
-    yieldPercent! > 100 ||
-    expected! > proposal.quantity + Number.EPSILON
-  )
-    return null;
+    !isPositiveQuantity(required) ||
+    !isPositiveQuantity(expected) ||
+    !isPositiveQuantity(yieldPercent) ||
+    !isPositiveQuantity(proposal.quantity) ||
+    yieldPercent > 100 ||
+    expected < required ||
+    expected > proposal.quantity
+  ) return null;
   return {
     coverage_semantics: "GOOD_OUTPUT_V1" as const,
     launched_quantity: proposal.quantity,
-    required_good_quantity: required!,
-    expected_good_quantity: expected!,
-    yield_percent: yieldPercent!,
+    required_good_quantity: required,
+    expected_good_quantity: expected,
+    yield_percent: yieldPercent,
   };
 }
 const unsafe = (

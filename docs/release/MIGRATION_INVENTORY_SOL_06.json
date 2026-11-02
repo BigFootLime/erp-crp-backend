@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-02T02:08:26.406Z",
+  "generated_at": "2026-11-02T07:00:23.413Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 357,
-  "support_file_count": 756,
-  "recent_patch_count": 299,
+  "patch_count": 360,
+  "support_file_count": 762,
+  "recent_patch_count": 302,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -740,13 +740,21 @@
         "verify": false,
         "rollback": false
       }
+    },
+    {
+      "filename": "20261102_supplier_treatment_estimate_commands_1807.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
     }
   ],
   "risk_totals": {
     "destructive_ddl": 3,
     "destructive_dml": 38,
-    "data_rewrite": 231,
-    "table_lock": 242,
+    "data_rewrite": 233,
+    "table_lock": 244,
     "blocking_index": 228,
     "enum_change": 2
   },
@@ -6813,6 +6821,23 @@
     },
     {
       "order": 357,
+      "filename": "20261102_industrial_yield_qualification_1032.sql",
+      "sha256": "8b0a8737c3baa84cc029f763350020377bd6bd8e340e1e37693b80d91f227e3a",
+      "bytes": 708,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 358,
       "filename": "20261102_supplier_portal_pilot_1806.sql",
       "sha256": "b976ed77318a015238964d17f6be8df650ec84494e8910ee92b7abea1f3f8cb6",
       "bytes": 5179,
@@ -6828,6 +6853,37 @@
         "table-lock",
         "blocking-index"
       ]
+    },
+    {
+      "order": 359,
+      "filename": "20261102_supplier_portal_recovery_request_1808.sql",
+      "sha256": "ea849e872e5dae4a3010c0215ecf562d6753080fa8c3bd4dc74744453f801451",
+      "bytes": 280,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 360,
+      "filename": "20261102_supplier_treatment_estimate_commands_1807.sql",
+      "sha256": "026a3d4f47ec0ef8df76e39637f79ccc37bc8ae9a53c5a2d773e9e66d8761134",
+      "bytes": 535,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": []
     }
   ]
 }

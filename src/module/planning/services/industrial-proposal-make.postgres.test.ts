@@ -212,7 +212,7 @@ describe.skipIf(!isolated)(
           [technical.piece, gamme, machine],
         );
         await tx.query(
-          "INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size) VALUES($1,'Vision Systems',2,1,100,1)",
+          "INSERT INTO public.industrial_article_rules(article_id,family,lead_days,unit_cost_eur,yield_percent,lot_size,yield_qualified_at) VALUES($1,'Vision Systems',2,1,100,1,now())",
           [article],
         );
       });
