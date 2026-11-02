@@ -1,4 +1,5 @@
 import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
+import { reconcileOrdersForQualityEvidence } from "../../commande-client/repository/commande-quality-milestone.repository";
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 // Repository Qualité 360 (#228).
@@ -2511,6 +2512,9 @@ export async function repoDecideExecution(params: {
       correlationId: before.correlation_id,
     });
 
+    if (params.body.decision === "FULL" || params.body.decision === "PARTIAL") {
+      await reconcileOrdersForQualityEvidence(client, before, params.actor.user_id);
+    }
     const after = await selectExecutionRow(client, params.id);
     return buildExecutionDetail(after!, await selectMeasurements(client, params.id));
   });
@@ -3092,12 +3096,13 @@ export async function repoTransitionNc(params: {
     const before = await client.query<{
       id: string;
       status: string;
+      of_id: number | null;
       updated_at: string;
       root_cause: string | null;
       capa_required: boolean;
     }>(
       `
-        SELECT id, status::text AS status, updated_at, root_cause, capa_required
+        SELECT id, status::text AS status, of_id::int AS of_id, updated_at, root_cause, capa_required
         FROM public.non_conformity WHERE id = $1::uuid FOR UPDATE
       `,
       [params.id]
@@ -3172,6 +3177,9 @@ export async function repoTransitionNc(params: {
       details: { from: nc.status, to: params.body.target_status, reason: params.body.reason ?? null },
     });
 
+    if (params.body.target_status === "CLOSED" || params.body.target_status === "CANCELLED") {
+      await reconcileOrdersForQualityEvidence(client, nc, params.actor.user_id);
+    }
     return { id: params.id, status: params.body.target_status };
   });
 }
