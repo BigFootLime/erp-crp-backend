@@ -1,9 +1,9 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-11-02T12:55:13.001Z
+- Généré : 2026-11-02T14:09:06.454Z
 - Source : filesystem scan of db/patches and db/patches/support
 - Patches exécutables : 364
-- Scripts auxiliaires : 774
+- Scripts auxiliaires : 777
 - Patches depuis 2026-07-01 : 306
 
 ## Risques statiques à examiner
@@ -113,6 +113,5 @@ Ces détections sont volontairement conservatrices : elles servent de file de re
 - `20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql`: preflight=false, verify=false, rollback=false
 - `20261027_zzzzz_intercompany_standard_article_locks_1454.sql`: preflight=false, verify=false, rollback=false
 - `20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql`: preflight=false, verify=false, rollback=false
-- `20261102_supplier_treatment_estimate_commands_1807.sql`: preflight=false, verify=false, rollback=false
 
 Le détail machine, l'ordre, les SHA-256, la transaction, la rejouabilité et les risques par fichier sont dans `MIGRATION_INVENTORY_SOL_06.json`.

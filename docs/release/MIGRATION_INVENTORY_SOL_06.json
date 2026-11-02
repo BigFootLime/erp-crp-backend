@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-11-02T12:55:13.001Z",
+  "generated_at": "2026-11-02T14:09:06.454Z",
   "source": "filesystem scan of db/patches and db/patches/support",
   "patch_count": 364,
-  "support_file_count": 774,
+  "support_file_count": 777,
   "recent_patch_count": 306,
   "recent_support_gaps": [
     {
@@ -735,14 +735,6 @@
     },
     {
       "filename": "20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql",
-      "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
-      }
-    },
-    {
-      "filename": "20261102_supplier_treatment_estimate_commands_1807.sql",
       "support": {
         "preflight": false,
         "verify": false,
@@ -6942,9 +6934,9 @@
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
+        "preflight": true,
+        "verify": true,
+        "rollback": true
       },
       "risks": []
     }
