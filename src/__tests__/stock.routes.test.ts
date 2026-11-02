@@ -567,6 +567,9 @@ describe("/api/v1/stock", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"matiere",client_ids:[],categories:["matiere_premiere"],tool_id:null,consumption_mode:"UNIT"}]};
+      // A non-cut material is managed in the canonical unit `u`; creation
+      // intentionally validates that unit against the stock referential.
+      if (q.includes("SELECT id::text AS id FROM public.units")) return { rows: [{ id: "3020" }] };
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
     if (q.includes("public.fn_next_issued_code_value")) return { rows: [{ v: "1" }] };
       if (q.includes("INSERT INTO public.articles (") || q.includes("INSERT INTO public.articles\n")) {
