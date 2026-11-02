@@ -117,7 +117,7 @@ function firmDemands(row: FirmCoverageRow, endDate: string): ContractCoverageDem
   return result;
 }
 
-export async function readContractCoverageDemands(db: Queryer, articles: readonly ClientContractArticle[], periods: readonly CoveragePeriod[]) {
+export async function readContractCoverageDemands(db: Queryer, articles: readonly Pick<ClientContractArticle, 'article_id'|'root_article_id'>[], periods: readonly CoveragePeriod[]) {
   const articleIds = articles.map(article => article.article_id);
   const legacy = (await db.query<{ needs_review: boolean }>(CONTRACT_COVERAGE_CADRE_REVIEW_SQL, [articleIds])).rows[0];
   if (legacy.needs_review) throw new HttpError(409, 'CONTRACT_COVERAGE_CADRE_REVIEW_REQUIRED',

@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "c9bfea9200a9033fd3e878189edfd6aab872ddd856a54bc486cfd2976bc256c3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "41b9d22d2598f206e2df1da7beff693bbe0eb73e08c05d9c585dee703fc3fcf5";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -14704,8 +14704,237 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/planning/v2/industrial/pic-targets",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:37",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json({ items: await industrialTx((tx) => readPicTarget)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/pic-targets",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:53",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => savePicTarget(tx, req)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/policy",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:123",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => readIndustrialPolicy()"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/policy",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:134",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => setIndustrialPolicy( )"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/runs",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:68",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await listIndustrialRuns(industrialClient.parse()"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:77",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(manage_schedule)",
+      "asyncHandler(async (req, res) => { res .status(202) .json( await enqueueIndustrialRun( indust)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/runs/{id}",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:91",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json(await industrialRunById(z.string().uuid().parse(r)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs/{id}/proposals/execute",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:110",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(supervise_execution)",
+      "asyncHandler(async (req, res) => { res.json( await executeIndustrialProposals( z.string().uui)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(supervise_execution)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs/{id}/validate",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:98",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(manage_schedule)",
+      "asyncHandler(async (req, res) => { res.json( await validateIndustrialRun( z.string().uuid().p)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/settings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:149",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => getIndustrialSettings)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/settings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:160",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => updateIndustrialSetti)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/planning/v2/master-plan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:11",
+    "source": "src/module/planning/routes/planning-central.routes.ts:13",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14725,7 +14954,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/operations/{operationId}/observations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:15",
+    "source": "src/module/planning/routes/planning-central.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14745,7 +14974,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:17",
+    "source": "src/module/planning/routes/planning-central.routes.ts:19",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14765,7 +14994,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:16",
+    "source": "src/module/planning/routes/planning-central.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14785,7 +15014,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/simulations/{id}",
-    "source": "src/module/planning/routes/planning-central.routes.ts:18",
+    "source": "src/module/planning/routes/planning-central.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14805,7 +15034,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations/{id}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:19",
+    "source": "src/module/planning/routes/planning-central.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14825,7 +15054,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/snapshot",
-    "source": "src/module/planning/routes/planning-central.routes.ts:14",
+    "source": "src/module/planning/routes/planning-central.routes.ts:16",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14845,7 +15074,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/status",
-    "source": "src/module/planning/routes/planning-central.routes.ts:10",
+    "source": "src/module/planning/routes/planning-central.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14865,7 +15094,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/unplan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:20",
+    "source": "src/module/planning/routes/planning-central.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14885,7 +15114,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidation-candidates",
-    "source": "src/module/planning/routes/planning-central.routes.ts:26",
+    "source": "src/module/planning/routes/planning-central.routes.ts:28",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14905,7 +15134,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:27",
+    "source": "src/module/planning/routes/planning-central.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14925,7 +15154,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:25",
+    "source": "src/module/planning/routes/planning-central.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14945,7 +15174,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-requests/{requestId}/approval-preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:21",
+    "source": "src/module/planning/routes/planning-central.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14965,7 +15194,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/approve",
-    "source": "src/module/planning/routes/planning-central.routes.ts:22",
+    "source": "src/module/planning/routes/planning-central.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14985,7 +15214,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/cancel-retaining-production",
-    "source": "src/module/planning/routes/planning-central.routes.ts:23",
+    "source": "src/module/planning/routes/planning-central.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15005,7 +15234,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/restitute",
-    "source": "src/module/planning/routes/planning-central.routes.ts:24",
+    "source": "src/module/planning/routes/planning-central.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15025,7 +15254,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:12",
+    "source": "src/module/planning/routes/planning-central.routes.ts:14",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15045,7 +15274,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:13",
+    "source": "src/module/planning/routes/planning-central.routes.ts:15",
     "middleware": [
       "anonymous",
       "authenticateToken",
