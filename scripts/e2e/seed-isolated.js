@@ -34,6 +34,7 @@ const USERS = [
   ["KEENAN", "Keenan", "E2E", "keenan.e2e@invalid.example", "Administrateur Systeme et Reseau", true, "Administrateur Systeme et Reseau"],
   ["E2E_STANDARD", "Standard", "E2E", "standard.e2e@invalid.example", "Employee", false, "Employee"],
   ["E2E_SALES", "Commerce", "E2E", "sales.e2e@invalid.example", "Secretaire", false, "Commerce"],
+  ["E2E_ORDER_SECRETARY", "Secretaire Commandes", "E2E", "order-secretary.e2e@invalid.example", "Secretaire", false, "Secretaire"],
   ["E2E_PLANNER", "Planning", "E2E", "planner.e2e@invalid.example", "Responsable Programmation", false, "Planification"],
   ["E2E_OPERATOR", "Operateur", "E2E", "operator.e2e@invalid.example", "Employee", false, "Opérateur atelier"],
   ["E2E_QUALITY", "Qualite", "E2E", "quality.e2e@invalid.example", "Responsable Qualité", false, "Qualité"],
