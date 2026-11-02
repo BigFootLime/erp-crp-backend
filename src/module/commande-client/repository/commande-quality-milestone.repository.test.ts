@@ -15,7 +15,7 @@ vi.mock("../../../shared/realtime/realtime-outbox.service", () => ({
 function fixture(status: string, checkpoint: string, openNc = 0, unreleased = 0) {
   const query = vi.fn(async (sql: string) => {
     if (sql.includes("FROM public.commande_historique")) return { rows: [{ nouveau_statut: status }] };
-    if (sql.includes("FROM public.commande_client_workflow_checkpoint")) return { rows: [{ status: checkpoint }] };
+    if (sql.includes("FROM public.commande_client_workflow_checkpoint")) return { rows: [{ checkpoint_code: "quality_control", status: checkpoint }] };
     if (sql.includes("WITH active_of AS")) return { rows: [{ total: 2, open_nc: openNc, unreleased }] };
     if (sql.includes("FOR UPDATE")) return { rows: [{ id: 17 }] };
     throw new Error("Unexpected quality SQL");

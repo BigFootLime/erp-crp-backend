@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { repoApplyCommandeWorkflowMilestone, repoEnsureCommandeWorkflowCheckpoints } from "./commande-client.repository";
 import { reconcileCommandeQualityMilestoneInTransaction } from "./commande-quality-milestone.repository";
+import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 
 type Db = Pick<PoolClient, "query">;
 
@@ -30,7 +31,7 @@ export async function reconcileCommandeProductionMilestonesInTransaction(params:
       `SELECT nouveau_statut FROM public.commande_historique WHERE commande_id = $1
        ORDER BY date_action DESC, id DESC LIMIT 1`, [orderId],
     );
-    const current = history.rows[0]?.nouveau_statut;
+    const current = normalizeCommandeWorkflowStatus(history.rows[0]?.nouveau_statut);
     if (current === "PRODUCTION_TERMINEE" || current === "CONTROLE_QUALITE") {
       await reconcileCommandeQualityMilestoneInTransaction(client, orderId, actorUserId);
       continue;
@@ -49,7 +50,7 @@ export async function reconcileCommandeProductionMilestonesInTransaction(params:
     await repoEnsureCommandeWorkflowCheckpoints(client, orderId, current);
     const checkpoints = await client.query<{ checkpoint_code: string; status: string }>(
       `SELECT checkpoint_code, status FROM public.commande_client_workflow_checkpoint
-       WHERE commande_id = $1 AND checkpoint_code IN ('production_launch', 'production_completion') FOR UPDATE`, [orderId],
+       WHERE commande_id = $1 AND checkpoint_code IN ('production_launch', 'production_completion', 'quality_control') FOR UPDATE`, [orderId],
     );
     const stages = new Map(checkpoints.rows.map(row => [row.checkpoint_code, row.status]));
     let mayComplete = current === "EN_PRODUCTION" && stages.get("production_completion") === "active";
@@ -63,7 +64,8 @@ export async function reconcileCommandeProductionMilestonesInTransaction(params:
       });
       mayComplete = true;
     }
-    if (!mayComplete || !ofs.rows.every(({ statut }) => statut === "TERMINE" || statut === "CLOTURE")) continue;
+    if (!mayComplete || stages.get("quality_control") === "blocked" ||
+        !ofs.rows.every(({ statut }) => statut === "TERMINE" || statut === "CLOTURE")) continue;
     await repoApplyCommandeWorkflowMilestone({
       tx: client, commande_id: orderId, nouveau_statut: "PRODUCTION_TERMINEE", cause: "production_sync",
       commentaire: "Tous les OF actifs sont terminés ou clôturés.", user_id: actorUserId,
