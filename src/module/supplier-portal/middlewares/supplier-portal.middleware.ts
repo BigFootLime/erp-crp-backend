@@ -27,12 +27,10 @@ export const supplierPortalAuthRateLimit: RequestHandler = (req, res, next) => {
   state.count++;
   attempts.set(key, state);
   if (state.count > 10)
-    return res
-      .status(429)
-      .json({
-        code: "SUPPLIER_PORTAL_RATE_LIMITED",
-        message: "Réessayez plus tard.",
-      });
+    return res.status(429).json({
+      code: "SUPPLIER_PORTAL_RATE_LIMITED",
+      message: "Réessayez plus tard.",
+    });
   next();
 };
 export const requireSupplierPortalPilot: RequestHandler = async (
@@ -40,12 +38,20 @@ export const requireSupplierPortalPilot: RequestHandler = async (
   res,
   next,
 ) => {
-  if (!supplierPortalPilotEnabled())
-    return res.status(404).json({ code: "NOT_FOUND", message: "Introuvable." });
-  if (process.env.NODE_ENV !== "test" && !(await supplierPortalProofGate()))
-    return res.status(404).json({ code: "NOT_FOUND", message: "Introuvable." });
-  await purgeExpiredPortalSecrets();
-  next();
+  try {
+    if (!supplierPortalPilotEnabled())
+      return res
+        .status(404)
+        .json({ code: "NOT_FOUND", message: "Introuvable." });
+    if (process.env.NODE_ENV !== "test" && !(await supplierPortalProofGate()))
+      return res
+        .status(404)
+        .json({ code: "NOT_FOUND", message: "Introuvable." });
+    await purgeExpiredPortalSecrets();
+    next();
+  } catch (error) {
+    next(error);
+  }
 };
 export const authenticateSupplierPortal: RequestHandler = async (
   req,
@@ -54,24 +60,20 @@ export const authenticateSupplierPortal: RequestHandler = async (
 ) => {
   const raw = req.header("authorization");
   if (!raw?.startsWith("Bearer "))
-    return res
-      .status(401)
-      .json({
-        code: "SUPPLIER_PORTAL_SESSION_REQUIRED",
-        message: "Session fournisseur requise.",
-      });
+    return res.status(401).json({
+      code: "SUPPLIER_PORTAL_SESSION_REQUIRED",
+      message: "Session fournisseur requise.",
+    });
   try {
     const identity = verifySupplierPortalSession(raw.slice(7));
     if (
       !(await findLiveAccount(identity)) ||
       !(await isConfiguredPilotSupplier(identity.supplierId))
     )
-      return res
-        .status(401)
-        .json({
-          code: "SUPPLIER_PORTAL_SESSION_INVALID",
-          message: "Session fournisseur invalide ou expirée.",
-        });
+      return res.status(401).json({
+        code: "SUPPLIER_PORTAL_SESSION_INVALID",
+        message: "Session fournisseur invalide ou expirée.",
+      });
     req.supplierPortalIdentity = identity;
     next();
   } catch (error) {
@@ -87,11 +89,9 @@ export const requireNamedSupplierPortalAdministrator: RequestHandler = async (
     process.env.NODE_ENV !== "test" &&
     (!req.user?.id || !(await isNamedSupplierPortalAdministrator(req.user.id)))
   )
-    return res
-      .status(403)
-      .json({
-        code: "SUPPLIER_PORTAL_ADMIN_NOT_NAMED",
-        message: "Administrateur pilote non configuré.",
-      });
+    return res.status(403).json({
+      code: "SUPPLIER_PORTAL_ADMIN_NOT_NAMED",
+      message: "Administrateur pilote non configuré.",
+    });
   next();
 };

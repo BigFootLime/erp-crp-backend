@@ -7,10 +7,8 @@ const audience = "cerp-supplier-portal-pilot",
   issuer = "cerp-api",
   purpose = "supplier-portal-session-v1";
 export function supplierPortalPilotEnabled() {
-  if (
-    process.env.NODE_ENV === "test" &&
-    process.env.SUPPLIER_PORTAL_PILOT === "1"
-  ) {
+  if (process.env.NODE_ENV === "test") {
+    if (process.env.SUPPLIER_PORTAL_PILOT !== "1") return false;
     try {
       const db = new URL(process.env.DATABASE_URL ?? "");
       return (
