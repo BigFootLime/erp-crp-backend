@@ -66,30 +66,27 @@ export function remainingIndustrialGoodOutput(input: {
   );
   const token =
     input.semantics as Partial<IndustrialGoodOutputSemantics> | null;
+  if (token?.coverage_semantics !== "GOOD_OUTPUT_V1") return legacy;
   if (
-    token?.coverage_semantics !== "GOOD_OUTPUT_V1" ||
     token.expected_good_quantity === undefined ||
     token.yield_percent === undefined
   )
-    return legacy;
+    return 0n;
   try {
     const expected = positive(
       parseCumpDecimal(String(token.expected_good_quantity)),
     );
     const yieldPercent = parseCumpDecimal(String(token.yield_percent));
     if (yieldPercent <= 0n || yieldPercent > 100n * CUMP_DECIMAL_SCALE)
-      return legacy;
+      return 0n;
 
-    // Scrap is removed from the raw launch once, before applying the expected
-    // yield.  `quantite_bonne` and output lots describe the same physical
-    // output in some workflows, so use their maximum rather than deducting it
-    // twice.  The token caps the result even if the OF is later edited.
-    const rawAfterScrap = positive(
-      parseCumpDecimal(input.launched) - parseCumpDecimal(input.scrap),
-    );
+    // The margin embedded in `expected` already covers the planned yield
+    // loss.  A confirmed scrap only reduces it once it exceeds that margin:
+    // `min(expected good, launched - scrap)`.  `quantite_bonne` and output
+    // lots can be two views of one physical output, hence the maximum.
     const forecastGood = minimum(
       expected,
-      (rawAfterScrap * yieldPercent) / (100n * CUMP_DECIMAL_SCALE),
+      positive(parseCumpDecimal(input.launched) - parseCumpDecimal(input.scrap)),
     );
     const actualGood = maximum(
       parseCumpDecimal(input.good),
@@ -97,7 +94,7 @@ export function remainingIndustrialGoodOutput(input: {
     );
     return positive(forecastGood - actualGood);
   } catch {
-    return legacy;
+    return 0n;
   }
 }
 

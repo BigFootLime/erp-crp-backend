@@ -32,13 +32,25 @@ describe("yield-aware industrial OF coverage", () => {
     ).toBe("94000000000000");
   });
 
-  it("removes definitive scrap once from raw work before applying the yield", () => {
+  it("keeps the initial yield margin when observed scrap stays inside it", () => {
     expect(
       remainingIndustrialGoodOutput({
         launched: "130",
         received: "0",
         good: "0",
         scrap: "5",
+        semantics: tagged,
+      }).toString(),
+    ).toBe("104000000000000");
+  });
+
+  it("reduces future conforming output only after observed scrap exceeds the margin", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "0",
+        good: "0",
+        scrap: "30",
         semantics: tagged,
       }).toString(),
     ).toBe("100000000000000");
@@ -54,5 +66,21 @@ describe("yield-aware industrial OF coverage", () => {
         semantics: null,
       }).toString(),
     ).toBe("115000000000000");
+  });
+
+  it("never falls back to gross launched quantity for a corrupt industrial token", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "0",
+        good: "0",
+        scrap: "0",
+        semantics: {
+          coverage_semantics: "GOOD_OUTPUT_V1",
+          expected_good_quantity: "104",
+          yield_percent: "bad",
+        },
+      }),
+    ).toBe(0n);
   });
 });

@@ -222,8 +222,20 @@ export async function readIndustrialInput(
     }>(
       `SELECT l.id::text,l.article_id::text AS article,
  upper(btrim(COALESCE(l.unite,a.unite))) AS unit,COALESCE(l.delai_interne,l.delai_client)::date::text AS due,
- GREATEST(l.quantite-COALESCE((SELECT sum(CASE WHEN o.statut::text IN('TERMINE','CLOTURE') THEN o.quantite_bonne
-  ELSE GREATEST(o.quantite_lancee-o.quantite_rebut,0) END) FROM public.ordres_fabrication o
+ GREATEST(l.quantite-COALESCE((SELECT sum(CASE WHEN o.statut::text IN('TERMINE','CLOTURE') THEN
+    GREATEST(o.quantite_bonne,COALESCE((SELECT sum(output.qty_ok) FROM public.of_output_lots output WHERE output.of_id=o.id),0))
+  WHEN execution.semantics->>'coverage_semantics'='GOOD_OUTPUT_V1' THEN
+    GREATEST(LEAST(
+      CASE WHEN COALESCE(execution.semantics->>'expected_good_quantity','')~'^[0-9]+(\\.[0-9]+)?$'
+        THEN (execution.semantics->>'expected_good_quantity')::numeric ELSE 0 END,
+      GREATEST(o.quantite_lancee-o.quantite_rebut,0)
+    )-GREATEST(o.quantite_bonne,COALESCE((SELECT sum(output.qty_ok) FROM public.of_output_lots output WHERE output.of_id=o.id),0)),0)
+  ELSE GREATEST(o.quantite_lancee-o.quantite_rebut,0) END)
+  FROM public.ordres_fabrication o LEFT JOIN LATERAL(
+    SELECT execution.result->'industrial_proposal' AS semantics FROM public.industrial_proposal_executions execution
+    WHERE execution.target_type='OF' AND execution.target_id=o.id::text AND execution.status='EXECUTED' AND execution.action='MAKE'
+    ORDER BY execution.created_at DESC,execution.id DESC LIMIT 1
+  ) execution ON true
   WHERE o.commande_ligne_id=l.id AND o.parent_of_id IS NULL AND o.statut::text<>'ANNULE'),0),0)::text AS quantity
  FROM public.commande_ligne l JOIN public.commande_client c ON c.id=l.commande_id JOIN public.articles a ON a.id=l.article_id
  WHERE l.article_id=ANY($1::uuid[]) AND c.order_type='INTERNE' AND COALESCE(c.internal_order_purpose,'STANDARD')='STANDARD'
