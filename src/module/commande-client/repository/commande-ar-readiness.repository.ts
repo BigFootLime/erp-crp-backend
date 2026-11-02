@@ -87,15 +87,56 @@ export async function readOrderArCoverage(db: Db, orderId: number) {
           WHERE o.statut::text <> 'ANNULE'
             AND (o.commande_id = $1 OR o.commande_ligne_id IN (SELECT id FROM lines))
         ), stock AS (
-          SELECT r.commande_ligne_id, sum(greatest(r.qty_reserved - r.qty_consumed, 0)) AS qty
+          SELECT r.commande_ligne_id,
+            sum(CASE
+              WHEN r.source_type = 'COMMANDE_LIGNE'
+                THEN greatest(r.qty_reserved - r.qty_consumed, 0)
+              ELSE LEAST(greatest(r.qty_reserved - r.qty_consumed, 0), COALESCE(prepared.qty, 0))
+            END) AS qty
           FROM public.stock_reservations r
           JOIN lines l ON l.id = r.commande_ligne_id
           JOIN public.articles requested ON requested.id = l.article_id
           JOIN public.articles reserved ON reserved.id = r.article_id
             AND COALESCE(reserved.root_article_id, reserved.id) = COALESCE(requested.root_article_id, requested.id)
-          LEFT JOIN public.lots lot ON lot.id = r.lot_id
-          WHERE r.status = 'ACTIVE' AND r.source_type = 'COMMANDE_LIGNE'
-            AND r.source_id = l.id::text
+          LEFT JOIN public.lots lot ON lot.id = r.lot_id AND lot.article_id = r.article_id
+          LEFT JOIN LATERAL (
+            SELECT LEAST(
+              prepared_line.quantite,
+              COALESCE(sum(prepared_allocation.quantite), 0)
+            ) AS qty
+            FROM public.bon_livraison_ligne prepared_line
+            JOIN public.bon_livraison prepared_header
+              ON prepared_header.id = prepared_line.bon_livraison_id
+            JOIN public.bon_livraison_ligne_allocations prepared_allocation
+              ON prepared_allocation.bon_livraison_ligne_id = prepared_line.id
+             AND prepared_allocation.reservation_id = r.id
+             AND prepared_allocation.article_id = r.article_id
+             AND prepared_allocation.lot_id IS NOT DISTINCT FROM r.lot_id
+             AND prepared_allocation.location_id IS NOT DISTINCT FROM r.location_id
+             AND prepared_allocation.stock_level_id IS NOT DISTINCT FROM r.stock_level_id
+             AND prepared_allocation.stock_batch_id IS NOT DISTINCT FROM r.stock_batch_id
+             AND prepared_allocation.commande_ligne_affaire_allocation_id
+               IS NOT DISTINCT FROM r.commande_ligne_affaire_allocation_id
+            WHERE prepared_line.id = r.bon_livraison_ligne_id
+              AND prepared_line.commande_ligne_id = l.id
+              AND prepared_header.statut = 'READY'
+            GROUP BY prepared_line.quantite
+          ) prepared ON r.source_type = 'BON_LIVRAISON_LIGNE'
+          WHERE r.status = 'ACTIVE'
+            -- Preparing a BL deliberately changes the reservation source from
+            -- COMMANDE_LIGNE to BON_LIVRAISON_LIGNE. It remains physical cover
+            -- for this order line only while the prepared allocation still
+            -- points at that exact reservation. Do not count arbitrary BL or
+            -- component reservations merely because they carry a line id.
+            AND (
+              (r.source_type = 'COMMANDE_LIGNE' AND r.source_id = l.id::text)
+              OR (
+                r.source_type = 'BON_LIVRAISON_LIGNE'
+                AND r.bon_livraison_ligne_id IS NOT NULL
+                AND r.source_id = r.bon_livraison_ligne_id::text
+                AND COALESCE(prepared.qty, 0) > 0
+              )
+            )
             AND (r.expires_at IS NULL OR r.expires_at > statement_timestamp())
             AND ((r.lot_id IS NULL AND NOT reserved.lot_tracking) OR (
               lot.lot_status = 'LIBERE'
