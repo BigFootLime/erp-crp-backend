@@ -1,0 +1,1 @@
+-- No automatic rollback: recovery request timestamps are audit evidence.

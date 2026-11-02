@@ -166,6 +166,10 @@ export async function createToken(
   expiresAt: string,
 ) {
   await pool.query(
+    "UPDATE supplier_portal_accounts SET recovery_requested_at=NULL,updated_at=now() WHERE id=$1::uuid",
+    [accountId],
+  );
+  await pool.query(
     "UPDATE supplier_portal_tokens SET used_at=now() WHERE account_id=$1::uuid AND token_kind=$2 AND used_at IS NULL",
     [accountId, kind],
   );
@@ -176,6 +180,12 @@ export async function createToken(
       [accountId, kind, opaqueHash(raw), expiresAt],
     )
   ).rows[0];
+}
+export async function markRecoveryRequested(email: string) {
+  await pool.query(
+    "UPDATE supplier_portal_accounts SET recovery_requested_at=COALESCE(recovery_requested_at,now()),updated_at=now() WHERE email_normalized=$1 AND account_status='ACTIVE'",
+    [email],
+  );
 }
 export async function listPortalOrders(identity: SupplierPortalIdentity) {
   return (
@@ -316,7 +326,7 @@ export async function createPromiseReview(input: {
 }
 export async function listAdminAccess() {
   return (
-    await pool.query(`SELECT a.id::text,a.supplier_id::text,f.nom AS supplier_name,a.email_normalized,a.account_status,a.consented_at::text,a.created_at::text,
+    await pool.query(`SELECT a.id::text,a.supplier_id::text,f.nom AS supplier_name,a.email_normalized,a.account_status,a.consented_at::text,a.recovery_requested_at::text,a.created_at::text,
   COALESCE(array_agg(x.order_id::text) FILTER(WHERE x.order_id IS NOT NULL),'{}') AS order_ids FROM supplier_portal_accounts a JOIN fournisseurs f ON f.id=a.supplier_id LEFT JOIN supplier_portal_account_orders x ON x.account_id=a.id GROUP BY a.id,f.nom ORDER BY a.created_at DESC`)
   ).rows;
 }
@@ -427,7 +437,7 @@ export async function resetByAdmin(
 export async function disableAccount(accountId: string) {
   const row = (
     await pool.query(
-      "UPDATE supplier_portal_accounts SET account_status='DISABLED',session_epoch=session_epoch+1,updated_at=now() WHERE id=$1::uuid RETURNING id::text",
+      "UPDATE supplier_portal_accounts SET account_status='DISABLED',recovery_requested_at=NULL,session_epoch=session_epoch+1,updated_at=now() WHERE id=$1::uuid RETURNING id::text",
       [accountId],
     )
   ).rows[0];

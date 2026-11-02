@@ -23,6 +23,10 @@ const treatmentPatch = fs.readFileSync(
   ),
   "utf8",
 );
+const recoveryPatch = fs.readFileSync(
+  path.resolve("db/patches/20261102_supplier_portal_recovery_request_1808.sql"),
+  "utf8",
+);
 
 suite("supplier portal dormant pilot — isolated PostgreSQL", () => {
   beforeAll(async () => {
@@ -44,6 +48,7 @@ suite("supplier portal dormant pilot — isolated PostgreSQL", () => {
     db = new Pool({ connectionString: url });
     await db.query(patch);
     await db.query(treatmentPatch);
+    await db.query(recoveryPatch);
     service = await import("./services/supplier-portal.service");
     repo = await import("./repository/supplier-portal.repository");
     monitor =
@@ -349,6 +354,18 @@ suite("supplier portal dormant pilot — isolated PostgreSQL", () => {
       .post("/api/v1/supplier-portal/auth/recover")
       .send({ email })
       .expect(202);
+    const recoveryAccess = await request(app)
+      .get("/api/v1/supplier-portal-admin/access")
+      .set("Authorization", `Bearer ${erpToken}`)
+      .expect(200);
+    expect(recoveryAccess.body.items ?? recoveryAccess.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: account!.id,
+          recovery_requested_at: expect.any(String),
+        }),
+      ]),
+    );
     const reset = (
       await request(app)
         .post(`/api/v1/supplier-portal-admin/accounts/${account!.id}/reset`)

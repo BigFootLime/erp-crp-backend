@@ -75,7 +75,7 @@ export async function recover(email: string) {
     normalizeSupplierPortalEmail(email),
   );
   if (account?.account_status === "ACTIVE")
-    await repo.createToken(account.id, "RESET", opaqueToken(), expiry());
+    await repo.markRecoveryRequested(account.email_normalized);
   return { accepted: true };
 }
 export const context = async (identity: SupplierPortalIdentity) => ({
