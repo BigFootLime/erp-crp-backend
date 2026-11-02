@@ -1,5 +1,6 @@
 import { repoProductionWorklist } from "../repository/production-worklist.repository";
 import {
+  repoOfImprovementReturns,
   repoPreparationWorkbench,
   repoReviewPreparationStock,
   repoSavePreparationDecisions,
@@ -10,6 +11,7 @@ import {
   repoGenerateSelfInspection,
 } from "../repository/self-inspection.repository";
 export const svcProductionWorklist = repoProductionWorklist;
+export const svcOfImprovementReturns = repoOfImprovementReturns;
 export const svcPreparationWorkbench = repoPreparationWorkbench;
 export const svcReviewPreparationStock = repoReviewPreparationStock;
 export const svcSavePreparationDecisions = repoSavePreparationDecisions;

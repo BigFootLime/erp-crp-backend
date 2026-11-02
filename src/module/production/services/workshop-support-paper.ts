@@ -2,19 +2,21 @@ import { renderCerpDocument } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable, renderWorkshopWritingArea } from "../../../shared/pdf/workshop-document-blocks";
 import { formatDateFr, type OfDocumentPayload } from "../domain/of-document";
 
-export type WorkshopSupportKind = "IMPROVEMENT" | "PREPARATION_CREATION" | "PREPARATION_INDEX";
+export type WorkshopSupportKind = "IMPROVEMENT" | "PREPARATION_CREATION" | "PREPARATION_INDEX" | "PREPARATION_IMPROVEMENT";
 const preparation = [
   ["Commercial", "Exigences générales client : cahier des charges, spécifications"],
   ["Commercial", "Exigences spécifiques pièce : assurance qualité, spécifications, commentaires"],
   ["Commercial", "Reprise provisoire de la gamme ; numéros de programme à vérifier"],
-  ["Méthodes", "Classement du nouveau plan client"],
-  ["Méthodes", "Plan de fabrication CRP"],
+  ["Commerce", "Indice technique, plan client et documents requis"],
+  ["Qualité", "Plan de fabrication CRP"],
   ["Méthodes", "Archivage des anciens plans ; indice, date et visa"],
   ["Méthodes", "Fichiers DXF et STEP si nécessaires"],
   ["Méthodes", "Moyens de contrôle spécifiques et fiche d’autocontrôle"],
   ["Méthodes", "Programmes CN et préparation de programmation"],
-  ["Méthodes", "Définition du brut et du débit"],
-  ["Méthodes", "Traitements sur la gamme et le plan"],
+  ["Qualité", "Définition de la matière et du débit"],
+  ["Qualité", "Traitements sur la gamme et le plan"],
+  ["Planification", "Sous-traitance et prestations externes"],
+  ["Qualité", "Validation du dossier technique"],
   ["Qualité", "Stock ancien indice : dérogation, modification ou isolement"],
   ["Qualité", "Date de sortie de l’ancien indice et observations"],
   ["Qualité", "Dossier première pièce / EI et documents à fournir"],
@@ -28,7 +30,7 @@ export function renderWorkshopSupportPaper(payload: OfDocumentPayload, kind: Wor
       module: "production",
     designVersion: "structured-v5", documentType: improvement ? "Informations techniques et suivi" : "Préparation de fabrication",
     name: payload.ofNumero, code: payload.revisionCode,
-    status: improvement ? "Fiche à compléter" : kind === "PREPARATION_INDEX" ? "Changement d’indice" : "Création de pièce",
+    status: improvement ? "Fiche à compléter" : kind === "PREPARATION_IMPROVEMENT" ? "Fiche d’amélioration continue" : kind === "PREPARATION_INDEX" ? "Changement d’indice" : "Création de pièce",
     generatedAt: formatDateFr(payload.generatedAt), generatedBy: payload.auteur, watermark: payload.watermark,
     title: `${improvement ? "Suivi" : "Préparation"} ${payload.ofNumero}`,
     subject: `Fiche vierge ${source} adaptée à ${payload.ofNumero}`,
@@ -57,6 +59,11 @@ export function renderWorkshopSupportPaper(payload: OfDocumentPayload, kind: Wor
       ], minimumRowHeight: 32, rows: [{ cells: { quantity: "", material: "", visa: "" } }] });
       renderWorkshopWritingArea(ctx, "Reste à réaliser : usinage, ébavurage, traitement, finition, autre", 42);
     } else {
+      if (kind === "PREPARATION_IMPROVEMENT") {
+        renderWorkshopBoxes(ctx, [{ title: "Motif de préparation", columns: 1, fields: [
+          { label: "Retour de production", value: "Fiche d’amélioration continue à consulter avant fabrication" },
+        ] }], { compact: true });
+      }
       renderWorkshopTable(ctx, { title: "Préparation — commentaires et visas", minimumRowHeight: 24, bodySize: 8.5, padding: 4, columns: [
         { key: "team", label: "Service", flex: 1.2 }, { key: "check", label: "Vérification", flex: 3.1 },
         { key: "comment", label: "Commentaires", flex: 2.1 }, { key: "visa", label: "VISA", flex: .7 },

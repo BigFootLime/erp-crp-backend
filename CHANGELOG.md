@@ -1,5 +1,11 @@
 # Changelog
 
+## En recette — préparation de l’ordre de fabrication (#1498)
+
+- La validation technique exige le rôle Qualité. Le serveur vérifie le visa et conserve l’auteur dans l’OF.
+- La fiche d’autocontrôle de la révision a priorité sur un modèle historique identifiable. Le PDF applicable peut accompagner le dossier atelier sans génération d’un second document.
+- Les retours d’amélioration de la pièce restent consultables au fil des révisions et des OF. Le support de préparation imprimé indique le motif lorsqu’un scan applicable existe.
+
 ## En recette — relevés CLAYENS et annulation des commandes
 
 - L’ADV conserve les versions par client et site, voit les soldes et les livraisons déclarées et examine les échéances ambiguës sans les apparier par date. Une transmission partielle conserve les lignes à qualifier.

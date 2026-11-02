@@ -11,7 +11,7 @@ import {synchronizePreparationChildren} from '../controllers/production-workbenc
 import {reusePreparationStock} from '../controllers/production-workbench.controller';
 import {saveProgrammingTask,importPreparationPurchases} from '../controllers/production-workbench.controller';
 import { previewConsolidation,createConsolidation,getConsolidation,dissolveConsolidation } from '../controllers/production-workbench.controller';
-import { productionWorklist,preparationWorkbench,savePreparationDecisions,selectPreparationVersion,reviewPreparationStock,generateSelfInspection,downloadSelfInspection } from '../controllers/production-workbench.controller';
+import { productionWorklist,ofImprovementReturns,preparationWorkbench,savePreparationDecisions,selectPreparationVersion,reviewPreparationStock,generateSelfInspection,downloadSelfInspection } from '../controllers/production-workbench.controller';
 
 import {
   hasGrantedAccountModuleAccess,
@@ -252,6 +252,7 @@ router.post('/consolidations/preview',requireOfCapability('generate'),previewCon
 router.post('/consolidations',requireOfCapability('generate'),createConsolidation);
 router.get('/consolidations/:id',requireOfCapability('read'),getConsolidation);
 router.post('/consolidations/:id/dissolve',requireOfCapability('cancel'),dissolveConsolidation);
+router.get('/ofs/:id/improvement-returns',requireOfCapability('read'),ofImprovementReturns);
 router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench);
 router.get('/ofs/:id/dossier',requireOfCapability('read'),readDossier);
 router.get('/ofs/:id/material',requireOfCapability('read'),readMaterial);
@@ -297,7 +298,7 @@ router.get("/ofs/:id/technical-snapshot", getOfTechnicalSnapshot);
 router.get("/ofs/:id/technical-preparation", requireOfCapability("read"), getOfTechnicalPreparation);
 router.patch("/ofs/:id/technical-preparation", requireOfCapability("edit_prelaunch"), patchOfTechnicalPreparation);
 router.post("/ofs/:id/technical-preparation/submit", requireOfCapability("edit_prelaunch"), submitOfTechnicalPreparation);
-router.post("/ofs/:id/technical-preparation/validate", requireOfCapability("release"), validateOfTechnicalPreparation);
+router.post("/ofs/:id/technical-preparation/validate", requireOfCapability("read"), validateOfTechnicalPreparation);
 // Internal creation snapshot, filed automatically on root creation. Same read
 // middleware as the OF card; no route can issue or reissue it.
 router.get("/ofs/:id/creation-snapshot", getOfCreationSnapshot);

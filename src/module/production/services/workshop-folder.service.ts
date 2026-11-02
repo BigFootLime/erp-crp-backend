@@ -6,6 +6,7 @@ import type { OfDocumentPayload } from "../domain/of-document";
 import type { OfPrintIntent } from "../repository/of-document-print.repository";
 import * as documents from "../repository/of-versioning.repository";
 import * as folders from "../repository/workshop-folder.repository";
+import { readImprovementReturns } from "../repository/improvement-returns.repository";
 import { readWorkshopAnnexSources } from "../repository/workshop-annex.repository";
 import { readOfDossierTx } from "../repository/of-dossier.repository";
 import { archiveOfDocument, compensateOfDocumentArchive, readArchivedOfDocument, type OfDocumentArchiveResult } from "./of-document-archive";
@@ -56,7 +57,7 @@ async function readAnnexes(tx: documents.DbQueryer, document: Pick<documents.OfD
         actions.push({ section: "plan_client", label: "Plan client" });
     if (source.missingPlans.some(p => p.role === "PLAN_FABRICATION"))
         actions.push({ section: "plan_fabrication", label: "Plan de fabrication" });
-    if (!source.inspection)
+    if (!source.inspection && !source.importedPdf)
         actions.push({ section: "autocontrole", label: "Fiche d’autocontrôle" });
     if (actions.length)
         throw new HttpError(422, "WORKSHOP_FOLDER_ANNEXES_REQUIRED", "Complétez les documents du dossier.", { actions });
@@ -68,11 +69,17 @@ async function readAnnexes(tx: documents.DbQueryer, document: Pick<documents.OfD
         parts.push({ kind: plan.role, name: plan.label, bytes, sha256: plan.sha256 });
         manifest.push({ kind: plan.role, name: plan.label, sha256: plan.sha256, id: plan.document_id, version_id: plan.version_id });
     }
-    const sheet = source.inspection!;
-    if (digest(sheet.pdf) !== sheet.pdf_sha256)
-        throw copyUnavailable();
-    parts.push({ kind: "AUTOCONTROLE", name: "Fiche d’autocontrôle", bytes: sheet.pdf, sha256: sheet.pdf_sha256 });
-    manifest.push({ kind: "AUTOCONTROLE", name: "Fiche d’autocontrôle", sha256: sheet.pdf_sha256, id: sheet.id, source_hash: sheet.source_hash });
+    const sheet = source.inspection;
+    const imported = source.importedPdf;
+    if (sheet || imported) {
+        const bytes = sheet?.pdf ?? await readBlob(imported!.storage_key, imported!.sha256);
+        const sha256 = sheet?.pdf_sha256 ?? imported!.sha256;
+        if (digest(bytes) !== sha256) throw copyUnavailable();
+        const part = { kind: "AUTOCONTROLE", name: "Fiche d’autocontrôle", sha256 };
+        parts.push({ ...part, bytes });
+        manifest.push({ ...part, ...(sheet ? { id: sheet.id, source_hash: sheet.source_hash }
+            : { id: imported!.id, version_id: imported!.version_id }) });
+    }
     return { parts, manifest };
 }
 async function supportParts(payload: OfDocumentPayload, preparationKind: WorkshopSupportKind | null) {
@@ -119,7 +126,8 @@ export async function prepareWorkshopFolder(ofId: number, key: string, actor: Of
             await assertPreparation(tx, ofId, status);
             const annexes = await readAnnexes(tx, document);
             const preparationKind = await folders.workshopPreparationKind(tx, ofId, payload.pieceIndice);
-            const supports = await supportParts(payload, preparationKind);
+            const returns = await readImprovementReturns(tx, ofId);
+            const supports = await supportParts(payload, returns.length ? "PREPARATION_IMPROVEMENT" : preparationKind);
             const original = await readOfDocumentStoredPdf(document);
             const parts: WorkshopPdfPart[] = [{ kind: "OF", name: payload.ofNumero, bytes: original.pdf, sha256: document.pdf_sha256! }, ...annexes.parts, ...supports];
             const manifest: folders.FolderSourcePart[] = [{ kind: "OF", name: payload.ofNumero, sha256: document.pdf_sha256!, id: document.id }, ...annexes.manifest,

@@ -15,6 +15,8 @@ vi.mock("../module/production/repository/of-versioning.repository",()=>{
 vi.mock("../module/production/repository/workshop-folder.repository",()=>({findWorkshopFolderByKey:mock.key,findWorkshopFolderBySource:mock.source,
   insertWorkshopFolder:mock.insert,bindWorkshopFolderPreparation:mock.bind,getWorkshopFolderCopy:mock.copy,insertWorkshopFolderCopy:mock.saveCopy,
   getWorkshopFolder:mock.get,getWorkshopFolderPrint:mock.printMapping,insertWorkshopFolderPrint:mock.savePrint,workshopPreparationKind:mock.kind}));
+vi.mock("../module/production/repository/improvement-returns.repository", () => ({ readImprovementReturns: vi.fn(async () => []) }));
+import { readImprovementReturns } from "../module/production/repository/improvement-returns.repository";
 vi.mock("../module/production/repository/workshop-annex.repository",()=>({readWorkshopAnnexSources:mock.annexes}));
 vi.mock("../module/production/repository/of-dossier.repository",()=>({readOfDossierTx:mock.dossier}));
 vi.mock("../module/production/services/of-versioning.service",()=>({buildDocumentPayload:mock.build,emitDocument:mock.emit}));
@@ -55,6 +57,20 @@ describe("Complete workshop packet command",()=>{
     expect(mock.saveCopy.mock.calls.map(call=>call[1].copy_mark)).toEqual(["ORIGINAL","DUPLICATA","OBSOLETE"]);
     expect(mock.archive).toHaveBeenCalledTimes(3);expect(mock.bind).toHaveBeenCalledOnce();expect(mock.print).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("private/key");
+  });
+  it("uses the pinned PDF from the PT when no generated inspection sheet exists", async () => {
+    mock.annexes.mockResolvedValue({hasClientPlan:true,missingPlans:[],plans:[],inspection:null,
+      importedPdf:{id:"sheet-doc",version_id:"sheet-v",sha256:hash(sheet),storage_key:"sheet-key"}});
+    mock.blob.mockResolvedValue(sheet);
+    await prepare();
+    expect(mock.blob).toHaveBeenCalledWith("sheet-key",hash(sheet));
+    expect(mock.insert.mock.calls[0][2].manifest).toContainEqual(expect.objectContaining({kind:"AUTOCONTROLE",version_id:"sheet-v",sha256:hash(sheet)}));
+  });
+  it("includes the improvement preparation paper on repeat manufacture", async () => {
+    mock.kind.mockResolvedValue(null);
+    vi.mocked(readImprovementReturns).mockResolvedValueOnce([{version_id:"scan",title:"MD61",original_name:"scan.pdf",mime_type:"application/pdf"}]);
+    await prepare();
+    expect(mock.compose.mock.calls[0][0].parts.map((part:any) => part.kind)).toContain("PREPARATION_IMPROVEMENT");
   });
   it("rejects missing plans or inspection before emitting an OF or accepting a copy",async()=>{
     mock.annexes.mockResolvedValue({hasClientPlan:false,missingPlans:[{role:"PLAN_CLIENT"},{role:"PLAN_FABRICATION"}],plans:[],inspection:null});

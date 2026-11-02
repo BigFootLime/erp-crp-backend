@@ -47,10 +47,13 @@ export async function generateSelfInspectionTx(
   ofId: number,
   expected: string,
   audit: AuditContext,
+  reuseImport = false,
 ) {
   const of = await loadPreparationOrder(tx, ofId, true);
   assertExecutionEvidenceMutable(of, expected);
   const evaluation = await evaluateOfPreparation(tx, ofId);
+  if (reuseImport && evaluation.rules_version >= 2 && evaluation.imported_inspection) return evaluation;
+  if (reuseImport && evaluation.inspection_conflict) throw new HttpError(409, "OF_INSPECTION_CONFLICT", "Identifiez la fiche applicable sur la pièce technique.");
   if (evaluation.sheet?.state === "READY") {
     await attachReadyInspection(tx, ofId, audit, evaluation);
     await preparationAudit(tx, audit, ofId, 'production.preparation.self-inspection.attach', {sheet_id: evaluation.sheet.id, source_hash: evaluation.sheet_hash});
@@ -132,7 +135,7 @@ export async function repoGenerateSelfInspection(
   audit: AuditContext,
 ) {
   return withRealtimeOutboxTransaction(await pool.connect(), (tx) =>
-    generateSelfInspectionTx(tx, ofId, expected, audit),
+    generateSelfInspectionTx(tx, ofId, expected, audit, true),
   );
 }
 
