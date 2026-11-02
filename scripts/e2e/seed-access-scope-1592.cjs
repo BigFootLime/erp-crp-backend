@@ -60,6 +60,7 @@ const ACCOUNT_ACCESS = [
   { username: "E2E_PLANNER", grants: ["production", "planning"] },
   { username: "E2E_OPERATOR", grants: ["production"] },
   { username: "E2E_QUALITY", grants: ["ged"] },
+  { username: "E2E_OF_QUALITY", grants: ["production", "pieces-techniques", "ged", "qualite"] },
   { username: "E2E_PURCHASING", grants: [] },
   { username: "E2E_ACCOUNTANT", grants: ["facturation"] },
   ...FIXTURE_USERS.map(({ username, grants }) => ({ username, grants })),

@@ -1,3 +1,4 @@
+import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
 import { svcProductionWorkbenchConfig } from "../services/production-workbench.service";
 import { z } from "zod";
 import { svcSynchronizePreparationChildren } from "../services/production-workbench.service";
@@ -33,6 +34,7 @@ import {
 } from "../validators/production-workbench.validators";
 import {
   svcProductionWorklist,
+  svcOfImprovementReturns,
   svcPreparationWorkbench,
   svcReviewPreparationStock,
   svcSavePreparationDecisions,
@@ -108,12 +110,12 @@ export const dissolveConsolidation = asyncHandler(async (req, res) => {
     ),
   );
 });
+export const ofImprovementReturns = asyncHandler(async (req, res) => {
+  res.json(await svcOfImprovementReturns(ofIdParamSchema.parse({ params: req.params }).params.id));
+});
 export const preparationWorkbench = asyncHandler(async (req, res) => {
-  res.json(
-    await svcPreparationWorkbench(
-      ofIdParamSchema.parse({ params: req.params }).params.id,
-    ),
-  );
+  const data = await svcPreparationWorkbench(ofIdParamSchema.parse({ params: req.params }).params.id);
+  res.json({ ...data, can_validate: canValidateTechnicalDossier(req.user) });
 });
 export const savePreparationDecisions = asyncHandler(async (req, res) => {
   res.json(

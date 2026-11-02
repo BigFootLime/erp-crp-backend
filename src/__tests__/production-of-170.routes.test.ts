@@ -55,7 +55,7 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
     const requestedRole = req.headers?.["x-test-role"];
     req.user = {
       id: 1,
-      role: typeof requestedRole === "string" ? requestedRole : "Administrateur Systeme et Reseau",
+      role: typeof requestedRole === "string" ? decodeURIComponent(requestedRole) : "Administrateur Systeme et Reseau",
     };
     next();
   },
@@ -67,6 +67,20 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 }));
 
 import app from "../config/app";
+
+describe("Technical dossier quality approval", () => {
+  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("refuses validation by %s even with production module access", async role => {
+    const response = await request(app).post("/api/v1/production/ofs/5/technical-preparation/validate").set("x-test-role", role).send({});
+    expect(response.status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+  it("allows Quality to reach the validation command", async () => {
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
+    const response = await request(app).post("/api/v1/production/ofs/5/technical-preparation/validate").set("x-test-role", encodeURIComponent("Responsable Qualité")).send({});
+    expect(response.status, JSON.stringify(response.body)).toBe(404);
+    expect(mocks.poolConnect).toHaveBeenCalled();
+  });
+});
 
 describe('material debit follow-up HTTP boundaries',()=>{
   it('requires preparation and reservation rights for revision reconciliation',async()=>{
