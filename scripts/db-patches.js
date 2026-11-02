@@ -11,6 +11,21 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261031_client_portal_delivery_receipts_1802.sql": "59cb1e123d4666eca575206032db4a076060594d9d1116adf3dc0db7d21824a8",
+  "20261031_demand_pilot_1801.sql": "62ac4a173f739086fe31fd984384016777d306a455bac8e88b65cc4614c70f1b",
+  "20261031_demand_revision_receipts_1032.sql": "2cc6474c968ad0c270550ecb2562236abf045458afdc9b363fdae696c2cadfc6",
+  "20261101_client_portal_commercial_cockpit_1804.sql": "e7c3be70d8f7547a85702a482a64ab75357301e458ff8b8dfe5c3a6a499db111",
+  "20261101_client_portal_operational_notices_1805.sql": "ab4c2677e9482d9215642dc905e851af2c226d55806e78ccad3c4f86776103b5",
+  "20261101_delivery_service_evidence_1803.sql": "8d4f82162d37688e528d7ca81e20a7b249f506fcafc23c8d2b0bcbf7b9e1a5d6",
+  "20261101_demand_acknowledgement_queue_1032.sql": "16fc803df16da61307aa100985dc7b604351b74f0a8dcb5814685e1be88f2059",
+  "20261101_demand_auto_decisions_1032.sql": "12b9bf9d0793c6910a2957c875095036ef05e7e0e8d8c2bee051752ec1c409d3",
+  "20261101_demand_counter_offers_1032.sql": "4a7ca0480aef119c3f7c8855d412fe12854ca6f3ae9baa2acfc8b309043e07c0",
+  "20261101_demand_firm_bindings_1032.sql": "1ff5ed2b4dbed4c9d156fb83251fdfdc5d93d20ae5fd058801b1255f72b74e62",
+  "20261101_demand_firm_drafts_1032.sql": "db77c008e0156ccded37980b8d20cae1cad697ad227595f15d5ede0115a3e929",
+  "20261101_demand_materialization_operations_1032.sql": "841c71c4146a8f4e2f31c11d428c36bf47517a39c4d9c5f76d82ba03c7bfd8de",
+  "20261101_demand_reference_mapping_1032.sql": "7472c5f00a0c08ca561c6bfbce7f43745a498a9d0b12df04ce3ee7e5304eb5e3",
+  "20261102_supplier_portal_pilot_1806.sql": "b976ed77318a015238964d17f6be8df650ec84494e8910ee92b7abea1f3f8cb6",
+  "20261102_supplier_treatment_estimate_commands_1807.sql": "026a3d4f47ec0ef8df76e39637f79ccc37bc8ae9a53c5a2d773e9e66d8761134",
   "20261102_carco_review_1032.sql": "f4fe1a52970953c79d2fb9c222aa0ca5c6926b736e0dd2a33a226ec8cdcc96d2",
   "20261031_industrial_planning_1032.sql": "39a021720a3d9bf14066f72d5b4022a162dd9f3de517d4482e9ef816ad21fb76",
   "20261101_industrial_assumptions_1032.sql": "ddbe2021ff048c9291e22124db8df791f16b96d0d1ff8150bcf06479d73a4fc6",
