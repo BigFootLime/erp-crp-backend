@@ -54,7 +54,10 @@ async function seedFullyPlannedManufacturing(db: PoolClient, orderId: number) {
     VALUES($1,10,'Opération AR',$2::uuid,'READY') RETURNING id::text AS id`, [of.rows[0].id, revision]);
   const eventId = randomUUID();
   await db.query(`INSERT INTO public.planning_events(id,title,of_operation_id,status,start_ts,end_ts,machine_id)
-    VALUES($1::uuid,'Créneau AR',$2,'PLANNED',now(),now()+interval '1 hour',(SELECT id FROM public.machines ORDER BY id LIMIT 1))`, [eventId, operation.rows[0].id]);
+    SELECT $1::uuid,'Créneau AR',$2,'PLANNED',free.start_at,free.start_at+interval '1 hour',machine.id
+    FROM (SELECT id FROM public.machines ORDER BY id LIMIT 1 FOR UPDATE) machine
+    CROSS JOIN LATERAL (SELECT GREATEST(now(),max(e.end_ts))+interval '1 minute' AS start_at
+      FROM public.planning_events e WHERE e.machine_id=machine.id AND e.archived_at IS NULL AND e.status<>'CANCELLED') free`, [eventId, operation.rows[0].id]);
   return { eventId };
 }
 
