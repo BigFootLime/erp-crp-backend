@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import type { z } from "zod";
+import type { DemandImportPreviewRow } from "../../demand-import/types";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { centralCanonicalJson } from "../../planning/domain/central-canonical-json";
@@ -20,6 +21,8 @@ type Batch = {
   completeSnapshot?: boolean;
   actor: Actor;
   idempotencyKey: string;
+  carcoReviewId?: string;
+  expectedMappings?: Map<string,NonNullable<DemandImportPreviewRow["resolved"]>>;
 };
 type Prior = {
   id: string;
@@ -196,6 +199,12 @@ export async function importDemand(p: Batch) {
   try {
     await tx.query("BEGIN");
     await lockDemandSite(tx, p.clientId, site);
+    const latestReview = (await tx.query<{id:string;source_as_of:Date}>(
+      "SELECT id,source_as_of FROM public.carco_reviews WHERE client_id=$1 AND external_site=$2 ORDER BY source_as_of DESC LIMIT 1",
+      [p.clientId,site])).rows[0];
+    if ((p.carcoReviewId && latestReview?.id!==p.carcoReviewId) ||
+        (!p.carcoReviewId && latestReview && Date.parse(asOf)<=+latestReview.source_as_of))
+      throw new HttpError(409,"CARCO_STALE","Un nouveau relevé a remplacé cette revue.");
     if (p.actor.portalAccountId)
       await assertDemandSiteAccess(
         tx,
@@ -222,8 +231,8 @@ export async function importDemand(p: Batch) {
     const seen =
       old ??
       (
-        await tx.query<{ id: string; request_hash: string; outcome: Outcome }>(
-          `SELECT id,request_hash,outcome FROM public.demand_pilot_imports
+        await tx.query<{ id: string; request_hash: string; outcome: Outcome; carco_review_id:string|null }>(
+          `SELECT id,request_hash,outcome,carco_review_id FROM public.demand_pilot_imports
     WHERE client_id=$1 AND external_site=$2 AND source_version=$3`,
           [p.clientId, site, version],
         )
@@ -233,7 +242,8 @@ export async function importDemand(p: Batch) {
         "INSERT INTO public.demand_pilot_import_requests(actor,idempotency_key,request_hash,import_id) VALUES($1,$2,$3,$4)",
         [actor, p.idempotencyKey, hash, id],
       );
-    if (seen) {
+    const supplement = !old && seen && p.carcoReviewId && "carco_review_id" in seen && seen.carco_review_id===p.carcoReviewId && seen.request_hash!==hash ? seen : null;
+    if (seen && !supplement) {
       if (seen.request_hash !== hash)
         throw new HttpError(
           409,
@@ -247,8 +257,8 @@ export async function importDemand(p: Batch) {
     if (
       (
         await tx.query(
-          "SELECT 1 FROM public.demand_pilot_imports WHERE client_id=$1 AND external_site=$2 AND source_as_of >= $3 LIMIT 1",
-          [p.clientId, site, asOf],
+          "SELECT 1 FROM public.demand_pilot_imports WHERE client_id=$1 AND external_site=$2 AND source_as_of >= $3 AND ($4::uuid IS NULL OR id<>$4) LIMIT 1",
+          [p.clientId, site, asOf,supplement?.id ?? null],
         )
       ).rowCount
     )
@@ -267,10 +277,10 @@ export async function importDemand(p: Batch) {
     const priorByKey = new Map(
       previous.map((r) => [demandImportCompositeKey(r.after_snapshot), r]),
     );
-    const importId = randomUUID();
-    await tx.query(
+    const importId = supplement?.id ?? randomUUID();
+    if (!supplement) await tx.query(
       `INSERT INTO public.demand_pilot_imports(id,client_id,external_site,source_version,source_as_of,request_hash,submitted_by_user_id,
-  submitted_by_portal_account_id,source_file_name,snapshot_complete,row_count) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+  submitted_by_portal_account_id,source_file_name,snapshot_complete,row_count,carco_review_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         importId,
         p.clientId,
@@ -283,12 +293,28 @@ export async function importDemand(p: Batch) {
         p.sourceFileName ?? null,
         !!p.completeSnapshot,
         ordered.length,
+        p.carcoReviewId ?? null,
       ],
     );
-    const outcome: Outcome = { created: 0, unchanged: 0, missing: 0 };
+    const outcome: Outcome = supplement ? {...supplement.outcome} : { created: 0, unchanged: 0, missing: 0 };
+    const accepted = new Map(p.carcoReviewId ? (await tx.query<{schedule_identity:string;content_sha256:string}>(
+      "SELECT schedule_identity,content_sha256 FROM public.carco_submitted_lines WHERE review_id=$1",[p.carcoReviewId]
+    )).rows.map(row=>[row.schedule_identity,row.content_sha256] as const) : []);
     for (const raw of ordered) {
       const row = await resolveDemandRow(tx, p.clientId, raw),
         prior = priorByKey.get(demandImportCompositeKey(row));
+      if (p.carcoReviewId) {
+        const identity=demandImportCompositeKey(row), fingerprint=digest([raw,row]);
+        const expected=p.expectedMappings?.get(identity);
+        if (!expected || expected.article_id!==row.article_id || expected.quantity!==row.quantity ||
+            expected.unit!==row.unit || expected.contract_line_id!==(row.contract_line_id??null))
+          throw new HttpError(409,"CARCO_MAPPING_STALE","Le rattachement article, unité ou contrat a changé. Revérifiez les lignes.");
+        if (accepted.has(identity)) {
+          if(accepted.get(identity)!==fingerprint) throw new HttpError(409,"CARCO_ALREADY_SUBMITTED","Une échéance transmise a changé de rattachement. Déposez une nouvelle version.");
+          continue;
+        }
+        await tx.query("INSERT INTO public.carco_submitted_lines(review_id,schedule_identity,content_sha256) VALUES($1,$2,$3)",[p.carcoReviewId,identity,fingerprint]);
+      }
       if (
         prior &&
         prior.diff_type !== "REMOVED" &&
@@ -302,7 +328,7 @@ export async function importDemand(p: Batch) {
     }
     if (p.completeSnapshot)
       for (const [key, prior] of priorByKey) {
-        if (keys.has(key) || prior.diff_type === "REMOVED") continue;
+        if (keys.has(key) || accepted.has(key) || prior.diff_type === "REMOVED") continue;
         await appendRevision(
           tx,
           p,
@@ -318,8 +344,8 @@ export async function importDemand(p: Batch) {
         outcome.missing++;
       }
     await tx.query(
-      "UPDATE public.demand_pilot_imports SET outcome=$2 WHERE id=$1",
-      [importId, JSON.stringify(outcome)],
+      "UPDATE public.demand_pilot_imports SET outcome=$2,snapshot_complete=snapshot_complete OR $3,row_count=GREATEST(row_count,$4) WHERE id=$1",
+      [importId, JSON.stringify(outcome),!!p.completeSnapshot,ordered.length],
     );
     await recordKey(importId);
     await tx.query("COMMIT");

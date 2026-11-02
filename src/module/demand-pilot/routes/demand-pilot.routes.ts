@@ -6,12 +6,14 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { z } from "zod";
 import { simulateDemand } from "../services/demand-simulation.service";
 import { Router } from "express";
+import carcoReviews from "./carco.routes";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import * as controller from "../controllers/demand-pilot.controller";
 import { prepareFirmDraft } from "../controllers/demand-pilot-firm-draft.controller";
 const router = Router(),
   upload = createSecureUpload("import-tabular", { storage: "memory" });
 router.get("/", controller.list);
+router.use("/carco", carcoReviews);
 router.post("/preview", upload.single("file"), controller.previewInternal);
 router.post("/imports", controller.importInternal);
 router.post("/manual", controller.manual);

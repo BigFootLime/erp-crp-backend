@@ -129,8 +129,11 @@ export async function resolveDemandRow(
       );
     const line = (
       await tx.query(
-        `SELECT 1 FROM public.client_contracts c JOIN public.client_contract_lines l ON l.contract_id=c.id WHERE c.id=$1::uuid AND c.client_id=$2 AND c.status='ACTIVE' AND l.id=$3::uuid FOR SHARE`,
-        [row.contract_id, clientId, row.contract_line_id],
+        `SELECT 1 FROM public.client_contracts c JOIN public.client_contract_lines l ON l.contract_id=c.id
+         JOIN public.units u ON u.id=l.unit_id WHERE c.id=$1::uuid AND c.client_id=$2 AND c.status='ACTIVE' AND l.id=$3::uuid
+         AND l.article_id=$4::uuid AND lower(u.code)=lower($5) AND (c.valid_from IS NULL OR c.valid_from<=$6::date)
+         AND (c.valid_until IS NULL OR c.valid_until>=$6::date) FOR SHARE`,
+        [row.contract_id, clientId, row.contract_line_id, resolved.id, resolved.unite, row.need_date],
       )
     ).rows[0];
     if (!line)

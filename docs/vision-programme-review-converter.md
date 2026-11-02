@@ -1,5 +1,11 @@
 # Programme Vision / Clayens : transcription locale sous revue
 
+Le tableau Excel CARCO suit un circuit distinct de la transcription PDF. Dans **Commandes clients → Boîte ADV → Relevés de commandes CLAYENS**, sélectionner le client, le site, la version et la date d’extraction indiquée par le client. Cocher « carnet complet » seulement lorsque le périmètre de l’envoi est confirmé. Déposer le CSV ou XLSX d’origine, puis relire les écarts et les motifs de revue. Le comparatif conserve les groupes ambigus, même si deux lignes ont les mêmes valeurs.
+
+`NUM_LIGNE_CDE` identifie la ligne. Une échéance conserve son propre identifiant. Sur une ligne ferme comportant une seule échéance, l’ADV peut enregistrer un identifiant stable après vérification. La correspondance article et unité est gérée dans **Planning → PIC / PDP / CBN → Correspondances article client**. Les lignes sans article restent visibles. La fiche technique d’une pièce fabriquée est contrôlée dans la préparation de l’OF.
+
+« Transmettre » enregistre des demandes pour décision ADV. Les lignes prêtes peuvent être traitées d’abord, puis la même version peut être complétée une fois les autres lignes qualifiées. Le solde alimente le besoin. Les pièces déjà livrées sont affichées pour contrôle. Le fichier de retour CSV est destiné à la relecture interne avant accord sur le format d’échange. Les quatre cycles ADV et l’ouverture de chaque compte fournisseur relèvent du pilote opérationnel.
+
 `scripts/demand/vision_programme_review.py` converts a **local PDF only** into
 a review queue for the `VISION_PROGRAMME` demand adapter.  It is for the
 scanned “Programme de livraison / Reste à livrer” sheets; it is not a CERP

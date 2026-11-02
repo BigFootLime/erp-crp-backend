@@ -1,5 +1,12 @@
 # Changelog
 
+## En recette — relevés CLAYENS et annulation des commandes
+
+- L’ADV conserve les versions par client et site, voit les soldes et les livraisons déclarées et examine les échéances ambiguës sans les apparier par date. Une transmission partielle conserve les lignes à qualifier.
+- Le calcul d’une révision utilise les rattachements commerciaux vérifiés. La préparation d’un appel ferme peut consommer sa prévision dans le registre contractuel natif.
+- La liste respecte l’état annulé et l’annulation retire les étapes ouvertes. Le dépôt répété d’un PDF de commande conserve un seul lien pour le même contenu.
+- Le projet de retour CSV sépare la confirmation source et les promesses CRP enregistrées. La mise en service chez le client reste conditionnée à la recette ADV.
+
 ## Candidat du 2 novembre 2026 — demande et atelier
 
 - La fiche commande affiche la chronologie et retire le panneau latéral de rôle. La secrétaire prépare le document depuis l’onglet AR. CERP vérifie la préparation et les créneaux des OF avant la génération et l’envoi d’un AR. Une commande servie directement sur stock exige la couverture du solde.

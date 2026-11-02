@@ -67,6 +67,7 @@ function getUploadedDocuments(req: Request): UploadedDocument[] {
     originalname: f.originalname,
     path: f.path,
     mimetype: f.mimetype,
+    sha256: f.uploadSecurity?.sha256,
   }));
 }
 

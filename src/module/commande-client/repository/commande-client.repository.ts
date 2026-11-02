@@ -1274,7 +1274,7 @@ function normalizedCommandeStatusSql(rawExpr: string): string {
       WHEN ${rawExpr} IN (
         'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_FOURNISSEUR','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
         'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
-        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
+        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE','ANNULE'
       ) THEN ${rawExpr}
       WHEN ${rawExpr} = 'ENREGISTREE' THEN 'EN_ANALYSE'
       WHEN ${rawExpr} = 'PLANIFIEE' THEN 'PLANNING_VALIDE'
@@ -1946,6 +1946,7 @@ function mapWorkflowCheckpoint(row: WorkflowCheckpointRow) {
 }
 
 function checkpointSeedStatus(definitionStatus: CommandeWorkflowStatus, currentStatus: CommandeWorkflowStatus, activeAssigned: { value: boolean }) {
+  if (currentStatus === "ANNULE") return "skipped" as const;
   if (currentStatus !== "BLOQUE" && COMMANDE_WORKFLOW_STATUS_ORDER[definitionStatus] <= COMMANDE_WORKFLOW_STATUS_ORDER[currentStatus]) {
     return "done" as CommandeCheckpointStatus;
   }
@@ -4111,6 +4112,27 @@ async function insertCommandeDocuments(
   for (const doc of documents) {
     const documentId = crypto.randomUUID();
     const isPdf = doc.originalname.toLowerCase().endsWith(".pdf");
+    if (isPdf && doc.sha256) {
+      // The order is locked throughout the create/update transaction.
+      const existing = await client.query<{id: string; sha256: string | null}>(
+        `SELECT d.id::text, cd.upload_sha256 AS sha256 FROM commande_documents cd
+         JOIN documents_clients d ON d.id=cd.document_id
+         WHERE cd.commande_id=$1 AND cd.type='PDF'
+           AND (cd.upload_sha256=$2 OR (cd.upload_sha256 IS NULL AND d.document_name=$3))`,
+        [commandeId, doc.sha256, doc.originalname],
+      );
+      let matched = false;
+      for (const stored of existing.rows) {
+        if (stored.sha256 === doc.sha256) { matched = true; break; }
+        try {
+          const bytes = await fs.readFile(path.join(ensureDocumentStoragePath(), stored.id + ".pdf"));
+          if (crypto.createHash("sha256").update(bytes).digest("hex") === doc.sha256) { matched = true; break; }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      if (matched) continue;
+    }
     const docType = isPdf ? "PDF" : doc.mimetype;
 
     const extCandidate = path.extname(doc.originalname).toLowerCase();
@@ -4132,10 +4154,10 @@ async function insertCommandeDocuments(
 
     await client.query(
       `
-      INSERT INTO commande_documents (commande_id, document_id, type)
-      VALUES ($1, $2, $3)
+      INSERT INTO commande_documents (commande_id, document_id, type, upload_sha256)
+      VALUES ($1, $2, $3, $4)
       `,
-      [commandeId, documentId, isPdf ? "PDF" : null]
+      [commandeId, documentId, isPdf ? "PDF" : null, isPdf ? doc.sha256 ?? null : null]
     );
   }
 }

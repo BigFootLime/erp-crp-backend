@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "62f9ed5bbe1043a1471742a48faed1250003a5dfe2e39e958a402330534c2774";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "ff70ea7dde59dcc8649c1310c376f17d5bcb5407daa1922c229e5b51a5653dec";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -6246,7 +6246,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/demand-pilot",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:14",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:15",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6261,7 +6261,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/demand-pilot/{id}",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:18",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6276,7 +6276,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/{id}/bind-firm",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:19",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6291,7 +6291,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/{id}/decision",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:20",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6306,7 +6306,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/{id}/simulation",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:34",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:36",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6321,7 +6321,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/batch-decisions",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:21",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6335,8 +6335,84 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/demand-pilot/carco",
+    "source": "src/module/demand-pilot/routes/carco.routes.ts:23",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "createSecureUpload(\"import-tabular\", { storage: \"memory\" }).single(file)",
+      "asyncHandler(async (req, res) => { const input = scopeFields .extend({ source_version: z.stri)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/carco/{id}/bind",
+    "source": "src/module/demand-pilot/routes/carco.routes.ts:72",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { const input = z .object({ row_number: z.number().int().min)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/demand-pilot/carco/{id}/return.csv",
+    "source": "src/module/demand-pilot/routes/carco.routes.ts:58",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { const csv = await exportCarco( scope(req.query), z.string()"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/carco/{id}/submit",
+    "source": "src/module/demand-pilot/routes/carco.routes.ts:87",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { res.json( await submitCarco( scope(req.body), z.string().u)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/demand-pilot/carco/latest",
+    "source": "src/module/demand-pilot/routes/carco.routes.ts:52",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { res.json({ review: await getCarco(scope(req.query)) }); })"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/demand-pilot/firm-drafts",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:33",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:35",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6351,7 +6427,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/imports",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:16",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6366,7 +6442,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/manual",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:17",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:19",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -6381,7 +6457,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/demand-pilot/preview",
-    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:15",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateToken",

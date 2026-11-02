@@ -31,6 +31,7 @@ export const demandRowSchema = z
     source_as_of: iso,
     kind: z.enum(["FIRM", "FORECAST"]),
     quantity: demandQuantity,
+    source_delivered_quantity: z.number().finite().min(0).max(1e9).optional(),
     unit: key.max(32),
     quantity_basis: z.enum(["TOTAL", "REMAINING"]).default("TOTAL"),
     need_date: date,

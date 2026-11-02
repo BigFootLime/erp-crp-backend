@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
+import { scenarioInput } from "./demand-scenario-input";
 import { centralCanonicalJson } from "../../planning/domain/central-canonical-json";
 import { calculateIndustrialPlan } from "../../planning/domain/industrial-plan";
 import { placeIndustrialProposals } from "../../planning/domain/industrial-capacity";
@@ -36,13 +37,16 @@ export async function simulateDemand(clientId: string, revisionId: string) {
         "DEMAND_ARTICLE_CHANGED",
         "L’article ne figure plus dans le périmètre du pilote.",
       );
+    const scenario=await scenarioInput(tx,row,source.demand);
     const evidence = await assessDemandStock(tx, {
       clientId,
       contractId: row.contract_id,
       articleId: row.article_id,
-      quantity: row.quantity,
+      quantity: scenario.quantity,
       unit: row.unit,
       needDate: row.need_date,
+      allocationId: scenario.bound?.allocation,
+      orderLineId: scenario.bound?.line,
     });
     const baseline = calculateIndustrialPlan(source);
     // A submitted external key is not evidence that a live ERP order may be displaced.
@@ -51,18 +55,18 @@ export async function simulateDemand(clientId: string, revisionId: string) {
     const after = calculateIndustrialPlan({
       ...source,
       demand: [
-        ...source.demand,
+        ...scenario.retained,
         {
           id,
           article: row.article_id,
           unit: row.unit.toUpperCase(),
-          quantity: row.quantity,
+          quantity: scenario.quantity,
           kind: row.kind,
           priceEur: null,
           due: row.need_date,
           contractLine: row.contract_line_id,
-          orderLine: null,
-          allocation: null,
+          orderLine: scenario.bound?.line ?? null,
+          allocation: scenario.bound?.allocation ?? null,
         },
       ],
     });
@@ -106,7 +110,7 @@ export async function simulateDemand(clientId: string, revisionId: string) {
       options.push({
         code: "STOCK",
         label: "Servir à la date demandée",
-        quantity: Number(row.quantity),
+        quantity: Number(scenario.quantity),
         date: row.need_date,
         conditions: [],
       });
@@ -170,17 +174,18 @@ export async function simulateDemand(clientId: string, revisionId: string) {
     return {
       revision_id: row.id,
       revision_no: row.revision_no,
-      scope: "EXISTING_BOOK_PLUS_REQUEST",
+      scope: scenario.bound || scenario.forecastKey ? "BOUND_SCHEDULE_REVISED" : "EXISTING_BOOK_PLUS_REQUEST",
       before: row.before_snapshot,
       after: row.after_snapshot,
       notice:
-        "Simulation conservatrice. Les engagements existants restent protégés jusqu’au rattachement commercial vérifié.",
+        scenario.bound || scenario.forecastKey ? "La simulation révise uniquement le besoin rattaché. Les expéditions réalisées restent acquises." : "Simulation conservatrice. Les engagements existants restent protégés jusqu’au rattachement commercial vérifié.",
       input_revision: createHash("sha256")
         .update(
           centralCanonicalJson([
             source,
             master.snapshot.revision,
             evidence.input_revision,
+            row.id, row.revision_no, scenario.quantity, scenario.bound, scenario.forecastKey,
           ]),
         )
         .digest("hex"),

@@ -5,6 +5,7 @@ import pool from "../../../config/database";
 import { importDemand } from "./demand-ingest.repository";
 import { decideDemand, getDemand } from "./demand-pilot.repository";
 import { processDemandMaterialization } from "../services/demand-pilot-materialization.service";
+import { prepareFirmDraft } from "../services/demand-pilot-firm-draft.service";
 
 const url = new URL(
   process.env.DATABASE_URL ?? "postgres://localhost/no_database",
@@ -206,6 +207,16 @@ describe.skipIf(!enabled)(
         { month: "2027-02-01", quantity: "10.000" },
         { month: "2027-03-01", quantity: "10.000" },
       ]);
+      const firm=await importDemand({clientId,rows:[{...row("A","2027-03-08","W3"),source_as_of:"2027-01-15T00:00:00Z",kind:"FIRM",quantity:4}],
+        actor:{userId:actor},idempotencyKey:randomUUID()});
+      const revision=(await pool.query("SELECT id FROM public.demand_pilot_revisions WHERE import_id=$1",[firm.import_id])).rows[0].id;
+      await prepareFirmDraft({client_id:clientId,revision_ids:[revision],lines:[{
+        revision_id:revision,designation:"Conversion partielle",prix_unitaire_ht:12,taux_tva:20,remise_ligne:0
+      }]},actor,randomUUID());
+      const residual=await pool.query(`SELECT cov.converted_quantity::float8 converted,cov.remaining_quantity::float8 remaining
+        FROM public.v_client_contract_forecast_coverage cov JOIN public.client_contract_forecasts f ON f.id=cov.forecast_id
+        WHERE f.contract_line_id=$1 AND f.month='2027-03-01'`,[lineId]);
+      expect(residual.rows[0]).toEqual({converted:4,remaining:6});
     }, 30000);
   },
 );

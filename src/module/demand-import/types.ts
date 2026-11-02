@@ -17,6 +17,8 @@ export type CanonicalDemandImportRow = DemandImportCompositeKey & {
   source_as_of: string;
   kind: DemandKind;
   quantity: number;
+  /** Source-unit quantity already delivered. Never added to demand. */
+  source_delivered_quantity?: number;
   /** Source unit, resolved against the CERP article before persistence. */
   unit: string;
   /** Clayens RAL programmes are a remaining quantity; ordinary exports are totals. */
@@ -42,6 +44,8 @@ export type DemandImportDiagnostic = {
 
 /** Candidate data is retained for the preview even when its mandatory values are absent. */
 export type DemandImportPreviewRow = {
+  source?: {order_type?:string;designation?:string;unit_price?:string};
+  resolved?: {article_id:string;article_code:string;unit:string;quantity:number;contract_line_id:string|null};
   row_number: number;
   candidate: Partial<CanonicalDemandImportRow>;
   diagnostics: DemandImportDiagnostic[];

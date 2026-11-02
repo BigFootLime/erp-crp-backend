@@ -169,6 +169,7 @@ async function preview(
       body.external_site,
       parsed,
       portalAccountId,
+      body.source === "VISION_SYSTEMS",
     )),
   };
 }

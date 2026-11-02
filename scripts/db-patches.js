@@ -11,6 +11,7 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261102_carco_review_1032.sql": "f4fe1a52970953c79d2fb9c222aa0ca5c6926b736e0dd2a33a226ec8cdcc96d2",
   "20261031_industrial_planning_1032.sql": "39a021720a3d9bf14066f72d5b4022a162dd9f3de517d4482e9ef816ad21fb76",
   "20261101_industrial_assumptions_1032.sql": "ddbe2021ff048c9291e22124db8df791f16b96d0d1ff8150bcf06479d73a4fc6",
   "20261101_industrial_proposal_execution_1032.sql": "d3a2f7b6c025e9fd2e262befda8078ae77fec4f6fad5721209596ad7143a63c9",

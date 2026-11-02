@@ -1,3 +1,4 @@
+import { laterScheduleConversions } from "../repository/demand-forecast-conversion";
 import { createHash } from "node:crypto";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -21,7 +22,7 @@ type Aggregate = {
 const currentRevision = `NOT EXISTS(SELECT 1 FROM public.demand_pilot_revisions newer WHERE
  (newer.client_id,newer.external_site,newer.external_order_key,newer.external_line_key,newer.external_schedule_key)
  =(r.client_id,r.external_site,r.external_order_key,r.external_line_key,r.external_schedule_key)
- AND newer.revision_no>r.revision_no AND newer.status IN('ACCEPTED_PENDING_MATERIALIZATION','MATERIALIZED'))`;
+ AND newer.kind='FORECAST' AND newer.revision_no>r.revision_no AND newer.status IN('ACCEPTED_PENDING_MATERIALIZATION','MATERIALIZED'))`;
 
 function audit(userId: number) {
   return {
@@ -53,7 +54,7 @@ async function acceptedMonth(
 ): Promise<Aggregate> {
   const result = await tx.query(
     `
-    SELECT COALESCE(sum(r.quantity),0)::text AS quantity,min(COALESCE(r.accepted_need_date,r.need_date))::text AS delivery_due,
+    SELECT COALESCE(sum(CASE WHEN r.quantity_basis='REMAINING' THEN greatest(0,r.quantity-${laterScheduleConversions}) ELSE r.quantity END),0)::text AS quantity,min(COALESCE(r.accepted_need_date,r.need_date))::text AS delivery_due,
       COALESCE(array_agg(r.id::text ORDER BY r.need_date,r.created_at,r.id),'{}'::text[]) AS revision_ids,
       COALESCE(bool_or(r.quantity_basis='TOTAL'),false) AS has_total, COALESCE(bool_or(r.quantity_basis='REMAINING'),false) AS has_remaining
     FROM public.demand_pilot_revisions r

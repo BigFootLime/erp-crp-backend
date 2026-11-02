@@ -19,6 +19,15 @@ export const MAX_DEMAND_IMPORT_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 500;
 const MAX_COMMENT_LENGTH = 2_000;
 const VISION_NEED_DATE_SENTINELS = new Set(["31/12/9000", "9000-12-31"]);
+const visionRequired: Record<string,string> = {
+  external_line_key:"Numéro de ligne de commande absent.",
+  external_schedule_key:"Identifiant stable d’échéance manquant. Vérifiez celui du client.",
+  kind:"Précisez si cette échéance est ferme ou prévisionnelle.",
+  unit:"Unité client non définie. Vérifiez la correspondance article et unité CRP.",
+  article_code:"Référence article client absente.",
+  quantity:"Quantité restante à servir absente.",
+  need_date:"Date de besoin absente ou non planifiable.",
+};
 
 type Candidate = Partial<CanonicalDemandImportRow>;
 
@@ -157,10 +166,11 @@ function visionCandidate(row: DemandImportRawRow): Candidate {
     ...base,
     external_site: value(row, "external_site", "SITE"),
     external_order_key: value(row, "NUM_CDE", "Cde Order", "external_order_key"),
-    external_line_key: value(row, "ID_LIGNE", "NUM_LIGNE", "external_line_key"),
+    external_line_key: value(row, "ID_LIGNE", "NUM_LIGNE_CDE", "NUM_LIGNE", "external_line_key"),
     external_schedule_key: value(row, "ID_ECHEANCE", "external_schedule_key"),
     kind: kindFromVision(value(row, "FERMETE", "kind", "TYPE_CDE")),
     quantity: remaining !== undefined ? normalizeQuantity(remaining) : base.quantity,
+    source_delivered_quantity: normalizeQuantity(value(row, "QTE_LIV")),
     quantity_basis: remaining !== undefined ? "REMAINING" : base.quantity_basis,
     unit: base.unit ?? value(row, "UA")?.toUpperCase(),
     need_date: VISION_NEED_DATE_SENTINELS.has(rawNeedDate ?? "")
@@ -263,6 +273,14 @@ function validateCandidate(
   rowNumber: number,
 ): DemandImportDiagnostic[] {
   const diagnostics = bounded(candidate, rowNumber);
+  if (source === "VISION_SYSTEMS" && value(raw,"TYPE_CDE")?.toLowerCase()==="cde ouverte" && !candidate.contract_reference)
+    diagnostics.push(issue("OPEN_CONTRACT_REQUIRED","Indiquez le contrat de cette commande ouverte avant transmission.","contract_reference",rowNumber));
+  if (source === "VISION_SYSTEMS" && candidate.customer_order_date && candidate.need_date &&
+      candidate.need_date < candidate.customer_order_date)
+    diagnostics.push(issue("NEED_BEFORE_ORDER", "Le besoin précède la date de commande. Vérifier les dates source.", "need_date", rowNumber));
+  if (source === "VISION_SYSTEMS" && value(raw, "QTE_LIV") !== undefined &&
+      (candidate.source_delivered_quantity === undefined || candidate.source_delivered_quantity > 1e9))
+    diagnostics.push(issue("DELIVERED_QUANTITY_INVALID", "Quantité déjà livrée invalide.", "source_delivered_quantity", rowNumber));
   const review = value(raw, "REVIEW_REQUIRED", "REVUE_REQUISE");
   if (review && !["FALSE", "NON", "0"].includes(review.toUpperCase()))
     diagnostics.push(
@@ -325,7 +343,7 @@ function validateCandidate(
       diagnostics.push(
         issue(
           "REQUIRED_FIELD_MISSING",
-          `Champ requis absent : ${field}.`,
+          (source==="VISION_SYSTEMS" ? visionRequired[field] : undefined) ?? `Champ requis absent : ${field}.`,
           field,
           rowNumber,
         ),
@@ -500,6 +518,8 @@ export function parseDemandImport(
     );
     const preview: DemandImportPreviewRow = {
       row_number,
+      ...(input.source==="VISION_SYSTEMS" ? {source:{order_type:value(raw,"TYPE_CDE")?.slice(0,80),
+        designation:value(raw,"LIBELLE_ARTICLE")?.slice(0,500),unit_price:value(raw,"PRUHA_US_EUR")?.slice(0,40)}} : {}),
       candidate,
       diagnostics: rowDiagnostics,
     };

@@ -1,3 +1,4 @@
+import { forecastForFirmDraft } from "../repository/demand-forecast-conversion";
 import { createHash } from "node:crypto";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -71,6 +72,7 @@ export async function prepareFirmDraft(
         "DEMAND_FIRM_DRAFT_SCOPE",
         "Les révisions doivent partager le client, le site et la commande externe.",
       );
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[JSON.stringify(["firm-draft",input.client_id,revisions[0].external_site,revisions[0].external_order_key])]);
     const existingDraft = (
       await tx.query<any>(
         "SELECT commande_id::text FROM public.demand_pilot_firm_drafts WHERE client_id=$1 AND external_site=$2 AND external_order_key=$3 FOR UPDATE",
@@ -82,6 +84,9 @@ export async function prepareFirmDraft(
       )
     ).rows[0];
     if (existingDraft) {
+      const linked=await tx.query("SELECT dl.revision_id FROM public.demand_pilot_firm_draft_lines dl JOIN public.demand_pilot_firm_drafts d ON d.id=dl.draft_id WHERE d.commande_id=$1 AND dl.revision_id=ANY($2::uuid[])",[existingDraft.commande_id,ids]);
+      if (linked.rowCount!==ids.length)
+        throw new HttpError(409,"DEMAND_EXISTING_ORDER_REVIEW","Cette commande existe déjà. Rapprochez les nouvelles échéances avec ses lignes avant de continuer.");
       await tx.query("COMMIT");
       const commandeId = Number(existingDraft.commande_id);
       return {
@@ -166,8 +171,12 @@ export async function prepareFirmDraft(
         "DEMAND_FIRM_DRAFT_CONTRACT_SCOPE",
         "Les révisions sélectionnées ne correspondent pas au contrat choisi.",
       );
+    const allocations=new Map<string,Awaited<ReturnType<typeof forecastForFirmDraft>>>();
+    for(const revision of revisions) {
+      if(revision.contract_line_id) allocations.set(revision.id,await forecastForFirmDraft(tx,revision.id));
+    }
     const lines = revisions
-      .sort((a: any, b: any) => a.need_date.localeCompare(b.need_date))
+      .sort((a: any, b: any) => a.need_date.localeCompare(b.need_date) || a.id.localeCompare(b.id))
       .map((r: any) => {
         const l = byId.get(r.id)!;
         return {
@@ -175,6 +184,7 @@ export async function prepareFirmDraft(
           piece_technique_id: r.piece_technique_id ?? null,
           piece_technique_version_id: r.piece_technique_version_id ?? null,
           client_contract_line_id: r.contract_line_id ?? null,
+          client_forecast_allocations: allocations.get(r.id) ?? [],
           designation: l.designation,
           code_piece: r.article_code,
           quantite: r.quantity,
@@ -240,12 +250,12 @@ export async function prepareFirmDraft(
         [created.id],
       )
     ).rows;
-    for (const r of revisions) {
-      const matched = orderLines.find(
-        (l: any) =>
-          l.article_id === r.article_id && l.delai_client === r.need_date,
-      );
-      if (!matched) throw new Error("DEMAND_FIRM_DRAFT_LINE_CROSSWALK_FAILED");
+    // The native writer inserts lines sequentially in payload order. Two distinct
+    // customer schedules can share both article and date.
+    if(orderLines.length!==revisions.length) throw new Error("DEMAND_FIRM_DRAFT_LINE_CROSSWALK_FAILED");
+    for (const [index,r] of revisions.entries()) {
+      const matched=orderLines[index];
+      if (matched.article_id!==r.article_id || matched.delai_client!==r.need_date) throw new Error("DEMAND_FIRM_DRAFT_LINE_CROSSWALK_FAILED");
       await tx.query(
         "INSERT INTO public.demand_pilot_firm_draft_lines(revision_id,draft_id,commande_ligne_id,source_revision_no) VALUES($1::uuid,$2::uuid,$3::bigint,$4)",
         [r.id, draft.id, matched.id, r.revision_no],

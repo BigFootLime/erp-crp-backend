@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg";
+import { laterScheduleConversions } from "../../demand-pilot/repository/demand-forecast-conversion";
 import {
   parseCumpDecimal as qty,
   formatCumpDecimal as fmt,
@@ -26,13 +27,13 @@ export async function expandPilotForecasts(
   if (!ids.length) return demand;
   const schedules = (
     await db.query<Schedule>(
-      `SELECT b.forecast_id,r.id,COALESCE(r.accepted_need_date,r.need_date)::text AS due,r.quantity::text,r.quantity_basis
+      `SELECT b.forecast_id,r.id,COALESCE(r.accepted_need_date,r.need_date)::text AS due,greatest(0,r.quantity-${laterScheduleConversions})::text AS quantity,r.quantity_basis
   FROM public.demand_pilot_forecast_bindings b JOIN public.demand_pilot_revisions r ON r.contract_line_id=b.contract_line_id
   AND date_trunc('month',COALESCE(r.accepted_need_date,r.need_date))::date=b.month
   WHERE b.forecast_id=ANY($1::uuid[]) AND r.status='MATERIALIZED' AND r.kind='FORECAST'
    AND NOT EXISTS(SELECT 1 FROM public.demand_pilot_revisions later WHERE later.client_id=r.client_id AND later.external_site=r.external_site
     AND later.external_order_key=r.external_order_key AND later.external_line_key=r.external_line_key AND later.external_schedule_key=r.external_schedule_key
-    AND later.status='MATERIALIZED' AND later.revision_no>r.revision_no)
+    AND later.kind='FORECAST' AND later.status='MATERIALIZED' AND later.revision_no>r.revision_no)
   ORDER BY b.forecast_id,due,r.id`,
       [ids],
     )
