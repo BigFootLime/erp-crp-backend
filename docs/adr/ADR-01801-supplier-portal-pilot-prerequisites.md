@@ -49,3 +49,5 @@ Le futur pilote externe a son propre mécanisme d'authentification, une
 autorisation par fournisseur et commande, et une file de propositions pour
 Achats. Le module est éteint par défaut. Le dossier d'ouverture devra réunir
 les cinq preuves ci-dessus avant une invitation réelle.
+
+Le lien à remettre à un fournisseur utilise l’origine HTTPS publique de CERP. Une origine fournisseur distincte peut être définie via `SUPPLIER_PORTAL_PUBLIC_URL`. L’application Windows affiche l’URL publique fournie par le serveur.

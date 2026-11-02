@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { buildPortalUrl } from "../../client-portal/services/client-portal-email.service";
 import { HttpError } from "../../../utils/httpError";
 import {
   normalizeSupplierPortalEmail,
@@ -139,9 +140,11 @@ export async function invite(input: {
       email: normalizeSupplierPortalEmail(input.email),
       token: raw,
     });
+  const manualUrl = "/supplier-portal/activate?token=" + encodeURIComponent(raw);
   return {
     invite_id: saved.id,
-    manual_url: "/supplier-portal/activate?token=" + encodeURIComponent(raw),
+    manual_url: manualUrl,
+    public_url: buildPortalUrl(manualUrl, process.env.SUPPLIER_PORTAL_PUBLIC_URL),
     expires_at: saved.expires_at,
     status: saved.status,
   };
@@ -149,8 +152,10 @@ export async function invite(input: {
 export async function resetByAdmin(accountId: string) {
   const raw = opaqueToken(),
     saved = await repo.resetByAdmin(accountId, raw, expiry());
+  const manualUrl = "/supplier-portal/reset?token=" + encodeURIComponent(raw);
   return {
-    manual_url: "/supplier-portal/reset?token=" + encodeURIComponent(raw),
+    manual_url: manualUrl,
+    public_url: buildPortalUrl(manualUrl, process.env.SUPPLIER_PORTAL_PUBLIC_URL),
     expires_at: saved.expires_at,
   };
 }

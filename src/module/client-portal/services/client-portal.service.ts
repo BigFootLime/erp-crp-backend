@@ -27,7 +27,7 @@ import type {
   PortalLoginInput,
   PortalPagination,
 } from "../validators/client-portal.validators";
-import { sendPortalAccessEmail } from "./client-portal-email.service";
+import { buildPortalUrl, sendPortalAccessEmail } from "./client-portal-email.service";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
@@ -140,6 +140,7 @@ export async function createPortalInvitationByAdmin(input: {
       account_id: String(tokenRow.account_id),
       expires_at: String(tokenRow.expires_at),
       activation_path: path,
+      activation_url: buildPortalUrl(path),
       token: replayToken,
       delivery,
     },

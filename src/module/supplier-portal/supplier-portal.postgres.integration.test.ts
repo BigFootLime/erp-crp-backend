@@ -105,6 +105,9 @@ suite("supplier portal dormant pilot — isolated PostgreSQL", () => {
       orderIds: [orderA],
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
     });
+    const publicLink = new URL(invite.public_url);
+    expect(publicLink.protocol).toBe("https:");
+    expect(publicLink.pathname + publicLink.search).toBe(invite.manual_url);
     const activationToken = new URL(
       "https://local" + invite.manual_url,
     ).searchParams.get("token")!;
