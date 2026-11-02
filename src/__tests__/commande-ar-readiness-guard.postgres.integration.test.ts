@@ -135,6 +135,65 @@ describePg("AR readiness barrier — isolated PostgreSQL", () => {
     await tx.query("UPDATE public.stock_reservations SET qty_reserved=5, expires_at=now()-interval '1 second' WHERE id=$1::uuid", [reservation.rows[0].id]);
     await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
   });
+
+  it("keeps a prepared BL reservation as cover, but rejects an incomplete or mismatched physical binding", async () => {
+    if (!tx) throw new Error("transaction unavailable");
+    const orderId = await seedCommande(tx, "105", "PLANNING_VALIDE", "ar_preparation");
+    const stockPosition = await tx.query<{ article_id: string; location_id: string; stock_level_id: string; magasin_id: string; emplacement_id: number }>(`
+      SELECT article.id::text AS article_id, emplacement.location_id::text AS location_id,
+             level.id::text AS stock_level_id, emplacement.magasin_id::text AS magasin_id,
+             emplacement.id::bigint::int AS emplacement_id
+      FROM public.articles_fabrique fabrique
+      JOIN public.articles article ON article.id=fabrique.article_id AND NOT article.lot_tracking
+      CROSS JOIN public.stock_levels level
+      JOIN public.emplacements emplacement ON emplacement.location_id IS NOT NULL
+      ORDER BY level.id, emplacement.id LIMIT 1`);
+    const actor = await tx.query<{ id: number }>("SELECT id::int AS id FROM public.users ORDER BY id LIMIT 1");
+    const customer = await tx.query<{ id: string }>("SELECT client_id::text AS id FROM public.clients ORDER BY client_id LIMIT 1");
+    if (!stockPosition.rows[0] || !actor.rows[0] || !customer.rows[0]) {
+      throw new Error("Fixture requires an article, stock location, actor and customer");
+    }
+    const otherArticle = await tx.query<{ id: string }>("SELECT id::text AS id FROM public.articles WHERE id<>$1::uuid ORDER BY id LIMIT 1", [stockPosition.rows[0].article_id]);
+    const otherLot = await tx.query<{ id: string }>("SELECT id::text AS id FROM public.lots ORDER BY id LIMIT 1");
+    const otherBatch = await tx.query<{ id: string }>("SELECT id::text AS id FROM public.stock_batches ORDER BY id LIMIT 1");
+    if (!otherArticle.rows[0] || !otherLot.rows[0] || !otherBatch.rows[0]) throw new Error("Fixture requires a second article, lot and batch");
+    await tx.query("UPDATE public.commande_client SET client_id=$2 WHERE id=$1", [orderId, customer.rows[0].id]);
+    const line = await tx.query<{ id: string }>("INSERT INTO public.commande_ligne(commande_id,designation,quantite,unite,prix_unitaire_ht,article_id) VALUES($1,'Stock BL AR',5,'u',0,$2::uuid) RETURNING id::text AS id", [orderId, stockPosition.rows[0].article_id]);
+    const reservation = await tx.query<{ id: string }>(`INSERT INTO public.stock_reservations(article_id,location_id,stock_level_id,commande_ligne_id,qty_reserved,source_type,source_id,status,created_by)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::bigint,5,'COMMANDE_LIGNE',$5::text,'ACTIVE',$6) RETURNING id::text AS id`, [stockPosition.rows[0].article_id, stockPosition.rows[0].location_id, stockPosition.rows[0].stock_level_id, line.rows[0].id, line.rows[0].id, actor.rows[0].id]);
+    const delivery = await tx.query<{ id: string }>(`INSERT INTO public.bon_livraison(numero,client_id,commande_id,statut)
+      VALUES($1,$2,$3,'READY') RETURNING id::text AS id`, [`BL-AR-GUARD-${orderId}`, customer.rows[0].id, orderId]);
+    const deliveryLine = await tx.query<{ id: string }>(`INSERT INTO public.bon_livraison_ligne(bon_livraison_id,designation,quantite,unite,commande_ligne_id)
+      VALUES($1::uuid,'Stock BL AR',5,'u',$2::bigint) RETURNING id::text AS id`, [delivery.rows[0].id, line.rows[0].id]);
+    await tx.query(`INSERT INTO public.bon_livraison_ligne_allocations(
+        bon_livraison_ligne_id,article_id,quantite,unite,reservation_id,magasin_id,emplacement_id,location_id,stock_level_id
+      ) VALUES($1::uuid,$2::uuid,5,'u',$3::uuid,$4::uuid,$5::bigint,$6::uuid,$7::uuid)`, [
+      deliveryLine.rows[0].id, stockPosition.rows[0].article_id, reservation.rows[0].id,
+      stockPosition.rows[0].magasin_id, stockPosition.rows[0].emplacement_id,
+      stockPosition.rows[0].location_id, stockPosition.rows[0].stock_level_id,
+    ]);
+    await tx.query(`UPDATE public.stock_reservations
+      SET source_type='BON_LIVRAISON_LIGNE', source_id=$2::text, bon_livraison_ligne_id=$2::uuid
+      WHERE id=$1::uuid`, [reservation.rows[0].id, deliveryLine.rows[0].id]);
+
+    await expect(readiness.assertOrderArReady(tx, orderId)).resolves.toBeUndefined();
+
+    await tx.query("UPDATE public.bon_livraison_ligne_allocations SET quantite=4 WHERE reservation_id=$1::uuid", [reservation.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
+    await tx.query("UPDATE public.bon_livraison_ligne_allocations SET quantite=5, article_id=$2::uuid WHERE reservation_id=$1::uuid", [reservation.rows[0].id, otherArticle.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
+    await tx.query("UPDATE public.bon_livraison_ligne_allocations SET article_id=$2::uuid WHERE reservation_id=$1::uuid", [reservation.rows[0].id, stockPosition.rows[0].article_id]);
+    await tx.query("UPDATE public.bon_livraison_ligne_allocations SET lot_id=$2::uuid, stock_batch_id=$3::uuid WHERE reservation_id=$1::uuid", [reservation.rows[0].id, otherLot.rows[0].id, otherBatch.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
+    await tx.query("UPDATE public.bon_livraison_ligne_allocations SET lot_id=NULL, stock_batch_id=NULL WHERE reservation_id=$1::uuid", [reservation.rows[0].id]);
+    await tx.query("UPDATE public.bon_livraison SET statut='CANCELLED' WHERE id=$1::uuid", [delivery.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
+    await tx.query("UPDATE public.bon_livraison SET statut='READY' WHERE id=$1::uuid", [delivery.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).resolves.toBeUndefined();
+
+    await tx.query("DELETE FROM public.bon_livraison_ligne_allocations WHERE reservation_id=$1::uuid", [reservation.rows[0].id]);
+    await expect(readiness.assertOrderArReady(tx, orderId)).rejects.toMatchObject({ status: 409, code: "COMMAND_AR_COVERAGE_REQUIRED" });
+  });
 });
 
 afterAll(async () => {
