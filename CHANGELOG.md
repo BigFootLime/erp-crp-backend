@@ -2,7 +2,7 @@
 
 ## Candidat du 2 novembre 2026 — demande et atelier
 
-- Le panneau de suivi de la commande conserve les notes, affectations et blocages. CERP vérifie la préparation et les créneaux des OF avant la génération et l’envoi d’un AR. Une commande servie directement sur stock exige la couverture du solde.
+- La fiche commande affiche la chronologie et retire le panneau latéral de rôle. La secrétaire prépare le document depuis l’onglet AR. CERP vérifie la préparation et les créneaux des OF avant la génération et l’envoi d’un AR. Une commande servie directement sur stock exige la couverture du solde.
 - Pour un appel ferme sous contrat dont la cible mensuelle est échue, Planning sépare le reste à livrer du manque après stock et encours. Il propose un créneau après gel et distingue fin de fabrication et réception estimée. Une donnée manquante renvoie le dossier en arbitrage.
 - Les Achats peuvent saisir une estimation de retour de traitement. Planning indique le risque sur la date de besoin, sans ajouter de stock disponible. Le module d’accès fournisseur est préparé et fermé par défaut.
 - L’adaptateur Vision lit le solde et l’unité des anciens tableaux. Les clés absentes ou ambiguës passent en revue. Voir le [rapport de recette](docs/release/DEMAND_PILOT_20261031_20261101.md) et la [qualification des quatre programmes historiques](docs/release/VISION_FOUR_CYCLE_RETROSPECTIVE_20261102.md).

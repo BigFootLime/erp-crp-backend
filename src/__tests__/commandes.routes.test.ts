@@ -1208,30 +1208,14 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
   });
 
-  it("POST /api/v1/commandes/:id/workflow/actions refuses direct AR preparation without current physical coverage", async () => {
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
-      const q = String(sql);
-      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
-      if (isWorkflowHeaderSql(q)) {
-        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "PLANNING_VALIDE" }] };
-      }
-      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
-      if (q.includes("SELECT status, responsible_role")) {
-        return { rows: [{ status: "active", responsible_role: "secretariat", assigned_user_id: null }] };
-      }
-      if (q.includes("WITH lines AS")) return { rows: [{ has_of: false, complete: false }] };
-      return { rows: [] };
-    });
-
+  it("refuses to mark AR ready through the generic workflow, even before accessing the order", async () => {
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
-      .set("x-test-role", "Secretaire")
       .send({ action: "prepare_ar" });
 
     expect(res.status).toBe(409);
-    expect(res.body).toMatchObject({ code: "COMMAND_AR_COVERAGE_REQUIRED" });
-    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
+    expect(res.body).toMatchObject({ code: "COMMAND_AR_DOCUMENT_REQUIRED" });
+    expect(mocks.clientQuery.mock.calls.some(call => String(call[0]).includes("commande_historique"))).toBe(false);
   });
 
   it("PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode clears assignment and resumes blocked status", async () => {
