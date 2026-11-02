@@ -10,6 +10,7 @@ function source(id: number, qty: number): ConsolidationSource {
     numero: `OF-${id}`,
     client_id: "ABC",
     article_id: "a",
+    unit: "PCE",
     piece_technique_id: "p",
     piece_technique_version_id: "v2",
     technical_snapshot_sha256: "same",
@@ -38,6 +39,104 @@ describe("Production consolidation conservation", () => {
     expect(p.demand_quantity).toBe(21);
     expect(p.planning_wait_started_at).toBe("2026-09-01T10:00:00Z");
     expect(p.allocations.map((a) => a.parent_of_id)).toEqual([101, 102]);
+  });
+  it("keeps yield-sized launch and material quantities separate from good allocations", () => {
+    const pilot = (id: number): ConsolidationSource => ({
+      ...source(id, 112),
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
+        required_good_quantity: 100,
+        expected_good_quantity: 100,
+        yield_percent: 90,
+      },
+    });
+    const plan = buildConsolidationPlan([pilot(1), pilot(2)], 0);
+    // 224 units are physically launched, but only 100+100 good pieces are
+    // allocated to the two original commercial demands.
+    expect(plan).toMatchObject({
+      quantity: 224,
+      demand_quantity: 200,
+      surplus_quantity: 0,
+    });
+    expect(plan.allocations).toEqual([
+      expect.objectContaining({
+        source_of_id: 1,
+        quantity: 100,
+        launched_quantity: 112,
+      }),
+      expect.objectContaining({
+        source_of_id: 2,
+        quantity: 100,
+        launched_quantity: 112,
+      }),
+    ]);
+  });
+  it("does not promise a pilot OF when its frozen yield token is invalid", () => {
+    expect(() =>
+      buildConsolidationPlan(
+        [
+          {
+            ...source(1, 112),
+            industrial_semantics: {
+              coverage_semantics: "GOOD_OUTPUT_V1",
+              launched_quantity: 112,
+              required_good_quantity: 100,
+              expected_good_quantity: 100,
+              yield_percent: 0,
+            },
+          },
+          source(2, 112),
+        ],
+        0,
+      ),
+    ).toThrow(/rendement figé/i);
+  });
+  it("refuses a pilot source whose frozen yield produces no good piece", () => {
+    expect(() => buildConsolidationPlan([
+      { ...source(1, 0.001), industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1", launched_quantity: 1,
+        required_good_quantity: 1, expected_good_quantity: 1, yield_percent: 1,
+      } },
+      source(2, 1),
+    ], 0)).toThrow(/aucune pièce conforme/i);
+  });
+  it("projects the same frozen yield token after a manual gross change", () => {
+    const pilot = (id: number, launched: number): ConsolidationSource => ({
+      ...source(id, launched),
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
+        required_good_quantity: 100,
+        expected_good_quantity: 100,
+        yield_percent: 90,
+      },
+    });
+    expect(
+      buildConsolidationPlan([pilot(1, 120), source(2, 10)], 0).allocations[0],
+    ).toMatchObject({ quantity: 100, launched_quantity: 120 });
+    expect(
+      buildConsolidationPlan([pilot(1, 100), source(2, 10)], 0).allocations[0],
+    ).toMatchObject({ quantity: 90, launched_quantity: 100 });
+    expect(
+      buildConsolidationPlan([pilot(1, 85), source(2, 10)], 0).allocations[0],
+    ).toMatchObject({ quantity: 76, launched_quantity: 85 });
+  });
+  it("uses millesimal floor for continuous units", () => {
+    const pilot: ConsolidationSource = {
+      ...source(1, 85.999),
+      unit: "kg",
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        launched_quantity: 112,
+        required_good_quantity: 100,
+        expected_good_quantity: 100,
+        yield_percent: 90,
+      },
+    };
+    expect(
+      buildConsolidationPlan([pilot, source(2, 1)], 0).allocations[0],
+    ).toMatchObject({ quantity: 77.399 });
   });
   it.each([
     ["client_id", "DEF"],
@@ -86,6 +185,30 @@ describe("Production consolidation conservation", () => {
       ],
       surplus: 0,
     });
+  });
+  it("allocates only the good commercial shares; physical yield margin remains stock", () => {
+    const distributed = allocateReceivedQuantity(
+      [
+        {
+          id: "first",
+          quantity: 100,
+          received_quantity: 0,
+          due_date: "2026-10-01",
+        },
+        {
+          id: "second",
+          quantity: 100,
+          received_quantity: 0,
+          due_date: "2026-10-02",
+        },
+      ],
+      224,
+    );
+    expect(distributed.allocations).toEqual([
+      { allocation_id: "first", quantity: 100 },
+      { allocation_id: "second", quantity: 100 },
+    ]);
+    expect(distributed.surplus).toBe(24);
   });
   it("leaves only actual received excess in stock", () =>
     expect(

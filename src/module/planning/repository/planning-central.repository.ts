@@ -172,7 +172,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     version:createHash("sha256").update(JSON.stringify(versionFields)).digest("hex"),estimate };
 }
 
-export async function readCentralResources(tx: CentralQuery, from: string, to: string): Promise<Resource[]> {
+export async function readCentralResources(tx: CentralQuery, from: string, to: string, includeAvailability = true): Promise<Resource[]> {
   const {rows} = await tx.query<Row>(`
     WITH resources AS (
       SELECT 'machine:'||m.id::text AS id,'MACHINE'::text AS kind,m.name AS label,'machine:'||m.id::text AS capacity_id,
@@ -222,7 +222,7 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
         weekday:Number(day)%7,startMinute:hours(row.day_start),endMinute:hours(row.day_end) })) : [],
       closures:Array.isArray(row.absences) ? row.absences as CalendarDefinition["closures"] : [],closedDates };
     const key = JSON.stringify(calendar);
-    if (!cache.has(key)) cache.set(key,calendar.shifts.length ? expandCalendar(calendar,from,to) : []);
+    if (!cache.has(key)) cache.set(key,includeAvailability && calendar.shifts.length ? expandCalendar(calendar,from,to) : []);
     return {id:String(row.id),kind:row.kind as Resource["kind"],label:String(row.label),timezone:calendar.timezone,
        capacityId:String(row.capacity_id),calendarConfigured:row.calendar_configured===true,capacityEnabled:row.capacity_enabled===true,availability:cache.get(key)!,version:String(row.version ?? "unconfigured"),
        unavailability:Array.isArray(row.unavailability)?row.unavailability as NonNullable<Resource['unavailability']>:[]};
@@ -264,7 +264,8 @@ export async function readCentralDependencies(tx: CentralQuery): Promise<Depende
 }
 
 export async function readCentralSnapshot(query: Omit<CentralWindow,'include_coverage'> & {
-  includeTaskIds?: string[]; include_coverage?: boolean; taskIdsOnly?:boolean; capacityResourceIds?:string[]
+  includeTaskIds?: string[]; include_coverage?: boolean; taskIdsOnly?:boolean; capacityResourceIds?:string[];
+  includeResourceAvailability?: boolean
 }, tx?: CentralQuery, includeCoverage = true): Promise<CentralSnapshot> {
   if (!tx) {
     const client = await pool.connect();
@@ -331,7 +332,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
     for (const task of tasks) if (task.operationId && task.view==='external')
       task.operationType = str(byId.get(task.operationId)?.operation_type);
   }
-  const resources = await readCentralResources(tx,query.from,query.to);
+  const resources = await readCentralResources(tx,query.from,query.to,query.includeResourceAvailability);
   await hydrateDurationEstimates(tx,tasks,resources,settings.activation==='LEARN');
   if(settings.activation==='LEARN') for(const task of tasks) task.version=createHash('sha256')
     .update(task.version+JSON.stringify(task.estimate)+JSON.stringify(task.resourceEstimates)).digest('hex');

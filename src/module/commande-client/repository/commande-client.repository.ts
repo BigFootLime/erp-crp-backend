@@ -229,7 +229,7 @@ type CommandeLineArticleResolution = {
   commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
 };
 
-type AuditContext = {
+export type AuditContext = {
   user_id: number;
   user_role: string | null;
   ip: string | null;
@@ -5138,9 +5138,20 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
 }
 
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
-  const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
-  return withRealtimeOutboxTransaction(client, async (client) => {
+  return withRealtimeOutboxTransaction(client, (tx) =>
+    repoGenerateAffairesFromOrderTx(tx, id, body, audit),
+  );
+}
+
+/** Native order launch inside an existing transaction. */
+export async function repoGenerateAffairesFromOrderTx(
+  client: PoolClient,
+  id: string,
+  body: GenerateAffairesV3BodyDTO,
+  audit: AuditContext,
+) {
+    const commandeId = toInt(id, "commande_id");
     let recoveredInvalidPlanningState = false;
 
     const commandeRes = await client.query<{
@@ -6101,7 +6112,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         ...generationWarnings,
       ])],
     };
-  });
 }
 
 type AffaireCreationInput = {

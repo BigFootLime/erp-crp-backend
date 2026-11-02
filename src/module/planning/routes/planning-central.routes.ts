@@ -1,4 +1,5 @@
 import { Router } from "express";
+import industrialRouter from "./industrial-plan.routes";
 import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar } from "../controllers/planning-central.controller";
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
 import { masterPlan } from '../controllers/planning-master-plan.controller';
@@ -6,6 +7,7 @@ import { approveRecovery, previewRecoveryApproval } from '../controllers/urgency
 import { cancelDeliveryUrgencyRetainingProduction, restoreDeliveryUrgency } from '../../livraisons/controllers/delivery-urgency.controller';
 import { previewRecoveryGrouping,applyRecoveryGrouping,listRecoveryGroupingCandidates } from '../controllers/recovery-consolidation.controller';
 const router=Router();
+router.use('/industrial',industrialRouter);
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
 router.get('/master-plan',requirePlanningCapability('read_capacity'),masterPlan);

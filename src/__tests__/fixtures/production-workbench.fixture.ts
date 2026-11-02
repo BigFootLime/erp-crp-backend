@@ -169,8 +169,16 @@ export async function seedProductionWorkbenchFixture(
   }
 }
 
+type WorkbenchStockSeed = {
+  article: string;
+  version: string | null;
+  piece: string | null;
+  code: string;
+  audit: Pick<AuditContext, "user_id">;
+};
+
 export async function seedWorkbenchStock(
-  f: Awaited<ReturnType<typeof seedProductionWorkbenchFixture>>,
+  f: WorkbenchStockSeed,
   quantity: number,
   status = "LIBERE",
   options: {
@@ -188,10 +196,18 @@ export async function seedWorkbenchStock(
     && /^\d+$/.test(managedPort) && Number(managedPort) >= 1024 && Number(managedPort) <= 65535
     && url.hostname === "127.0.0.1" && url.port === String(Number(managedPort))
     && url.pathname === "/cerp_test" && url.username === "cerp_e2e";
+  // Historical dedicated fixtures stay supported. The broader loopback target is
+  // restricted to the explicitly isolated demand-pilot validation process.
+  const fixedCerp712 = process.env.DATABASE_URL ===
+    "postgresql://cerp_712@127.0.0.1:55432/cerp_test";
+  const loopbackPilot = process.env.NODE_ENV === "test" &&
+    process.env.CERP_E2E_ISOLATED === "1" &&
+    process.env.CERP_DEMAND_POSTGRES_TEST === "1" &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+    url.pathname === "/cerp_test";
   if (
     process.env.CERP_E2E_ISOLATED !== "1" ||
-    (!managedSol05 && process.env.DATABASE_URL !==
-      "postgresql://cerp_712@127.0.0.1:55432/cerp_test")
+    (!managedSol05 && !fixedCerp712 && !loopbackPilot)
   )
     throw Error("Isolated fixture only");
   const tx = await pool.connect();
