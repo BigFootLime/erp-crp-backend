@@ -17,6 +17,7 @@ let emailSink: Server;
 let emailSinkUrl: string;
 let storageRoot: string;
 let mfa: { mfa_factor_id: string; mfa_factor_version: number };
+let secretary: { id: number; username: string; email: string };
 let receivedEmails: Array<{
   headers: Record<string, string | string[] | undefined>;
   body: Record<string, unknown>;
@@ -43,9 +44,9 @@ function requireIsolatedDatabase(): void {
 function authToken(): string {
   return jwt.sign(
     {
-      id: 1,
-      username: "admin-e2e",
-      email: "keenan.e2e@invalid.example",
+      id: secretary.id,
+      username: secretary.username,
+      email: secretary.email,
       role: "Secretaire",
       mfa: true,
       amr: ["totp"],
@@ -56,6 +57,54 @@ function authToken(): string {
     process.env.JWT_SECRET!,
     { expiresIn: "5m" },
   );
+}
+
+async function seedOrdinarySecretary(): Promise<void> {
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+  const inserted = await db.query<{ id: number }>(
+    `INSERT INTO public.users(username,password,name,surname,email,role,status,is_superadmin,mfa_required)
+    VALUES($1,'DISABLED_E2E_CREDENTIAL','Secrétaire','Recette',$2,'Secretaire','Active',false,true) RETURNING id`,
+    [
+      `ar-e2e-secretary-${suffix}`,
+      `ar-e2e-secretary-${suffix}@invalid.example`,
+    ],
+  );
+  const id = inserted.rows[0]?.id;
+  if (!id) throw new Error("Unable to create the isolated Secretary fixture");
+  secretary = {
+    id,
+    username: `ar-e2e-secretary-${suffix}`,
+    email: `ar-e2e-secretary-${suffix}@invalid.example`,
+  };
+  await db.query(
+    "INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by) VALUES($1,'Secretaire',NULL)",
+    [id],
+  );
+  const factor = await db.query<{ id: string; version: number }>(
+    `INSERT INTO public.user_mfa_factors(user_id,factor_type,state,encrypted_secret,encryption_iv,encryption_tag,key_id,version,enrolled_at)
+    VALUES($1,'TOTP','ACTIVE',decode(repeat('00',16),'hex'),decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'),'e2e-local',1,now()) RETURNING id::text,version`,
+    [id],
+  );
+  if (!factor.rows[0])
+    throw new Error("Unable to create the isolated Secretary MFA fixture");
+  mfa = {
+    mfa_factor_id: factor.rows[0].id,
+    mfa_factor_version: factor.rows[0].version,
+  };
+  await db.query(
+    `INSERT INTO public.app_module_user_access(user_id,module_key,access,updated_by)
+    VALUES($1,'commandes-clients','GRANTED',NULL)`,
+    [id],
+  );
+}
+
+async function repairAbandonedSecretaryFixtures(): Promise<void> {
+  // A prior interrupted local test may have written the fixture account before
+  // its role assignment. Repair only this test's unique prefix; deletion is
+  // unsafe because retained audit records can refer to an account.
+  await db.query(`INSERT INTO public.user_role_assignments(user_id,role_key,assigned_by)
+    SELECT id,'Secretaire',NULL FROM public.users WHERE username LIKE 'ar-e2e-secretary-%'
+    ON CONFLICT (user_id,role_key) DO NOTHING`);
 }
 
 async function seedReadyOrder(
@@ -160,12 +209,13 @@ async function runArchiveWorker(): Promise<void> {
   expect(claimed).toBeGreaterThanOrEqual(1);
 }
 
-async function cleanupOrder(orderId: number): Promise<void> {
-  // OF technical snapshots are retained immutable evidence and consequently
-  // cannot be deleted through normal business SQL. The harness is explicitly
-  // a disposable local database; random fixture identifiers avoid cross-run
-  // matching while preserving the same audit guarantees as production.
-  void orderId;
+async function assertRetainedImmutableEvidence(orderId: number): Promise<void> {
+  const evidence = await db.query<{ count: string }>(
+    `SELECT count(*)::text AS count
+    FROM public.ordres_fabrication WHERE commande_id=$1`,
+    [orderId],
+  );
+  expect(Number(evidence.rows[0]?.count ?? 0)).toBe(1);
 }
 
 suite("AR HTTP full path — isolated PostgreSQL", () => {
@@ -202,22 +252,19 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
     emailSinkUrl = `http://127.0.0.1:${address.port}`;
     process.env.RESEND_API_BASE_URL = emailSinkUrl;
     db = new Pool({ connectionString: databaseUrl });
-    const factor = await db.query<{
-      mfa_factor_id: string;
-      mfa_factor_version: number;
-    }>(
-      "SELECT id::text AS mfa_factor_id,version AS mfa_factor_version FROM public.user_mfa_factors WHERE user_id=1 AND state='ACTIVE' LIMIT 1",
-    );
-    if (!factor.rows[0])
-      throw new Error(
-        "E2E fixture requires active MFA for the authenticated administrator",
-      );
-    mfa = factor.rows[0];
+    await repairAbandonedSecretaryFixtures();
+    await seedOrdinarySecretary();
     app = (await import("../config/app")).default;
   }, 30_000);
 
   afterAll(async () => {
     await new Promise<void>((resolve) => emailSink?.close(() => resolve()));
+    if (secretary?.id)
+      await db
+        .query("UPDATE public.users SET status='Inactive' WHERE id=$1", [
+          secretary.id,
+        ])
+        .catch(() => undefined);
     await db?.end();
     await rm(storageRoot, { recursive: true, force: true });
   });
@@ -225,6 +272,28 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
   it("generates, archives, previews and sends one AR exactly once through the local test transport", async () => {
     const { orderId } = await seedReadyOrder(randomUUID());
     try {
+      const profile = await request(app)
+        .get("/api/v1/auth/access-profile")
+        .set("Authorization", `Bearer ${authToken()}`)
+        .expect(200);
+      expect(profile.body.is_superadmin).toBe(false);
+      expect(profile.body.modules).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            module_key: "commandes-clients",
+            allowed: true,
+            source: "OVERRIDE",
+          }),
+        ]),
+      );
+      const me = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${authToken()}`)
+        .expect(200);
+      expect(me.body.user).toMatchObject({
+        id: secretary.id,
+        role: "Secretaire",
+      });
       const generated = await request(app)
         .post(`/api/v1/commandes/${orderId}/ar/generate`)
         .set("Authorization", `Bearer ${authToken()}`)
@@ -266,9 +335,7 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
         email_provider_id: "local-1",
       });
       expect(receivedEmails).toHaveLength(1);
-      expect(receivedEmails[0]!.body.to).toEqual([
-        "keenan.e2e@invalid.example",
-      ]);
+      expect(receivedEmails[0]!.body.to).toEqual([secretary.email]);
       expect(receivedEmails[0]!.headers["idempotency-key"]).toBe(
         body.idempotency_key,
       );
@@ -305,7 +372,7 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
       expect(history.rows[0]!.sent_at).not.toBeNull();
       expect(Number(history.rows[0]!.access_count)).toBeGreaterThanOrEqual(2);
     } finally {
-      await cleanupOrder(orderId);
+      await assertRetainedImmutableEvidence(orderId);
     }
   });
 
@@ -342,7 +409,7 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
       );
       expect(state.rows[0]).toEqual({ status: "GENERATED", sent_at: null });
     } finally {
-      await cleanupOrder(orderId);
+      await assertRetainedImmutableEvidence(orderId);
     }
   });
 });
