@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-11-02T07:24:33.939Z",
+  "generated_at": "2026-11-02T07:24:55.699Z",
   "source": "filesystem scan of db/patches and db/patches/support",
   "patch_count": 363,
-  "support_file_count": 765,
+  "support_file_count": 771,
   "recent_patch_count": 305,
   "recent_support_gaps": [
     {
@@ -735,22 +735,6 @@
     },
     {
       "filename": "20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql",
-      "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
-      }
-    },
-    {
-      "filename": "20261102_consolidation_good_output_trigger_fix_1810.sql",
-      "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
-      }
-    },
-    {
-      "filename": "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql",
       "support": {
         "preflight": false,
         "verify": false,
@@ -6860,9 +6844,9 @@
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
+        "preflight": true,
+        "verify": true,
+        "rollback": true
       },
       "risks": []
     },
@@ -6874,9 +6858,9 @@
       "transaction_wrapped": true,
       "replay_markers": true,
       "support": {
-        "preflight": false,
-        "verify": false,
-        "rollback": false
+        "preflight": true,
+        "verify": true,
+        "rollback": true
       },
       "risks": []
     },
