@@ -361,7 +361,7 @@ export const readSupplierConsultations: RequestHandler = async (
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const query = z
-      .object({ round: z.string().uuid().optional() })
+      .object({ round: z.string().guid().optional() })
       .strict()
       .parse(req.query);
     res.json(
