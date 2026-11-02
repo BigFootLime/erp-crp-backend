@@ -5,6 +5,7 @@ import {
   formatCumpDecimal,
   parseCumpDecimal,
 } from "../../stock/domain/cump-decimal";
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import { readCentralSnapshot } from "../../planning/repository/planning-central.repository";
 import { readOfComponentCoverageTx } from "../../production/repository/of-component-coverage.repository";
 import type {
@@ -36,6 +37,7 @@ type Producer = {
   task_ids: string[];
   forecast_issues: string[];
   industrial_semantics: unknown | null;
+  consolidation_semantics: unknown | null;
 };
 const positive = (value: bigint) => (value > 0n ? value : 0n);
 const minimum = (a: bigint, b: bigint) => (a < b ? a : b);
@@ -43,9 +45,46 @@ const maximum = (a: bigint, b: bigint) => (a > b ? a : b);
 
 type IndustrialGoodOutputSemantics = {
   coverage_semantics: "GOOD_OUTPUT_V1";
+  launched_quantity?: string | number;
   expected_good_quantity: string | number;
   yield_percent: string | number;
 };
+
+type ConsolidationGoodOutputSemantics = {
+  coverage_semantics: "CONSOLIDATION_GOOD_OUTPUT_V1";
+  allocated_good_quantity: string | number;
+  raw_surplus_quantity: string | number;
+};
+
+function expectedGoodFromCurrentLaunch(
+  launched: bigint,
+  yieldPercent: bigint,
+  unit: string | undefined,
+) {
+  const precision =
+    canonicalizeStockUnitCode(unit) === "u"
+      ? CUMP_DECIMAL_SCALE
+      : CUMP_DECIMAL_SCALE / 1_000n;
+  return (
+    (launched * yieldPercent) /
+    (100n * CUMP_DECIMAL_SCALE * precision) *
+    precision
+  );
+}
+
+function allocatedConsolidationGoodOutput(semantics: unknown | null) {
+  const token = semantics as Partial<ConsolidationGoodOutputSemantics> | null;
+  if (
+    token?.coverage_semantics !== "CONSOLIDATION_GOOD_OUTPUT_V1" ||
+    token.allocated_good_quantity === undefined
+  )
+    return null;
+  try {
+    return positive(parseCumpDecimal(String(token.allocated_good_quantity)));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Only OFs carrying the immutable execution token use yield-aware coverage.
@@ -57,6 +96,7 @@ export function remainingIndustrialGoodOutput(input: {
   received: string;
   good: string;
   scrap: string;
+  unit?: string;
   semantics: unknown | null;
 }) {
   const legacy = positive(
@@ -80,13 +120,25 @@ export function remainingIndustrialGoodOutput(input: {
     if (yieldPercent <= 0n || yieldPercent > 100n * CUMP_DECIMAL_SCALE)
       return 0n;
 
+    const initialLaunch =
+      token.launched_quantity === undefined
+        ? null
+        : positive(parseCumpDecimal(String(token.launched_quantity)));
+    const currentLaunch = parseCumpDecimal(input.launched);
+    // The immutable expected output is retained for the unmodified OF. When
+    // its draft quantity changes, recompute from that current gross quantity
+    // and the frozen yield; never from a mutable article setting.
+    const recalculatedExpected =
+      initialLaunch !== null && currentLaunch !== initialLaunch
+        ? expectedGoodFromCurrentLaunch(currentLaunch, yieldPercent, input.unit)
+        : expected;
     // The margin embedded in `expected` already covers the planned yield
     // loss.  A confirmed scrap only reduces it once it exceeds that margin:
     // `min(expected good, launched - scrap)`.  `quantite_bonne` and output
     // lots can be two views of one physical output, hence the maximum.
     const forecastGood = minimum(
-      expected,
-      positive(parseCumpDecimal(input.launched) - parseCumpDecimal(input.scrap)),
+      recalculatedExpected,
+      positive(currentLaunch - parseCumpDecimal(input.scrap)),
     );
     const actualGood = maximum(
       parseCumpDecimal(input.good),
@@ -108,6 +160,7 @@ export const CONTRACT_COVERAGE_PRODUCERS_SQL = `SELECT o.id::bigint::int,o.numer
       AND execution.status='EXECUTED' AND execution.action='MAKE'
       AND execution.result->'industrial_proposal'->>'coverage_semantics'='GOOD_OUTPUT_V1'
     ORDER BY execution.created_at DESC,execution.id DESC LIMIT 1) AS industrial_semantics,
+  o.technical_preparation->'consolidation_good_output' AS consolidation_semantics,
   c.surplus_quantity::text AS surplus,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('id',share.id::text,'order_line_id',source.commande_ligne_id::text,
     'quantity',share.quantity::text,'received',share.received_quantity::text) ORDER BY share.due_date NULLS LAST,share.id)
@@ -236,6 +289,7 @@ export async function readContractCoverageProduction(
       received: "0",
       good: "0",
       scrap: producer.scrap,
+      unit: producer.unit,
       semantics: producer.industrial_semantics,
     });
     if (
@@ -302,13 +356,30 @@ export async function readContractCoverageProduction(
     const availableDate = new Intl.DateTimeFormat("sv-SE", {
       timeZone: "Europe/Paris",
     }).format(new Date(end));
-    let remaining = remainingIndustrialGoodOutput({
-      launched: producer.launched,
-      received: producer.received,
-      good: producer.good,
-      scrap: producer.scrap,
-      semantics: producer.industrial_semantics,
-    });
+    const consolidationAllocation = allocatedConsolidationGoodOutput(
+      producer.consolidation_semantics,
+    );
+    let remaining =
+      consolidationAllocation === null
+        ? remainingIndustrialGoodOutput({
+            launched: producer.launched,
+            received: producer.received,
+            good: producer.good,
+            scrap: producer.scrap,
+            unit: producer.unit,
+            semantics: producer.industrial_semantics,
+          })
+        : minimum(
+            remainingIndustrialGoodOutput({
+              launched: producer.launched,
+              received: "0",
+              good: "0",
+              scrap: producer.scrap,
+              unit: producer.unit,
+              semantics: producer.industrial_semantics,
+            }),
+            consolidationAllocation,
+          );
     const add = (id: string, quantity: bigint, lineId: string | null) => {
       const accepted = minimum(remaining, quantity);
       if (!accepted) return;
@@ -326,7 +397,19 @@ export async function readContractCoverageProduction(
         label: producer.number,
       });
     };
-    if (producer.surplus !== null) {
+    if (consolidationAllocation !== null) {
+      // Consolidated surplus is gross input, not future good output. Shares
+      // alone carry the allocated good quantity; already received shares are
+      // covered by stock rather than by this future-production source.
+      for (const owner of producer.owners)
+        add(
+          `production:${producer.id}:share:${owner.id}`,
+          positive(
+            parseCumpDecimal(owner.quantity) - parseCumpDecimal(owner.received),
+          ),
+          owner.order_line_id,
+        );
+    } else if (producer.surplus !== null) {
       for (const owner of producer.owners)
         add(
           `production:${producer.id}:share:${owner.id}`,

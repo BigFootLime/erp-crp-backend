@@ -4,6 +4,7 @@ import { remainingIndustrialGoodOutput } from "./client-contract-coverage-produc
 describe("yield-aware industrial OF coverage", () => {
   const tagged = {
     coverage_semantics: "GOOD_OUTPUT_V1" as const,
+    launched_quantity: 130,
     expected_good_quantity: 104,
     yield_percent: 80,
   };
@@ -30,6 +31,20 @@ describe("yield-aware industrial OF coverage", () => {
         semantics: tagged,
       }).toString(),
     ).toBe("94000000000000");
+  });
+
+  it("recalculates a manually reduced discrete OF from its frozen 90% yield", () => {
+    expect(remainingIndustrialGoodOutput({
+      launched: "9", received: "0", good: "0", scrap: "0", unit: "PCE",
+      semantics: { coverage_semantics: "GOOD_OUTPUT_V1", launched_quantity: 10, expected_good_quantity: 9, yield_percent: 90 },
+    }).toString()).toBe("8000000000000");
+  });
+
+  it("recalculates a manually increased discrete OF and subtracts released output once", () => {
+    expect(remainingIndustrialGoodOutput({
+      launched: "12", received: "2", good: "2", scrap: "0", unit: "PCE",
+      semantics: { coverage_semantics: "GOOD_OUTPUT_V1", launched_quantity: 10, expected_good_quantity: 9, yield_percent: 90 },
+    }).toString()).toBe("8000000000000");
   });
 
   it("keeps the initial yield margin when observed scrap stays inside it", () => {

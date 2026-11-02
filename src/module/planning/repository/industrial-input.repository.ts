@@ -226,10 +226,18 @@ export async function readIndustrialInput(
     GREATEST(o.quantite_bonne,COALESCE((SELECT sum(output.qty_ok) FROM public.of_output_lots output WHERE output.of_id=o.id),0))
   WHEN execution.semantics->>'coverage_semantics'='GOOD_OUTPUT_V1' THEN
     GREATEST(LEAST(
-      CASE WHEN COALESCE(execution.semantics->>'expected_good_quantity','')~'^[0-9]+(\\.[0-9]+)?$'
+      CASE WHEN COALESCE(execution.semantics->>'launched_quantity','')~'^[0-9]+(\\.[0-9]+)?$'
+          AND COALESCE(execution.semantics->>'yield_percent','')~'^[0-9]+(\\.[0-9]+)?$'
+          AND (execution.semantics->>'yield_percent')::numeric>0
+          AND (execution.semantics->>'yield_percent')::numeric<=100
+          AND o.quantite_lancee<>(execution.semantics->>'launched_quantity')::numeric
+        THEN CASE WHEN lower(btrim(a.unite)) IN('u','pc','pce','pces','pcs','piece','pieces','pièce','pièces','unit','units','unite','unites','unité','unités')
+          THEN floor(o.quantite_lancee*(execution.semantics->>'yield_percent')::numeric/100)
+          ELSE floor(o.quantite_lancee*(execution.semantics->>'yield_percent')::numeric*1000/100)/1000 END
+      WHEN COALESCE(execution.semantics->>'expected_good_quantity','')~'^[0-9]+(\\.[0-9]+)?$'
         THEN (execution.semantics->>'expected_good_quantity')::numeric ELSE 0 END,
       GREATEST(o.quantite_lancee-o.quantite_rebut,0)
-    )-GREATEST(o.quantite_bonne,COALESCE((SELECT sum(output.qty_ok) FROM public.of_output_lots output WHERE output.of_id=o.id),0)),0)
+    ),0)
   ELSE GREATEST(o.quantite_lancee-o.quantite_rebut,0) END)
   FROM public.ordres_fabrication o LEFT JOIN LATERAL(
     SELECT execution.result->'industrial_proposal' AS semantics FROM public.industrial_proposal_executions execution
