@@ -3,6 +3,7 @@ import { enqueueAppNotificationCreated, enqueueEntityChanged } from "../../../sh
 import { HttpError } from "../../../utils/httpError";
 import { repoApplyCommandeWorkflowMilestone, repoEnsureCommandeWorkflowCheckpoints } from "./commande-client.repository";
 import { assertCommandeQualityReleased } from "./commande-fulfillment-guards.repository";
+import { normalizeCommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 
 type Db = Pick<PoolClient, "query">;
 
@@ -13,15 +14,16 @@ export async function reconcileCommandeQualityMilestoneInTransaction(client: Db,
     `SELECT nouveau_statut FROM public.commande_historique
      WHERE commande_id = $1 ORDER BY date_action DESC, id DESC LIMIT 1`, [orderId],
   );
-  const status = history.rows[0]?.nouveau_statut;
+  const status = normalizeCommandeWorkflowStatus(history.rows[0]?.nouveau_statut);
   if (status !== "PRODUCTION_TERMINEE" && status !== "CONTROLE_QUALITE") return;
 
   await repoEnsureCommandeWorkflowCheckpoints(client, orderId, status);
-  const checkpoint = await client.query<{ status: string }>(
-    `SELECT status FROM public.commande_client_workflow_checkpoint
-     WHERE commande_id = $1 AND checkpoint_code = 'quality_control' FOR UPDATE`, [orderId],
+  const checkpoint = await client.query<{ checkpoint_code: string; status: string }>(
+    `SELECT checkpoint_code, status FROM public.commande_client_workflow_checkpoint
+     WHERE commande_id = $1 AND checkpoint_code IN ('quality_control', 'delivery') FOR UPDATE`, [orderId],
   );
-  if (checkpoint.rows[0]?.status !== "active") return;
+  const stages = new Map(checkpoint.rows.map(row => [row.checkpoint_code, row.status]));
+  if (stages.get("quality_control") !== "active" || stages.get("delivery") === "blocked") return;
 
   try {
     await assertCommandeQualityReleased(client, orderId);
