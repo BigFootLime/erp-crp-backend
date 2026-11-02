@@ -657,6 +657,13 @@ describe("/api/v1/planning", () => {
       if (q.includes("UPDATE public.of_operations")) {
         return { rows: [] };
       }
+      // The planning promotion now recomputes every active OF operation under
+      // the order lock. This fixture represents the one-operation, fully
+      // planned case; a mere first event must not be treated as enough when
+      // the readiness query reports an incomplete sibling operation.
+      if (q.includes("WITH manufacturing AS") && q.includes("AS incomplete")) {
+        return { rows: [{ orders: 1, incomplete: 0 }] };
+      }
       if (q.includes("FROM public.ordres_fabrication o") && q.includes("active_events")) {
         return {
           rows: [
