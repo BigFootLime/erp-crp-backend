@@ -1,4 +1,4 @@
-import { pdfPageTexts } from "../../../__tests__/helpers/pdf-text";
+import { pdfPageTexts as drawnPages } from "../../../__tests__/helpers/pdf-text";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -66,7 +66,6 @@ import { buildCommandeArPdfBuffer, renderCommandeArOfficialPdf, svcGenerateComma
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 
 
-const drawnPages = pdfPageTexts;
 
 const ISSUER = {
   company_name: "CROIX ROUSSE PRECISION",
@@ -184,6 +183,15 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     expect(text).toContain("Priorite: CRITIQUE");
     expect(archive.sourceSnapshot.public_comment).toBe(raw);
     expect(text).not.toContain("Délai de livraison");
+    const splitArchive = structuredClone(archive);
+    const snapshot = splitArchive.sourceSnapshot as { lines: { promise_schedule?: { due_date: string; quantity: string }[] }[] };
+    snapshot.lines[0].promise_schedule = [
+      { due_date: "2026-11-05", quantity: "1" },
+      { due_date: "2026-11-12", quantity: "1" },
+    ];
+    const splitText = drawnPages(await renderCommandeArOfficialPdf({ archive: splitArchive })).join("\n");
+    expect(splitText).toContain("05/11/2026");
+    expect(splitText).toContain("12/11/2026");
   });
 });
 

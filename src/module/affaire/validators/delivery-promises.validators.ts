@@ -6,3 +6,8 @@ export const reviseDeliveryPromisesSchema = z.object({
     parts: z.array(z.object({ quantity: z.number().positive().max(100000000).multipleOf(0.000001), due_date: date }).strict()).min(1).max(50),
 }).strict();
 export type ReviseDeliveryPromisesInput = z.infer<typeof reviseDeliveryPromisesSchema>;
+export const recordDeliveryPromiseEvidenceSchema = z.object({
+    root_id: z.string().uuid(), part_id: z.string().uuid(), expected_version: z.coerce.number().int().positive(), request_key: z.string().uuid(),
+    delivery_address_id: z.string().uuid().optional(), departure_due_date: date.optional(), reason: z.string().trim().min(5).max(2000),
+}).strict().refine(value => Boolean(value.delivery_address_id || value.departure_due_date), { message: "Une adresse ou une date de départ est requise." });
+export type RecordDeliveryPromiseEvidenceInput = z.infer<typeof recordDeliveryPromiseEvidenceSchema>;

@@ -57,8 +57,10 @@ export async function readContractCoverageProduction(db: Queryer, input: { artic
   }
   if (input.endDate < input.now.slice(0, 10)) return { sources, issues: [{ code: 'HISTORICAL_PRODUCTION_EXCLUDED',
     message: 'Les OF actuels ne constituent pas une couverture historique des mois déjà passés.' }], revision: null };
+  // Coverage checks dated commitments and whether their resources are enabled.
+  // It never searches for new slots across the long PIC horizon.
   const snapshot = await readCentralSnapshot({ from: input.now, to: `${input.endDate}T23:59:59Z`, limit: 5000,
-    includeTaskIds: taskIds, taskIdsOnly: true }, db);
+    includeTaskIds: taskIds, taskIdsOnly: true, includeResourceAvailability: false }, db);
   if (snapshot.nextCursor) throw new HttpError(422, 'CONTRACT_COVERAGE_SCOPE_TOO_LARGE', 'Le planning dépasse le périmètre complet de la synthèse.');
   const resourceById = new Map(snapshot.resources.map(resource => [resource.id, resource]));
   for (const producer of producers) {

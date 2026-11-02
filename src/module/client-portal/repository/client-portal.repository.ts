@@ -654,16 +654,37 @@ async function listProjection(viewName: string, identity: ClientPortalIdentity, 
   ]);
   if (!allowedViews.has(viewName)) throw new Error("Unknown portal projection");
   const offset = (page - 1) * pageSize;
+  // A customer account can be restricted to delivery sites.  The legacy
+  // projections are client-wide, so never use them without re-attaching their
+  // source document to the account's explicit site allow-list.
+  const scope = viewName === "client_portal_orders_v"
+    ? `EXISTS (SELECT 1 FROM public.commande_client order_header
+                 JOIN public.client_portal_delivery_site_bindings binding
+                   ON binding.delivery_address_id=order_header.destinataire_id
+                WHERE order_header.id=projection.id::bigint
+                  AND binding.account_id=$2::uuid)`
+    : viewName === "client_portal_deliveries_v"
+      ? `EXISTS (SELECT 1 FROM public.bon_livraison delivery
+                   JOIN public.client_portal_delivery_site_bindings binding
+                     ON binding.delivery_address_id=delivery.adresse_livraison_id
+                  WHERE delivery.id=projection.id::uuid
+                    AND binding.account_id=$2::uuid)`
+      : `EXISTS (SELECT 1 FROM public.facture invoice
+                   JOIN public.commande_client order_header ON order_header.id=invoice.commande_id
+                   JOIN public.client_portal_delivery_site_bindings binding
+                     ON binding.delivery_address_id=order_header.destinataire_id
+                  WHERE invoice.id=projection.id::uuid
+                    AND binding.account_id=$2::uuid)`;
   const count = await pool.query<{ total: number }>(
-    `SELECT count(*)::int AS total FROM public.${viewName} WHERE client_id=$1`,
-    [identity.clientId]
+    `SELECT count(*)::int AS total FROM public.${viewName} projection WHERE projection.client_id=$1 AND ${scope}`,
+    [identity.clientId, identity.accountId]
   );
   const data = await pool.query(
-    `SELECT * FROM public.${viewName}
-      WHERE client_id=$1
+    `SELECT projection.* FROM public.${viewName} projection
+      WHERE projection.client_id=$1 AND ${scope}
       ORDER BY updated_at DESC, id DESC
-      LIMIT $2 OFFSET $3`,
-    [identity.clientId, pageSize, offset]
+      LIMIT $3 OFFSET $4`,
+    [identity.clientId, identity.accountId, pageSize, offset]
   );
   return { items: data.rows.map(({ client_id: _clientId, ...row }) => row), total: count.rows[0]?.total ?? 0 };
 }
@@ -676,6 +697,120 @@ export const repoListPortalDeliveries = (identity: ClientPortalIdentity, page: n
 
 export const repoListPortalInvoices = (identity: ClientPortalIdentity, page: number, pageSize: number) =>
   listProjection("client_portal_invoices_v", identity, page, pageSize);
+
+/**
+ * Commercial cockpit: every row is tied either to an explicit contract
+ * allow-list or to a delivery-site binding.  Contracts deliberately have no
+ * inferred site: an unbound contract stays invisible rather than becoming
+ * client-wide by accident.
+ */
+export async function repoGetPortalCommercialOverview(identity: ClientPortalIdentity) {
+  const contracts = await pool.query(
+    `SELECT contract.id::text AS id, contract.reference, contract.title, contract.status,
+            contract.valid_from::text, contract.valid_until::text,
+            count(line.id)::int AS line_count
+       FROM public.client_portal_contract_bindings binding
+       JOIN public.client_contracts contract ON contract.id=binding.contract_id
+       LEFT JOIN public.client_contract_lines line ON line.contract_id=contract.id AND line.active
+      WHERE binding.account_id=$1::uuid AND contract.client_id=$2
+      GROUP BY contract.id
+      ORDER BY contract.reference, contract.id`,
+    [identity.accountId, identity.clientId]
+  );
+  const firm = await pool.query(
+    `SELECT count(*)::int AS order_count, COALESCE(sum(scoped.total_ht),0)::text AS total_ht,
+            COALESCE(sum(scoped.total_ttc),0)::text AS total_ttc
+       FROM (
+         SELECT order_header.id, order_header.total_ht, order_header.total_ttc
+           FROM public.client_contract_calls call
+           JOIN public.commande_client order_header ON order_header.id=call.commande_id
+           JOIN public.client_portal_contract_bindings contract_binding
+             ON contract_binding.contract_id=call.contract_id AND contract_binding.account_id=$1::uuid
+           JOIN public.client_portal_delivery_site_bindings site_binding
+             ON site_binding.delivery_address_id=order_header.destinataire_id AND site_binding.account_id=$1::uuid
+          WHERE call.client_id=$2
+       ) scoped`,
+    [identity.accountId, identity.clientId]
+  );
+  const forecasts = await pool.query(
+    `SELECT unit.code AS unit, sum(forecast.quantity)::text AS quantity, count(*)::int AS schedule_count
+       FROM public.client_contract_forecasts forecast
+       JOIN public.units unit ON unit.id=forecast.unit_id
+       JOIN public.client_portal_contract_bindings binding
+         ON binding.contract_id=forecast.contract_id AND binding.account_id=$1::uuid
+       JOIN public.client_contracts contract ON contract.id=forecast.contract_id AND contract.client_id=$2
+      WHERE forecast.status='ACTIVE'
+      GROUP BY unit.code
+      ORDER BY unit.code`,
+    [identity.accountId, identity.clientId]
+  );
+  const promises = await pool.query(
+    `SELECT root.id::text AS promise_id, root.commande_id::text AS commande_id,
+            part.id::text AS part_id, part.due_date::text AS promised_date,
+            GREATEST(part.quantity-COALESCE((SELECT sum(shipment.quantity) FROM public.delivery_promise_shipments shipment WHERE shipment.part_id=part.id),0),0)::text AS remaining_quantity,
+            CASE WHEN part.due_date<CURRENT_DATE THEN 'OVERDUE' WHEN part.due_date<=CURRENT_DATE+7 THEN 'CRITICAL' ELSE 'PLANNED' END AS criticality
+       FROM public.delivery_promise_roots root
+       JOIN public.delivery_promise_site_evidence evidence ON evidence.root_id=root.id
+       JOIN public.delivery_promise_parts part ON part.root_id=root.id AND part.retired_at IS NULL
+       JOIN public.commande_client order_header ON order_header.id=root.commande_id
+       JOIN public.client_portal_delivery_site_bindings binding
+         ON binding.delivery_address_id=evidence.delivery_address_id AND binding.account_id=$1::uuid
+      WHERE order_header.client_id=$2
+        AND part.quantity>COALESCE((SELECT sum(shipment.quantity) FROM public.delivery_promise_shipments shipment WHERE shipment.part_id=part.id),0)
+      ORDER BY part.due_date,part.id
+      LIMIT 100`,
+    [identity.accountId, identity.clientId]
+  );
+  const publications = await pool.query<{ count: number }>(
+    `SELECT count(*)::int AS count FROM public.client_portal_publications publication
+      WHERE publication.client_id=$1 AND publication.revoked_at IS NULL
+        AND (publication.expires_at IS NULL OR publication.expires_at>now())`,
+    [identity.clientId]
+  );
+  const notices = await pool.query(
+    `SELECT notice.id::text AS id, notice.notice_type, notice.title, notice.message,
+            notice.published_from::text, notice.published_until::text, notice.starts_on::text, notice.ends_on::text
+       FROM public.client_portal_operational_notices notice
+      WHERE notice.client_id=$1
+        AND (notice.account_id IS NULL OR notice.account_id=$2::uuid)
+        AND (notice.delivery_address_id IS NULL OR EXISTS(
+          SELECT 1 FROM public.client_portal_delivery_site_bindings binding
+           WHERE binding.account_id=$2::uuid AND binding.delivery_address_id=notice.delivery_address_id))
+        AND notice.published_from<=now() AND notice.published_until>now()
+      ORDER BY notice.starts_on NULLS LAST, notice.created_at DESC`,
+    [identity.clientId, identity.accountId]
+  );
+  const progress = await pool.query(
+    `SELECT order_header.id::text AS commande_id, order_header.numero,
+       CASE
+         WHEN EXISTS(SELECT 1 FROM public.bon_livraison delivery WHERE delivery.commande_id=order_header.id AND delivery.statut IN ('SHIPPED','DELIVERED')) THEN 'EXPEDITION_RECORDED'
+         WHEN EXISTS(SELECT 1 FROM public.ordres_fabrication fabrication WHERE fabrication.commande_id=order_header.id AND fabrication.statut::text NOT IN ('BROUILLON','ANNULE')) THEN 'PRODUCTION_RECORDED'
+         WHEN EXISTS(SELECT 1 FROM public.commande_client_workflow_checkpoint checkpoint WHERE checkpoint.commande_id=order_header.id AND checkpoint.status='done') THEN 'WORKFLOW_RECORDED'
+         ELSE 'ORDER_RECORDED'
+       END AS milestone,
+       CASE
+         WHEN EXISTS(SELECT 1 FROM public.bon_livraison delivery WHERE delivery.commande_id=order_header.id AND delivery.statut IN ('SHIPPED','DELIVERED')) THEN 'BON_LIVRAISON'
+         WHEN EXISTS(SELECT 1 FROM public.ordres_fabrication fabrication WHERE fabrication.commande_id=order_header.id AND fabrication.statut::text NOT IN ('BROUILLON','ANNULE')) THEN 'ORDRE_FABRICATION'
+         WHEN EXISTS(SELECT 1 FROM public.commande_client_workflow_checkpoint checkpoint WHERE checkpoint.commande_id=order_header.id AND checkpoint.status='done') THEN 'WORKFLOW'
+         ELSE 'COMMANDE'
+       END AS source
+       FROM public.commande_client order_header
+       JOIN public.client_portal_delivery_site_bindings binding ON binding.delivery_address_id=order_header.destinataire_id AND binding.account_id=$2::uuid
+      WHERE order_header.client_id=$1
+      ORDER BY order_header.updated_at DESC, order_header.id DESC
+      LIMIT 100`,
+    [identity.clientId, identity.accountId]
+  );
+  return {
+    contracts: contracts.rows,
+    firm: firm.rows[0] ?? { order_count: 0, total_ht: "0", total_ttc: "0" },
+    forecasts: forecasts.rows,
+    promises: promises.rows,
+    publications: { authorized_count: publications.rows[0]?.count ?? 0, source: "CLIENT_PORTAL_PUBLICATIONS_ONLY" },
+    operational_notices: notices.rows,
+    order_progress: progress.rows,
+  };
+}
 
 const PORTAL_DOCUMENT_SELECT = `
   publication.id::text AS id,

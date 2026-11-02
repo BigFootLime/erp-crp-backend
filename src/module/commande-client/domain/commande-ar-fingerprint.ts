@@ -43,6 +43,7 @@ type CommandeArFingerprintSource = {
     prix_unitaire_ht: unknown;
     taux_tva: unknown;
     total_ttc: unknown;
+    promise_schedule?: {quantity:string;due_date:string}[];
     delai_client?: unknown;
     delai_interne?: unknown;
   }>;
@@ -79,6 +80,7 @@ function normalizedLine(source: Record<string, unknown>): Record<string, unknown
     prix_unitaire_ht: source.prix_unitaire_ht,
     taux_tva: source.taux_tva,
     total_ttc: source.total_ttc,
+    ...(Array.isArray(source.promise_schedule)&&source.promise_schedule.length?{promise_schedule:source.promise_schedule}:{}),
     delai_client: source.delai_client ?? null,
     delai_interne: source.delai_interne ?? null,
   };

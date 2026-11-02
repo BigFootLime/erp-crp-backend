@@ -1,0 +1,1 @@
+-- No automatic rollback: this pilot creates identity and audit evidence. Remove only in the isolated test database.

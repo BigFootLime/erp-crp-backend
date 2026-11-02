@@ -1,105 +1,11 @@
 # Changelog
 
-## Préparé — Révisions du dossier pendant la préparation OF (#1493)
+## Préparé — pilote de demande, preuves portail et sandbox fournisseur (2026-10-31/11-01)
 
-- Donne priorité au dossier sélectionné pour un OF encore en préparation, même si une ancienne version demeure dans la référence physique. Gamme, nomenclature, achats et besoins matière utilisent cette sélection.
-- Suit les nouvelles révisions mineures compatibles du même indice, uniquement pour les OF brouillons non validés et non figés en suivi automatique. Les choix manuels, nouveaux indices et évolutions majeures sont exclus.
-- Expose le mode automatique ou manuel dans le dossier OF. Le choix explicite reste manuel, avec possibilité de réactiver le suivi des prochaines révisions.
-- Invalide les évaluations concernées et trace les OF suivis dans l’audit de création. Préserve les choix manuels des sous-OF et leur synchronisation explicite. Aucune migration ni reprise des données existantes.
-
-## Correctif — Même fichier pour les deux plans (#1491)
-
-- Autorise un fichier déjà présent dans la GED lorsqu’il est déposé comme plan client ou plan de fabrication d’une pièce technique ou de son indice.
-- Conserve la détection des doublons des autres documents, les contrôles d’accès et antivirus, et la déduplication physique du stockage.
-- Applique la même exception à la libération de quarantaine ; aucune migration de base.
-
-## Correctif — Consignes de découpe PT / OF (#1487)
-
-- Le rendement de la nomenclature distingue les pièces par brut et les bruts par pièce. Le besoin de l’OF arrondit les bruts avant de calculer le linéaire.
-- L’aperçu et le nouveau gabarit PDF OF 1.8 présentent la longueur de coupe, le rendement, les bruts et le linéaire pour chaque matière. Les réimpressions anciennes conservent leur gabarit.
-- Réutilise les colonnes et les règles JSON existantes ; aucune migration ni réécriture de stock.
-
-## Correctif — Code client des articles (#1485)
-
-- La fiche article, la liste, son tri/filtre/recherche et les inventaires lisent le code métier du client lié à la pièce technique. Un identifiant technique ancien ne remplace plus le code client affiché.
-- Le contrôle du client lors de la reprise PF utilise la même résolution. Les références historiques distinctes restent disponibles ; aucune donnée ni référence de pièce n'est réécrite.
-
-## Préparé — Unité de gestion matière automatique (frontend #1802)
-
-- Les transactions de création et de modification des matières imposent `mm` pour une barre à découper, `u` sinon, indépendamment de l’unité envoyée par le client. Le journal d’audit conserve l’unité appliquée.
-- Les lectures stock déduisent l’unité d’une matière historique dont le champ est vide. Les unités déjà renseignées restent intactes à la lecture, sans migration ni conversion des quantités.
-
-## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
-
-- La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.
-- La fiche d’un compte existant reprend ses droits effectifs depuis sa source Production ou Test authentifiée ; refus explicites, versions et statut SuperAdmin propre à chaque entreprise sont conservés.
-- Une modification de plusieurs entreprises partage une transaction unique. Les anciennes validations restent compatibles et une décision déjà préparée ne peut pas changer silencieusement de sélection.
-- Les paramètres métier restent ceux du Paramétrage ERP de l’entreprise active ; les identifiants de déploiement relèvent du registre technique.
-
-## Préparé — Esprit Carabine 2.0.33 (#1454)
-
-- Le profil commercial ne lance plus le nettoyage MFA local : les facteurs et challenges restent gérés par l’annuaire commun, sans élargir les droits SQL du site commercial.
-- Corrige le contrat de réponse des mutations d'administration des sociétés : une adhésion renvoie désormais l'identité annuaire attendue, et les réponses d'adhésion ou d'instance n'exposent plus `company_id` hors DTO public.
-- Corrige la première migration clients avant son premier déploiement : elle accepte les schémas canoniques, historiques ou mixtes, sans inventer d’identité particulière.
-- Le repli historique TVA/NAF vers les champs canoniques n'est exécuté que lorsque les colonnes historiques existent ; les contraintes B2C restent effectives sur les colonnes présentes.
-
-## Préparé — Esprit Carabine 2.0.32 (#1454 / frontend #1775)
-
-- Réunit le socle multi-entreprise avec les correctifs PT, OF et métrologie de la fenêtre urgente.
-- La résolution des documents d’historique métrologie conserve le coffre documentaire canonique sans modifier les droits ni les données métier.
-- Cette préparation reste sans activation d’entreprise, base, stock, facture ou service.
-
-## Préparé — Esprit Carabine 2.0.31 (#1454 / frontend #1775)
-
-- Réunit le socle commercial multi-entreprise et le correctif PT / OF 2.0.30 dans une même candidate de code.
-- L’annuaire, les contrôles MFA, les accès par entreprise et les privilèges SuperAdmin restent contrôlés côté serveur.
-- Cette préparation ne crée aucune entreprise, base, utilisateur, commande, stock ou facture ; l’activation reste une opération séparée et auditée.
-
-## Préparé — Reprise complète Métrologie (#1460)
-
-- Lots d’import immuables, fichiers sources contrôlés par empreinte et antivirus, vingt champs du registre et observations historiques avec provenance.
-- Import transactionnel et répétable, codes issus de COCONTR, profils et catégories existants ; les références d’étalon sont distinguées de l’identité de l’appareil.
-- Documents et scans d’instruments reliés à la GED, contrôlés par les capacités métrologie et par le parent ; aucune pièce jointe ne qualifie automatiquement un instrument.
-- Revue paginée des lignes et rattachements à clarifier, motif audité et protection des observations déjà reprises.
-- Deux migrations additives sélectives avec préflight, vérification des droits et des preuves immuables, rollback protégé avant import.
-- Validation ciblée et répétition réelle sur PostgreSQL 17 isolé ; le déploiement et la reprise en bases communes sont suivis séparément.
-
-## Préparé — Métrologie MD15 et codes du registre qualité (#1452)
-
-- Profils documentaires par famille, reprise contrôlée de codes tels que `PC-01` et compteurs indépendants réservant les numéros historiques, y compris TFD.
-- Fiches, champs historiques et contexte MD15 d'exécution versionnés sans modifier les décisions d'éligibilité, de qualification ou l'identité de l'opérateur.
-- Patch PostgreSQL rejoué, vérifié, concurrencé et retourné sur une fixture PostgreSQL 17 isolée ; les séquences consommées restent préservées.
-
-## Lectures de contrôle temps réel sans verrou exclusif — #1450
-
-- La validation du journal lit un snapshot REPEATABLE READ sans verrouiller l'allocateur global ; les lecteurs sains ne bloquent plus les autres instances et les publications.
-- Vérification complète, quarantaine, barrière de resynchronisation et rollback sur conflit conservés. Aucun changement de schéma.
-
-## Préparé — Catalogue outillage privé, traçabilité et inventaire — #1762
-
-- Le catalogue fournisseur et ses extraits image sont lus par des routes Outillage authentifiées, avec contrôle de capacité `read`; aucune source n'est publiée par les fichiers statiques. Les créations, modifications et suppressions de fiches ainsi que les référentiels exigent `configure`; les six opérations de stock exigent `operate`.
-- Une création issue du catalogue conserve une provenance serveur vérifiée (sélection, document, empreinte, page, zone et confirmation), sans importer de prix ni de quantité physique. Une quantité initiale doit être nulle ; le seuil de réapprovisionnement reste saisissable.
-- Les outils issus du catalogue restent « inventaire requis » jusqu'au comptage physique ; un comptage confirmé à zéro finalise aussi l'inventaire et établit une rupture réelle. Avant comptage, ils sont distingués des ruptures et seuils ordinaires et ne peuvent pas être sortis ni proposés sur la tablette ; les outils historiques gardent leur comportement.
-- Migration additive, précontrôle des doublons fabricant/référence et index unique insensible à la casse/aux espaces. Procédure de livraison, vérification et rollback protégé : `docs/runbooks/outillage-catalogue-1762.md`. Aucun déploiement ni migration réelle n'est inclus dans cette préparation.
-- La charte PDF reste attachée à sa version de modèle : les anciennes éditions OF conservent leurs empreintes historiques. Les lecteurs de tests décodent les polices incorporées et les scénarios de commande suivent le parcours commercial actuel.
-- Dépendances de sécurité actualisées : Zod 4.6.7 avec son générateur OpenAPI compatible, Multer 2.5.0 et body-parser 1.20.9. Les validateurs conservent leurs messages et bornes avec les API Zod 4 ; les locks npm et pnpm sont synchronisés.
-- L’image Docker conserve ses paquets Alpine épinglés et prend curl 8.23.0-r0, disponible dans le dépôt 3.24 ; la recette complète des paquets a été rejouée sur l’image de base exacte.
-- Compatibilité de validation : les GUID PostgreSQL historiques gardent leur format accepté, les PATCH n'injectent pas de valeurs de création dans les champs absents, et les clés de pollution de prototype restent refusées avant normalisation.
-
-## Préparé localement — Multi-entreprises (#1454 / frontend #1775)
-
-- Contrats purs d'entreprise, adhésion et accès : environnement distinct de l'entreprise, annuaire commun conservé, profil commercial en mode accueil et projections de stock séparées des modules industriels.
-- Contrat d'achat interentreprises avec validation fournisseur, configuration figée et expéditions cumulées ; aucune réservation ou sortie de stock effectuée par ces fonctions.
-- Contrat de la future boutique : clients professionnels/particuliers, confirmation déclenchant un achat, déduplication, révisions et annulations explicites. Deux facturations prévues : CRP → EC et EC → client final, sans devis EC.
-- Socle HTTP/Socket.IO à runtime et pool fixes par entreprise/environnement, annuaire central étendu, affectations explicites et échanges de session courts avec reprise idempotente bornée à la session source.
-- Administration centrale versionnée et MFA, politique de modules signée et projetée avec audit, identité légale conservée dans la base de l'entreprise ; mode historique conservé quand la fonctionnalité est désactivée.
-- Clients B2B/B2C ajoutés par patch métier distinct, vérifications de transition atomiques et maintien du libellé historique. Paramétrage commercial sans dépendance aux machines, maintenances ou stock local.
-- Connexion principale et liens de connexion directe par entreprise, avec confirmation du runtime avant saisie des identifiants et récupération explicite d'une cible indisponible.
-- Création native de commande réutilisée après acceptation de la demande fournisseur, avec transaction, notification, liens de lignes et retour de décision. Transport HMAC entre processus et bases fixes, outbox durable, inbox idempotente et retries bornés.
-- Offres fournisseur publiées et versions tarifaires figées ; prix retail propres à l'acheteur, sans transmission au fournisseur. Relations et articles locaux sélectionnés explicitement.
-- Expédition native CRP, document sous identité EC et preuve de livraison externe côté commercial sans mouvement de stock local ; allocations et double facturation natives avec émetteurs et numérotations distincts.
-- Recette PostgreSQL locale du flux et de l'archivage documentaire, migration à froid des 330 patches sans dérive et sélection immuable des neuf patches métier EC. Preuves et limites : `docs/testing/intercompany-native-qualification-1454.md`. Provisionnement réel, accès, catalogue et activation restent distincts de cette recette.
-- Aucun provisionnement, migration réelle, service, publication ou environnement de production modifié. Les patches Directory restent séparés du runner métier ; aucun lancement global de migrations n'est effectué.
+- Imports de demandes, décisions, contre-propositions, brouillons fermes, files d'AR et propositions industrielles sont séparés des commandes ERP et restent idempotents ; aucun import ne crée à lui seul un OF, une commande, une réservation ou un AR.
+- Le portail client est borné aux contrats et sites explicitement liés. Les preuves de réception et d'échéance de départ sont append-only ; aucune échéance n'est inférée.
+- Le sandbox fournisseur est exclusivement local/test, fail-closed, et ses routes métier exigent un JWT à audience dédiée. Il ne vaut ni activation du portail fournisseur ni publication Production. Le pilote de quatre semaines n'a pas été exécuté.
+- Ordre des migrations et état de qualification : `docs/release/DEMAND_PILOT_20261031_20261101.md`.
 
 ## Charte commune des PDF — #1442
 
@@ -138,12 +44,6 @@
 - La configuration de l’entreprise conserve son annuaire commun et vérifie les droits Production actuels par réponse privée signée, depuis Production comme depuis Test.
 - Les listes d’accès affichent l’identifiant canonique de l’annuaire lorsque le nom local est technique. Déploiement et données de catalogue à coordonner ; aucun changement de schéma.
 
-## Préparé — Exécution des maintenances pour le bleu/vert (#1381)
-
-- Séparer les API routées sans tâches périodiques du worker dédié sous verrou PostgreSQL ; conserver le fonctionnement combiné par défaut.
-- Arrêter les douze minuteries puis attendre les cycles actifs avant un passage normal au worker suivant. Exposer le mode et l'état du worker dans la readiness.
-- Préparation sans nouvelle dépendance, migration, changement de droits ou activation en production. La bascule réseau, le bootstrap et le retour compatible avec Directory PIN v2 restent à qualifier séparément ; aucune garantie de traitement exactement une fois sous partition n'est annoncée.
-
 ## 2.0.15 — Compte et droits communs à toutes les bases (#1407)
 
 - L'approbation active Production et Test ; les autres bases Test enregistrées reprennent le compte, ses fonctions et son statut SuperAdmin réel. Un blocage explicite demeure prioritaire et une inscription Test seule ne donne aucun accès Production.
@@ -167,6 +67,9 @@
 
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
+- Préparer un OF brouillon à partir d'une cohorte physique constatée, avec version technique publiée, demande native précise et checkpoints d'avancement. La reprise d'une phase commencée sans pièce produite conserve cette réalité sans inventer de temps passé.
+- Conserver les matières déjà utilisées dans des checkpoints immuables et les projeter avec l'origine `CUTOVER_OPENING`, sans créer de mouvements, réservations ou pointages historiques. Les besoins futurs restent soumis à la préparation normale.
+- Vérifier côté serveur les correspondances, les reliquats, les preuves, l'unité et la propriété. Les sources incomplètes restent en préparation ; la qualification intégrée, les migrations et la publication du candidat restent à effectuer.
 
 ## Préparé — Disponibilité du temps réel avec annuaire partagé (#1388)
 

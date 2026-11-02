@@ -19,7 +19,6 @@ import { stockLanesOperation } from './stock-lanes-contract';
 import { productionReceiptLanesOperation } from './production-receipt-lanes-contract';
 import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
-import { metrologyDocumentsOperation } from './metrology-documents-contract';
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -32,9 +31,6 @@ type OpenApiOperation = Record<string, unknown>;
 type OpenApiPathItem = Record<string, OpenApiOperation>;
 
 const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
-  "post /intercompany/messages": "Transport entre entreprises authentifié par HMAC-SHA256 avec clé propre au pair, empreinte du message canonique, cible/environnement fixes, horodatage de 60 secondes et nonce ; traitement transactionnel de l’inbox et rejeu idempotent par identifiant et empreinte. Aucun jeton utilisateur n’est accepté comme preuve du pair.",
-  "get /entreprises/sign-in-context": "Contexte minimal de connexion d'une instance entreprise active. La cible et l'environnement doivent correspondre au runtime fixe ; aucune liste d'entreprises, session ou donnée privée n'est exposée.",
-  "post /entreprises/switches/exchange": "Ticket opaque de changement d'entreprise valable au plus 60 secondes, lié au profil, à la session source, à la cible et aux versions d'adhésion ; limitation IP/ticket persistée, aucun Bearer source accepté, consommation et émission de session idempotentes par la même clé.",
   "get /auth/test-registration": "Disponibilité du formulaire test, désactivé par défaut et limité à current_database()=cerp_test avec opt-in serveur.",
   "post /auth/test-registration": "Création test uniquement avec opt-in serveur, vérification de la base connectée, débit persisté, idempotence et MFA obligatoire avant première session.",
   "post /terminals/pair": "Appairage par secret temporaire aléatoire de 128 bits, à usage unique, valable quinze minutes et lié à un terminal enregistré.",
@@ -47,7 +43,10 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /auth/reset-password": "Réinitialisation par jeton à usage unique avec limitation de débit.",
   "post /auth/account-requests": "Demande d'accès Production soumise sans session ERP, limitée par IP et par adresse e-mail ; aucun compte ni jeton n'est créé avant l'approbation SuperAdmin.",
   "get /auth/account-requests/status": "Suivi minimal d'une demande par reçu opaque présenté exclusivement dans l'en-tête Authorization ; aucune identité, rôle ou donnée du formulaire n'est exposé.",
+  "get /entreprises/sign-in-context": "Contexte de connexion limité en débit, vérifié contre l'autorité d'entreprise fixe et sans session ERP ; il ne renvoie aucune identité utilisateur.",
+  "post /entreprises/switches/exchange": "Échange limité en débit d'un ticket d'entreprise opaque, à usage unique, contre une session locale ; tout Bearer source est refusé.",
   "post /electronic-invoicing/webhooks/{providerCode}": "Webhook prestataire authentifié par signature sur le corps brut et limité en débit.",
+  "post /intercompany/messages": "Livraison inter-entreprises authentifiée par HMAC de pair configuré, horodatée et vérifiée avant toute écriture métier.",
   "post /time-clock/device-events": "Ingestion de badge authentifiée par le token opaque aléatoire de 192 bits d’une borne active ; UID haché côté serveur et commande idempotente.",
   "post /time-clock/device-heartbeat": "Présence d’une borne authentifiée par son token opaque aléatoire de 192 bits ; aucune donnée RH n’est retournée.",
   "get /environment": "Signal public minimal de routage de base, sans secret ni donnée métier.",
@@ -57,16 +56,55 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "post /portal/auth/forgot-password": "Demande de récupération portail non révélatrice avec limitation de débit persistée.",
   "post /portal/auth/login": "Échange d’identifiants portail contre une session courte avec limitation de débit persistée.",
   "post /portal/auth/reset-password": "Réinitialisation portail par jeton à usage unique avec limitation de débit persistée.",
+  "post /supplier-portal/auth/login": "Recette isolée explicitement opt-in uniquement, compte fournisseur actif et jeton à audience dédiée ; 404 hors de cerp_test local.",
+  "post /supplier-portal/auth/activate": "Recette isolée : invitation hachée à usage unique, expiration et consentement de politique requis.",
+  "post /supplier-portal/auth/recover": "Recette isolée : réponse 202 uniforme, sans diffusion d’e-mail ni révélation de compte.",
+  "post /supplier-portal/auth/reset": "Recette isolée : jeton de récupération haché à usage unique et expirant.",
+  "get /supplier-portal/portal-context": "Recette isolée : session fournisseur dédiée, audience distincte et compte actif requis.",
+  "get /supplier-portal/orders": "Recette isolée : session fournisseur dédiée et commandes explicitement accordées seulement.",
+  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise": "Recette isolée : proposition idempotente soumise à revue Achats, If-Match obligatoire et aucune promesse officielle modifiée.",
 };
 
 const CLIENT_PORTAL_AUTH_OPERATIONS = new Set([
+  "get /client-portal/demand",
+  "get /client-portal/demand/{id}",
+  "post /client-portal/demand/{id}/response",
+  "post /client-portal/demand/imports",
+  "post /client-portal/demand/manual",
+  "post /client-portal/demand/preview",
   "get /portal/deliveries",
+  "get /portal/commercial-overview",
+  "post /portal/deliveries/{deliveryId}/receipt",
+  "get /portal/deliveries/dashboard",
   "get /portal/documents",
   "post /portal/documents/{publicationId}/acknowledgements",
   "get /portal/documents/{publicationId}/download",
   "get /portal/invoices",
   "get /portal/me",
   "get /portal/orders",
+]);
+
+// This surface is physically mounted before the ERP JWT middleware because it
+// uses an isolated supplier-session issuer.  It is nevertheless never a
+// public business API: availability is fail-closed and the read/write routes
+// require a short-lived, audience-bound supplier JWT.
+const SUPPLIER_SANDBOX_SESSION_OPERATIONS = new Set([
+  "get /supplier-sandbox/purchase-lines",
+  "post /supplier-sandbox/promise-proposals",
+]);
+const SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS = new Set([
+  "post /supplier-sandbox/auth/login",
+]);
+const SUPPLIER_PORTAL_SESSION_OPERATIONS = new Set([
+  "get /supplier-portal/portal-context",
+  "get /supplier-portal/orders",
+  "put /supplier-portal/orders/{orderId}/lines/{lineId}/promise",
+]);
+const SUPPLIER_PORTAL_CREDENTIAL_OPERATIONS = new Set([
+  "post /supplier-portal/auth/login",
+  "post /supplier-portal/auth/activate",
+  "post /supplier-portal/auth/recover",
+  "post /supplier-portal/auth/reset",
 ]);
 
 const IDEMPOTENT_OPERATIONS = new Set([
@@ -178,53 +216,66 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
   const key = operationKey(route);
   const publicReason = PUBLIC_ROUTE_POLICIES[key];
   const providerSigned = key === "post /electronic-invoicing/webhooks/{providerCode}";
-  const intercompanySigned = key === "post /intercompany/messages";
   const clientPortalAuthenticated = CLIENT_PORTAL_AUTH_OPERATIONS.has(key);
+  const supplierSandboxSession = SUPPLIER_SANDBOX_SESSION_OPERATIONS.has(key);
+  const supplierSandboxCredentialExchange = SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS.has(key);
+  const supplierPortalSession = SUPPLIER_PORTAL_SESSION_OPERATIONS.has(key);
+  const supplierPortalCredentialExchange = SUPPLIER_PORTAL_CREDENTIAL_OPERATIONS.has(key);
   const terminalSession = TERMINAL_SESSION_OPERATIONS.has(key);
   const terminalDevice = TERMINAL_DEVICE_OPERATIONS.has(key) || terminalSession;
   const idempotent = IDEMPOTENT_OPERATIONS.has(key);
   const parameters = pathParameters(route);
-  if (intercompanySigned) {
-    for (const suffix of ["Source", "Destination", "Environment", "Time", "Nonce"]) {
-      parameters.push({ name: `X-CERP-Intercompany-${suffix}`, in: "header", required: true, schema: { type: "string" } });
-    }
-  }
   if (idempotent) parameters.push({ $ref: "#/components/parameters/IdempotencyKey" });
   const operation: OpenApiOperation = {
     tags: [tagFor(route)],
     summary: `${route.method.toUpperCase()} ${route.path}`,
     operationId: operationId(route),
     parameters,
-    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || terminalDevice || intercompanySigned),
+    responses: genericResponses(route, route.authenticated || clientPortalAuthenticated || supplierSandboxSession || supplierSandboxCredentialExchange || supplierPortalSession || supplierPortalCredentialExchange || terminalDevice),
     security: terminalSession ? [{terminalDevice:[], terminalSession:[]}]
       : terminalDevice ? [{terminalDevice:[]}]
-      : intercompanySigned ? [{intercompanySignature:[]}]
       : route.authenticated
       ? [{ bearerAuth: [] }]
       : clientPortalAuthenticated
         ? [{ clientPortalBearerAuth: [] }]
+      : supplierSandboxSession
+        ? [{ supplierSandboxBearerAuth: [] }]
+      : supplierPortalSession
+        ? [{ supplierPortalBearerAuth: [] }]
       : providerSigned
         ? [{ providerSignature: [] }]
         : [],
     "x-cerp-source": route.source,
     "x-cerp-authentication": terminalSession ? "Appareil appairé + session PIN active liée à cet appareil + compte et droits vérifiés"
       : terminalDevice ? "Secret d’appareil appairé et non révoqué"
-      : intercompanySigned ? "HMAC-SHA256 du pair + message canonique + cible/environnement fixes + fenêtre de 60 secondes"
       : route.authenticated
       ? "JWT Bearer + compte actif"
       : clientPortalAuthenticated
         ? "JWT Bearer portail + compte client actif + session_epoch"
+        : supplierSandboxSession
+          ? "JWT Bearer fournisseur court, audience cerp-supplier-sandbox, compte actif et session_epoch"
+          : supplierSandboxCredentialExchange
+            ? "Échange d’identifiants uniquement dans le bac à sable local opt-in ; indisponible (404) hors recette isolée"
+            : supplierPortalSession
+              ? "JWT Bearer fournisseur de pilote local, audience dédiée, compte actif et session_epoch"
+              : supplierPortalCredentialExchange
+                ? "Échange de pilote local isolé, invitation ou récupération à usage unique, indisponible (404) hors recette isolée"
         : providerSigned
           ? "signature prestataire"
           : "public contrôlé",
-    "x-cerp-rbac": intercompanySigned ? ["configuredPeerScope", "fixedCompanyEnvironmentScope", "transactionalInboxIdentity"]
-      : terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
+    "x-cerp-rbac": terminalDevice ? ["terminalDeviceScope", ...(terminalSession ? ["terminalSessionScope", "terminalKindScope"] : [])]
       : route.rbac.length > 0
       ? [...route.rbac]
       : route.authenticated
         ? ["moduleAccessGate"]
         : clientPortalAuthenticated
           ? ["clientPortalTenantBoundary"]
+          : supplierSandboxSession
+            ? ["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly"]
+            : supplierPortalSession
+              ? ["supplierPortalTenantBoundary", "supplierPortalPilotOnly"]
+            : supplierSandboxCredentialExchange
+              ? ["supplierSandboxLocalOnly", "credentialExchange"]
           : [],
     "x-cerp-rate-limit-policy": route.middleware.filter((name) => /RateLimit/i.test(name)),
     "x-cerp-idempotency": idempotent ? "required" : "not-declared",
@@ -243,38 +294,8 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
-  if (route.path.startsWith("/entreprises")) return companyOperation(key, operation);
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
-  return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));
-}
-
-function companyOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
-  const signInContext = key === "get /entreprises/sign-in-context";
-  const exchange = key === "post /entreprises/switches/exchange";
-  const createSwitch = key === "post /entreprises/switches";
-  const parameters = Array.isArray(operation.parameters) ? operation.parameters : [];
-  const result: OpenApiOperation = {
-    ...operation,
-    tags: ["entreprises"],
-    parameters: [...parameters,
-      { name: "X-CERP-Company", in: "header", required: exchange, schema: { type: "string", format: "uuid" }, description: "Entreprise active, recoupée avec le runtime fixe et l'adhésion Directory. Requise sur les requêtes protégées en mode multi-entreprises, facultative pour la découverte initiale." },
-      { name: "X-CERP-Database", in: "header", required: exchange, schema: { type: "string", enum: ["cerp_prod", "cerp_test"] }, description: "Environnement indépendant de l'entreprise ; jamais une URL ou une connexion SQL." },
-    ],
-    "x-cerp-rbac": signInContext ? ["fixedCompanyRuntime", "activeCompanyInstance"] : exchange ? ["shortLivedCompanySwitchTicket", "fixedCompanyRuntime", "liveSourceAndTargetMembership"] : key.includes("/admin/") ? ["liveDirectoryOwner", "recentMfa", "fixedCompanyRuntime"] : ["liveDirectorySession", "activeCompanyMembership", "fixedCompanyRuntime"],
-    responses: { ...operation.responses as OpenApiObject, ...(signInContext ? {} : { "401": { $ref: "#/components/responses/Unauthenticated" } }), "403": { $ref: "#/components/responses/Forbidden" }, "503": { description: "Annuaire, contexte entreprise ou instance non disponible ; aucun repli vers une autre entreprise." } },
-  };
-  if (exchange || createSwitch) result.requestBody = {
-    required: true,
-    content: { "application/json": { schema: {
-      type: "object", additionalProperties: false,
-      required: exchange ? ["ticket", "key"] : ["target_company_id", "key"],
-      properties: { key: { type: "string", format: "uuid", description: "Conserver la même clé lors d'un réessai après une réponse réseau ambiguë." }, ...(exchange ? { ticket: { type: "string", pattern: "^[a-f0-9]{64}$" } } : { target_company_id: { type: "string", format: "uuid" } }) },
-    } } },
-  };
-  if (exchange) result["x-cerp-authentication"] = "Ticket opaque à cible fixe, sans en-tête Authorization source";
-  if (signInContext) result["x-cerp-authentication"] = "Public : l'instance fixe confirme uniquement sa propre société active ; les en-têtes de cible sont facultatifs et, s'ils sont fournis, doivent correspondre au runtime.";
-  if (exchange || createSwitch) result["x-cerp-idempotency"] = "required-body-key";
-  return result;
+  return accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched)))))))));
 }
 
 function accountRequestOperation(key: string, operation: OpenApiOperation): OpenApiOperation {
@@ -414,7 +435,6 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
   return {
     ...legacyComponents,
     securitySchemes: {
-      intercompanySignature: { type: "apiKey", in: "header", name: "X-CERP-Intercompany-Signature", description: "HMAC-SHA256 hexadécimal du cadre signé incluant méthode, chemin, entreprises, environnement, horodatage, nonce et empreinte canonique. Les autres en-têtes X-CERP-Intercompany sont obligatoires." },
       terminalDevice: {type:"apiKey",in:"header",name:"X-Terminal-Device",description:"Secret aléatoire du terminal appairé."},
       terminalSession: {type:"apiKey",in:"header",name:"X-Station-Session",description:"Jeton opérateur en mémoire, lié au terminal."},
       bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" },
@@ -423,6 +443,18 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
         scheme: "bearer",
         bearerFormat: "JWT",
         description: "Jeton de session court du portail client, audience cerp-client-portal.",
+      },
+      supplierSandboxBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Jeton fournisseur de recette uniquement : audience cerp-supplier-sandbox, durée 15 minutes, session_epoch vérifié.",
+      },
+      supplierPortalBearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT",
+        description: "Jeton fournisseur de pilote local : audience cerp-supplier-portal-pilot, durée 15 minutes, session_epoch vérifié.",
       },
       providerSignature: {
         type: "apiKey",
@@ -666,6 +698,8 @@ export function assertOpenApiRouteSecurity(): void {
       && !TERMINAL_DEVICE_OPERATIONS.has(operationKey(route))
       && !TERMINAL_SESSION_OPERATIONS.has(operationKey(route))
       && !CLIENT_PORTAL_AUTH_OPERATIONS.has(operationKey(route))
+      && !SUPPLIER_SANDBOX_SESSION_OPERATIONS.has(operationKey(route))
+      && !SUPPLIER_SANDBOX_CREDENTIAL_OPERATIONS.has(operationKey(route))
       && !PUBLIC_ROUTE_POLICIES[operationKey(route)])
     .map((route) => operationKey(route));
   if (undocumentedPublic.length > 0) {

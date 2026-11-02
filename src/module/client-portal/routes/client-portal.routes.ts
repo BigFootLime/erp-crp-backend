@@ -13,8 +13,11 @@ router.post("/auth/reset-password", controller.resetPassword);
 router.use(authenticateClientPortal);
 
 router.get("/me", controller.me);
+router.get("/commercial-overview", controller.commercialOverview);
 router.get("/orders", controller.listOrders);
 router.get("/deliveries", controller.listDeliveries);
+router.get("/deliveries/dashboard", controller.deliveryDashboard);
+router.post("/deliveries/:deliveryId/receipt", controller.confirmDeliveryReceipt);
 router.get("/invoices", controller.listInvoices);
 router.get("/documents", controller.listDocuments);
 router.get("/documents/:publicationId/download", controller.downloadDocument);

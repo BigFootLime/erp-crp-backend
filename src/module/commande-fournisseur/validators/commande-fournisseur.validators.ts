@@ -18,6 +18,9 @@ const dateOnly = z
     const t = Date.parse(`${v}T00:00:00Z`);
     return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v;
   }, "Date calendaire invalide");
+export const supplierPromiseExceptionsQuerySchema = z.object({
+  query: z.object({ today: dateOnly.optional() }).strict(),
+});
 const isoDateTime = z.string().datetime({ offset: true });
 // Les fiches et le verrou renvoient updated_at::text avec sa précision PostgreSQL.
 // Valider la forme sans transformer le jeton comparé exactement par le dépôt.

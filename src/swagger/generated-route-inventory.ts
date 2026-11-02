@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "c9bfea9200a9033fd3e878189edfd6aab872ddd856a54bc486cfd2976bc256c3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "65a9002d676e8d0fee953379c54f1133572d90870e628c4848d3bdc8606f9369";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -613,6 +613,101 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/contracts",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.createAdminContractBinding"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/delivery-sites",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.createAdminDeliverySiteBinding"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/client-portal/accounts/{accountId}/demand-sites",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.listAdminDemandSiteBindings"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/demand-sites",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.createAdminDemandSiteBinding"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/accounts/{accountId}/demand-sites/revoke",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.revokeAdminDemandSiteBinding"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/admin/client-portal/accounts/{accountId}/invitations",
     "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:13",
     "middleware": [
@@ -651,8 +746,46 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/admin/client-portal/operational-notices",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.listAdminOperationalNotices"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/admin/client-portal/operational-notices",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations",
+      "controller.createAdminOperationalNotice"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSuperadmin",
+      "requireRecentMfaForMutations"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/admin/client-portal/publications",
-    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:15",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -671,7 +804,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/client-portal/publications",
-    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:16",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -690,7 +823,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/admin/client-portal/publications/{publicationId}/revoke",
-    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:17",
+    "source": "src/module/client-portal/routes/client-portal-admin.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1848,7 +1981,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires",
-    "source": "src/module/affaire/routes/affaire.routes.ts:62",
+    "source": "src/module/affaire/routes/affaire.routes.ts:63",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1866,7 +1999,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/affaires",
-    "source": "src/module/affaire/routes/affaire.routes.ts:76",
+    "source": "src/module/affaire/routes/affaire.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1884,7 +2017,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}",
-    "source": "src/module/affaire/routes/affaire.routes.ts:72",
+    "source": "src/module/affaire/routes/affaire.routes.ts:74",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1902,7 +2035,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/affaires/{id}",
-    "source": "src/module/affaire/routes/affaire.routes.ts:77",
+    "source": "src/module/affaire/routes/affaire.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1920,7 +2053,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/affaires/{id}/archive",
-    "source": "src/module/affaire/routes/affaire.routes.ts:80",
+    "source": "src/module/affaire/routes/affaire.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1938,7 +2071,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}/creation-snapshot",
-    "source": "src/module/affaire/routes/affaire.routes.ts:68",
+    "source": "src/module/affaire/routes/affaire.routes.ts:70",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1956,7 +2089,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/affaire/routes/affaire.routes.ts:70",
+    "source": "src/module/affaire/routes/affaire.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1974,7 +2107,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/affaire/routes/affaire.routes.ts:69",
+    "source": "src/module/affaire/routes/affaire.routes.ts:71",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -1992,7 +2125,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/affaires/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/affaire/routes/affaire.routes.ts:71",
+    "source": "src/module/affaire/routes/affaire.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2010,7 +2143,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}/delivery-promises",
-    "source": "src/module/affaire/routes/affaire.routes.ts:64",
+    "source": "src/module/affaire/routes/affaire.routes.ts:65",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2027,8 +2160,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "post",
+    "path": "/affaires/{id}/delivery-promises/evidence",
+    "source": "src/module/affaire/routes/affaire.routes.ts:67",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireAffaireCapability(write)",
+      "recordAffaireDeliveryPromiseEvidence"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireAffaireCapability(write)"
+    ]
+  },
+  {
+    "method": "post",
     "path": "/affaires/{id}/delivery-promises/revisions",
-    "source": "src/module/affaire/routes/affaire.routes.ts:65",
+    "source": "src/module/affaire/routes/affaire.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2046,7 +2197,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/{id}/operations",
-    "source": "src/module/affaire/routes/affaire.routes.ts:63",
+    "source": "src/module/affaire/routes/affaire.routes.ts:64",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2064,7 +2215,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/affaires/{id}/transition",
-    "source": "src/module/affaire/routes/affaire.routes.ts:78",
+    "source": "src/module/affaire/routes/affaire.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2082,7 +2233,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/affaires/command-center",
-    "source": "src/module/affaire/routes/affaire.routes.ts:61",
+    "source": "src/module/affaire/routes/affaire.routes.ts:62",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -2100,7 +2251,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/affaires/preview",
-    "source": "src/module/affaire/routes/affaire.routes.ts:75",
+    "source": "src/module/affaire/routes/affaire.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -3414,6 +3565,79 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/client-portal/demand",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:8",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.listPortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/client-portal/demand/{id}",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.getPortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/client-portal/demand/{id}/response",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.responsePortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/client-portal/demand/imports",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:10",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.importPortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/client-portal/demand/manual",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.importPortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "post",
+    "path": "/client-portal/demand/preview",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "upload.single(file)",
+      "controller.previewPortal"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
     "path": "/clients",
     "source": "src/module/client/routes/client.routes.ts:56",
     "middleware": [
@@ -4261,7 +4485,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:79",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:118",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4278,7 +4502,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:82",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:138",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4295,7 +4519,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:88",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:152",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4312,7 +4536,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes-fournisseurs/{id}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:94",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:182",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4329,7 +4553,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/accuse",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:102",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:215",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4346,7 +4570,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/consultations",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:92",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:170",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4365,7 +4589,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/consultations/commands",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:93",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:176",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4384,7 +4608,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:104",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:217",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4401,7 +4625,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/documents/{documentId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:105",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:218",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4418,7 +4642,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/duplicate",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:118",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:263",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4435,7 +4659,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/general-terms",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:75",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:106",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4452,7 +4676,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/commandes-fournisseurs/{id}/general-terms",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:76",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:107",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4484,7 +4708,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/lignes",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:96",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:188",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4501,7 +4725,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/commandes-fournisseurs/{id}/lignes/{ligneId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:99",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:204",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4518,7 +4742,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/commandes-fournisseurs/{id}/lignes/{ligneId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:98",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:199",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4533,9 +4757,26 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "put",
+    "path": "/commandes-fournisseurs/{id}/lignes/{ligneId}/treatment-estimate",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:189",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(acknowledge)",
+      "saveInternalTreatmentEstimate"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(acknowledge)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/lignes/reorder",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:97",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:194",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4552,7 +4793,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:110",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:227",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4569,7 +4810,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/official-documents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:111",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:232",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4586,7 +4827,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:112",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:237",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4603,7 +4844,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/download",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:114",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:247",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4620,7 +4861,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/general-terms",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:77",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:112",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4637,7 +4878,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/preview",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:113",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:242",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4654,7 +4895,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/official-documents/{documentId}/print-intents",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:115",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:252",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4671,7 +4912,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/open-contracts",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:90",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:158",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4690,7 +4931,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/open-contracts/commands",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:91",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:164",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4709,7 +4950,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/{id}/qualification",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:89",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:153",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4726,7 +4967,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/receptions/resync",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:117",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:258",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4743,7 +4984,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/{id}/transition",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:101",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:210",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4760,7 +5001,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/commandes-fournisseurs/kpis",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:80",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:119",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4775,9 +5016,26 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/commandes-fournisseurs/promise-exceptions",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:120",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireCapability(read)",
+      "listSupplierPromiseExceptions"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireCapability(read)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/commandes-fournisseurs/propositions/confirm",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:86",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:146",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4794,7 +5052,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/commandes-fournisseurs/propositions/preview",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:85",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:141",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -4809,9 +5067,47 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/commandes-fournisseurs/supplier-sandbox-proposals",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:125",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierSandbox",
+      "requireCapability(read)",
+      "listSupplierSandboxProposals"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierSandbox",
+      "requireCapability(read)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/commandes-fournisseurs/supplier-sandbox-proposals/{proposalId}/review",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:131",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierSandbox",
+      "requireCapability(acknowledge)",
+      "reviewSupplierSandboxProposal"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierSandbox",
+      "requireCapability(acknowledge)"
+    ]
+  },
+  {
     "method": "post",
     "path": "/commandes-fournisseurs/totaux/simulate",
-    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:83",
+    "source": "src/module/commande-fournisseur/routes/commande-fournisseur.routes.ts:139",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -5924,6 +6220,157 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "moduleAccessGate",
       "postDashboardUsage"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/demand-pilot",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.list"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/demand-pilot/{id}",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:18",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.get"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/{id}/bind-firm",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.bindFirm"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/{id}/decision",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.decide"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/{id}/simulation",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:34",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { const result = await simulateDemand( z.string().trim().min)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/batch-decisions",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:21",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "asyncHandler(async (req, res) => { res.json( await decideBatch( batchDecisionSchema.parse(req)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/firm-drafts",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:33",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "prepareFirmDraft"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/imports",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.importInternal"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/manual",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:17",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "controller.manual"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/demand-pilot/preview",
+    "source": "src/module/demand-pilot/routes/demand-pilot.routes.ts:15",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "upload.single(file)",
+      "controller.previewInternal"
     ],
     "authenticated": true,
     "rbac": [
@@ -14704,8 +15151,277 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/planning/v2/industrial/article-mappings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:74",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { const id = industrialClient.parse(req.query.client_id); re)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/article-mappings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:92",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => saveArticleMapping(tx)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/pic-targets",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:38",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json({ items: await industrialTx((tx) => readPicTarget)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/pic-targets",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:54",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => savePicTarget(tx, req)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/policy",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:162",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => readIndustrialPolicy()"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/policy",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:173",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => setIndustrialPolicy( )"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/runs",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:107",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await listIndustrialRuns(industrialClient.parse()"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:116",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(manage_schedule)",
+      "asyncHandler(async (req, res) => { res .status(202) .json( await enqueueIndustrialRun( indust)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/runs/{id}",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:130",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json(await industrialRunById(z.string().uuid().parse(r)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs/{id}/proposals/execute",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:149",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(supervise_execution)",
+      "asyncHandler(async (req, res) => { res.json( await executeIndustrialProposals( z.string().uui)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(supervise_execution)"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/planning/v2/industrial/runs/{id}/validate",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:137",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(manage_schedule)",
+      "asyncHandler(async (req, res) => { res.json( await validateIndustrialRun( z.string().uuid().p)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(manage_schedule)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/planning/v2/industrial/settings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:188",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requirePlanningCapability(read_capacity)",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => getIndustrialSettings)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requirePlanningCapability(read_capacity)"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/planning/v2/industrial/settings",
+    "source": "src/module/planning/routes/industrial-plan.routes.ts:199",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireProductionOrAdmin",
+      "anonymous",
+      "requireSuperadmin",
+      "asyncHandler(async (req, res) => { res.json( await industrialTx((tx) => updateIndustrialSetti)"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireProductionOrAdmin",
+      "requireSuperadmin"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/planning/v2/master-plan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:11",
+    "source": "src/module/planning/routes/planning-central.routes.ts:13",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14725,7 +15441,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/operations/{operationId}/observations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:15",
+    "source": "src/module/planning/routes/planning-central.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14745,7 +15461,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:17",
+    "source": "src/module/planning/routes/planning-central.routes.ts:19",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14765,7 +15481,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations",
-    "source": "src/module/planning/routes/planning-central.routes.ts:16",
+    "source": "src/module/planning/routes/planning-central.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14785,7 +15501,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/simulations/{id}",
-    "source": "src/module/planning/routes/planning-central.routes.ts:18",
+    "source": "src/module/planning/routes/planning-central.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14805,7 +15521,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/simulations/{id}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:19",
+    "source": "src/module/planning/routes/planning-central.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14825,7 +15541,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/snapshot",
-    "source": "src/module/planning/routes/planning-central.routes.ts:14",
+    "source": "src/module/planning/routes/planning-central.routes.ts:16",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14845,7 +15561,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/status",
-    "source": "src/module/planning/routes/planning-central.routes.ts:10",
+    "source": "src/module/planning/routes/planning-central.routes.ts:12",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14865,7 +15581,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/unplan",
-    "source": "src/module/planning/routes/planning-central.routes.ts:20",
+    "source": "src/module/planning/routes/planning-central.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14885,7 +15601,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidation-candidates",
-    "source": "src/module/planning/routes/planning-central.routes.ts:26",
+    "source": "src/module/planning/routes/planning-central.routes.ts:28",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14905,7 +15621,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/apply",
-    "source": "src/module/planning/routes/planning-central.routes.ts:27",
+    "source": "src/module/planning/routes/planning-central.routes.ts:29",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14925,7 +15641,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-recoveries/{recoveryId}/consolidations/{consolidationId}/preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:25",
+    "source": "src/module/planning/routes/planning-central.routes.ts:27",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14945,7 +15661,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/urgency-requests/{requestId}/approval-preview",
-    "source": "src/module/planning/routes/planning-central.routes.ts:21",
+    "source": "src/module/planning/routes/planning-central.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14965,7 +15681,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/approve",
-    "source": "src/module/planning/routes/planning-central.routes.ts:22",
+    "source": "src/module/planning/routes/planning-central.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14985,7 +15701,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/cancel-retaining-production",
-    "source": "src/module/planning/routes/planning-central.routes.ts:23",
+    "source": "src/module/planning/routes/planning-central.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15005,7 +15721,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/urgency-requests/{requestId}/restitute",
-    "source": "src/module/planning/routes/planning-central.routes.ts:24",
+    "source": "src/module/planning/routes/planning-central.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15025,7 +15741,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:12",
+    "source": "src/module/planning/routes/planning-central.routes.ts:14",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15045,7 +15761,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/planning/v2/workshop-calendar",
-    "source": "src/module/planning/routes/planning-central.routes.ts:13",
+    "source": "src/module/planning/routes/planning-central.routes.ts:15",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15128,8 +15844,20 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/portal/commercial-overview",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:16",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.commercialOverview"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
     "path": "/portal/deliveries",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:17",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:18",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -15139,9 +15867,33 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": []
   },
   {
+    "method": "post",
+    "path": "/portal/deliveries/{deliveryId}/receipt",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.confirmDeliveryReceipt"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/deliveries/dashboard",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.deliveryDashboard"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
     "method": "get",
     "path": "/portal/documents",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -15153,7 +15905,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/portal/documents/{publicationId}/acknowledgements",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -15165,7 +15917,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/documents/{publicationId}/download",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -15177,7 +15929,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/invoices",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:18",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -15201,7 +15953,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/orders",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:16",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:17",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -25448,6 +26200,287 @@ export const GENERATED_ROUTE_INVENTORY = [
     "rbac": [
       "moduleAccessGate",
       "requireFinanceCapability(supplier_invoice_match)"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-portal-admin/access",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.access"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal-admin/access/{id}/disable",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.disable"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal-admin/accounts/{id}/reset",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.reset"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal-admin/invites",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.invite"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-portal-admin/promise-reviews",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.reviews"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal-admin/promise-reviews/{id}/decision",
+    "source": "src/module/supplier-portal/routes/supplier-portal-admin.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authenticateToken",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator",
+      "controller.decision"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSupplierPortalPilot",
+      "authorizeRole(Administrateur Systeme et Reseau,Directeur,Achats,Responsable Achats)",
+      "requireNamedSupplierPortalAdministrator"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal/auth/activate",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "supplierPortalAuthRateLimit",
+      "controller.activate"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal/auth/login",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "supplierPortalAuthRateLimit",
+      "controller.login"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal/auth/recover",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "supplierPortalAuthRateLimit",
+      "controller.recover"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-portal/auth/reset",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:5",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "supplierPortalAuthRateLimit",
+      "controller.reset"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-portal/orders",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "authenticateSupplierPortal",
+      "controller.orders"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/supplier-portal/orders/{orderId}/lines/{lineId}/promise",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "authenticateSupplierPortal",
+      "controller.promise"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-portal/portal-context",
+    "source": "src/module/supplier-portal/routes/supplier-portal.routes.ts:6",
+    "middleware": [
+      "anonymous",
+      "requireSupplierPortalPilot",
+      "authenticateSupplierPortal",
+      "controller.portalContext"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierPortalPilot"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-sandbox/auth/login",
+    "source": "src/module/supplier-sandbox/routes/supplier-sandbox.routes.ts:9",
+    "middleware": [
+      "anonymous",
+      "requireSupplierSandbox",
+      "controller.login"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierSandbox"
+    ]
+  },
+  {
+    "method": "post",
+    "path": "/supplier-sandbox/promise-proposals",
+    "source": "src/module/supplier-sandbox/routes/supplier-sandbox.routes.ts:12",
+    "middleware": [
+      "anonymous",
+      "requireSupplierSandbox",
+      "authenticateSupplierSandbox",
+      "controller.proposePromise"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierSandbox"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/supplier-sandbox/purchase-lines",
+    "source": "src/module/supplier-sandbox/routes/supplier-sandbox.routes.ts:11",
+    "middleware": [
+      "anonymous",
+      "requireSupplierSandbox",
+      "authenticateSupplierSandbox",
+      "controller.lines"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireSupplierSandbox"
     ]
   },
   {

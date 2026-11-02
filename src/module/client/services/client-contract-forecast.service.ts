@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import {createHash,randomUUID} from 'node:crypto';
 import pool from '../../../config/database';
 import {HttpError} from '../../../utils/httpError';
@@ -35,7 +36,15 @@ export async function getClientForecasts(clientId:string,contractId:string,query
 
 export async function executeClientForecastCommand(clientId:string,contractId:string,command:ClientForecastCommand,key:string,audit:AuditContext) {
   const hash=createHash('sha256').update(JSON.stringify({client_id:clientId,contract_id:contractId,command})).digest('hex');
-  return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
+  return withRealtimeOutboxTransaction(await pool.connect(),tx=>executeClientForecastCommandTx(tx,clientId,contractId,command,key,audit),{reconcileCommit:async verifier=>{
+
+    const saved=await repo.readClientForecastReplay(verifier,audit.user_id,key);
+    return !saved?'not_committed':saved.request_hash===hash?'committed':'unknown';
+  }});
+}
+
+export async function executeClientForecastCommandTx(tx:PoolClient,clientId:string,contractId:string,command:ClientForecastCommand,key:string,audit:AuditContext) {
+  const hash=createHash('sha256').update(JSON.stringify({client_id:clientId,contract_id:contractId,command})).digest('hex');
     await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`client-forecast:${audit.user_id}:${key}`]);
     const client=await readCrmClient(tx,clientId,true);
     if(!client)throw new HttpError(404,'CLIENT_NOT_FOUND','Client introuvable');
@@ -76,8 +85,4 @@ export async function executeClientForecastCommand(clientId:string,contractId:st
     await enqueueEntityChanged(tx,{module:'clients',entityType:'CLIENT',entityId:clientId,action:'updated',at:new Date().toISOString(),
       invalidateKeys:[`client:${clientId}`,'client-contract-forecasts']},{deduplicationKey:`client-forecast:${eventId}`});
     return {result,replayed:false};
-  },{reconcileCommit:async verifier=>{
-    const saved=await repo.readClientForecastReplay(verifier,audit.user_id,key);
-    return !saved?'not_committed':saved.request_hash===hash?'committed':'unknown';
-  }});
 }

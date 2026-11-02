@@ -745,8 +745,8 @@ describe("/api/v1/commandes", () => {
         completed_by: 1,
         blocked_reason: null,
         notes: null,
-        action_key: "request_stock_check",
-        action_label: "Passer au contrôle stock",
+        action_key: "request_technical_analysis",
+        action_label: "Demander analyse technique",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-01T08:00:00.000Z",
@@ -754,8 +754,8 @@ describe("/api/v1/commandes", () => {
       {
         id: "77",
         commande_id: "123",
-        checkpoint_code: "stock_check",
-        label: "Contrôle du stock",
+        checkpoint_code: "technical_analysis",
+        label: "Analyse technique",
         sort_order: 30,
         status: "active",
         responsible_role: "technique",
@@ -765,8 +765,8 @@ describe("/api/v1/commandes", () => {
         completed_by: null,
         blocked_reason: null,
         notes: null,
-        action_key: "check_stock",
-        action_label: "Contrôler le stock",
+        action_key: "complete_technical_analysis",
+        action_label: "Valider technique",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-01T08:00:00.000Z",
@@ -780,7 +780,7 @@ describe("/api/v1/commandes", () => {
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client cc")) {
         return {
-          rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" }],
+          rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_TECHNIQUE" }],
         };
       }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
@@ -794,18 +794,18 @@ describe("/api/v1/commandes", () => {
     expect(res.body).toMatchObject({
       commande_id: 123,
       numero: "CC-123",
-      statut: "ATTENTE_STOCK",
+      statut: "ATTENTE_TECHNIQUE",
       can_act: true,
       current_checkpoint: {
-        checkpoint_code: "stock_check",
+        checkpoint_code: "technical_analysis",
         status: "active",
         assigned_user_id: 12,
       },
       available_actions: [
         {
-          key: "check_stock",
-          target_status: "ATTENTE_OF",
-          next_checkpoint_code: "of_generation",
+          key: "complete_technical_analysis",
+          target_status: "ATTENTE_STOCK",
+          next_checkpoint_code: "stock_check",
         },
       ],
     });
@@ -822,13 +822,13 @@ describe("/api/v1/commandes", () => {
     expect(String(mocks.clientQuery.mock.calls[freshHistoryIndex]?.[0])).not.toContain("FOR UPDATE OF cc");
   });
 
-  it("computes workflow can_act from exact role, assignment and administrator override", async () => {
+  it("computes workflow can_act from exact role and assignment, without an administrator override", async () => {
     let assignedUserId: number | null = null;
     const checkpoint = {
       id: "77",
       commande_id: "123",
-      checkpoint_code: "stock_check",
-      label: "Contrôle du stock",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
       sort_order: 30,
       status: "active",
       responsible_role: "technique",
@@ -838,8 +838,8 @@ describe("/api/v1/commandes", () => {
       completed_by: null,
       blocked_reason: null,
       notes: null,
-      action_key: "check_stock",
-      action_label: "Contrôler le stock",
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
       metadata: {},
       created_at: "2026-06-01T08:00:00.000Z",
       updated_at: "2026-06-01T08:00:00.000Z",
@@ -848,7 +848,7 @@ describe("/api/v1/commandes", () => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM commande_client cc")) {
-        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" }] };
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_TECHNIQUE" }] };
       }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
       if (q.includes("FROM public.commande_client_workflow_checkpoint")) {
@@ -873,18 +873,42 @@ describe("/api/v1/commandes", () => {
     const admin = await request(app)
       .get("/api/v1/commandes/123/workflow")
       .set("x-test-role", "Administrateur Systeme et Reseau");
-    expect(admin.body).toMatchObject({ can_act: true });
-    expect(admin.body.available_actions).toHaveLength(1);
+    expect(admin.body).toMatchObject({ can_act: false, available_actions: [] });
+    expect(admin.body.action_forbidden_reason).toContain("technique");
+  });
+
+  it("refuses a direct workflow action from an administrator outside the active business role", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "active", responsible_role: "technique", assigned_user_id: null }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .set("x-test-role", "Administrateur Systeme et Reseau")
+      .send({ action: "check_stock" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "WORKFLOW_CHECKPOINT_FORBIDDEN" });
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
   });
 
   it("POST /api/v1/commandes/:id/workflow/actions advances the checkpoint workflow", async () => {
-    const headerRow = { id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" };
+    const headerRow = { id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_TECHNIQUE" };
     const reloadedCheckpointRows = [
       {
         id: "77",
         commande_id: "123",
-        checkpoint_code: "of_generation",
-        label: "Contrôle du stock",
+        checkpoint_code: "technical_analysis",
+        label: "Analyse technique",
         sort_order: 30,
         status: "done",
         responsible_role: "technique",
@@ -893,9 +917,9 @@ describe("/api/v1/commandes", () => {
         completed_at: "2026-06-16T08:00:00.000Z",
         completed_by: 1,
         blocked_reason: null,
-        notes: "stock contrôlé",
-        action_key: "mark_of_ready",
-        action_label: "Contrôler le stock",
+        notes: "ok technique",
+        action_key: "complete_technical_analysis",
+        action_label: "Valider technique",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-16T08:00:00.000Z",
@@ -903,9 +927,9 @@ describe("/api/v1/commandes", () => {
       {
         id: "78",
         commande_id: "123",
-        checkpoint_code: "of_generation",
-        label: "Lancement commande",
-        sort_order: 50,
+        checkpoint_code: "stock_check",
+        label: "Controle du stock",
+        sort_order: 40,
         status: "active",
         responsible_role: "technique",
         assigned_user_id: null,
@@ -914,8 +938,8 @@ describe("/api/v1/commandes", () => {
         completed_by: null,
         blocked_reason: null,
         notes: null,
-        action_key: "mark_of_ready",
-        action_label: "Vérifier le stock et lancer",
+        action_key: "check_stock",
+        action_label: "Controler le stock",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-16T08:00:00.000Z",
@@ -934,7 +958,7 @@ describe("/api/v1/commandes", () => {
       if (q.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 123, numero: "CC-123", client_id: "001" }] };
       }
-      if (q.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "ATTENTE_STOCK" }] };
+      if (q.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "ATTENTE_TECHNIQUE" }] };
       if (q.includes("INSERT INTO commande_historique")) return { rows: [{ id: "45" }] };
       if (q.includes("UPDATE commande_client SET updated_at")) return { rows: [] };
       if (q.includes("SELECT DISTINCT u.id")) return { rows: [] };
@@ -947,19 +971,20 @@ describe("/api/v1/commandes", () => {
 
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
-      .send({ action: "check_stock", commentaire: "stock contrôlé" });
+      .set("x-test-role", "Method")
+      .send({ action: "complete_technical_analysis", commentaire: "ok technique" });
 
     expect(res.status).toBe(200);
     expect(res.body.workflow).toMatchObject({
       commande_id: 123,
-      statut: "ATTENTE_OF",
+      statut: "ATTENTE_STOCK",
       current_checkpoint: {
-        checkpoint_code: "of_generation",
+        checkpoint_code: "stock_check",
         status: "active",
       },
       available_actions: [
         {
-          key: "mark_of_ready",
+          key: "check_stock",
         },
       ],
     });
@@ -968,12 +993,12 @@ describe("/api/v1/commandes", () => {
     const completedCheckpointCall = mocks.clientQuery.mock.calls.find(
       (c) => String(c[0]).includes("SET status = 'done'") && String(c[0]).includes("public.commande_client_workflow_checkpoint")
     );
-    expect(completedCheckpointCall?.[1]).toEqual([123, "stock_check", 1, "stock contrôlé"]);
+    expect(completedCheckpointCall?.[1]).toEqual([123, "technical_analysis", 1, "ok technique"]);
 
     const statusHistoryCall = mocks.clientQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO commande_historique")
     );
-    expect(statusHistoryCall?.[1]).toEqual([123, 1, "ATTENTE_STOCK", "ATTENTE_OF", "stock contrôlé"]);
+    expect(statusHistoryCall?.[1]).toEqual([123, 1, "ATTENTE_TECHNIQUE", "ATTENTE_STOCK", "ok technique"]);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO ordres_fabrication"))).toBe(false);
   });
 
@@ -982,8 +1007,8 @@ describe("/api/v1/commandes", () => {
       {
         id: "77",
         commande_id: "123",
-        checkpoint_code: "stock_check",
-        label: "Contrôle du stock",
+        checkpoint_code: "technical_analysis",
+        label: "Analyse technique",
         sort_order: 30,
         status: "done",
         responsible_role: "technique",
@@ -992,9 +1017,9 @@ describe("/api/v1/commandes", () => {
         completed_at: "2026-06-16T08:00:00.000Z",
         completed_by: 1,
         blocked_reason: null,
-        notes: "stock contrôlé",
-        action_key: "check_stock",
-        action_label: "Contrôler le stock",
+        notes: "ok technique",
+        action_key: "complete_technical_analysis",
+        action_label: "Valider technique",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-16T08:00:00.000Z",
@@ -1002,9 +1027,9 @@ describe("/api/v1/commandes", () => {
       {
         id: "78",
         commande_id: "123",
-        checkpoint_code: "of_generation",
-        label: "Lancement commande",
-        sort_order: 50,
+        checkpoint_code: "stock_check",
+        label: "Controle du stock",
+        sort_order: 40,
         status: "active",
         responsible_role: "technique",
         assigned_user_id: null,
@@ -1013,8 +1038,8 @@ describe("/api/v1/commandes", () => {
         completed_by: null,
         blocked_reason: null,
         notes: null,
-        action_key: "mark_of_ready",
-        action_label: "Vérifier le stock et lancer",
+        action_key: "check_stock",
+        action_label: "Controler le stock",
         metadata: {},
         created_at: "2026-06-01T08:00:00.000Z",
         updated_at: "2026-06-16T08:00:00.000Z",
@@ -1025,7 +1050,7 @@ describe("/api/v1/commandes", () => {
       const query = String(sql);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
       if (query.includes("FROM commande_client cc")) {
-        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_OF" }] };
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_STOCK" }] };
       }
       if (query.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
       if (query.includes("SELECT status, responsible_role")) {
@@ -1037,10 +1062,11 @@ describe("/api/v1/commandes", () => {
 
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
-      .send({ action: "check_stock", commentaire: "stock contrôlé" });
+      .set("x-test-role", "Method")
+      .send({ action: "complete_technical_analysis", commentaire: "ok technique" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ idempotent_replay: true, workflow: { statut: "ATTENTE_OF" } });
+    expect(res.body).toMatchObject({ idempotent_replay: true, workflow: { statut: "ATTENTE_STOCK" } });
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("commande_client_event_log"))).toBe(false);
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("app_notification"))).toBe(false);
@@ -1108,6 +1134,7 @@ describe("/api/v1/commandes", () => {
 
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
+      .set("x-test-role", action === "mark_delivered" ? "Logistique" : "Comptabilite")
       .send({ action });
 
     expect(res.status).toBe(409);
@@ -1127,13 +1154,14 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ status: "active", responsible_role: "planning" }] };
       }
       if (q.includes("FROM public.ordres_fabrication")) {
-        return { rows: [{ exists: false }] };
+        return { rows: [{ orders: 0, incomplete: 0 }] };
       }
       return { rows: [] };
     });
 
     const res = await request(app)
       .post("/api/v1/commandes/123/workflow/actions")
+      .set("x-test-role", "Planification")
       .send({ action: "validate_planning" });
 
     expect(res.status).toBe(409);
@@ -1141,12 +1169,65 @@ describe("/api/v1/commandes", () => {
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
   });
 
+  it("POST /api/v1/commandes/:id/workflow/actions refuses planning validation while an OF is still a draft", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "ATTENTE_PLANNING" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "active", responsible_role: "planning", assigned_user_id: null }] };
+      }
+      if (q.includes("FROM public.ordres_fabrication")) {
+        return { rows: [{ orders: 1, incomplete: 1 }] };
+      }
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .set("x-test-role", "Planification")
+      .send({ action: "validate_planning" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "PLANNING_REQUIRES_PLANNED_OF" });
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("POST /api/v1/commandes/:id/workflow/actions refuses direct AR preparation without current physical coverage", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FROM commande_client cc")) {
+        return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "PLANNING_VALIDE" }] };
+      }
+      if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
+      if (q.includes("SELECT status, responsible_role")) {
+        return { rows: [{ status: "active", responsible_role: "secretariat", assigned_user_id: null }] };
+      }
+      if (q.includes("WITH lines AS")) return { rows: [{ has_of: false, complete: false }] };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/commandes/123/workflow/actions")
+      .set("x-test-role", "Secretaire")
+      .send({ action: "prepare_ar" });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ code: "COMMAND_AR_COVERAGE_REQUIRED" });
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(false);
+  });
+
   it("PATCH /api/v1/commandes/:id/workflow/checkpoints/:checkpointCode clears assignment and resumes blocked status", async () => {
     const checkpointRow = {
       id: "77",
       commande_id: "123",
-      checkpoint_code: "stock_check",
-      label: "Contrôle du stock",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
       sort_order: 30,
       status: "blocked",
       responsible_role: "technique",
@@ -1156,9 +1237,9 @@ describe("/api/v1/commandes", () => {
       completed_by: null,
       blocked_reason: "Plan manquant",
       notes: null,
-      action_key: "check_stock",
-      action_label: "Contrôler le stock",
-      metadata: { previous_status_before_block: "ATTENTE_STOCK" },
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
+      metadata: { previous_status_before_block: "ATTENTE_TECHNIQUE" },
       created_at: "2026-06-01T08:00:00.000Z",
       updated_at: "2026-06-01T08:00:00.000Z",
     };
@@ -1172,7 +1253,6 @@ describe("/api/v1/commandes", () => {
         };
       }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
-      if (q.includes("technical_analysis")) return { rows: [] };
       if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("FOR UPDATE")) {
         return { rows: [checkpointRow] };
       }
@@ -1204,7 +1284,7 @@ describe("/api/v1/commandes", () => {
     });
 
     const res = await request(app)
-      .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
       .send({ status: "active", assigned_user_id: null, due_at: null, notes: "ok" });
 
     expect(res.status).toBe(200);
@@ -1220,7 +1300,7 @@ describe("/api/v1/commandes", () => {
     );
     expect(updateCheckpointCall?.[1]).toEqual([
       123,
-      "stock_check",
+      "technical_analysis",
       "active",
       null,
       null,
@@ -1236,14 +1316,14 @@ describe("/api/v1/commandes", () => {
     const resumeStatusCall = mocks.clientQuery.mock.calls.find((c) =>
       String(c[0]).includes("INSERT INTO commande_historique")
     );
-    expect(resumeStatusCall?.[1]).toEqual([123, 1, "BLOQUE", "ATTENTE_STOCK", "ok"]);
+    expect(resumeStatusCall?.[1]).toEqual([123, 1, "BLOQUE", "ATTENTE_TECHNIQUE", "ok"]);
   });
 
   it.each(["done", "skipped", "pending"])(
     "PATCH checkpoint rejects direct progress status %s",
     async (status) => {
       const res = await request(app)
-        .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+        .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
         .send({ status });
 
       expect(res.status).toBe(400);
@@ -1255,8 +1335,8 @@ describe("/api/v1/commandes", () => {
     const checkpointRow = {
       id: "77",
       commande_id: "123",
-      checkpoint_code: "stock_check",
-      label: "Contrôle du stock",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
       sort_order: 30,
       status: "blocked",
       responsible_role: "technique",
@@ -1266,9 +1346,9 @@ describe("/api/v1/commandes", () => {
       completed_by: null,
       blocked_reason: "Plan manquant",
       notes: null,
-      action_key: "check_stock",
-      action_label: "Contrôler le stock",
-      metadata: { previous_status_before_block: "ATTENTE_STOCK" },
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
+      metadata: { previous_status_before_block: "ATTENTE_TECHNIQUE" },
       created_at: "2026-06-01T08:00:00.000Z",
       updated_at: "2026-06-01T08:00:00.000Z",
     };
@@ -1276,7 +1356,6 @@ describe("/api/v1/commandes", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const query = String(sql);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
-      if (query.includes("technical_analysis")) return { rows: [] };
       if (query.includes("FROM commande_client cc")) {
         return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: "BLOQUE" }] };
       }
@@ -1288,7 +1367,7 @@ describe("/api/v1/commandes", () => {
     });
 
     const res = await request(app)
-      .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
       .send({ status: "blocked", blocked_reason: "Plan manquant" });
 
     expect(res.status).toBe(200);
@@ -1300,13 +1379,13 @@ describe("/api/v1/commandes", () => {
   });
 
   it("notifies each real block episode with its own history-backed dedupe key", async () => {
-    let currentStatus = "ATTENTE_STOCK";
+    let currentStatus = "ATTENTE_TECHNIQUE";
     let nextHistoryId = 100;
     let checkpoint = {
       id: "77",
       commande_id: "123",
-      checkpoint_code: "stock_check",
-      label: "Contrôle du stock",
+      checkpoint_code: "technical_analysis",
+      label: "Analyse technique",
       sort_order: 30,
       status: "active",
       responsible_role: "technique",
@@ -1316,8 +1395,8 @@ describe("/api/v1/commandes", () => {
       completed_by: null,
       blocked_reason: null,
       notes: null,
-      action_key: "check_stock",
-      action_label: "Contrôler le stock",
+      action_key: "complete_technical_analysis",
+      action_label: "Valider technique",
       metadata: {} as Record<string, unknown>,
       created_at: "2026-06-01T08:00:00.000Z",
       updated_at: "2026-06-01T08:00:00.000Z",
@@ -1331,7 +1410,6 @@ describe("/api/v1/commandes", () => {
         return { rows: [{ id: "123", numero: "CC-123", client_id: "001", raw_statut: currentStatus }] };
       }
       if (q.includes("INSERT INTO public.commande_client_workflow_checkpoint")) return { rows: [] };
-      if (q.includes("technical_analysis")) return { rows: [] };
       if (q.includes("FROM public.commande_client_workflow_checkpoint") && q.includes("FOR UPDATE")) {
         return { rows: [checkpoint] };
       }
@@ -1383,19 +1461,19 @@ describe("/api/v1/commandes", () => {
     });
 
     const blockOne = await request(app)
-      .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
       .send({ status: "blocked", blocked_reason: "Premier blocage" });
     const resume = await request(app)
-      .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
       .send({ status: "active" });
     const blockTwo = await request(app)
-      .patch("/api/v1/commandes/123/workflow/checkpoints/stock_check")
+      .patch("/api/v1/commandes/123/workflow/checkpoints/technical_analysis")
       .send({ status: "blocked", blocked_reason: "Second blocage" });
 
     expect([blockOne.status, resume.status, blockTwo.status]).toEqual([200, 200, 200]);
     expect(notificationKeys).toEqual([
-      "commande:123:checkpoint:stock_check:blocked:101",
-      "commande:123:checkpoint:stock_check:blocked:103",
+      "commande:123:checkpoint:technical_analysis:blocked:101",
+      "commande:123:checkpoint:technical_analysis:blocked:103",
     ]);
   });
 

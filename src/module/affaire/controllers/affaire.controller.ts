@@ -14,8 +14,8 @@ import {
   updateAffaireBodySchema,
 } from "../validators/affaire.validators";
 import type { AuditContext } from "../types/affaire.types";
-import { readDeliveryPromises, reviseDeliveryPromises } from "../repository/delivery-promises.repository";
-import { reviseDeliveryPromisesSchema } from "../validators/delivery-promises.validators";
+import { readDeliveryPromises, reviseDeliveryPromises, recordDeliveryPromiseEvidence } from "../repository/delivery-promises.repository";
+import { reviseDeliveryPromisesSchema, recordDeliveryPromiseEvidenceSchema } from "../validators/delivery-promises.validators";
 import {
   svcArchiveAffaire,
   svcCreateAffaire,
@@ -137,6 +137,10 @@ export const reviseAffaireDeliveryPromises: RequestHandler = async (req,res,next
     const {id}=affaireIdParamsSchema.parse(req.params);
     res.json(await reviseDeliveryPromises(id,reviseDeliveryPromisesSchema.parse(req.body),buildAuditContext(req)));
   } catch(error) { next(error); }
+};
+export const recordAffaireDeliveryPromiseEvidence: RequestHandler = async (req,res,next) => {
+  try { const {id}=affaireIdParamsSchema.parse(req.params); res.status(201).json(await recordDeliveryPromiseEvidence(id,recordDeliveryPromiseEvidenceSchema.parse(req.body),buildAuditContext(req))); }
+  catch(error) { next(error); }
 };
 
 // Aperçu de création manuelle : lecture seule, aucun effet de bord (ne consomme pas de code).

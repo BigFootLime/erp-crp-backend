@@ -42,7 +42,7 @@ export const MODULE_CATALOG: readonly ModuleCatalogEntry[] = [
     label: "Commandes clients",
     description: "Commandes fermes, cadres et internes, appels de livraison.",
     category: "Commerce",
-    api_prefixes: ["/commandes"],
+    api_prefixes: ["/commandes", "/demand-pilot"],
     nav_page_keys: ["commandes"],
     is_protected: false,
     sort_order: 30,

@@ -1,21 +1,21 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-09-14T18:16:40.161Z
+- Généré : 2026-11-02T02:08:26.406Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 231
-- Scripts auxiliaires : 438
-- Patches depuis 2026-07-01 : 173
+- Patches exécutables : 357
+- Scripts auxiliaires : 756
+- Patches depuis 2026-07-01 : 299
 
 ## Risques statiques à examiner
 
 | Classe | Nombre de patches |
 |---|---:|
 | DDL destructif | 3 |
-| DML destructif | 10 |
-| Réécriture de données | 135 |
-| Verrou de table possible | 172 |
-| Index non concurrent | 159 |
-| Évolution d'enum | 1 |
+| DML destructif | 38 |
+| Réécriture de données | 231 |
+| Verrou de table possible | 242 |
+| Index non concurrent | 228 |
+| Évolution d'enum | 2 |
 
 Ces détections sont volontairement conservatrices : elles servent de file de revue, pas de preuve de danger. Les durées réelles sont capturées par la répétition isolée.
 
@@ -82,5 +82,36 @@ Ces détections sont volontairement conservatrices : elles servent de file de re
 - `20260909_consumable_need_reservations.sql`: preflight=true, verify=true, rollback=false
 - `20260909_consumable_of_revision.sql`: preflight=true, verify=true, rollback=false
 - `20260909_supply_terminals.sql`: preflight=true, verify=true, rollback=false
+- `20261006_of_completion_before_planning.sql`: preflight=true, verify=true, rollback=false
+- `20261007_material_source_yield_877.sql`: preflight=true, verify=true, rollback=false
+- `20261010_recipe_numeric_precision_1062.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_requests_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_fees_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_replenishments_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_delivery_urgency_restitutions_1033.sql`: preflight=false, verify=true, rollback=true
+- `20261012_recovery_material_extensions_1034.sql`: preflight=false, verify=true, rollback=true
+- `20261012_recovery_consolidation_additions_1034.sql`: preflight=false, verify=true, rollback=true
+- `20261013_empty_quality_execution_cancellation_1276.sql`: preflight=false, verify=true, rollback=true
+- `20261013_material_bar_identity_1256.sql`: preflight=false, verify=true, rollback=true
+- `20261013_subcontract_operation_completion_1273.sql`: preflight=false, verify=true, rollback=true
+- `20261013_subcontract_origin_packages_1269.sql`: preflight=false, verify=true, rollback=true
+- `20261023_independent_business_code_counter_permissions_1423.sql`: preflight=false, verify=false, rollback=false
+- `20261023_independent_business_code_counters_1423.sql`: preflight=false, verify=true, rollback=false
+- `20261023_stock_warehouse_links_1428.sql`: preflight=false, verify=false, rollback=false
+- `20261026_metrology_md15_profile_codes.sql`: preflight=false, verify=true, rollback=true
+- `20261027_00_intercompany_transport_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_intercompany_commercial_catalogue_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_intercompany_external_fulfilment_receipts_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_intercompany_invoice_sources_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_intercompany_supplier_offer_revisions_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_intercompany_transport_immutability_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_metrology_ged_entity_type_1780_compat.sql`: preflight=false, verify=false, rollback=false
+- `20261027_metrology_ged_entity_type_1780.sql`: preflight=false, verify=true, rollback=false
+- `20261027_z_intercompany_external_invoice_guard_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_zz_intercompany_delivery_destination_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_zzz_intercompany_dropship_commande_ligne_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_zzzzz_intercompany_standard_article_locks_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql`: preflight=false, verify=false, rollback=false
 
 Le détail machine, l'ordre, les SHA-256, la transaction, la rejouabilité et les risques par fichier sont dans `MIGRATION_INVENTORY_SOL_06.json`.
