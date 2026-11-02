@@ -23,7 +23,62 @@ export type ConsolidationSource = {
   parent_of_id: number | null;
   root_of_id: number | null;
   technical_snapshot: unknown;
+  /** Immutable execution snapshot for pilot OFs. Absent on historical/manual OFs. */
+  industrial_semantics?: unknown | null;
 };
+
+type GoodOutputSemantics = {
+  coverage_semantics: "GOOD_OUTPUT_V1";
+  required_good_quantity: string | number;
+  expected_good_quantity: string | number;
+  yield_percent: string | number;
+};
+
+const milli = (quantity: number) => Math.round(quantity * 1000);
+
+/**
+ * The launched quantity remains the physical quantity for load and material.
+ * An industrial OF, however, can carry an immutable forecast of its good
+ * output.  Only that good output can be promised to its commercial source.
+ * Old/manual OFs deliberately retain their former (launched = good) meaning.
+ */
+export function sourceCommercialQuantity(source: ConsolidationSource): number {
+  if (
+    source.industrial_semantics === undefined ||
+    source.industrial_semantics === null
+  )
+    return source.quantite_lancee;
+  const token = source.industrial_semantics as Partial<GoodOutputSemantics>;
+  if (token.coverage_semantics !== "GOOD_OUTPUT_V1")
+    throw new HttpError(
+      422,
+      "CONSOLIDATION_YIELD_INVALID",
+      "Le rendement figé de l’OF est illisible.",
+      { of_id: source.id },
+    );
+  const required = Number(token.required_good_quantity);
+  const expected = Number(token.expected_good_quantity);
+  const yieldPercent = Number(token.yield_percent);
+  if (
+    !Number.isFinite(required) ||
+    required <= 0 ||
+    !Number.isFinite(expected) ||
+    expected <= 0 ||
+    !Number.isFinite(yieldPercent) ||
+    yieldPercent <= 0 ||
+    yieldPercent > 100 ||
+    expected > source.quantite_lancee
+  )
+    throw new HttpError(
+      422,
+      "CONSOLIDATION_YIELD_INVALID",
+      "Le rendement figé de l’OF ne permet pas de promettre une quantité conforme.",
+      { of_id: source.id },
+    );
+  // The customer never receives a yield/lot margin.  If the frozen forecast
+  // is weaker than the firm need, it is also the conservative upper bound.
+  return Math.min(required, expected);
+}
 export function buildConsolidationPlan(
   sources: ConsolidationSource[],
   surplus: number,
@@ -83,11 +138,18 @@ export function buildConsolidationPlan(
   if (!Number.isFinite(surplus) || surplus < 0)
     throw new HttpError(422, "CONSOLIDATION_QUANTITY", "Surplus invalide.");
   // OF quantities are already net of stock at generation. Never subtract that stock again.
-  const demandMilli = sources.reduce(
-    (sum, s) => sum + Math.round(s.quantite_lancee * 1000),
+  // `quantity` is the physical/brut quantity: it sizes the gamme and BOM.
+  // Allocations are good pieces only, so a 112-brut/100-bon pilot OF never
+  // promises its 12-piece yield margin a second time after consolidation.
+  const launchedMilli = sources.reduce(
+    (sum, s) => sum + milli(s.quantite_lancee),
     0,
   );
-  const quantity = (demandMilli + Math.round(surplus * 1000)) / 1000;
+  const demandMilli = sources.reduce(
+    (sum, s) => sum + milli(sourceCommercialQuantity(s)),
+    0,
+  );
+  const quantity = (launchedMilli + milli(surplus)) / 1000;
   const wait =
     sources
       .map((s) => s.planning_wait_started_at)
@@ -101,7 +163,8 @@ export function buildConsolidationPlan(
     allocations: sources.map((s) => ({
       source_of_id: s.id,
       numero: s.numero,
-      quantity: s.quantite_lancee,
+      quantity: sourceCommercialQuantity(s),
+      launched_quantity: s.quantite_lancee,
       due_date: s.date_fin_prevue,
       parent_of_id: s.parent_of_id,
       root_of_id: s.root_of_id,

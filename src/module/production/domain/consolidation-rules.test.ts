@@ -39,6 +39,79 @@ describe("Production consolidation conservation", () => {
     expect(p.planning_wait_started_at).toBe("2026-09-01T10:00:00Z");
     expect(p.allocations.map((a) => a.parent_of_id)).toEqual([101, 102]);
   });
+  it("keeps yield-sized launch and material quantities separate from good allocations", () => {
+    const pilot = (id: number): ConsolidationSource => ({
+      ...source(id, 112),
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        required_good_quantity: 100,
+        expected_good_quantity: 100,
+        yield_percent: 90,
+      },
+    });
+    const plan = buildConsolidationPlan([pilot(1), pilot(2)], 0);
+    // 224 units are physically launched, but only 100+100 good pieces are
+    // allocated to the two original commercial demands.
+    expect(plan).toMatchObject({
+      quantity: 224,
+      demand_quantity: 200,
+      surplus_quantity: 0,
+    });
+    expect(plan.allocations).toEqual([
+      expect.objectContaining({
+        source_of_id: 1,
+        quantity: 100,
+        launched_quantity: 112,
+      }),
+      expect.objectContaining({
+        source_of_id: 2,
+        quantity: 100,
+        launched_quantity: 112,
+      }),
+    ]);
+  });
+  it("does not promise a pilot OF when its frozen yield token is invalid", () => {
+    expect(() =>
+      buildConsolidationPlan(
+        [
+          {
+            ...source(1, 112),
+            industrial_semantics: {
+              coverage_semantics: "GOOD_OUTPUT_V1",
+              required_good_quantity: 100,
+              expected_good_quantity: 100,
+              yield_percent: 0,
+            },
+          },
+          source(2, 112),
+        ],
+        0,
+      ),
+    ).toThrow(/rendement figé/i);
+  });
+  it("caps an optimistic yield margin at the firm need and caps a short forecast below it", () => {
+    const pilot = (
+      id: number,
+      launched: number,
+      expected: number,
+    ): ConsolidationSource => ({
+      ...source(id, launched),
+      industrial_semantics: {
+        coverage_semantics: "GOOD_OUTPUT_V1",
+        required_good_quantity: 100,
+        expected_good_quantity: expected,
+        yield_percent: 90,
+      },
+    });
+    expect(
+      buildConsolidationPlan([pilot(1, 120, 108), source(2, 10)], 0)
+        .allocations[0],
+    ).toMatchObject({ quantity: 100, launched_quantity: 120 });
+    expect(
+      buildConsolidationPlan([pilot(1, 100, 90), source(2, 10)], 0)
+        .allocations[0],
+    ).toMatchObject({ quantity: 90, launched_quantity: 100 });
+  });
   it.each([
     ["client_id", "DEF"],
     ["article_id", "other"],
@@ -86,6 +159,30 @@ describe("Production consolidation conservation", () => {
       ],
       surplus: 0,
     });
+  });
+  it("allocates only the good commercial shares; physical yield margin remains stock", () => {
+    const distributed = allocateReceivedQuantity(
+      [
+        {
+          id: "first",
+          quantity: 100,
+          received_quantity: 0,
+          due_date: "2026-10-01",
+        },
+        {
+          id: "second",
+          quantity: 100,
+          received_quantity: 0,
+          due_date: "2026-10-02",
+        },
+      ],
+      224,
+    );
+    expect(distributed.allocations).toEqual([
+      { allocation_id: "first", quantity: 100 },
+      { allocation_id: "second", quantity: 100 },
+    ]);
+    expect(distributed.surplus).toBe(24);
   });
   it("leaves only actual received excess in stock", () =>
     expect(
