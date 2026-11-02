@@ -11,9 +11,13 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261031_industrial_planning_1032.sql": "39a021720a3d9bf14066f72d5b4022a162dd9f3de517d4482e9ef816ad21fb76",
+  "20261101_industrial_assumptions_1032.sql": "ddbe2021ff048c9291e22124db8df791f16b96d0d1ff8150bcf06479d73a4fc6",
+  "20261101_industrial_proposal_execution_1032.sql": "d3a2f7b6c025e9fd2e262befda8078ae77fec4f6fad5721209596ad7143a63c9",
+  "20261102_consolidation_good_output_invariants_1809.sql": "252b6507b82ad32efdc9bd04c66744a2b912ac804d86f01f3d8a2b7ade3f6868",
   "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql": "ec2fb673822486bde011a19d8d4b194d54f923596420c715bc73a0cb4873d2b2",
   "20261102_consolidation_good_output_trigger_fix_1810.sql": "59b215e30053a5634e8f3bdc6d194847129f78d5f25d72a13672cb7fe4f3dc09",
-  "20261102_consolidation_good_output_invariants_1809.sql": "252b6507b82ad32efdc9bd04c66744a2b912ac804d86f01f3d8a2b7ade3f6868",
+  "20261102_industrial_yield_qualification_1032.sql": "8b0a8737c3baa84cc029f763350020377bd6bd8e340e1e37693b80d91f227e3a",
   "20261102_supplier_portal_recovery_request_1808.sql": "ea849e872e5dae4a3010c0215ecf562d6753080fa8c3bd4dc74744453f801451",
   "20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql": "ddd523443ff759509e7d316ee049cd32361af858a59f43e1257cc96cfd89c7a5",
   "20261027_zzzzz_intercompany_standard_article_locks_1454.sql": "810c4d2029f5645a33eb5986ca0c699e1ca7fe3131c1c8c15e6cb06645d52860",

@@ -297,8 +297,9 @@ export async function repoAuthorizeCommandeArGeneration(params: {
       ) st ON TRUE
       LEFT JOIN public.commande_client_workflow_checkpoint cp
         ON cp.commande_id = cc.id AND cp.checkpoint_code = CASE
-          WHEN st.nouveau_statut IN ('PLANNING_VALIDE','PLANIFIEE') THEN 'ar_preparation'
-          ELSE 'ar_sent' END
+          WHEN st.nouveau_statut IN ('PLANNING_VALIDE', 'PLANIFIEE') THEN 'ar_preparation'
+          ELSE 'ar_sent'
+        END
       WHERE cc.id = $1::bigint
       LIMIT 1
     `,
@@ -330,10 +331,13 @@ export async function repoAuthorizeCommandeArGeneration(params: {
   });
 
   const preparing = currentStatus === "PLANNING_VALIDE" && params.stage !== "send";
-  // Existing versions are readable by their authorized role after the checkpoint moves on.
-  // Only GET history supplies this stage; generation and send still require current evidence.
+  // A generated/sent AR remains readable to the authorized workflow role,
+  // without turning history into a bypass for generation or dispatch.
   if (params.stage === "history") {
-    const existing = await params.tx.query("SELECT 1 FROM public.commande_ar_log WHERE commande_id=$1 LIMIT 1", [params.commande_id]);
+    const existing = await params.tx.query(
+      "SELECT 1 FROM public.commande_ar_log WHERE commande_id=$1 LIMIT 1",
+      [params.commande_id],
+    );
     if (existing.rows.length) return;
   }
   if ((!preparing && currentStatus !== "AR_PRET") || row.checkpoint_status !== "active") {
@@ -346,9 +350,14 @@ export async function repoAuthorizeCommandeArGeneration(params: {
   await assertOrderArReady(params.tx, params.commande_id);
   if (preparing && params.stage === "generate") {
     await repoApplyCommandeWorkflowMilestone({
-      tx: params.tx, commande_id: params.commande_id, user_id: params.user_id, nouveau_statut: "AR_PRET",
-      cause: "checkpoint", commentaire: "Préparation de l’AR officiel après vérification des lignes et du planning.",
-      completed_checkpoint_codes: ["ar_preparation"], active_checkpoint_code: "ar_sent",
+      tx: params.tx,
+      commande_id: params.commande_id,
+      user_id: params.user_id,
+      nouveau_statut: "AR_PRET",
+      cause: "checkpoint",
+      commentaire: "Préparation de l’AR officiel après vérification des lignes et du planning.",
+      completed_checkpoint_codes: ["ar_preparation"],
+      active_checkpoint_code: "ar_sent",
     });
   }
 }
@@ -1246,7 +1255,9 @@ async function repoFinalizeCommandeArSendLegacy(params: {
       `,
       [params.commande_id]
     );
-    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true ? await readOrderArCoverage(tx, params.commande_id) : null;
+    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true
+      ? await readOrderArCoverage(tx, params.commande_id)
+      : null;
     const stockOnlyFlow = cover?.complete === true && !cover.has_of;
 
     const statusOut = await repoApplyCommandeWorkflowMilestone({
@@ -1635,7 +1646,9 @@ export async function repoFinalizeCommandeArSend(params: {
       `SELECT COALESCE((metadata->>'stock_only_flow')::boolean, false) AS stock_only_flow FROM public.commande_client_workflow_checkpoint WHERE commande_id = $1::bigint AND checkpoint_code = 'ar_sent' LIMIT 1`,
       [params.commande_id]
     );
-    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true ? await readOrderArCoverage(tx, params.commande_id) : null;
+    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true
+      ? await readOrderArCoverage(tx, params.commande_id)
+      : null;
     const stockOnlyFlow = cover?.complete === true && !cover.has_of;
     const statusOut = await repoApplyCommandeWorkflowMilestone({
       tx,

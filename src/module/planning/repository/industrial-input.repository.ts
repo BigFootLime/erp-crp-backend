@@ -1,3 +1,4 @@
+import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import type {
@@ -326,7 +327,7 @@ export async function readIndustrialInput(
       po.ownerClientId ||
       !po.unit ||
       po.available <= 0 ||
-      (po.unit !== po.purchaseUnit && po.coefficient === 1) ||
+      (canonicalizeStockUnitCode(po.unit) !== canonicalizeStockUnitCode(po.purchaseUnit) && po.coefficient === 1) ||
       po.documents.length ||
       po.requirements.some((r) => r.obligatoire)
     ) {

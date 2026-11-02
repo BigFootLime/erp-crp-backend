@@ -2599,7 +2599,11 @@ export async function repoRunCommandeWorkflowAction(
     );
   }
   if (action.key === "prepare_ar") {
-    throw new HttpError(409, "COMMAND_AR_DOCUMENT_REQUIRED", "Générez l’AR depuis le dossier de commande. Sa préparation et son planning seront vérifiés avant édition.");
+    throw new HttpError(
+      409,
+      "COMMAND_AR_DOCUMENT_REQUIRED",
+      "Générez l’AR depuis le dossier de commande. Sa préparation et son planning seront vérifiés avant édition.",
+    );
   }
   if (action.key === "mark_ar_sent") {
     throw new HttpError(

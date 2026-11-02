@@ -87,6 +87,16 @@ function source(): IndustrialInput {
   };
 }
 describe("Industrial PIC/PDP/CBN", () => {
+  it("uses piece aliases across the order, stock and manufacturing article", () => {
+    const input = source();
+    input.articles[0].unit = "U";
+    input.articles[0].yieldPercent = "90";
+    input.demand = [{ ...demand("firm", "110"), contractLine: null, unit: "PCE" }];
+    input.supplies = [{ ...supply("stock", "10"), unit: "pièces" }];
+    expect(calculateIndustrialPlan(input).proposals[0]).toMatchObject({
+      quantity: 112, required_good_quantity: 100, expected_good_quantity: 100,
+    });
+  });
   it("grosses up only the net good pieces, rounds to whole starts and sizes components from the gross OF", () => {
     const input = source();
     input.articles[0].yieldPercent = "90";

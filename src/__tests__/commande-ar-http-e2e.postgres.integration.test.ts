@@ -353,9 +353,16 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
         ar_id: generated.body.ar_id,
       });
       expect(receivedEmails).toHaveLength(1);
-      const versions = await request(app).get(`/api/v1/commandes/${orderId}/ar`)
-        .set("Authorization", `Bearer ${authToken()}`).expect(200);
-      expect(versions.body.versions).toEqual([expect.objectContaining({ ar_id: generated.body.ar_id, status: "SENT" })]);
+      const versions = await request(app)
+        .get(`/api/v1/commandes/${orderId}/ar`)
+        .set("Authorization", `Bearer ${authToken()}`)
+        .expect(200);
+      expect(versions.body.versions).toEqual([
+        expect.objectContaining({
+          ar_id: generated.body.ar_id,
+          status: "SENT",
+        }),
+      ]);
       const history = await db.query<{
         status: string;
         sent_at: string | null;
@@ -414,5 +421,33 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
     } finally {
       await assertRetainedImmutableEvidence(orderId);
     }
+  });
+
+  it("never lets the generic role panel skip AR preparation or traced dispatch", async () => {
+    const { orderId } = await seedReadyOrder(randomUUID());
+    const before = await db.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM public.commande_historique WHERE commande_id=$1",
+      [orderId],
+    );
+
+    for (const action of ["prepare_ar", "mark_ar_sent"]) {
+      const refusal = await request(app)
+        .post(`/api/v1/commandes/${orderId}/workflow/actions`)
+        .set("Authorization", `Bearer ${authToken()}`)
+        .send({ action })
+        .expect(409);
+      expect(refusal.body.code).toBe(
+        action === "prepare_ar"
+          ? "COMMAND_AR_DOCUMENT_REQUIRED"
+          : "COMMAND_AR_SEND_REQUIRED",
+      );
+    }
+
+    const after = await db.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM public.commande_historique WHERE commande_id=$1",
+      [orderId],
+    );
+    expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+    await assertRetainedImmutableEvidence(orderId);
   });
 });

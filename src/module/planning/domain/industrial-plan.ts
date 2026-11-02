@@ -87,7 +87,7 @@ function parentFirst(input: IndustrialInput) {
 function eligible(source: Supply, need: Need) {
   return (
     source.article === need.article &&
-    source.unit === need.unit &&
+    canonicalizeStockUnitCode(source.unit) === canonicalizeStockUnitCode(need.unit) &&
     source.available <= need.due &&
     (!source.contractLine || source.contractLine === need.contractLine) &&
     (!source.orderLine || source.orderLine === need.orderLine) &&
@@ -235,7 +235,7 @@ export function calculateIndustrialPlan(
     const process = (n: Need, target = false) => {
       const gross = qty(n.quantity),
         due = n.due < input.today ? input.today : n.due;
-      if (n.unit !== article.unit) {
+      if (canonicalizeStockUnitCode(n.unit) !== canonicalizeStockUnitCode(article.unit)) {
         issues.add("Unité incompatible pour " + n.id + ".");
         return;
       }

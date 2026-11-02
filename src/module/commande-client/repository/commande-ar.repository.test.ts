@@ -175,8 +175,11 @@ describe("commande AR generation authorization", () => {
   });
 
   it("allows the explicitly assigned user", async () => {
-    const tx = { query: vi.fn().mockResolvedValueOnce({ rows: [accessRow(7)] })
-      .mockResolvedValueOnce({ rows: [{ has_of: false, complete: true }] }) };
+    const tx = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [accessRow(7)] })
+        .mockResolvedValueOnce({ rows: [{ has_of: false, complete: true }] }),
+    };
     await expect(repoAuthorizeCommandeArGeneration({
       tx: tx as never,
       commande_id: 123,

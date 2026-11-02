@@ -37,10 +37,9 @@ export function canActOnCommandeWorkflowCheckpoint(params: {
   responsible_role: string;
   assigned_user_id?: number | null;
 }): boolean {
-  // The workflow panel is deliberately not an administration override. A
-  // status change can commit customer promises, production and delivery
-  // consequences; it therefore stays owned by the active business role even
-  // when the caller is an administrator or has a module-level entitlement.
+  // A command workflow action can alter customer promises, production and
+  // delivery. Module access and administrator status grant access to the
+  // screen, never ownership of the active business checkpoint.
   if (params.assigned_user_id !== null && params.assigned_user_id !== undefined) {
     return params.assigned_user_id === params.user_id;
   }
