@@ -71,6 +71,7 @@ import {
   createInternalContractDraft,
   persistAndReserveAssemblyComponents,
 } from "../../commande-client/repository/commande-client.repository";
+import { reconcileCommandeProductionMilestonesInTransaction } from "../../commande-client/repository/commande-production-milestone.repository";
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
@@ -329,6 +330,13 @@ export async function repoReleaseOrdreFabrication(params: { id: number; body: Re
        WHERE id = $1::bigint`,
       [params.id, params.audit.user_id]
     );
+    const linkedOrder = await client.query<{ commande_id: string | null }>(
+      `SELECT commande_id::text AS commande_id FROM public.ordres_fabrication WHERE id=$1::bigint`, [params.id]
+    );
+    const commandeId = Number(linkedOrder.rows[0]?.commande_id);
+    if (Number.isSafeInteger(commandeId)) await reconcileCommandeProductionMilestonesInTransaction({
+      client, actorUserId: params.audit.user_id, orderIds: [commandeId],
+    });
     // Freeze source references as a recorded evidence snapshot. The OF's own
     // technical hash is already immutable after launch; this captures the exact
     // release decision without mutating the original technical entities.
@@ -3983,6 +3991,10 @@ export async function repoUpdateOrdreFabrication(params: {
         ...(cancelledPurchaseAllocations.length ? { cancelled_purchase_allocations: cancelledPurchaseAllocations, physical_stock_unchanged: true } : {}),
       },
     });
+    if (statutChanges && ["EN_COURS", "TERMINE", "CLOTURE"].includes(requestedStatut)) {
+      const orderId = ofRow.commande_id ? toInt(ofRow.commande_id, "ordres_fabrication.commande_id") : null;
+      if (orderId !== null) await reconcileCommandeProductionMilestonesInTransaction({ client, actorUserId: params.audit.user_id, orderIds: [orderId] });
+    }
 
     for (const purchaseId of [...new Set(cancelledPurchaseAllocations.map(allocation => allocation.purchase_order_id))].sort()) {
       const change = await insertAuditLog(client, params.audit, {
@@ -4105,6 +4117,11 @@ export async function repoUpdateOrdreFabricationOperation(params: {
         machine_id: p.machine_id,
       },
     });
+    if (p.status === "RUNNING" || p.status === "DONE") {
+      const order = await client.query<{ commande_id: string | null }>(`SELECT commande_id::text AS commande_id FROM public.ordres_fabrication WHERE id=$1::bigint`, [params.of_id]);
+      const orderId = order.rows[0]?.commande_id ? toInt(order.rows[0].commande_id, "ordres_fabrication.commande_id") : null;
+      if (orderId !== null) await reconcileCommandeProductionMilestonesInTransaction({ client, actorUserId: params.audit.user_id, orderIds: [orderId] });
+    }
 
     return true;
   });
