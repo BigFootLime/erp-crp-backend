@@ -225,6 +225,7 @@ CREATE TABLE public.commande_historique (
   id bigserial PRIMARY KEY,
   commande_id bigint NOT NULL REFERENCES public.commande_client(id) ON DELETE CASCADE,
   user_id integer REFERENCES public.users(id),
+  nouveau_statut text,
   action text NOT NULL DEFAULT '',
   details jsonb,
   date_action timestamptz NOT NULL DEFAULT now(),
