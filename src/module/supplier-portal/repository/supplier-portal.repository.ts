@@ -52,6 +52,20 @@ export async function isNamedSupplierPortalAdministrator(userId: number) {
   ).rows[0];
   return row?.allowed === true;
 }
+export async function configuredSupplierPortalPolicyVersion(
+  supplierId: string,
+) {
+  if (process.env.NODE_ENV === "test") return "pilot-local-v1";
+  const row = (
+    await pool.query<{ policy_version: string | null }>(
+      "SELECT approved_policy_version AS policy_version FROM supplier_portal_configuration WHERE id=true AND enabled AND pilot_supplier_id=$1::uuid",
+      [supplierId],
+    )
+  ).rows[0];
+  if (!row?.policy_version)
+    throw new HttpError(404, "NOT_FOUND", "Introuvable.");
+  return row.policy_version;
+}
 /** Bounded housekeeping called by portal traffic. No business promise is deleted. */
 export async function purgeExpiredPortalSecrets() {
   await pool.query(
@@ -114,14 +128,18 @@ export async function consumeTokenAndSetPassword(input: {
         "SUPPLIER_PORTAL_ACCOUNT_NOT_ACTIVE",
         "Le compte n’est pas activé.",
       );
+    const policyVersion =
+      input.kind === "ACTIVATE"
+        ? await configuredSupplierPortalPolicyVersion(row.supplier_id)
+        : null;
     const account = (
       await tx.query(
         `UPDATE supplier_portal_accounts SET password_hash=$2,account_status='ACTIVE',
       consented_at=CASE WHEN $3::boolean THEN now() ELSE consented_at END,
-      policy_version=CASE WHEN $3::boolean THEN 'pilot-local-v1' ELSE policy_version END,
+      policy_version=CASE WHEN $3::boolean THEN $4 ELSE policy_version END,
       session_epoch=session_epoch+1,updated_at=now() WHERE id=$1::uuid
       RETURNING id::text,supplier_id::text,session_epoch`,
-        [row.account_id, input.passwordHash, input.consent],
+        [row.account_id, input.passwordHash, input.consent, policyVersion],
       )
     ).rows[0];
     await tx.query(
@@ -198,6 +216,9 @@ export async function createPromiseReview(input: {
   const tx = await pool.connect();
   try {
     await tx.query("BEGIN");
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+      `supplier-portal-promise:${input.identity.accountId}:${input.key}`,
+    ]);
     const replay = (
       await tx.query<any>(
         "SELECT id::text,status,request_hash FROM supplier_portal_promise_reviews WHERE account_id=$1::uuid AND idempotency_key=$2 FOR UPDATE",

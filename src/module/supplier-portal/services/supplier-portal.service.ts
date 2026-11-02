@@ -82,7 +82,9 @@ export const context = async (identity: SupplierPortalIdentity) => ({
   supplier_id: identity.supplierId,
   mode: "PILOT_ISOLATED",
   promises: "REVIEW_ONLY",
-  policy_version: "pilot-local-v1",
+  policy_version: await repo.configuredSupplierPortalPolicyVersion(
+    identity.supplierId,
+  ),
 });
 export const orders = (identity: SupplierPortalIdentity) =>
   repo.listPortalOrders(identity);
