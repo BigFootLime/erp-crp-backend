@@ -673,7 +673,7 @@ async function listProjection(viewName: string, identity: ClientPortalIdentity, 
                    JOIN public.commande_client order_header ON order_header.id=invoice.commande_id
                    JOIN public.client_portal_delivery_site_bindings binding
                      ON binding.delivery_address_id=order_header.destinataire_id
-                  WHERE invoice.id=projection.id::uuid
+                  WHERE invoice.id=projection.id::bigint
                     AND binding.account_id=$2::uuid)`;
   const count = await pool.query<{ total: number }>(
     `SELECT count(*)::int AS total FROM public.${viewName} projection WHERE projection.client_id=$1 AND ${scope}`,

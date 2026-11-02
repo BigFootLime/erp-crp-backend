@@ -63,10 +63,10 @@ describe("client portal repository tenant isolation", () => {
   });
 
   it.each([
-    ["orders", repoListPortalOrders],
-    ["deliveries", repoListPortalDeliveries],
-    ["invoices", repoListPortalInvoices],
-  ] as const)("always binds the authenticated client for %s", async (_label, loader) => {
+    ["orders", repoListPortalOrders, "order_header.id=projection.id::bigint"],
+    ["deliveries", repoListPortalDeliveries, "delivery.id=projection.id::uuid"],
+    ["invoices", repoListPortalInvoices, "invoice.id=projection.id::bigint"],
+  ] as const)("always binds the authenticated client for %s", async (_label, loader, sourceDocument) => {
     mocked.query
       .mockResolvedValueOnce({ rows: [{ total: 0 }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -74,6 +74,7 @@ describe("client portal repository tenant isolation", () => {
     expect(mocked.query).toHaveBeenCalledTimes(2);
     for (const [sql, values] of mocked.query.mock.calls) {
       expect(String(sql)).toContain("WHERE projection.client_id=$1 AND EXISTS");
+      expect(String(sql)).toContain(sourceDocument);
       expect(String(sql)).toContain("public.client_portal_delivery_site_bindings binding");
       expect(String(sql)).toContain("binding.account_id=$2::uuid");
       expect(values.slice(0, 2)).toEqual([identity.clientId, identity.accountId]);
