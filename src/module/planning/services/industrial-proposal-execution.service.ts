@@ -30,6 +30,38 @@ type Run = {
   source_digest: string;
   result: IndustrialResult;
 };
+
+type YieldAwareProposal = IndustrialProposal & {
+  required_good_quantity?: number;
+  expected_good_quantity?: number;
+  yield_percent?: number;
+};
+
+/** Persist the calculation's immutable output semantics alongside the OF link.
+ * Do not infer them later from mutable article settings.  Older proposals have
+ * no token and deliberately retain legacy read-model behaviour. */
+export function industrialProposalSnapshot(proposal: IndustrialProposal) {
+  const source = proposal as YieldAwareProposal;
+  const required = source.required_good_quantity;
+  const expected = source.expected_good_quantity;
+  const yieldPercent = source.yield_percent;
+  if (
+    ![required, expected, yieldPercent].every(
+      (value) =>
+        typeof value === "number" && Number.isFinite(value) && value > 0,
+    ) ||
+    yieldPercent! > 100 ||
+    expected! > proposal.quantity + Number.EPSILON
+  )
+    return null;
+  return {
+    coverage_semantics: "GOOD_OUTPUT_V1" as const,
+    launched_quantity: proposal.quantity,
+    required_good_quantity: required!,
+    expected_good_quantity: expected!,
+    yield_percent: yieldPercent!,
+  };
+}
 const unsafe = (
   p: IndustrialProposal,
   result: IndustrialResult,
@@ -129,6 +161,17 @@ async function launchContractProposal(
   key: string,
   audit: AuditContext,
 ) {
+  const yieldSnapshot = industrialProposalSnapshot(p);
+  if (
+    yieldSnapshot &&
+    yieldSnapshot.expected_good_quantity + Number.EPSILON < p.quantity
+  ) {
+    return {
+      reason:
+        "Le rendement impose une quantité lancée supérieure au besoin conforme. " +
+        "La préparation contractuelle ne peut pas absorber cet excédent sans décision explicite.",
+    } as const;
+  }
   const owner = (
     await tx.query<{ contract_id: string }>(
       `SELECT contract_id::text FROM public.client_contract_lines WHERE id=$1::uuid AND active FOR SHARE`,
@@ -365,7 +408,10 @@ async function executeIndustrialProposalsOnce(
               "OF créé par le lancement canonique de réapprovisionnement contractuel.",
             targetType: "OF",
             targetId: String(root.root_of_id),
-            result: contract.launched,
+            result: {
+              ...contract.launched,
+              industrial_proposal: industrialProposalSnapshot(proposal),
+            },
           });
           outcomes.push({
             proposal_index: index,
@@ -424,6 +470,7 @@ async function executeIndustrialProposalsOnce(
           result: {
             root_of_id: generated.root_of_id,
             batch_id: generated.batch_id,
+            industrial_proposal: industrialProposalSnapshot(proposal),
           },
         });
         outcomes.push({

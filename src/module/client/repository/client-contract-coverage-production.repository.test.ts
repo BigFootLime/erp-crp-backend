@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import { remainingIndustrialGoodOutput } from "./client-contract-coverage-production.repository";
+
+describe("yield-aware industrial OF coverage", () => {
+  const tagged = {
+    coverage_semantics: "GOOD_OUTPUT_V1" as const,
+    expected_good_quantity: 104,
+    yield_percent: 80,
+  };
+
+  it("credits only the expected good output, not the gross launched quantity", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "0",
+        good: "0",
+        scrap: "0",
+        semantics: tagged,
+      }).toString(),
+    ).toBe("104000000000000");
+  });
+
+  it("does not deduct the same real output twice when lots and OF good quantity agree", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "10",
+        good: "10",
+        scrap: "0",
+        semantics: tagged,
+      }).toString(),
+    ).toBe("94000000000000");
+  });
+
+  it("removes definitive scrap once from raw work before applying the yield", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "0",
+        good: "0",
+        scrap: "5",
+        semantics: tagged,
+      }).toString(),
+    ).toBe("100000000000000");
+  });
+
+  it("preserves legacy OF coverage when no immutable industrial token exists", () => {
+    expect(
+      remainingIndustrialGoodOutput({
+        launched: "130",
+        received: "10",
+        good: "10",
+        scrap: "5",
+        semantics: null,
+      }).toString(),
+    ).toBe("115000000000000");
+  });
+});
