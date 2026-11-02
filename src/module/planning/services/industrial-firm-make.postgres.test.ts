@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { authorizationRole } from "../../auth/domain/roles";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
 import { createPilotFixtureArticle } from "../../../__tests__/fixtures/demand-pilot.fixture";
@@ -35,7 +36,8 @@ let beforePlanning: { activation: string; workshop_calendar_id: string | null };
 let beforeMaterialWorkflow = false;
 let beforeProductionWorkbench = false;
 const audit = (): AuditContext => ({ user_id: actor, role: "Directeur", ip: null, user_agent: null, device_type: null, os: null, browser: null, path: "/planning/industrial", page_key: "planning.industrial", client_session_id: null });
-const technicalAudit = (): AuditContext => ({ ...audit(), user_id: technicalActor, role: "Method | Responsable Programmation" });
+const technicalRole = authorizationRole("Employee", ["Employee", "Études-Méthodes"]);
+const technicalAudit = (): AuditContext => ({ ...audit(), user_id: technicalActor, role: technicalRole });
 async function waitRun(id: string) {
   for (let index = 0; index < 12; index++) {
     const run = await industrialRunById(id);
@@ -125,7 +127,7 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     await repoRunCommandeWorkflowAction(order.id, { action: "start_analysis", commentaire: "Recette secrétaire" }, secretaryActor, "Secretaire");
     await repoRunCommandeWorkflowAction(order.id, { action: "request_stock_check", commentaire: "Contrôle OLD/NEW demandé" }, secretaryActor, "Secretaire");
     const stock = await repoAnalyzeCommandeStock(order.id, {
-      user_id: technicalActor, user_role: "Method | Responsable Programmation", ip: null, user_agent: null,
+      user_id: technicalActor, user_role: technicalRole, ip: null, user_agent: null,
       device_type: null, os: null, browser: null, path: "/commandes/stock", page_key: "commandes.stock", client_session_id: null,
     });
     expect(stock?.suggested_scenario).toBe("LIVRAISON_AND_OF");
@@ -170,7 +172,7 @@ describe.skipIf(!isolated)("firm demand to technically validated OF", () => {
     expect(replay.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ status: "EXECUTED", target_type: "OF", target_id: String(ofId) })]));
     // The native OF editor can change a draft without overwriting the customer demand.
     const draft = await repoGetOrdreFabrication({ id: ofId, user_id: actor });
-    const editAudit = { ...audit(), user_role: "Production" };
+    const editAudit = { ...technicalAudit(), user_role: technicalRole };
     const adjusted = await repoUpdateOrdreFabrication({ id: ofId, audit: editAudit,
       patch: { quantite_lancee: launchQuantity + 8, expected_updated_at: draft!.updated_at } });
     expect(adjusted?.quantite_lancee).toBe(launchQuantity + 8);

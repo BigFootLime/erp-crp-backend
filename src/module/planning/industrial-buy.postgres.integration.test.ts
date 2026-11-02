@@ -375,12 +375,12 @@ describe.skipIf(!enabled)(
         .get(`/commandes-fournisseurs/${orderId}/official-documents`)
         .expect(200);
       expect(queued.body.state).toBe("PENDING");
-      expect(
-        await runAuthoritativePdfArchiveWorkerOnce(),
-      ).toBeGreaterThanOrEqual(1);
-      const issued = await api
-        .get(`/commandes-fournisseurs/${orderId}/official-documents`)
-        .expect(200);
+      // Each worker batch can contain documents from earlier OFs or delivery affairs.
+      let issued = queued;
+      for (let batch = 0; batch < 30 && issued.body.state === "PENDING"; batch++) {
+        if (await runAuthoritativePdfArchiveWorkerOnce() === 0) break;
+        issued = await api.get(`/commandes-fournisseurs/${orderId}/official-documents`).expect(200);
+      }
       expect(issued.body).toMatchObject({
         state: "READY",
         latest_document: { state: "ISSUED" },
