@@ -1,6 +1,11 @@
 import { z } from "zod";
 const uuid = z.string().guid();
 const reason = z.string().trim().min(3).max(2000);
+export const operationProgrammingSchema = z.object({
+  expected_updated_at: z.string().min(1), operation_id: uuid,
+  operation_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  estimated_hours: z.number().finite().positive().max(10000),
+}).strict();
 export const worklistQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
   queue: z
@@ -30,6 +35,7 @@ const requirement = z.discriminatedUnion("mode", [
 ]);
 export const preparationDecisionsSchema = z
   .object({
+    part_variant: z.string().trim().max(160).nullable().optional(),
     material: requirement.optional(),
     treatment: requirement.optional(),
     subcontract: requirement.optional(),

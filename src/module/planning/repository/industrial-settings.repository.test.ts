@@ -26,6 +26,24 @@ function dbForSettings() {
 }
 
 describe("industrial settings yield qualification", () => {
+  it('rejects a stale contract edit before writing its reserve or risk policy',async()=>{
+    const rule={contract_line_id:articleId,reference:'CONTRAT',configured_code:'VS-42',min_stock:10,max_stock:100,committed_forecast:false,use_history:false,risk_limit_eur:500};
+    const db={query:vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce({rows:[rule],rowCount:1})};
+    const body=industrialSettingsSchema.parse({client_id:'042',articles:[],contracts:[{contract_line_id:articleId,min_stock:20,max_stock:100,committed_forecast:false,use_history:false,risk_limit_eur:500,expected:{min_stock:0,max_stock:100,committed_forecast:false,use_history:false,risk_limit_eur:500}}]});
+    await expect(updateIndustrialSettings(db as never,7,body)).rejects.toMatchObject({status:409,code:'CONTRACT_RULES_CHANGED'});
+    expect(db.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('can configure a draft contract without changing the article or activating the contract',async()=>{
+    const rule={contract_line_id:articleId,reference:'CONTRAT',configured_code:'VS-42',min_stock:0,max_stock:0,committed_forecast:false,use_history:false,risk_limit_eur:null};
+    const db={query:vi.fn().mockResolvedValueOnce(empty).mockResolvedValueOnce({rows:[rule],rowCount:1}).mockResolvedValue(empty)};
+    const {min_stock,max_stock,committed_forecast,use_history,risk_limit_eur}=rule;
+    await updateIndustrialSettings(db as never,7,industrialSettingsSchema.parse({client_id:'042',articles:[],contracts:[{contract_line_id:articleId,min_stock,max_stock:100,committed_forecast,use_history,risk_limit_eur,expected:{min_stock,max_stock,committed_forecast,use_history,risk_limit_eur}}]}));
+    const statements=db.query.mock.calls.map(call=>String(call[0]));
+    expect(statements[1]).toContain("c.status IN ('DRAFT','ACTIVE')");
+    expect(statements.some(sql=>sql.includes('INSERT INTO public.industrial_contract_rules'))).toBe(true);
+    expect(statements.some(sql=>sql.includes('UPDATE public.client_contracts')||sql.includes('INSERT INTO public.industrial_article_rules'))).toBe(false);
+  });
   it("keeps an omitted yield absent instead of defaulting it to an approved 100%", () => {
     const parsed = industrialSettingsSchema.parse({
       client_id: "042",

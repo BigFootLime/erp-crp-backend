@@ -1,5 +1,20 @@
 # Préparation Production et regroupements — exploitation #712
 
+## Modification préparée le 3 novembre 2026 — MD07-E et temps par opération
+
+Deux routes supplémentaires sous `/api/v1/production/ofs/:id/workbench` réutilisent l’authentification et la capacité `edit_prelaunch` :
+
+| Route POST | Corps | Résultat |
+|---|---|---|
+| `inspection-template` | `expected_updated_at` | Classeur XLSX MD07-E contenant l’identité de l’OF ; aucune création de fiche READY ni validation qualité |
+| `operation-programming` | `expected_updated_at`, `operation_id` UUID, `operation_hash` SHA-256, `estimated_hours` positif ≤ 10000 | Dossier réévalué ; estimation enregistrée dans `technical_preparation.operation_programming` |
+
+Les estimations ne modifient ni les opérations techniques ni le statut de réalisation de la tâche CN. L’OF est verrouillé pendant l’écriture ; une version périmée, un dossier figé ou une opération étrangère/modifiée est refusé. Le modèle est embarqué dans le backend, sans dépendance au lecteur Z en exploitation. Les chaînes commerciales sont écrites comme texte Excel, jamais comme formules. Les révisions historiques des fiches déjà produites ne sont pas réécrites.
+
+Les rubriques autocontrôle, stock et programmation sont réunies côté Qualité. Les exigences historiques du contrôle restent opposables dans la fiche d’autocontrôle. Le modèle vierge généré doit être complété puis importé et passer les contrôles GED ; il ne suffit pas à autoriser une fabrication. Le métier a confirmé que Type (variation) désigne la variante physique de la pièce. Elle se renseigne dans `piece_version_preparation.decisions.part_variant` (texte facultatif, 160 caractères maximum), via le parcours de préparation existant avec contrôle de concurrence. Les fiches reprennent cette valeur, vide si absente ; aucun recours au type de changement de la révision. Les OF figés conservent leurs décisions capturées et les anciennes fiches ne sont pas réécrites.
+
+Aucun patch SQL nécessaire. Recette locale ciblée : 23 tests backend, 16 tests frontend, un parcours Chromium avec API simulées, compilation TypeScript, build web et inventaire HTTP. Ce lot n’a pas fait l’objet d’une nouvelle publication ni d’une recette PostgreSQL opérationnelle.
+
 ## Correction de recette du 7 octobre 2026 — #838
 
 La sélection d’une révision pour un OF brouillon écrit uniquement `technical_preparation.selected_version_id`. L’évaluation et la validation lisent cette sélection ; les quatre champs du snapshot physique restent vides jusqu’au gel atomique du dossier. L’écriture anticipée de `piece_technique_version_id` produisait une erreur SQLSTATE 55000, car une identité seule constitue un snapshot incomplet. Aucun trigger ni checksum de migration ne change. La concurrence, l’appartenance de la version à la pièce et l’interdiction de modifier un dossier figé sont conservées.

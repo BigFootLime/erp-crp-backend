@@ -27,7 +27,7 @@ export async function getIndustrialSettings(
       `SELECT l.id AS contract_line_id,c.reference,l.configured_code,COALESCE(r.min_stock,0)::float8 AS min_stock,
  COALESCE(r.max_stock,0)::float8 AS max_stock,COALESCE(r.committed_forecast,false) AS committed_forecast,COALESCE(r.use_history,false) AS use_history,r.risk_limit_eur::float8
  FROM public.client_contract_lines l JOIN public.client_contracts c ON c.id=l.contract_id LEFT JOIN public.industrial_contract_rules r ON r.contract_line_id=l.id
- WHERE c.client_id=$1 AND c.status='ACTIVE' AND l.active ORDER BY c.reference,l.configured_code,l.id LIMIT 501`,
+ WHERE c.client_id=$1 AND c.status IN ('DRAFT','ACTIVE') AND l.active ORDER BY c.reference,l.configured_code,l.id LIMIT 501`,
       [clientId],
     )
   ).rows;
@@ -74,7 +74,10 @@ export async function updateIndustrialSettings(
         a.lot_size,
       ],
     );
-  for (const r of body.contracts)
+  for (const r of body.contracts) {
+    const previous=current.contracts.find(line=>line.contract_line_id===r.contract_line_id);
+    if (r.expected && Object.entries(r.expected).some(([key,value])=>previous?.[key]!==value))
+      throw new HttpError(409,'CONTRACT_RULES_CHANGED','Les conditions de ce contrat ont changé. Rechargez-les avant d’enregistrer.');
     await db.query(
       `INSERT INTO public.industrial_contract_rules(contract_line_id,min_stock,max_stock,committed_forecast,risk_limit_eur,use_history)
  VALUES($1,$2,$3,$4,$5,COALESCE($6,false)) ON CONFLICT(contract_line_id) DO UPDATE SET min_stock=excluded.min_stock,max_stock=excluded.max_stock,
@@ -88,6 +91,7 @@ export async function updateIndustrialSettings(
         r.use_history ?? null,
       ],
     );
+  }
   await db.query(
     "INSERT INTO public.industrial_policy_events(client_id,actor_id,snapshot) VALUES($1,$2,$3)",
     [

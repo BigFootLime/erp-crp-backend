@@ -16,6 +16,7 @@ import {
   type SelfInspectionSnapshot,
 } from "../services/self-inspection-pdf";
 import type { SelfInspectionIdentity } from "../services/self-inspection-workshop";
+import {renderSelfInspectionXlsx} from '../services/self-inspection-xlsx';
 import { readOfDocumentCommercial } from "./of-document-commercial.repository";
 
 /** Frozen part definition and exact commercial allocations, captured with the blank sheet. */
@@ -78,7 +79,8 @@ export async function generateSelfInspectionTx(
     source_hash: evaluation.sheet_hash,
     identity: await readSelfInspectionIdentity(tx, ofId),
     generated_at: new Date().toISOString(),
-    layout_version: "self-inspection/2.0",
+    layout_version: "MD07-E",
+    variation: evaluation.decisions.part_variant?.trim() || null,
   };
   await tx.query(
     `INSERT INTO public.of_self_inspection_sheets(of_id,piece_technique_version_id,quality_plan_id,source_hash,snapshot,state,created_by)
@@ -137,6 +139,25 @@ export async function repoGenerateSelfInspection(
   return withRealtimeOutboxTransaction(await pool.connect(), (tx) =>
     generateSelfInspectionTx(tx, ofId, expected, audit, true),
   );
+}
+
+/** First manufacture: a printable template is not published inspection evidence. */
+export async function repoGenerateInspectionTemplate(ofId:number, expected:string, audit:AuditContext) {
+  return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
+    const of = await loadPreparationOrder(tx,ofId,true);
+    assertExecutionEvidenceMutable(of,expected);
+    const evaluation = await evaluateOfPreparation(tx,ofId);
+    if (!evaluation.version) throw new HttpError(422,'INSPECTION_VERSION_REQUIRED','Sélectionnez la révision de la pièce.');
+    const identity = await readSelfInspectionIdentity(tx,ofId);
+    const snapshot:SelfInspectionSnapshot = {of,version:evaluation.version,identity,
+      plan:{code:'MD07-E',version:1,label:'Fiche d’autocontrôle'},characteristics:[],
+      source_hash:evaluation.sheet_hash,generated_at:new Date().toISOString(),layout_version:'MD07-E',header_only:true,
+      variation:evaluation.decisions.part_variant?.trim() || null};
+    const pdf = await renderSelfInspectionXlsx(snapshot);
+    await preparationAudit(tx,audit,ofId,'production.preparation.self-inspection.template',
+      {model:'MD07-E',piece_version_id:of.version_id,format:'xlsx',sha256:createHash('sha256').update(pdf).digest('hex')});
+    return pdf;
+  });
 }
 
 export async function repoDownloadSelfInspection(

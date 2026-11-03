@@ -1,4 +1,5 @@
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { readImprovementReturns } from "./improvement-returns.repository";
 import { importedInspection } from "../domain/imported-inspection";
@@ -79,6 +80,7 @@ export type PreparationOrder = {
   preparation_rules_version: number | null;
   version_selection_mode?: "AUTO" | "MANUAL";
   technical_preparation?: {
+    operation_programming?: Record<string, ProgrammingPreparation>;
     version_selection_mode?: "AUTO" | "MANUAL";
     execution_programming?: NonNullable<PreparationDecisions['programming']>;
     execution_quality?: Pick<TechnicalSources, 'quality_plan' | 'characteristics'>;
@@ -96,6 +98,8 @@ type TechnicalSources = {
     is_current: boolean;
     manufacturing_mode: string;
     indice: string;
+    indice_externe_original?: string | null;
+    version_interne?: number | null;
     updated_at: string;
     effective?: boolean;
     date_effet?: string | null;
@@ -419,9 +423,6 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     items.push({ key: "index_review", label: "Fiche d’amélioration continue", status: "MISSING", required: false,
       detail: "Retour de production à consulter pour cette pièce.", scope: "VERSION" });
   }
-  const sharedReady = isPreparationReady(
-    items.filter((i) => i.scope === "VERSION"),
-  );
   const programmingTask =
     (
       await tx.query(
@@ -464,7 +465,29 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       [id],
     )
   ).rows[0];
+  const centreRows = (await tx.query<{id:string; label:string}>(
+    `SELECT id::text, concat_ws(' ',code,designation,type_cf) AS label FROM public.centres_frais WHERE id::text=ANY($1::text[])`,
+    [sources.operations.map(op => op.cf_id).filter(Boolean)])).rows;
+  const centres = new Map(centreRows.map(row => [row.id, row.label]));
+  const programmingOperations = sources.operations.filter(op => needsProgramming(op, centres)).map(op => {
+    const saved = of.technical_preparation?.operation_programming?.[op.id];
+    const current = programmingPreparationCurrent(op, of.version_id, saved);
+    return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
+      estimated_hours: current ? saved!.estimated_hours : null, status: current ? 'PREPARED' as const : 'TODO' as const};
+  });
+  const programmingItem = items.find(item => item.key === 'programming');
+  if (programmingItem && programmingOperations.length) {
+    const prepared = programmingOperations.filter(op => op.status === 'PREPARED');
+    programmingItem.detail = `${prepared.length}/${programmingOperations.length} opérations préparées · ${prepared.reduce((sum,op)=>sum+(op.estimated_hours??0),0)} h prévues. La réalisation du programme CN reste à confirmer avant usinage.`;
+    // Estimates belong to the OF and do not replace legacy mandatory program evidence.
+    if (!programmingItem.required && programmingItem.status !== 'BLOCKED') {
+      programmingItem.scope = 'OF';
+      programmingItem.status = prepared.length === programmingOperations.length ? 'READY' : 'MISSING';
+    }
+  }
+  const sharedReady = isPreparationReady(items.filter(item => item.scope === 'VERSION'));
   return {
+    programming_operations: programmingOperations,
     of: {
       ...of,
       // Existing drafts predate the flag and deliberately follow the

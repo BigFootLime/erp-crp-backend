@@ -79,6 +79,7 @@ export const industrialSettingsSchema = z
             committed_forecast: z.boolean(),
             use_history: z.boolean().optional(),
             risk_limit_eur: z.number().nonnegative().max(1e12).nullable(),
+            expected: z.object({min_stock:z.number(),max_stock:z.number(),committed_forecast:z.boolean(),use_history:z.boolean(),risk_limit_eur:z.number().nullable()}).strict().optional(),
           })
           .strict()
           .refine(

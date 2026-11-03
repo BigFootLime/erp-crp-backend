@@ -1,5 +1,14 @@
 # Changelog
 
+## Livraison CERP 2.0.52 — modèle MD07-E et programmation par opération (3 novembre 2026)
+
+- Le champ Type (variation) lit la variante physique `part_variant` des décisions de préparation de la révision ; il ne dérive jamais du type de changement Évolution/Modification. Les décisions et documents des OF figés sont préservés.
+
+- Génère un classeur Excel MD07-E avec l’identité de l’OF, l’indice et la version. Les champs sont écrits comme texte, le modèle garde ses zones d’impression et n’est jamais une preuve de conformité.
+- Enregistre les estimations de programmation par opération de fraisage/tournage avec contrôle du dossier, de la révision et de l’empreinte de l’opération. Un OF annulé, planifié ou figé refuse la modification.
+- Autorise la préparation des conditions industrielles d’un contrat brouillon et détecte les modifications concurrentes depuis la fiche client. Cela n’active pas le contrat.
+- Deux routes authentifiées ajoutées à l’inventaire HTTP ; aucun patch de base nécessaire. Livraison fondée sur les vérifications ciblées déjà réalisées, sans relance de la campagne complète à la demande du responsable.
+
 ## En recette — commandes ouvertes et dépôts CARCO
 
 - Une ouverture sur contrat actif conserve le numéro du cadre, la version du contrat et l’auteur. Les ouvertures simultanées retrouvent le même dossier. Les appels fermes et les OF suivent leurs circuits existants.
