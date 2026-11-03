@@ -5,6 +5,9 @@ import { HttpError } from "../../../utils/httpError";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import {
   recordCarco,
+  listCarcoDeposits,
+  bindReviewContract,
+  qualifyOpenSchedule,
   getCarco,
   submitCarco,
   bindCarco,
@@ -20,6 +23,19 @@ function scope(raw: unknown) {
   const fields = scopeFields.parse(raw);
   return { clientId: fields.client_id, site: fields.external_site };
 }
+router.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const query = z
+      .object({
+        client_id: scopeFields.shape.client_id.optional(),
+        page: z.coerce.number().int().min(1).max(100000).default(1),
+      })
+      .strict()
+      .parse(req.query);
+    res.json(await listCarcoDeposits(query.client_id ?? null, query.page));
+  }),
+);
 router.post(
   "/",
   createSecureUpload("import-tabular", { storage: "memory" }).single("file"),
@@ -44,6 +60,43 @@ router.post(
       input.source_as_of,
       input.complete_snapshot === "true",
       req.file,
+      req.user!.id,
+    );
+    res.json(await getCarco(s, id));
+  }),
+);
+router.post(
+  "/:id/contract",
+  asyncHandler(async (req, res) => {
+    const s = scope(req.body),
+      id = z.string().uuid().parse(req.params.id);
+    await bindReviewContract(
+      s,
+      id,
+      z.string().uuid().parse(req.body.contract_id),
+      req.user!.id,
+    );
+    res.json(await getCarco(s, id));
+  }),
+);
+router.post(
+  "/:id/qualification",
+  asyncHandler(async (req, res) => {
+    const s = scope(req.body),
+      id = z.string().uuid().parse(req.params.id);
+    const input = z
+      .object({
+        row_number: z.number().int().positive(),
+        kind: z.enum(["FIRM", "FORECAST"]),
+        schedule_key: z.string().trim().min(1).max(160),
+      })
+      .parse(req.body);
+    await qualifyOpenSchedule(
+      s,
+      id,
+      input.row_number,
+      input.kind,
+      input.schedule_key,
       req.user!.id,
     );
     res.json(await getCarco(s, id));

@@ -37,7 +37,7 @@ export async function assertDemandSiteAccess(
   site: string,
 ) {
   const allowed = await tx.query(
-    `SELECT 1 FROM public.client_portal_accounts a JOIN public.client_portal_demand_sites s ON s.portal_account_id=a.id WHERE a.id=$1::uuid AND a.client_id=$2 AND a.status='ACTIVE' AND s.external_site=$3 FOR SHARE`,
+    `SELECT 1 FROM public.client_portal_accounts a JOIN public.client_portal_demand_sites s ON s.portal_account_id=a.id WHERE a.id=$1::uuid AND a.client_id=$2 AND a.status='ACTIVE' AND s.external_site=$3 FOR SHARE OF a`,
     [accountId, clientId, site],
   );
   if (!allowed.rowCount)
@@ -131,7 +131,7 @@ export async function resolveDemandRow(
       await tx.query(
         `SELECT 1 FROM public.client_contracts c JOIN public.client_contract_lines l ON l.contract_id=c.id
          JOIN public.units u ON u.id=l.unit_id WHERE c.id=$1::uuid AND c.client_id=$2 AND c.status='ACTIVE' AND l.id=$3::uuid
-         AND l.article_id=$4::uuid AND lower(u.code)=lower($5) AND (c.valid_from IS NULL OR c.valid_from<=$6::date)
+         AND l.active AND l.article_id=$4::uuid AND lower(u.code)=lower($5) AND (c.valid_from IS NULL OR c.valid_from<=$6::date)
          AND (c.valid_until IS NULL OR c.valid_until>=$6::date) FOR SHARE`,
         [row.contract_id, clientId, row.contract_line_id, resolved.id, resolved.unite, row.need_date],
       )
@@ -146,7 +146,7 @@ export async function resolveDemandRow(
   if (row.contract_reference && (!row.contract_id || !row.contract_line_id)) {
     const candidates = (
       await tx.query(
-        `SELECT c.id::text contract_id,l.id::text contract_line_id FROM public.client_contracts c JOIN public.client_contract_lines l ON l.contract_id=c.id JOIN public.units u ON u.id=l.unit_id WHERE c.client_id=$1 AND c.reference=$2 AND c.status='ACTIVE' AND l.article_id=$3::uuid AND lower(u.code)=lower($4) AND (c.valid_from IS NULL OR c.valid_from<=$5::date) AND (c.valid_until IS NULL OR c.valid_until>=$5::date) FOR SHARE`,
+        `SELECT c.id::text contract_id,l.id::text contract_line_id FROM public.client_contracts c JOIN public.client_contract_lines l ON l.contract_id=c.id JOIN public.units u ON u.id=l.unit_id WHERE c.client_id=$1 AND c.reference=$2 AND c.status='ACTIVE' AND l.active AND l.article_id=$3::uuid AND lower(u.code)=lower($4) AND (c.valid_from IS NULL OR c.valid_from<=$5::date) AND (c.valid_until IS NULL OR c.valid_until>=$5::date) FOR SHARE`,
         [
           clientId,
           row.contract_reference,
