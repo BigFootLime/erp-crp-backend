@@ -12,7 +12,31 @@ import {
   persistPreparationEvaluation,
   preparationAudit,
   invalidateCompatibleDrafts,
+  evaluateOfPreparation,
 } from "./production-preparation.repository";
+import type { z } from 'zod';
+import type { operationProgrammingSchema } from '../validators/production-workbench.validators';
+
+/** Estimate preparation effort per route operation. This never marks a CNC program DONE. */
+export async function repoPrepareOperationProgramming(id: number, input: z.infer<typeof operationProgrammingSchema>, audit: AuditContext) {
+  return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
+    const of = await loadPreparationOrder(tx, id, true);
+    assertPreparationMutable(of, input.expected_updated_at);
+    if (of.technical_snapshot_sha256) throw new HttpError(409, 'PROGRAMMING_PREPARATION_FROZEN', 'La préparation de cet OF est déjà validée.');
+    const evaluation = await evaluateOfPreparation(tx, id);
+    const operation = evaluation.programming_operations.find(op => op.operation_id === input.operation_id);
+    if (!of.version_id || !operation) throw new HttpError(422, 'PROGRAMMING_OPERATION_INVALID', 'Sélectionnez une opération de fraisage ou de tournage de cet OF.');
+    if (operation.operation_hash !== input.operation_hash) throw new HttpError(409, 'PROGRAMMING_OPERATION_CHANGED', 'La gamme a changé. Actualisez avant de préparer la programmation.');
+    const saved = {version_id: of.version_id, operation_hash: operation.operation_hash, estimated_hours: input.estimated_hours,
+      prepared_at: new Date().toISOString(), prepared_by: audit.user_id};
+    await tx.query(`UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2,
+      technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('operation_programming',
+        COALESCE(technical_preparation->'operation_programming','{}'::jsonb)||jsonb_build_object($3::text,$4::jsonb)) WHERE id=$1`,
+      [id,audit.user_id,input.operation_id,JSON.stringify(saved)]);
+    await preparationAudit(tx,audit,id,'production.preparation.operation-programming.prepare',{operation_id:input.operation_id,...saved});
+    return persistPreparationEvaluation(tx,id);
+  });
+}
 export async function repoSynchronizePreparationChildren(
   id: number,
   expected: string,

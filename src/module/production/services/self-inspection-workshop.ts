@@ -56,8 +56,8 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
     designVersion: "structured-v5",
     documentType: "Fiche d’autocontrôle",
     name: snapshot.of.numero,
-    code: `${snapshot.plan.code} / v${snapshot.plan.version}`,
-    status: "Fiche vierge",
+    code: snapshot.layout_version === 'MD07-E' ? 'MD07-E' : `${snapshot.plan.code} / v${snapshot.plan.version}`,
+    status: snapshot.header_only ? 'À compléter' : "Fiche vierge",
     generatedAt: new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris" }).format(createdAt),
     creationDate: createdAt,
     title: `Fiche d’autocontrôle - ${snapshot.of.numero}`,
@@ -66,10 +66,15 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
   }, (ctx) => {
     renderWorkshopBoxes(ctx, [
       { title: "Fabrication", columns: 2, fields: [
+        ...(snapshot.layout_version === 'MD07-E' ? [{ label: "Numéro d’OF", value: snapshot.of.numero, prominent: true }] : []),
         { label: "Code client", value: identity?.client_code ?? null },
         { label: "Affaire de livraison", value: identity?.affairs.join("\n") || (identity?.scope === "INTERNAL" ? "Fabrication interne" : identity?.scope === "ASSEMBLY" ? "Sous-pièce de montage" : null) },
         { label: "Quantité lancée", value: `${quantity(snapshot.of.quantite_lancee)} pièces`, prominent: true },
-        { label: "Indice", value: snapshot.version.indice, prominent: true },
+        { label: "Indice", value: snapshot.version.indice_externe_original ?? snapshot.version.indice, prominent: true },
+        ...(snapshot.layout_version === 'MD07-E' ? [
+          { label: "Version", value: snapshot.version.version_interne == null ? null : String(snapshot.version.version_interne) },
+          { label: "Type (variation)", value: snapshot.variation ?? null },
+        ] : []),
       ] },
       { title: "Pièce", fields: [
         { label: "Référence", value: identity?.reference ?? null },
@@ -87,7 +92,7 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
         { key: "last", label: "Dernière pièce", flex: 1.2 },
         { key: "notes", label: "Observations", flex: 1.7 },
       ],
-      rows: snapshot.characteristics.map((c) => ({
+      rows: snapshot.header_only ? Array.from({length:8}, () => ({cells:{requirement:'',first:'',instrument:'',sampling:'',last:'',notes:''}})) : snapshot.characteristics.map((c) => ({
         cells: { requirement: inspectionRequirement(c), first: "", instrument: "", sampling: inspectionSampling(c), last: "", notes: "" },
         continuationLabel: `Suite - ${text(c.characteristic_key) || text(c.label) || "contrôle"}`,
       })),
@@ -106,6 +111,7 @@ export async function renderSelfInspectionWorkshop(snapshot: SelfInspectionSnaps
       rows: [{ cells: { operation: "", machine: "", good: "", scrap: "", date: "", visa: "" } }],
     });
     renderWorkshopWritingArea(ctx, "Observations / modification de programme");
+    if (snapshot.header_only) ctx.notes('En-tête prérempli. Renseigner les cotes, les tolérances, les moyens et la fréquence de contrôle avant utilisation en fabrication.');
     ctx.notes("Un changement de programme impose un nouveau contrôle de première pièce. Mode papier : scan obligatoire de la fiche renseignée, rattaché à l’OF et à l’opération, sans ressaisie des mesures. La libération qualité reste distincte.");
   });
 }

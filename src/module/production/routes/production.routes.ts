@@ -1,4 +1,6 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {prepareOperationProgramming} from '../controllers/production-workbench.controller';
+import {generateInspectionTemplate} from '../controllers/production-workbench.controller';
 import { generateContractReplenishment } from '../controllers/contract-replenishment.controller';
 import { readAssemblyComponents, issueAssemblyComponents, readAssemblyWithdrawals, previewAssemblyReturn, submitAssemblyReturn } from '../controllers/assembly-component-consumption.controller';
 import {readComponentCoverage,readSupplierQualification,readSupplierRecommendations} from '../controllers/of-material.controller';
@@ -290,6 +292,8 @@ router.post('/ofs/:id/workbench/version',requireOfCapability('edit_prelaunch'),s
 router.post('/ofs/:id/workbench/stock-review',requireOfCapability('edit_prelaunch'),reviewPreparationStock);
 router.post('/ofs/:id/workbench/stock-reuse',requireOfCapability('quality_decision'),reusePreparationStock);
 router.post('/ofs/:id/workbench/self-inspection',requireOfCapability('edit_prelaunch'),generateSelfInspection);
+router.post('/ofs/:id/workbench/inspection-template',requireOfCapability('edit_prelaunch'),generateInspectionTemplate);
+router.post('/ofs/:id/workbench/operation-programming',requireOfCapability('edit_prelaunch'),prepareOperationProgramming);
 router.get('/ofs/:id/workbench/self-inspection/:sheetId',requireOfCapability('read'),downloadSelfInspection);
 router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfGeneration);
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
