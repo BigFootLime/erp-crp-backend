@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "25f0c8fc0dd2b7ea3ac239828a39167632900854f0083e3d83fadeaaf7f1dd80";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "69de1c74d3ddf65ca0466d4dbceb61c00dd4fb4d5695457afcdd45b5a019d2ca";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -8386,7 +8386,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:71",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:75",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8404,7 +8404,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:78",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8422,7 +8422,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/{finishId}",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:99",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:103",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8439,7 +8439,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/finitions/{finishId}",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:101",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:105",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8457,7 +8457,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/{finishId}/archive",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:116",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:120",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8475,7 +8475,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/finitions/{finishId}/favori",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:112",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:116",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8492,7 +8492,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/{finishId}/favori",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:111",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:115",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8509,7 +8509,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/{finishId}/historique",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:130",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:134",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8527,7 +8527,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/{finishId}/reactivate",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:122",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:126",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8545,7 +8545,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/{finishId}/revisions",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:137",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:141",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8563,7 +8563,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/capabilities",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:51",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:53",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8578,7 +8578,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/familles",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:53",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:55",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8595,7 +8595,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/familles",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:54",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:56",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8612,8 +8612,26 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "patch",
+    "path": "/finitions/familles/{familyCode}",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:63",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "requireSurfaceFinishCapability(library_draft_write)",
+      "validate(updateFinishFamilyBodySchema)",
+      "updateFinishFamily"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireSurfaceFinishCapability(library_draft_write)"
+    ]
+  },
+  {
+    "method": "patch",
     "path": "/finitions/revisions/{revisionId}",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:144",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:148",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8631,7 +8649,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/revisions/{revisionId}/documents",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:162",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:166",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8648,7 +8666,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/revisions/{revisionId}/documents",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:164",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:168",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8666,7 +8684,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/revisions/{revisionId}/impact",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:160",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:164",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8683,7 +8701,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/revisions/{revisionId}/transition",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:153",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:157",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8701,7 +8719,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/finitions/similaires",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:64",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:68",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8719,7 +8737,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/stock-article/confirm",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:92",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:96",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -8737,7 +8755,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/finitions/stock-article/preview",
-    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:85",
+    "source": "src/module/surface-finish/routes/surface-finish.routes.ts:89",
     "middleware": [
       "anonymous",
       "authenticateToken",

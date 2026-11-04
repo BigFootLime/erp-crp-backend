@@ -12,6 +12,9 @@ import type {
 
 export type SurfaceFinishFamily = {
   code: string;
+  nom_diminutif?: string | null;
+  updated_at?: string;
+  legacy_code?: string | null;
   label: string;
   description: string | null;
   commentaire_template: string | null;

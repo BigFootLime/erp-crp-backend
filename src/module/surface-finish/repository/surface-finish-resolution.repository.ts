@@ -187,7 +187,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
             f.code                AS finish_code,
             f.designation_courte  AS finish_designation,
             f.family_code         AS finish_family,
-            f.procede             AS finish_procede,
+            fam.nom_diminutif     AS finish_procede,
             fam.commentaire_template AS family_commentaire_template,
             f.statut              AS finish_statut
      FROM public.surface_finish_revisions r
@@ -198,6 +198,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
   );
   const row = res.rows[0];
   if (!row) throw new HttpError(404, "NOT_FOUND", "Révision de finition introuvable.");
+  if (!row.finish_procede) throw new HttpError(422,"FAMILY_ABBREVIATION_REQUIRED","Configurez le nom diminutif de la famille de cette finition.");
   return {
     revision: mapRevision(row),
     finish: {
@@ -617,6 +618,7 @@ export async function repoPreviewStockFinishArticle(
 ): Promise<SurfaceFinishPreview> {
   const context = await loadStockContext(db, body.piece_technique_id, body.piece_technique_version_id);
   const { revision, finish } = await loadRevision(db, body.finish_revision_id);
+  if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
   const resolved = resolveOperationSpec(revision, body.overrides);
   const spec = buildCanonicalFinishSpec({
     piece_technique_version_id: context.piece_technique_version_id,
@@ -733,6 +735,7 @@ export async function repoConfirmStockFinishArticle(
 
     const context = await loadStockContext(client, body.piece_technique_id, body.piece_technique_version_id);
     const { revision, finish } = await loadRevision(client, body.finish_revision_id);
+    if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
     assertRevisionSelectable(revision.statut);
     const resolved = resolveOperationSpec(revision, body.overrides);
     const spec = buildCanonicalFinishSpec({
@@ -924,6 +927,7 @@ export async function repoPreviewOperationFinish(
 ): Promise<SurfaceFinishPreview> {
   const context = await loadContext(db, gammeId, operationId);
   const { revision, finish } = await loadRevision(db, body.finish_revision_id);
+  if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
 
   const resolved = resolveOperationSpec(revision, body.overrides);
   const spec = buildCanonicalFinishSpec({
@@ -1183,6 +1187,7 @@ export async function repoConfirmOperationFinish(
 
     /* 3) Révision active obligatoire. */
     const { revision, finish } = await loadRevision(client, body.finish_revision_id);
+    if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
     assertRevisionSelectable(revision.statut);
 
     /* 4) Recalcul serveur de la spécification et de l'empreinte. */

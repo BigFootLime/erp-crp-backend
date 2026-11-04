@@ -13,6 +13,7 @@ import {
   capabilitiesSVC,
   confirmOperationFinishSVC,
   createFinishFamilySVC,
+  updateFinishFamilySVC,
   createFinishDraftSVC,
   createRevisionSVC,
   detachOperationFinishSVC,
@@ -112,6 +113,10 @@ export const createFinishFamily: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const updateFinishFamily: RequestHandler = async (req,res,next) => {
+  try { res.json(await updateFinishFamilySVC(routeParam(req,"familyCode"),req.body,buildAuditContext(req))); } catch(error) { next(error); }
 };
 
 export const listFinishes: RequestHandler = async (req, res, next) => {

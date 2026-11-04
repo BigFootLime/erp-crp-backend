@@ -14,6 +14,7 @@ import {
   repoAttachRevisionDocument,
   repoCreateFinishDraft,
   repoCreateFinishFamily,
+  repoUpdateFinishFamily,
   repoCreateRevision,
   repoGetFinish,
   repoListFinishes,
@@ -44,6 +45,7 @@ import type {
   ArchiveFinishBodyDTO,
   AttachDocumentBodyDTO,
   CreateFinishFamilyBodyDTO,
+  UpdateFinishFamilyBodyDTO,
   ConfirmFinishBodyDTO,
   CreateFinishBodyDTO,
   DetachFinishBodyDTO,
@@ -84,6 +86,10 @@ export async function createFinishFamilySVC(
   audit: AuditContext
 ): Promise<SurfaceFinishFamily> {
   return repoCreateFinishFamily(body, audit);
+}
+
+export async function updateFinishFamilySVC(code: string, body: UpdateFinishFamilyBodyDTO, audit: AuditContext): Promise<SurfaceFinishFamily> {
+  return repoUpdateFinishFamily(code,body,audit);
 }
 
 export async function listFinishesSVC(

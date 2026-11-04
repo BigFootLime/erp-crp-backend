@@ -1,5 +1,10 @@
 # Changelog
 
+## En préparation — Identités des familles de finition (#1831)
+
+- Conserver le code de famille attribué par le serveur et son nom diminutif partagé ; vérifier la famille de finition lors des aperçus et confirmations.
+- Réintroduire la migration immuable requise par le dossier OF #1833 et ses supports de vérification. Aucun script n'est appliqué à la production par cette consolidation.
+
 ## En préparation — Dossier OF choisi et préparation (#1833)
 
 - Conserver le dossier technique choisi pour chaque OF, y compris pour les anciennes entrées AUTO : aucune révision technique ne déplace automatiquement cette sélection.
