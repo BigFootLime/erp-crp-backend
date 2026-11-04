@@ -407,8 +407,18 @@ export async function repoDecideReferenceChangeSet(
     const row = locked.rows[0];
     if (!row) throw new HttpError(404, "REFERENCE_CHANGE_SET_NOT_FOUND", "Proposition introuvable.");
     if (row.status !== "PENDING_APPROVAL") throw new HttpError(409, "REFERENCE_CHANGE_SET_NOT_PENDING", "Cette proposition a déjà reçu une décision.");
-    if (Number(row.proposed_by) === audit.user_id) {
-      throw new HttpError(403, "FOUR_EYES_APPROVAL_REQUIRED", "Le proposant ne peut pas approuver sa propre modification sensible.");
+    const selfDecision = Number(row.proposed_by) === audit.user_id;
+    let decisionDatabase: string | undefined;
+    if (selfDecision) {
+      // Resolve the actual transaction database; request headers and NODE_ENV
+      // cannot authorize an exception on a shared test/production API.
+      const context = await client.query<{ database_name: string }>(
+        "SELECT current_database()::text AS database_name"
+      );
+      decisionDatabase = context.rows[0]?.database_name;
+      if (decisionDatabase !== "cerp_test") {
+        throw new HttpError(403, "FOUR_EYES_APPROVAL_REQUIRED", "Le proposant ne peut pas approuver sa propre modification sensible en production.");
+      }
     }
     if (decision === "APPROVED") {
       await client.query(
@@ -429,7 +439,10 @@ export async function repoDecideReferenceChangeSet(
        VALUES ($1::uuid,$2,$3,$4,$5,$6)`,
       [changeSetId, decision, input.reason, audit.user_id, input.idempotency_key, requestHash]
     );
-    await insertAudit(client, audit, `reference_data.change_set.${decision.toLowerCase()}`, changeSetId, { reason: input.reason });
+    await insertAudit(client, audit, `reference_data.change_set.${decision.toLowerCase()}`, changeSetId, {
+      reason: input.reason,
+      ...(selfDecision ? { self_decision: true, database_name: decisionDatabase, actor_separation_policy: "TEST_SELF_APPROVAL" } : {}),
+    });
     const updated = await client.query(`SELECT ${CHANGE_SET_SELECT} FROM public.reference_data_change_sets WHERE id=$1::uuid`, [changeSetId]);
     await client.query("COMMIT");
     return { change_set: mapChangeSet(updated.rows[0]), replayed: false };
