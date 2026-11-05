@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1833 (1bf835bc)
+
+- Source originale : fix(methodes): link purchases to route operations and apply finish title (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Identités des familles de finition (#1831)
 
 - Conserver le code de famille attribué par le serveur et son nom diminutif partagé ; vérifier la famille de finition lors des aperçus et confirmations.

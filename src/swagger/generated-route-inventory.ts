@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "69de1c74d3ddf65ca0466d4dbceb61c00dd4fb4d5695457afcdd45b5a019d2ca";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "3ffe2b2f62bbc7a11b9174d24d9e971a65123a63feee7a322b7bb12e4cc3c646";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -14430,6 +14430,7 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "validate(achatIdParamSchema)",
       "validate(updateAchatSchema)",
+      "anonymous",
       "updateAchat"
     ],
     "authenticated": true,

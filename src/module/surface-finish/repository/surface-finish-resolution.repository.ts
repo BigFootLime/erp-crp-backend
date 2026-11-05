@@ -1477,6 +1477,8 @@ export async function repoConfirmOperationFinish(
       ]
     );
     const purchaseLineId = lineRes.rows[0].id;
+    await client.query(`UPDATE public.pieces_techniques_achats SET gamme_operation_id=$2::uuid WHERE id=$1::uuid AND gamme_operation_id IS DISTINCT FROM $2::uuid`,[purchaseLineId,operationId]);
+    await client.query(`UPDATE public.pieces_techniques_operations SET designation=$2,designation_auto=false,updated_at=now() WHERE id=$1::uuid AND (designation IS DISTINCT FROM $2 OR designation_auto)`,[operationId,finish.designation_courte]);
 
     await client.query(
       `UPDATE public.gamme_operation_finitions SET achat_ligne_id = $2::uuid, updated_at = now()
@@ -1486,6 +1488,7 @@ export async function repoConfirmOperationFinish(
 
     /* 10) Audit append-only — la décision reste explicable des mois plus tard. */
     await insertFinishAudit(client, audit, "finitions.operation.confirm", "gamme_operation_finition", operationId, {
+      operation_designation: finish.designation_courte,
       gamme_id: context.gamme_id,
       piece_technique_version_id: context.piece_technique_version_id,
       finish_revision_id: revision.id,

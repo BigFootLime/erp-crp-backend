@@ -13,6 +13,7 @@ const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
   "20261113_stock_nuance_library.sql": "9317b8db4125b567035bc6463b2a90780edec0b13ac3dd5f18f4956cc3c1bc8d",
   '20261105_fixed_of_dossier_1833.sql': 'da10acae9cb75275b9bd54635491ae3167902d60114afe6e201865b20a1991e0',
+  '20261105_material_operation_links_1833.sql': 'd6214f6e079e4326b699a931a2444b02a9d371da64d7e6bb7bbd1f05a673ce80',
   '20261104_special_process_family_identity_1831.sql': '417a1bea8130ef0c8639f091b17be987906bdd2a87a08e20cc8ba6f38b7e56a0',
   "20261102_open_orders_carco_1031.sql": "4573ad3b70173f61e1ad1acfc231ac87533f4a1e4dfcabc68029bdff5a3e1329",
   "20261031_client_portal_delivery_receipts_1802.sql": "59cb1e123d4666eca575206032db4a076060594d9d1116adf3dc0db7d21824a8",

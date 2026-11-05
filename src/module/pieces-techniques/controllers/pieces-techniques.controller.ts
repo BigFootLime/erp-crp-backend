@@ -636,7 +636,7 @@ export const updateAchat: RequestHandler = async (req, res, next) => {
   try {
     const { id, achatId } = achatIdParamSchema.parse({ params: req.params }).params
     const body = req.body as UpdateAchatBodyDTO
-    const out = await updateAchatSVC(id, achatId, body)
+    const out = await updateAchatSVC(id, achatId, body, buildAuditContext(req))
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return

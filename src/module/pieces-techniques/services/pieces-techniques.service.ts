@@ -1,3 +1,4 @@
+import { repoLinkExistingPurchaseOperation } from "../repository/pieces-techniques.repository";
 // src/module/pieces-techniques/services/pieces-techniques.service.ts
 import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
@@ -292,7 +293,11 @@ export async function addAchatSVC(pieceTechniqueId: string, body: AddAchatBodyDT
   }, audit);
 }
 
-export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, body: UpdateAchatBodyDTO) {
+export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, body: UpdateAchatBodyDTO,audit?:import("../repository/pieces-techniques.repository").AuditContext) {
+  if(body.gamme_operation_id!==undefined){
+    if(!body.gamme_operation_id||!audit||Object.keys(body).some(key=>key!=="gamme_operation_id"))throw new HttpError(422,"PURCHASE_LINK_COMMAND","Enregistrez le rattachement séparément des autres modifications de la ligne.");
+    return repoLinkExistingPurchaseOperation(pieceTechniqueId,achatId,body.gamme_operation_id,audit);
+  }
   const computed = computeAchat(body);
   return repoUpdateAchat(pieceTechniqueId, achatId, { ...body, ...computed });
 }

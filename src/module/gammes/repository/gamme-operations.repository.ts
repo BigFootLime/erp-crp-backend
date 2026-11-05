@@ -51,6 +51,8 @@ export const OP_COLS = `
   o.ordre, o.phase, o.designation, o.designation_2, o.designation_auto, o.type_operation,
   o.machine_id::text AS machine_id, o.poste_id::text AS poste_id, o.cf_id::text AS cf_id,
   o.machine_family_code, o.numero_programme,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix) ORDER BY a.code,p.id)
+    FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id WHERE p.gamme_operation_id=o.id AND p.type_achat='MATIERE'),'[]'::jsonb) AS matieres,
   o.tp::float8 AS tp, o.tf_unit::float8 AS tf_unit, o.qte::float8 AS qte, o.coef::float8 AS coef,
   o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
   o.taux_horaire_legacy::float8 AS taux_horaire_legacy, o.cf_rate_id::text AS cf_rate_id,
@@ -74,6 +76,7 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null}>;
   id: string;
   piece_technique_id: string;
   gamme_id: string | null;
@@ -178,6 +181,7 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
     temps_unitaire_minutes: hoursToMinutes(toNum(row.tf_unit, 0)),
     temps_fabrication_minutes: hoursToMinutes(toNum(row.temps_fabrication, 0)),
     temps_final_minutes: hoursToMinutes(tempsTotal),
+    matieres: Array.isArray(row.matieres) ? row.matieres : [],
     taux_horaire: tauxConnu,
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: (row.taux_horaire_effective_at as string | null) ?? null,
