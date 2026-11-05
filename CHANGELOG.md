@@ -1,5 +1,11 @@
 # Changelog
 
+## En préparation — Dossier OF choisi et préparation (#1833)
+
+- Conserver le dossier technique choisi pour chaque OF, y compris pour les anciennes entrées AUTO : aucune révision technique ne déplace automatiquement cette sélection.
+- Compléter les achats et la préparation sans créer de révision ; exiger confirmation et motif pour un nouveau plan client.
+- Conserver les règles de droits, les instantanés figés et les références historiques. Les migrations ciblées restent des sources de livraison ; elles ne sont pas appliquées à la production par cette consolidation.
+
 ## En préparation — Modification et archivage des PT (#1837)
 
 - Obtenir ou créer atomiquement le dossier de travail au même plan/indice, avec droit de modification et protection des pièces archivées.

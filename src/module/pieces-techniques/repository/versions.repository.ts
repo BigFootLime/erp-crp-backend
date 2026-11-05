@@ -181,6 +181,9 @@ export async function repoCreateVersion(
   try {
     await client.query("BEGIN")
     const isAssembly = await assertPieceExists(client, pieceTechniqueId)
+    await client.query('SELECT id FROM public.pieces_techniques WHERE id=$1::uuid FOR UPDATE',[pieceTechniqueId]);
+    const priorVersion=await client.query(`SELECT 1 FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid LIMIT 1`,[pieceTechniqueId]);
+    if(priorVersion.rowCount && (body.client_requirement_confirmed!==true || (body.raison_changement?.trim().length??0)<3)) throw new HttpError(422,"CLIENT_REVISION_REQUIRED","Utilisez Nouveau plan / exigence client pour créer une révision supplémentaire.");
     const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, body.plan_reference, body.indice)
 
     const res = await client.query<PieceTechniqueVersionRow>(
@@ -681,9 +684,9 @@ async function cloneTechnicalVersionTx(
       targetIndex: body.indice, sourcePlan: source.plan_reference, targetPlan: planReference })
       ? await copyMinorRevisionDocumentsTx(client, pieceTechniqueId, sourceVersionId, row.id, audit.user_id) : 0
 
-    // Draft OFs follow a new revision only while they have not been frozen and
-    // the client index did not change.  An explicit MANUAL choice is never
-    // replaced; legacy records intentionally default to AUTO for this policy.
+    // The legacy compatibility inputs remain available, while #1833 pins every OF
+    // selection. canAutoFollowCompatibleRevision therefore denies retargeting
+    // even for a compatible minor revision or a legacy AUTO value.
     const autoFollowedOfIds: number[] = []
     const compatibleAutoTarget = canAutoFollowCompatibleRevision({
       state: { statut: "BROUILLON", technicalSnapshotSha256: null, technicalReadiness: "INCOMPLETE" },
@@ -694,8 +697,8 @@ async function cloneTechnicalVersionTx(
       targetChangeLevel: row.change_level,
       targetInterchangeable: row.impact_interchangeabilite === true,
     })
-    // Article reconfiguration prepares a replacement without changing any OF.
-    // Ordinary revision creation retains its existing AUTO-follow behavior.
+    // Article reconfiguration also explicitly denies retargeting. Its caller-owned
+    // transaction and this legacy option remain compatible with existing consumers.
     if (compatibleAutoTarget && options.autoFollowDraftOrders !== false) {
       const synchronized = await client.query<{ id: number }>(
         `UPDATE public.ordres_fabrication o SET

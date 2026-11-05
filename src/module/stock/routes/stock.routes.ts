@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { reconfigureStockArticle } from "../controllers/stock.controller";
+import { updateArticleFamily } from "../controllers/article-family.controller";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
@@ -174,6 +175,7 @@ router.get("/article-categories", requireStockCapability("read"), listStockArtic
 router.get("/units", requireStockCapability("read"), listStockUnits);
 router.get("/article-families", requireStockCapability("read"), listStockArticleFamilies);
 router.post("/article-families", requireArticleWrite, createStockArticleFamily);
+router.patch("/article-families", requireArticleWrite, updateArticleFamily);
 router.get("/matiere-referential-capabilities", getStockMatiereReferentialCapabilities);
 router.get("/matiere-nuances", requireMatiereReferentialAccess, listStockMatiereNuances);
 router.post("/matiere-nuances", requireMatiereReferentialAccess, createStockMatiereNuance);

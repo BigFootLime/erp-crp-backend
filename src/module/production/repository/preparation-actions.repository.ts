@@ -28,6 +28,7 @@ export async function repoPrepareOperationProgramming(id: number, input: z.infer
     if (!of.version_id || !operation) throw new HttpError(422, 'PROGRAMMING_OPERATION_INVALID', 'Sélectionnez une opération de fraisage ou de tournage de cet OF.');
     if (operation.operation_hash !== input.operation_hash) throw new HttpError(409, 'PROGRAMMING_OPERATION_CHANGED', 'La gamme a changé. Actualisez avant de préparer la programmation.');
     const saved = {version_id: of.version_id, operation_hash: operation.operation_hash, estimated_hours: input.estimated_hours,
+      mode: input.mode ?? 'REQUIRED', reason: input.reason,
       prepared_at: new Date().toISOString(), prepared_by: audit.user_id};
     await tx.query(`UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2,
       technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('operation_programming',

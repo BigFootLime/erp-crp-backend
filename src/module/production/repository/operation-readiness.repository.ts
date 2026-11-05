@@ -1,3 +1,4 @@
+import { programmingPreparationCurrent, type ProgrammingPreparation } from "../domain/operation-programming";
 import type {PoolClient} from "pg";
 import pool from "../../../config/database";
 import {HttpError} from "../../../utils/httpError";
@@ -14,7 +15,7 @@ import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
 import {readWipOpeningCheckpointsTx} from '../wip-opening/wip-opening-read.repository';
 import { IMPORTED_INSPECTION_EVIDENCE_SQL } from './imported-inspection.sql';
 
-type OperationRow = {id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
+type OperationRow = {source_operation:object|null;version_id:string|null;programming_preparation?:ProgrammingPreparation;id:string;kind:string|null;machine_id:string|null;machine_status:string|null;machine_unavailable:boolean;good:number;scrap:number;pending:number;rework:number;updated_at:string;program_required:boolean;program_ready:boolean;quality_blocked:boolean;inspection_missing:boolean};
 type DependencyRow = {successor:string;predecessor:string;label:string;status:string;good:number;transferred:number;minimum:number|null;partial:boolean};
 
 export async function usesOperationReadiness(tx:DossierDb,ofId:number){
@@ -43,7 +44,8 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
   const openingCheckpoints=await readWipOpeningCheckpointsTx(tx,ofId);
   const openingByOperation=new Map(openingCheckpoints.map(checkpoint=>[checkpoint.operationId,checkpoint]));
   const operations=(await tx.query<OperationRow>(`
-    SELECT op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
+    SELECT prep_source.value AS source_operation,o.piece_technique_version_id::text AS version_id,
+      o.technical_preparation->'operation_programming'->(prep_source.value->>'id') AS programming_preparation,op.id::text,frozen.value->>'type_operation' AS kind,op.machine_id::text,m.status::text AS machine_status,op.updated_at::text,
       (m.archived_at IS NOT NULL OR m.is_available IS FALSE OR EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL) OR EXISTS(SELECT 1 FROM public.production_machine_unavailability u JOIN public.planning_events e ON e.id=u.planning_event_id WHERE u.machine_id=m.id AND u.archived_at IS NULL AND e.archived_at IS NULL AND e.status NOT IN ('DONE','CANCELLED') AND e.start_ts<=statement_timestamp() AND e.end_ts>statement_timestamp())) AS machine_unavailable,
       COALESCE(q.good,0)::float8 AS good,COALESCE(q.scrap,0)::float8 AS scrap,COALESCE(q.pending,0)::float8 AS pending,COALESCE(q.rework,0)::float8 AS rework,
        (frozen.value->>'type_operation' IN ('FRAISAGE','TOURNAGE','REPRISE') AND (COALESCE(programming.value->>'mode','')<>'NONE'
@@ -69,6 +71,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
            AND s.piece_technique_version_id=o.piece_technique_version_id AND (s.snapshot->'of'->>'quantite_lancee')::numeric=o.quantite_lancee)) AS inspection_missing
     FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id LEFT JOIN public.machines m ON m.id=op.machine_id
      LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
+     LEFT JOIN LATERAL(SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'preparation_evidence'->'operations','[]')) WHERE value->>'phase'=op.phase::text LIMIT 1) prep_source ON true
      CROSS JOIN LATERAL(SELECT COALESCE(o.technical_preparation->'execution_programming',o.technical_snapshot->'preparation_decisions'->'programming') AS value) programming
     LEFT JOIN public.production_operation_quantities q ON q.operation_id=op.id
     WHERE op.id=ANY($1::uuid[]) ORDER BY op.phase,op.id`,[dossier.operations.map(o=>o.id)])).rows;
@@ -107,11 +110,12 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
     const row=operations.find(r=>r.id===op.id);
     const opening=openingByOperation.get(op.id);
     const openingProcessed=(opening?.quantityGood??0)+(opening?.quantityScrap??0)+(opening?.quantityPendingControl??0);
+    const noProgramming=row?.programming_preparation?.mode === "NOT_REQUIRED" && programmingPreparationCurrent(row.source_operation??{},row.version_id,row.programming_preparation);
     const facts:OperationReadinessFacts={id:op.id,label:op.label,phase:op.phase,status:op.status,targetQuantity:dossier.quantity,
       processedQuantity:Number(row?.good??0)+Number(row?.scrap??0)+Number(row?.pending??0)+Number(row?.rework??0)+openingProcessed,dossierComplete:dossier.status==='COMPLETE',executionStatus:dossier.executionStatus,
       planned:op.planned||['RUNNING','DONE'].includes(op.status),machineBlocked:row?.machine_unavailable===true||statuses.includes(row?.machine_status??''),
       preparationMissing:coverage.needs.some(n=>!n.id||!n.operationId||!n.reviewed)||coverage.previousNeeds.length>0,
-       programRequired:row?.program_required===true,programReady:row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
+       programRequired:!noProgramming&&row?.program_required===true,programReady:noProgramming||row?.program_ready===true,qualityBlocked:!row||row.quality_blocked,inspectionMissing:row?.inspection_missing===true,
       componentsMissing:row?.kind==='ASSEMBLAGE'&&componentMissing,materials:materialFacts.get(op.id)??[],
       wholeOfMaterialBlockers:[...missingMaterial.map(n=>`${n.designation} : ${n.missing} ${n.unit??''} à couvrir physiquement.${n.blockers.length?' '+n.blockers.join(' '):''}`),...(originBlock?[originBlock]:[])],
       predecessors:dependencies.filter(d=>d.successor===op.id).map(d=>{

@@ -75,11 +75,20 @@ import { insertFinishAudit, mapRevision, revisionColumns, type RevisionRow } fro
 
 type Queryer = Pick<PoolClient, "query">;
 
+async function ensureSpecialProcessClient(tx:Queryer,articleId:string,context:OperationFinishContext,audit:AuditContext){
+  if(!context.client_id)return;
+  const inserted=await tx.query(`INSERT INTO public.article_client_links(article_id,client_id,created_by) VALUES($1::uuid,$2,$3) ON CONFLICT DO NOTHING`,[articleId,context.client_id,audit.user_id]);
+  const updated=await tx.query(`UPDATE public.articles SET commercial_scope='CLIENTS',updated_at=now() WHERE id=$1::uuid AND commercial_scope IS DISTINCT FROM 'CLIENTS'`,[articleId]);
+  if(inserted.rowCount||updated.rowCount)await insertFinishAudit(tx,audit,'finitions.article.client.link','articles',articleId,{piece_technique_id:context.piece_technique_id,client_id:context.client_id});
+}
+
+
 /* -------------------------------------------------------------------------- */
 /* Contexte — lu côté serveur, jamais reconstruit depuis la requête           */
 /* -------------------------------------------------------------------------- */
 
 type ContextRow = {
+  client_id: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;
@@ -109,6 +118,7 @@ async function loadContext(tx: Queryer, gammeId: string, operationId: string): P
     `SELECT
        pt.id::text                 AS piece_technique_id,
        pt.code_piece               AS code_piece,
+       pt.client_id::text          AS client_id,
        pt.designation              AS designation_piece,
        ptv.id::text                AS piece_technique_version_id,
        ptv.indice                  AS indice,
@@ -141,6 +151,7 @@ async function loadContext(tx: Queryer, gammeId: string, operationId: string): P
   return {
     piece_technique_id: row.piece_technique_id,
     code_piece: row.code_piece,
+    client_id: row.client_id,
     designation_piece: row.designation_piece,
     piece_technique_version_id: row.piece_technique_version_id,
     indice: row.indice,
@@ -533,6 +544,7 @@ function buildClassification(): PlannedArticleClassification {
 }
 
 type StockContextRow = {
+  client_id: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;
@@ -556,6 +568,7 @@ async function loadStockContext(
     `SELECT
        pt.id::text AS piece_technique_id,
        pt.code_piece,
+       pt.client_id::text AS client_id,
        pt.designation AS designation_piece,
        ptv.id::text AS piece_technique_version_id,
        ptv.indice,
@@ -579,6 +592,7 @@ async function loadStockContext(
   return {
     piece_technique_id: row.piece_technique_id,
     code_piece: row.code_piece,
+    client_id: row.client_id,
     designation_piece: row.designation_piece,
     piece_technique_version_id: row.piece_technique_version_id,
     indice: row.indice,
@@ -792,6 +806,8 @@ export async function repoConfirmStockFinishArticle(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
+          commercial_scope: context.client_id ? "CLIENTS" : "CRP",
+          client_ids: context.client_id ? [context.client_id] : [],
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           stock_managed: GENERATED_ARTICLE_TAXONOMY.stock_managed,
           lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
@@ -882,6 +898,7 @@ export async function repoConfirmStockFinishArticle(
        VALUES ($1,$2,$3,$4::jsonb,$5)`,
       [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
     );
+    await ensureSpecialProcessClient(client,articleId,context,audit);
     if (!transactionClient) await client.query("COMMIT");
     return payload;
   } catch (error) {
@@ -1245,6 +1262,8 @@ export async function repoConfirmOperationFinish(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
+          commercial_scope: context.client_id ? "CLIENTS" : "CRP",
+          client_ids: context.client_id ? [context.client_id] : [],
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           // Une prestation ne se stocke pas : la pièce traitée et ses lots
           // restent tracés par les domaines OF, sous-traitance et réception.
@@ -1512,6 +1531,7 @@ export async function repoConfirmOperationFinish(
       [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
     );
 
+    await ensureSpecialProcessClient(client,articleId,context,audit);
     await client.query("COMMIT");
     return payload;
   } catch (err) {

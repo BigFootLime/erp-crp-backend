@@ -1556,6 +1556,7 @@ async function repoListOperations(pieceTechniqueId: string): Promise<Operation[]
 }
 
 type AchatRow = {
+  gamme_operation_id?: string | null;
   piece_technique_version_id: string | null;
   article_id: string | null;
   id: string;
@@ -1588,6 +1589,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
   const sql = `
     SELECT
       id::text AS id,
+      gamme_operation_id::text AS gamme_operation_id,
       phase,
       type_achat,
       article_id::text AS article_id,
@@ -1620,6 +1622,7 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
   const res = await db.query<AchatRow>(sql, [pieceTechniqueId]);
   return res.rows.map((r) => ({
     id: r.id,
+    gamme_operation_id: r.gamme_operation_id,
     phase: r.phase,
     type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     article_id: r.article_id,
@@ -3287,12 +3290,30 @@ export async function repoReorderOperations(pieceTechniqueId: string, order: str
 
 export async function repoAddAchat(
   pieceTechniqueId: string,
-  body: AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number }
+  body: AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number },
+  audit?: AuditContext
 ): Promise<Achat | null> {
-  const exists = await db.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
-  if (!exists.rows[0]?.ok) return null;
+  const client=await db.connect();
+  try {
+  await client.query("BEGIN");
+  const exists = await client.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
+  if (!exists.rows[0]?.ok) {await client.query("ROLLBACK");return null;}
 
-  const res = await db.query<AchatRow>(
+  let linked: {id:string;phase:number;designation:string;short_name:string}|undefined;
+  if(body.gamme_operation_id){
+    if(body.type_achat!=="TRAITEMENT"||!body.article_id||!body.piece_technique_version_id||!audit) throw new HttpError(422,"PS_OPERATION_CONTEXT","Sélectionnez le procédé spécial et la version de pièce avant de rattacher une opération.");
+    linked=(await client.query<{id:string;phase:number;designation:string;short_name:string}>(`
+      SELECT o.id::text,o.phase,o.designation,f.designation_courte AS short_name
+      FROM public.pieces_techniques_operations o JOIN public.gammes g ON g.id=o.gamme_id
+      JOIN public.articles_traitement t ON t.article_id=$4::uuid AND t.piece_technique_version_id=$3::uuid
+      JOIN public.surface_finish_revisions r ON r.id=t.finish_revision_id JOIN public.surface_finishes f ON f.id=r.finish_id
+      WHERE o.id=$1::uuid AND g.piece_technique_version_id=$3::uuid AND o.piece_technique_id=$2::uuid
+      AND o.type_operation='SOUS_TRAITANCE' AND o.phase IS NOT NULL AND g.statut IN ('BROUILLON','EN_VALIDATION') FOR UPDATE OF o,g`,
+      [body.gamme_operation_id,pieceTechniqueId,body.piece_technique_version_id,body.article_id])).rows[0];
+    if(!linked) throw new HttpError(422,"PS_OPERATION_MISMATCH","Choisissez une opération de sous-traitance dans une gamme modifiable du même indice et de la même révision.");
+    body={...body,phase:linked.phase};
+  }
+  const res = await client.query<AchatRow>(
     `
       INSERT INTO pieces_techniques_achats (
         piece_technique_id,
@@ -3385,7 +3406,7 @@ export async function repoAddAchat(
   );
 
   const r = res.rows[0];
-  return {
+  const saved:Achat = {
     id: r.id,
     article_id: r.article_id,
     piece_technique_version_id: r.piece_technique_version_id,
@@ -3413,6 +3434,14 @@ export async function repoAddAchat(
     designation_2: r.designation_2,
     designation_3: r.designation_3,
   };
+  if(linked&&saved?.id&&audit){
+    await client.query(`UPDATE public.pieces_techniques_achats SET gamme_operation_id=$2::uuid WHERE id=$1::uuid`,[saved.id,linked.id]);
+    await client.query(`UPDATE public.pieces_techniques_operations SET designation=$2,designation_auto=false,updated_at=now() WHERE id=$1::uuid`,[linked.id,linked.short_name]);
+    await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:saved.id,details:{operation_id:linked.id,previous_designation:linked.designation,designation:linked.short_name}},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
+    saved.gamme_operation_id=linked.id;
+  }
+  await client.query('COMMIT');return saved;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
 export async function repoUpdateAchat(

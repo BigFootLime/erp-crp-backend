@@ -473,16 +473,20 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     const saved = of.technical_preparation?.operation_programming?.[op.id];
     const current = programmingPreparationCurrent(op, of.version_id, saved);
     return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
-      estimated_hours: current ? saved!.estimated_hours : null, status: current ? 'PREPARED' as const : 'TODO' as const};
+      estimated_hours: current ? saved!.estimated_hours : null, status: current ? saved?.mode === 'NOT_REQUIRED' ? 'NOT_REQUIRED' as const : 'PREPARED' as const : 'TODO' as const};
   });
   const programmingItem = items.find(item => item.key === 'programming');
   if (programmingItem && programmingOperations.length) {
-    const prepared = programmingOperations.filter(op => op.status === 'PREPARED');
+    const prepared = programmingOperations.filter(op => op.status !== 'TODO');
     programmingItem.detail = `${prepared.length}/${programmingOperations.length} opérations préparées · ${prepared.reduce((sum,op)=>sum+(op.estimated_hours??0),0)} h prévues. La réalisation du programme CN reste à confirmer avant usinage.`;
     // Estimates belong to the OF and do not replace legacy mandatory program evidence.
     if (!programmingItem.required && programmingItem.status !== 'BLOCKED') {
       programmingItem.scope = 'OF';
       programmingItem.status = prepared.length === programmingOperations.length ? 'READY' : 'MISSING';
+    }
+    if(programmingOperations.every(operation=>operation.status==='NOT_REQUIRED')){
+      programmingItem.scope='OF';programmingItem.required=false;programmingItem.status='NOT_REQUIRED';
+      programmingItem.detail='Absence de programmation confirmée pour chacune des opérations concernées de cet OF.';
     }
   }
   const sharedReady = isPreparationReady(items.filter(item => item.scope === 'VERSION'));

@@ -109,6 +109,7 @@ const operationCore = z
     machine_id: uuid.optional().nullable(),
     poste_id: uuid.optional().nullable(),
     cf_id: uuid.optional().nullable(),
+    taux_horaire_override: z.number().finite().min(0).max(100000).optional().nullable(),
     numero_programme: z.string().trim().max(60).optional().nullable(),
     // Unité de SAISIE de l'interface.
     temps_preparation_minutes: z.coerce.number().min(0).max(100_000).optional().nullable(),

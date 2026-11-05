@@ -3,6 +3,7 @@ import { sourceHash } from './preparation-rules';
 export type ProgrammingPreparation = {
   version_id: string; operation_hash: string; estimated_hours: number;
   prepared_at: string; prepared_by: number;
+  mode?: 'REQUIRED' | 'NOT_REQUIRED'; reason?: string;
 };
 export function needsProgramming(operation: {type_operation?: string | null; cf_id: string | null}, centres: Map<string, string>) {
   const label = `${operation.type_operation ?? ''} ${centres.get(operation.cf_id ?? '') ?? ''}`
@@ -11,5 +12,5 @@ export function needsProgramming(operation: {type_operation?: string | null; cf_
 }
 export function programmingPreparationCurrent(operation: object, versionId: string | null, saved?: ProgrammingPreparation) {
   return Boolean(saved && saved.version_id === versionId && saved.operation_hash === sourceHash(operation)
-    && Number.isFinite(saved.estimated_hours) && saved.estimated_hours > 0);
+    && (saved.mode === 'NOT_REQUIRED' ? (saved.reason?.trim().length ?? 0) >= 3 : Number.isFinite(saved.estimated_hours) && saved.estimated_hours > 0));
 }

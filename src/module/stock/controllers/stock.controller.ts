@@ -309,7 +309,7 @@ export const closeStockInventorySession: RequestHandler = async (req, res, next)
   }
 };
 
-function buildAuditContext(req: Request): AuditContext {
+export function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
   if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
 

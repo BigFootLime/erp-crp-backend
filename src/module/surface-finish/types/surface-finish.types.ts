@@ -136,6 +136,7 @@ export type SurfaceFinishDocument = {
 
 /** Contexte lu côté serveur : jamais reconstruit depuis le corps de la requête. */
 export type OperationFinishContext = {
+  client_id?: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;

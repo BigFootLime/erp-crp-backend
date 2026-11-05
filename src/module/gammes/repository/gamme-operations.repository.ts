@@ -412,6 +412,7 @@ export type OperationWriteInput = {
   machine_id?: string | null;
   poste_id?: string | null;
   cf_id?: string | null;
+  taux_horaire_override?: number | null;
   numero_programme?: string | null;
   /** Unité de saisie de l'interface. Prioritaire sur la variante en heures. */
   temps_preparation_minutes?: number | null;
@@ -476,13 +477,14 @@ type ResolvedOperation = {
   temps_fabrication: number;
   temps_total: number;
   taux_horaire: number;
-  taux_horaire_source: "CENTRE_FRAIS" | "ABSENT";
+  taux_horaire_source: "CENTRE_FRAIS" | "ABSENT" | "OPERATION";
   taux_horaire_effective_at: string | null;
   cf_rate_id: string | null;
   cout_mo: number;
 };
 
 type ExistingOperation = {
+  taux_horaire?: number | null; taux_horaire_source?: string | null;
   id: string;
   phase: number | null;
   designation: string;
@@ -554,8 +556,9 @@ async function resolveOperation(
 
   // --- Tarif figé ----------------------------------------------------------
   const rate = cfId ? await repoResolveCostCenterRate(tx, cfId, at) : null;
-  const tauxSource: "CENTRE_FRAIS" | "ABSENT" = rate ? "CENTRE_FRAIS" : "ABSENT";
-  const taux = rate?.taux_horaire ?? 0;
+  const override=input.taux_horaire_override !== undefined ? input.taux_horaire_override : existing?.taux_horaire_source === 'OPERATION' ? existing.taux_horaire : null;
+  const tauxSource: "CENTRE_FRAIS" | "ABSENT" | "OPERATION" = override != null ? 'OPERATION' : rate ? 'CENTRE_FRAIS' : 'ABSENT';
+  const taux = override ?? rate?.taux_horaire ?? 0;
 
   // --- Phase ---------------------------------------------------------------
   const phasesRes = await tx.query<{ id: string; phase: number | null }>(
@@ -627,7 +630,7 @@ async function resolveOperation(
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: rate?.date_effet ?? null,
     cf_rate_id: rate?.id ?? null,
-    cout_mo: computeLabourCost(times.temps_final, rate ? rate.taux_horaire : null) ?? 0,
+    cout_mo: computeLabourCost(times.temps_final, tauxSource !== "ABSENT" ? taux : null) ?? 0,
   };
 }
 
@@ -732,7 +735,7 @@ export async function repoUpdateGammeOperation(
       `SELECT id::text AS id, gamme_id::text AS gamme_id, phase, designation, designation_auto,
               machine_family_code, machine_id::text AS machine_id, cf_id::text AS cf_id, numero_programme,
               tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
-              type_operation, updated_at::text AS updated_at
+              taux_horaire::float8 AS taux_horaire,taux_horaire_source,type_operation, updated_at::text AS updated_at
          FROM public.pieces_techniques_operations WHERE id = $1 FOR UPDATE`,
       [operationId]
     );
@@ -748,6 +751,7 @@ export async function repoUpdateGammeOperation(
     });
 
     const existing: ExistingOperation = {
+      taux_horaire:current.taux_horaire,taux_horaire_source:current.taux_horaire_source,
       id: String(current.id),
       phase: current.phase === null ? null : Number(current.phase),
       designation: String(current.designation ?? ""),

@@ -153,6 +153,7 @@ const operationInputSchema = z.object({
 })
 
 const achatInputSchema = z.object({
+  gamme_operation_id: uuid.optional().nullable(),
   piece_technique_version_id: uuid.optional().nullable(),
   phase: z.coerce.number().int().optional().nullable(),
   // GPAO B3.5/B4 — catégorie de nomenclature d'achat (défaut DIVERS). Additif : les payloads

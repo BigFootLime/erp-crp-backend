@@ -1032,6 +1032,20 @@ export async function repoCreateArticleFamily(
   return row;
 }
 
+export async function repoUpdateArticleFamily(input:{category:ArticleCategory;code:string;designation:string;expected_updated_at:string},audit:AuditContext):Promise<StockArticleFamily> {
+  const client=await db.connect();
+  try {
+    await client.query('BEGIN');
+    const table=articleFamilyTable(input.category);
+    const current=(await client.query<StockArticleFamily>(`SELECT *, $2::text AS category,updated_at::text AS updated_at FROM public.${table} WHERE code=$1 FOR UPDATE`,[input.code,input.category])).rows[0];
+    if(!current) throw new HttpError(404,'ARTICLE_FAMILY_NOT_FOUND','Famille introuvable.');
+    if(new Date(current.updated_at!).getTime()!==new Date(input.expected_updated_at).getTime()) throw new HttpError(409,'ARTICLE_FAMILY_CHANGED','La famille a changé. Actualisez avant de modifier.');
+    const saved=(await client.query<StockArticleFamily>(`UPDATE public.${table} SET designation=$2,updated_at=now() WHERE code=$1 RETURNING code,designation,is_active,created_at::text,updated_at::text,$3::text AS category`,[input.code,input.designation,input.category])).rows[0]!;
+    await insertAuditLog(client,audit,{action:'stock.article-families.update',entity_type:'article_families',entity_id:`${input.category}:${input.code}`,details:{before:current,after:saved}});
+    await client.query('COMMIT');return saved;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
 function isPgForeignKeyViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23503";
 }

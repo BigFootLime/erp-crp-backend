@@ -127,6 +127,7 @@ export type TypeAchat =
   | "DIVERS"
 
 export type Achat = {
+  gamme_operation_id?: string | null
   article_id?: string | null
   piece_technique_version_id?: string | null
   id?: string

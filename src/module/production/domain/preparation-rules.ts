@@ -152,9 +152,8 @@ export function evaluatePreparation(f: PreparationFacts, rulesVersion = PREPARAT
     "index",
     "Indice technique",
     Boolean(f.version_id) &&
-      f.version_status === "APPLICABLE" &&
-      f.version_current,
-    "Version applicable et courante requise.",
+      f.version_status !== "OBSOLETE",
+    "Indice et révision sélectionnés pour cet OF.",
   );
   // Identity is an integrity guard, separate from the four business rubrics.
   // A draft/obsolete revision cannot be frozen under another revision's evidence.
@@ -183,7 +182,7 @@ export function evaluatePreparation(f: PreparationFacts, rulesVersion = PREPARAT
   );
   for (const [key, label, category] of [
     ["material", "Matière première", "MATIERE"],
-    ["treatment", "Traitements (TR)", "TRAITEMENT"],
+    ["treatment", "Procédés spéciaux", "TRAITEMENT"],
     ["subcontract", "Sous-traitance", "SOUS_TRAITANCE"],
   ] as const) {
     const decision = f.decisions[key];

@@ -449,11 +449,11 @@ export async function loadApplicableTechnicalSnapshot(
        AND g.is_current = true
       WHERE v.piece_technique_id = $1::uuid
         AND (
-          ($3::boolean AND v.id=$2::uuid AND v.statut IN ('APPLICABLE','OBSOLETE'))
-          OR
-          (NOT $3::boolean AND v.statut = 'APPLICABLE'
-            AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE))
+          ($2::uuid IS NOT NULL AND v.id=$2::uuid
+            AND (v.statut <> 'OBSOLETE' OR $3::boolean))
+          OR ($2::uuid IS NULL AND v.statut = 'APPLICABLE')
         )
+        AND ($3::boolean OR v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
       ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
       LIMIT 1
     `,
@@ -465,7 +465,7 @@ export async function loadApplicableTechnicalSnapshot(
     throw new HttpError(
       422,
       "VERSION_NOT_APPLICABLE",
-      `La pièce technique ${pieceTechniqueId} ne possède pas de version applicable pour générer un OF.`,
+      `La pièce technique ${pieceTechniqueId} ne possède pas d’indice et de révision disponibles pour générer un OF.`,
       details ?? { piece_technique_id: pieceTechniqueId, code_piece: null, designation: null, versions: [] }
     );
   }

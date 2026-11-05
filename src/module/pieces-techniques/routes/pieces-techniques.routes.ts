@@ -1,3 +1,4 @@
+import { requireMethodesCapability } from "../../methodes/middlewares/methodes-authorization.middleware"
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
 import {
@@ -263,7 +264,7 @@ router.patch("/:id/operations/:opId", validate(operationIdParamSchema), validate
 router.delete("/:id/operations/:opId", validate(operationIdParamSchema), deleteOperation)
 router.post("/:id/operations/reorder", validate(idParamSchema), validate(reorderSchema), reorderOperations)
 
-router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), addAchat)
+router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), addAchat)
 router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), updateAchat)
 router.delete("/:id/achats/:achatId", validate(achatIdParamSchema), deleteAchat)
 router.post("/:id/achats/reorder", validate(idParamSchema), validate(reorderSchema), reorderAchats)

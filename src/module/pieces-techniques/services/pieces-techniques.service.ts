@@ -285,11 +285,11 @@ export async function reorderOperationsSVC(pieceTechniqueId: string, order: stri
   return repoReorderOperations(pieceTechniqueId, order);
 }
 
-export async function addAchatSVC(pieceTechniqueId: string, body: AddAchatBodyDTO) {
+export async function addAchatSVC(pieceTechniqueId: string, body: AddAchatBodyDTO, audit?: import("../repository/pieces-techniques.repository").AuditContext) {
   return repoAddAchat(pieceTechniqueId, {
     ...body,
     ...computeAchat(body),
-  });
+  }, audit);
 }
 
 export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, body: UpdateAchatBodyDTO) {
