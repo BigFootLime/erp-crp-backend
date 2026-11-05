@@ -265,7 +265,7 @@ router.delete("/:id/operations/:opId", validate(operationIdParamSchema), deleteO
 router.post("/:id/operations/reorder", validate(idParamSchema), validate(reorderSchema), reorderOperations)
 
 router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), addAchat)
-router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), updateAchat)
+router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), (req,res,next)=>req.body?.gamme_operation_id !== undefined ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), updateAchat)
 router.delete("/:id/achats/:achatId", validate(achatIdParamSchema), deleteAchat)
 router.post("/:id/achats/reorder", validate(idParamSchema), validate(reorderSchema), reorderAchats)
 

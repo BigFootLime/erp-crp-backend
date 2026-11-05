@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1833 (6b15d947)
+
+- Source originale : feat(methodes): make attachments reversible and calculate route profitability (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1833 (710a6b2b)
 
 - Source originale : fix(methodes): support two finishes per phase and cap raw materials (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.

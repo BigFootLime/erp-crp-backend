@@ -51,12 +51,12 @@ export const OP_COLS = `
   o.ordre, o.phase, o.designation, o.designation_2, o.designation_auto, o.type_operation,
   o.machine_id::text AS machine_id, o.poste_id::text AS poste_id, o.cf_id::text AS cf_id,
   o.machine_family_code, o.numero_programme,
-  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix) ORDER BY a.code,p.id)
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix,'longueur_mm',p.longueur_mm,'quantite_pieces',p.quantite_pieces,'coefficient_chute',p.coefficient_chute) ORDER BY a.code,p.id)
     FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id WHERE p.gamme_operation_id=o.id AND p.type_achat='MATIERE'),'[]'::jsonb) AS matieres,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',f.designation_courte,'fournisseur_nom',p.fournisseur_nom,'fournisseur_id',p.fournisseur_id) ORDER BY r.slot)
     FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id JOIN public.articles a ON a.id=r.article_id LEFT JOIN public.pieces_techniques_achats p ON p.id=r.achat_ligne_id WHERE r.gamme_operation_id=o.id),'[]'::jsonb) AS procedes_speciaux,
   o.tp::float8 AS tp, o.tf_unit::float8 AS tf_unit, o.qte::float8 AS qte, o.coef::float8 AS coef,
-  o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
+  o.prix_vente_horaire::float8 AS prix_vente_horaire, o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
   o.taux_horaire_legacy::float8 AS taux_horaire_legacy, o.cf_rate_id::text AS cf_rate_id,
   o.prix::float8 AS prix, o.temps_fabrication::float8 AS temps_fabrication,
   o.temps_total::float8 AS temps_total, o.cout_mo::float8 AS cout_mo, o.consignes,
@@ -78,8 +78,9 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  prix_vente_horaire: number|null;
   procedes_speciaux?: Array<{achat_id:string|null;article_id:string;code:string;designation:string;fournisseur_nom:string|null;fournisseur_id:string|null}>;
-  matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null}>;
+  matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null;longueur_mm?:number|null;quantite_pieces?:number|null;coefficient_chute?:number|null}>;
   id: string;
   piece_technique_id: string;
   gamme_id: string | null;
@@ -186,6 +187,7 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
     temps_final_minutes: hoursToMinutes(tempsTotal),
     matieres: Array.isArray(row.matieres) ? row.matieres : [],
     procedes_speciaux: Array.isArray(row.procedes_speciaux) ? row.procedes_speciaux : [],
+    prix_vente_horaire: row.prix_vente_horaire==null?null:toNum(row.prix_vente_horaire),
     taux_horaire: tauxConnu,
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: (row.taux_horaire_effective_at as string | null) ?? null,
@@ -421,6 +423,7 @@ export type OperationWriteInput = {
   poste_id?: string | null;
   cf_id?: string | null;
   taux_horaire_override?: number | null;
+  prix_vente_horaire?: number | null;
   numero_programme?: string | null;
   /** Unité de saisie de l'interface. Prioritaire sur la variante en heures. */
   temps_preparation_minutes?: number | null;
@@ -676,8 +679,8 @@ export async function repoCreateGammeOperation(
         (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, designation_auto,
          type_operation, machine_id, poste_id, cf_id, machine_family_code, numero_programme,
          tp, tf_unit, qte, coef, taux_horaire, taux_horaire_source, taux_horaire_effective_at,
-         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27)
+         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by, prix_vente_horaire)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27,$28)
        RETURNING id::text AS id`,
       [
         gamme.piece_technique_id,
@@ -707,6 +710,7 @@ export async function repoCreateGammeOperation(
         resolved.cout_mo,
         input.consignes ?? null,
         audit.user_id,
+        input.prix_vente_horaire ?? null,
       ]
     );
     createdId = res.rows[0].id;
@@ -743,7 +747,7 @@ export async function repoUpdateGammeOperation(
       `SELECT id::text AS id, gamme_id::text AS gamme_id, phase, designation, designation_auto,
               machine_family_code, machine_id::text AS machine_id, cf_id::text AS cf_id, numero_programme,
               tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
-              taux_horaire::float8 AS taux_horaire,taux_horaire_source,type_operation, updated_at::text AS updated_at
+              taux_horaire::float8 AS taux_horaire,taux_horaire_source,prix_vente_horaire,type_operation, updated_at::text AS updated_at
          FROM public.pieces_techniques_operations WHERE id = $1 FOR UPDATE`,
       [operationId]
     );
@@ -785,7 +789,7 @@ export async function repoUpdateGammeOperation(
          tp = $12, tf_unit = $13, qte = $14, coef = $15,
          taux_horaire = $16, taux_horaire_source = $17, taux_horaire_effective_at = $18, cf_rate_id = $19,
          prix = COALESCE($20, prix), temps_fabrication = $21, temps_total = $22, cout_mo = $23,
-         consignes = COALESCE($24, consignes), updated_by = $25, updated_at = now()
+         consignes = COALESCE($24, consignes), updated_by = $25, prix_vente_horaire=$26, updated_at = now()
        WHERE id = $1`,
       [
         operationId,
@@ -813,12 +817,14 @@ export async function repoUpdateGammeOperation(
         resolved.cout_mo,
         input.consignes ?? null,
         audit.user_id,
+        input.prix_vente_horaire !== undefined ? input.prix_vente_horaire : current.prix_vente_horaire,
       ]
     );
     await insertAudit(client, audit, "gammes.operations.update", "gamme_operation", operationId, {
       gamme_id: gammeId,
       phase_avant: existing.phase,
       phase_apres: resolved.phase,
+      taux_horaire_avant:current.taux_horaire,taux_horaire_apres:resolved.taux_horaire,prix_vente_horaire_avant:current.prix_vente_horaire,prix_vente_horaire_apres:input.prix_vente_horaire!==undefined?input.prix_vente_horaire:current.prix_vente_horaire,
     });
     await client.query("COMMIT");
   } catch (error) {

@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "3ffe2b2f62bbc7a11b9174d24d9e971a65123a63feee7a322b7bb12e4cc3c646";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "0960339bbb5e30c31eabbf81ef9120e88f10351e7cdabde347699d92c7b28dfc";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -9656,7 +9656,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/gammes/{gammeId}",
-    "source": "src/module/gammes/routes/gammes.routes.ts:38",
+    "source": "src/module/gammes/routes/gammes.routes.ts:40",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9674,7 +9674,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/gammes/{gammeId}/operations",
-    "source": "src/module/gammes/routes/gammes.routes.ts:56",
+    "source": "src/module/gammes/routes/gammes.routes.ts:58",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9693,7 +9693,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/gammes/{gammeId}/operations",
-    "source": "src/module/gammes/routes/gammes.routes.ts:78",
+    "source": "src/module/gammes/routes/gammes.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9713,7 +9713,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/gammes/{gammeId}/operations/{operationId}",
-    "source": "src/module/gammes/routes/gammes.routes.ts:92",
+    "source": "src/module/gammes/routes/gammes.routes.ts:94",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9733,7 +9733,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/gammes/{gammeId}/operations/{operationId}",
-    "source": "src/module/gammes/routes/gammes.routes.ts:85",
+    "source": "src/module/gammes/routes/gammes.routes.ts:87",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9828,7 +9828,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/gammes/{gammeId}/operations/next-phase",
-    "source": "src/module/gammes/routes/gammes.routes.ts:64",
+    "source": "src/module/gammes/routes/gammes.routes.ts:66",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9848,7 +9848,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/gammes/{gammeId}/operations/reorder",
-    "source": "src/module/gammes/routes/gammes.routes.ts:71",
+    "source": "src/module/gammes/routes/gammes.routes.ts:73",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9867,8 +9867,30 @@ export const GENERATED_ROUTE_INVENTORY = [
   },
   {
     "method": "get",
+    "path": "/gammes/{gammeId}/profitability",
+    "source": "src/module/gammes/routes/gammes.routes.ts:117",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireMethodesCapability(gamme_operation_read)",
+      "requireMethodesCapability(tarif_read)",
+      "validate(gammeIdParamSchema)",
+      "validate(profitabilityQuerySchema)",
+      "readGammeProfitability"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireMethodesCapability(gamme_operation_read)",
+      "requireMethodesCapability(tarif_read)"
+    ]
+  },
+  {
+    "method": "get",
     "path": "/gammes/{gammeId}/publication",
-    "source": "src/module/gammes/routes/gammes.routes.ts:101",
+    "source": "src/module/gammes/routes/gammes.routes.ts:103",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9887,7 +9909,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/gammes/{gammeId}/publish",
-    "source": "src/module/gammes/routes/gammes.routes.ts:107",
+    "source": "src/module/gammes/routes/gammes.routes.ts:109",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -9907,7 +9929,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/gammes/{gammeId}/revisions",
-    "source": "src/module/gammes/routes/gammes.routes.ts:47",
+    "source": "src/module/gammes/routes/gammes.routes.ts:49",
     "middleware": [
       "anonymous",
       "authenticateToken",

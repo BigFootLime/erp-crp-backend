@@ -31,5 +31,5 @@ export async function bindIssuedFinishPurchaseTx(tx:Pick<PoolClient,'query'>,inp
 }
 
 export async function syncOperationFinishTitleTx(tx:Pick<PoolClient,'query'>,operationId:string){
- await tx.query(`UPDATE public.pieces_techniques_operations o SET designation=s.title,designation_auto=false,updated_at=now() FROM (SELECT string_agg(f.designation_courte,' / ' ORDER BY r.slot) AS title FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id WHERE r.gamme_operation_id=$1::uuid) s WHERE o.id=$1::uuid AND s.title IS NOT NULL AND (o.designation IS DISTINCT FROM s.title OR o.designation_auto)`,[operationId]);
+ await tx.query(`UPDATE public.pieces_techniques_operations o SET designation=s.title,designation_auto=false,updated_at=now() FROM (SELECT COALESCE(string_agg(f.designation_courte,' / ' ORDER BY r.slot),'Procédés Spéciaux') AS title FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id WHERE r.gamme_operation_id=$1::uuid) s WHERE o.id=$1::uuid AND o.type_operation='SOUS_TRAITANCE' AND s.title IS NOT NULL AND (o.designation IS DISTINCT FROM s.title OR o.designation_auto)`,[operationId]);
 }

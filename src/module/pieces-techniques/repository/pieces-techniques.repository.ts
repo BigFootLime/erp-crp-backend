@@ -3451,7 +3451,7 @@ export async function repoAddAchat(
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:string,operationId:string,audit:AuditContext):Promise<Achat|null>{
+export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:string,operationId:string|null,audit:AuditContext):Promise<Achat|null>{
  const client=await db.connect();
  try{await client.query('BEGIN');const binding=await linkPurchaseOperationTx(client,{pieceId,lineId,operationId,actorId:audit.user_id});
   await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:lineId,details:binding},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
