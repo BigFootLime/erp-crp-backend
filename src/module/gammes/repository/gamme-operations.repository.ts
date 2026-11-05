@@ -10,6 +10,7 @@
 //   - `temps_total` et `cout_mo` sont CALCULÉS, jamais reçus du client.
 
 import type { PoolClient } from "pg";
+import { preparationOperationIssues } from "../../production/domain/preparation-rules";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -78,6 +79,7 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  preparation_issues?: string[];
   prix_vente_horaire: number|null;
   procedes_speciaux?: Array<{achat_id:string|null;article_id:string;code:string;designation:string;fournisseur_nom:string|null;fournisseur_id:string|null}>;
   matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null;longueur_mm?:number|null;quantite_pieces?:number|null;coefficient_chute?:number|null}>;
@@ -152,7 +154,22 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
       (validFrom !== null && at < validFrom) ||
       (validTo !== null && at > validTo));
 
+  const preparationIssues = preparationOperationIssues({
+    designation: String(row.designation ?? ''), type_operation: (row.type_operation as string | null) ?? null,
+    cf_id: (row.cf_id as string | null) ?? null, machine_family_code: (row.machine_family_code as string | null) ?? null,
+    tp: Number(row.tp), tf_unit: Number(row.tf_unit),
+  });
+  const familyCode = (row.machine_family_code as string | null) ?? null;
+  const families = new Map<string, MachineFamilyRef>();
+  if (familyCode) families.set(familyCode, {code:familyCode,libelle:String(row.machine_family_libelle ?? familyCode),
+    programme_requis:Boolean(row.famille_programme_requis),actif:true});
+  const publicationIssues = collectPublicationBlockers([{
+    id: String(row.id), phase: row.phase == null ? null : Number(row.phase), designation: String(row.designation ?? ''),
+    machine_family_code: familyCode, numero_programme: (row.numero_programme as string | null) ?? null,
+  }],families).filter(issue => issue.code !== 'OPERATION_DESIGNATION_REQUIRED').map(issue => issue.message);
+
   return {
+    preparation_issues: [...new Set([...preparationIssues,...publicationIssues])],
     id: String(row.id),
     piece_technique_id: String(row.piece_technique_id),
     gamme_id: (row.gamme_id as string | null) ?? null,
