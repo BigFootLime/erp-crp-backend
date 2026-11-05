@@ -658,6 +658,8 @@ export async function repoSelectPreparationVersion(
   return withRealtimeOutboxTransaction(await pool.connect(), async (tx) => {
     const of = await loadPreparationOrder(tx, id, true);
     assertPreparationMutable(of, input.expected_updated_at);
+    if(of.technical_preparation?.version_selection_mode==='MANUAL' && of.version_id && input.version_id!==of.version_id)
+      throw new HttpError(409,'OF_DOSSIER_PINNED','L’indice et la révision de cet OF sont conservés. Complétez ce dossier ; un nouveau plan client suit son propre dossier.');
     if (of.technical_snapshot_sha256)
       throw new HttpError(
         409,
@@ -680,9 +682,9 @@ export async function repoSelectPreparationVersion(
       // The physical snapshot identity is populated atomically during validation.
       // A draft selection must not partially attach that immutable snapshot.
       `UPDATE public.ordres_fabrication SET
-      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode',COALESCE($5::text,'MANUAL')),
+      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode','MANUAL'),
       preparation_rules_version=$3,technical_readiness='INCOMPLETE',updated_at=now(),updated_by=$4 WHERE id=$1`,
-      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id, input.version_selection_mode],
+      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id],
     );
     await preparationAudit(
       tx,
