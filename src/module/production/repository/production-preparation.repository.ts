@@ -1,4 +1,5 @@
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { readGammePublicationBlockersTx } from "../../gammes/repository/gamme-operations.repository";
 import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { readImprovementReturns } from "./improvement-returns.repository";
@@ -373,7 +374,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     ).length,
     required_documents_missing: Number(sources.missing_documents),
     routing_count:
-      sources.gamme?.statut === "APPLICABLE" && sources.gamme.is_current
+      sources.gamme && ["BROUILLON", "EN_VALIDATION", "APPLICABLE"].includes(sources.gamme.statut) && sources.gamme.is_current
         ? sources.operations.length
         : 0,
     invalid_operations: sources.operations.filter((o) => preparationOperationIssues(o).length > 0).length,
@@ -405,6 +406,16 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     sheet_current: sheet?.state === "READY" || (rulesVersion >= 2 && Boolean(importedInspection(sources.documents))),
   };
   const items = evaluatePreparation(f, rulesVersion);
+  if (sources.version?.effective === false) {
+    const index = items.find(item => item.key === 'index');
+    if (index) { index.status = 'BLOCKED'; index.detail = 'La date d’effet de cet indice est future. Corrigez-la avant de valider.'; }
+  }
+  const routing = items.find(item => item.key === 'routing');
+  if (routing && sources.gamme && sources.gamme.statut !== 'APPLICABLE') {
+    const blockers = await readGammePublicationBlockersTx(tx, sources.gamme.id);
+    if (blockers.length) { routing.status = 'BLOCKED'; routing.detail = blockers.map(blocker => blocker.message).join(' ; '); }
+    else if (routing.status === 'READY') routing.detail = 'Gamme complète : elle deviendra applicable avec la validation du dossier.';
+  }
   const importedSheet = importedInspection(sources.documents);
   if (importedSheet && sheet?.state !== "READY") {
     const item = items.find((entry) => entry.key === "self_inspection");

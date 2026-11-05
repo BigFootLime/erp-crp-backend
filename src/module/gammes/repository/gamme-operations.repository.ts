@@ -1007,14 +1007,18 @@ export async function repoGammePublicationReadiness(gammeId: string): Promise<Pu
  * garde de publication est rejouée DANS la transaction, sur les lignes
  * verrouillées : un aperçu « publiable » ne vaut pas autorisation.
  */
-export async function repoPublishGamme(
-  gammeId: string,
-  expectedUpdatedAt: string | null | undefined,
-  audit: AuditContext
+export async function readGammePublicationBlockersTx(tx: Pick<PoolClient, "query">, gammeId: string) {
+  const operations = await tx.query(`SELECT id::text,phase,designation,machine_family_code,numero_programme
+    FROM public.pieces_techniques_operations WHERE gamme_id=$1`, [gammeId]);
+  return collectPublicationBlockers(operations.rows.map(row => ({
+    id: String(row.id), phase: row.phase == null ? null : Number(row.phase), designation: row.designation,
+    machine_family_code: row.machine_family_code, numero_programme: row.numero_programme,
+  })), await loadFamilyMap(tx));
+}
+
+export async function publishGammeTx(
+  client: PoolClient, gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
 ): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
     const gamme = await loadGammeContext(client, gammeId, true);
     assertGammeEditable(gamme.statut);
     assertOptimisticVersion({
@@ -1055,12 +1059,18 @@ export async function repoPublishGamme(
     await insertAudit(client, audit, "gammes.publish", "gamme", gammeId, {
       operations: operations.rowCount ?? 0,
     });
-    await client.query("COMMIT");
     return res.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+}
+
+export async function repoPublishGamme(
+  gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
+): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await publishGammeTx(client, gammeId, expectedUpdatedAt, audit);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { client.release(); }
 }

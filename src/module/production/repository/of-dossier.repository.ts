@@ -68,6 +68,22 @@ export async function repoOfDossier(id:number) {
     return result;
   } catch(error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
 }
+export async function completePreparedDossierTx(tx:DossierDb,id:number,audit:AuditContext,current?:Awaited<ReturnType<typeof readOfDossierTx>>) {
+  current ??= await readOfDossierTx(tx,id);
+  if (!current.operations.length) throw new HttpError(422,'GAMME_REQUIRED','Le dossier doit contenir au moins une opération.');
+    if(!current.canComplete) throw new HttpError(409,"DOSSIER_INCOMPLETE","Validez la définition technique avant de passer le dossier à Complet.",{blockers:current.blockers});
+    const preparation=await evaluateOfPreparation(tx,id);
+    if(!preparation.ready) throw new HttpError(409,"DOSSIER_TECHNICAL_CHANGED","La préparation technique doit être revue.",{items:preparation.items});
+    if(current.status!=="COMPLETE"){
+      await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=COALESCE(invalidated_at,now()),invalidation_reason=COALESCE(invalidation_reason,'Nouvelle validation du dossier.') WHERE of_id=$1 AND invalidated_at IS NULL",[id]);
+      await tx.query(`INSERT INTO public.of_dossier_validations(of_id,source_hash,planning_revision,evidence,decided_by)
+        SELECT $1,$2,revision,$3::jsonb,$4 FROM public.planning_central_settings WHERE singleton`,[id,current.sourceHash,JSON.stringify({planning:current.planning,operations:current.operations,preparationHash:preparation.source_hash,rulesVersion:preparation.rules_version,warnings:preparation.warnings}),audit.user_id]);
+      // Never changes execution status or actual dates.
+      await preparationAudit(tx,audit,id,"production.of.dossier.complete",{sourceHash:current.sourceHash,operations:current.planning.total});
+    }
+  return readOfDossierTx(tx,id);
+}
+
 export async function repoCompleteOfDossier(id:number,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext) {
   return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
     // Same lock order as central planning: planning revision before the OF.
@@ -84,17 +100,7 @@ export async function repoCompleteOfDossier(id:number,body:{expectedVersion:stri
     }
     const current=await readOfDossierTx(tx,id);
     if(current.version!==body.expectedVersion) throw new HttpError(409,"DOSSIER_CHANGED","Le dossier a changé. Relis ses conséquences avant de valider.");
-    if(!current.canComplete) throw new HttpError(409,"DOSSIER_INCOMPLETE","Validez la définition technique avant de passer le dossier à Complet.",{blockers:current.blockers});
-    const preparation=await evaluateOfPreparation(tx,id);
-    if(!preparation.ready) throw new HttpError(409,"DOSSIER_TECHNICAL_CHANGED","La préparation technique doit être revue.",{items:preparation.items});
-    if(current.status!=="COMPLETE"){
-      await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=COALESCE(invalidated_at,now()),invalidation_reason=COALESCE(invalidation_reason,'Nouvelle validation du dossier.') WHERE of_id=$1 AND invalidated_at IS NULL",[id]);
-      await tx.query(`INSERT INTO public.of_dossier_validations(of_id,source_hash,planning_revision,evidence,decided_by)
-        SELECT $1,$2,revision,$3::jsonb,$4 FROM public.planning_central_settings WHERE singleton`,[id,current.sourceHash,JSON.stringify({planning:current.planning,operations:current.operations,preparationHash:preparation.source_hash,rulesVersion:preparation.rules_version,warnings:preparation.warnings}),audit.user_id]);
-      // Never changes execution status or actual dates.
-      await preparationAudit(tx,audit,id,"production.of.dossier.complete",{sourceHash:current.sourceHash,operations:current.planning.total});
-    }
-    const response=await readOfDossierTx(tx,id);
+    const response=await completePreparedDossierTx(tx,id,audit,current);
     await tx.query("INSERT INTO public.of_material_commands(idempotency_key,actor_id,of_id,command_type,payload_hash,response) VALUES($1::uuid,$2,$3,'COMPLETE',$4,$5::jsonb)",[body.idempotencyKey,audit.user_id,id,payloadHash,JSON.stringify(response)]);
     return response;
   });

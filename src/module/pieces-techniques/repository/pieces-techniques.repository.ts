@@ -2399,6 +2399,22 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
   }
 }
 
+/** OF preparation can activate its draft piece; it never restarts an obsolete piece or production. */
+export async function activatePreparedPieceTx(tx: PoolClient, id: string, audit: AuditContext) {
+  const row = (await tx.query<{statut:PieceTechniqueStatut}>(`SELECT statut::text FROM public.pieces_techniques
+    WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE`,[id])).rows[0];
+  if (!row) throw new HttpError(404,'PIECE_NOT_FOUND','Pièce technique introuvable.');
+  if (row.statut === 'OBSOLETE') throw new HttpError(409,'PIECE_OBSOLETE','Une pièce obsolète ne peut pas être activée par la préparation.');
+  if (row.statut !== 'DRAFT') return;
+  const commentaire='Activation lors de la validation du dossier de préparation OF.';
+  await tx.query(`UPDATE public.pieces_techniques SET statut='ACTIVE',en_fabrication=0,updated_by=$2,updated_at=now()
+    WHERE id=$1::uuid`,[id,audit.user_id]);
+  await tx.query(`INSERT INTO public.pieces_techniques_historique(piece_technique_id,user_id,ancien_statut,nouveau_statut,commentaire)
+    VALUES($1::uuid,$2,'DRAFT','ACTIVE',$3)`,[id,audit.user_id,commentaire]);
+  await insertAuditLog(tx,audit,{action:'pieces-techniques.status',entity_type:'pieces_techniques',entity_id:id,
+    details:{from:'DRAFT',to:'ACTIVE',commentaire}});
+}
+
 export async function repoUpdatePieceTechniqueStatus(
   id: string,
   ancienStatut: PieceTechniqueStatut,

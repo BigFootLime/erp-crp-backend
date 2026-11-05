@@ -414,7 +414,8 @@ export async function repoUpdateVersionStatus(
  * exposer au client un état partiellement publié si le gel documentaire
  * échoue ensuite.
  */
-export async function repoPublishVersion(
+export async function publishVersionTx(
+  client: PoolClient,
   pieceTechniqueId: string,
   versionId: string,
   extra: {
@@ -425,9 +426,6 @@ export async function repoPublishVersion(
   },
   audit: AuditContext
 ): Promise<PieceTechniqueVersionRow | null> {
-  const client = await db.connect()
-  try {
-    await client.query("BEGIN")
     const cur = await client.query<PieceTechniqueVersionRow>(
       `SELECT ${VERSION_COLUMNS}
          FROM public.piece_technique_versions
@@ -437,7 +435,6 @@ export async function repoPublishVersion(
     )
     const current = cur.rows[0] ?? null
     if (!current) {
-      await client.query("ROLLBACK").catch(() => {})
       return null
     }
     if (extra.expected_updated_at && extra.expected_updated_at !== current.updated_at) {
@@ -470,10 +467,8 @@ export async function repoPublishVersion(
           date_effet_updated: true,
           date_effet: extra.date_effet,
         })
-        await client.query("COMMIT")
         return row
       }
-      await client.query("COMMIT")
       return current
     }
 
@@ -533,14 +528,28 @@ export async function repoPublishVersion(
       document_requirements_frozen: frozen ? !frozen.already_frozen : false,
       document_requirements_count: frozen?.frozen_count ?? null,
     })
-    await client.query("COMMIT")
     return row
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    client.release()
-  }
+}
+
+export async function repoPublishVersion(
+  pieceTechniqueId: string,
+  versionId: string,
+  extra: {
+    date_application: string | null;
+    date_effet?: string | null;
+    commentaire_validation: string | null;
+    expected_updated_at?: string;
+  },
+  audit: AuditContext
+): Promise<PieceTechniqueVersionRow | null> {
+  const client = await db.connect()
+  try {
+    await client.query("BEGIN")
+    const result = await publishVersionTx(client, pieceTechniqueId, versionId, extra, audit)
+    await client.query("COMMIT")
+    return result
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error }
+  finally { client.release() }
 }
 
 /** Copy immutable technical evidence; transaction and intent are owned by the caller. */

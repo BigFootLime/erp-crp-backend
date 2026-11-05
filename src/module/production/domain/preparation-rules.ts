@@ -235,7 +235,9 @@ export function evaluatePreparation(f: PreparationFacts, rulesVersion = PREPARAT
     "routing",
     "Gamme",
     f.routing_count > 0 && f.invalid_operations === 0,
-    f.operation_issues?.length ? f.operation_issues.join(" ; ") : "Gamme applicable, opérations, ressources et temps renseignés.",
+    f.operation_issues?.length ? f.operation_issues.join(" ; ") : "Opérations, ressources et temps renseignés ; gamme publiable ou déjà applicable.",
+    "VERSION",
+    true,
   );
   add(
     "quality",

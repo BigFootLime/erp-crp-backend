@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "ca67bfe7f36397a295e8696327f262284797145fd0b106643ffb2a71f29bf74e";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "7346f3356ea0c3b0eb9854625447b257be0906c9ae020003fb33e28eddcf2539";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -18922,13 +18922,13 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "moduleAccessGate",
       "authenticateToken",
-      "requireOfCapability(release)",
+      "requireOfCapability(read)",
       "completeDossier"
     ],
     "authenticated": true,
     "rbac": [
       "moduleAccessGate",
-      "requireOfCapability(release)"
+      "requireOfCapability(read)"
     ]
   },
   {

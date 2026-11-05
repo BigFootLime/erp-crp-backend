@@ -283,7 +283,7 @@ router.post('/ofs/:id/material/debit-corrections',requireOfCapability('operate')
 router.post('/ofs/:id/material/transfers',requireOfCapability('operate'),transferMaterial);
 router.post('/ofs/:id/material/reconcile-revision',requireOfCapability('read'),reconcileMaterial);
 router.post('/ofs/:id/material/customer-calls',requireOfCapability('read'),customerMaterial);
-router.post('/ofs/:id/complete',requireOfCapability('release'),completeDossier);
+router.post('/ofs/:id/complete',requireOfCapability('read'),completeDossier);
 router.post('/ofs/:id/workbench/children/synchronize',requireOfCapability('generate'),synchronizePreparationChildren);
 router.post('/ofs/:id/workbench/programming',requireOfCapability('revise'),saveProgrammingTask);
 router.post('/ofs/:id/workbench/purchases/import',requireOfCapability('edit_prelaunch'),importPreparationPurchases);

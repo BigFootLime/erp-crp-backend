@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1833 (7f80413d)
+
+- Source originale : fix(production): validate and publish a complete dossier in one action (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1833 (f9d17be5)
 
 - Source originale : fix(planning): require completed OF preparation before scheduling (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
