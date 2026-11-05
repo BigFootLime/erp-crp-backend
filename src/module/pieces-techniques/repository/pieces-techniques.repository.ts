@@ -1,3 +1,4 @@
+import { syncOperationFinishTitleTx } from "../../surface-finish/repository/surface-finish-purchase-link.repository";
 // src/module/pieces-techniques/repository/pieces-techniques.repository.ts
 import type { PoolClient } from "pg";
 import { currentDossierTotalsSql } from "./dossier-totals.sql";
@@ -3300,6 +3301,12 @@ export async function repoAddAchat(
   const exists = await client.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
   if (!exists.rows[0]?.ok) {await client.query("ROLLBACK");return null;}
 
+  if(body.type_achat==='MATIERE'){
+    if(body.piece_technique_version_id)await client.query('SELECT 1 FROM public.piece_technique_versions WHERE id=$1::uuid FOR UPDATE',[body.piece_technique_version_id]);
+    else await client.query('SELECT 1 FROM public.pieces_techniques WHERE id=$1::uuid FOR UPDATE',[pieceTechniqueId]);
+    const count=Number((await client.query(`SELECT count(*) AS count FROM public.pieces_techniques_achats WHERE piece_technique_id=$1::uuid AND piece_technique_version_id IS NOT DISTINCT FROM $2::uuid AND type_achat='MATIERE'`,[pieceTechniqueId,body.piece_technique_version_id??null])).rows[0].count);
+    if(count>=2)throw new HttpError(422,'MATERIAL_LIMIT_REACHED','Deux matières premières au maximum par dossier de pièce.');
+  }
   let linked: {id:string;phase:number;designation:string;short_name:string|null}|undefined;
   if(body.gamme_operation_id){
     if(!["TRAITEMENT","MATIERE"].includes(body.type_achat)||!body.article_id||!body.piece_technique_version_id||!audit) throw new HttpError(422,"PS_OPERATION_CONTEXT","Sélectionnez l’article et la version de pièce avant de rattacher une opération.");
@@ -3557,11 +3564,16 @@ export async function repoUpdateAchat(
 }
 
 export async function repoDeleteAchat(pieceTechniqueId: string, achatId: string): Promise<boolean> {
-  const { rowCount } = await db.query(
-    `DELETE FROM pieces_techniques_achats WHERE id = $1::uuid AND piece_technique_id = $2::uuid`,
-    [achatId, pieceTechniqueId]
-  );
-  return (rowCount ?? 0) > 0;
+ const client=await db.connect();
+ try{await client.query('BEGIN');
+  const row=(await client.query<{gamme_operation_id:string|null;statut:string|null}>(`SELECT p.gamme_operation_id::text,g.statut FROM public.pieces_techniques_achats p LEFT JOIN public.gammes g ON g.id=p.gamme_id WHERE p.id=$1::uuid AND p.piece_technique_id=$2::uuid FOR UPDATE OF p`,[achatId,pieceTechniqueId])).rows[0];
+  if(!row){await client.query('ROLLBACK');return false;}
+  if(row.gamme_operation_id&&row.statut&&!['BROUILLON','EN_VALIDATION'].includes(row.statut))throw new HttpError(409,'GAMME_NOT_EDITABLE','Cette gamme est figée : créez une gamme de travail avant de modifier ses rattachements.');
+  await client.query('DELETE FROM public.gamme_operation_finitions WHERE achat_ligne_id=$1::uuid',[achatId]);
+  await client.query('DELETE FROM public.pieces_techniques_achats WHERE id=$1::uuid',[achatId]);
+  if(row.gamme_operation_id)await syncOperationFinishTitleTx(client,row.gamme_operation_id);
+  await client.query('COMMIT');return true;
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
 export async function repoReorderAchats(pieceTechniqueId: string, order: string[]): Promise<Achat[] | null> {

@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { HttpError } from '../../../utils/httpError';
-import { bindIssuedFinishPurchaseTx } from '../../surface-finish/repository/surface-finish-purchase-link.repository';
+import { bindIssuedFinishPurchaseTx, syncOperationFinishTitleTx } from '../../surface-finish/repository/surface-finish-purchase-link.repository';
 
 /** Used by new purchases, existing-line attachment and controlled reconciliation. Caller owns the transaction. */
 export async function linkPurchaseOperationTx(tx:Pick<PoolClient,'query'>,input:{pieceId:string;lineId:string;operationId?:string;phase?:number|null;actorId:number}){
@@ -13,12 +13,12 @@ export async function linkPurchaseOperationTx(tx:Pick<PoolClient,'query'>,input:
  if(purchase.gamme_operation_id&&purchase.gamme_operation_id!==operation.id)throw new HttpError(409,'PURCHASE_ALREADY_LINKED','Cette ligne est déjà rattachée à une autre opération. Retirez d’abord son association dans la gamme.');
  const article=(await tx.query<{designation_courte:string|null}>(material?`SELECT NULL::text AS designation_courte FROM public.articles WHERE id=$1::uuid AND article_category='matiere' AND is_active`:`SELECT f.designation_courte FROM public.articles a JOIN public.articles_traitement t ON t.article_id=a.id JOIN public.surface_finish_revisions r ON r.id=t.finish_revision_id JOIN public.surface_finishes f ON f.id=r.finish_id WHERE a.id=$1::uuid AND a.is_active AND t.piece_technique_id=$2::uuid AND t.superseded_at IS NULL`,[purchase.article_id,...(material?[]:[input.pieceId])])).rows[0];
  if(!article)throw new HttpError(422,'PURCHASE_ARTICLE_INCOMPATIBLE','Cet article ne correspond pas au besoin ou à cette pièce technique.');
- if(!material&&(await tx.query(`SELECT 1 FROM public.pieces_techniques_achats WHERE gamme_operation_id=$1::uuid AND type_achat='TRAITEMENT' AND id<>$2::uuid LIMIT 1`,[operation.id,input.lineId])).rowCount)
-  throw new HttpError(409,'OPERATION_FINISH_ALREADY_LINKED','Cette opération porte déjà un procédé spécial. Choisissez une autre opération ou modifiez sa finition dans la gamme.');
+ if(!material&&Number((await tx.query(`SELECT count(*) AS count FROM public.pieces_techniques_achats WHERE gamme_operation_id=$1::uuid AND type_achat='TRAITEMENT' AND id<>$2::uuid`,[operation.id,input.lineId])).rows[0].count)>=2)
+  throw new HttpError(422,'OPERATION_FINISH_LIMIT_REACHED','Deux procédés spéciaux au maximum sur une opération.');
  await tx.query(`UPDATE public.pieces_techniques_achats SET gamme_operation_id=$2::uuid,phase=$3,gamme_id=$4::uuid WHERE id=$1::uuid AND (gamme_operation_id IS DISTINCT FROM $2::uuid OR phase IS DISTINCT FROM $3 OR gamme_id IS DISTINCT FROM $4::uuid)`,[input.lineId,operation.id,operation.phase,operation.gamme_id]);
  if(!material){
   await bindIssuedFinishPurchaseTx(tx,{operationId:operation.id,versionId:purchase.piece_technique_version_id,articleId:purchase.article_id,lineId:input.lineId,actorId:input.actorId});
-  await tx.query(`UPDATE public.pieces_techniques_operations SET designation=$2,designation_auto=false,updated_at=now() WHERE id=$1::uuid AND (designation IS DISTINCT FROM $2 OR designation_auto)`,[operation.id,article.designation_courte]);
+  await syncOperationFinishTitleTx(tx,operation.id);
  }
  return {operation_id:operation.id,phase:operation.phase,type_achat:purchase.type_achat,article_id:purchase.article_id,previous_designation:operation.designation,designation:material?operation.designation:article.designation_courte,designation_preserved:material};
 }

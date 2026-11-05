@@ -53,6 +53,8 @@ export const OP_COLS = `
   o.machine_family_code, o.numero_programme,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix) ORDER BY a.code,p.id)
     FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id WHERE p.gamme_operation_id=o.id AND p.type_achat='MATIERE'),'[]'::jsonb) AS matieres,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',f.designation_courte,'fournisseur_nom',p.fournisseur_nom,'fournisseur_id',p.fournisseur_id) ORDER BY r.slot)
+    FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id JOIN public.articles a ON a.id=r.article_id LEFT JOIN public.pieces_techniques_achats p ON p.id=r.achat_ligne_id WHERE r.gamme_operation_id=o.id),'[]'::jsonb) AS procedes_speciaux,
   o.tp::float8 AS tp, o.tf_unit::float8 AS tf_unit, o.qte::float8 AS qte, o.coef::float8 AS coef,
   o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
   o.taux_horaire_legacy::float8 AS taux_horaire_legacy, o.cf_rate_id::text AS cf_rate_id,
@@ -76,6 +78,7 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  procedes_speciaux?: Array<{achat_id:string|null;article_id:string;code:string;designation:string;fournisseur_nom:string|null;fournisseur_id:string|null}>;
   matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null}>;
   id: string;
   piece_technique_id: string;
@@ -182,6 +185,7 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
     temps_fabrication_minutes: hoursToMinutes(toNum(row.temps_fabrication, 0)),
     temps_final_minutes: hoursToMinutes(tempsTotal),
     matieres: Array.isArray(row.matieres) ? row.matieres : [],
+    procedes_speciaux: Array.isArray(row.procedes_speciaux) ? row.procedes_speciaux : [],
     taux_horaire: tauxConnu,
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: (row.taux_horaire_effective_at as string | null) ?? null,

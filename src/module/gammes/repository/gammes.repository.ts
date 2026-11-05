@@ -242,6 +242,7 @@ const finitionsTable = await tx.query<{ present: boolean }>(
 )
 if (finitionsTable.rows[0]?.present) {
   const finitionColumns = await copyableColumns(tx, "gamme_operation_finitions", [
+    "achat_ligne_id",
     "id",
     "gamme_id",
     "gamme_operation_id",

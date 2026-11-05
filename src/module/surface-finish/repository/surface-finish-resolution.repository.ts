@@ -1,3 +1,4 @@
+import { syncOperationFinishTitleTx } from "./surface-finish-purchase-link.repository";
 // #210 — Résolution d'article de sous-traitance depuis une opération de gamme.
 //
 // Deux commandes seulement :
@@ -1106,7 +1107,7 @@ export async function repoGetOperationFinish(
 ): Promise<OperationFinishRequirement | null> {
   const res = await db.query<RequirementRow>(
     `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM}
-     WHERE fin.gamme_id = $1::uuid AND fin.gamme_operation_id = $2::uuid`,
+     WHERE fin.gamme_id = $1::uuid AND fin.gamme_operation_id = $2::uuid AND fin.slot=1`,
     [gammeId, operationId]
   );
   const row = res.rows[0];
@@ -1115,7 +1116,7 @@ export async function repoGetOperationFinish(
 
 async function readRequirement(tx: Queryer, operationId: string): Promise<OperationFinishRequirement | null> {
   const res = await tx.query<RequirementRow>(
-    `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM} WHERE fin.gamme_operation_id = $1::uuid`,
+    `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM} WHERE fin.gamme_operation_id = $1::uuid AND fin.slot=1`,
     [operationId]
   );
   const row = res.rows[0];
@@ -1325,6 +1326,7 @@ export async function repoConfirmOperationFinish(
     }
 
     /* 8) Exigence de finition — créée ou mise à jour, jamais dupliquée. */
+    if((await client.query(`SELECT 1 FROM public.gamme_operation_finitions WHERE gamme_operation_id=$1::uuid AND slot=2 AND article_id=$2::uuid`,[operationId,articleId])).rowCount)throw new HttpError(409,"OPERATION_FINISH_ALREADY_LINKED","Cet article est déjà rattaché comme deuxième procédé spécial à cette opération.");
     const previous = await readRequirement(client, operationId);
     if (previous && body.expected_finition_updated_at) {
       assertOptimisticVersion({
@@ -1400,7 +1402,7 @@ export async function repoConfirmOperationFinish(
          $33,$34,$35,
          $36,$36
        )
-       ON CONFLICT (gamme_operation_id) DO UPDATE SET
+       ON CONFLICT (gamme_operation_id,slot) DO UPDATE SET
          gamme_id = EXCLUDED.gamme_id,
          piece_technique_version_id = EXCLUDED.piece_technique_version_id,
          finish_revision_id = EXCLUDED.finish_revision_id,
@@ -1443,15 +1445,15 @@ export async function repoConfirmOperationFinish(
     /* 9) Ligne de nomenclature d'achat — liée par FK, jamais par la phase. */
     const lineRes = await client.query<{ id: string; quantite: string }>(
       `INSERT INTO public.pieces_techniques_achats (
-         piece_technique_id, phase, article_id, quantite, unite_prix,
+         id, piece_technique_id, phase, article_id, quantite, unite_prix,
          designation, designation_snapshot, type_achat,
          gamme_operation_id, gamme_id, piece_technique_version_id, source
        ) VALUES (
-         $1::uuid, $2, $3::uuid, $4, $5,
+         COALESCE((SELECT p.id FROM public.pieces_techniques_achats p WHERE p.id=$11::uuid AND p.gamme_operation_id=$8::uuid),gen_random_uuid()), $1::uuid, $2, $3::uuid, $4, $5,
          $6, $6, $7,
          $8::uuid, $9::uuid, $10::uuid, 'GAMME_FINITION'
        )
-       ON CONFLICT (gamme_operation_id) WHERE gamme_operation_id IS NOT NULL AND type_achat = 'TRAITEMENT'
+       ON CONFLICT (id)
        DO UPDATE SET
          article_id = EXCLUDED.article_id,
          quantite = EXCLUDED.quantite,
@@ -1474,15 +1476,16 @@ export async function repoConfirmOperationFinish(
         context.operation_id,
         context.gamme_id,
         context.piece_technique_version_id,
+        previous?.achat_ligne_id ?? null,
       ]
     );
     const purchaseLineId = lineRes.rows[0].id;
     await client.query(`UPDATE public.pieces_techniques_achats SET gamme_operation_id=$2::uuid WHERE id=$1::uuid AND gamme_operation_id IS DISTINCT FROM $2::uuid`,[purchaseLineId,operationId]);
-    await client.query(`UPDATE public.pieces_techniques_operations SET designation=$2,designation_auto=false,updated_at=now() WHERE id=$1::uuid AND (designation IS DISTINCT FROM $2 OR designation_auto)`,[operationId,finish.designation_courte]);
+    await syncOperationFinishTitleTx(client,operationId);
 
     await client.query(
       `UPDATE public.gamme_operation_finitions SET achat_ligne_id = $2::uuid, updated_at = now()
-       WHERE gamme_operation_id = $1::uuid`,
+       WHERE gamme_operation_id = $1::uuid AND slot=1`,
       [operationId, purchaseLineId]
     );
 
@@ -1584,7 +1587,7 @@ export async function repoDetachOperationFinish(
       `SELECT id::text AS id, updated_at::text AS updated_at, article_id::text AS article_id,
               achat_ligne_id::text AS achat_ligne_id
        FROM public.gamme_operation_finitions
-       WHERE gamme_operation_id = $1::uuid FOR UPDATE`,
+       WHERE gamme_operation_id = $1::uuid AND slot=1 FOR UPDATE`,
       [operationId]
     );
     const row = current.rows[0];
@@ -1603,8 +1606,9 @@ export async function repoDetachOperationFinish(
         [row.achat_ligne_id]
       );
     }
-    await client.query(`DELETE FROM public.gamme_operation_finitions WHERE gamme_operation_id = $1::uuid`, [operationId]);
+    await client.query(`DELETE FROM public.gamme_operation_finitions WHERE gamme_operation_id = $1::uuid AND slot=1`, [operationId]);
 
+    await syncOperationFinishTitleTx(client,operationId);
     await insertFinishAudit(client, audit, "finitions.operation.detach", "gamme_operation_finition", operationId, {
       gamme_id: gammeId,
       motif: body.motif,

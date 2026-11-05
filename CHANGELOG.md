@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1833 (710a6b2b)
+
+- Source originale : fix(methodes): support two finishes per phase and cap raw materials (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1833 (1bf835bc)
 
 - Source originale : fix(methodes): link purchases to route operations and apply finish title (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
