@@ -170,7 +170,10 @@ export function schedule(input: {
         return resource && (!resource.qualifiedTaskIds || resource.qualifiedTaskIds.includes(t.id));
       }).sort() : req?.resourceIds ?? t.resourceIds;
       const resources = ids.map(id => resourceMap.get(id)).filter((r): r is Resource => !!r);
-      if (!ids.length || resources.length !== ids.length) { conflict(t.id, "RESOURCE_MISSING", "Ressource ou calendrier à définir."); continue; }
+      if (!ids.length || resources.length !== ids.length) {
+        const issue=t.resourceIssues?.[0];
+        conflict(t.id, issue?.code ?? "RESOURCE_MISSING", issue?.message ?? "Aucune ressource affectée ou admissible pour cette opération. Vérifiez les postes et les machines dans la préparation de l’OF."); continue;
+      }
       if (ids.some(id => !t.eligibleResourceIds.includes(id)) ||
           resources.some(r => r.qualifiedTaskIds && !r.qualifiedTaskIds.includes(t.id))) {
         conflict(t.id, "RESOURCE_NOT_QUALIFIED", "La ressource n'est pas qualifiée pour cette opération."); continue;
@@ -186,7 +189,8 @@ export function schedule(input: {
           (!parent?.external || d.releasedQuantity>=t.quantity)) continue;
         const date = predecessorDate(parent);
         if (!date || conflicted.has(d.predecessorId)) {
-          conflict(t.id, "PREDECESSOR_UNAVAILABLE", "Un prérequis n'a pas de disponibilité réalisable.", d.predecessorId); blocked = true; break;
+          const cause=parent?.resourceIssues?.[0]?.message;
+          conflict(t.id, "PREDECESSOR_UNAVAILABLE", `${parent?.label ?? 'L’étape précédente'} doit pouvoir être planifiée avant cette opération.${cause ? ' '+cause : ''}`, d.predecessorId); blocked = true; break;
         }
         earliest = Math.max(earliest, ms(date.end) + d.lagMinutes * 60000);
       }

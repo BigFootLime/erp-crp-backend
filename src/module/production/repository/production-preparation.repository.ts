@@ -1,5 +1,6 @@
 import {readProcurementWarningsTx} from '../../planning/repository/planning-procurement-readiness';
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { prepareOperationResources } from './workstation-defaults.repository';
 import { readGammePublicationBlockersTx } from "../../gammes/repository/gamme-operations.repository";
 import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
@@ -27,14 +28,8 @@ import {
 } from "../domain/preparation-rules";
 
 type Db = Pick<PoolClient, "query">;
-/** Same active-role eligibility for the picker and the assignment transaction. */
-export const PROGRAMMING_ASSIGNEE_PREDICATE_SQL = `u.status='Active' AND EXISTS (
-  SELECT 1 FROM public.app_roles r
-  WHERE r.is_active AND lower(r.role_key) SIMILAR TO '%(admin|directeur|program|method|méthod|production)%'
-    AND (r.role_key=u.role OR EXISTS (
-      SELECT 1 FROM public.user_role_assignments a WHERE a.user_id=u.id AND a.role_key=r.role_key
-    ))
-)`;
+import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "./programming-assignee.sql";
+export { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "./programming-assignee.sql";
 
 export async function usesPreparationRules(tx: Db, id?: number) {
   const result = await tx.query<{ enabled: boolean }>(
@@ -118,6 +113,9 @@ type TechnicalSources = {
   }>;
   operations: Array<{
     id: string;
+    phase?: number | null;
+    machine_id?: string | null;
+    poste_id?: string | null;
     designation: string;
     type_operation?: string | null;
     machine_family_code: string | null;
@@ -438,7 +436,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   const programmingTask =
     (
       await tx.query(
-        `SELECT p.id::text,p.assignee_id,p.estimated_hours::float8,p.status,p.program_reference,p.updated_at::text,concat_ws(' ',u.name,u.surname) AS assignee_name
+        `SELECT p.id::text,p.assignee_id,p.estimated_hours::float8,p.status,p.program_reference,p.updated_at::text,concat_ws(' ',u.name,u.surname) AS assignee_name,
+          COALESCE((to_jsonb(p)->>'progress_percent')::int,CASE WHEN p.status='DONE' THEN 100 ELSE 0 END) AS progress_percent
     FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id WHERE p.piece_technique_version_id=$1::uuid
       AND CASE WHEN $3::boolean THEN p.id=$2::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) ELSE p.of_id IS NULL END`,
         [of.version_id, decisions.programming?.task_id ?? null, Boolean(of.technical_snapshot_sha256), id],
@@ -510,6 +509,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   items.push({key:'resources',label:'Ressources de fabrication',scope:'OF',required:!of.technical_snapshot_sha256,
     status:resourceIssues.length?'MISSING':'READY',detail:resourceIssues.length?resourceIssues.map(operation=>`${operation.label} : ${operation.issue}`).join(' · '):'Postes habituels et familles de machines disponibles. Le choix des créneaux reste à faire dans le planning.'});
   return {
+    resource_preparation:resourcePreparation,
     programming_operations: programmingOperations,
     of: {
       ...of,

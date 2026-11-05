@@ -135,13 +135,14 @@ export const programmingTaskSchema = z
     assignee_id: z.number().int().positive(),
     estimated_hours: z.number().positive().max(10000),
     status: z.enum(["TODO", "DONE"]),
+    progress_percent: z.union([z.literal(0),z.literal(25),z.literal(50),z.literal(75),z.literal(100)]).optional(),
     program_reference: z.string().trim().min(1).max(200).optional(),
   })
   .strict()
   .refine((x) => x.status !== "DONE" || Boolean(x.program_reference), {
     path: ["program_reference"],
     message: "La référence du programme réalisé est requise.",
-  });
+  }).refine(x=>x.progress_percent===undefined || (x.status==='DONE')===(x.progress_percent===100),{path:['progress_percent'],message:'100 % exige un programme réalisé et référencé.'});
 export const importPurchasesSchema = z
   .object({
     expected_updated_at: z.string().min(1),

@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1834 (3f590a01)
+
+- Source originale : feat(production): configure reusable workstations and explain planning blockers (#1834). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1836 (04e52afe)
 
 - Source originale : fix(production): validate material stock and separate treatment purchasing (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.

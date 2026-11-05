@@ -5,6 +5,8 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { readWorkstationDefaults } from '../../production/repository/workstation-defaults.repository';
+import { isWorkstationType, resolveDefaultPoste } from '../../production/domain/workstation-defaults';
 import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
 import {assertMaintenanceMachineUnblockedTx} from "../../production/repository/operator-maintenance-read.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
@@ -667,11 +669,15 @@ export async function assertOperationResourceCompatible(params: {
   if (!row) throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
   // A manual route explicitly assigns its autonomous workstation on the OF.
   // Never infer a qualification from a label or accept an arbitrary workstation.
-  if (!row.required_machine_family_code && ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(row.operation_type ?? "")) {
+  if (isWorkstationType(row.operation_type) && !row.machine_id && !params.resource.machine_id) {
     if (!row.machine_id && !row.operation_machine_id && !params.resource.machine_id && row.poste_active &&
         row.assigned_poste_id && row.assigned_poste_id === row.selected_poste_id) return;
+    if(!row.operation_machine_id&&!row.assigned_poste_id&&row.poste_active){
+      const setup=await readWorkstationDefaults(params.tx);
+      if(resolveDefaultPoste(row.operation_type,setup.defaults,setup.postes)?.id===row.selected_poste_id)return;
+    }
     throw new HttpError(422, "PLANNING_MANUAL_POSTE_REQUIRED",
-      "Affectez un poste autonome actif à cette opération manuelle dans la fiche OF, puis sélectionnez ce poste.",
+      "Aucun poste de travail utilisable : sélectionnez le poste habituel du configurateur ERP ou le poste affecté à cet OF.",
       { operation_id: row.operation_id });
   }
   if (!row.required_machine_family_code) {

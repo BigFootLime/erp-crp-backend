@@ -28,6 +28,8 @@ export type Estimate = {
   excluded: Array<{ id: string; reason: string }>;
 };
 export type CentralTask = {
+  resourceIssues?: Array<{code:string;message:string;actionPath:string}>;
+  progressPercent?: number;
   external?: { packages: import('../../subcontract/subcontract-flow.types').SubcontractFlow[];
     preparations?: import('../../subcontract/subcontract-flow.types').ExternalServicePreparation[];
     preparationIssues?: string[];

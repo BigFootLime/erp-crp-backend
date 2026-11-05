@@ -1,4 +1,5 @@
 import {createPreparationDraftTree} from './preparation-generation';
+import { assignGeneratedWorkstationDefaults } from '../repository/workstation-defaults.repository';
 import {synchronizeDraftChildrenTx} from '../repository/preparation-children.repository';
 import { PREPARATION_RULES_VERSION } from './preparation-rules';
 // Moteur unique de génération récursive des OF (#55/#141/#170).
@@ -323,7 +324,7 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
         pto.cf_id,
         cf.code AS cf_code_snapshot,
         pto.cf_rate_id,
-        NULL::uuid AS poste_id,
+        NULLIF(to_jsonb(pto)->>'poste_id','')::uuid AS poste_id,
         pto.machine_id,
         pto.machine_family_code,
         pto.numero_programme,
@@ -353,6 +354,7 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
     [params.of_id, params.piece_technique_id, params.gamme_id]
   );
 
+  await assignGeneratedWorkstationDefaults(tx,params.of_id);
   return operationsInsert.rowCount ?? 0;
 }
 
