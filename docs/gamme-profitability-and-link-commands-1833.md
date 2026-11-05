@@ -11,6 +11,8 @@
 
 Material blank counts reuse the canonical production document cutting calculation, including whole-blank rounding. Stored purchase prices remain authoritative; absent prices are not replaced by catalogue guesses. Setup is counted once per lot. Non-EUR operation costs are excluded from the known EUR subtotal and require conversion before a global margin is shown. Assembly child costs are marked incomplete rather than silently omitted.
 
+A positive purchase requirement with a zero or absent purchase price is treated as awaiting price confirmation, so an old default zero cannot create a profitable estimate. A zero selling rate explicitly entered on an operation remains a known selling value and can show a loss.
+
 Margin percentage = (revenue − cost) / revenue × 100. Display thresholds are explicit: strong ≥20%, good ≥10%, tight ≥0%, loss <0%. Unknown revenue/cost is neutral. A known zero selling rate can show a loss without an undefined percentage. Missing rates, machine cycle times, prices and conversion are returned as reasons. This is a dossier estimate, excluding overhead absent from the dossier, and does not rewrite an OF financial snapshot.
 
 No test campaign was run, per the user’s direct-delivery instruction. TypeScript, lint, API contract and release-integrity checks are recorded in the private delivery receipt.

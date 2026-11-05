@@ -37,7 +37,7 @@ export async function repoGammeProfitability(gammeId:string,quantity:number){
     else {missing.push(`Longueur de coupe manquante · ${p.designation??p.id}`);need=NaN;}
    }
    const price=numeric(p.unit_price);
-   const cost=need===0?0:!Number.isFinite(need)||price===null?null:money(need*price);
+   const cost=need===0?0:!Number.isFinite(need)||price===null||price<=0?null:money(need*price);
    if(cost===null)missing.push(`Prix d'achat ou quantité manquant · ${p.designation??p.id}`);
    return {purchase_id:p.id,quantity:Number.isFinite(need)?need:null,unit,cost,cutting};
   });
