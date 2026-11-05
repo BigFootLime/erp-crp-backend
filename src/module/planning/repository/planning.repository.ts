@@ -5,6 +5,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
 import {assertMaintenanceMachineUnblockedTx} from "../../production/repository/operator-maintenance-read.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
@@ -1473,6 +1474,8 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
   const fromP = push(filters.from);
   const toP = push(filters.to);
   where.push(`tstzrange(e.start_ts, e.end_ts, '[)') && tstzrange(${fromP}::timestamptz, ${toP}::timestamptz, '[)')`);
+  const eligibleOfIds = await readPlanningEligibleOfIds(pool, filters.of_id ? [filters.of_id] : undefined);
+  where.push(`(COALESCE(e.of_id,op.of_id) IS NULL OR COALESCE(e.of_id,op.of_id)=ANY(${push(eligibleOfIds)}::bigint[]))`);
 
   if (filters.machine_id) where.push(`e.machine_id = ${push(filters.machine_id)}::uuid`);
   if (filters.poste_id) where.push(`e.poste_id = ${push(filters.poste_id)}::uuid`);

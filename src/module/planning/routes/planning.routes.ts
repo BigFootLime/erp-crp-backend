@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { listPlanningClientColors, setPlanningClientColor } from "../controllers/planning-client-color.controller";
-import { getPlanningReferenceOf, listPlanningReferenceOfs } from "../controllers/planning-references.controller";
+import { getPlanningReferenceOf, listPlanningReferenceOfs, listPlanningReferenceClients } from "../controllers/planning-references.controller";
 import centralRouter from "./planning-central.routes";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
@@ -68,6 +68,7 @@ router.get("/client-colors", requirePlanningCapability("read"), listPlanningClie
 router.put("/client-colors/:clientId", requirePlanningCapability("manage_schedule"), setPlanningClientColor);
 
 router.get("/references/ofs", requirePlanningCapability("read"), listPlanningReferenceOfs);
+router.get("/references/clients", requirePlanningCapability("read"), listPlanningReferenceClients);
 router.get("/references/ofs/:id", requirePlanningCapability("read"), getPlanningReferenceOf);
 
 router.get("/resources", requirePlanningCapability("read"), listPlanningResources);

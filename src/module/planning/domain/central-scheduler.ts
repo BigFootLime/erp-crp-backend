@@ -128,6 +128,10 @@ export function schedule(input: {
         waiting.set(d.successorId,remaining);
         if (remaining === 0) readyIds.push(d.successorId);
       }
+      if (t.source === "DRAFT" || t.readiness !== "READY") {
+        conflict(t.id, "DOSSIER_INCOMPLETE", "Terminez et validez la préparation de l’OF avant de le planifier.");
+        continue;
+      }
       if(t.external){
         let earliest=Math.max(ms(input.from),ms(requests.get(t.id)?.earliestStart??input.from));
         let unavailable=false;

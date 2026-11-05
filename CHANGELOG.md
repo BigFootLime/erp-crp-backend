@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1833 (f9d17be5)
+
+- Source originale : fix(planning): require completed OF preparation before scheduling (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1833 (6b15d947)
 
 - Source originale : feat(methodes): make attachments reversible and calculate route profitability (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.

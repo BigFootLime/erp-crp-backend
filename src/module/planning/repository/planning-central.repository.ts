@@ -13,6 +13,7 @@ import {readPlanningCoverageTx} from './planning-coverage.repository';
 import {emptyPlanningCoverage} from '../domain/planning-material-coverage';
 import {hydrateExternalPlanning} from './planning-external.repository';
 import {earliestReplenishmentTarget,readReplenishmentPlanningTargets} from './planning-replenishment-targets.repository';
+import { readPlanningEligibleOfIds } from './planning-of-eligibility.repository';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -67,19 +68,6 @@ WITH operation_rows AS (
  WHERE o.statut<>'ANNULE' AND op.status::text<>'CANCELLED'
    AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
-), draft_rows AS (
- SELECT t.id,NULL::text AS operation_id,NULL::text AS programming_id,t.draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
-   o.id,o.commande_id,o.numero,pt.code_piece,o.piece_technique_version_id::text,'Opérations à définir'::text,0::int,
-   'machines'::text,cc.order_type='INTERNE',cc.internal_order_purpose,o.quantite_lancee,0::numeric,0::numeric,0::numeric,0::numeric,
-   NULL::text,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,'TODO'::text,
-   o.technical_readiness,CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END,1::int,o.created_at,o.updated_at,0::numeric,NULL::numeric,'DRAFT'::text
- FROM public.planning_tasks t JOIN public.ordres_fabrication o ON o.id=t.draft_of_id
- JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
- LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
- LEFT JOIN public.commande_ligne cl ON cl.id=o.commande_ligne_id
- WHERE o.statut='BROUILLON' AND NOT EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id=o.id)
-   AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
 ), legacy_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
    t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
@@ -114,7 +102,7 @@ WITH operation_rows AS (
  WHERE v.statut<>'OBSOLETE' OR t.locked OR t.committed_start IS NOT NULL OR pr.status<>'TODO'
    OR EXISTS(SELECT 1 FROM public.ordres_fabrication consumer
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
-), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
+), tasks AS (SELECT * FROM operation_rows UNION ALL
  SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows), filtered AS (
 SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
   (SELECT max(addition.created_at) FROM public.production_recovery_consolidation_additions addition
@@ -128,7 +116,8 @@ SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
   LEFT JOIN LATERAL (SELECT min(p.due_date) AS due FROM public.delivery_promise_roots r
     JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
     WHERE r.line_id=owner.commande_ligne_id AND p.quantity>COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)) promise ON true
- WHERE ($3::bigint IS NULL OR of_id=$3)
+ WHERE (tasks.of_id IS NULL OR tasks.of_id=ANY($13::bigint[]))
+ AND ($3::bigint IS NULL OR of_id=$3)
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
    AND ($5::text IS NULL OR resource_id=$5 OR (committed_start IS NULL AND $5=ANY(forecast_resource_ids)))
   AND ($12::text IS NULL OR owner.client_id=$12)
@@ -280,9 +269,10 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
   const settings = await readCentralSettings(tx);
   if (query.snapshot_revision && query.snapshot_revision !== settings.revision)
     throw new HttpError(409,'PLANNING_SNAPSHOT_OBSOLETE','Le planning a changé. Actualisez la liste.');
+  const eligibleOfIds = await readPlanningEligibleOfIds(tx, query.of_id ? [query.of_id] : undefined);
   const { rows } = await tx.query<Row>(TASK_QUERY,[query.from,query.to,query.of_id ?? null,query.search ?? null,
     query.resource_id ?? null,query.cursor ?? null,query.limit+1,query.includeTaskIds ?? [],query.placement ?? null,
-    query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null]);
+    query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null,eligibleOfIds]);
   const more = rows.length > query.limit;
   const visible = more ? rows.slice(0,query.limit) : rows;
   const targets=await readReplenishmentPlanningTargets(tx,visible.flatMap(row=>row.of_id==null?[]:[num(row.of_id)]));
