@@ -1,3 +1,4 @@
+import {effectivePreparationVersionSql} from '../production/repository/effective-preparation-version.sql';
 import {preparationAudit} from '../production/repository/production-preparation.repository';
 import type { PoolClient } from 'pg';
 import pool from '../../config/database';
@@ -17,6 +18,7 @@ type Db = Pick<PoolClient, 'query'>;
 type Purchase = {
     id: string;
     article_id: string | null;
+    fournisseur_id?: string | null;
     type_achat: string;
     designation?: string;
     nom?: string;
@@ -34,9 +36,9 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number, selecti
         purchases: Purchase[];
     }>(`
     SELECT o.id::int,o.numero AS number,o.quantite_lancee::float8 AS quantity,o.statut::text AS status,o.technical_snapshot_sha256 AS hash,
-      o.piece_technique_version_id::text AS "technicalVersion",r.id::text AS "ofRevisionId",
+      ${effectivePreparationVersionSql("o")}::text AS "technicalVersion",r.id::text AS "ofRevisionId",
       COALESCE(o.technical_snapshot->'preparation_evidence'->'purchases',
-        (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=o.piece_technique_version_id),'[]'::jsonb) AS purchases
+        (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=${effectivePreparationVersionSql("o")}),'[]'::jsonb) AS purchases
     FROM public.ordres_fabrication o LEFT JOIN public.of_revisions r ON r.of_id=o.id AND r.statut='ACTIVE' WHERE o.id=$1`, [ofId])).rows[0];
     if (!of)
         throw new HttpError(404, 'OF_NOT_FOUND', 'OF introuvable.');
@@ -94,7 +96,7 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number, selecti
         status: string;
     }>(`
     SELECT COALESCE((p.preparation_snapshot->>'planningForecast')::boolean,false) AND c.statut='BROUILLON' AS "forecastOnly",p.line_id::text AS "lineId",p.preparation_snapshot->'purchase'->>'id' AS "purchaseId",
-      p.operation_id::text AS "operationId",p.material_origin_id::text AS "originId",l.quantite::float8 AS quantity,
+      p.operation_id::text AS "operationId",p.material_origin_id::text AS "originId",GREATEST(0,l.quantite-COALESCE(l.qty_annulee,0))::float8 AS quantity,
       c.id::text AS "orderId",c.code,c.statut::text AS status FROM public.subcontract_purchase_origins p
     JOIN public.commande_fournisseur_ligne l ON l.id=p.line_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
     WHERE p.of_id=$1 AND l.statut_ligne='ACTIVE' AND c.statut<>'ANNULEE' ORDER BY p.created_at,p.line_id`, [ofId])).rows;

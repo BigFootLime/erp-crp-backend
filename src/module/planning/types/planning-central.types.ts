@@ -31,7 +31,7 @@ export type CentralTask = {
   external?: { packages: import('../../subcontract/subcontract-flow.types').SubcontractFlow[];
     preparations?: import('../../subcontract/subcontract-flow.types').ExternalServicePreparation[];
     preparationIssues?: string[];
-    fullReadyAt:string|null; firstBatchReadyAt:string|null; issues:string[];plannedReturnAt?:string };
+    fullReadyAt:string|null; firstBatchReadyAt:string|null; issues:string[];plannedReturnAt?:string;forecastLeadDays?:number };
   procurementWarnings?:string[];
   resourceEstimates?: Record<string, Estimate>;
   id: string; source: "OPERATION" | "PROGRAMMING" | "DRAFT";

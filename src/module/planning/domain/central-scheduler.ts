@@ -144,7 +144,7 @@ export function schedule(input: {
         if(unavailable)continue;
         const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt&&(!t.cycleStartedAt||ms(p.departedAt)>=ms(t.cycleStartedAt))?[p.departedAt]:[]).sort()[0];
         let projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
-        const assumption=t.external.plannedReturnAt;
+        const assumption=t.external.plannedReturnAt??(t.external.forecastLeadDays!==undefined?iso(earliest+t.external.forecastLeadDays*86400000):undefined);
         if(!projection.fullReadyAt&&assumption&&!t.external.packages.some(p=>p.departedAt||p.issued>0||p.returned>0||p.released>0)){
           if(ms(assumption)<=earliest){conflict(t.id,'SUPPLIER_FORECAST_TOO_EARLY','Le retour prévu doit être postérieur à la fin des opérations précédentes.');continue;}
           projection={...projection,fullReadyAt:assumption,issues:[]};

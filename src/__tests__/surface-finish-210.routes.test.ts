@@ -395,7 +395,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
     expect(preview.status).toBe(200);
     expect(preview.body.spec_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(preview.body.generated_designation).toBe(
-      "ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm cl. AA20"
+      "PS/ANODISATION-SULFURIQUE-PL-4521-C — Anodisation noire RAL 9005 20 µm cl. AA20"
     );
     expect(String(preview.body.generated_comment)).toContain("Norme / spécification : ISO 7599");
     expect(mocks.poolConnect).not.toHaveBeenCalled();
@@ -500,7 +500,7 @@ describe("#210 aperçu", () => {
     expect(status).toBe(200);
     expect(body.spec_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(body.preview_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(body.generated_designation).toBe("ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm cl. AA20");
+    expect(body.generated_designation).toBe("PS/ANODISATION-SULFURIQUE-PL-4521-C — Anodisation noire RAL 9005 20 µm cl. AA20");
     expect(String(body.generated_comment)).toContain("Norme / spécification : ISO 7599");
     expect(String(body.generated_comment)).not.toMatch(/null|undefined/i);
   });
@@ -524,7 +524,7 @@ describe("#210 aperçu", () => {
     const spec = res.body.spec_canonical as Record<string, unknown>;
     expect(spec.teinte_ral).toBeNull();
     expect(spec.couleur).toBeNull();
-    expect(res.body.generated_designation).toBe("ST — CAP-100 ind. C — Anodisation noire 20 µm cl. AA20");
+    expect(res.body.generated_designation).toBe("PS/ANODISATION-SULFURIQUE-PL-4521-C — Anodisation noire 20 µm cl. AA20");
   });
 
   it("annonce la classification CAT sans jamais inventer le code article", async () => {
@@ -535,7 +535,7 @@ describe("#210 aperçu", () => {
     expect(classification.article_categories).toEqual(["traitement_surface"]);
     expect(classification.stock_managed).toBe(false);
     expect(classification.lot_tracking).toBe(false);
-    expect(String(classification.code_hint)).toContain("…");
+    expect(classification.code_hint).toBe("PS-<nom diminutif>-<référence plan>-<indice>");
   });
 
   it("N'ÉCRIT RIEN : aucune transaction, aucun INSERT, aucun UPDATE", async () => {

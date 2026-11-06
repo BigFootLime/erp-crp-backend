@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1836 (2f58ded3)
+
+- Source originale : feat(procurement): prepare OF purchase forecasts and follow conforming output (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Planning de l’OF complet et achats liés (#1835)
 
 - Réconcilier les routes et transactions de préparation fournisseur et de simulation de toutes les opérations du dossier, en conservant les engagements et les contrôles de ressources.

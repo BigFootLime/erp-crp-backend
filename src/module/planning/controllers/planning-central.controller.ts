@@ -85,5 +85,6 @@ export const centralAutoOf:RequestHandler=asyncHandler(async(req,res)=>{
  const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
  const input=z.object({earliestStart:z.string().datetime({offset:true}),autoAssign:z.boolean().default(true)}).strict().parse(req.body);
  const {createOfAutoSimulation}=await import('../services/planning-central.service');
- res.status(201).json(await createOfAutoSimulation(ofId,input.earliestStart,input.autoAssign,buildAuditContext(req),key(req.headers['idempotency-key'])));
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ res.status(201).json(await createOfAutoSimulation(ofId,input.earliestStart,input.autoAssign,buildAuditContext(req),key(req.headers['idempotency-key']),(await consumableRights(req)).purchase));
 });

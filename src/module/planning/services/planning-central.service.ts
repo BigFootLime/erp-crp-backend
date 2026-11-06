@@ -234,7 +234,11 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
 }
 
 /** Read the complete OF and necessary programming tasks, independently of the selected UI view. */
-export async function createOfAutoSimulation(ofId:number,earliestStart:string,autoAssign:boolean,audit:AuditContext,key:string){
+export async function createOfAutoSimulation(ofId:number,earliestStart:string,autoAssign:boolean,audit:AuditContext,key:string,canPurchase=false){
+ const {consumableCommand}=await import('../../production/repository/consumable-command.repository');
+ const {prepareAutomaticPlanningPurchasesTx}=await import('../repository/planning-procurement.repository');
+ const preparationCommand={idempotencyKey:key,earliestStart,autoAssign};
+ await consumableCommand({ofId},'OF_AUTO_PREPARE_PURCHASES',preparationCommand,audit,tx=>prepareAutomaticPlanningPurchasesTx(tx,ofId,audit,canPurchase));
  const from=earliestStart,to=new Date(Date.parse(from)+42*86400000).toISOString();
  const tx=await pool.connect();let tasks:CentralSnapshot['tasks'];let revision:string;
  try{

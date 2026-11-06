@@ -21,6 +21,7 @@ export async function readSubcontractPredecessorsTx(tx: Db, operationId: string)
         label: string;
         status: string;
         good: number;
+        processed: number;
     }>(`
     WITH route AS (
       SELECT o.id,lag(o.id) OVER(ORDER BY o.phase,o.id) AS previous
@@ -32,10 +33,24 @@ export async function readSubcontractPredecessorsTx(tx: Db, operationId: string)
       UNION SELECT previous FROM route WHERE id=$1::uuid AND previous IS NOT NULL AND NOT EXISTS(
         SELECT 1 FROM public.planning_operation_dependencies d WHERE d.successor_id='op:'||$1 AND d.predecessor_id LIKE 'op:%')
     ) SELECT p.id::text,p.designation AS label,p.status::text,
-      COALESCE((SELECT sum(q.qty_good) FROM public.production_quantity_declarations q WHERE q.operation_id=p.id),0)::float8 AS good
+      COALESCE((SELECT q.good FROM public.production_operation_quantities q WHERE q.operation_id=p.id),0)::float8 AS good,
+      COALESCE((SELECT q.good+q.scrap+q.rework+q.pending FROM public.production_operation_quantities q WHERE q.operation_id=p.id),0)::float8 AS processed
     FROM edges e JOIN public.of_operations p ON p.id=e.id ORDER BY p.phase,p.id`, [operationId])).rows;
 }
 /** Purchase validation is stricter than a partial internal operation start. */
+export async function readSubcontractForecastPredecessorsTx(tx:Db,operationId:string){
+    const direct=await readSubcontractPredecessorsTx(tx,operationId);
+    const result=direct.map(p=>({...p,direct:true}));
+    const seen=new Set([operationId,...direct.map(p=>p.id)]);
+    for(let index=0;index<result.length;index++){
+        if(result.length>1000)throw new HttpError(409,'SUBCONTRACT_ROUTE_INVALID','La chaîne des opérations doit être revue.');
+        for(const p of await readSubcontractPredecessorsTx(tx,result[index].id)){
+            if(seen.has(p.id))continue;
+            seen.add(p.id);result.push({...p,direct:false});
+        }
+    }
+    return result;
+}
 export async function assertSubcontractPurchaseReadyTx(tx: Db, orderId: string) {
     const lines = (await tx.query<{
         id: string;

@@ -1,3 +1,4 @@
+import {prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
 import { publishPreparationDefinitionTx } from "./preparation-publication.repository";
 import { completePreparedDossierTx } from "./of-dossier.repository";
 import {preparationAudit} from './production-preparation.repository';
@@ -4635,6 +4636,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
   id: number;
   body: ValidateOfTechnicalPreparationBodyDTO;
   audit: AuditContext;
+  canPurchase?: boolean;
 }) {
   const client = await pool.connect();
   return withRealtimeOutboxTransaction(client, async (tx) => {
@@ -4686,6 +4688,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
     }
     const finishValidation = async () => {
       const state = (await tx.query<{statut:string}>('SELECT statut::text FROM public.ordres_fabrication WHERE id=$1',[params.id])).rows[0];
+      if (state?.statut === 'BROUILLON')await prepareAutomaticPlanningPurchasesTx(tx,params.id,params.audit,params.canPurchase===true);
       if (state?.statut === 'BROUILLON' && await usesPreparationRules(tx,params.id))
         await completePreparedDossierTx(tx,params.id,params.audit);
       return getOfTechnicalPreparationTx(tx,params.id);

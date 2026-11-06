@@ -3,6 +3,7 @@ vi.mock('../../../config/database',()=>({default:{}}));
 vi.mock('./planning-forecast.repository',()=>({readForecastState:async()=>null}));
 vi.mock('./duration-learning.repository',()=>({hydrateDurationEstimates:async()=>{},readLearningState:async()=>null}));
 vi.mock('./planning-external.repository',()=>({hydrateExternalPlanning:async()=>{}}));
+vi.mock('./planning-supply-state',async importOriginal=>({...await importOriginal<object>(),hydratePlanningSupply:async()=>{}}));
 vi.mock('./planning-replenishment-targets.repository',()=>({readReplenishmentPlanningTargets:async()=>new Map(),earliestReplenishmentTarget:()=>null}));
 import { readCentralSnapshot, taskFromRow } from './planning-central.repository';
 

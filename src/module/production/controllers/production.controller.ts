@@ -1,3 +1,4 @@
+import {consumableRights} from './consumable-procurement.controller';
 import type { Request } from "express";
 import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
@@ -434,7 +435,7 @@ export const validateOfTechnicalPreparation = asyncHandler(async (req, res) => {
   }
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const body = validateOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
-  const out = await svcValidateOfTechnicalPreparation({ id, body, audit: buildAuditContext(req) });
+  const out = await svcValidateOfTechnicalPreparation({ id, body, audit: buildAuditContext(req), canPurchase:(await consumableRights(req)).purchase });
   if (!out) { res.status(404).json({ error: "Not found" }); return; }
   res.status(200).json(out);
 });
