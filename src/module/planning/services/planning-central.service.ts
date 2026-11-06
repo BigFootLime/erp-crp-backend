@@ -86,7 +86,9 @@ async function simulationSnapshot(input:CentralSimulationInput,tx:PoolClient) {
   // all competing reservations, and the complete dependency closure.
   const capacities=new Set(selected.resources.filter(r=>ids.has(r.id)).map(r=>r.capacityId??r.id));
   const capacityResourceIds=selected.resources.filter(r=>ids.has(r.id)||capacities.has(r.capacityId??r.id)).map(r=>r.id);
-  return scopeClientUrgency(await readCentralSnapshot({...query,capacityResourceIds},tx,false),input,tx);
+  const snapshot=await scopeClientUrgency(await readCentralSnapshot({...query,capacityResourceIds},tx,false),input,tx);
+  if(input.preserveCommitted)for(const task of snapshot.tasks)if(task.committed)task.locked=true;
+  return snapshot;
 }
 
 export async function previewCentralWindow(input: CentralPreviewInput, signal?: AbortSignal) {
@@ -229,4 +231,26 @@ export async function applyCentralSimulation(id:string,revision:string,audit:Aud
     await auditApplication(tx,audit,id,result);
     return {id,revision:final.revision,result};
   });
+}
+
+/** Read the complete OF and necessary programming tasks, independently of the selected UI view. */
+export async function createOfAutoSimulation(ofId:number,earliestStart:string,autoAssign:boolean,audit:AuditContext,key:string){
+ const from=earliestStart,to=new Date(Date.parse(from)+42*86400000).toISOString();
+ const tx=await pool.connect();let tasks:CentralSnapshot['tasks'];let revision:string;
+ try{
+  await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  const own=await readCentralSnapshot({from,to,of_id:ofId,limit:10000},tx,false);
+  if(!own.tasks.length)throw new HttpError(409,'PLANNING_OF_NOT_READY','Cet OF ne possède pas de dossier validé à planifier.');
+  if(own.nextCursor)throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','Cet OF dépasse la capacité du calcul.');
+  const linked=dependencyClosure(await readCentralDependencies(tx),own.tasks.map(t=>t.id),'both');
+  const complete=await readCentralSnapshot({from,to,includeTaskIds:[...linked],limit:10000},tx,false);
+  if(complete.nextCursor)throw new HttpError(422,'PLANNING_CHAIN_TOO_DENSE','La chaîne de cet OF dépasse la capacité du calcul.');
+  tasks=complete.tasks.filter(t=>t.ofId===ofId||t.source==='PROGRAMMING'&&linked.has(t.id));revision=complete.revision;
+  await tx.query('COMMIT');
+ }catch(e){await tx.query('ROLLBACK');throw e;}finally{tx.release();}
+ const changes=tasks.filter(t=>!t.committed&&!t.locked&&t.commitment!=='DONE'&&t.commitment!=='STARTED').map(t=>({taskId:t.id,expectedVersion:t.version,earliestStart,autoAssign:autoAssign&&t.source==='OPERATION'}));
+ if(!changes.length)throw new HttpError(409,'PLANNING_OF_ALREADY_PLACED','Les opérations de cet OF sont déjà engagées ou démarrées.');
+ if(changes.length>100)throw new HttpError(422,'PLANNING_OF_TOO_DENSE','Cet OF dépasse 100 opérations. Préparez son découpage avec le planificateur.');
+ const intent={revision,from,to,changes,preserveCommitted:true};
+ return {...await createCentralSimulation(intent,audit,key),intent,tasks};
 }

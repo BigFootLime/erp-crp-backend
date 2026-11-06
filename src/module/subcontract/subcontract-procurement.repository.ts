@@ -1,3 +1,4 @@
+import {preparationAudit} from '../production/repository/production-preparation.repository';
 import type { PoolClient } from 'pg';
 import pool from '../../config/database';
 import { HttpError } from '../../utils/httpError';
@@ -6,7 +7,7 @@ import { assertMaterialOriginLimit } from '../production/domain/of-material-poli
 import { readMaterialOriginPolicyTx } from '../production/repository/of-material-policy.repository';
 import { consumableCommand } from '../production/repository/consumable-command.repository';
 import type { AuditContext } from '../production/repository/production.repository';
-import { createMaterialDraftsTx } from '../commande-fournisseur/repository/commande-fournisseur.repository';
+import { createMaterialDraftsTx, recomputeTotauxTx } from '../commande-fournisseur/repository/commande-fournisseur.repository';
 import { readSubcontractPredecessorsTx } from '../commande-fournisseur/repository/subcontract-purchase.repository';
 import { subcontractSelection, type SubcontractProcurementCommand, type SubcontractDemandCommand, type SubcontractSelection } from './subcontract-procurement.validators';
 import { assertSubcontractPieceUnit, assertSubcontractSupplement } from './subcontract-procurement.domain';
@@ -82,6 +83,7 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number, selecti
     FROM public.fournisseur_catalogue c JOIN public.fournisseurs f ON f.id=c.fournisseur_id WHERE c.article_id=ANY($1::uuid[]) AND c.actif AND f.actif IS NOT FALSE
       AND(c.valid_from IS NULL OR c.valid_from<=current_date) AND(c.valid_to IS NULL OR c.valid_to>=current_date) ORDER BY 4,c.id`, [purchases.flatMap(p => p.article_id ? [p.article_id] : [])])).rows;
     const drafts = (await tx.query<{
+        forecastOnly:boolean;
         lineId: string;
         purchaseId: string | null;
         operationId: string;
@@ -91,7 +93,7 @@ export async function readSubcontractProcurementTx(tx: Db, ofId: number, selecti
         code: string;
         status: string;
     }>(`
-    SELECT p.line_id::text AS "lineId",p.preparation_snapshot->'purchase'->>'id' AS "purchaseId",
+    SELECT COALESCE((p.preparation_snapshot->>'planningForecast')::boolean,false) AND c.statut='BROUILLON' AS "forecastOnly",p.line_id::text AS "lineId",p.preparation_snapshot->'purchase'->>'id' AS "purchaseId",
       p.operation_id::text AS "operationId",p.material_origin_id::text AS "originId",l.quantite::float8 AS quantity,
       c.id::text AS "orderId",c.code,c.statut::text AS status FROM public.subcontract_purchase_origins p
     JOIN public.commande_fournisseur_ligne l ON l.id=p.line_id JOIN public.commande_fournisseur c ON c.id=l.commande_id
@@ -178,9 +180,18 @@ export async function prepareSubcontractProcurement(ofId: number, body: Subcontr
             throw new HttpError(422, 'SUBCONTRACT_ORIGIN_INVALID', 'Choisissez une seule ligne pour chaque origine matière engagée dans cet OF.');
         const predecessors = current.predecessorState.find(state => state.operationId === operation.id)?.predecessors ?? [];
         assertSubcontractSupplement({ purchaseId: purchase.id, operationId: operation.id, ofQuantity: current.of.quantity,
-            lines: current.drafts, rows: body.rows, predecessors });
+            lines: current.drafts.filter(d=>!d.forecastOnly), rows: body.rows, predecessors });
         if (!body.due && offer.delay === null)
             throw new HttpError(422, 'SUBCONTRACT_DELAY_REQUIRED', 'Confirmez une date de retour ou un délai fournisseur avant de préparer les lignes.');
+        const provisional=current.drafts.filter(d=>d.forecastOnly&&d.operationId===operation.id&&d.purchaseId===purchase.id);
+        if(provisional.length){
+          const ids=provisional.map(d=>d.lineId);
+          const locked=(await tx.query<{id:string}>(`SELECT l.id::text FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur c ON c.id=l.commande_id WHERE l.id=ANY($1::uuid[]) AND l.statut_ligne='ACTIVE' AND c.statut='BROUILLON' FOR UPDATE OF c,l`,[ids])).rows;
+          if(locked.length!==ids.length)throw new HttpError(409,'SUBCONTRACT_PROCUREMENT_CHANGED','Un brouillon prévisionnel a changé. Relisez ses lignes.');
+          await tx.query(`UPDATE public.commande_fournisseur_ligne SET statut_ligne='ANNULEE',updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`,[ids,audit.user_id]);
+          for(const orderId of new Set(provisional.map(d=>d.orderId)))await recomputeTotauxTx(tx,orderId);
+          await preparationAudit(tx,audit,ofId,'production.subcontract.forecast.replaced',{line_ids:ids,reason:body.reason});
+        }
         const commands = await createMaterialDraftsTx(tx, body.rows.map(row => ({ type: 'SOUS_TRAITANCE' as const, needId: null, ofId, sourceRef: purchase.id, articleId: purchase.article_id!, designation: `${purchase.designation ?? purchase.nom ?? operation.label} · ${row.originId ? current.origins.find(o => o.id === row.originId)!.label : 'Sans MP directe'}`,
             supplierId: offer.supplierId, currency: offer.currency, destinationId: body.destinationId, unit: offer.unit, quantity: row.quantity, assigned: 0, price: offer.price, due: body.due, delay: offer.delay, catalogueId: offer.id, supplierReference: offer.reference, requirements: [], operation: operation.label,
             subcontract: { operationId: operation.id, materialOriginId: row.originId, snapshot: { purchase, operation, unit: offer.unit, origin: row.originId, quantity: row.quantity, reason: body.reason, technicalHash: current.of.hash, predecessors: current.predecessorState.find(s => s.operationId === operation.id) } } })), audit);

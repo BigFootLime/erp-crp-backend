@@ -1,4 +1,6 @@
 import { resolvePlanningClientColor } from "../domain/planning-client-color";
+import { readOperationQualifications } from "./planning-operation-resources.repository";
+import { hydratePlanningSupply } from './planning-supply-state';
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
 import pool from "../../../config/database";
@@ -332,6 +334,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
   // Keep boundary edges for the inspector and scheduler, without sending the complete graph on every UI page.
   const dependencies = (await readCentralDependencies(tx)).filter(d=>taskIds.has(d.predecessorId)||taskIds.has(d.successorId));
   await hydrateExternalPlanning(tx,tasks,resources,dependencies,query.from,query.to);
+  await hydratePlanningSupply(tx,tasks);
   // Historical transfers covered the previous cycle. A restarted successor
   // must wait for the newly added pieces when forecasting the complete batch.
   const byTaskId=new Map(tasks.map(task=>[task.id,task]));

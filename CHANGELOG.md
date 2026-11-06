@@ -1,5 +1,10 @@
 # Changelog
 
+## En préparation — Planning de l’OF complet et achats liés (#1835)
+
+- Réconcilier les routes et transactions de préparation fournisseur et de simulation de toutes les opérations du dossier, en conservant les engagements et les contrôles de ressources.
+- Conserver les couleurs client, l'éligibilité des dossiers et les contrats plus récents de la consolidation. Aucun déploiement de ce lot.
+
 ## En préparation — Réconciliation de la préparation #1833 (97cdc72c)
 
 - Source originale : feat(gammes): expose canonical preparation issues per operation (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.

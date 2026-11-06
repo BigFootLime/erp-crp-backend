@@ -1,3 +1,4 @@
+import { readPlanningSupplyStates } from '../../planning/repository/planning-supply-state';
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
 import { readGammePublicationBlockersTx } from "../../gammes/repository/gamme-operations.repository";
 import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
@@ -501,6 +502,14 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     }
   }
   const sharedReady = isPreparationReady(items.filter(item => item.scope === 'VERSION'));
+  const planningSupply=(await readPlanningSupplyStates(tx,[id])).get(id);
+  const purchasing=sources.purchases.some(p=>['MATIERE','SOUS_TRAITANCE','TRAITEMENT'].includes(p.type_achat));
+  if(purchasing){const messages=planningSupply?.entries.flatMap(entry=>entry.actions)??['Vérifiez les disponibilités matière, les retours de traitement prévus et les brouillons fournisseur dans le planning.'];
+    items.push({key:'procurement',label:'Dates prévues et achats fournisseur',scope:'OF',required:false,status:messages.length?'MISSING':'READY',detail:[...new Set(messages)].join(' · ')||'Prévisions et brouillons préparés. Les réceptions réelles restent à confirmer avant fabrication.'});}
+  const resourcePreparation=await prepareOperationResources(tx,sources.operations,id);
+  const resourceIssues=resourcePreparation.filter(operation=>operation.issue);
+  items.push({key:'resources',label:'Ressources de fabrication',scope:'OF',required:!of.technical_snapshot_sha256,
+    status:resourceIssues.length?'MISSING':'READY',detail:resourceIssues.length?resourceIssues.map(operation=>`${operation.label} : ${operation.issue}`).join(' · '):'Postes habituels et familles de machines disponibles. Le choix des créneaux reste à faire dans le planning.'});
   return {
     programming_operations: programmingOperations,
     of: {

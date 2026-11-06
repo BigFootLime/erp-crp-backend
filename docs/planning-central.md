@@ -1,5 +1,15 @@
 # Planning central — première publication (#717)
 
+## OF complet et prévisions d’approvisionnement — 2.0.70 / #1835
+
+`POST /planning/v2/ofs/:ofId/auto-plan` reçoit `earliestStart` et `autoAssign`. Il relit la route et les programmations liées, génère une simulation versionnée et conserve les créneaux engagés par `preserveCommitted`. Il renvoie l’intention et les tâches complètes pour l’aperçu. La validation canonique séparée reste nécessaire ; la limite de 100 opérations ne produit jamais un OF partiellement demandé.
+
+`GET/POST /planning/v2/ofs/:ofId/preparation` lit et conserve les dates et choix fournisseur. Le POST attend `expectedVersion`, `idempotencyKey` et des entrées `{key,due,supplierId,catalogueId}`. Les quantités, articles et liens OF proviennent du serveur. La permission Planning autorise les dates ; les droits Achats restent nécessaires aux brouillons. Les prix ne sont pas renvoyés par ce contrat. Les écritures utilisent les verrous et l’idempotence du parcours d’approvisionnement, sans événement de planning.
+
+Les hypothèses sont conservées sous `technical_preparation.planning_supply`, avec identité technique et révision OF ; elles expirent si la définition change. Le planning utilise la disponibilité matière prévue et, pour une prestation sans fait réel de départ/retour, un retour estimé manuel lorsque la projection fournisseur n’est pas disponible. Les conflits `PROCUREMENT_FORECAST` sont non bloquants et ne transforment pas une estimation en stock réel. Les gardes de démarrage, de réception et de qualité sont conservées. Les besoins incomplets sont présentés comme non bloquants dans la préparation technique.
+
+Les brouillons emploient le service canonique de commandes, les quantités manquantes, minima et unités applicables et les liaisons OF/besoins/prestations. Sans fournisseur ou unité exploitable, le besoin est conservé à compléter. Les achats libres attendus et les barres à vérifier imposent un rapprochement avant une nouvelle création. Les lignes globales de prestation sans origine connue sont marquées prévisionnelles ; leur remplacement ultérieur par les origines réelles est transactionnel, audité et annule les anciennes lignes sans supprimer leurs preuves. Les commandes déjà confirmées ne sont pas remplacées. Aucune migration de schéma n’est nécessaire. La livraison est autorisée sans tests et sans planifier de données atelier.
+
 L’apprentissage des durées (#965) est décrit dans [le runbook dédié](duration-learning-965.md) :
 mesures validées, correction, reprise d’historique et activation `LEARN`.
 

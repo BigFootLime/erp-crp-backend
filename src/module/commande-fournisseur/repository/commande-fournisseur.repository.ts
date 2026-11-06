@@ -2361,7 +2361,7 @@ export type MaterialDraftLine = {
   type?:"MATIERE"|"ARTICLE"|"SOUS_TRAITANCE";stockUnit?:string;coefficient?:number;catalogueId?:string|null;supplierReference?:string|null;delay?:number|null;
   subcontract?:{operationId:string;materialOriginId:string|null;snapshot:unknown};
   requirements: string[]; operation: string;
-  allocations?: Array<{needId:string;sourceRef:string;ofId:number;assigned:number}>;
+  allocations?: Array<{needId:string|null;sourceRef:string;ofId:number;assigned:number}>;
 };
 /** Called inside the coverage transaction, after reservations and net-shortage checks. */
 export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraftLine[], audit: AuditContext) {

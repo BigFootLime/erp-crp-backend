@@ -143,7 +143,13 @@ export function schedule(input: {
         }
         if(unavailable)continue;
         const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt&&(!t.cycleStartedAt||ms(p.departedAt)>=ms(t.cycleStartedAt))?[p.departedAt]:[]).sort()[0];
-        const projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
+        let projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
+        const assumption=t.external.plannedReturnAt;
+        if(!projection.fullReadyAt&&assumption&&!t.external.packages.some(p=>p.departedAt||p.issued>0||p.returned>0||p.released>0)){
+          if(ms(assumption)<=earliest){conflict(t.id,'SUPPLIER_FORECAST_TOO_EARLY','Le retour prévu doit être postérieur à la fin des opérations précédentes.');continue;}
+          projection={...projection,fullReadyAt:assumption,issues:[]};
+          for(const message of t.procurementWarnings??[])result.conflicts.push({taskId:t.id,code:'PROCUREMENT_FORECAST',message,blocking:false});
+        }
         if(!projection.fullReadyAt){for(const issue of projection.issues)conflict(t.id,'EXTERNAL_RETURN_UNAVAILABLE',issue);continue;}
         if(requested?.resourceIds && requested.resourceIds.join('|')!==t.resourceIds.join('|')){conflict(t.id,'EXTERNAL_SUPPLIER_FIXED','Le fournisseur est celui de la commande liée.');continue;}
         const slot={start:actual??iso(earliest),end:projection.fullReadyAt};
@@ -197,6 +203,7 @@ export function schedule(input: {
       if (!slot) { conflict(t.id, "NO_CAPACITY", "Aucun créneau réalisable dans les calendriers chargés."); continue; }
       if (req?.autoAssign) ids = [alternatives[0].id];
       reserve(ids, slot); result.forecasts[t.id] = slot;
+      for(const message of t.procurementWarnings??[])result.conflicts.push({taskId:t.id,code:'PROCUREMENT_FORECAST',message,blocking:false});
       if (!t.committed || t.committed.start !== slot.start || t.committed.end !== slot.end ||
         ids.join("|") !== t.resourceIds.join("|")) result.changes.push({ taskId: t.id, before: t.committed, beforeResourceIds: t.resourceIds, after: slot, resourceIds: ids });
     }
