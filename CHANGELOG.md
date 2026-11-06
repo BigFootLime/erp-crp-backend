@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1836 (5ad9f3bd)
+
+- Source originale : docs(release): record approved procurement guard and API promotion (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1836 (2bb50a95)
 
 - Source originale : chore(db): qualify the immutable procurement completion patch (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
