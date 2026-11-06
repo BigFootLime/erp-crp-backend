@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1836 (2bb50a95)
+
+- Source originale : chore(db): qualify the immutable procurement completion patch (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1836 (2f58ded3)
 
 - Source originale : feat(procurement): prepare OF purchase forecasts and follow conforming output (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.

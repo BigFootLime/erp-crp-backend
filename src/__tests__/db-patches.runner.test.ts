@@ -43,6 +43,18 @@ const md15PatchFilename = "20261026_metrology_md15_profile_codes.sql";
 const md15PatchChecksum =
   "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d";
 
+it("freezes the conforming subcontract completion patch for a single-patch preview", async () => {
+  const filename='20261106_procurement_conforming_completion_1836.sql';
+  const patches=runner.listPatches(resolve(repoRoot,'db/patches'));
+  const selected=runner.immutableOnlyPatch(patches,filename)!;
+  expect(selected.sha256).toBe('eab590ad5aca08ed61fe3c1ee2de3cab5a690c5db0af61dfb855f89b64161032');
+  expect(runner.parseArgs(['up','--dry-run','--only',filename])).toMatchObject({only:filename,dryRun:true});
+  expect(()=>runner.immutableOnlyPatch([{...selected,sha256:'0'.repeat(64)}],filename)).toThrow(/checksum mismatch/);
+  const client=inventoryClient();
+  await runner.runUp({query:client.query},[selected],{dryRun:true,only:filename});
+  expect(client.query.mock.calls.some(([sql])=>String(sql).includes('CREATE OR REPLACE FUNCTION public.guard_subcontract_completion_1273'))).toBe(false);
+});
+
 it("accepts only the frozen business-company cohort and rejects content substitutions", () => {
   const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
   const companies = patches.filter(patch => patch.filename.endsWith("_1454.sql"));
