@@ -21,7 +21,8 @@ export async function copyMinorRevisionDocumentsTx(tx: Pick<PoolClient, "query">
      WHERE source.id=$2::uuid AND source.piece_technique_id=$1::uuid
        AND ((l.link_role='PLAN_CLIENT' AND d.class_key='PLAN_CLIENT')
          OR (l.link_role='PLAN_FABRICATION' AND d.class_key='GAMME_DOC')
-         OR (l.link_role='FICHE_AUTOCONTROLE' AND d.class_key='RELEVE_CONTROLE'))
+         OR (l.link_role='FICHE_AUTOCONTROLE' AND d.class_key='RELEVE_CONTROLE')
+         OR (l.link_role='MODELE_3D' AND d.class_key='MODELE_3D'))
     ON CONFLICT(document_id,entity_type,entity_id,link_role) DO NOTHING`, [pieceId, sourceId, targetId, actorId]);
   return result.rowCount ?? 0;
 }

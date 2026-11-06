@@ -1,5 +1,11 @@
 # Changelog
 
+## En préparation — Modification et archivage des PT (#1837)
+
+- Obtenir ou créer atomiquement le dossier de travail au même plan/indice, avec droit de modification et protection des pièces archivées.
+- Remapper achats, opérations, finitions et besoins d'outillage lors du clonage ; conserver les nomenclatures et documents historiques compatibles.
+- Archiver sans renommer ni supprimer les références. Les clones de reconfiguration conservent la transaction appelante et ne modifient aucun OF existant.
+
 ## Préparé — Consolidation complète et régressions (13 novembre 2026)
 
 - Réconciliation dev/main/2.0.84, reconfiguration articles transactionnelle et conservation des OF existants.

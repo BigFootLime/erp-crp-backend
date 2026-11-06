@@ -14,6 +14,7 @@ import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/author
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { applicableBomScopeSql } from './bom-version-scope.sql';
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
@@ -1359,7 +1360,7 @@ function mapFabricationTreeRow(row: FabricationTreeRow): FabricationTreeNode {
   };
 }
 
-export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth = 50): Promise<FabricationTreeResponse | null> {
+export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth = 50,versionId:string|null=null): Promise<FabricationTreeResponse | null> {
   const depth = Math.max(1, Math.min(50, Math.trunc(maxDepth)));
   const res = await db.query<FabricationTreeRow>(
     `
@@ -1376,6 +1377,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           p.en_fabrication,
           p.ensemble,
           p.version_number,
+          COALESCE($3::uuid,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=p.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)) AS technical_version_id,
           0::int AS level,
           ARRAY[p.id]::uuid[] AS path_ids,
           ARRAY[0]::int[] AS order_path,
@@ -1387,6 +1389,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
         FROM pieces_techniques p
         WHERE p.id = $1::uuid
           AND p.deleted_at IS NULL
+          AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM public.piece_technique_versions v WHERE v.id=$3::uuid AND v.piece_technique_id=p.id))
 
         UNION ALL
 
@@ -1402,6 +1405,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           child.en_fabrication,
           child.ensemble,
           child.version_number,
+          COALESCE(n.child_piece_technique_version_id,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=child.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)),
           tree.level + 1 AS level,
           tree.path_ids || child.id AS path_ids,
           tree.order_path || n.rang AS order_path,
@@ -1412,7 +1416,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           n.designation AS line_designation
         FROM tree
         JOIN pieces_techniques_nomenclature n
-          ON n.parent_piece_technique_id = tree.piece_technique_id
+          ON ${applicableBomScopeSql('n','tree.piece_technique_id','tree.technical_version_id')}
         JOIN pieces_techniques child
           ON child.id = n.child_piece_technique_id
          AND child.deleted_at IS NULL
@@ -1438,6 +1442,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           en_fabrication::int AS en_fabrication,
           ensemble,
           version_number::int AS version_number,
+          technical_version_id,
           level,
           array_to_string(path_ids::text[], '/') AS path_text,
           ordre_affichage,
@@ -1459,8 +1464,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       FROM enriched e
       LEFT JOIN LATERAL (
         SELECT v.id FROM public.piece_technique_versions v
-        WHERE v.piece_technique_id = e.piece_technique_id::uuid
-          AND v.statut <> 'OBSOLETE'
+        WHERE v.id=e.technical_version_id
         ORDER BY CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
           v.version_interne DESC NULLS LAST, v.created_at DESC, v.id DESC
         LIMIT 1
@@ -1468,7 +1472,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       ${currentDossierTotalsSql("e.piece_technique_id::uuid", "current_version.id")}
       ORDER BY e.order_path ASC, e.piece_technique_id ASC
     `,
-    [pieceTechniqueId, depth]
+    [pieceTechniqueId, depth,versionId]
   );
 
   if (!res.rows.length) return null;
@@ -3041,26 +3045,38 @@ export async function repoReorderBom(pieceTechniqueId: string, order: string[]):
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))",[pieceTechniqueId]);
 
-    const current = await client.query<{ id: string }>(
-      `SELECT id::text AS id FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid`,
+    const current = await client.query<{ id: string;rang:number }>(
+      `SELECT id::text AS id,rang::int FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid FOR UPDATE`,
       [pieceTechniqueId]
     );
     const currentIds = new Set(current.rows.map((r) => r.id));
+    if(!order.length||new Set(order).size!==order.length)throw new HttpError(422,'INVALID_ORDER','Chaque ligne doit apparaître une seule fois.');
     for (const id of order) {
       if (!currentIds.has(id)) throw new HttpError(422, "INVALID_ORDER", "Order contains invalid line id");
     }
 
+    // Ranks are unique across all client plans. Keep historical lines intact,
+    // and stage swaps above the full range before assigning the working order.
+    const selected=new Set(order);
+    const outsideMax=Math.max(0,...current.rows.filter(r=>!selected.has(r.id)).map(r=>Number(r.rang)||0));
+    const allMax=Math.max(outsideMax,...current.rows.map(r=>Number(r.rang)||0));
+    if(allMax+order.length*20+10>2147483647)throw new HttpError(422,'INVALID_ORDER','La numérotation des lignes doit être revue.');
     const params: unknown[] = [pieceTechniqueId];
+    const stageParams:unknown[]=[pieceTechniqueId];
     const cases: string[] = [];
     for (let i = 0; i < order.length; i++) {
       params.push(order[i]);
-      params.push((i + 1) * 10);
+      params.push(outsideMax+(i + 1) * 10);
+      stageParams.push(order[i],allMax+order.length*10+(i+1)*10);
       const idParam = `$${params.length - 1}`;
       const rankParam = `$${params.length}`;
       cases.push(`WHEN id = ${idParam}::uuid THEN ${rankParam}`);
     }
     const inList = order.map((_, i) => `$${2 + i * 2}`).join(", ");
+    const reorderSql=`UPDATE pieces_techniques_nomenclature SET rang=CASE ${cases.join(' ')} ELSE rang END WHERE parent_piece_technique_id=$1::uuid AND id IN (${inList})`;
+    await client.query(reorderSql,stageParams);
     await client.query(
       `
         UPDATE pieces_techniques_nomenclature

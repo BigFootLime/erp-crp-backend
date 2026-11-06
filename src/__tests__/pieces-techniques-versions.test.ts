@@ -82,7 +82,7 @@ describe("Versions — validators", () => {
   })
 
   it("create-next exige aussi un indice", () => {
-    expect(createNextVersionSchema.safeParse({ body: { indice: "B", type_changement: "EVOLUTION" } }).success).toBe(true)
+    expect(createNextVersionSchema.safeParse({ body: { indice: "B", type_changement: "EVOLUTION", client_requirement_confirmed: true, raison_changement: "Nouveau plan client" } }).success).toBe(true)
     expect(createNextVersionSchema.safeParse({ body: {} }).success).toBe(false)
   })
 })

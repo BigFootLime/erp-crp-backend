@@ -205,7 +205,7 @@ async function copyableColumns(
 }
 
 /** Shared by gamme revision and technical-index revision; preserve every business column. */
-export async function copyGammeOperationsTx(tx: Pick<PoolClient, "query">, sourceGammeId: string, targetGammeId: string, userId: number): Promise<number> {
+export async function copyGammeOperationsTx(tx: Pick<PoolClient, "query">, sourceGammeId: string, targetGammeId: string, userId: number, operationIds?: Map<string, string>): Promise<number> {
 const opColumns = await copyableColumns(tx, "pieces_techniques_operations", [
   "id",
   "gamme_id",
@@ -236,6 +236,7 @@ const copiedOps = await tx.query<{ new_id: string; old_id: string }>(
 
 // Liens de finition : chaque ligne suit SON opération dupliquée. Une
 // finition orpheline serait pire qu'absente.
+for (const pair of copiedOps.rows) if (pair.old_id) operationIds?.set(pair.old_id, pair.new_id)
 const finitionsTable = await tx.query<{ present: boolean }>(
   `SELECT to_regclass('public.gamme_operation_finitions') IS NOT NULL AS present`
 )

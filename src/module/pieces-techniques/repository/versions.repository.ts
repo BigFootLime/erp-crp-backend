@@ -540,21 +540,18 @@ export async function repoPublishVersion(
   }
 }
 
-// "Créer une nouvelle version depuis une version existante" (Nouvel indice / évolution / modification).
-export async function repoCreateNextVersion(
-  pieceTechniqueId: string,
-  sourceVersionId: string,
-  body: CreateNextVersionBodyDTO,
-  audit: AuditContext,
-  transactionClient?: PoolClient,
+/** Copy immutable technical evidence; transaction and intent are owned by the caller. */
+async function cloneTechnicalVersionTx(
+  client: PoolClient, pieceTechniqueId: string, sourceVersionId: string,
+  body: CreateNextVersionBodyDTO, audit: AuditContext, routineEdit: boolean,
   options: { autoFollowDraftOrders?: boolean } = {},
 ): Promise<PieceTechniqueVersionCloneResult> {
-  const client = transactionClient ?? await db.connect()
-  try {
-    if (!transactionClient) await client.query("BEGIN")
     // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
     // Même verrou que les ajouts/modifications de composants, avant toute allocation.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
+    const piece = (await client.query<{ statut: string }>("SELECT statut::text FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE", [pieceTechniqueId])).rows[0]
+    if (!piece) throw new HttpError(404, "PIECE_NOT_FOUND", "Pièce technique introuvable.")
+    if (piece.statut === "OBSOLETE") throw new HttpError(409, "PIECE_ARCHIVED", "Cette pièce est archivée ; son dossier reste consultable.")
     const src = await client.query<PieceTechniqueVersionRow>(
       `SELECT ${VERSION_COLUMNS} FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR SHARE`,
@@ -605,6 +602,8 @@ export async function repoCreateNextVersion(
       version_nomenclature_lines: 0,
     }
 
+    const operationIds = new Map<string, string>()
+    let copiedGammeId: string | null = null
     const sourceGamme = await client.query<{ id: string }>(
       `SELECT id::text AS id
          FROM public.gammes
@@ -625,13 +624,20 @@ export async function repoCreateNextVersion(
          RETURNING id::text AS id`,
         [row.id, sourceGammeId, audit.user_id]
       )
-      const copiedGammeId = gamme.rows[0]?.id
+      copiedGammeId = gamme.rows[0]?.id ?? null
       if (!copiedGammeId) throw new Error("Impossible de copier la gamme courante de la version source")
       copied.current_gamme = true
 
-      copied.gamme_operations = await copyGammeOperationsTx(client, sourceGammeId, copiedGammeId, audit.user_id)
+      copied.gamme_operations = await copyGammeOperationsTx(client, sourceGammeId, copiedGammeId, audit.user_id, operationIds)
     }
 
+    // Pin the effective legacy BOM to its source before introducing a scoped copy.
+    // Otherwise the first scoped BOM would hide the historical unscoped lines.
+    const pinnedLegacyBom = await client.query(`UPDATE public.pieces_techniques_nomenclature n
+      SET parent_piece_technique_version_id=$2::uuid
+      WHERE n.parent_piece_technique_id=$1::uuid AND n.parent_piece_technique_version_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM public.pieces_techniques_nomenclature scoped
+          WHERE scoped.parent_piece_technique_id=$1::uuid AND scoped.parent_piece_technique_version_id IS NOT NULL)`, [pieceTechniqueId, sourceVersionId])
     const copiedBom = await client.query(
       `INSERT INTO public.pieces_techniques_nomenclature
         (parent_piece_technique_id, parent_piece_technique_version_id, child_piece_technique_id,
@@ -652,10 +658,25 @@ export async function repoCreateNextVersion(
     )
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
-    await client.query(
+    const linkedPurchases = await client.query<{ gamme_operation_id: string }>(
+      `SELECT DISTINCT gamme_operation_id::text FROM public.pieces_techniques_achats
+       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$2::uuid AND gamme_operation_id IS NOT NULL`, [pieceTechniqueId, sourceVersionId])
+    if (linkedPurchases.rows.some(purchase => !operationIds.has(purchase.gamme_operation_id)))
+      throw new HttpError(409, "PURCHASE_OPERATION_NOT_COPIED", "Un achat vise une opération hors de la gamme courante. Vérifiez son rattachement avant de modifier le dossier.")
+    const purchases = await client.query<{ old_id: string; new_id: string }>(
       COPY_VERSION_PURCHASES_SQL,
-      [pieceTechniqueId, row.id, sourceVersionId]
+      [pieceTechniqueId, row.id, sourceVersionId, JSON.stringify(Object.fromEntries(operationIds)), copiedGammeId]
     )
+    for (const purchase of purchases.rows) await client.query(`UPDATE public.gamme_operation_finitions target
+      SET achat_ligne_id=$2::uuid FROM public.gamme_operation_finitions source
+      WHERE source.achat_ligne_id=$1::uuid AND target.gamme_id=$3::uuid
+        AND target.gamme_operation_id=($4::jsonb->>source.gamme_operation_id::text)::uuid AND target.slot=source.slot`,
+      [purchase.old_id, purchase.new_id, copiedGammeId, JSON.stringify(Object.fromEntries(operationIds))])
+    await client.query(`INSERT INTO public.piece_version_tool_requirements
+      (piece_technique_version_id,id_outil,required_quantity,usage_notes,created_by,updated_by)
+      SELECT $2::uuid,id_outil,required_quantity,usage_notes,$3,$3
+      FROM public.piece_version_tool_requirements WHERE piece_technique_version_id=$1::uuid`,
+      [sourceVersionId, row.id, audit.user_id])
     const copiedDocuments = canCarryMinorRevisionDocuments({ changeLevel, sourceIndex: source.indice,
       targetIndex: body.indice, sourcePlan: source.plan_reference, targetPlan: planReference })
       ? await copyMinorRevisionDocumentsTx(client, pieceTechniqueId, sourceVersionId, row.id, audit.user_id) : 0
@@ -698,23 +719,72 @@ export async function repoCreateNextVersion(
       autoFollowedOfIds.push(...synchronized.rows.map((of) => of.id))
     }
 
-    await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
+    await insertAudit(client, audit, routineEdit ? "pieces-techniques.edit.prepare" : "pieces-techniques.version.create-next", row.id, {
+      client_requirement_confirmed: body.client_requirement_confirmed === true,
+      purpose: routineEdit ? "EDIT" : body.client_requirement_confirmed === true ? "CLIENT_PLAN" : "INTERNAL_CLONE",
+      raison_changement: body.raison_changement,
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,
       indice: row.indice,
       type_changement: row.type_changement,
       copied_documents: copiedDocuments,
+      legacy_bom_lines_pinned: pinnedLegacyBom.rowCount ?? 0,
       auto_followed_of_ids: autoFollowedOfIds,
       copied,
     })
-    if (!transactionClient) await client.query("COMMIT")
     return { ...row, copied }
-  } catch (e) {
+}
+
+/** Ordinary editing keeps the client plan/index. Repeated openings reuse its working definition. */
+export async function repoPreparePieceEdit(pieceTechniqueId:string,audit:AuditContext){
+  const client=await db.connect()
+  try{
+    await client.query("BEGIN")
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))",[pieceTechniqueId])
+    const piece=(await client.query<{statut:string}>("SELECT statut::text FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE",[pieceTechniqueId])).rows[0]
+    if(!piece)throw new HttpError(404,"PIECE_NOT_FOUND","Pièce technique introuvable.")
+    if(piece.statut==="OBSOLETE")throw new HttpError(409,"PIECE_ARCHIVED","Cette pièce est archivée ; son dossier reste consultable.")
+    const versions=(await client.query<PieceTechniqueVersionRow>(
+      "SELECT "+VERSION_COLUMNS+" FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid ORDER BY CASE statut WHEN 'EN_VALIDATION' THEN 0 WHEN 'BROUILLON' THEN 1 ELSE 2 END,created_at DESC,version_interne DESC,id DESC FOR UPDATE",[pieceTechniqueId])).rows
+    const working=versions.find(v=>["BROUILLON","EN_VALIDATION"].includes(v.statut))
+    if(working){await client.query("COMMIT");return {version:working,created:false}}
+    const source=versions.find(v=>v.statut==="APPLICABLE")??versions.find(v=>v.statut==="OBSOLETE")
+    if(!source){await client.query("COMMIT");return {version:null,created:false}}
+    const version=await cloneTechnicalVersionTx(client,pieceTechniqueId,source.id,{
+      indice:source.indice,plan_reference:source.plan_reference,change_level:"MINOR",
+      commentaire_revision:"Modification du dossier technique",raison_changement:"Modification du dossier technique",
+      type_changement:"MODIFICATION",date_effet:null
+    },audit,true)
+    await client.query("COMMIT")
+    return {version,created:true}
+  }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error}
+  finally{client.release()}
+}
+
+/** Public client-plan changes require confirmation; internal clones may borrow their caller's transaction. */
+export async function repoCreateNextVersion(
+  pieceTechniqueId: string,
+  sourceVersionId: string,
+  body: CreateNextVersionBodyDTO,
+  audit: AuditContext,
+  transactionClient?: PoolClient,
+  options: { autoFollowDraftOrders?: boolean } = {},
+): Promise<PieceTechniqueVersionCloneResult> {
+  if (!transactionClient && (body.client_requirement_confirmed !== true || (body.raison_changement?.trim().length ?? 0) < 3)) {
+    throw new HttpError(422, "CLIENT_REVISION_REQUIRED", "Utilisez Nouveau plan client pour changer de version.")
+  }
+  const client = transactionClient ?? await db.connect()
+  try {
+    if (!transactionClient) await client.query("BEGIN")
+    const result = await cloneTechnicalVersionTx(client, pieceTechniqueId, sourceVersionId, body, audit, false, options)
+    if (!transactionClient) await client.query("COMMIT")
+    return result
+  } catch (error) {
     if (!transactionClient) await client.query("ROLLBACK").catch(() => {})
-    if ((e as { code?: string })?.code === "23505") {
-      throw new HttpError(409, "CONFLICT", "Une donnée de la nouvelle version entre en conflit avec une donnée existante. Actualisez les indices avant de réessayer.")
+    if ((error as { code?: string })?.code === "23505") {
+      throw new HttpError(409, "CONFLICT", "Une donnée du nouveau plan entre en conflit. Actualisez le dossier avant de réessayer.")
     }
-    throw e
+    throw error
   } finally {
     if (!transactionClient) client.release()
   }

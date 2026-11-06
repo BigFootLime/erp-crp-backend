@@ -50,6 +50,7 @@ const versionCoreBody = z.object({
 
 export const createVersionSchema = z.object({ body: versionCoreBody })
 export type CreateVersionBodyDTO = z.infer<typeof createVersionSchema>["body"]
+export const preparePieceEditSchema=z.object({body:z.object({}).strict().default({})})
 
 export const updateVersionSchema = z.object({
   body: versionCoreBody.partial().extend({

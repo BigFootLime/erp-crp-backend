@@ -315,6 +315,8 @@ export const reorderSchema = z.object({
   }),
 })
 
+export const fabricationTreeQuerySchema=z.object({query:z.object({version_id:uuid.optional()})})
+
 export type ReorderBodyDTO = z.infer<typeof reorderSchema>["body"]
 
 export const addOperationSchema = z.object({

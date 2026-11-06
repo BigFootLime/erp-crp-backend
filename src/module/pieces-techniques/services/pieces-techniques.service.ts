@@ -97,7 +97,7 @@ export const pieceTechniquesSummarySVC = (filters: ListPiecesTechniquesQueryDTO)
 
 export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoGetPieceTechnique(id, includes);
 
-export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
+export const getPieceTechniqueFabricationTreeSVC = (id: string,versionId?:string) => repoGetFabricationTree(id,50,versionId??null);
 
 /** Hash du DTO validé, commun au pré-contrôle HTTP et à la transaction de création. */
 export function pieceTechniqueCreateRequestHash(body: CreatePieceTechniqueBodyDTO): string {

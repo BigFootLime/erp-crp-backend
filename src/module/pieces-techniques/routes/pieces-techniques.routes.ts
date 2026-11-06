@@ -51,6 +51,7 @@ import {
   createPieceTechnique,
   previewPieceTechniqueCode,
   deletePieceTechnique,
+  archivePieceTechnique,
   deleteAchat,
   deleteBomLine,
   deleteOperation,
@@ -110,6 +111,7 @@ import {
   updateVersion,
   updateVersionStatus,
   publishVersion,
+  preparePieceEdit,
 } from "../controllers/versions.controller"
 import { createOrLinkArticleFabrique, getPieceArticlePrincipal } from "../controllers/piece-article.controller"
 import {
@@ -119,6 +121,7 @@ import {
   versionIdParamSchema,
   versionStatusSchema,
   publishVersionSchema,
+  preparePieceEditSchema,
 } from "../validators/versions.validators"
 import {
   getTechnicalCompleteness,
@@ -210,6 +213,7 @@ router.post("/:id/creation-snapshot/:documentId/print-intents", validate(idParam
 router.get("/:id", validate(idParamSchema), getPieceTechnique)
 router.patch("/:id", validate(idParamSchema), validate(updatePieceTechniqueSchema), updatePieceTechnique)
 router.delete("/:id", requireDeleteRole, validate(idParamSchema), deletePieceTechnique)
+router.post("/:id/archive",requireDeleteRole,validate(idParamSchema),archivePieceTechnique)
 
 router.post("/:id/duplicate", validate(idParamSchema), duplicatePieceTechnique)
 router.post("/:id/status", validate(idParamSchema), validate(pieceTechniqueStatusSchema), updatePieceTechniqueStatus)
@@ -220,6 +224,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 
 // Versions / indices (GPAO B2.1) — source de vérité indice/plan/statut.
 router.get("/:id/versions", validate(idParamSchema), listVersions)
+router.post("/:id/prepare-edit", validate(idParamSchema), validate(preparePieceEditSchema), preparePieceEdit)
 // Version-scoped technical PDF; never replaces the immutable creation receipt.
 router.get("/:id/versions/:versionId/technical-sheet/source", technicalSheetSource)
 router.get("/:id/versions/:versionId/technical-sheet", listTechnicalSheets)

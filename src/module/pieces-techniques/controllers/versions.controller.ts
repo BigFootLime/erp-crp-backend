@@ -2,6 +2,8 @@
 // GPAO B2.1 — HTTP handlers des versions/indices.
 import type { Request, RequestHandler } from "express"
 import { HttpError } from "../../../utils/httpError"
+import {canWritePieceTechnique} from '../pieces-techniques.permissions'
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context"
 import { parseUuidRouteParam } from "../../../utils/routeParams"
 import type { AuditContext } from "../repository/pieces-techniques.repository"
 import {
@@ -10,6 +12,7 @@ import {
   updateVersionSchema,
   publishVersionSchema,
   versionStatusSchema,
+  preparePieceEditSchema,
 } from "../validators/versions.validators"
 import {
   createNextVersionSVC,
@@ -18,6 +21,7 @@ import {
   updateVersionSVC,
   updateVersionStatusSVC,
   publishVersionSVC,
+  preparePieceEditSVC,
 } from "../services/versions.service"
 
 function buildAuditContext(req: Request): AuditContext {
@@ -53,6 +57,15 @@ export const listVersions: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err)
   }
+}
+
+export const preparePieceEdit: RequestHandler = async(req,res,next)=>{
+  try{
+    if(!requestHasGrantedAccountModuleAccess(req)&&!canWritePieceTechnique(req.user))throw new HttpError(403,'PIECE_WRITE_FORBIDDEN','Le droit de modification des pièces techniques est requis.')
+    preparePieceEditSchema.parse({body:req.body})
+    const result=await preparePieceEditSVC(parseUuidRouteParam(req.params,'id'),buildAuditContext(req))
+    res.status(result.created?201:200).json(result)
+  }catch(error){next(error)}
 }
 
 export const createVersion: RequestHandler = async (req, res, next) => {
