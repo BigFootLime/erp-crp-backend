@@ -73,7 +73,7 @@ export const centralOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
  const {readPlanningProcurement}=await import('../repository/planning-procurement.repository');
  const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
  const rights=await consumableRights(req);res.setHeader('Cache-Control','no-store');
- res.json({...await readPlanningProcurement(ofId),canSave:requestHasElevatedAccountModuleAccess(req)||roleHasPlanningCapability(req.user?.role,'manage_schedule'),canPurchase:rights.purchase});
+ res.json({...await readPlanningProcurement(ofId,rights.prices),canSave:requestHasElevatedAccountModuleAccess(req)||roleHasPlanningCapability(req.user?.role,'manage_schedule'),canPurchase:rights.purchase});
 });
 export const centralSaveOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
  const ofId=z.coerce.number().int().positive().parse(req.params.ofId);

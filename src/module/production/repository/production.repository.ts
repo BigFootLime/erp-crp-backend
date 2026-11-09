@@ -1,4 +1,4 @@
-import {prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
+import {assertStockReviewVersionTx,prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
 import { publishPreparationDefinitionTx } from "./preparation-publication.repository";
 import { completePreparedDossierTx } from "./of-dossier.repository";
 import {preparationAudit} from './production-preparation.repository';
@@ -4637,6 +4637,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
   body: ValidateOfTechnicalPreparationBodyDTO;
   audit: AuditContext;
   canPurchase?: boolean;
+  stockRights?: {reserve:boolean;deplete:boolean};
 }) {
   const client = await pool.connect();
   return withRealtimeOutboxTransaction(client, async (tx) => {
@@ -4688,14 +4689,17 @@ export async function repoValidateOfTechnicalPreparation(params: {
     }
     const finishValidation = async () => {
       const state = (await tx.query<{statut:string}>('SELECT statut::text FROM public.ordres_fabrication WHERE id=$1',[params.id])).rows[0];
-      if (state?.statut === 'BROUILLON')await prepareAutomaticPlanningPurchasesTx(tx,params.id,params.audit,params.canPurchase===true);
+      const procurement=state?.statut==='BROUILLON'
+        ?await prepareAutomaticPlanningPurchasesTx(tx,params.id,params.audit,params.canPurchase===true,params.stockRights&&reviewedSources?{...params.stockRights,reviewedSources}:undefined)
+        :null;
       if (state?.statut === 'BROUILLON' && await usesPreparationRules(tx,params.id))
         await completePreparedDossierTx(tx,params.id,params.audit);
-      return getOfTechnicalPreparationTx(tx,params.id);
+      return {...await getOfTechnicalPreparationTx(tx,params.id),materialDrafts:procurement?.orders??[]};
     };
     if (params.body.expected_updated_at && Date.parse(params.body.expected_updated_at) !== Date.parse(row.updated_at)) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
     }
+    const reviewedSources=params.body.material_review_version?await assertStockReviewVersionTx(tx,params.id,params.body.material_review_version):undefined;
     if (row.technical_readiness === 'VALIDATED') return finishValidation();
     const selected = typeof row.technical_preparation?.selected_version_id === "string"
       ? row.technical_preparation.selected_version_id

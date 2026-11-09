@@ -1445,9 +1445,9 @@ export async function repoTransitionCommandeFournisseur(
          WHERE commande_id=$1::uuid AND version=$2`, [id,header.version_document])).rows[0]?.revision;
       // Legacy preparations remain usable only when no applicable qualification was configured.
       const hasDecision = qualification && ([qualification.global,...qualification.domains].some(scope=>scope.decision)||qualification.client_approvals?.some(check=>check.policies.length));
-      if (qualification && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
+      if (qualification && qualification.enabled !== false && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
         throw new HttpError(409,"SUPPLIER_QUALIFICATION_DOCUMENT_STALE",
-          "L’homologation ou le périmètre d’achat a changé. Régénérez le bon de commande avant l’envoi.");
+          "Le contrôle du fournisseur a changé. Générez de nouveau le bon de commande avant de l’envoyer.");
       }
     }
     if (kind === "cancel") {

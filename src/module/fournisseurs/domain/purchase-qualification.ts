@@ -31,6 +31,7 @@ export type PurchaseQualification = {
   checked_at: string;
   today: string;
   can_engage: boolean;
+  enabled?: boolean;
   global: QualificationScope;
   domains: QualificationScope[];
   unmapped_line_ids: string[];
@@ -91,6 +92,7 @@ export function qualificationScope(
 export function assertPurchaseQualification(
   state: PurchaseQualification,
 ): void {
+  if(state.enabled===false)return;
   assertGlobalPurchaseHomologation(state.global.decision, state.today);
   const blocked = state.domains.filter((scope) => scope.status === "BLOCKED");
   if (blocked.length)
@@ -110,6 +112,7 @@ export function purchaseQualificationRevision(
     .update(
       JSON.stringify({
         supplier_id: state.supplier_id,
+        ...(state.enabled===false?{enabled:false}:{}),
         global: state.global,
         domains: state.domains,
         unmapped_line_ids: state.unmapped_line_ids,

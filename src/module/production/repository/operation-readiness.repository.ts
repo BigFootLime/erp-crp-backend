@@ -137,7 +137,7 @@ export async function readOperationReadinessTx(tx:DossierDb,ofId:number,material
       })};
     const firstMachining=operations.find(o=>['TOURNAGE','FRAISAGE','REPRISE'].includes(o.kind??''));
     const quantityKind=row?.kind==='DECOUPE'&&firstMachining?.kind==='TOURNAGE'&&coverage.needs.some(n=>n.operationId===op.id&&n.debitRule?.form==='BAR')?'POTENTIAL' as const:'ACTUAL' as const;
-    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:facts.materials.length>0,
+    return {...evaluateOperationReadiness(facts),machineId:row?.machine_id??null,materialOperation:coverage.needs.some(n=>n.operationId===op.id&&(n.debitRule?.form!=='UNIT'||n.consumed<n.required)),
       assemblyOperation:row?.kind==='ASSEMBLAGE',quantityKind,
       ...(opening?{openingCheckpoint:{...opening}}:{}),
       successors:dependencies.filter(d=>d.predecessor===op.id).flatMap(d=>{const next=dossier.operations.find(o=>o.id===d.successor);return next?[{id:next.id,label:next.label,minimum:d.minimum??1}]:[]})};

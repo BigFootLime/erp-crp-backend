@@ -96,7 +96,7 @@ export const svcPatchOfTechnicalPreparation = (params: { id: number; body: Patch
   repo.repoPatchOfTechnicalPreparation(params);
 export const svcSubmitOfTechnicalPreparation = (params: { id: number; body: SubmitOfTechnicalPreparationBodyDTO; audit: repo.AuditContext }) =>
   repo.repoSubmitOfTechnicalPreparation(params);
-export const svcValidateOfTechnicalPreparation = (params: { id: number; body: ValidateOfTechnicalPreparationBodyDTO; canPurchase?:boolean; audit: repo.AuditContext }) =>
+export const svcValidateOfTechnicalPreparation = (params: { id: number; body: ValidateOfTechnicalPreparationBodyDTO; canPurchase?:boolean; stockRights?:{reserve:boolean;deplete:boolean}; audit: repo.AuditContext }) =>
   repo.repoValidateOfTechnicalPreparation(params);
 
 export const svcUpdateOrdreFabricationOperation = (params: {

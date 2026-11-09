@@ -55,3 +55,15 @@ it('does not create another historical need for an unchanged JSONB configuration
   await configureOfMaterial(19,'new-source',{expectedVersion:current.version,idempotencyKey:'key',configuration:{operationId:'cut',requirements:Object.fromEntries(Object.entries(requirements).reverse()) as typeof requirements,supplyMode:'PURCHASE',debitRule:rule,allowPartial:true,supplierId:'supplier',destinationId:null}},{user_id:1} as never);
   expect(tx.query.mock.calls.some(c=>c[0].startsWith('UPDATE public.of_material_needs SET superseded_at'))).toBe(false);
 });
+
+it('prévisualise le brut et la phase de la PT avant la création des opérations OF',async()=>{
+  tx.query.mockImplementation(async(sql:string,params:unknown[]=[])=>materialOriginQueryFixture(sql,params,{current:19},[])??({rows:
+    sql.includes('AS purchases')?[{revision:'draft-version',hash:null,client_id:null,purchases:[
+      {id:'source',article_id:'article',type_achat:'MATIERE',quantite:1,unite_prix:'u',gamme_operation_id:'source-cut',fournisseur_id:null}
+    ]}]:sql.includes('FROM public.pieces_techniques_operations p')?[{id:'source-cut',phase:10,label:'Débit',sourceId:'source-cut'}]:
+    sql.startsWith('SELECT a.id::text,a.code,a.unite')?[{id:'article',code:'ALU',unite:'u',grade:'7075'}]:[]
+  }));
+  const data=await readMaterialTx(tx as never,19,true);
+  expect(data.needs[0]).toMatchObject({id:null,operationId:'source-cut',operationLabel:'Débit',unit:'u',required:100,purchaseMissing:100,
+    reviewed:false,debitRule:{form:'UNIT'},requirements:{grade:'7075'}});
+});

@@ -1,3 +1,4 @@
+import {readSupplierQualitySetting} from "./supplier-quality-settings.repository";
 import type { PoolClient } from "pg";
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -44,6 +45,8 @@ export async function readPurchaseQualificationTx(
       "COMMANDE_FOURNISSEUR_NOT_FOUND",
       "Commande fournisseur introuvable.",
     );
+  const enabled=(await readSupplierQualitySetting(tx,enforce)).value_json.enabled;
+  if(!enabled)return disabledQualification(header.fournisseur_id,header.today,header.checked_at);
   const contexts = await readPurchaseClientContextsTx(tx, orderId);
   const clientIds = [
     ...new Set(contexts.map((context) => context.client_id)),
@@ -82,6 +85,7 @@ export async function readPurchaseQualificationTx(
     lines,
     contexts,
     enforce,
+    enabled,
   });
 }
 
@@ -96,11 +100,14 @@ export async function readSupplierPurchaseQualificationTx(
     lines: PurchaseScopeLine[];
     contexts: Omit<PurchaseClientContext, "domains">[];
     enforce?: boolean;
+    enabled?: boolean;
     // Internal read-only batch input. Actual engagements always re-read and lock.
     prefetched?: { decisions: QualificationDecision[]; policies: Awaited<ReturnType<typeof readApprovalPoliciesTx>> };
   },
 ): Promise<PurchaseQualification> {
   const { lines, contexts, enforce = false } = input;
+  if(!(input.enabled??(await readSupplierQualitySetting(tx,enforce)).value_json.enabled))
+    return disabledQualification(input.supplierId,input.today,input.checkedAt);
   const clientIds = [...new Set(contexts.map(context => context.client_id))].sort();
   const domainLines = new Map<string, string[]>();
   const unmapped: string[] = [];
@@ -174,6 +181,11 @@ export async function readSupplierPurchaseQualificationTx(
     assertClientApprovals(clientApprovals);
   }
   return state;
+}
+
+function disabledQualification(supplierId:string,today:string,checkedAt:string):PurchaseQualification{
+  return {supplier_id:supplierId,today,checked_at:checkedAt,enabled:false,can_engage:true,
+    global:qualificationScope(null,[],null,today),domains:[],unmapped_line_ids:[]};
 }
 
 /** A read-only consistent diagnostic; mutations re-evaluate under supplier/aggregate locks. */

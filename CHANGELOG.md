@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1836 (04e52afe)
+
+- Source originale : fix(production): validate material stock and separate treatment purchasing (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
 ## En préparation — Réconciliation de la préparation #1836 (5ad9f3bd)
 
 - Source originale : docs(release): record approved procurement guard and API promotion (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
