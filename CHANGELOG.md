@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Référentiels matière éditables
+
+- Les nuances, états et sous-états matière disposent de PATCH atomiques auditables : code, désignation, statut et les seules propriétés propres au référentiel peuvent évoluer sans modifier les relations historiques.
+- Les doublons de code normalisé retournent `409`, une cible absente `404`, et les écritures utilisent exactement la même autorisation que les créations d'articles ; le contrat de capacités permet à l'interface de rester fermée par défaut.
+- Un sous-état peut désormais être créé ou rendu sans désignation : la compatibilité de la colonne historique non nulle est conservée en stockant une chaîne vide. `unite_achat` reste compatible côté API, mais n'est pas un défaut de longueur d'approvisionnement.
+
 ## Préparé — Sous-états matière autonomes
 
 - Les sous-états matière peuvent être créés sans état parent tout en conservant les rattachements historiques existants.

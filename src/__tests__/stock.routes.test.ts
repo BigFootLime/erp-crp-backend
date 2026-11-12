@@ -111,6 +111,79 @@ describe("/api/v1/stock", () => {
     expect(insert?.[1]).toEqual([null, "REC", "Recuit", true]);
   });
 
+  it("POST /api/v1/stock/matiere-sous-etats accepts a code-only standalone sub-state", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK" || query.includes("audit_logs")) return { rows: [] };
+      if (query.includes("INSERT INTO public.stock_sous_etats")) return { rows: [{ id: 42, etat_id: null, code: "BRUT", designation: "", is_active: true }] };
+      return { rows: [] };
+    });
+    const res = await request(app).post("/api/v1/stock/matiere-sous-etats").set("Authorization", "Bearer fake").send({ code: "BRUT" });
+    expect(res.status).toBe(201);
+    expect(mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "BRUT", "", true]);
+  });
+
+  it("reports the same referential write capability as protected mutations", async () => {
+    const allowed = await request(app).get("/api/v1/stock/matiere-referential-capabilities").set("Authorization", "Bearer fake");
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toEqual({ read: true, write: true });
+    mocks.currentRole.value = "Commercial";
+    const denied = await request(app).get("/api/v1/stock/matiere-referential-capabilities").set("Authorization", "Bearer fake");
+    expect(denied.body).toEqual({ read: false, write: false });
+  });
+
+  it("protects, validates, and reports missing nuance updates", async () => {
+    mocks.currentRole.value = "Commercial";
+    const denied = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ code: "X" });
+    expect(denied.status).toBe(403);
+    mocks.currentRole.value = "Administrateur Systeme et Reseau";
+    const invalid = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({});
+    expect(invalid.status).toBe(400);
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => String(sql) === "BEGIN" || String(sql) === "ROLLBACK" ? { rows: [] } : { rows: [] });
+    const missing = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ is_active: false });
+    expect(missing.status).toBe(404);
+  });
+
+  it("normalizes duplicate referential edits to 409 and permits a blank sub-state designation", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("SELECT to_jsonb")) return { rows: [{ row: { id: 4, code: "OLD", designation: "Before" } }] };
+      if (query.includes("UPDATE public.stock_nuances")) throw Object.assign(new Error("duplicate"), { code: "23505" });
+      return { rows: [] };
+    });
+    const duplicate = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ code: "DUP" });
+    expect(duplicate.status).toBe(409);
+    expect(duplicate.body.code).toBe("DUPLICATE_REFERENTIAL_CODE");
+
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK" || query.includes("audit_logs")) return { rows: [] };
+      if (query.includes("SELECT to_jsonb")) return { rows: [{ row: { id: 8, code: "REC", designation: "Recuit" } }] };
+      if (query.includes("SELECT id::int AS id, etat_id::int")) return { rows: [{ id: 8, etat_id: null, code: "REC", designation: "", is_active: true }] };
+      return { rows: [] };
+    });
+    const blank = await request(app).patch("/api/v1/stock/matiere-sous-etats/8").set("Authorization", "Bearer fake").send({ designation: "" });
+    expect(blank.status).toBe(200);
+    const update = mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("UPDATE public.stock_sous_etats"));
+    expect(update?.[1]).toEqual([8, ""]);
+  });
+
+  it("does not clear an optional designation when a referential PATCH omits it", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK" || query.includes("audit_logs")) return { rows: [] };
+      if (query.includes("SELECT to_jsonb")) return { rows: [{ row: { id: 9, code: "OLD", designation: "Existing" } }] };
+      if (query.includes("FROM public.stock_nuances n LEFT JOIN")) return { rows: [{ id: 9, code: "NEW", designation: "Existing", densite: null, is_active: true, etat_ids: [] }] };
+      return { rows: [] };
+    });
+    const response = await request(app).patch("/api/v1/stock/matiere-nuances/9").set("Authorization", "Bearer fake").send({ code: "NEW" });
+    expect(response.status).toBe(200);
+    const update = mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("UPDATE public.stock_nuances"));
+    expect(String(update?.[0])).not.toContain("designation =");
+    expect(update?.[1]).toEqual([9, "NEW"]);
+  });
+
   const barBatch = '00000000-0000-4000-8000-000000001246';
   const barCount = { expectedVersion: 'a'.repeat(64), idempotencyKey: '00000000-0000-4000-8000-000000001247', reason: 'Comptage vérifié', bars: [] };
   it('exposes bar inventory with the current user confirmation capability', async () => {

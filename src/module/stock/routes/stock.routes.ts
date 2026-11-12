@@ -22,6 +22,10 @@ import {
   createStockMatiereEtat,
   createStockMatiereNuance,
   createStockMatiereSousEtat,
+  getStockMatiereReferentialCapabilities,
+  updateStockMatiereNuance,
+  updateStockMatiereEtat,
+  updateStockMatiereSousEtat,
   createStockEmplacement,
   createStockLot,
   createStockLotGenealogy,
@@ -163,12 +167,16 @@ router.get("/article-categories", requireStockCapability("read"), listStockArtic
 router.get("/units", requireStockCapability("read"), listStockUnits);
 router.get("/article-families", requireStockCapability("read"), listStockArticleFamilies);
 router.post("/article-families", requireArticleWrite, createStockArticleFamily);
+router.get("/matiere-referential-capabilities", getStockMatiereReferentialCapabilities);
 router.get("/matiere-nuances", requireStockCapability("read"), listStockMatiereNuances);
 router.post("/matiere-nuances", requireArticleWrite, createStockMatiereNuance);
+router.patch("/matiere-nuances/:id", requireArticleWrite, updateStockMatiereNuance);
 router.get("/matiere-etats", requireStockCapability("read"), listStockMatiereEtats);
 router.post("/matiere-etats", requireArticleWrite, createStockMatiereEtat);
+router.patch("/matiere-etats/:id", requireArticleWrite, updateStockMatiereEtat);
 router.get("/matiere-sous-etats", requireStockCapability("read"), listStockMatiereSousEtats);
 router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEtat);
+router.patch("/matiere-sous-etats/:id", requireArticleWrite, updateStockMatiereSousEtat);
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);

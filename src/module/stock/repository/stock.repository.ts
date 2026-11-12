@@ -120,6 +120,9 @@ import type {
   CreateMatiereEtatBodyDTO,
   CreateMatiereNuanceBodyDTO,
   CreateMatiereSousEtatBodyDTO,
+  UpdateMatiereNuanceBodyDTO,
+  UpdateMatiereEtatBodyDTO,
+  UpdateMatiereSousEtatBodyDTO,
   CreateArticleBodyDTO,
   CreateArticleFamilyBodyDTO,
   CreateEmplacementBodyDTO,
@@ -1449,7 +1452,8 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
 export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
   const etat_id = typeof body.etat_id === "number" ? Math.trunc(body.etat_id) : null;
   const code = normalizeStockReferentialCode(body.code, "Sous-etat");
-  const designation = body.designation.trim();
+  // Historical schema keeps this column NOT NULL while the API permits code-only values.
+  const designation = body.designation?.trim() || "";
   const is_active = body.is_active;
 
   const client = await db.connect();
@@ -1507,6 +1511,109 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
   } finally {
     client.release();
   }
+}
+
+type ReferentialPatch = Record<string, string | number | boolean | null | undefined>;
+
+async function updateMatiereReferential<T>(args: {
+  table: "stock_nuances" | "stock_etats" | "stock_sous_etats";
+  id: number;
+  patch: ReferentialPatch;
+  audit: AuditContext;
+  action: string;
+  read: (tx: Pick<PoolClient, "query">, id: number) => Promise<T | null>;
+}): Promise<T | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const before = await client.query<Record<string, unknown>>(
+      `SELECT to_jsonb(r) AS row FROM public.${args.table} r WHERE r.id = $1 FOR UPDATE`, [args.id]
+    );
+    const previous = before.rows[0]?.row;
+    if (!previous) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const values: unknown[] = [args.id];
+    const assignments: string[] = [];
+    for (const [column, value] of Object.entries(args.patch)) {
+      if (value === undefined) continue;
+      values.push(value);
+      assignments.push(`${column} = $${values.length}`);
+    }
+    assignments.push("updated_at = now()");
+    await client.query(`UPDATE public.${args.table} SET ${assignments.join(", ")} WHERE id = $1`, values);
+    const out = await args.read(client, args.id);
+    if (!out) throw new Error(`Updated ${args.table} could not be read`);
+
+    await repoInsertAuditLog({
+      user_id: args.audit.user_id,
+      body: {
+        event_type: "ACTION", action: args.action, page_key: args.audit.page_key,
+        entity_type: args.table, entity_id: String(args.id), path: args.audit.path,
+        client_session_id: args.audit.client_session_id,
+        details: { before: previous, patch: args.patch },
+      },
+      ip: args.audit.ip, user_agent: args.audit.user_agent, device_type: args.audit.device_type,
+      os: args.audit.os, browser: args.audit.browser, tx: client,
+    });
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (isPgUniqueViolation(err)) throw new HttpError(409, "DUPLICATE_REFERENTIAL_CODE", "A referential with this code already exists");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function readMatiereNuanceTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereNuance | null> {
+  const res = await tx.query<{ id: number; code: string; designation: string | null; densite: string | number | null; is_active: boolean; etat_ids: number[] }>(`
+    SELECT n.id::int AS id, n.code, n.designation,
+      COALESCE(NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric, n.densite * 1000) AS densite,
+      n.is_active, COALESCE(array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL), ARRAY[]::int[]) AS etat_ids
+    FROM public.stock_nuances n LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id=n.id
+    WHERE n.id=$1 GROUP BY n.id`, [id]);
+  const row = res.rows[0];
+  return row ? { ...row, designation: row.designation?.trim() || null, densite: row.densite === null ? null : Number(row.densite), etat_ids: row.etat_ids ?? [] } : null;
+}
+
+async function readMatiereEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereEtat | null> {
+  const res = await tx.query<{ id: number; code: string; designation: string | null; unite_achat: number; is_active: boolean; nuance_ids: number[] }>(`
+    SELECT e.id::int AS id, e.code, e.designation, e.unite_achat::int AS unite_achat, e.is_active,
+      COALESCE(array_agg(ne.nuance_id::int ORDER BY ne.nuance_id) FILTER (WHERE ne.nuance_id IS NOT NULL), ARRAY[]::int[]) AS nuance_ids
+    FROM public.stock_etats e LEFT JOIN public.stock_nuance_etats ne ON ne.etat_id=e.id
+    WHERE e.id=$1 GROUP BY e.id`, [id]);
+  const row = res.rows[0];
+  return row ? { ...row, designation: row.designation?.trim() || null, nuance_ids: row.nuance_ids ?? [] } : null;
+}
+
+async function readMatiereSousEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereSousEtat | null> {
+  const res = await tx.query<StockMatiereSousEtat>(`SELECT id::int AS id, etat_id::int AS etat_id, code, designation, is_active FROM public.stock_sous_etats WHERE id=$1`, [id]);
+  return res.rows[0] ?? null;
+}
+
+export function repoUpdateMatiereNuance(id: number, body: UpdateMatiereNuanceBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_nuances", id, audit, action: "stock.matiere-nuances.update", read: readMatiereNuanceTx,
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Nuance"), designation: body.designation === undefined ? undefined : body.designation ?? "", densite: body.densite === undefined ? undefined : body.densite === null ? null : body.densite / 1000, is_active: body.is_active },
+  });
+}
+
+export function repoUpdateMatiereEtat(id: number, body: UpdateMatiereEtatBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_etats", id, audit, action: "stock.matiere-etats.update", read: readMatiereEtatTx,
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", unite_achat: body.unite_achat, is_active: body.is_active },
+  });
+}
+
+export function repoUpdateMatiereSousEtat(id: number, body: UpdateMatiereSousEtatBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_sous_etats", id, audit, action: "stock.matiere-sous-etats.update", read: readMatiereSousEtatTx,
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Sous-etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", is_active: body.is_active },
+  });
 }
 
 async function ensureArticleFamilyEntry(
