@@ -317,9 +317,9 @@ export const PROTECTED_MODULE_KEYS: readonly string[] = MODULE_CATALOG.filter(
  */
 export const AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY = "matiere-referentiels";
 export const AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS = [
-  "stock-matiere-nuances",
-  "stock-matiere-etats",
-  "stock-matiere-sous-etats",
+  "matiere-nuances",
+  "matiere-etats",
+  "matiere-sous-etats",
 ] as const;
 
 const AUTHENTICATED_MATIERE_REFERENTIAL_PATHS = new Set([

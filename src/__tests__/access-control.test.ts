@@ -214,7 +214,7 @@ describe("Catalogue de modules #326", () => {
 
   it("réserve les trois référentiels matière à tout compte authentifié, sans ouvrir Stock", () => {
     expect(AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS).toEqual([
-      "stock-matiere-nuances", "stock-matiere-etats", "stock-matiere-sous-etats",
+      "matiere-nuances", "matiere-etats", "matiere-sous-etats",
     ]);
     expect(isAuthenticatedMatiereReferentialRequest("/api/v1/stock/matiere-nuances", "GET")).toBe(true);
     expect(isAuthenticatedMatiereReferentialRequest("/stock/matiere-etats", "POST")).toBe(true);
@@ -418,7 +418,7 @@ describe("Résolution du profil d'accès", () => {
     expect(profile.modules[0]).toMatchObject({ allowed: false, source: "DEFAULT" });
     expect(profile.modules.find((module) => module.module_key === "matiere-referentiels")).toMatchObject({
       allowed: true,
-      nav_page_keys: ["stock-matiere-nuances", "stock-matiere-etats", "stock-matiere-sous-etats"],
+      nav_page_keys: ["matiere-nuances", "matiere-etats", "matiere-sous-etats"],
     });
   });
 
