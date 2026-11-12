@@ -265,6 +265,8 @@ export const createMatiereSousEtatSchema = z.object({
       code: z.string().trim().min(1).max(40),
       designation: z.union([z.string().trim().max(160), z.null()]).optional()
         .transform((value) => (value && value.length > 0 ? value : null)),
+      informations: z.union([z.string().trim().max(10000), z.null()]).optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
       is_active: z.boolean().optional().default(true),
     })
     .strict(),
@@ -275,6 +277,7 @@ export const updateMatiereSousEtatSchema = z.object({
   body: z.object({
     code: optionalReferentialCode,
     designation: optionalReferentialDesignation,
+    informations: z.union([z.string().trim().max(10000), z.null()]).optional(),
     is_active: z.boolean().optional(),
   }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
 });

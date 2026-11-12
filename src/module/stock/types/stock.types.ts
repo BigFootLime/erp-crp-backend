@@ -110,6 +110,8 @@ export type StockMatiereSousEtat = {
   etat_id: number | null;
   code: string;
   designation: string;
+  /** Optional explanatory paragraph displayed as a contextual hint in material selectors. */
+  informations: string | null;
   is_active: boolean;
 };
 

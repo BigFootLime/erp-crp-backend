@@ -26,11 +26,13 @@ const configs: Record<ReferentialKind, ReferentialConfig> = {
 
 const codeSchema = z.string().min(1).max(40);
 const designationSchema = z.string().max(160).nullable();
+const informationsSchema = z.string().max(10000).nullable();
 const densitySchema = z.number().finite().min(100).max(30000).nullable();
 const positiveId = z.number().int().positive();
 const createSchema = z.object({
   code: codeSchema,
   designation: designationSchema.optional(),
+  informations: informationsSchema.optional(),
   densite: densitySchema.optional(),
   is_active: z.boolean().optional(),
   etat_ids: z.array(positiveId).max(500).optional(),
@@ -41,6 +43,7 @@ const createSchema = z.object({
 const patchSchema = z.object({
   code: codeSchema.optional(),
   designation: designationSchema.optional(),
+  informations: informationsSchema.optional(),
   densite: densitySchema.optional(),
   is_active: z.boolean().optional(),
   unite_achat: positiveId.optional(),
@@ -77,7 +80,7 @@ function apiRow(config: ReferentialConfig, row: Record<string, unknown>) {
     return { ...common, densite: Number.isFinite(densite as number) ? densite : null, etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.map(Number) : [] };
   }
   if (config.kind === "etats") return { ...common, unite_achat: Number(row.unite_achat) || 3020, nuance_ids: Array.isArray(row.nuance_ids) ? row.nuance_ids.map(Number) : [] };
-  return { ...common, etat_id: row.etat_id === null ? null : Number(row.etat_id) };
+  return { ...common, etat_id: row.etat_id === null ? null : Number(row.etat_id), informations: typeof row.informations === "string" && row.informations.trim() ? row.informations : null };
 }
 
 function listFilters(config: ReferentialConfig, query: Request["query"]): { sql: string; values: unknown[] } {
@@ -110,7 +113,7 @@ async function list(config: ReferentialConfig, query: Request["query"] = {}) {
     const result = await pool.query<Record<string, unknown>>(`SELECT e.id::int AS id,e.code,e.designation,e.unite_achat::int AS unite_achat,e.is_active,COALESCE(array_agg(ne.nuance_id::int ORDER BY ne.nuance_id) FILTER (WHERE ne.nuance_id IS NOT NULL),ARRAY[]::int[]) AS nuance_ids FROM public.stock_etats e LEFT JOIN public.stock_nuance_etats ne ON ne.etat_id=e.id ${filters.sql} GROUP BY e.id ORDER BY e.code`, filters.values);
     return result.rows.map((row) => apiRow(config, row));
   }
-  const result = await pool.query<Record<string, unknown>>(`SELECT se.id::int AS id,se.etat_id::int AS etat_id,se.code,se.designation,se.is_active FROM public.stock_sous_etats se ${filters.sql} ORDER BY se.code`, filters.values);
+  const result = await pool.query<Record<string, unknown>>(`SELECT se.id::int AS id,se.etat_id::int AS etat_id,se.code,se.designation,se.informations,se.is_active FROM public.stock_sous_etats se ${filters.sql} ORDER BY se.code`, filters.values);
   return result.rows.map((row) => apiRow(config, row));
 }
 
@@ -130,8 +133,10 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
   if (config.kind !== "etats" && body.nuance_ids !== undefined) throw new ValidationError("nuance_ids is only supported for matiere-etats");
   if (config.kind !== "etats" && body.unite_achat !== undefined) throw new ValidationError("unite_achat is only supported for matiere-etats");
   if (config.kind !== "sous-etats" && body.etat_id !== undefined) throw new ValidationError("etat_id is only supported for matiere-sous-etats");
+  if (config.kind !== "sous-etats" && body.informations !== undefined) throw new ValidationError("informations is only supported for matiere-sous-etats");
   const code = body.code === undefined ? undefined : normalizeCode(body.code);
   const designation = body.designation === undefined ? undefined : body.designation?.trim() || "";
+  const informations = body.informations === undefined ? undefined : body.informations?.trim() || null;
   const densite = body.densite;
   const client = await pool.connect();
   try {
@@ -140,9 +145,9 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
     let before: unknown = undefined;
     if (create) {
       if (!code) throw new ValidationError("code is required");
-      const columns = config.kind === "nuances" ? "code,designation,densite,is_active" : config.kind === "etats" ? "code,designation,unite_achat,is_active" : "etat_id,code,designation,is_active";
-      const params = config.kind === "nuances" ? [code, designation ?? "", densite === undefined || densite === null ? null : densite / 1000, body.is_active ?? true] : config.kind === "etats" ? [code, designation ?? "", body.unite_achat ?? 3020, body.is_active ?? true] : [body.etat_id ?? null, code, designation ?? "", body.is_active ?? true];
-      const result = await client.query<Record<string, unknown>>(`INSERT INTO public.${config.table} (${columns}) VALUES (${params.map((_, index) => `$${index + 1}`).join(",")}) RETURNING id::int AS id,code,designation,is_active`, params);
+      const columns = config.kind === "nuances" ? "code,designation,densite,is_active" : config.kind === "etats" ? "code,designation,unite_achat,is_active" : "etat_id,code,designation,informations,is_active";
+      const params = config.kind === "nuances" ? [code, designation ?? "", densite === undefined || densite === null ? null : densite / 1000, body.is_active ?? true] : config.kind === "etats" ? [code, designation ?? "", body.unite_achat ?? 3020, body.is_active ?? true] : [body.etat_id ?? null, code, designation ?? "", informations ?? null, body.is_active ?? true];
+      const result = await client.query<Record<string, unknown>>(`INSERT INTO public.${config.table} (${columns}) VALUES (${params.map((_, index) => `$${index + 1}`).join(",")}) RETURNING id::int AS id,code,designation,${config.kind === "sous-etats" ? "informations," : ""}is_active`, params);
       row = result.rows[0];
       const relationIds = config.kind === "nuances" ? body.etat_ids : config.kind === "etats" ? body.nuance_ids : undefined;
       if (relationIds?.length) {
@@ -162,11 +167,12 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
       const push = (column: string, value: unknown) => { values.push(value); updates.push(`${column}=$${values.length}`); };
       if (code !== undefined) push("code", code);
       if (designation !== undefined) push("designation", designation);
+      if (config.kind === "sous-etats" && informations !== undefined) push("informations", informations);
       if (config.kind === "nuances" && densite !== undefined) push("densite", densite === null ? null : densite / 1000);
       if (config.kind === "etats" && body.unite_achat !== undefined) push("unite_achat", body.unite_achat);
       if (body.is_active !== undefined) push("is_active", body.is_active);
       updates.push("updated_at=now()");
-      const result = await client.query<Record<string, unknown>>(`UPDATE public.${config.table} SET ${updates.join(",")} WHERE id=$1 RETURNING id::int AS id,code,designation,is_active`, values);
+      const result = await client.query<Record<string, unknown>>(`UPDATE public.${config.table} SET ${updates.join(",")} WHERE id=$1 RETURNING id::int AS id,code,designation,${config.kind === "sous-etats" ? "informations," : ""}is_active`, values);
       row = result.rows[0];
     }
     if (!row) throw new Error("Referential write returned no row");

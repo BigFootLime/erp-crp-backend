@@ -1431,6 +1431,7 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
     etat_id: number | null;
     code: string;
     designation: string;
+    informations: string | null;
     is_active: boolean;
   }>(
     `
@@ -1439,6 +1440,7 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
         se.etat_id::int AS etat_id,
         se.code,
         se.designation,
+        se.informations,
         se.is_active
       FROM public.stock_sous_etats se
       ${whereSql}
@@ -1454,6 +1456,7 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
   const code = normalizeStockReferentialCode(body.code, "Sous-etat");
   // Historical schema keeps this column NOT NULL while the API permits code-only values.
   const designation = body.designation?.trim() || "";
+  const informations = body.informations?.trim() || null;
   const is_active = body.is_active;
 
   const client = await db.connect();
@@ -1464,11 +1467,11 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
     try {
       ins = await client.query<StockMatiereSousEtat>(
         `
-          INSERT INTO public.stock_sous_etats (etat_id, code, designation, is_active)
-          VALUES ($1::bigint,$2,$3,$4)
-          RETURNING id::int AS id, etat_id::int AS etat_id, code, designation, is_active
+          INSERT INTO public.stock_sous_etats (etat_id, code, designation, informations, is_active)
+          VALUES ($1::bigint,$2,$3,$4,$5)
+          RETURNING id::int AS id, etat_id::int AS etat_id, code, designation, informations, is_active
         `,
-        [etat_id, code, designation, is_active]
+        [etat_id, code, designation, informations, is_active]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
@@ -1493,7 +1496,7 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
         entity_id: String(row.id),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { etat_id, code, designation, is_active },
+        details: { etat_id, code, designation, informations, is_active },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1591,7 +1594,7 @@ async function readMatiereEtatTx(tx: Pick<PoolClient, "query">, id: number): Pro
 }
 
 async function readMatiereSousEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereSousEtat | null> {
-  const res = await tx.query<StockMatiereSousEtat>(`SELECT id::int AS id, etat_id::int AS etat_id, code, designation, is_active FROM public.stock_sous_etats WHERE id=$1`, [id]);
+  const res = await tx.query<StockMatiereSousEtat>(`SELECT id::int AS id, etat_id::int AS etat_id, code, designation, informations, is_active FROM public.stock_sous_etats WHERE id=$1`, [id]);
   return res.rows[0] ?? null;
 }
 
@@ -1612,7 +1615,7 @@ export function repoUpdateMatiereEtat(id: number, body: UpdateMatiereEtatBodyDTO
 export function repoUpdateMatiereSousEtat(id: number, body: UpdateMatiereSousEtatBodyDTO, audit: AuditContext) {
   return updateMatiereReferential({
     table: "stock_sous_etats", id, audit, action: "stock.matiere-sous-etats.update", read: readMatiereSousEtatTx,
-    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Sous-etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", is_active: body.is_active },
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Sous-etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", informations: body.informations === undefined ? undefined : body.informations?.trim() || null, is_active: body.is_active },
   });
 }
 

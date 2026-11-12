@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Informations des sous-états matière
+
+- Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.
+- Les API natives et la compatibilité EC partagent ce contrat, sans modifier les propriétés des nuances ou états ni l’autorisation existante.
+- Le patch additif de colonne nullable et sa contrainte sont idempotents et validés sur PostgreSQL 17 isolé. L’application aux bases CERP attend une autorisation explicite distincte.
+
 ## Préparé — Référentiels matière éditables
 
 - Les nuances, états et sous-états matière disposent de PATCH atomiques auditables : code, désignation, statut et les seules propriétés propres au référentiel peuvent évoluer sans modifier les relations historiques.

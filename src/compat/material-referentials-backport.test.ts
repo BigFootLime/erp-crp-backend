@@ -60,13 +60,13 @@ describe("material referentials backport", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const query = String(sql);
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
-      if (query.includes("INSERT INTO public.stock_sous_etats")) return { rows: [{ id: 8, code: "REC", designation: "", is_active: true }] };
+      if (query.includes("INSERT INTO public.stock_sous_etats")) return { rows: [{ id: 8, code: "REC", designation: "", informations: "Pour une finition précise.", is_active: true }] };
       return { rows: [] };
     });
-    mocks.query.mockResolvedValue({ rows: [{ id: 8, etat_id: null, code: "REC", designation: "", is_active: true }] });
-    const response = await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "rec" }).expect(201);
-    expect(response.body).toMatchObject({ id: 8, code: "REC", designation: null, etat_id: null });
-    expect(mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "REC", "", true]);
+    mocks.query.mockResolvedValue({ rows: [{ id: 8, etat_id: null, code: "REC", designation: "", informations: "Pour une finition précise.", is_active: true }] });
+    const response = await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "rec", informations: "Pour une finition précise." }).expect(201);
+    expect(response.body).toMatchObject({ id: 8, code: "REC", designation: null, etat_id: null, informations: "Pour une finition précise." });
+    expect(mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "REC", "", "Pour une finition précise.", true]);
   });
 
   it("accepts legacy inline relations and the old state purchase unit", async () => {
@@ -92,6 +92,8 @@ describe("material referentials backport", () => {
     expect(mocks.query.mock.calls[0]?.[1]).toEqual(["%acier%", true]);
     await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "X".repeat(41) }).expect(400);
     await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "OK", designation: "X".repeat(161) }).expect(400);
+    await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "OK", informations: "X".repeat(10001) }).expect(400);
+    await request(app()).post("/stock/matiere-etats").set("Authorization", "Bearer test").send({ code: "OK", informations: "Réservé aux sous-états" }).expect(400);
   });
 
   it("adds only the three virtual material grants to a successful profile", async () => {
