@@ -1425,7 +1425,7 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const res = await db.query<{
     id: number;
-    etat_id: number;
+    etat_id: number | null;
     code: string;
     designation: string;
     is_active: boolean;
@@ -1447,7 +1447,7 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
 }
 
 export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
-  const etat_id = Math.trunc(body.etat_id);
+  const etat_id = typeof body.etat_id === "number" ? Math.trunc(body.etat_id) : null;
   const code = normalizeStockReferentialCode(body.code, "Sous-etat");
   const designation = body.designation.trim();
   const is_active = body.is_active;
@@ -1468,7 +1468,7 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
-        throw new HttpError(409, "DUPLICATE_SOUS_ETAT", `Sous-etat ${code} already exists for this etat`);
+        throw new HttpError(409, "DUPLICATE_SOUS_ETAT", `Sous-etat ${code} already exists`);
       }
       if (isPgForeignKeyViolation(err)) {
         throw new HttpError(400, "INVALID_ETAT", "etat_id is invalid");

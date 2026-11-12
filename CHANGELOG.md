@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Sous-états matière autonomes
+
+- Les sous-états matière peuvent être créés sans état parent tout en conservant les rattachements historiques existants.
+- Le patch de schéma rend le lien parent facultatif et protège les codes des sous-états autonomes sans réécrire de données ni modifier l'index des entrées historiques.
+- Contrôles ciblés : route de création, typage et build/OpenAPI.
+
 ## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 
 - La validation d’un compte choisit ses entreprises et dérive leurs accès de l’unique décision de droits approuvée, sans seconde grille de modules.

@@ -106,7 +106,8 @@ export type StockMatiereEtat = {
 
 export type StockMatiereSousEtat = {
   id: number;
-  etat_id: number;
+  /** Historical rows can retain their original state link. New entries do not require one. */
+  etat_id: number | null;
   code: string;
   designation: string;
   is_active: boolean;

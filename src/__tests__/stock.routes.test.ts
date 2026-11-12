@@ -89,6 +89,28 @@ beforeEach(() => {
 });
 
 describe("/api/v1/stock", () => {
+  it("POST /api/v1/stock/matiere-sous-etats creates a standalone sub-state", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("INSERT INTO public.stock_sous_etats")) {
+        return { rows: [{ id: 41, etat_id: null, code: "REC", designation: "Recuit", is_active: true }] };
+      }
+      if (query.includes("INSERT INTO public.audit_logs")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/stock/matiere-sous-etats")
+      .set("Authorization", "Bearer fake")
+      .send({ code: "REC", designation: "Recuit" });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 41, etat_id: null, code: "REC", designation: "Recuit" });
+    const insert = mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"));
+    expect(insert?.[1]).toEqual([null, "REC", "Recuit", true]);
+  });
+
   const barBatch = '00000000-0000-4000-8000-000000001246';
   const barCount = { expectedVersion: 'a'.repeat(64), idempotencyKey: '00000000-0000-4000-8000-000000001247', reason: 'Comptage vérifié', bars: [] };
   it('exposes bar inventory with the current user confirmation capability', async () => {
