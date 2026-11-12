@@ -98,8 +98,10 @@ vi.mock("../module/access-control/repository/access-control.repository", async (
 import app from "../config/app";
 import * as baseRepo from "../module/access-control/repository/access-control.repository";
 import {
+  AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS,
   MODULE_CATALOG,
   PROTECTED_MODULE_KEYS,
+  isAuthenticatedMatiereReferentialRequest,
   resolveModuleKeyForPath,
 } from "../module/access-control/domain/module-catalog";
 import * as service from "../module/access-control/services/access-control.service";
@@ -208,6 +210,17 @@ describe("Catalogue de modules #326", () => {
     expect(resolveModuleKeyForPath("/methodes/familles-machine/9")).toBe("methodes-parc-machines");
     expect(resolveModuleKeyForPath("/centre-frais/9")).toBe("methodes-centres-frais");
     expect(resolveModuleKeyForPath("/ged/documents")).toBe("ged");
+  });
+
+  it("réserve les trois référentiels matière à tout compte authentifié, sans ouvrir Stock", () => {
+    expect(AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS).toEqual([
+      "stock-matiere-nuances", "stock-matiere-etats", "stock-matiere-sous-etats",
+    ]);
+    expect(isAuthenticatedMatiereReferentialRequest("/api/v1/stock/matiere-nuances", "GET")).toBe(true);
+    expect(isAuthenticatedMatiereReferentialRequest("/stock/matiere-etats", "POST")).toBe(true);
+    expect(isAuthenticatedMatiereReferentialRequest("/stock/matiere-sous-etats/5", "PATCH")).toBe(true);
+    expect(isAuthenticatedMatiereReferentialRequest("/stock/articles", "GET")).toBe(false);
+    expect(isAuthenticatedMatiereReferentialRequest("/stock/matiere-nuances/5/other", "PATCH")).toBe(false);
   });
 
   it("rend les nouveaux espaces sélectionnables séparément dans la tour d'accès", () => {
@@ -403,6 +416,10 @@ describe("Résolution du profil d'accès", () => {
     repo.repoResolveAccessProfile.mockResolvedValue(profileRows({ enabled: false }));
     const profile = await service.getAccessProfile(OPERATEUR_ID);
     expect(profile.modules[0]).toMatchObject({ allowed: false, source: "DEFAULT" });
+    expect(profile.modules.find((module) => module.module_key === "matiere-referentiels")).toMatchObject({
+      allowed: true,
+      nav_page_keys: ["stock-matiere-nuances", "stock-matiere-etats", "stock-matiere-sous-etats"],
+    });
   });
 
   it("l'override explicite prime sur le défaut catalogue", async () => {

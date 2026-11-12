@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import { hasGrantedAccountModuleAccess, requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { previewArticleCode } from "../../../shared/codes/code-generator.service";
 import { createCreationSnapshotHandlers } from "../../../shared/authoritative-documents/creation-snapshot-http";
@@ -95,7 +95,6 @@ import {
   type HistoricalImportBodyDTO,
   type ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
-import { roleHasStockCapability } from "../domain/stock-rbac";
 import type { AuditContext } from "../repository/stock.repository";
 import {
   closeStockInventorySessionSVC,
@@ -172,7 +171,8 @@ import {
   createHistoricalImportSVC,
   listConsolidatedInventorySVC,
 } from "../services/stock.service";
-import { canViewArticleCosts, canWriteStockArticles } from "../stock-article.permissions";
+import { roleHasStockCapability } from "../domain/stock-rbac";
+import { canViewArticleCosts } from "../stock-article.permissions";
 import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
 import { UploadDestinationCleanupError } from "../../../shared/uploads/secure-upload";
 
@@ -535,11 +535,9 @@ export const createStockMatiereNuance: RequestHandler = async (req, res, next) =
 };
 
 export const getStockMatiereReferentialCapabilities: RequestHandler = (req, res) => {
-  // Keep this discovery response exactly aligned with authorizeRole's account-access bypass.
-  const accountAccess = requestHasGrantedAccountModuleAccess(req) || hasGrantedAccountModuleAccess();
-  const read = accountAccess || roleHasStockCapability(req.user?.role, "read");
-  const write = accountAccess || canWriteStockArticles(req.user);
-  res.json({ read, write });
+  // The route is authenticated by the stock router; this deliberately does not
+  // convey any general Stock capability.
+  res.json({ read: true, write: true });
 };
 
 export const updateStockMatiereNuance: RequestHandler = async (req, res, next) => {

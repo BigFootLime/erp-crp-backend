@@ -123,23 +123,22 @@ describe("/api/v1/stock", () => {
     expect(mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "BRUT", "", true]);
   });
 
-  it("reports the same referential write capability as protected mutations", async () => {
+  it("reports authenticated referential capability independently from Stock roles", async () => {
     const allowed = await request(app).get("/api/v1/stock/matiere-referential-capabilities").set("Authorization", "Bearer fake");
     expect(allowed.status).toBe(200);
     expect(allowed.body).toEqual({ read: true, write: true });
     mocks.currentRole.value = "Commercial";
     const denied = await request(app).get("/api/v1/stock/matiere-referential-capabilities").set("Authorization", "Bearer fake");
-    expect(denied.body).toEqual({ read: false, write: false });
+    expect(denied.body).toEqual({ read: true, write: true });
   });
 
-  it("protects, validates, and reports missing nuance updates", async () => {
+  it("allows an authenticated non-Stock role while validating and reporting missing nuance updates", async () => {
     mocks.currentRole.value = "Commercial";
-    const denied = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ code: "X" });
-    expect(denied.status).toBe(403);
-    mocks.currentRole.value = "Administrateur Systeme et Reseau";
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => String(sql) === "BEGIN" || String(sql) === "ROLLBACK" ? { rows: [] } : { rows: [] });
+    const allowed = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ is_active: false });
+    expect(allowed.status).toBe(404);
     const invalid = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({});
     expect(invalid.status).toBe(400);
-    mocks.clientQuery.mockImplementation(async (sql: unknown) => String(sql) === "BEGIN" || String(sql) === "ROLLBACK" ? { rows: [] } : { rows: [] });
     const missing = await request(app).patch("/api/v1/stock/matiere-nuances/4").set("Authorization", "Bearer fake").send({ is_active: false });
     expect(missing.status).toBe(404);
   });

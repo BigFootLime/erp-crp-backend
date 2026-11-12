@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
-import { isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
+import { isAuthenticatedMatiereReferentialRequest, isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -68,6 +68,13 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
   const userId = normalizeUserId(req.user?.id);
   if (userId === null) {
     // Le socle authenticateToken a déjà statué : rien à ajouter ici.
+    next();
+    return;
+  }
+
+  // Authenticated material referentials are intentionally outside the Stock
+  // module decision. Keep this exact-path exception narrow.
+  if (isAuthenticatedMatiereReferentialRequest(req.originalUrl, req.method)) {
     next();
     return;
   }

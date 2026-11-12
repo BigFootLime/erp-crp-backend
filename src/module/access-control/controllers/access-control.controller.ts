@@ -6,6 +6,7 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as service from "../services/access-control.service";
 import * as reviewService from "../services/access-review.service";
+import { AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY } from "../domain/module-catalog";
 import { getSensitiveCapabilityOverview, setSensitiveCapability, sensitiveCapabilityMutationSchema } from "../services/sensitive-capabilities.service";
 import type { AccessAuditContext } from "../types/access-control.types";
 import {
@@ -56,7 +57,12 @@ export const getAccessProfile: RequestHandler = asyncHandler(async (req, res) =>
   const company = req.businessCompanyAccess?.context;
   res.json(company ? {
     ...profile,
-    modules: profile.modules.map(module => ({ ...module, allowed: module.allowed && company.module_keys.includes(module.module_key) })),
+    modules: profile.modules.map(module => ({
+      ...module,
+      allowed: module.module_key === AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY
+        ? true
+        : module.allowed && company.module_keys.includes(module.module_key),
+    })),
   } : profile);
 });
 

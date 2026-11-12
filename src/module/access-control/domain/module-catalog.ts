@@ -310,6 +310,25 @@ export const PROTECTED_MODULE_KEYS: readonly string[] = MODULE_CATALOG.filter(
   (entry) => entry.is_protected
 ).map((entry) => entry.module_key);
 
+/**
+ * A deliberately narrow authenticated surface: these three material master
+ * data pages do not grant the surrounding Stock module (articles, inventory,
+ * movements, or exports).
+ */
+export const AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY = "matiere-referentiels";
+export const AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS = [
+  "stock-matiere-nuances",
+  "stock-matiere-etats",
+  "stock-matiere-sous-etats",
+] as const;
+
+const AUTHENTICATED_MATIERE_REFERENTIAL_PATHS = new Set([
+  "/stock/matiere-referential-capabilities",
+  "/stock/matiere-nuances",
+  "/stock/matiere-etats",
+  "/stock/matiere-sous-etats",
+]);
+
 export function getModuleCatalogEntry(moduleKey: string): ModuleCatalogEntry | null {
   return MODULE_CATALOG.find((entry) => entry.module_key === moduleKey) ?? null;
 }
@@ -340,6 +359,20 @@ function normalizePath(path: string): string {
     : withoutQuery;
   const prefixed = withoutRoot.startsWith("/") ? withoutRoot : `/${withoutRoot}`;
   return prefixed.length > 1 ? prefixed.replace(/\/+$/, "") : prefixed;
+}
+
+/** Exact collection routes and their single-ID PATCH forms only. */
+export function isAuthenticatedMatiereReferentialRequest(
+  path: string | null | undefined,
+  method: string | null | undefined
+): boolean {
+  if (typeof path !== "string") return false;
+  const normalized = normalizePath(path);
+  if (method?.toUpperCase() === "GET") return AUTHENTICATED_MATIERE_REFERENTIAL_PATHS.has(normalized);
+  if (method?.toUpperCase() === "POST") return AUTHENTICATED_MATIERE_REFERENTIAL_PATHS.has(normalized)
+    && normalized !== "/stock/matiere-referential-capabilities";
+  return method?.toUpperCase() === "PATCH"
+    && /^\/stock\/matiere-(nuances|etats|sous-etats)\/[^/]+$/.test(normalized);
 }
 
 /**
