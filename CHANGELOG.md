@@ -1,10 +1,10 @@
 # Changelog
 
-## Préparé — Informations des sous-états matière
+## 2026-11-12 — Informations des sous-états matière
 
 - Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.
 - Les API natives et la compatibilité EC partagent ce contrat, sans modifier les propriétés des nuances ou états ni l’autorisation existante.
-- Le patch additif de colonne nullable et sa contrainte sont idempotents et validés sur PostgreSQL 17 isolé. L’application aux bases CERP attend une autorisation explicite distincte.
+- Le patch additif de colonne nullable et sa contrainte sont idempotents et validés sur PostgreSQL 17 isolé. Après autorisation explicite, ils ont été appliqués en CRP et EC, Test puis Production, avec sauvegarde et vérification de conservation des valeurs existantes. L’API VPS et l’API native CRP partagent la même base Production ; le patch n’a pas été appliqué en double.
 
 ## Préparé — Référentiels matière éditables
 
