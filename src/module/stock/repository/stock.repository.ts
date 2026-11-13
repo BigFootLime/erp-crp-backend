@@ -42,6 +42,7 @@ import {
   type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
 import { canonicalizeStockUnitCode, materialManagementUnit } from "../../../shared/stock-unit";
+import { findCanonicalStockUnit, resolveArticleStockUnit } from "../../../shared/stock-unit.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -2208,25 +2209,6 @@ function parseEffectiveAt(raw: string | null | undefined): Date {
   return dt;
 }
 
-/**
- * `public.units.code` is the single stock-unit referential. Articles retain
- * their unit as a code so every creation/update must check that code before it
- * can later be used by a stock movement.
- */
-async function findCanonicalStockUnit(
-  client: Pick<PoolClient, "query">,
-  unitCode: string | null | undefined
-): Promise<{ id: string | null; code: string } | null> {
-  const code = canonicalizeStockUnitCode(unitCode);
-  if (!code) return null;
-  const unit = await client.query<{ id: string | null }>(
-    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
-    [code]
-  );
-  const row = unit.rows[0];
-  return row ? { id: row.id, code } : null;
-}
-
 export async function assertCanonicalArticleUnit(
   client: Pick<PoolClient, "query">,
   unitCode: string | null | undefined
@@ -2249,24 +2231,12 @@ export async function resolveUnitIdForArticle(
   articleId: string,
   preferredUnitCode: string | null | undefined
 ): Promise<string> {
-  let code: string | null = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
-
-  if (!code) {
-    const a = await client.query<{ unite: string | null }>(
-      `SELECT unite FROM public.articles WHERE id = $1::uuid`,
-      [articleId]
-    );
-    code = a.rows[0]?.unite?.trim() ? a.rows[0].unite.trim() : null;
-  }
-
-  if (!code) code = "u";
-
-  const unit = await findCanonicalStockUnit(client, code);
-  const unitId = unit?.id;
-  if (!unitId) {
-    throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`);
-  }
-  return unitId;
+  return (
+    await resolveArticleStockUnit(client, articleId, preferredUnitCode, {
+      missingUnit: { defaultCode: "u" },
+      unknownUnitError: ({ submitted }) => new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${submitted}`),
+    })
+  ).unit_id;
 }
 
 export type EmplacementMapping = {
