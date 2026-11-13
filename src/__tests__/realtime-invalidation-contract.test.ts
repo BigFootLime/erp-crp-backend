@@ -76,6 +76,22 @@ describe("realtime invalidation producer contract", () => {
     expect(catalog.unresolved_dynamic_sites.every((site: { reason: string }) => site.reason === "invalidateKeys array binding is not proven immutable")).toBe(true)
   })
 
+  it("keeps inherited const spreads and conditional const arrays as conservative negative cases", async () => {
+    const { dir, output } = await fixture(`
+      const inherited = ["inherited"]
+      enqueue({ invalidateKeys: [...inherited] })
+      const conditional = condition ? ["left"] : ["right"]
+      enqueue({ invalidateKeys: conditional })
+      const invalidateKeys = ["shorthand"]
+      enqueue({ invalidateKeys })
+    `)
+    expect(run(dir, output).status).toBe(0)
+    const catalog = JSON.parse(await readFile(output, "utf8"))
+    expect(catalog.key_patterns).toEqual([])
+    expect(catalog.unresolved_dynamic_sites).toHaveLength(3)
+    expect(catalog.unresolved_dynamic_sites.every((site: { reason: string }) => site.reason === "invalidateKeys array binding is not proven immutable")).toBe(true)
+  })
+
   it("rejects invalid CLI input before writes and excludes test and fixture directories", async () => {
     const { dir, output } = await fixture(`enqueue({ invalidateKeys: ["runtime"] })`)
     await Promise.all(["__tests__", "__fixtures__", "fixtures"].map(name => mkdir(path.join(dir, name))))

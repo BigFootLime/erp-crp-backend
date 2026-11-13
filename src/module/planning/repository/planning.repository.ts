@@ -1116,26 +1116,26 @@ async function loadCommandeIdForOf(tx: DbQueryer, ofId: number): Promise<number 
   return toNullableInt(res.rows[0]?.commande_id ?? null, "ordres_fabrication.commande_id");
 }
 
-async function enqueuePlanningRealtime(tx: DbQueryer, params: {
+export async function enqueuePlanningRealtime(tx: DbQueryer, params: {
   event_id: string;
   of_id?: number | null;
   commande_id?: number | null;
   action: "created" | "updated" | "deleted" | "status_changed";
   mutation_key: string;
 }) {
-  const invalidateKeys = ["planning:events", `planning:event:${params.event_id}`, "production:ofs"];
-  if (typeof params.of_id === "number") invalidateKeys.push(`production:of:${params.of_id}`);
-  if (typeof params.commande_id === "number") {
-    invalidateKeys.push("commandes:list", `commandes:detail:${params.commande_id}`);
-  }
-
   await enqueueEntityChanged(tx, {
     entityType: "PLANNING_EVENTS",
     entityId: params.event_id,
     action: params.action,
     module: "production",
     at: new Date().toISOString(),
-    invalidateKeys,
+    invalidateKeys: [
+      "planning:events",
+      `planning:event:${params.event_id}`,
+      "production:ofs",
+      ...(typeof params.of_id === "number" ? [`production:of:${params.of_id}`] : []),
+      ...(typeof params.commande_id === "number" ? ["commandes:list", `commandes:detail:${params.commande_id}`] : []),
+    ],
   }, {
     deduplicationKey: `planning:${params.event_id}:${params.mutation_key}`,
   });

@@ -13,7 +13,7 @@
       "**/{__tests__,__fixtures__,fixtures}/**"
     ],
     "extraction": "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, inline array literals and inline spreads only. Conditional array branches are unioned without evaluating their condition. Array bindings are unresolved because mutation and aliasing are not proven absent; binding ambiguity, mutation, scope, and interprocedural values are unresolved.",
-    "exhaustive": false
+    "exhaustive": true
   },
   "key_patterns": [
     "achats:detail:{id}",
@@ -49,6 +49,7 @@
     "outils-recent-movements",
     "outils-revetements",
     "outils-summary",
+    "planning:event:{id}",
     "planning:events",
     "planning:list",
     "production",
@@ -75,11 +76,5 @@
     "receptions:list",
     "stock:reservations"
   ],
-  "unresolved_dynamic_sites": [
-    {
-      "source": "src/module/planning/repository/planning.repository.ts",
-      "line": 1136,
-      "reason": "invalidateKeys array binding is not proven immutable"
-    }
-  ]
+  "unresolved_dynamic_sites": []
 }
