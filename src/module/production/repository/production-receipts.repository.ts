@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "crypto";
 import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
-import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { resolveArticleStockUnit } from "../../../shared/stock-unit.repository";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -773,31 +773,13 @@ export async function resolveUnitIdForArticle(
   articleId: string,
   preferredUnitCode: string | null | undefined
 ): Promise<{ unit_id: string; unit_code: string }> {
-  const preferred = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
-
-  let code: string | null = preferred;
-  if (!code) {
-    const a = await client.query<{ unite: string | null }>(
-      `SELECT unite FROM public.articles WHERE id = $1::uuid LIMIT 1`,
-      [articleId]
-    );
-    code = a.rows[0]?.unite?.trim() ? a.rows[0].unite!.trim() : null;
-  }
-
-  code = canonicalizeStockUnitCode(code);
-  if (!code) {
-    throw new HttpError(422, "UNIT_REQUIRED", "Veuillez renseigner l'unite pour la mise en stock");
-  }
-
-  const u = await client.query<{ id: string }>(
-    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
-    [code]
-  );
-  const unitId = u.rows[0]?.id;
-  if (!unitId) {
-    throw new HttpError(422, "UNIT_NOT_FOUND", "Unite inconnue");
-  }
-  return { unit_id: unitId, unit_code: code };
+  return resolveArticleStockUnit(client, articleId, preferredUnitCode, {
+    articleLookupLimit: 1,
+    missingUnit: {
+      error: () => new HttpError(422, "UNIT_REQUIRED", "Veuillez renseigner l'unite pour la mise en stock"),
+    },
+    unknownUnitError: () => new HttpError(422, "UNIT_NOT_FOUND", "Unite inconnue"),
+  });
 }
 
 async function resolveEmplacementByLocationId(
