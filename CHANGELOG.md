@@ -9,6 +9,8 @@
 
 ## Préparé — Baseline 2.0.84 et fiabilité des contrats (13 novembre 2026)
 
+- Catalogue statique versionné des clés d’invalidation temps réel et contrôle de fraîcheur en lecture seule ; les deux sites dynamiques Qualité restent explicitement non exhaustifs. Les payloads et producteurs runtime sont conservés.
+
 - Les tests de création des sous-états couvrent le texte Informations multiligne et la valeur absente, avec le contrat SQL à cinq paramètres. Les cas existants sont conservés.
 - Documentation explicite de la paire source 2.0.84 et des limites de provenance du runtime composite ; aucune modification de production.
 

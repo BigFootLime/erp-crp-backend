@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0.0",
+  "authority": "erp-crp-backend",
+  "contract": "realtime-invalidation-producer-catalog",
+  "generated_from": {
+    "source_root": "src",
+    "include": [
+      "**/*.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}"
+    ],
+    "exclude": [
+      "**/*.{test,spec}.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}",
+      "**/*.d.ts",
+      "**/{__tests__,__fixtures__,fixtures}/**"
+    ],
+    "extraction": "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, uniquely named const arrays and const spreads only. Binding ambiguity, mutation, scope, and interprocedural values are unresolved.",
+    "exhaustive": false
+  },
+  "key_patterns": [
+    "achats:detail:{id}",
+    "affaires:detail:{id}",
+    "client-contract-forecasts",
+    "client-contract-replenishment",
+    "client-contracts",
+    "client-crm-followups",
+    "client-open-orders",
+    "client:{id}",
+    "clients",
+    "clients:detail:{id}",
+    "clients:list",
+    "commandes-fournisseurs",
+    "commandes:detail:{id}",
+    "commandes:list",
+    "commandes:workflow:{id}",
+    "delivery-affairs",
+    "livraisons",
+    "livraisons:detail:{id}",
+    "livraisons:list",
+    "metrologie:alerts",
+    "metrologie:center",
+    "metrologie:equipement:{id}",
+    "metrologie:equipements",
+    "metrologie:kpis",
+    "outil-pricing",
+    "outillage-allocations",
+    "outils",
+    "outils-fabricants",
+    "outils-fournisseurs",
+    "outils-low-stock",
+    "outils-recent-movements",
+    "outils-revetements",
+    "outils-summary",
+    "planning:event:{id}",
+    "planning:events",
+    "planning:list",
+    "production",
+    "production:list",
+    "production:of:{id}",
+    "production:of:{id}:receipt-context",
+    "production:of:{id}:traceability",
+    "production:ofs",
+    "proformas",
+    "programmation:{id}",
+    "programmations",
+    "receipt-processing",
+    "receipt-processing-line",
+    "receptions:detail:{id}",
+    "receptions:kpis",
+    "receptions:list",
+    "stock:reservations"
+  ],
+  "unresolved_dynamic_sites": [
+    {
+      "source": "src/module/qualite/repository/qualite.repository.ts",
+      "line": 206,
+      "reason": "invalidateKeys is not a statically resolvable array"
+    },
+    {
+      "source": "src/module/qualite/repository/quality-360.repository.ts",
+      "line": 229,
+      "reason": "invalidateKeys is not a statically resolvable array"
+    }
+  ]
+}
