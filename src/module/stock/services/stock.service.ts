@@ -33,6 +33,9 @@ import type {
   CreateMatiereNuanceBodyDTO,
   PreviewMaterialArticleCodeBodyDTO,
   CreateMatiereSousEtatBodyDTO,
+  UpdateMatiereNuanceBodyDTO,
+  UpdateMatiereEtatBodyDTO,
+  UpdateMatiereSousEtatBodyDTO,
   CreateEmplacementBodyDTO,
   CreateLotBodyDTO,
   CreateMagasinBodyDTO,
@@ -85,6 +88,9 @@ import {
   repoCreateMatiereEtat,
   repoCreateMatiereNuance,
   repoCreateMatiereSousEtat,
+  repoUpdateMatiereNuance,
+  repoUpdateMatiereEtat,
+  repoUpdateMatiereSousEtat,
   repoAttachArticleDocuments,
   repoAttachMovementDocuments,
   repoCancelMovement,
@@ -312,6 +318,10 @@ export async function createStockMatiereNuanceSVC(body: CreateMatiereNuanceBodyD
   return repoCreateMatiereNuance(body, audit);
 }
 
+export function updateStockMatiereNuanceSVC(id: number, body: UpdateMatiereNuanceBodyDTO, audit: AuditContext) {
+  return repoUpdateMatiereNuance(id, body, audit);
+}
+
 export async function listStockMatiereEtatsSVC(filters: ListMatiereEtatsQueryDTO): Promise<StockMatiereEtat[]> {
   return repoListMatiereEtats(filters);
 }
@@ -320,12 +330,20 @@ export async function createStockMatiereEtatSVC(body: CreateMatiereEtatBodyDTO, 
   return repoCreateMatiereEtat(body, audit);
 }
 
+export function updateStockMatiereEtatSVC(id: number, body: UpdateMatiereEtatBodyDTO, audit: AuditContext) {
+  return repoUpdateMatiereEtat(id, body, audit);
+}
+
 export async function listStockMatiereSousEtatsSVC(filters: ListMatiereSousEtatsQueryDTO): Promise<StockMatiereSousEtat[]> {
   return repoListMatiereSousEtats(filters);
 }
 
 export async function createStockMatiereSousEtatSVC(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
   return repoCreateMatiereSousEtat(body, audit);
+}
+
+export function updateStockMatiereSousEtatSVC(id: number, body: UpdateMatiereSousEtatBodyDTO, audit: AuditContext) {
+  return repoUpdateMatiereSousEtat(id, body, audit);
 }
 
 export async function createStockArticleFamilySVC(

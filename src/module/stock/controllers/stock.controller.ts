@@ -13,6 +13,10 @@ import {
   createMatiereEtatSchema,
   createMatiereNuanceSchema,
   createMatiereSousEtatSchema,
+  matiereReferentialIdParamSchema,
+  updateMatiereNuanceSchema,
+  updateMatiereEtatSchema,
+  updateMatiereSousEtatSchema,
   createEmplacementSchema,
   createLotSchema,
   createLotGenealogySchema,
@@ -62,6 +66,9 @@ import {
   type CreateMatiereNuanceBodyDTO,
   type PreviewMaterialArticleCodeBodyDTO,
   type CreateMatiereSousEtatBodyDTO,
+  type UpdateMatiereNuanceBodyDTO,
+  type UpdateMatiereEtatBodyDTO,
+  type UpdateMatiereSousEtatBodyDTO,
   type CreateEmplacementBodyDTO,
   type CreateLotBodyDTO,
   type CreateLotGenealogyBodyDTO,
@@ -88,7 +95,6 @@ import {
   type HistoricalImportBodyDTO,
   type ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
-import { roleHasStockCapability } from "../domain/stock-rbac";
 import type { AuditContext } from "../repository/stock.repository";
 import {
   closeStockInventorySessionSVC,
@@ -159,9 +165,13 @@ import {
   createStockMatiereEtatSVC,
   createStockMatiereNuanceSVC,
   createStockMatiereSousEtatSVC,
+  updateStockMatiereNuanceSVC,
+  updateStockMatiereEtatSVC,
+  updateStockMatiereSousEtatSVC,
   createHistoricalImportSVC,
   listConsolidatedInventorySVC,
 } from "../services/stock.service";
+import { roleHasStockCapability } from "../domain/stock-rbac";
 import { canViewArticleCosts } from "../stock-article.permissions";
 import { removeTemporaryArticleDocuments, validateArticleDocuments } from "../services/article-document-validation";
 import { UploadDestinationCleanupError } from "../../../shared/uploads/secure-upload";
@@ -524,6 +534,24 @@ export const createStockMatiereNuance: RequestHandler = async (req, res, next) =
   }
 };
 
+export const getStockMatiereReferentialCapabilities: RequestHandler = (req, res) => {
+  // The route is authenticated by the stock router; this deliberately does not
+  // convey any general Stock capability.
+  res.json({ read: true, write: true });
+};
+
+export const updateStockMatiereNuance: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = matiereReferentialIdParamSchema.parse({ params: req.params }).params;
+    const parsed = updateMatiereNuanceSchema.safeParse({ body: req.body });
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+    const body: UpdateMatiereNuanceBodyDTO = parsed.data.body;
+    const out = await updateStockMatiereNuanceSVC(id, body, buildAuditContext(req));
+    if (!out) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(out);
+  } catch (err) { next(err); }
+};
+
 export const listStockMatiereEtats: RequestHandler = async (req, res, next) => {
   try {
     const parsed = listMatiereEtatsQuerySchema.safeParse(req.query);
@@ -549,6 +577,18 @@ export const createStockMatiereEtat: RequestHandler = async (req, res, next) => 
   }
 };
 
+export const updateStockMatiereEtat: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = matiereReferentialIdParamSchema.parse({ params: req.params }).params;
+    const parsed = updateMatiereEtatSchema.safeParse({ body: req.body });
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+    const body: UpdateMatiereEtatBodyDTO = parsed.data.body;
+    const out = await updateStockMatiereEtatSVC(id, body, buildAuditContext(req));
+    if (!out) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(out);
+  } catch (err) { next(err); }
+};
+
 export const listStockMatiereSousEtats: RequestHandler = async (req, res, next) => {
   try {
     const parsed = listMatiereSousEtatsQuerySchema.safeParse(req.query);
@@ -572,6 +612,18 @@ export const createStockMatiereSousEtat: RequestHandler = async (req, res, next)
   } catch (err) {
     next(err);
   }
+};
+
+export const updateStockMatiereSousEtat: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = matiereReferentialIdParamSchema.parse({ params: req.params }).params;
+    const parsed = updateMatiereSousEtatSchema.safeParse({ body: req.body });
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid body" }); return; }
+    const body: UpdateMatiereSousEtatBodyDTO = parsed.data.body;
+    const out = await updateStockMatiereSousEtatSVC(id, body, buildAuditContext(req));
+    if (!out) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(out);
+  } catch (err) { next(err); }
 };
 
 export const createStockArticleFamily: RequestHandler = async (req, res, next) => {

@@ -22,6 +22,10 @@ import {
   createStockMatiereEtat,
   createStockMatiereNuance,
   createStockMatiereSousEtat,
+  getStockMatiereReferentialCapabilities,
+  updateStockMatiereNuance,
+  updateStockMatiereEtat,
+  updateStockMatiereSousEtat,
   createStockEmplacement,
   createStockLot,
   createStockLotGenealogy,
@@ -120,6 +124,12 @@ const upload = createSecureUpload("business-document");
 router.use(authenticateToken);
 
 const requireArticleWrite = authorizeRole(...ARTICLE_WRITE_ROLES);
+// The three material referentials are an explicitly authenticated-only surface.
+// Do not reuse Stock or article roles here: they would broaden unrelated rights.
+const requireMatiereReferentialAccess: RequestHandler = (req, res, next) => {
+  if (!req.user) { res.status(401).json({ error: "Utilisateur non authentifié" }); return; }
+  next();
+};
 const requireSupplierConditionsWrite: RequestHandler = (req,res,next) => {
   if (req.body?.supplier_conditions?.length) return authorizeRole(...SUPPLIER_WRITE_ROLES)(req,res,next);
   next();
@@ -163,12 +173,16 @@ router.get("/article-categories", requireStockCapability("read"), listStockArtic
 router.get("/units", requireStockCapability("read"), listStockUnits);
 router.get("/article-families", requireStockCapability("read"), listStockArticleFamilies);
 router.post("/article-families", requireArticleWrite, createStockArticleFamily);
-router.get("/matiere-nuances", requireStockCapability("read"), listStockMatiereNuances);
-router.post("/matiere-nuances", requireArticleWrite, createStockMatiereNuance);
-router.get("/matiere-etats", requireStockCapability("read"), listStockMatiereEtats);
-router.post("/matiere-etats", requireArticleWrite, createStockMatiereEtat);
-router.get("/matiere-sous-etats", requireStockCapability("read"), listStockMatiereSousEtats);
-router.post("/matiere-sous-etats", requireArticleWrite, createStockMatiereSousEtat);
+router.get("/matiere-referential-capabilities", getStockMatiereReferentialCapabilities);
+router.get("/matiere-nuances", requireMatiereReferentialAccess, listStockMatiereNuances);
+router.post("/matiere-nuances", requireMatiereReferentialAccess, createStockMatiereNuance);
+router.patch("/matiere-nuances/:id", requireMatiereReferentialAccess, updateStockMatiereNuance);
+router.get("/matiere-etats", requireMatiereReferentialAccess, listStockMatiereEtats);
+router.post("/matiere-etats", requireMatiereReferentialAccess, createStockMatiereEtat);
+router.patch("/matiere-etats/:id", requireMatiereReferentialAccess, updateStockMatiereEtat);
+router.get("/matiere-sous-etats", requireMatiereReferentialAccess, listStockMatiereSousEtats);
+router.post("/matiere-sous-etats", requireMatiereReferentialAccess, createStockMatiereSousEtat);
+router.patch("/matiere-sous-etats/:id", requireMatiereReferentialAccess, updateStockMatiereSousEtat);
 router.get("/articles", requireStockCapability("read"), listStockArticles);
 router.get("/articles/kpis", requireStockCapability("read"), getStockArticlesKpis);
 router.get("/articles/code-preview", requireStockCapability("read"), previewStockArticleCode);

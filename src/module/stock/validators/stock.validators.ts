@@ -194,6 +194,21 @@ export const createMatiereNuanceSchema = z.object({
 });
 export type CreateMatiereNuanceBodyDTO = z.infer<typeof createMatiereNuanceSchema>["body"];
 
+export const matiereReferentialIdParamSchema = z.object({ params: z.object({ id: positiveInt }) });
+const optionalReferentialCode = z.string().trim().min(1).max(40).optional();
+const optionalReferentialDesignation = z.union([z.string().trim().max(160), z.null()]).optional()
+  .transform((value) => (value === undefined ? undefined : value && value.length > 0 ? value : null));
+
+export const updateMatiereNuanceSchema = z.object({
+  body: z.object({
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    densite: z.coerce.number().min(100).max(30_000).nullable().optional(),
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereNuanceBodyDTO = z.infer<typeof updateMatiereNuanceSchema>["body"];
+
 export const listMatiereEtatsQuerySchema = z.object({
   q: z.string().trim().optional(),
   nuance_id: optionalPositiveInt,
@@ -223,6 +238,17 @@ export const createMatiereEtatSchema = z.object({
 });
 export type CreateMatiereEtatBodyDTO = z.infer<typeof createMatiereEtatSchema>["body"];
 
+export const updateMatiereEtatSchema = z.object({
+  body: z.object({
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    // Backward-compatible only; procurement length is material-driven.
+    unite_achat: optionalPositiveInt,
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereEtatBodyDTO = z.infer<typeof updateMatiereEtatSchema>["body"];
+
 export const listMatiereSousEtatsQuerySchema = z.object({
   q: z.string().trim().optional(),
   etat_id: optionalPositiveInt,
@@ -233,14 +259,29 @@ export type ListMatiereSousEtatsQueryDTO = z.infer<typeof listMatiereSousEtatsQu
 export const createMatiereSousEtatSchema = z.object({
   body: z
     .object({
-      etat_id: positiveInt,
+      // A sub-state is a standalone referential. The optional field remains
+      // accepted to keep legacy clients compatible during rollout.
+      etat_id: nullablePositiveInt.optional(),
       code: z.string().trim().min(1).max(40),
-      designation: z.string().trim().min(1).max(160),
+      designation: z.union([z.string().trim().max(160), z.null()]).optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
+      informations: z.union([z.string().trim().max(10000), z.null()]).optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
       is_active: z.boolean().optional().default(true),
     })
     .strict(),
 });
 export type CreateMatiereSousEtatBodyDTO = z.infer<typeof createMatiereSousEtatSchema>["body"];
+
+export const updateMatiereSousEtatSchema = z.object({
+  body: z.object({
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    informations: z.union([z.string().trim().max(10000), z.null()]).optional(),
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereSousEtatBodyDTO = z.infer<typeof updateMatiereSousEtatSchema>["body"];
 
 /**
  * #164 — Aperçu SERVEUR de la référence matière.

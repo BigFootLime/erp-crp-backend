@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-12 — Informations des sous-états matière
+
+- Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.
+- Les API natives et la compatibilité EC partagent ce contrat, sans modifier les propriétés des nuances ou états ni l’autorisation existante.
+- Le patch additif de colonne nullable et sa contrainte sont idempotents et validés sur PostgreSQL 17 isolé. Après autorisation explicite, ils ont été appliqués en CRP et EC, Test puis Production, avec sauvegarde et vérification de conservation des valeurs existantes. L’API VPS et l’API native CRP partagent la même base Production ; le patch n’a pas été appliqué en double.
+
+## Préparé — Référentiels matière éditables
+
+- Les nuances, états et sous-états matière disposent de PATCH atomiques auditables : code, désignation, statut et les seules propriétés propres au référentiel peuvent évoluer sans modifier les relations historiques.
+- Les doublons de code normalisé retournent `409`, une cible absente `404`, et les écritures utilisent exactement la même autorisation que les créations d'articles ; le contrat de capacités permet à l'interface de rester fermée par défaut.
+- Un sous-état peut désormais être créé ou rendu sans désignation : la compatibilité de la colonne historique non nulle est conservée en stockant une chaîne vide. `unite_achat` reste compatible côté API, mais n'est pas un défaut de longueur d'approvisionnement.
+
+## Préparé — Sous-états matière autonomes
+
+- Les sous-états matière peuvent être créés sans état parent tout en conservant les rattachements historiques existants.
+- Le patch de schéma rend le lien parent facultatif et protège les codes des sous-états autonomes sans réécrire de données ni modifier l'index des entrées historiques.
+- Contrôles ciblés : route de création, typage et build/OpenAPI.
+
+## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
 ## Livraison CERP 2.0.52 — modèle MD07-E et programmation par opération (3 novembre 2026)
 
 - Le champ Type (variation) lit la variante physique `part_variant` des décisions de préparation de la révision ; il ne dérive jamais du type de changement Évolution/Modification. Les décisions et documents des OF figés sont préservés.

@@ -14,6 +14,10 @@ import type {
   ResolvedAccessProfile,
   ResolvedModuleAccess,
 } from "../types/access-control.types";
+import {
+  AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY,
+  AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS,
+} from "../domain/module-catalog";
 
 const AUDIT_PAGE_KEY = "administration-acces";
 const AUDIT_ENTITY_TYPE = "module_access";
@@ -28,6 +32,22 @@ type CacheEntry = { expiresAt: number; epoch: bigint; profile: ResolvedAccessPro
 // Cache processus, toujours gardé par l'epoch partagé lu avant chaque décision.
 // Le TTL ne constitue donc jamais une fenêtre de droits obsolètes inter-instance.
 const profileCache = new Map<number, CacheEntry>();
+
+function withAuthenticatedMatiereReferentials(profile: ResolvedAccessProfile): ResolvedAccessProfile {
+  return {
+    ...profile,
+    modules: [
+      ...profile.modules.filter((module) => module.module_key !== AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY),
+      {
+        module_key: AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY,
+        label: "Référentiels matière",
+        nav_page_keys: [...AUTHENTICATED_MATIERE_REFERENTIAL_PAGE_KEYS],
+        allowed: true,
+        source: "DEFAULT",
+      },
+    ],
+  };
+}
 
 export function invalidateAccessCache(userId?: number): void {
   if (typeof userId === "number") {
@@ -93,7 +113,7 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
       });
     }
 
-    const profile: ResolvedAccessProfile = { is_superadmin: isSuperadmin, modules };
+    const profile = withAuthenticatedMatiereReferentials({ is_superadmin: isSuperadmin, modules });
     if (epochBefore === null) return profile;
     const epochAfter = await repo.repoAuthorizationEpoch();
     if (epochAfter === epochBefore) {
@@ -107,7 +127,7 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
   const rows = await repo.repoResolveAccessProfile(userId);
   if (rows === null) return null;
   const isSuperadmin = rows[0]?.is_superadmin === true;
-  return {
+  return withAuthenticatedMatiereReferentials({
     is_superadmin: isSuperadmin,
     modules: rows.filter((row) => row.module_key).map((row) => {
       const decision = decide({
@@ -124,7 +144,7 @@ export async function resolveAccessProfile(userId: number): Promise<ResolvedAcce
         source: decision.source,
       };
     }),
-  };
+  });
 }
 
 /** Réponse versionnée de `GET /auth/access-profile`. Infrastructure absente ⇒ indisponible. */
