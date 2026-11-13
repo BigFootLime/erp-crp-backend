@@ -95,17 +95,17 @@ describe("#164 profils matière et dimensions restantes", () => {
 });
 
 describe("#164 nuances et unité canonique de densité", () => {
-  it("accepte une nuance sans désignation", () => {
+  it("accepte une nuance avec une désignation normalisée sans description facultative", () => {
     const parsed = createMatiereNuanceSchema.parse({
-      body: { code: "42CD4", densite: 7_850 },
+      body: { norme_fr: "42CD4", densite: 7_850 },
     });
     expect(parsed.body.designation).toBeNull();
     expect(parsed.body.densite).toBe(7_850);
   });
 
-  it("refuse le code manquant et une densité encore exprimée en kg/dm³", () => {
+  it("refuse les normes manquantes et une densité encore exprimée en kg/dm³", () => {
     expect(createMatiereNuanceSchema.safeParse({ body: { densite: 7_850 } }).success).toBe(false);
-    expect(createMatiereNuanceSchema.safeParse({ body: { code: "S235", densite: 7.85 } }).success).toBe(false);
+    expect(createMatiereNuanceSchema.safeParse({ body: { norme_en: "S235", densite: 7.85 } }).success).toBe(false);
   });
 });
 

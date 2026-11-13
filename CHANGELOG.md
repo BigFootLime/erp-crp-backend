@@ -7,6 +7,12 @@
 - API native d'acceptation des relations CRP, gardes profil/module, prévalidation des clés de reprise et image reproductible avec zlib corrigé.
 - Détails et preuves : `docs/testing/complete-main-integration-20261113.md`.
 
+## Prepared — Nuance library (#1839, ERP baseline 2.0.84)
+
+- Four optional standard designations with a required populated title on new identities; searchable correspondences and stable historical workshop codes.
+- Atomic validation/audit and normalized database uniqueness, including inactive and concurrent writes. Additive migration preserves original IDs, article/state links and density; unclassified historical codes remain explicitly LEGACY.
+- Migration preflight/verification, non-destructive rollback guidance, OpenAPI details and isolated PostgreSQL regression harness. No production migration/deployment. See [runbook](docs/http/nuance-library-1839.md).
+
 ## Préparé — Baseline 2.0.84 et fiabilité des contrats (13 novembre 2026)
 
 - Catalogue statique versionné des clés d’invalidation temps réel et contrôle de fraîcheur en lecture seule ; les branches conditionnelles Qualité sont couvertes sans exécution du code, et aucun site statique ne reste non résolu. Les payloads et producteurs runtime sont conservés. Le budget CI est borné pour limiter la contention sans modifier les assertions.
