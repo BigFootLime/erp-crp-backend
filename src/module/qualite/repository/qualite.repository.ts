@@ -13,7 +13,7 @@ import pool from "../../../config/database";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
-import { canonicalizeStockUnitCode } from "../../../shared/stock-unit";
+import { resolveArticleStockUnit } from "../../../shared/stock-unit.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
@@ -2734,23 +2734,12 @@ async function reserveStockMovementNo(tx: DbQueryer): Promise<string> {
 }
 
 export async function resolveUnitIdForArticle(tx: DbQueryer, articleId: string, preferredUnitCode: string | null | undefined): Promise<string> {
-  const preferred = preferredUnitCode?.trim() ? preferredUnitCode.trim() : null;
-  let code: string | null = preferred;
-  if (!code) {
-    const a = await tx.query<{ unite: string | null }>(`SELECT unite FROM public.articles WHERE id = $1::uuid`, [articleId]);
-    code = a.rows[0]?.unite?.trim() ? a.rows[0].unite.trim() : null;
-  }
-  code = canonicalizeStockUnitCode(code) ?? "u";
-
-  const u = await tx.query<{ id: string }>(
-    `SELECT id::text AS id FROM public.units WHERE lower(code::text) = lower($1) LIMIT 1`,
-    [code]
-  );
-  const unitId = u.rows[0]?.id;
-  if (!unitId) {
-    throw new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${code}`);
-  }
-  return unitId;
+  return (
+    await resolveArticleStockUnit(tx, articleId, preferredUnitCode, {
+      missingUnit: { defaultCode: "u" },
+      unknownUnitError: ({ canonical }) => new HttpError(400, "UNKNOWN_UNIT", `Unknown unit code: ${canonical}`),
+    })
+  ).unit_id;
 }
 
 type EmplacementMapping = {

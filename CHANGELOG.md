@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Résolution partagée des unités Stock (#1503)
+
+- Les résolutions d'unités de Stock, Livraisons, Qualité et des réceptions de production partagent une primitive utilisant la transaction de l'appelant. Chaque module conserve ses valeurs par défaut, ses statuts et messages d'erreur, ses requêtes et ses types de retour ; les politiques sont couvertes par des régressions dédiées. Voir [l'architecture](docs/architecture/stock-unit-resolution.md).
+
 ## En préparation — Réconciliation de la préparation #1834 (3f590a01)
 
 - Source originale : feat(production): configure reusable workstations and explain planning blockers (#1834). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
