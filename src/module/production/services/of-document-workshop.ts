@@ -1,6 +1,6 @@
 import { CERP_DOC_COLORS, CONTENT_WIDTH, type CerpDocumentContext } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable, type WorkshopFieldBox } from "../../../shared/pdf/workshop-document-blocks";
-import { formatDateFr, formatNumberFr, formatQuantity, type OfDocumentPayload } from "../domain/of-document";
+import { formatDateFr, formatNumberFr, formatQuantity, OF_WORKSHOP_TEMPLATE_VERSION, type OfDocumentPayload } from "../domain/of-document";
 import type { WorkshopDocumentTechnicalEvidence } from "../domain/of-document-technical-source";
 import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
 
@@ -19,7 +19,7 @@ function materialHeader(payload: OfDocumentPayload): WorkshopFieldBox {
     const materials = evidence.materials;
     const dimensionNames: Record<string, string> = { diametre_mm: "Ø", longueur_mm: "Lg", largeur_mm: "Largeur", epaisseur_mm: "Ép." };
     const lines = (read: (material: typeof materials[number]) => string | null) => materials.map(material => read(material) ?? "À compléter").join("\n");
-    const cuttingFields = payload.templateVersion === "of-ordre-fabrication/1.8" ? [{
+    const cuttingFields = (payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || payload.templateVersion === "of-ordre-fabrication/1.8") ? [{
       label: "Calcul de débit OF", span: 2 as const, value: lines(material => material.cutting
         ? `${[material.reference, material.designation].filter(Boolean).join(" — ")}\nLongueur de coupe : ${material.cutting.longueurCoupeMm === null ? "Non renseignée" : `${number(material.cutting.longueurCoupeMm)} mm`}\n${material.cutting.piecesParBrut >= 1 ? `Pièces / brut : ${number(material.cutting.piecesParBrut)}` : `Bruts / pièce : ${number(material.cutting.brutsParPiece)}`}\nNombre de bruts : ${number(material.cutting.nombreBruts)}\nLinéaire total : ${material.cutting.longueurTotaleMm === null ? "Non renseigné" : `${number(material.cutting.longueurTotaleMm)} mm`}`
         : null),
@@ -80,7 +80,9 @@ export function renderWorkshopOfDocument(ctx: CerpDocumentContext, payload: OfDo
     materialHeader(payload),
   ], { compact: true });
   renderWorkshopBoxes(ctx, [
-    { title: "Client et documents", columns: 2, fields: [
+    { title: "Client et documents", columns: 2,
+      backgroundColor: payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? payload.clientPlanningColor : undefined,
+      fields: [
       { label: "Code client", value: payload.clientCode },
       { label: "Affaire de livraison", value: payload.affaires.map(affaire => affaire.numero ?? `Affaire #${affaire.affaireId}`).join("\n") || "Aucune affaire rattachée" },
       { label: "Documents à fournir", span: 2, value: payload.documentsAFournir.map(document => `- ${document}`).join("\n") || "Aucun document requis" },

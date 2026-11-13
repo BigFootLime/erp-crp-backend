@@ -698,7 +698,7 @@ export async function repoCreateClient(
     if (!sourceRevision) throw new Error("CLIENT_CREATION_SNAPSHOT_REVISION_MISSING");
     await queueCreationPdfArchive(db, {
       entityType: "client", entityId: clientId, documentKind: "CLIENT_CREATION_SNAPSHOT", documentVersion: 1,
-      renderVersion: "internal-creation-snapshot-v1", idempotencyKey: `client:${clientId}:creation-snapshot:v1`,
+      renderVersion: "internal-creation-snapshot-v1+style-20261019", idempotencyKey: `client:${clientId}:creation-snapshot:v1`,
       title: `Création fiche client ${clientCode}`, originalName: authoritativePdfFilename(["Client", clientCode, "creation"]), sourceRevision,
       sourceSnapshot: buildInternalCreationSnapshot({
         entityLabel: "Fiche client", reference: clientCode,

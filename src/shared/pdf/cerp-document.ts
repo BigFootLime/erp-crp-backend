@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit"
+import type { DocumentCategory } from "./document-appearance"
 import { currentPdfPresentation, PDF_MODULE_ACCENTS, type PdfModule } from "./document-theme"
 import { documentFont, registerInterDocumentFonts } from "./document-fonts"
 
@@ -244,6 +245,8 @@ export type CerpDocumentHeader = {
   /** Explicit renderer opt-in; never restyles an already-issued historical PDF. */
   appearance?: "clients-v3" | "module-v1" | "legacy-v1"
   module?: PdfModule
+  /** Earlier explicit category contracts map to the current scoped charter. */
+  category?: DocumentCategory
   /** Explicit visual contract. Legacy/pending archives keep the classic renderer by default. */
   designVersion?: CerpDocumentDesign
   /** Type de document, en capitales dans l'en-tete et le rappel d'identite. */
@@ -374,7 +377,7 @@ export class CerpDocumentContext {
     return Math.max(this.fieldOffset, this.doc.heightOfString(toPdfSafeText(label.toUpperCase()), { width, characterSpacing: 0.75 }) + 4)
   }
 
-  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP, private readonly colors: DocumentColors = CERP_DOC_COLORS) {
+  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP, readonly colors: DocumentColors = CERP_DOC_COLORS) {
     this.doc = doc
     this.cursor = startY
     this.reserve = reserve
@@ -1102,7 +1105,7 @@ export async function renderCerpDocument(
   header: CerpDocumentHeader,
   render: (ctx: CerpDocumentContext) => void
 ): Promise<Buffer> {
-  const policy = currentPdfPresentation(header.documentType, header.module)
+  const policy = currentPdfPresentation(header.documentType, header.module ?? header.category)
   if (!policy.legacy && header.appearance !== "legacy-v1") {
     header = { ...header, designVersion: "structured-v5", appearance: "module-v1", module: policy.module }
   }

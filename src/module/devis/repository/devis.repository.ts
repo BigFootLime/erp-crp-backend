@@ -130,7 +130,7 @@ async function queueDevisCreationPdfTx(
     entityId: String(input.devisId),
     documentKind: "CUSTOMER_QUOTE",
     documentVersion: 1,
-    renderVersion: "devis-pdf-v1",
+    renderVersion: "devis-pdf-v1+style-20261019",
     idempotencyKey: `devis:${input.devisId}:creation:v1`,
     title: `Devis ${input.numero}`,
     originalName: authoritativePdfFilename(["DEVIS", input.numero, "v1"]),
@@ -2101,7 +2101,7 @@ export async function repoQueueDevisOfficialDocument(id: number, idempotencyKey:
       throw new HttpError(409, "OFFICIAL_DOCUMENT_SOURCE_REVISION_CONFLICT", "La source du document a changé. Rechargez avant de réémettre.");
     }
     const archive = await queueCreationPdfArchive(client, {
-      entityType: "devis", entityId: String(id), documentKind: "CUSTOMER_QUOTE", documentVersion: existingCount + 1, renderVersion: "devis-pdf-v1",
+      entityType: "devis", entityId: String(id), documentKind: "CUSTOMER_QUOTE", documentVersion: existingCount + 1, renderVersion: "devis-pdf-v1+style-20261019",
       idempotencyKey, title: `Devis ${numero}`, originalName: authoritativePdfFilename(["DEVIS", numero, `v${existingCount + 1}`]),
       sourceRevision: currentSourceRevision,
       sourceSnapshot, actorUserId: audit.user_id, requireGeneralTerms: true,

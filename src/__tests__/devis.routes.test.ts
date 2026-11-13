@@ -761,7 +761,7 @@ describe("/api/v1/devis", () => {
       entityType: "devis",
       entityId: "7",
       documentKind: "CUSTOMER_QUOTE",
-      renderVersion: "devis-pdf-v1",
+      renderVersion: "devis-pdf-v1+style-20261019",
     }));
     expect(mocks.poolConnect).toHaveBeenCalledTimes(1);
 

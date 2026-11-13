@@ -1,3 +1,4 @@
+import { archiveDocumentCategory } from "../../../shared/pdf/document-appearance";
 import { renderCerpDocument, type CerpLineRow } from "../../../shared/pdf/cerp-document";
 import { formatDateFR, money, percent } from "../../../shared/pdf/format-fr";
 import { issuerIdentityLine, issuerLegalMentions, type LegalParty } from "../../../shared/pdf/legal-mentions";

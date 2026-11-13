@@ -473,7 +473,7 @@ describe("#167 — idempotence création / révision / conversion", () => {
       entityType: "devis",
       entityId: "7",
       documentKind: "CUSTOMER_QUOTE",
-      renderVersion: "devis-pdf-v1",
+      renderVersion: "devis-pdf-v1+style-20261019",
     }));
 
     const recordCall = mocks.clientQuery.mock.calls.find((c) =>
