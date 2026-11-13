@@ -86,6 +86,7 @@ import dashboardGovernanceRoutes from "../module/dashboard-governance/routes/das
 import referenceDataRoutes from "../module/reference-data/routes/reference-data.routes"
 import commercialReferencesRoutes from "../module/commercial-references/routes/commercial-references.routes"
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
+import { mountOrderedRouteGroup } from "./route-mount-order"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
 import entreprisesRoutes from "../module/entreprises/routes/entreprises.routes";
@@ -152,8 +153,10 @@ router.use("/piece-technique-versions", pieceTechniqueVersionsRoutes) // GPAO B2
 // opération est montée AVANT le routeur historique des gammes pour déclarer ses
 // capacités fines sans hériter des gardes hérités. Le routeur historique reste
 // inchangé pour les écrans en production.
-router.use("/gammes", surfaceFinishGammeRoutes)
-router.use("/gammes", gammesRoutes)                                   // GPAO B2.2 — gammes + opérations
+mountOrderedRouteGroup(router, [
+  { prefix: "/gammes", router: surfaceFinishGammeRoutes },
+  { prefix: "/gammes", router: gammesRoutes }, // GPAO B2.2 — gammes + opérations
+])
 // Référentiels Méthodes : familles machine, centres de frais tarifés, sélecteur
 // de machines. Rattaché au module d'accès « Données techniques » (#326).
 router.use("/methodes", methodesRoutes)
@@ -161,19 +164,25 @@ router.use("/finitions", surfaceFinishRoutes)                         // #210 �
 router.use("/audit-logs", auditLogsRoutes)
 // Tour de contrôle des accès (#326) montée AVANT le routeur admin historique : elle
 // est gardée par le statut superadmin et ne doit pas hériter de son authorizeRole.
-router.use("/admin/access", accessControlRoutes);
-router.use("/admin/webhooks", webhookAdminRoutes);
-router.use("/admin/client-portal", clientPortalAdminRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/admin/access", router: accessControlRoutes },
+  { prefix: "/admin/webhooks", router: webhookAdminRoutes },
+  { prefix: "/admin/client-portal", router: clientPortalAdminRoutes },
+])
 router.use("/supplier-portal-admin", supplierPortalAdminRoutes);
-router.use("/admin/reference-data", referenceDataRoutes);
-// Resolve delegated ERP configuration before the legacy admin superadmin guard.
-router.use("/admin/onboarding", onboardingRoutes);
-router.use("/admin", adminRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/admin/reference-data", router: referenceDataRoutes },
+  // Resolve delegated ERP configuration before the legacy admin superadmin guard.
+  { prefix: "/admin/onboarding", router: onboardingRoutes },
+  { prefix: "/admin", router: adminRoutes },
+])
 router.use("/affaires", affaireRoutes);
 router.use("/devis", devisRoutes);
 router.use(commercialReferencesRoutes);
-router.use("/electronic-invoicing", electronicInvoiceDirectoryRoutes);
-router.use("/electronic-invoicing", electronicInvoiceReportingRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/electronic-invoicing", router: electronicInvoiceDirectoryRoutes },
+  { prefix: "/electronic-invoicing", router: electronicInvoiceReportingRoutes },
+])
 router.use("/factures", facturesRoutes);
 router.use("/avoirs", avoirsRoutes);
 router.use("/paiements", paiementsRoutes);
@@ -187,32 +196,38 @@ router.use("/supplier-invoices", supplierInvoiceRoutes);
 // Suivi et pointage de production 360 (#274) monté AVANT le routeur historique :
 // ses routes déclarent des capacités fines (refus par défaut) et exigent une
 // clé d'idempotence. Le routeur hérité reste inchangé pour les écrans existants.
-router.use("/production/execution", productionExecutionRoutes);
-// Poste opérateur tablette (#159) monté AVANT le routeur historique. Il ne
-// duplique aucune commande d'exécution : il ajoute appareil, session, file de
-// travail, dossier OF numérique et transmission de poste.
-router.use("/production/station", productionStationRoutes);
-// Versioning d'OF, replanification, AR client et document (#370), monté AVANT le
-// routeur historique. Il ne duplique aucune commande existante : il ajoute les
-// révisions, le VISA de phase, la dérive de temps, le brouillon de planning, le
-// dossier d'AR à recaler et le document d'OF figé.
-router.use("/production/of-versioning", ofVersioningRoutes);
-// Centre guidé de préparation : lecture des prérequis et calendriers audités.
-// Monté avant le routeur historique pour conserver une frontière RBAC dédiée.
-router.use("/production/readiness", productionReadinessRoutes);
-router.use("/production", productionRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/production/execution", router: productionExecutionRoutes },
+  // Poste opérateur tablette (#159) monté AVANT le routeur historique. Il ne
+  // duplique aucune commande d'exécution : il ajoute appareil, session, file de
+  // travail, dossier OF numérique et transmission de poste.
+  { prefix: "/production/station", router: productionStationRoutes },
+  // Versioning d'OF, replanification, AR client et document (#370), monté AVANT le
+  // routeur historique. Il ne duplique aucune commande existante : il ajoute les
+  // révisions, le VISA de phase, la dérive de temps, le brouillon de planning, le
+  // dossier d'AR à recaler et le document d'OF figé.
+  { prefix: "/production/of-versioning", router: ofVersioningRoutes },
+  // Centre guidé de préparation : lecture des prérequis et calendriers audités.
+  // Monté avant le routeur historique pour conserver une frontière RBAC dédiée.
+  { prefix: "/production/readiness", router: productionReadinessRoutes },
+  { prefix: "/production", router: productionRoutes },
+])
 router.use("/planning", planningRoutes);
 router.use("/programmations", programmationRoutes);
 // Qualité 360 (#228) monté AVANT le routeur historique : ses routes déclarent
 // des capacités fines et ne doivent pas hériter du garde global hérité.
-router.use("/qualite/v2", quality360Routes);
-router.use("/qualite", qualiteRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/qualite/v2", router: quality360Routes },
+  { prefix: "/qualite", router: qualiteRoutes },
+])
 router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
-router.use("/commandes-fournisseurs", intercompanyPurchaseTrackingRoutes);
-router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
+mountOrderedRouteGroup(router, [
+  { prefix: "/commandes-fournisseurs", router: intercompanyPurchaseTrackingRoutes },
+  { prefix: "/commandes-fournisseurs", router: commandeFournisseurRoutes }, // Module « Commandes fournisseurs » (#172) — BCF
+])
 router.use("/subcontract-work-packages", subcontractRoutes); // #626
 router.use("/procurement-reliability", procurementReliabilityRoutes); // SOL-18 — scorecards et rapprochement achats
 router.use("/replenishment-proposals", replenishmentProposalRoutes); // FEAT-CERP-0003 — suggestions sans achat automatique
@@ -220,20 +235,26 @@ router.use("/receptions", receptionsRoutes);
 // Métrologie 360 (#229) monté AVANT le routeur historique : ses routes
 // déclarent des capacités fines (refus par défaut) et ne partagent pas les
 // chemins hérités, qui restent inchangés pour les écrans en production.
-router.use("/metrologie/v2", metrology360Routes);
-router.use("/metrologie", metrologieRoutes);
+mountOrderedRouteGroup(router, [
+  { prefix: "/metrologie/v2", router: metrology360Routes },
+  { prefix: "/metrologie", router: metrologieRoutes },
+])
 router.use("/codes", codesRoutes);
 router.use("/notifications", notificationsRoutes);
 router.use("/chat", chatRoutes);
 router.use("/users", usersRoutes);
 // Traçabilité 360 (#142) : la surface étendue est montée AVANT le routeur
 // historique pour que `/traceability/v2/...` ne soit jamais capté par lui.
-router.use("/traceability/identification", identificationRoutes);
-router.use("/traceability/v2", traceability360Routes)
-router.use("/traceability", traceabilityRoutes)
+mountOrderedRouteGroup(router, [
+  { prefix: "/traceability/identification", router: identificationRoutes },
+  { prefix: "/traceability/v2", router: traceability360Routes },
+  { prefix: "/traceability", router: traceabilityRoutes },
+])
 router.use("/asbuilt", asbuiltRoutes)
 router.use("/locks", locksRoutes)
-router.use("/time-clock", tempsDeplacementsRoutes) // Module « Temps & Déplacements » (RH pointage/kilomètres)
+mountOrderedRouteGroup(router, [
+  { prefix: "/time-clock", router: tempsDeplacementsRoutes }, // Module « Temps & Déplacements » (RH pointage/kilomètres)
+])
 router.use("/project-office", projectOfficeRoutes) // Module « Project Office » (#130) — feature gate PROJECT_OFFICE fail-closed
 // GED centrale (ADR-0037). Additif : aucun module existant n'est rebranché.
 // Si le patch 20260727_ged_core n'est pas appliqué, ces routes répondent

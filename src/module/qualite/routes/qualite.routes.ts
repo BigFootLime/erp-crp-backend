@@ -7,6 +7,7 @@ import {
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { HttpError } from "../../../utils/httpError";
+import { hasLegacyRoleFragment } from "../../access-control/domain/legacy-role-adaptation";
 
 import {
   attachActionDocuments,
@@ -43,15 +44,11 @@ import {
 } from "../controllers/qualite.controller";
 
 function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("admin") || r.includes("administrateur");
+  return hasLegacyRoleFragment(role, ["admin", "administrateur"]);
 }
 
 function isQualityRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("qualit") || r.includes("quality") || r.includes("qse");
+  return hasLegacyRoleFragment(role, ["qualit", "quality", "qse"]);
 }
 
 const requireQualityOrAdmin: RequestHandler = (req, _res, next) => {

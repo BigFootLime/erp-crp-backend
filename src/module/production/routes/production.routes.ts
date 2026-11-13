@@ -24,6 +24,7 @@ import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import {readOperatorMaintenance,writeOperatorMaintenance} from "../controllers/operator-maintenance.controller";
 import { HttpError } from "../../../utils/httpError";
+import { hasLegacyRoleFragment } from "../../access-control/domain/legacy-role-adaptation";
 import { roleHasMachineCapability, type MachineCapability } from "../domain/machine-rbac";
 import { roleHasOfCapability, type OfCapability } from "../domain/of-rbac";
 import {readMaterial,configureMaterial,confirmMaterial,verifyMaterialLot,readOperationReadiness,debitMaterial,customerMaterial,correctDebitMaterial,transferMaterial,reconcileMaterial,prepareMaterialPurchases,chooseMaterialSupplier} from "../controllers/of-material.controller";
@@ -112,15 +113,11 @@ import {
 } from "../controllers/machine-park.controller";
 
 function isAdminRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("admin") || r.includes("administrateur");
+  return hasLegacyRoleFragment(role, ["admin", "administrateur"]);
 }
 
 function isProductionRole(role: string | undefined): boolean {
-  if (!role) return false;
-  const r = role.trim().toLowerCase();
-  return r.includes("production") || r.includes("atelier") || r.includes("secretaire") || r.includes("secretariat");
+  return hasLegacyRoleFragment(role, ["production", "atelier", "secretaire", "secretariat"]);
 }
 
 const requireAdmin: RequestHandler = (req, _res, next) => {
