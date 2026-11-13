@@ -7,6 +7,8 @@ import { Router, type Request, type RequestHandler, type Response } from "expres
 import { z, ZodError } from "zod";
 
 import pool from "../config/database";
+import { nuanceIdentity, resolveNuanceIdentity, nuanceNormeShape, nuanceNormeFields } from "../module/stock/domain/nuance-library";
+import { HttpError } from "../utils/httpError";
 import { authenticateToken } from "../module/auth/middlewares/auth.middleware";
 import { repoInsertAuditLog } from "../module/audit-logs/repository/audit-logs.repository";
 
@@ -48,6 +50,12 @@ const patchSchema = z.object({
   is_active: z.boolean().optional(),
   unite_achat: positiveId.optional(),
 }).strict().refine((body) => Object.keys(body).length > 0, "At least one mutable field is required");
+const nuanceCreateSchema = createSchema.extend({ ...nuanceNormeShape, code: codeSchema.optional() });
+const nuancePatchSchema = z.object({
+  ...nuanceNormeShape, code: codeSchema.optional(), designation: designationSchema.optional(),
+  densite: densitySchema.optional(), is_active: z.boolean().optional(),
+}).strict().refine(body => Object.keys(body).length > 0, "At least one mutable field is required");
+type CompatNuanceFields = z.infer<typeof nuanceCreateSchema>;
 const idSchema = z.coerce.number().int().positive();
 
 function normalizeCode(raw: string): string {
@@ -77,7 +85,7 @@ function apiRow(config: ReferentialConfig, row: Record<string, unknown>) {
   const common = { id: Number(row.id), code: String(row.code), designation, is_active: Boolean(row.is_active) };
   if (config.kind === "nuances") {
     const densite = row.densite === null || row.densite === undefined ? null : Number(row.densite);
-    return { ...common, densite: Number.isFinite(densite as number) ? densite : null, etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.map(Number) : [] };
+    return { ...common, ...nuanceIdentity(row), densite: Number.isFinite(densite as number) ? densite : null, etat_ids: Array.isArray(row.etat_ids) ? row.etat_ids.map(Number) : [] };
   }
   if (config.kind === "etats") return { ...common, unite_achat: Number(row.unite_achat) || 3020, nuance_ids: Array.isArray(row.nuance_ids) ? row.nuance_ids.map(Number) : [] };
   return { ...common, etat_id: row.etat_id === null ? null : Number(row.etat_id), informations: typeof row.informations === "string" && row.informations.trim() ? row.informations : null };
@@ -91,6 +99,10 @@ function listFilters(config: ReferentialConfig, query: Request["query"]): { sql:
   if (q) where.push(`(${config.kind === "nuances" ? "n" : config.kind === "etats" ? "e" : "se"}.code ILIKE ${push(`%${q}%`)} OR ${config.kind === "nuances" ? "n" : config.kind === "etats" ? "e" : "se"}.designation ILIKE $${values.length})`);
   const active = query.is_active === "true" ? true : query.is_active === "false" ? false : undefined;
   const alias = config.kind === "nuances" ? "n" : config.kind === "etats" ? "e" : "se";
+  if (q && config.kind === "nuances") {
+    const pattern = `$${values.length}`;
+    where[0] = `(n.code ILIKE ${pattern} OR n.designation ILIKE ${pattern} OR n.norme_fr ILIKE ${pattern} OR n.norme_en ILIKE ${pattern} OR n.norme_werkstoff ILIKE ${pattern} OR n.norme_usa ILIKE ${pattern})`;
+  }
   if (active !== undefined) where.push(`${alias}.is_active=${push(active)}`);
   const relation = config.kind === "etats" ? query.nuance_id : query.etat_id;
   const relationId = typeof relation === "string" && /^\d+$/.test(relation) ? Number(relation) : undefined;
@@ -106,7 +118,7 @@ function listFilters(config: ReferentialConfig, query: Request["query"]): { sql:
 async function list(config: ReferentialConfig, query: Request["query"] = {}) {
   const filters = listFilters(config, query);
   if (config.kind === "nuances") {
-    const result = await pool.query<Record<string, unknown>>(`SELECT n.id::int AS id,n.code,n.designation,COALESCE(NULLIF(to_jsonb(n)->>'densite_kg_m3','')::numeric,n.densite*1000) AS densite,n.is_active,COALESCE(array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL),ARRAY[]::int[]) AS etat_ids FROM public.stock_nuances n LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id=n.id ${filters.sql} GROUP BY n.id ORDER BY n.code`, filters.values);
+    const result = await pool.query<Record<string, unknown>>(`SELECT n.id::int AS id,n.code,n.designation,n.norme_fr,n.norme_en,n.norme_werkstoff,n.norme_usa,n.designation_principale,COALESCE(NULLIF(to_jsonb(n)->>'densite_kg_m3','')::numeric,n.densite*1000) AS densite,n.is_active,COALESCE(array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL),ARRAY[]::int[]) AS etat_ids FROM public.stock_nuances n LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id=n.id ${filters.sql} GROUP BY n.id ORDER BY n.code`, filters.values);
     return result.rows.map((row) => apiRow(config, row));
   }
   if (config.kind === "etats") {
@@ -124,8 +136,10 @@ function auditContext(req: Request) {
 }
 
 async function mutate(config: ReferentialConfig, req: Request, create: boolean) {
-  const raw = parseBody(create ? createSchema : patchSchema, req.body);
-  const body = raw as z.infer<typeof createSchema>;
+  const schema = config.kind === "nuances" ? (create ? nuanceCreateSchema : nuancePatchSchema) : (create ? createSchema : patchSchema);
+  const raw = parseBody(schema as z.ZodType<unknown>, req.body);
+  const body = raw as z.infer<typeof createSchema> & CompatNuanceFields;
+  const identity = config.kind === "nuances" && create ? resolveNuanceIdentity(body) : null;
   if (!config.density && body.densite !== undefined) {
     throw new ValidationError("densite is only supported for matiere-nuances");
   }
@@ -134,19 +148,20 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
   if (config.kind !== "etats" && body.unite_achat !== undefined) throw new ValidationError("unite_achat is only supported for matiere-etats");
   if (config.kind !== "sous-etats" && body.etat_id !== undefined) throw new ValidationError("etat_id is only supported for matiere-sous-etats");
   if (config.kind !== "sous-etats" && body.informations !== undefined) throw new ValidationError("informations is only supported for matiere-sous-etats");
-  const code = body.code === undefined ? undefined : normalizeCode(body.code);
+  const code = body.code === undefined ? (identity ? normalizeCode(identity.libelle) : undefined) : normalizeCode(body.code);
   const designation = body.designation === undefined ? undefined : body.designation?.trim() || "";
   const informations = body.informations === undefined ? undefined : body.informations?.trim() || null;
   const densite = body.densite;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (config.kind === "nuances") await client.query("SELECT pg_advisory_xact_lock(20261113, 84)");
     let row: Record<string, unknown> | undefined;
     let before: unknown = undefined;
     if (create) {
       if (!code) throw new ValidationError("code is required");
-      const columns = config.kind === "nuances" ? "code,designation,densite,is_active" : config.kind === "etats" ? "code,designation,unite_achat,is_active" : "etat_id,code,designation,informations,is_active";
-      const params = config.kind === "nuances" ? [code, designation ?? "", densite === undefined || densite === null ? null : densite / 1000, body.is_active ?? true] : config.kind === "etats" ? [code, designation ?? "", body.unite_achat ?? 3020, body.is_active ?? true] : [body.etat_id ?? null, code, designation ?? "", informations ?? null, body.is_active ?? true];
+      const columns = config.kind === "nuances" ? "code,designation,densite,is_active,norme_fr,norme_en,norme_werkstoff,norme_usa,designation_principale" : config.kind === "etats" ? "code,designation,unite_achat,is_active" : "etat_id,code,designation,informations,is_active";
+      const params = config.kind === "nuances" ? [code, designation ?? "", densite === undefined || densite === null ? null : densite / 1000, body.is_active ?? true, ...nuanceNormeFields.map(key => identity![key]), identity!.designation_principale] : config.kind === "etats" ? [code, designation ?? "", body.unite_achat ?? 3020, body.is_active ?? true] : [body.etat_id ?? null, code, designation ?? "", informations ?? null, body.is_active ?? true];
       const result = await client.query<Record<string, unknown>>(`INSERT INTO public.${config.table} (${columns}) VALUES (${params.map((_, index) => `$${index + 1}`).join(",")}) RETURNING id::int AS id,code,designation,${config.kind === "sous-etats" ? "informations," : ""}is_active`, params);
       row = result.rows[0];
       const relationIds = config.kind === "nuances" ? body.etat_ids : config.kind === "etats" ? body.nuance_ids : undefined;
@@ -165,7 +180,16 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
       const updates: string[] = [];
       const values: unknown[] = [id];
       const push = (column: string, value: unknown) => { values.push(value); updates.push(`${column}=$${values.length}`); };
-      if (code !== undefined) push("code", code);
+      if (config.kind === "nuances") {
+        const previous = before as Record<string, unknown>;
+        const merged = resolveNuanceIdentity(body, previous);
+        if (body.code !== undefined && body.code !== previous.code && merged.designation_principale !== "LEGACY") throw new HttpError(400, "NUANCE_CODE_IMMUTABLE", "Le code technique d’une nuance classée est conservé.");
+        if (nuanceNormeFields.some(key => body[key] !== undefined) || body.designation_principale !== undefined) {
+          for (const key of nuanceNormeFields) push(key, merged[key]);
+          push("designation_principale", merged.designation_principale);
+        }
+        if (body.code !== undefined && body.code !== previous.code) push("code", code);
+      } else if (code !== undefined) push("code", code);
       if (designation !== undefined) push("designation", designation);
       if (config.kind === "sous-etats" && informations !== undefined) push("informations", informations);
       if (config.kind === "nuances" && densite !== undefined) push("densite", densite === null ? null : densite / 1000);
@@ -177,7 +201,7 @@ async function mutate(config: ReferentialConfig, req: Request, create: boolean) 
     }
     if (!row) throw new Error("Referential write returned no row");
     const audit = auditContext(req);
-    await repoInsertAuditLog({ user_id: audit.user_id, body: { event_type: "ACTION", action: `stock.matiere-${config.kind}.${create ? "create" : "update"}`, page_key: config.pageKey, entity_type: config.table, entity_id: String(row.id), path: audit.path, client_session_id: audit.client_session_id, details: create ? { code: row.code, ...(config.kind === "nuances" ? { etat_ids: body.etat_ids ?? [] } : config.kind === "etats" ? { nuance_ids: body.nuance_ids ?? [], unite_achat: body.unite_achat ?? 3020 } : { etat_id: body.etat_id ?? null }) } : { before, patch: raw } }, ip: audit.ip, user_agent: audit.user_agent, device_type: null, os: null, browser: null, tx: client });
+    await repoInsertAuditLog({ user_id: audit.user_id, body: { event_type: "ACTION", action: `stock.matiere-${config.kind}.${create ? "create" : "update"}`, page_key: config.pageKey, entity_type: config.table, entity_id: String(row.id), path: audit.path, client_session_id: audit.client_session_id, details: create ? { ...(identity ?? {}), code: row.code, ...(config.kind === "nuances" ? { etat_ids: body.etat_ids ?? [] } : config.kind === "etats" ? { nuance_ids: body.nuance_ids ?? [], unite_achat: body.unite_achat ?? 3020 } : { etat_id: body.etat_id ?? null }) } : { before, patch: raw } }, ip: audit.ip, user_agent: audit.user_agent, device_type: null, os: null, browser: null, tx: client });
     await client.query("COMMIT");
     return row;
   } catch (error) {
@@ -197,8 +221,9 @@ function handlers(config: ReferentialConfig): RequestHandler[] {
       const fresh = (await list(config)).find((item) => item.id === Number(row.id));
       res.status(create ? 201 : 200).json(fresh ?? apiRow(config, row));
     } catch (error) {
+      if (error instanceof HttpError) { sendError(res, error.status, error.code, error.message); return; }
       if (error instanceof ValidationError || error instanceof ZodError) { sendError(res, 400, "VALIDATION_ERROR", error.message); return; }
-      if (error instanceof DuplicateError) { sendError(res, 409, "DUPLICATE_REFERENTIAL_CODE", "A referential with this code already exists"); return; }
+      if (error instanceof DuplicateError) { sendError(res, 409, "DUPLICATE_REFERENTIAL_CODE", "Une nuance ou valeur possède déjà ce code ou cette désignation. Consultez aussi les entrées inactives."); return; }
       next(error);
     }
   };
