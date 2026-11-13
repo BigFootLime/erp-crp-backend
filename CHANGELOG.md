@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Lecteur jetable pour la recette temps réel (#1506)
+
+- Le seed SOL-05 protégé ajoute un compte non-superadmin limité au module Clients pour la recette à deux utilisateurs. Les comptes négatifs, dont E2E_SALES, restent fermés. Les gardes de base locale jetable sont couvertes par une régression ; aucun contrôle d'autorisation de l'application ni schéma métier n'est modifié.
+
 ## En préparation — Résolution partagée des unités Stock (#1503)
 
 - Les résolutions d'unités de Stock, Livraisons, Qualité et des réceptions de production partagent une primitive utilisant la transaction de l'appelant. Chaque module conserve ses valeurs par défaut, ses statuts et messages d'erreur, ses requêtes et ses types de retour ; les politiques sont couvertes par des régressions dédiées. Voir [l'architecture](docs/architecture/stock-unit-resolution.md).
