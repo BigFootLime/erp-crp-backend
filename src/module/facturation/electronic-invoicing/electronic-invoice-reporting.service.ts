@@ -1,4 +1,5 @@
 import { logger } from "../../../shared/observability/logger";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import { HttpError } from "../../../utils/httpError";
 import type { FinanceActorContext } from "../repository/workflow.repository.shared";
 import {
@@ -155,30 +156,24 @@ async function processOne(kind: "TRANSACTION" | "PAYMENT"): Promise<boolean> {
   return true;
 }
 
-export function startEReportingMaintenance(): () => void {
+export function startEReportingMaintenance(options: Readonly<{ cycle?: () => Promise<void> }> = {}): () => void | Promise<void> {
+  // Internal test seam; normal runtime configuration remains authoritative.
+  if (options.cycle) return startDrainableRecurringTask(options.cycle, 30_000).stop;
   if (!enabled()) return () => undefined;
-  let running = false;
   let lastPeriodSynchronization = 0;
-  const run = () => {
-    if (running) return;
-    running = true;
-    void (async () => {
+  const run = async (): Promise<void> => {
+    try {
       if (Date.now() - lastPeriodSynchronization >= 5 * 60_000) {
         await synchronizePeriods();
         lastPeriodSynchronization = Date.now();
       }
       await processOne("TRANSACTION");
       await processOne("PAYMENT");
-    })().catch((error) => {
-        logger.error("electronic_invoice_ereporting_worker_failed", {
-          failure_code: error instanceof Error ? error.name : "EREPORTING_WORKER_FAILED",
-        });
-      }).finally(() => {
-        running = false;
+    } catch (error) {
+      logger.error("electronic_invoice_ereporting_worker_failed", {
+        failure_code: error instanceof Error ? error.name : "EREPORTING_WORKER_FAILED",
       });
+    }
   };
-  const timer = setInterval(run, 30_000);
-  timer.unref();
-  setImmediate(run);
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(run, 30_000).stop;
 }

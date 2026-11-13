@@ -2,6 +2,7 @@ export const COMMANDE_WORKFLOW_STATUSES = [
   "BROUILLON",
   "EN_ANALYSE",
   "ATTENTE_TECHNIQUE",
+  "ATTENTE_FOURNISSEUR",
   "ATTENTE_STOCK",
   "ATTENTE_OF",
   "ATTENTE_PLANNING",
@@ -25,6 +26,7 @@ export const COMMANDE_WORKFLOW_STATUS_LABELS: Record<CommandeWorkflowStatus, str
   BROUILLON: "Brouillon",
   EN_ANALYSE: "En analyse",
   ATTENTE_TECHNIQUE: "Attente technique",
+  ATTENTE_FOURNISSEUR: "Attente fournisseur",
   ATTENTE_STOCK: "Attente contrôle stock",
   ATTENTE_OF: "Attente lancement",
   ATTENTE_PLANNING: "Attente planning",
@@ -46,6 +48,7 @@ export const COMMANDE_WORKFLOW_STATUS_ORDER: Record<CommandeWorkflowStatus, numb
   BROUILLON: 0,
   EN_ANALYSE: 1,
   ATTENTE_TECHNIQUE: 2,
+  ATTENTE_FOURNISSEUR: 3,
   ATTENTE_STOCK: 3,
   ATTENTE_OF: 4,
   ATTENTE_PLANNING: 5,
@@ -80,8 +83,11 @@ export const COMMANDE_WORKFLOW_TRANSITION_CAUSES = [
   "internal_production_launch",
   "internal_archive",
   "planning_sync",
+  "production_sync",
+  "quality_sync",
   "ar_send",
   "shipment_sync",
+  "supplier_shipment_sync",
   "invoice_sync",
   "block",
   "resume",
@@ -113,6 +119,9 @@ const CHECKPOINT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
   { from: "LIVRE", to: "FACTURE", cause: "checkpoint" },
   { from: "FACTURE", to: "ARCHIVE", cause: "checkpoint" },
 ];
+const SUPPLIER_FULFILMENT_TRANSITIONS: CommandeWorkflowTransitionRule[] = [
+  { from: "ATTENTE_FOURNISSEUR", to: "LIVRE", cause: "supplier_shipment_sync" },
+];
 
 const CANCELLATION_TRANSITIONS: CommandeWorkflowTransitionRule[] = COMMANDE_WORKFLOW_STATUSES
   .filter((status) => !["LIVRE", "FACTURE", "ARCHIVE", "ANNULE"].includes(status))
@@ -125,6 +134,7 @@ export const COMMANDE_WORKFLOW_BLOCKABLE_STATUSES = COMMANDE_WORKFLOW_STATUSES.f
 
 export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionRule[] = [
   ...CHECKPOINT_TRANSITIONS,
+  ...SUPPLIER_FULFILMENT_TRANSITIONS,
   ...CANCELLATION_TRANSITIONS,
   // Compatibility repair retires a command checkpoint, never an OF validation.
   { from: "ATTENTE_TECHNIQUE", to: "ATTENTE_STOCK", cause: "technical_review_retired" },
@@ -152,6 +162,10 @@ export const COMMANDE_WORKFLOW_TRANSITIONS: readonly CommandeWorkflowTransitionR
   { from: "PLANNING_VALIDE", to: "EN_PRODUCTION", cause: "internal_production_launch" },
   { from: "LIVRE", to: "ARCHIVE", cause: "internal_archive" },
   { from: "ATTENTE_PLANNING", to: "PLANNING_VALIDE", cause: "planning_sync" },
+  { from: "AR_ENVOYE", to: "EN_PRODUCTION", cause: "production_sync" },
+  { from: "EN_PRODUCTION", to: "PRODUCTION_TERMINEE", cause: "production_sync" },
+  { from: "PRODUCTION_TERMINEE", to: "PRET_LIVRAISON", cause: "quality_sync" },
+  { from: "CONTROLE_QUALITE", to: "PRET_LIVRAISON", cause: "quality_sync" },
   { from: "AR_PRET", to: "AR_ENVOYE", cause: "ar_send" },
   // Le flux 100 % stock n'a ni OF ni contrôle de fin de fabrication. Une fois
   // l'AR effectivement envoyé, la livraison préparée devient exploitable.

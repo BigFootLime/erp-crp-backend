@@ -32,7 +32,7 @@ describe("commande fulfillment invariants", () => {
     let status = "PRET_LIVRAISON";
     const transitions: unknown[][] = [];
     const tx = queryable(async (sql, values) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT order_type")) return { rows: [{ order_type: "STANDARD" }] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: status }] };
@@ -53,7 +53,7 @@ describe("commande fulfillment invariants", () => {
   it("does not repair a partial invoice or bypass an earlier command gate", async () => {
     let fullyInvoiced = false;
     const tx = queryable(async sql => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [{ ...completeState, fully_invoiced: fullyInvoiced }] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [{ ...completeState, fully_invoiced: fullyInvoiced }] };
       if (sql.includes("SELECT order_type")) return { rows: [{ order_type: "STANDARD" }] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "ATTENTE_PLANNING" }] };
@@ -72,7 +72,7 @@ describe("commande fulfillment invariants", () => {
       const id = Number(values?.[0]);
       if (sql.includes("SELECT DISTINCT COALESCE(order_line.commande_id")) return { rows: [{ commande_id: 12 }, { commande_id: 13 }] };
       if (sql.includes("SELECT order_type")) { locked.push(id); return { rows: [{ order_type: "STANDARD" }] }; }
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [{ ...completeState, fully_shipped: id === 12 }] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [{ ...completeState, fully_shipped: id === 12 }] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) return { rows: [{ id, numero: `CC-${id}`, client_id: "001" }] };
       if (sql.includes("SELECT nouveau_statut")) return { rows: [{ nouveau_statut: "PRET_LIVRAISON" }] };
       if (sql.includes("INSERT INTO commande_historique")) { transitioned.push(id); return { rows: [{ id: "1" }] }; }
@@ -114,7 +114,7 @@ describe("commande fulfillment invariants", () => {
 
   it("advances delivery only from PRET_LIVRAISON", async () => {
     const tx = queryable(async (sql) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       }
@@ -146,7 +146,7 @@ describe("commande fulfillment invariants", () => {
 
   it("rolls back the semantic shortcut when a complete shipment happens too early", async () => {
     const tx = queryable(async (sql) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       }
@@ -165,7 +165,7 @@ describe("commande fulfillment invariants", () => {
 
   it("advances invoicing only after the delivered command is fully covered", async () => {
     const tx = queryable(async (sql) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       }
@@ -240,7 +240,7 @@ describe("commande fulfillment invariants", () => {
     let historyWrites = 0;
     let statusEvents = 0;
     const tx = queryable(async (sql, values) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       }
@@ -268,7 +268,7 @@ describe("commande fulfillment invariants", () => {
 
     expect(historyWrites).toBe(2);
     expect(statusEvents).toBe(2);
-    expect(tx.query.mock.calls.some(([sql]) => /commande_client[\s\S]*statut/i.test(String(sql)))).toBe(false);
+    expect(tx.query.mock.calls.some(([sql]) => /UPDATE\s+public\.commande_client\s+SET\s+statut/i.test(String(sql)))).toBe(false);
   });
 
   it.each([
@@ -277,7 +277,7 @@ describe("commande fulfillment invariants", () => {
     ["invoice", "ARCHIVE"],
   ])("treats downstream %s replay at %s as a side-effect-free success", async (kind, currentStatus) => {
     const tx = queryable(async (sql) => {
-      if (sql.includes("WITH shipped_by_line AS")) return { rows: [completeState] };
+      if (sql.includes("WITH stock_shipped_by_line AS")) return { rows: [completeState] };
       if (sql.includes("SELECT id::int AS id, numero, client_id")) {
         return { rows: [{ id: 12, numero: "CC-12", client_id: "001" }] };
       }

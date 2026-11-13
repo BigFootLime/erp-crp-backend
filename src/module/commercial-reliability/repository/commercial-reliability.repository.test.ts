@@ -85,6 +85,9 @@ describe("SOL-17 order cancellation transaction", () => {
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commercial_order_cancellations"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commande_historique"))).toHaveLength(1);
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commande_client_event_log"))).toHaveLength(1);
+    const retired = query.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.commande_client_workflow_checkpoint"));
+    expect(retired?.[0]).toContain("status IN ('pending','active','blocked')");
+    expect(retired?.[0]).toContain("status='skipped'");
     expect(query.mock.calls.filter(([sql]) => String(sql).includes("INSERT INTO public.commercial_command_receipts"))).toHaveLength(1);
     expect(mocks.audit).toHaveBeenCalledOnce();
     expect(query).toHaveBeenCalledWith("COMMIT");

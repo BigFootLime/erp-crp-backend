@@ -14,7 +14,7 @@ import {
   THICKNESS_UNITS,
 } from "../domain/surface-finish-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const shortText = z.string().trim().min(1).max(200);
 const mediumText = z.string().trim().min(1).max(500);
 const longText = z.string().trim().max(4000);

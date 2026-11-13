@@ -15,12 +15,13 @@ describe("account request OpenAPI inventory", () => {
     });
   });
 
-  it("discovers the two public and four SuperAdmin request routes through named router imports", () => {
+  it("discovers the company-picker route with the protected request routes", () => {
     const routes = GENERATED_ROUTE_INVENTORY.filter((route) => route.path.includes("account-requests"));
 
     expect(routes.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "delete /admin/account-requests/{id}",
       "get /admin/account-requests",
+      "get /admin/account-requests/{id}/company-access-options",
       "get /auth/account-requests/status",
       "post /admin/account-requests/{id}/approve",
       "post /admin/account-requests/{id}/reject",
@@ -35,7 +36,7 @@ describe("account request OpenAPI inventory", () => {
     }
 
     const adminRoutes = routes.filter((route) => route.path.startsWith("/admin/"));
-    expect(adminRoutes).toHaveLength(4);
+    expect(adminRoutes).toHaveLength(5);
     for (const route of adminRoutes) {
       expect(route.authenticated).toBe(true);
       expect(route.rbac).toEqual(expect.arrayContaining([

@@ -5,12 +5,18 @@ import { materialBarMovementCommandSchema } from './material-bar-movement.valida
 import { materialBarInventoryCommand } from './material-bars.validators';
 
 export const articleSupplierConditionSchema = createCatalogueSchema.shape.body.omit({article_id:true,type:true,designation:true}).partial().extend({
-  supplier_id: z.string().uuid(), catalogue_id: z.string().uuid().optional(), preferred: z.boolean().default(false),
+  // This schema updates an existing supplier condition. Do not let create-only
+  // defaults overwrite its quality policy or pricing basis when absent.
+  pricing_basis: z.enum(["NONE", "KG", "M"]).optional(),
+  devise: z.string().trim().min(1).max(10).optional(),
+  requiert_controle_reception: z.boolean().optional(),
+  actif: z.boolean().optional(),
+  supplier_id: z.string().guid(), catalogue_id: z.string().guid().optional(), preferred: z.boolean().default(false),
   expected_catalogue_updated_at: z.string().trim().min(1).max(100).optional(),
 });
 export type ArticleSupplierCondition = z.infer<typeof articleSupplierConditionSchema>;
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 const positiveInt = z.coerce.number().int().positive();
 
@@ -149,7 +155,7 @@ export const similarArticlesQuerySchema = z
     /** CAT métier (`article_category_link`), plus fine que la catégorie primaire. */
     business_category: z.string().trim().min(1).max(60).optional(),
     family_code: z.string().trim().min(1).max(40).optional(),
-    piece_technique_id: z.string().uuid().optional(),
+    piece_technique_id: z.string().guid().optional(),
     limit: z.coerce.number().int().min(1).max(20).optional().default(8),
   })
   .strict();
@@ -622,7 +628,7 @@ export const createEmplacementSchema = z.object({
       location_type: stockLocationTypeSchema.optional().default("STORAGE"),
       allow_inbound: z.boolean().optional().default(true),
       allow_outbound: z.boolean().optional().default(true),
-      restrictions: z.record(z.unknown()).optional().default({}),
+      restrictions: z.record(z.string(), z.unknown()).optional().default({}),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict()
@@ -663,7 +669,7 @@ export const updateEmplacementSchema = z.object({
       location_type: stockLocationTypeSchema.optional(),
       allow_inbound: z.boolean().optional(),
       allow_outbound: z.boolean().optional(),
-      restrictions: z.record(z.unknown()).optional(),
+      restrictions: z.record(z.string(), z.unknown()).optional(),
       notes: z.string().trim().min(1).optional().nullable(),
     })
     .strict(),

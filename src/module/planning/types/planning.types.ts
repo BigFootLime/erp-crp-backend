@@ -123,6 +123,7 @@ export type PlanningValidationSkippedCommande = {
     | "AR_ALREADY_SENT"
     | "ALREADY_READY"
     | "RESOURCE_QUALIFICATION_REQUIRED"
+    | "OPERATIONS_NOT_FULLY_PLANNED"
     | "WORKFLOW_NOT_ADVANCED";
   message: string;
 };

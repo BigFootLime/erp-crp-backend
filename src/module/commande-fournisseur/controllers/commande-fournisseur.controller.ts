@@ -1,8 +1,14 @@
 import type { Request, RequestHandler } from "express";
-import {z} from 'zod';
-import { readSupplierOpenContractsSVC, commandSupplierOpenContractSVC } from '../services/supplier-open-contract.service';
-import {supplierConsultationCommandSchema} from '../validators/supplier-consultation.validators';
-import {readSupplierConsultationsSVC,commandSupplierConsultationSVC} from '../services/supplier-consultation.service';
+import { z } from "zod";
+import {
+  readSupplierOpenContractsSVC,
+  commandSupplierOpenContractSVC,
+} from "../services/supplier-open-contract.service";
+import { supplierConsultationCommandSchema } from "../validators/supplier-consultation.validators";
+import {
+  readSupplierConsultationsSVC,
+  commandSupplierConsultationSVC,
+} from "../services/supplier-consultation.service";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
@@ -28,7 +34,14 @@ import {
   transitionSchema,
   updateCommandeSchema,
   updateLigneSchema,
+  supplierPromiseExceptionsQuerySchema,
+  treatmentEstimateSchema,
 } from "../validators/commande-fournisseur.validators";
+import { getSupplierPromiseExceptions } from "../services/supplier-promise-monitor.service";
+import {
+  getSupplierTreatmentEstimates,
+  saveSupplierTreatmentEstimate,
+} from "../services/supplier-treatment-estimates.service";
 import {
   accuseReceptionSVC,
   addLigneSVC,
@@ -58,12 +71,22 @@ import {
 
 function buildAuditContext(req: Request): AuditContext {
   const user = req.user;
-  if (!user) throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
+  if (!user)
+    throw new HttpError(401, "UNAUTHORIZED", "Authentication required");
 
   const forwardedFor = req.headers["x-forwarded-for"];
-  const ipFromHeader = typeof forwardedFor === "string" ? forwardedFor.split(",")[0]?.trim() : null;
-  const ua = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null;
-  const pageKey = typeof req.headers["x-page-key"] === "string" ? req.headers["x-page-key"] : null;
+  const ipFromHeader =
+    typeof forwardedFor === "string"
+      ? forwardedFor.split(",")[0]?.trim()
+      : null;
+  const ua =
+    typeof req.headers["user-agent"] === "string"
+      ? req.headers["user-agent"]
+      : null;
+  const pageKey =
+    typeof req.headers["x-page-key"] === "string"
+      ? req.headers["x-page-key"]
+      : null;
   const clientSessionId =
     typeof req.headers["x-client-session-id"] === "string"
       ? req.headers["x-client-session-id"]
@@ -85,11 +108,41 @@ function buildAuditContext(req: Request): AuditContext {
   };
 }
 
-export const readSupplierOpenContracts: RequestHandler = async (req,res,next) => {
-  try { const {params}=commandeIdParamSchema.parse({params:req.params}); res.json(await readSupplierOpenContractsSVC(params.id,req.user?.role,buildAuditContext(req).user_id)); } catch(error) {next(error);}
+export const readSupplierOpenContracts: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    res.json(
+      await readSupplierOpenContractsSVC(
+        params.id,
+        req.user?.role,
+        buildAuditContext(req).user_id,
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
 };
-export const commandSupplierOpenContract: RequestHandler = async (req,res,next) => {
-  try { const {params}=commandeIdParamSchema.parse({params:req.params}); res.json(await commandSupplierOpenContractSVC(params.id,req.body,buildAuditContext(req))); } catch(error) {next(error);}
+export const commandSupplierOpenContract: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    res.json(
+      await commandSupplierOpenContractSVC(
+        params.id,
+        req.body,
+        buildAuditContext(req),
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
 };
 
 function includePricesFor(req: Request): boolean {
@@ -100,69 +153,280 @@ function includePricesFor(req: Request): boolean {
 }
 
 /** Clé d'idempotence : header standard prioritaire, sinon champ body. */
-function idempotencyKeyFrom(req: Request, bodyKey?: string): string | undefined {
+function idempotencyKeyFrom(
+  req: Request,
+  bodyKey?: string,
+): string | undefined {
   const header = req.headers["idempotency-key"];
-  if (typeof header === "string" && header.trim().length >= 8) return header.trim().slice(0, 120);
+  if (typeof header === "string" && header.trim().length >= 8)
+    return header.trim().slice(0, 120);
   return bodyKey;
 }
 
-export const listCommandesFournisseurs: RequestHandler = async (req, res, next) => {
+export const listCommandesFournisseurs: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { query } = listCommandesQuerySchema.parse({ query: req.query });
-    const out = await listCommandesFournisseursSVC(query, includePricesFor(req));
+    const out = await listCommandesFournisseursSVC(
+      query,
+      includePricesFor(req),
+    );
     res.json(out);
   } catch (err) {
     next(err);
   }
 };
 
-export const getCommandeFournisseurKpis: RequestHandler = async (_req, res, next) => {
+export const getCommandeFournisseurKpis: RequestHandler = async (
+  _req,
+  res,
+  next,
+) => {
   try {
     res.json(await getCommandeFournisseurKpisSVC());
   } catch (err) {
     next(err);
   }
 };
-
-export const readPurchaseQualification: RequestHandler = async (req,res,next) => {
+/** Internal exception inbox. It derives dates from purchase lines and does not alter a supplier commitment. */
+export const listSupplierPromiseExceptions: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
-    const {params} = commandeIdParamSchema.parse({params:req.params});
-    res.json({data:await readPurchaseQualificationSVC(params.id)});
-  } catch (error) { next(error); }
+    const { query } = supplierPromiseExceptionsQuerySchema.parse({
+      query: req.query,
+    });
+    const today =
+      query.today ??
+      new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Paris" }).format(
+        new Date(),
+      );
+    const items = await getSupplierPromiseExceptions(today);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ generated_at: new Date().toISOString(), today, items });
+  } catch (error) {
+    next(error);
+  }
+};
+/** Internal purchasing estimate, deliberately distinct from supplier confirmation and official promise. */
+export const saveInternalTreatmentEstimate: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const parsed = treatmentEstimateSchema.parse({
+      params: req.params,
+      body: req.body,
+    });
+    const idempotencyKey = idempotencyKeyFrom(req);
+    if (!idempotencyKey)
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "La clé Idempotency-Key est requise.",
+      );
+    const actor = buildAuditContext(req).user_id;
+    const row = await saveSupplierTreatmentEstimate({
+      orderId: parsed.params.id,
+      lineId: parsed.params.ligneId,
+      estimatedReturnDate: parsed.body.estimated_return_date,
+      reason: parsed.body.reason,
+      sourceVersion: parsed.body.source_version,
+      idempotencyKey,
+      actorId: actor,
+    });
+    if (row.idempotency_replayed) res.setHeader("Idempotency-Replayed", "true");
+    res.json(row);
+  } catch (error) {
+    next(error);
+  }
+};
+export const listInternalTreatmentEstimates: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    res.json(
+      await getSupplierTreatmentEstimates(
+        commandeIdParamSchema.parse({ params: req.params }).params.id,
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+/** Internal purchasing inbox for sandbox proposals. It never changes the actual supplier promise. */
+export const listSupplierSandboxProposals: RequestHandler = async (
+  _req,
+  res,
+  next,
+) => {
+  try {
+    const { default: pool } = await import("../../../config/database");
+    const result = await pool.query(
+      `SELECT p.id::text,p.order_id::text,p.line_id::text,p.promised_date::text,p.promised_quantity::text,p.reason,p.status,p.submitted_at,c.code,l.position,l.designation,l.type,COALESCE(f.nom,f.raison_sociale) AS supplier_name FROM supplier_sandbox_promise_proposals p JOIN commande_fournisseur c ON c.id=p.order_id JOIN commande_fournisseur_ligne l ON l.id=p.line_id JOIN fournisseurs f ON f.id=p.supplier_id WHERE p.status='PENDING' ORDER BY p.submitted_at ASC`,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ items: result.rows });
+  } catch (error) {
+    next(error);
+  }
+};
+/** A procurement actor, never the supplier, may reject or apply a queued sandbox promise. */
+export const reviewSupplierSandboxProposal: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const parsed = z
+      .object({
+        params: z.object({ proposalId: z.string().uuid() }),
+        body: z
+          .object({
+            action: z.enum(["APPLY", "REJECT"]),
+            reason: z.string().trim().min(3).max(1000),
+          })
+          .strict(),
+      })
+      .parse({ params: req.params, body: req.body });
+    const actor = buildAuditContext(req).user_id;
+    const { default: pool } = await import("../../../config/database");
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      const proposal = await tx.query(
+        `SELECT * FROM supplier_sandbox_promise_proposals WHERE id=$1::uuid AND status='PENDING' FOR UPDATE`,
+        [parsed.params.proposalId],
+      );
+      if (!proposal.rowCount)
+        throw new HttpError(
+          404,
+          "SUPPLIER_SANDBOX_PROPOSAL_NOT_FOUND",
+          "Proposition introuvable.",
+        );
+      const p = proposal.rows[0];
+      if (parsed.body.action === "APPLY") {
+        await tx.query(
+          `UPDATE commande_fournisseur_ligne SET date_promesse=$1::date,qty_confirmee=$2,updated_by=$3,updated_at=now() WHERE id=$4::uuid AND commande_id=$5::uuid`,
+          [p.promised_date, p.promised_quantity, actor, p.line_id, p.order_id],
+        );
+        await tx.query(
+          `UPDATE commande_fournisseur_transition SET motif=motif WHERE false`,
+        );
+      }
+      const status = parsed.body.action === "APPLY" ? "ACCEPTED" : "REJECTED";
+      await tx.query(
+        `UPDATE supplier_sandbox_promise_proposals SET status=$1,reviewed_at=now(),reviewed_by=$2,review_reason=$3 WHERE id=$4::uuid`,
+        [status, actor, parsed.body.reason, p.id],
+      );
+      await tx.query("COMMIT");
+      res.json({ id: p.id, status, applied: parsed.body.action === "APPLY" });
+    } catch (error) {
+      await tx.query("ROLLBACK");
+      throw error;
+    } finally {
+      tx.release();
+    }
+  } catch (error) {
+    next(error);
+  }
 };
 
-export const readSupplierConsultations:RequestHandler=async(req,res,next)=>{
-  try{
-    const {params}=commandeIdParamSchema.parse({params:req.params});
-    const query=z.object({round:z.string().uuid().optional()}).strict().parse(req.query);
-    res.json(await readSupplierConsultationsSVC(params.id,req.user?.role,query.round,buildAuditContext(req).user_id));
-  }catch(error){next(error);}
-};
-export const commandSupplierConsultation:RequestHandler=async(req,res,next)=>{
-  try{
-    const {params}=commandeIdParamSchema.parse({params:req.params});
-    const body=supplierConsultationCommandSchema.parse(req.body);
-    res.json(await commandSupplierConsultationSVC(params.id,body,buildAuditContext(req)));
-  }catch(error){next(error);}
-};
-
-export const getCommandeFournisseur: RequestHandler = async (req, res, next) => {
+export const readPurchaseQualification: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
-    const out = await getCommandeFournisseurSVC(params.id, includePricesFor(req));
+    res.json({ data: await readPurchaseQualificationSVC(params.id) });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const readSupplierConsultations: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    const query = z
+      .object({ round: z.string().guid().optional() })
+      .strict()
+      .parse(req.query);
+    res.json(
+      await readSupplierConsultationsSVC(
+        params.id,
+        req.user?.role,
+        query.round,
+        buildAuditContext(req).user_id,
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+export const commandSupplierConsultation: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    const body = supplierConsultationCommandSchema.parse(req.body);
+    res.json(
+      await commandSupplierConsultationSVC(
+        params.id,
+        body,
+        buildAuditContext(req),
+      ),
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getCommandeFournisseur: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    const out = await getCommandeFournisseurSVC(
+      params.id,
+      includePricesFor(req),
+    );
     res.json(out);
   } catch (err) {
     next(err);
   }
 };
 
-export const createCommandeFournisseur: RequestHandler = async (req, res, next) => {
+export const createCommandeFournisseur: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { body } = createCommandeSchema.parse({ body: req.body });
     const audit = buildAuditContext(req);
     const out = await createCommandeFournisseurSVC(
-      { ...body, idempotency_key: idempotencyKeyFrom(req, body.idempotency_key) },
-      audit
+      {
+        ...body,
+        idempotency_key: idempotencyKeyFrom(req, body.idempotency_key),
+      },
+      audit,
     );
     res.status(out.idempotent_replay ? 200 : 201).json(out);
   } catch (err) {
@@ -170,7 +434,11 @@ export const createCommandeFournisseur: RequestHandler = async (req, res, next) 
   }
 };
 
-export const updateCommandeFournisseur: RequestHandler = async (req, res, next) => {
+export const updateCommandeFournisseur: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const { body } = updateCommandeSchema.parse({ body: req.body });
@@ -210,7 +478,12 @@ export const deleteLigne: RequestHandler = async (req, res, next) => {
     const { params } = ligneIdParamSchema.parse({ params: req.params });
     const parsed = deleteLigneSchema.parse({ body: req.body ?? {} });
     const audit = buildAuditContext(req);
-    await deleteLigneSVC(params.id, params.ligneId, parsed.body?.expected_updated_at, audit);
+    await deleteLigneSVC(
+      params.id,
+      params.ligneId,
+      parsed.body?.expected_updated_at,
+      audit,
+    );
     res.status(204).send();
   } catch (err) {
     next(err);
@@ -228,7 +501,11 @@ export const reorderLignes: RequestHandler = async (req, res, next) => {
   }
 };
 
-export const transitionCommandeFournisseur: RequestHandler = async (req, res, next) => {
+export const transitionCommandeFournisseur: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const { body } = transitionSchema.parse({ body: req.body });
@@ -236,9 +513,12 @@ export const transitionCommandeFournisseur: RequestHandler = async (req, res, ne
     res.json(
       await transitionCommandeFournisseurSVC(
         params.id,
-        { ...body, idempotency_key: idempotencyKeyFrom(req, body.idempotency_key) },
-        audit
-      )
+        {
+          ...body,
+          idempotency_key: idempotencyKeyFrom(req, body.idempotency_key),
+        },
+        audit,
+      ),
     );
   } catch (err) {
     next(err);
@@ -249,7 +529,12 @@ export const accuseReception: RequestHandler = async (req, res, next) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const { body } = accuseSchema.parse({ body: req.body });
-    if(body.lignes?.length && !includePricesFor(req))throw new HttpError(403,"PRICES_FORBIDDEN","L’accès aux prix est requis pour confirmer les montants de l’AR.");
+    if (body.lignes?.length && !includePricesFor(req))
+      throw new HttpError(
+        403,
+        "PRICES_FORBIDDEN",
+        "L’accès aux prix est requis pour confirmer les montants de l’AR.",
+      );
     const audit = buildAuditContext(req);
     res.json(await accuseReceptionSVC(params.id, body, audit));
   } catch (err) {
@@ -264,7 +549,14 @@ export const generateDocument: RequestHandler = async (req, res, next) => {
     const audit = buildAuditContext(req);
     res
       .status(201)
-      .json(await generateDocumentSVC(params.id, parsed.body?.motif_revision, parsed.body?.expected_updated_at, audit));
+      .json(
+        await generateDocumentSVC(
+          params.id,
+          parsed.body?.motif_revision,
+          parsed.body?.expected_updated_at,
+          audit,
+        ),
+      );
   } catch (err) {
     next(err);
   }
@@ -283,46 +575,85 @@ export const listOfficialDocuments: RequestHandler = async (req, res, next) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     res.json(await listSupplierPoOfficialDocumentsSVC(params.id));
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
 export const queueOfficialDocument: RequestHandler = async (req, res, next) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
-    const { body } = officialDocumentRequestSchema.parse({ body: req.body ?? {} });
+    const { body } = officialDocumentRequestSchema.parse({
+      body: req.body ?? {},
+    });
     const key = idempotencyKeyFrom(req);
-    if (!key) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une clé d'idempotence est requise.");
+    if (!key)
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "Une clé d'idempotence est requise.",
+      );
     const audit = buildAuditContext(req);
-    const result = await queueSupplierPoOfficialDocumentSVC(params.id, key, audit, body);
+    const result = await queueSupplierPoOfficialDocumentSVC(
+      params.id,
+      key,
+      audit,
+      body,
+    );
     res.status(201).json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
 export const getOfficialDocument: RequestHandler = async (req, res, next) => {
   try {
-    const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
-    const result = await getSupplierPoOfficialDocumentSVC(params.id, params.documentId);
-    if (!result) throw new HttpError(404, "OFFICIAL_DOCUMENT_NOT_FOUND", "Document officiel introuvable.");
+    const { params } = officialDocumentIdParamSchema.parse({
+      params: req.params,
+    });
+    const result = await getSupplierPoOfficialDocumentSVC(
+      params.id,
+      params.documentId,
+    );
+    if (!result)
+      throw new HttpError(
+        404,
+        "OFFICIAL_DOCUMENT_NOT_FOUND",
+        "Document officiel introuvable.",
+      );
     res.json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
 function sendOfficialPdf(disposition: "inline" | "attachment"): RequestHandler {
   return async (req, res, next) => {
     try {
-      const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
+      const { params } = officialDocumentIdParamSchema.parse({
+        params: req.params,
+      });
       const actorId = buildAuditContext(req).user_id;
       const file = await readSupplierPoOfficialDocumentSVC(
-        params.id, params.documentId, actorId,
-        disposition === "inline" ? "AUTHORITATIVE_PDF_PREVIEWED" : "AUTHORITATIVE_PDF_DOWNLOADED"
+        params.id,
+        params.documentId,
+        actorId,
+        disposition === "inline"
+          ? "AUTHORITATIVE_PDF_PREVIEWED"
+          : "AUTHORITATIVE_PDF_DOWNLOADED",
       );
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Length", String(file.bytes.byteLength));
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "private, no-store");
-      res.setHeader("Content-Disposition", `${disposition}; filename="${file.filename}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `${disposition}; filename="${file.filename}"`,
+      );
       res.send(file.bytes);
-    } catch (err) { next(err); }
+    } catch (err) {
+      next(err);
+    }
   };
 }
 
@@ -331,10 +662,18 @@ export const downloadOfficialDocument = sendOfficialPdf("attachment");
 
 export const printOfficialDocument: RequestHandler = async (req, res, next) => {
   try {
-    const { params } = officialDocumentIdParamSchema.parse({ params: req.params });
-    await recordSupplierPoOfficialPrintSVC(params.id, params.documentId, buildAuditContext(req).user_id);
+    const { params } = officialDocumentIdParamSchema.parse({
+      params: req.params,
+    });
+    await recordSupplierPoOfficialPrintSVC(
+      params.id,
+      params.documentId,
+      buildAuditContext(req).user_id,
+    );
     res.status(204).send();
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
 };
 
 export const simulateTotaux: RequestHandler = async (req, res, next) => {
@@ -360,8 +699,17 @@ export const confirmPropositions: RequestHandler = async (req, res, next) => {
     const { body } = propositionsConfirmSchema.parse({ body: req.body });
     const audit = buildAuditContext(req);
     const key = idempotencyKeyFrom(req, body.idempotency_key);
-    if (!key) throw new HttpError(400, "IDEMPOTENCY_KEY_REQUIRED", "Une clé d'idempotence est requise.");
-    res.status(201).json(await confirmPropositionsSVC({ ...body, idempotency_key: key }, audit));
+    if (!key)
+      throw new HttpError(
+        400,
+        "IDEMPOTENCY_KEY_REQUIRED",
+        "Une clé d'idempotence est requise.",
+      );
+    res
+      .status(201)
+      .json(
+        await confirmPropositionsSVC({ ...body, idempotency_key: key }, audit),
+      );
   } catch (err) {
     next(err);
   }
@@ -380,12 +728,18 @@ export const resyncReceptions: RequestHandler = async (req, res, next) => {
   }
 };
 
-export const duplicateCommandeFournisseur: RequestHandler = async (req, res, next) => {
+export const duplicateCommandeFournisseur: RequestHandler = async (
+  req,
+  res,
+  next,
+) => {
   try {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const parsed = duplicateSchema.parse({ body: req.body ?? {} });
     const audit = buildAuditContext(req);
-    res.status(201).json(await duplicateAsDraftSVC(params.id, parsed.body?.note, audit));
+    res
+      .status(201)
+      .json(await duplicateAsDraftSVC(params.id, parsed.body?.note, audit));
   } catch (err) {
     next(err);
   }

@@ -4,7 +4,7 @@ import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 import { QUALITY_LEVELS } from "../../client/validators/client.validators"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const pieceTechniqueStatutSchema = z.enum([
   "DRAFT",
@@ -183,6 +183,17 @@ const achatInputSchema = z.object({
   designation_3: z.string().optional().nullable(),
 })
 
+function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: string | null; quantite_pieces?: number | null; longueur_mm?: number | null }, ctx: z.RefinementCtx, path: Array<string | number> = []) {
+  if (achat.type_achat !== "MATIERE" || achat.quantite_pieces == null) return
+  if (!Number.isFinite(achat.quantite_pieces) || achat.quantite_pieces <= 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, "quantite_pieces"], message: "Le rendement pièces par brut doit être strictement positif." })
+  }
+  const linearUnit = ["MM", "M"].includes(achat.unite_prix?.trim().toUpperCase() ?? "")
+  if (linearUnit && (achat.longueur_mm == null || !Number.isFinite(achat.longueur_mm) || achat.longueur_mm <= 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, "longueur_mm"], message: "La longueur de coupe est requise avec un rendement pièces par brut." })
+  }
+}
+
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
     article_id: uuid.optional().nullable(),
@@ -226,6 +237,7 @@ export const createPieceTechniqueSchema = z.object({
     if (body.plan_reference && !body.sans_indice && !body.indice_externe) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["indice_externe"], message: "Indice externe requis ou cochez Sans indice" })
     }
+    body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
   }),
 })
 
@@ -291,6 +303,7 @@ export type AddBomLineBodyDTO = z.infer<typeof addBomLineSchema>["body"]
 export const updateBomLineSchema = z.object({
   body: bomLineInputSchema.partial().extend({
     rang: z.coerce.number().int().min(1).optional(),
+    quantite: z.coerce.number().positive().optional(),
   }),
 })
 
@@ -311,19 +324,31 @@ export const addOperationSchema = z.object({
 export type AddOperationBodyDTO = z.infer<typeof addOperationSchema>["body"]
 
 export const updateOperationSchema = z.object({
-  body: operationInputSchema.partial(),
+  body: operationInputSchema.partial().extend({
+    phase: z.coerce.number().int().min(0).optional(),
+    prix: z.coerce.number().min(0).optional(),
+    coef: z.coerce.number().min(0).optional(),
+    tp: z.coerce.number().min(0).optional(),
+    tf_unit: z.coerce.number().min(0).optional(),
+    qte: z.coerce.number().min(0).optional(),
+    taux_horaire: z.coerce.number().min(0).optional(),
+  }),
 })
 
 export type UpdateOperationBodyDTO = z.infer<typeof updateOperationSchema>["body"]
 
 export const addAchatSchema = z.object({
-  body: achatInputSchema,
+  body: achatInputSchema.superRefine((achat, ctx) => validateMaterialCutting(achat, ctx)),
 })
 
 export type AddAchatBodyDTO = z.infer<typeof addAchatSchema>["body"]
 
 export const updateAchatSchema = z.object({
-  body: achatInputSchema.partial(),
+  body: achatInputSchema.partial().extend({
+    type_achat: z.enum(["MATIERE", "CONSOMMABLE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"]).optional(),
+    quantite: z.coerce.number().min(0).optional(),
+    tva_achat: z.coerce.number().min(0).max(100).optional(),
+  }),
 })
 
 export type UpdateAchatBodyDTO = z.infer<typeof updateAchatSchema>["body"]

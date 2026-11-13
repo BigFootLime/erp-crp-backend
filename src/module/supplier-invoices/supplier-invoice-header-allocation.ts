@@ -4,14 +4,14 @@ import { z } from 'zod';
 export const HEADER_ALLOCATION_METHOD = 'PROPORTIONAL_NET_V1' as const;
 const money = z.string().regex(/^-?\d{1,16}(?:\.\d{1,2})?$/);
 const factsSchema = z.object({
-  invoice_id: z.string().uuid(), currency: z.string().regex(/^[A-Z]{3}$/),
+  invoice_id: z.string().guid(), currency: z.string().regex(/^[A-Z]{3}$/),
   document_type: z.enum(['INVOICE','CREDIT_NOTE']), total_ht: money,
-  match_version_id: z.string().uuid().nullable(), match_purchase_order_id: z.string().uuid().nullable(),
+  match_version_id: z.string().guid().nullable(), match_purchase_order_id: z.string().guid().nullable(),
   match_outcome: z.string().nullable(), supplier_matches: z.boolean(),
-  lines: z.array(z.object({ id: z.string().uuid(), position: z.number().int().positive(), net_ht: money,
-    purchase_order_line_id: z.string().uuid().nullable() })).min(1).max(2000),
-  artifacts:z.array(z.object({id:z.string().uuid(),sha256:z.string().regex(/^[a-f0-9]{64}$/),
-    document_id:z.string().uuid().nullable(),version_id:z.string().uuid().nullable(),
+  lines: z.array(z.object({ id: z.string().guid(), position: z.number().int().positive(), net_ht: money,
+    purchase_order_line_id: z.string().guid().nullable() })).min(1).max(2000),
+  artifacts:z.array(z.object({id:z.string().guid(),sha256:z.string().regex(/^[a-f0-9]{64}$/),
+    document_id:z.string().guid().nullable(),version_id:z.string().guid().nullable(),
     scan_status:z.string(),archived_at:z.string().nullable()})).max(2000),
 });
 export type InvoiceHeaderFacts = z.infer<typeof factsSchema>;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date (expected YYYY-MM-DD)");
 
 function parseBoolean(value: unknown): boolean | undefined {
@@ -76,6 +76,8 @@ export const patchEquipementSchema = z.object({
     note: z.string().trim().min(1).max(2000).optional().nullable(),
     patch: z
       .object({
+        // Les anciens écrans renvoient le code courant dans le payload complet.
+        // Le dépôt le compare sous verrou et n'autorise jamais son changement.
         code: z.string().trim().min(1).max(80).optional().nullable(),
         designation: z.string().trim().min(1).max(400).optional(),
         categorie: z.string().trim().min(1).max(120).optional().nullable(),

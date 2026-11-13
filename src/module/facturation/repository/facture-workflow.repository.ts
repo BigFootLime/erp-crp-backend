@@ -131,6 +131,7 @@ async function assertInvoiceDeliveryQuality(
 }
 
 type DeliverySourceRow = {
+  source_type: "DELIVERY_LINE" | "EXTERNAL_FULFILMENT_RECEIPT_LINE";
   source_id: string;
   source_line_id: string;
   delivery_number: string;
@@ -239,6 +240,7 @@ function listWhere(filters: EligibleSourcesQueryDTO): { sql: string; values: unk
 
 const deliverySourceSelect = (ownInvoiceSql = "NULL") => `
   SELECT
+    'DELIVERY_LINE'::text AS source_type,
     bl.id::text AS source_id,
     bll.id::text AS source_line_id,
     bl.numero AS delivery_number,
@@ -289,6 +291,52 @@ const deliverySourceSelect = (ownInvoiceSql = "NULL") => `
   ) credited ON TRUE
 `;
 const DELIVERY_SOURCE_SELECT = deliverySourceSelect();
+
+/** Supplier receipts are buyer-side evidence only.  They deliberately do not
+ * manufacture a local stock BL: the linked dropship order line supplies the
+ * EC's customer, retail price and VAT, while the immutable receipt supplies
+ * the shipped quantity. */
+const externalFulfilmentSourceSelect = (ownInvoiceSql = "NULL", lock = false) => `
+  SELECT
+    'EXTERNAL_FULFILMENT_RECEIPT_LINE'::text AS source_type,
+    receipt_line.message_id::text AS source_id,
+    concat(receipt_line.message_id::text, ':', receipt_line.line_no::text) AS source_line_id,
+    receipt.seller_delivery_number AS delivery_number,
+    'SHIPPED'::text AS delivery_status,
+    command.client_id,
+    customer.company_name AS client_name,
+    COALESCE(customer.blocked, FALSE) AS client_blocked,
+    command.id::text AS commande_id,
+    NULL::text AS affaire_id,
+    order_line.id::text AS commande_line_id,
+    order_line.designation,
+    order_line.code_piece,
+    order_line.unite AS unit,
+    receipt_line.quantity::numeric(18,3)::text AS quantity_source,
+    COALESCE(invoiced.quantity, 0)::numeric(18,3)::text AS quantity_already_invoiced,
+    '0.000'::text AS quantity_already_credited,
+    order_line.prix_unitaire_ht::numeric(18,4)::text AS unit_price_ex_tax,
+    COALESCE(order_line.remise_ligne, 0)::numeric(9,4)::text AS discount_percent,
+    COALESCE(order_line.taux_tva, 0)::numeric(9,4)::text AS tax_rate_percent,
+    concat('DROPSHIP_RECEIPT:', receipt_line.message_id::text, ':', receipt_line.line_no::text,
+      ':ORDER_LINE:', order_line.id::text, ':PRICE:', COALESCE(order_line.prix_unitaire_ht::text, 'NULL'),
+      ':DISCOUNT:', COALESCE(order_line.remise_ligne::text, 'NULL'), ':VAT:', COALESCE(order_line.taux_tva::text, 'NULL')) AS pricing_version
+  FROM public.cerp_intercompany_external_fulfilment_receipt_lines receipt_line
+  JOIN public.cerp_intercompany_external_fulfilment_receipts receipt ON receipt.message_id = receipt_line.message_id
+  JOIN public.commande_ligne order_line ON order_line.id = receipt_line.buyer_sales_order_line_id
+  JOIN public.commande_client command ON command.id = order_line.commande_id
+  JOIN public.clients customer ON customer.client_id = command.client_id
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(source.quantity_consumed), 0) AS quantity
+    FROM public.facture_source_allocations source
+    WHERE source.source_type = 'EXTERNAL_FULFILMENT_RECEIPT_LINE'
+      AND source.source_line_id = concat(receipt_line.message_id::text, ':', receipt_line.line_no::text)
+      AND source.allocation_status IN ('DRAFT','CONSUMED')
+      AND (${ownInvoiceSql}::bigint IS NULL OR source.facture_id <> ${ownInvoiceSql})
+  ) invoiced ON TRUE
+  WHERE command.fulfilment_mode = 'SUPPLIER_DROPSHIP'
+  ${lock ? "FOR UPDATE OF receipt_line, receipt, order_line, command" : ""}
+`;
 
 function sourceBlockers(
   row: DeliverySourceRow,
@@ -343,7 +391,7 @@ function mapEligibleSource(
     parseDecimal(row.quantity_source, 3, "Quantité source") -
     parseDecimal(row.quantity_already_invoiced, 3, "Quantité facturée");
   return {
-    source_type: "DELIVERY_LINE",
+    source_type: row.source_type,
     source_id: row.source_id,
     source_line_id: row.source_line_id,
     delivery_number: row.delivery_number,
@@ -455,7 +503,25 @@ async function loadSelectedDeliverySources(
     `,
     [sourceLineIds, ownInvoiceId ?? null]
   );
-  return result.rows;
+  // Keep older read-only fixtures/adapters compatible while the SQL projection
+  // gains an explicit discriminator for the external receipt family.
+  return result.rows.map((row) => ({ ...row, source_type: row.source_type ?? "DELIVERY_LINE" }));
+}
+
+async function loadSelectedExternalFulfilmentSources(
+  queryer: DbQueryer,
+  sourceLineIds: string[],
+  lock: boolean,
+  ownInvoiceId?: number
+): Promise<DeliverySourceRow[]> {
+  if (!sourceLineIds.length) return [];
+  const result = await queryer.query<DeliverySourceRow>(
+    `SELECT * FROM (${externalFulfilmentSourceSelect("$2", lock)}) external_source
+      WHERE external_source.source_line_id = ANY($1::text[])
+      ORDER BY external_source.source_line_id`,
+    [sourceLineIds, ownInvoiceId ?? null],
+  );
+  return result.rows.map((row) => ({ ...row, source_type: "EXTERNAL_FULFILMENT_RECEIPT_LINE" }));
 }
 
 function assertDueDates(preview: FacturePreview): void {
@@ -484,13 +550,19 @@ async function buildFacturePreview(
   const sourceLineIds = input.sources
     .filter((source) => source.source_type === "DELIVERY_LINE")
     .map((source) => source.source_line_id);
-  if (new Set(sourceLineIds).size !== sourceLineIds.length) {
+  const externalSourceLineIds = input.sources
+    .filter((source) => source.source_type === "EXTERNAL_FULFILMENT_RECEIPT_LINE")
+    .map((source) => source.source_line_id);
+  if (new Set(input.sources.filter(source => source.source_type !== "DEPOSIT").map(source => `${source.source_type}:${source.source_line_id}`)).size !== input.sources.filter(source => source.source_type !== "DEPOSIT").length) {
     throw new HttpError(422, "DUPLICATE_SOURCE_LINE", "Une ligne source ne peut apparaître qu'une fois.");
   }
   const policy = await loadActiveBillingPolicy(queryer);
-  const rows = await loadSelectedDeliverySources(queryer, sourceLineIds, lock, invoiceId);
+  const rows = [
+    ...await loadSelectedDeliverySources(queryer, sourceLineIds, lock, invoiceId),
+    ...await loadSelectedExternalFulfilmentSources(queryer, externalSourceLineIds, lock, invoiceId),
+  ];
   const billingAffairs = await readProformaFinalInvoiceAffairs(queryer, sourceLineIds, input.client_id, invoiceId);
-  const byId = new Map(rows.map((row) => [row.source_line_id, row]));
+  const byId = new Map(rows.map((row) => [`${row.source_type}:${row.source_line_id}`, row]));
   const blockers: FinanceBlocker[] = unsupported.map((source) => ({
     code: "SOURCE_TYPE_NOT_ENABLED",
     message: `${source.source_type} reste désactivé jusqu'à validation Finance de sa règle contractuelle.`,
@@ -502,8 +574,8 @@ async function buildFacturePreview(
   if(new Set(depositSelections.map(source=>source.source_line_id)).size!==depositSelections.length)throw new HttpError(422,'DUPLICATE_SOURCE_LINE',"Une ligne d'acompte ne peut apparaître qu'une fois.");
 
   for (const selection of input.sources) {
-    if (selection.source_type !== "DELIVERY_LINE") continue;
-    const row = byId.get(selection.source_line_id);
+    if (selection.source_type !== "DELIVERY_LINE" && selection.source_type !== "EXTERNAL_FULFILMENT_RECEIPT_LINE") continue;
+    const row = byId.get(`${selection.source_type}:${selection.source_line_id}`);
     if (!row || row.source_id !== selection.source_id) {
       blockers.push({
         code: "SOURCE_NOT_FOUND",
@@ -557,7 +629,7 @@ async function buildFacturePreview(
       taxRatePercent: pricing.tax_rate_percent,
     });
     lines.push({
-      source_type: "DELIVERY_LINE",
+      source_type: row.source_type,
       source_id: row.source_id,
       source_line_id: row.source_line_id,
       designation: row.designation,
@@ -1148,7 +1220,7 @@ async function savedPreviewInput(client: PoolClient, factureId: number): Promise
     );
   }
   const sources = await client.query<{
-    source_type: "DELIVERY_LINE" | "MILESTONE" | "DEPOSIT";
+    source_type: "DELIVERY_LINE" | "EXTERNAL_FULFILMENT_RECEIPT_LINE" | "MILESTONE" | "DEPOSIT";
     source_id: string;
     source_line_id: string;
     quantity: string;
@@ -1540,7 +1612,7 @@ export async function repoIssueFacture(params: {
       entityId: facture.uuid,
       documentKind: "FINANCE_INVOICE_LEGAL_PDF",
       documentVersion: 1,
-      renderVersion: "finance-legal-issued-v2",
+      renderVersion: "finance-legal-issued-v3",
       idempotencyKey: `finance:facture:${facture.uuid}:legal:${legal.legalNumber}:v1`,
       title: `Facture légale ${legal.legalNumber}`,
       originalName: artifact.fileName,

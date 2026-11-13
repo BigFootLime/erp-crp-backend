@@ -1,5 +1,6 @@
 import pool from "../../../config/database";
 import type { WorklistQuery } from "../validators/production-workbench.validators";
+import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 
 /** One SQL statement gives counters, page and clock the same MVCC snapshot. */
 export async function repoProductionWorklist(input: WorklistQuery) {
@@ -35,9 +36,7 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
       LEFT JOIN public.clients c ON c.client_id=o.client_id
       LEFT JOIN public.ordres_fabrication parent ON parent.id=o.parent_of_id
-      LEFT JOIN public.piece_technique_versions v ON v.id=COALESCE(o.piece_technique_version_id,
-        NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-        NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid)
+      LEFT JOIN public.piece_technique_versions v ON v.id=${effectivePreparationVersionSql("o")}
       LEFT JOIN public.production_consolidation_allocations coverage ON coverage.source_of_id=o.id AND coverage.state='ACTIVE'
       LEFT JOIN public.production_consolidations producer ON producer.id=coverage.consolidation_id
       LEFT JOIN public.production_consolidations own_group ON own_group.producer_of_id=o.id AND own_group.state='ACTIVE'

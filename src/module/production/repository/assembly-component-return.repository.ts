@@ -15,10 +15,10 @@ import type { AuditContext } from './production.repository';
 import type { AssemblyComponentReturn } from '../validators/assembly-component-consumption.validators';
 
 type Db = Pick<PoolClient, 'query'>;
-const receiptResult = z.object({ ofId: z.number().int().positive(), operationId: z.string().uuid(),
+const receiptResult = z.object({ ofId: z.number().int().positive(), operationId: z.string().guid(),
   assemblyQuantity: z.number().int().positive(), sourceAllocations: z.array(z.object({ sourceOfId: z.number().int().positive(), assemblyQuantity: z.number().int().positive() })).nonempty(),
-  movements: z.array(z.object({ requirementId: z.string().uuid(), sourceOfId: z.number().int().positive(),
-    reservationId: z.string().uuid(), stockMovementId: z.string().uuid(), quantity: z.number().positive() })).nonempty() });
+  movements: z.array(z.object({ requirementId: z.string().guid(), sourceOfId: z.number().int().positive(),
+    reservationId: z.string().guid(), stockMovementId: z.string().guid(), quantity: z.number().positive() })).nonempty() });
 type Withdrawal = { id: string; createdAt: string; result: unknown; returned: boolean };
 type ReturnMovement = { requirementId: string; sourceOfId: string; reservationId: string; stockMovementId: string;
   quantity: number; lotId: string | null; lotCode: string | null; label: string; reservationVersion: number;

@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { z } from "zod";
 import pool from '../../config/database';
 
 import { asyncHandler } from "../../utils/asyncHandler";
@@ -35,6 +36,14 @@ export const list: RequestHandler = asyncHandler(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(await directory.listDirectoryRequests(req, dto.query));
 });
+
+export const companyAccessOptions: RequestHandler = asyncHandler(async (req, res) => {
+  if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");
+  const id = z.string().uuid().parse(req.params.id);
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await directory.listDirectoryRequestCompanyAccessOptions(req, id));
+});
+
 
 export const approve: RequestHandler = asyncHandler(async (req, res) => {
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise.");

@@ -3,6 +3,7 @@ import { generalTermsHandlers } from "../../../shared/commercial-terms/commercia
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { HttpError } from "../../../utils/httpError";
+import { requireSupplierSandbox } from "../../supplier-sandbox/middlewares/supplier-sandbox.middleware";
 import {
   roleHasCommandeFournisseurCapability,
   type CommandeFournisseurCapability,
@@ -23,6 +24,11 @@ import {
   getOfficialDocument,
   getCommandeFournisseur,
   getCommandeFournisseurKpis,
+  listSupplierPromiseExceptions,
+  listInternalTreatmentEstimates,
+  listSupplierSandboxProposals,
+  reviewSupplierSandboxProposal,
+  saveInternalTreatmentEstimate,
   getDocument,
   listCommandesFournisseurs,
   listOfficialDocuments,
@@ -46,13 +52,21 @@ import {
  * re-vérifié dans le repository une fois l'état source connu (pattern affaire #169).
  * Masquer un bouton frontend n'est jamais une autorisation.
  */
-function requireCapability(capability: CommandeFournisseurCapability): RequestHandler {
+function requireCapability(
+  capability: CommandeFournisseurCapability,
+): RequestHandler {
   return (req, _res, next) => {
     if (
       !requestHasGrantedAccountModuleAccess(req) &&
       !roleHasCommandeFournisseurCapability(req.user?.role, capability)
     ) {
-      next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet pas cette action sur les commandes fournisseurs."));
+      next(
+        new HttpError(
+          403,
+          "FORBIDDEN",
+          "Votre rôle ne permet pas cette action sur les commandes fournisseurs.",
+        ),
+      );
       return;
     }
     next();
@@ -62,59 +76,200 @@ function requireCapability(capability: CommandeFournisseurCapability): RequestHa
 /** Garde coarse de transition : la capacité fine est re-vérifiée dans le repo (état connu). */
 const requireAnyTransitionCapability: RequestHandler = (req, _res, next) => {
   const role = req.user?.role;
-  const capabilities: CommandeFournisseurCapability[] = ["submit", "approve", "send", "acknowledge", "cancel", "close"];
-  if (!capabilities.some((cap) => roleHasCommandeFournisseurCapability(role, cap))) {
-    next(new HttpError(403, "FORBIDDEN", "Votre rôle ne permet aucune transition de commande fournisseur."));
+  const capabilities: CommandeFournisseurCapability[] = [
+    "submit",
+    "approve",
+    "send",
+    "acknowledge",
+    "cancel",
+    "close",
+  ];
+  if (
+    !capabilities.some((cap) => roleHasCommandeFournisseurCapability(role, cap))
+  ) {
+    next(
+      new HttpError(
+        403,
+        "FORBIDDEN",
+        "Votre rôle ne permet aucune transition de commande fournisseur.",
+      ),
+    );
     return;
   }
   next();
 };
 
 const router = Router();
-const generalTerms = generalTermsHandlers("commande-fournisseur", "SUPPLIER_PURCHASE_ORDER");
+const generalTerms = generalTermsHandlers(
+  "commande-fournisseur",
+  "SUPPLIER_PURCHASE_ORDER",
+);
 router.get("/:id/general-terms", requireCapability("read"), generalTerms.read);
-router.put("/:id/general-terms", requireCapability("update_draft"), generalTerms.select);
-router.get("/:id/official-documents/:documentId/general-terms", requireCapability("export"), generalTerms.download);
+router.put(
+  "/:id/general-terms",
+  requireCapability("update_draft"),
+  generalTerms.select,
+);
+router.get(
+  "/:id/official-documents/:documentId/general-terms",
+  requireCapability("export"),
+  generalTerms.download,
+);
 
 router.get("/", requireCapability("read"), listCommandesFournisseurs);
 router.get("/kpis", requireCapability("read"), getCommandeFournisseurKpis);
+router.get(
+  "/promise-exceptions",
+  requireCapability("read"),
+  listSupplierPromiseExceptions,
+);
+router.get(
+  "/supplier-sandbox-proposals",
+  requireSupplierSandbox,
+  requireCapability("read"),
+  listSupplierSandboxProposals,
+);
+router.post(
+  "/supplier-sandbox-proposals/:proposalId/review",
+  requireSupplierSandbox,
+  requireCapability("acknowledge"),
+  reviewSupplierSandboxProposal,
+);
 
 router.post("/", requireCapability("create"), createCommandeFournisseur);
 router.post("/totaux/simulate", requireCapability("read"), simulateTotaux);
 
-router.post("/propositions/preview", requireCapability("create"), previewPropositions);
-router.post("/propositions/confirm", requireCapability("create"), confirmPropositions);
+router.post(
+  "/propositions/preview",
+  requireCapability("create"),
+  previewPropositions,
+);
+router.post(
+  "/propositions/confirm",
+  requireCapability("create"),
+  confirmPropositions,
+);
 
 router.get("/:id", requireCapability("read"), getCommandeFournisseur);
-router.get("/:id/qualification", requireCapability("read"), readPurchaseQualification);
-router.get("/:id/open-contracts", requireCapability("read"), requireCapability("prices"), readSupplierOpenContracts);
-router.post("/:id/open-contracts/commands", requireCapability("update_draft"), requireCapability("prices"), commandSupplierOpenContract);
-router.get("/:id/consultations", requireCapability("read"), requireCapability("prices"), readSupplierConsultations);
-router.post("/:id/consultations/commands", requireCapability("update_draft"), requireCapability("prices"), commandSupplierConsultation);
-router.patch("/:id", requireCapability("update_draft"), updateCommandeFournisseur);
+router.get(
+  "/:id/qualification",
+  requireCapability("read"),
+  readPurchaseQualification,
+);
+router.get(
+  "/:id/treatment-estimates",
+  requireCapability("read"),
+  listInternalTreatmentEstimates,
+);
+router.get(
+  "/:id/open-contracts",
+  requireCapability("read"),
+  requireCapability("prices"),
+  readSupplierOpenContracts,
+);
+router.post(
+  "/:id/open-contracts/commands",
+  requireCapability("update_draft"),
+  requireCapability("prices"),
+  commandSupplierOpenContract,
+);
+router.get(
+  "/:id/consultations",
+  requireCapability("read"),
+  requireCapability("prices"),
+  readSupplierConsultations,
+);
+router.post(
+  "/:id/consultations/commands",
+  requireCapability("update_draft"),
+  requireCapability("prices"),
+  commandSupplierConsultation,
+);
+router.patch(
+  "/:id",
+  requireCapability("update_draft"),
+  updateCommandeFournisseur,
+);
 
 router.post("/:id/lignes", requireCapability("update_draft"), addLigne);
-router.post("/:id/lignes/reorder", requireCapability("update_draft"), reorderLignes);
-router.patch("/:id/lignes/:ligneId", requireCapability("update_draft"), updateLigne);
-router.delete("/:id/lignes/:ligneId", requireCapability("update_draft"), deleteLigne);
+router.put(
+  "/:id/lignes/:ligneId/treatment-estimate",
+  requireCapability("acknowledge"),
+  saveInternalTreatmentEstimate,
+);
+router.post(
+  "/:id/lignes/reorder",
+  requireCapability("update_draft"),
+  reorderLignes,
+);
+router.patch(
+  "/:id/lignes/:ligneId",
+  requireCapability("update_draft"),
+  updateLigne,
+);
+router.delete(
+  "/:id/lignes/:ligneId",
+  requireCapability("update_draft"),
+  deleteLigne,
+);
 
-router.post("/:id/transition", requireAnyTransitionCapability, transitionCommandeFournisseur);
+router.post(
+  "/:id/transition",
+  requireAnyTransitionCapability,
+  transitionCommandeFournisseur,
+);
 router.post("/:id/accuse", requireCapability("acknowledge"), accuseReception);
 
 router.post("/:id/documents", requireCapability("send"), generateDocument);
-router.get("/:id/documents/:documentId", requireCapability("read"), getDocument);
+router.get(
+  "/:id/documents/:documentId",
+  requireCapability("read"),
+  getDocument,
+);
 
 // Official generated PDFs live independently from legacy attachments. Export
 // capability is required for every metadata or byte surface because PO prices
 // are commercially sensitive; a foreign UUID resolves as the same 404.
-router.get("/:id/official-documents", requireCapability("export"), listOfficialDocuments);
-router.post("/:id/official-documents", requireCapability("export"), queueOfficialDocument);
-router.get("/:id/official-documents/:documentId", requireCapability("export"), getOfficialDocument);
-router.get("/:id/official-documents/:documentId/preview", requireCapability("export"), previewOfficialDocument);
-router.get("/:id/official-documents/:documentId/download", requireCapability("export"), downloadOfficialDocument);
-router.post("/:id/official-documents/:documentId/print-intents", requireCapability("export"), printOfficialDocument);
+router.get(
+  "/:id/official-documents",
+  requireCapability("export"),
+  listOfficialDocuments,
+);
+router.post(
+  "/:id/official-documents",
+  requireCapability("export"),
+  queueOfficialDocument,
+);
+router.get(
+  "/:id/official-documents/:documentId",
+  requireCapability("export"),
+  getOfficialDocument,
+);
+router.get(
+  "/:id/official-documents/:documentId/preview",
+  requireCapability("export"),
+  previewOfficialDocument,
+);
+router.get(
+  "/:id/official-documents/:documentId/download",
+  requireCapability("export"),
+  downloadOfficialDocument,
+);
+router.post(
+  "/:id/official-documents/:documentId/print-intents",
+  requireCapability("export"),
+  printOfficialDocument,
+);
 
-router.post("/:id/receptions/resync", requireCapability("read"), resyncReceptions);
-router.post("/:id/duplicate", requireCapability("create"), duplicateCommandeFournisseur);
+router.post(
+  "/:id/receptions/resync",
+  requireCapability("read"),
+  resyncReceptions,
+);
+router.post(
+  "/:id/duplicate",
+  requireCapability("create"),
+  duplicateCommandeFournisseur,
+);
 
 export default router;

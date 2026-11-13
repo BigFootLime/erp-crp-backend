@@ -27,7 +27,7 @@ import {
   webhookSubscriptionResponseSchema,
 } from "./webhook.validators";
 
-const idempotencySchema = z.string().uuid();
+const idempotencySchema = z.string().guid();
 
 function actor(req: Request) {
   const userId = req.user?.id;

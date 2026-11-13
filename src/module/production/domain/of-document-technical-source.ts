@@ -36,6 +36,11 @@ export type WorkshopDocumentMaterial = {
   requiredQuantity: number | null; unit: string | null; grade: string | null; condition: string | null;
   dimensions: Record<string, number>; certificates: string[]; manualChecks: string[];
   debitPerBlank: number | null; form: string | null; confirmed: boolean;
+  cutting?: WorkshopDocumentMaterialCutting | null;
+};
+export type WorkshopDocumentMaterialCutting = {
+  longueurCoupeMm: number | null; piecesParBrut: number; brutsParPiece: number;
+  nombreBruts: number; longueurTotaleMm: number | null;
 };
 export type WorkshopDocumentMaterialDebit = {
   phase: number; lot: string; bar: string | null; unit: string | null;
@@ -116,10 +121,36 @@ export function ofDocumentExecution(row: { status: string; good: unknown; scrap:
   return { statut: row.status, bonnes: count(row.good), rebuts: count(row.scrap), attenteControle: count(row.pending), reprises: count(row.rework) };
 }
 
+/** Derives whole physical blanks from the PT's canonical pieces-per-blank yield. */
+export function ofDocumentMaterialCutting(purchase: JsonRecord, launched: unknown): WorkshopDocumentMaterialCutting | null {
+  const longueurCoupeMm = numeric(purchase.longueur_mm);
+  const piecesParBrut = numeric(purchase.quantite_pieces);
+  const quantity = numeric(launched);
+  if (piecesParBrut === null || piecesParBrut <= 0 || quantity === null || quantity < 0 || !Number.isSafeInteger(quantity)) return null;
+  const nombreBruts = Math.ceil(quantity / piecesParBrut - 1e-9);
+  return { longueurCoupeMm, piecesParBrut, brutsParPiece: 1 / piecesParBrut,
+    nombreBruts, longueurTotaleMm: longueurCoupeMm !== null && longueurCoupeMm > 0 ? Math.round(nombreBruts * longueurCoupeMm * 1000) / 1000 : null };
+}
+
 /** A stock debit step is not necessarily the physical blank length: do not remove an implicit kerf or assume one piece per blank. */
 export function ofDocumentModernDebit(materials: readonly WorkshopDocumentMaterial[]): Partial<OfDocumentDecoupe> {
+  // The legacy `decoupe` block is singular.  New workshop evidence is per
+  // material, so never silently select one line when several materials exist.
+  if (materials.length !== 1) return {};
   const material = materials[0];
   if (!material) return {};
+  if (material.cutting) return {
+    unite: material.unit,
+    longueurBrutMm: material.cutting.longueurCoupeMm,
+    longueurCoupeMm: material.cutting.longueurCoupeMm,
+    nombreBruts: material.cutting.nombreBruts,
+    piecesParBrut: material.cutting.piecesParBrut,
+    brutsParPiece: material.cutting.brutsParPiece,
+    longueurTotaleMm: material.cutting.longueurTotaleMm,
+    methodeCalcul: material.cutting.longueurCoupeMm === null
+      ? `Nombre de bruts calculé : ${material.cutting.nombreBruts}. Longueur de coupe à renseigner.`
+      : `Longueur totale = longueur de coupe (${material.cutting.longueurCoupeMm} mm) x nombre de bruts (${material.cutting.nombreBruts}).`,
+  };
   return {
     unite: material.unit,
     longueurTotaleMm: material.confirmed && material.unit?.toLowerCase() === "mm" ? material.requiredQuantity : null,

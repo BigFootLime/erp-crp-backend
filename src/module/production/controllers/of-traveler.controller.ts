@@ -30,7 +30,7 @@ export const listOfTravelers = asyncHandler(async (req, res) => {
 export const issueOfTraveler = asyncHandler(async (req, res) => {
   const id = await scope(req),
     key = req.get("Idempotency-Key")?.trim() ?? "";
-  if (!z.string().uuid().safeParse(key).success)
+  if (!z.string().guid().safeParse(key).success)
     throw new HttpError(
       400,
       "IDEMPOTENCY_KEY_REQUIRED",
@@ -51,7 +51,7 @@ export const issueOfTraveler = asyncHandler(async (req, res) => {
 const send = (download: boolean) =>
   asyncHandler(async (req, res) => {
     const id = await scope(req),
-      documentId = z.string().uuid().parse(req.params.documentId);
+      documentId = z.string().guid().parse(req.params.documentId);
     const file = await service.readOfTraveler(
       id,
       documentId,
@@ -70,7 +70,7 @@ export const previewOfTraveler = send(false);
 export const downloadOfTraveler = send(true);
 export const printOfTraveler = asyncHandler(async (req, res) => {
   const id = await scope(req),
-    documentId = z.string().uuid().parse(req.params.documentId);
+    documentId = z.string().guid().parse(req.params.documentId);
   await service.printOfTraveler(id, documentId, buildAuditContext(req).user_id);
   res.status(204).send();
 });

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { crmClientIdSchema } from "../../client/validators/client-crm.validators";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const productionReferenceListQuerySchema = z.object({
   q: z.string().trim().max(120).optional(),

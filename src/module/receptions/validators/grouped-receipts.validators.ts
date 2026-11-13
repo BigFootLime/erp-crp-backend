@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { receivedMaterialBarsSchema } from '../../stock/validators/material-bars.validators';
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-export const expectedReceiptsQuerySchema=z.object({q:z.string().trim().max(200).optional(),orderId:z.string().uuid().optional(),orderCode:z.string().trim().max(100).optional(),supplierId:z.string().uuid().optional(),supplierName:z.string().trim().max(150).optional(),category:z.string().trim().max(60).optional(),ofId:z.coerce.number().int().positive().optional(),ofNumber:z.string().trim().max(100).optional(),dateFrom:date.optional(),dateTo:date.optional(),partial:z.enum(['true','false']).optional(),page:z.coerce.number().int().positive().default(1),pageSize:z.coerce.number().int().min(1).max(100).default(30)});
-export const prepareGroupedReceiptSchema=z.object({idempotencyKey:z.string().uuid(),supplierId:z.string().uuid(),reference:z.string().trim().min(1).max(120),date}).strict();
+export const expectedReceiptsQuerySchema=z.object({q:z.string().trim().max(200).optional(),orderId:z.string().guid().optional(),orderCode:z.string().trim().max(100).optional(),supplierId:z.string().guid().optional(),supplierName:z.string().trim().max(150).optional(),category:z.string().trim().max(60).optional(),ofId:z.coerce.number().int().positive().optional(),ofNumber:z.string().trim().max(100).optional(),dateFrom:date.optional(),dateTo:date.optional(),partial:z.enum(['true','false']).optional(),page:z.coerce.number().int().positive().default(1),pageSize:z.coerce.number().int().min(1).max(100).default(30)});
+export const prepareGroupedReceiptSchema=z.object({idempotencyKey:z.string().guid(),supplierId:z.string().guid(),reference:z.string().trim().min(1).max(120),date}).strict();
 const quantity=z.number().positive().max(999999999).refine(v=>Math.abs(v*1000-Math.round(v*1000))<0.000001,'Trois décimales maximum.');
-const destination=z.object({magasinId:z.string().uuid(),emplacementId:z.number().int().positive()});
-export const confirmGroupedReceiptSchema=z.object({idempotencyKey:z.string().uuid(),
-  lines:z.array(z.object({lineId:z.string().uuid(),expectedVersion:z.string().min(1),quantity,destination:destination.nullable(),supplierLotCode:z.string().trim().max(120).nullable(),
+const destination=z.object({magasinId:z.string().guid(),emplacementId:z.number().int().positive()});
+export const confirmGroupedReceiptSchema=z.object({idempotencyKey:z.string().guid(),
+  lines:z.array(z.object({lineId:z.string().guid(),expectedVersion:z.string().min(1),quantity,destination:destination.nullable(),supplierLotCode:z.string().trim().max(120).nullable(),
     materialBars:receivedMaterialBarsSchema.optional(),
     packs:z.array(z.object({quantity,supplierLotCode:z.string().trim().max(120).nullable(),materialBars:receivedMaterialBarsSchema.optional()}).strict()).max(200).default([]),overReceiptReason:z.string().trim().max(1000).nullable()
   }).strict()).min(1).max(100)

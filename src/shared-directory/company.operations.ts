@@ -13,7 +13,7 @@ export function mountDirectoryCompany(app:Express,db:Pool,wrap:Wrap,authorityId:
   const body=auth.parse(req.body);z.object({}).strict().parse(body.input);await validateDirectorySession(db,req.directoryCaller!,body.directory_session);res.json(await readSetupCompanies());
  }));
  app.post('/internal/directory/company-save',wrap(async(req,res)=>{
-  const body=auth.parse(req.body),input=z.object({company:companySchema,key:z.string().uuid()}).strict().parse(body.input);
+  const body=auth.parse(req.body),input=z.object({company:companySchema,key:z.string().guid()}).strict().parse(body.input);
   const actor=await validateDirectorySession(db,req.directoryCaller!,body.directory_session);await requireDirectoryCompanyConfiguration(db,actor,authorityId,await keys(),transport);
   res.json(await saveSetupCompany(input.company,actor.source_user_id,input.key));
  }));

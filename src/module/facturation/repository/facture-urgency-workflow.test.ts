@@ -59,6 +59,23 @@ describe('urgency fee in the canonical invoice workflow',()=>{
   it('does not accept caller-defined urgency prices as input sources',()=>{
     expect(facturePreviewBodySchema.safeParse({...input,sources:[{source_type:'ORDER_CHARGE',source_id:'10',source_line_id:charge.id,quantity:'1'}]}).success).toBe(false);
   });
+  it('builds an EC customer invoice draft from a signed external receipt line at the local retail price',async()=>{
+    const receiptInput=facturePreviewBodySchema.parse({...input,sources:[{
+      source_type:'EXTERNAL_FULFILMENT_RECEIPT_LINE',source_id:'11111111-1111-4111-8111-111111111111',
+      source_line_id:'11111111-1111-4111-8111-111111111111:1',quantity:'2.000',
+    }]});
+    mocks.query.mockImplementation(async(sql:string,values:unknown[]=[])=>{
+      if(sql.includes('FROM public.finance_billing_policies'))return {rows:[{policy_version:'1',legal_entity_code:'1',eligible_delivery_statuses:['SHIPPED'],active:true}]};
+      if(sql.includes('cerp_intercompany_external_fulfilment_receipt_lines'))return {rows:[{source_id:receiptInput.sources[0].source_id,source_line_id:receiptInput.sources[0].source_line_id,commande_id:'10',affaire_id:null,delivery_status:'SHIPPED',client_id:'C1',client_blocked:false,commande_line_id:'1',designation:'Pièce EC',code_piece:'EC-1',unit:'u',quantity_source:'2.000',quantity_already_invoiced:'0.000',unit_price_ex_tax:'42.0000',discount_percent:'0.0000',tax_rate_percent:'20.0000',pricing_version:'receipt-price'}]};
+      if(sql.includes('FROM public.delivery_urgency_order_charges'))return {rows:[]};
+      if(sql.includes('buyer_siren'))return {rows:[{buyer_siren:'987654321',delivery_address:null,buyer_electronic_address:{scheme:'0225',value:'buyer',directory_entry_id:'b',verified_at:'2026-10-01'},seller_electronic_address:{scheme:'0225',value:'seller',directory_entry_id:'s',verified_at:'2026-10-01'}}]};
+      return {rows:[]};
+    });
+    const preview=await repoPreviewFacture(receiptInput);
+    expect(preview.blockers).toEqual([]);
+    expect(preview.lines[0]).toMatchObject({source_type:'EXTERNAL_FULFILMENT_RECEIPT_LINE',unit_price_ex_tax:'42.0000',quantity:'2.000'});
+    expect(preview.totals.total_ex_tax).toBe('84.00');
+  });
   it('reads a preview in one read-only snapshot and releases the connection',async()=>{
     await repoPreviewFacture(input);
     expect(mocks.query.mock.calls[0][0]).toBe('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');

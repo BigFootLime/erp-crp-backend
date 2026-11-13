@@ -11,13 +11,13 @@ function emptyStringToNull(value: unknown) {
 }
 
 export const productionGroupIdParamSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
 });
 
 export const listProductionGroupsQuerySchema = z.object({
   q: z.string().optional(),
   client_id: z.string().optional(),
-  piece_technique_id: z.string().uuid().optional(),
+  piece_technique_id: z.string().guid().optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(200).optional().default(20),
   sortBy: z.enum(["updated_at", "code"]).optional().default("updated_at"),
@@ -30,7 +30,7 @@ export const createProductionGroupBodySchema = z
   .object({
     code: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(120)).optional(),
     client_id: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(120)).optional().nullable(),
-    piece_technique_id: z.preprocess(emptyStringToNull, z.string().uuid()).optional().nullable(),
+    piece_technique_id: z.preprocess(emptyStringToNull, z.string().guid()).optional().nullable(),
     piece_code: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(200)).optional().nullable(),
     piece_label: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(1000)).optional().nullable(),
     description: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(20000)).optional().nullable(),
@@ -43,7 +43,7 @@ export type CreateProductionGroupBodyDTO = z.infer<typeof createProductionGroupB
 export const updateProductionGroupBodySchema = z
   .object({
     client_id: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(120)).optional().nullable(),
-    piece_technique_id: z.preprocess(emptyStringToNull, z.string().uuid()).optional().nullable(),
+    piece_technique_id: z.preprocess(emptyStringToNull, z.string().guid()).optional().nullable(),
     piece_code: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(200)).optional().nullable(),
     piece_label: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(1000)).optional().nullable(),
     description: z.preprocess(emptyStringToNull, z.string().trim().min(1).max(20000)).optional().nullable(),

@@ -6,7 +6,7 @@ import { buildAuditContext } from '../../production/controllers/production.contr
 import { consumableRights } from '../../production/controllers/consumable-procurement.controller';
 import { getConsumableSupply,resolveConsumableScan,replenishConsumable,depleteConsumablePack } from '../repository/consumable-supply.repository';
 import { consumableDepletionSchema,consumableReplenishmentSchema } from '../validators/consumable-supply.validators';
-const identity=(req:Request)=>z.string().uuid().parse(req.params.id);
+const identity=(req:Request)=>z.string().guid().parse(req.params.id);
 async function present(data:Awaited<ReturnType<typeof getConsumableSupply>>,req:Request){
   const permissions=await consumableRights(req);
   return {...data,permissions,catalogues:data.catalogues.map(c=>({...c,price:permissions.prices?c.price:null}))};

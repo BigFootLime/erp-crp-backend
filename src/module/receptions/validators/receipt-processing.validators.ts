@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { receivedMaterialBarsSchema } from '../../stock/validators/material-bars.validators';
 const command = {
-  idempotencyKey: z.string().uuid(),
+  idempotencyKey: z.string().guid(),
   expectedVersion: z.number().int().positive(),
 };
 export const processingQuerySchema = z
@@ -24,13 +24,13 @@ export const packReceiptSchema = z
   })
   .strict();
 export const mapReceiptArticleSchema = z
-  .object({ ...command, stockArticleId: z.string().uuid() })
+  .object({ ...command, stockArticleId: z.string().guid() })
   .strict();
 export const stockProcessingSchema = z
   .object({
     ...command,
     quantity: z.number().finite().positive(),
-    magasinId: z.string().uuid(),
+    magasinId: z.string().guid(),
     emplacementId: z.number().int().positive(),
     materialBars: receivedMaterialBarsSchema.optional(),
   })
@@ -41,11 +41,11 @@ export const toolStockProcessingSchema = z
 export const subcontractProcessingSchema = z
   .object({
     ...command,
-    returnEventId: z.string().uuid().optional(),
+    returnEventId: z.string().guid().optional(),
     origins: z
       .array(
         z.object({
-          issueEventId: z.string().uuid(),
+          issueEventId: z.string().guid(),
           quantity: z.number().finite().positive(),
         }),
       )
@@ -64,7 +64,7 @@ export const reconcileReceiptSchema = z
 export const voidPackagingSchema = z
   .object({
     ...command,
-    packagingId: z.string().uuid(),
+    packagingId: z.string().guid(),
     reason: z.string().trim().min(3).max(2000),
   })
   .strict();

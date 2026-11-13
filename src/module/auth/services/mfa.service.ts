@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import bwipjs from "bwip-js";
 import type { PoolClient } from "pg";
 
@@ -877,10 +878,14 @@ export async function cleanupExpiredMfaArtifacts(): Promise<{
   });
 }
 
-export function startMfaArtifactMaintenance(intervalMs = 15 * 60_000): () => void {
+export function startMfaArtifactMaintenance(
+  intervalMs = 15 * 60_000,
+  dependencies: Readonly<{ cleanup?: typeof cleanupExpiredMfaArtifacts }> = {},
+): () => void | Promise<void> {
+  const cleanup = dependencies.cleanup ?? cleanupExpiredMfaArtifacts;
   const run = async () => {
     try {
-      const result = await cleanupExpiredMfaArtifacts();
+      const result = await cleanup();
       if (result.challengesDeleted || result.pendingFactorsDeleted) {
         logger.info("mfa_expired_artifacts_cleaned", {
           challenge_count: result.challengesDeleted,
@@ -891,8 +896,5 @@ export function startMfaArtifactMaintenance(intervalMs = 15 * 60_000): () => voi
       logger.error("mfa_expired_artifact_cleanup_failed", { failure_code: safeErrorCode(error) });
     }
   };
-  void run();
-  const timer = setInterval(() => void run(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(run, intervalMs).stop;
 }

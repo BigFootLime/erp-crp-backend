@@ -1,0 +1,1 @@
+SELECT 'public.industrial_plan_runs'::regclass,'public.industrial_policies'::regclass,'public.industrial_contract_rules'::regclass,'public.industrial_article_rules'::regclass,'public.industrial_policy_events'::regclass;

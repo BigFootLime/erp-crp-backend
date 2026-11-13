@@ -11,6 +11,7 @@ type ParentPolicy = Readonly<{ moduleKey: string; canonicalType: string; identit
 // alias resolves to the exact canonical parent that is revalidated in SQL.
 const PARENT_POLICIES: Readonly<Record<string, ParentPolicy>> = {
   CUTOVER_ROW: { moduleKey: "data-cutover", canonicalType: "CUTOVER_ROW", identity: "uuid", superadminOnly: true },
+  METROLOGIE_EQUIPEMENT: { moduleKey: "metrologie", canonicalType: "METROLOGIE_EQUIPEMENT", identity: "uuid" },
   CLIENT: { moduleKey: "clients", canonicalType: "CLIENT", identity: "text" },
   FOURNISSEUR: { moduleKey: "fournisseurs", canonicalType: "FOURNISSEUR", identity: "uuid" },
   DEVIS: { moduleKey: "devis", canonicalType: "DEVIS", identity: "integer" },

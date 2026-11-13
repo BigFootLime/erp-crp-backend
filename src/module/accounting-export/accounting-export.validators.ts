@@ -50,7 +50,7 @@ export const listAccountingMappingsSchema = z.object({
 }).strict();
 
 export const createAccountingPreviewSchema = z.object({
-  mapping_version_id: z.string().uuid(),
+  mapping_version_id: z.string().guid(),
   period_from: isoDate,
   period_to: isoDate,
   source_types: z.array(z.enum(ACCOUNTING_SOURCE_TYPES)).min(1).max(8)
@@ -63,13 +63,13 @@ export const createAccountingPreviewSchema = z.object({
   }
 });
 
-export const accountingBatchIdSchema = z.string().uuid();
+export const accountingBatchIdSchema = z.string().guid();
 export const expectedBatchVersionSchema = z.object({ expected_version: z.coerce.number().int().positive() }).strict();
 export const cancelAccountingBatchSchema = expectedBatchVersionSchema.extend({
   reason: z.string().trim().min(8).max(500),
 }).strict();
 export const reexportAccountingBatchSchema = z.object({
-  mapping_version_id: z.string().uuid().optional(),
+  mapping_version_id: z.string().guid().optional(),
   reason: z.string().trim().min(8).max(500),
 }).strict();
 

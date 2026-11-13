@@ -48,6 +48,23 @@ vi.mock('../module/auth/middlewares/auth.middleware', () => ({
 
 // ✅ importer app APRÈS les mocks
 import app from '../config/app'
+import { companyRuntimeService } from '../module/entreprises/runtime/company-runtime.service'
+
+const companyId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const otherCompanyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+
+function publicAuthenticationRequest(path: string) {
+  const requestBuilder = request(app).post(`/api/v1/auth${path}`)
+  if (path === '/tablet-pin/pair') return requestBuilder.send({ pairingCode: 'a'.repeat(32) })
+  if (path === '/tablet-pin/login') {
+    return requestBuilder.send({
+      pin: '0123',
+      deviceId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      deviceSecret: 'a'.repeat(64),
+    })
+  }
+  return requestBuilder.send({ username: 'operator', password: 'password123' })
+}
 
 describe('🧪 Routes Authentification (/auth)', () => {
   it('🔒 POST /api/v1/auth/register est fermé et retourne 404', async () => {
@@ -72,6 +89,59 @@ describe('🧪 Routes Authentification (/auth)', () => {
 
     expect(res.status).toBe(200)
     expect(res.body).toHaveProperty('token')
+  })
+
+  it('requires the fixed company target for password and tablet authentication, before their controllers', async () => {
+    const configuration = vi.spyOn(companyRuntimeService, 'configuration').mockReturnValue({
+      enabled: true,
+      company_id: companyId,
+      environment: 'cerp_test',
+    })
+    try {
+      for (const path of ['/login', '/tablet-pin/login', '/tablet-pin/pair']) {
+        const missing = await publicAuthenticationRequest(path)
+        expect(missing.status).toBe(403)
+        expect(missing.body.code).toBe('COMPANY_LOGIN_TARGET_MISMATCH')
+
+        const tampered = await publicAuthenticationRequest(path)
+          .set('X-CERP-Company', otherCompanyId)
+          .set('X-CERP-Database', 'cerp_test')
+        expect(tampered.status).toBe(403)
+        expect(tampered.body.code).toBe('COMPANY_LOGIN_TARGET_MISMATCH')
+
+        const wrongEnvironment = await publicAuthenticationRequest(path)
+          .set('X-CERP-Company', companyId)
+          .set('X-CERP-Database', 'cerp_prod')
+        expect(wrongEnvironment.status).toBe(403)
+        expect(wrongEnvironment.body.code).toBe('COMPANY_LOGIN_TARGET_MISMATCH')
+      }
+    } finally {
+      configuration.mockRestore()
+    }
+  })
+
+  it('accepts a confirmed fixed company target and keeps a bare legacy request compatible', async () => {
+    const configuration = vi.spyOn(companyRuntimeService, 'configuration')
+    try {
+      configuration.mockReturnValue({
+        enabled: true,
+        company_id: companyId,
+        environment: 'cerp_test',
+      })
+      for (const path of ['/login', '/tablet-pin/login', '/tablet-pin/pair']) {
+        const confirmed = await publicAuthenticationRequest(path)
+          .set('X-CERP-Company', companyId)
+          .set('X-CERP-Database', 'cerp_test')
+        expect(confirmed.status).toBe(200)
+      }
+
+      configuration.mockReturnValue({ enabled: false })
+      for (const path of ['/login', '/tablet-pin/login', '/tablet-pin/pair']) {
+        expect((await publicAuthenticationRequest(path)).status).toBe(200)
+      }
+    } finally {
+      configuration.mockRestore()
+    }
   })
 
   it('canonicalise les variantes Unicode du username avant le bucket login', async () => {

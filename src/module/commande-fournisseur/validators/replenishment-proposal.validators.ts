@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const listReplenishmentProposalsSchema = z.object({
   query: z.object({

@@ -14,6 +14,7 @@ COPY scripts/openapi ./scripts/openapi
 COPY docs/http/openapi-route-coverage.json ./docs/http/openapi-route-coverage.json
 COPY scripts/security ./scripts/security
 COPY scripts/build ./scripts/build
+COPY resources/outillage-catalogue ./resources/outillage-catalogue
 RUN npm run build
 
 # --------- Runtime ------------
@@ -30,7 +31,7 @@ RUN printf '%s\n' \
     "libcrypto3=3.5.9-r0" \
     "libssl3=3.5.9-r0" \
     "zlib=1.3.2-r1" \
-    "curl=8.22.0-r0" \
+    "curl=8.23.0-r0" \
     "tini=0.19.0-r3" \
     "su-exec=0.3-r0" \
     "clamav=1.4.6-r0" \
@@ -78,6 +79,7 @@ RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack 
 COPY scripts/db-patches.js ./scripts/db-patches.js
 COPY scripts/migrations/patch-dependencies.js ./scripts/migrations/patch-dependencies.js
 COPY db/patches ./db/patches
+COPY resources/outillage-catalogue ./resources/outillage-catalogue
 
 # ...
 COPY --from=builder /app/dist ./dist

@@ -1,4 +1,6 @@
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
+import {prepareOperationProgramming} from '../controllers/production-workbench.controller';
+import {generateInspectionTemplate} from '../controllers/production-workbench.controller';
 import { generateContractReplenishment } from '../controllers/contract-replenishment.controller';
 import { readAssemblyComponents, issueAssemblyComponents, readAssemblyWithdrawals, previewAssemblyReturn, submitAssemblyReturn } from '../controllers/assembly-component-consumption.controller';
 import {readComponentCoverage,readSupplierQualification,readSupplierRecommendations} from '../controllers/of-material.controller';
@@ -11,7 +13,7 @@ import {synchronizePreparationChildren} from '../controllers/production-workbenc
 import {reusePreparationStock} from '../controllers/production-workbench.controller';
 import {saveProgrammingTask,importPreparationPurchases} from '../controllers/production-workbench.controller';
 import { previewConsolidation,createConsolidation,getConsolidation,dissolveConsolidation } from '../controllers/production-workbench.controller';
-import { productionWorklist,preparationWorkbench,savePreparationDecisions,selectPreparationVersion,reviewPreparationStock,generateSelfInspection,downloadSelfInspection } from '../controllers/production-workbench.controller';
+import { productionWorklist,ofImprovementReturns,preparationWorkbench,savePreparationDecisions,selectPreparationVersion,reviewPreparationStock,generateSelfInspection,downloadSelfInspection } from '../controllers/production-workbench.controller';
 
 import {
   hasGrantedAccountModuleAccess,
@@ -252,6 +254,7 @@ router.post('/consolidations/preview',requireOfCapability('generate'),previewCon
 router.post('/consolidations',requireOfCapability('generate'),createConsolidation);
 router.get('/consolidations/:id',requireOfCapability('read'),getConsolidation);
 router.post('/consolidations/:id/dissolve',requireOfCapability('cancel'),dissolveConsolidation);
+router.get('/ofs/:id/improvement-returns',requireOfCapability('read'),ofImprovementReturns);
 router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench);
 router.get('/ofs/:id/dossier',requireOfCapability('read'),readDossier);
 router.get('/ofs/:id/material',requireOfCapability('read'),readMaterial);
@@ -289,6 +292,8 @@ router.post('/ofs/:id/workbench/version',requireOfCapability('edit_prelaunch'),s
 router.post('/ofs/:id/workbench/stock-review',requireOfCapability('edit_prelaunch'),reviewPreparationStock);
 router.post('/ofs/:id/workbench/stock-reuse',requireOfCapability('quality_decision'),reusePreparationStock);
 router.post('/ofs/:id/workbench/self-inspection',requireOfCapability('edit_prelaunch'),generateSelfInspection);
+router.post('/ofs/:id/workbench/inspection-template',requireOfCapability('edit_prelaunch'),generateInspectionTemplate);
+router.post('/ofs/:id/workbench/operation-programming',requireOfCapability('edit_prelaunch'),prepareOperationProgramming);
 router.get('/ofs/:id/workbench/self-inspection/:sheetId',requireOfCapability('read'),downloadSelfInspection);
 router.post("/ofs/generate/preview", requireOfCapability("generate"), previewOfGeneration);
 router.post("/ofs/generate", requireOfCapability("generate"), generateOfs);
@@ -297,7 +302,7 @@ router.get("/ofs/:id/technical-snapshot", getOfTechnicalSnapshot);
 router.get("/ofs/:id/technical-preparation", requireOfCapability("read"), getOfTechnicalPreparation);
 router.patch("/ofs/:id/technical-preparation", requireOfCapability("edit_prelaunch"), patchOfTechnicalPreparation);
 router.post("/ofs/:id/technical-preparation/submit", requireOfCapability("edit_prelaunch"), submitOfTechnicalPreparation);
-router.post("/ofs/:id/technical-preparation/validate", requireOfCapability("release"), validateOfTechnicalPreparation);
+router.post("/ofs/:id/technical-preparation/validate", requireOfCapability("read"), validateOfTechnicalPreparation);
 // Internal creation snapshot, filed automatically on root creation. Same read
 // middleware as the OF card; no route can issue or reissue it.
 router.get("/ofs/:id/creation-snapshot", getOfCreationSnapshot);

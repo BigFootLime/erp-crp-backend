@@ -1,4 +1,5 @@
 import { Router } from "express";
+import metrologyDocumentsRoutes from "./metrology-documents.routes";
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
@@ -20,6 +21,7 @@ import {
   getExecution,
   getImpact,
   listCategories,
+  listEquipmentProfiles,
   listEquipment,
   listExecutions,
   listImpacts,
@@ -36,6 +38,12 @@ import {
   uploadCertificate,
   upsertCategory,
   validateExecution,
+  listLegacyObservations,
+  getLegacyImportBatch,
+  listLegacyImportRows,
+  listLegacyImportBatches,
+  resolveLegacyImportRow,
+  downloadLegacyImportSource,
 } from "../controllers/metrology-360.controller";
 
 /**
@@ -46,6 +54,7 @@ import {
  * écran en production ; il gagne seulement les mêmes gardes RBAC.
  */
 const router = Router();
+router.use(metrologyDocumentsRoutes);
 router.use(authenticateToken);
 
 // Les fichiers transitent par un répertoire temporaire privé, jamais par le
@@ -54,6 +63,7 @@ const upload = createSecureUpload("quality-document", { maxFiles: 1 });
 
 /* Référentiels ------------------------------------------------------------ */
 router.get("/categories", requireMetrologyCapability("read"), listCategories);
+router.get("/equipment-profiles", requireMetrologyCapability("read"), listEquipmentProfiles);
 router.put("/categories", requireMetrologyCapability("categories_manage"), upsertCategory);
 router.get("/units", requireMetrologyCapability("read"), listUnits);
 
@@ -65,7 +75,13 @@ router.get("/eligibility", requireMetrologyCapability("read"), evaluateEligibili
 router.get("/equipements", requireMetrologyCapability("read"), listEquipment);
 router.post("/equipements", requireMetrologyCapability("equipment_write"), createEquipment);
 router.get("/equipements/:id", requireMetrologyCapability("read"), getEquipment);
+router.get("/equipements/:id/legacy-observations", requireMetrologyCapability("read"), listLegacyObservations);
 router.patch("/equipements/:id", requireMetrologyCapability("equipment_write"), updateEquipment);
+router.get("/legacy-imports", requireMetrologyCapability("read"), listLegacyImportBatches);
+router.get("/legacy-imports/:id", requireMetrologyCapability("read"), getLegacyImportBatch);
+router.get("/legacy-imports/:id/rows", requireMetrologyCapability("read"), listLegacyImportRows);
+router.get("/legacy-import-sources/:id/file", requireMetrologyCapability("read"), downloadLegacyImportSource);
+router.patch("/legacy-imports/:id/rows/:childId", requireMetrologyCapability("equipment_write"), resolveLegacyImportRow);
 router.get("/equipements/:id/timeline", requireMetrologyCapability("audit_read"), equipmentTimeline);
 router.get("/equipements/:id/usage", requireMetrologyCapability("impact_read"), equipmentUsage);
 

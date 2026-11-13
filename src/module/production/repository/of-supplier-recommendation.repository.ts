@@ -1,4 +1,5 @@
 import pool from '../../../config/database';
+import { effectivePreparationVersionSql } from './effective-preparation-version.sql';
 import { HttpError } from '../../../utils/httpError';
 import { OF_PURCHASE_SCOPE_SQL } from './of-supplier-qualification.repository';
 import { readOfPurchaseClientContextsTx } from '../../commande-fournisseur/repository/purchase-client-context.repository';
@@ -10,8 +11,7 @@ import { estimateRecommendationPrice, rankSupplierSuggestions, summarizeSupplier
 import { supplierRecommendationEvidence, type SourcedSupplierSuggestion } from '../../commande-fournisseur/domain/supplier-recommendation-evidence';
 
 export const SUPPLIER_RECOMMENDATION_CONTEXT_SQL = `SELECT id AS of_id,updated_at::text AS of_updated_at,
-  COALESCE(piece_technique_version_id,NULLIF(technical_preparation->>'selected_version_id','')::uuid,
-    NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)::text AS technical_version_id
+  ${effectivePreparationVersionSql("ordres_fabrication")}::text AS technical_version_id
   FROM public.ordres_fabrication WHERE id=$1`;
 
 // Only actual sent orders of this exact article teach a preference. A receipt

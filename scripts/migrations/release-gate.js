@@ -55,16 +55,10 @@ function sha256(content) {
 }
 
 function orderedPatches() {
-  return require('./patch-dependencies').orderPatchDependencies(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
+  const { orderPatchDependencies, sortPatchNames } = require('./patch-dependencies');
+  return orderPatchDependencies(sortPatchNames(fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
-    .map((entry) => entry.name)
-    .sort((left, right) => {
-      const a = left.slice(0, -4);
-      const b = right.slice(0, -4);
-      if (b.startsWith(`${a}_`)) return -1;
-      if (a.startsWith(`${b}_`)) return 1;
-      return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
-    }));
+    .map((entry) => entry.name)));
 }
 
 function expectedRehearsalPatches() {
@@ -252,7 +246,21 @@ async function patchLedger(client) {
     `SELECT filename,sha256,applied_at::text AS applied_at
      FROM public.cerp_schema_migrations ORDER BY filename`
   );
-  return classifyPatchLedgerRows(appliedResult.rows);
+  const report = classifyPatchLedgerRows(appliedResult.rows);
+  const patches = inventory().patches;
+  const { resolveClosedSeedApplicability } = require("./metrology-ged-applicability");
+  const applicability = await resolveClosedSeedApplicability(
+    client,
+    patches,
+    new Map(appliedResult.rows.map((row) => [row.filename, row]))
+  );
+  const notApplicable = [...applicability]
+    .filter(([, decision]) => decision.status === "not-applicable-finance-profile")
+    .map(([filename, decision]) => ({ filename, reason: decision.reason }));
+  if (notApplicable.length) {
+    report.pending = report.pending.filter((filename) => !applicability.has(filename));
+  }
+  return { ...report, not_applicable: notApplicable };
 }
 
 async function verifyKnownExternalAppliedPatches(client, ledger) {

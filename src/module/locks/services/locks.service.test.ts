@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveAccessProfile: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock("../repository/locks.repository", () => ({
   repoReleaseLock: mocks.repoReleaseLock,
 }));
 
-import { svcAcquireLock, svcHeartbeatLock, svcReleaseLock } from "./locks.service";
+import { startExpiredLockMaintenance, svcAcquireLock, svcHeartbeatLock, svcReleaseLock } from "./locks.service";
 
 const LOCK = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -95,5 +95,31 @@ describe("HTTP entity-lock ACL", () => {
       .rejects.toMatchObject({ status: 400, code: "INVALID_LOCK_ENTITY" });
     expect(mocks.resolveAccessProfile).not.toHaveBeenCalled();
     expect(mocks.repoAcquireLock).not.toHaveBeenCalled();
+  });
+});
+
+describe("expired lock maintenance drain", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("waits for the active expiry database sweep and never starts a later cycle after stop", async () => {
+    vi.useFakeTimers();
+    let releaseSweep: ((value: number) => void) | undefined;
+    const expireLocks = vi.fn(() => new Promise<number>((resolve) => { releaseSweep = resolve; }));
+    const stop = startExpiredLockMaintenance({ expireLocks, intervalMs: 1_000 });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(expireLocks).toHaveBeenCalledWith(500);
+
+    const stopping = stop();
+    let settled = false;
+    void Promise.resolve(stopping).then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(expireLocks).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+
+    releaseSweep?.(0);
+    await stopping;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(expireLocks).toHaveBeenCalledOnce();
   });
 });

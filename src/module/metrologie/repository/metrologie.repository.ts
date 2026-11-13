@@ -61,6 +61,16 @@ function getPgErrorInfo(err: unknown) {
   return { code, constraint };
 }
 
+/** Compatibilité des anciens formulaires : ils peuvent renvoyer le code affiché
+ * mais il reste strictement immuable, y compris avant le trigger SQL. */
+export function assertLegacyEquipmentCodeUnchanged(currentCode: string | null, submittedCode: string | null | undefined): void {
+  if (submittedCode !== undefined && submittedCode !== currentCode) {
+    throw new HttpError(422, "METROLOGY_CODE_IMMUTABLE", "Le code de l'équipement est immuable.", {
+      fields: { "patch.code": ["Le code affiché peut être renvoyé, mais ne peut pas être modifié."] },
+    });
+  }
+}
+
 function userLabel(u: { username: string; name: string | null; surname: string | null }): string {
   const parts = [u.surname ?? "", u.name ?? ""]
     .map((s) => s.trim())
@@ -904,6 +914,9 @@ export async function repoPatchEquipement(
     if (!current) return false;
 
     const patch = body.patch;
+    // Comparaison après SELECT ... FOR UPDATE : le code inchangé des anciens
+    // dialogs reste compatible, un changement échoue avant toute écriture.
+    assertLegacyEquipmentCodeUnchanged(current.code, patch.code);
     const sets: string[] = [];
     const values: unknown[] = [];
     const push = (v: unknown) => {
@@ -922,7 +935,9 @@ export async function repoPatchEquipement(
       sets.push(`${sql} = ${push(v ?? null)}${cast ?? ""}`);
     };
 
-    setIfDefined("code", "code");
+    // `categorie` est l'étiquette legacy; cette route ne touche jamais
+    // `categorie_code` ni `specifications`, donc elle ne contourne pas la
+    // cohérence MD15 portée par la route v2.
     setIfDefined("designation", "designation");
     setIfDefined("categorie", "categorie");
     setIfDefined("marque", "marque");

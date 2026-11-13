@@ -10,7 +10,7 @@ export const identificationEntityTypeSchema = z.enum(IDENTIFICATION_ENTITY_TYPES
 export const identificationFlowSchema = z.enum(IDENTIFICATION_FLOWS);
 export const identificationSymbologySchema = z.enum(IDENTIFICATION_SYMBOLOGIES);
 export const identificationLabelProfileSchema = z.enum(IDENTIFICATION_LABEL_PROFILES);
-export const identificationUuidSchema = z.string().uuid();
+export const identificationUuidSchema = z.string().guid();
 
 export const issueIdentificationLabelSchema = z.object({
   entity_type: identificationEntityTypeSchema,

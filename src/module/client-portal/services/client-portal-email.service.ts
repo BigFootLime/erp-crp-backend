@@ -14,14 +14,14 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#039;");
 }
 
-function portalBaseUrl(): string {
-  return (process.env.CLIENT_PORTAL_PUBLIC_URL ?? "https://cerp.croix-rousse-precision.fr")
+function portalBaseUrl(publicUrl?: string): string {
+  return (publicUrl ?? process.env.CLIENT_PORTAL_PUBLIC_URL ?? "https://cerp.croix-rousse-precision.fr")
     .trim()
     .replace(/\/+$/, "");
 }
 
-export function buildPortalUrl(path: string): string {
-  return `${portalBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+export function buildPortalUrl(path: string, publicUrl?: string): string {
+  return `${portalBaseUrl(publicUrl)}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export async function sendPortalAccessEmail(input: {

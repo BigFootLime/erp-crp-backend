@@ -11,7 +11,7 @@ export const createBankingInfoSchema = z.object({
 })
 
 export const idParamSchema = z.object({
-  params: z.object({ id: z.string().uuid("id must be a uuid") }),
+  params: z.object({ id: z.string().guid("id must be a uuid") }),
 })
 
 // tiny helper

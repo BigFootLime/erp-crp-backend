@@ -6,7 +6,7 @@ vi.mock("../config/database", () => ({
   default: { query: queryMock },
 }));
 
-import { repoListArticles } from "../module/stock/repository/stock.repository";
+import { repoGetArticle, repoListArticles } from "../module/stock/repository/stock.repository";
 
 function normalized(sql: unknown): string {
   return String(sql).replace(/\s+/g, " ").trim();
@@ -50,5 +50,33 @@ describe("BUG-CERP-0015 - filtre GET /stock/articles", () => {
     );
     expect(queryMock.mock.calls[0]?.[1]).toEqual(["CLI-0042"]);
     expect(normalized(queryMock.mock.calls[1]?.[0])).toContain("latest_version.plan_reference AS piece_plan_reference");
+  });
+
+  it("uses the linked customer for filtering, searching and sorting, even without article_client_links", async () => {
+    await repoListArticles({ client_code: "CLI-001", q: "CLI-001", sortBy: "client_code", sortDir: "asc" });
+    const canonical = "COALESCE(NULLIF(btrim(piece_client.client_code), ''), NULLIF(NULLIF(btrim(pt.code_client), ''), btrim(pt.client_id)))";
+    for (const call of queryMock.mock.calls) {
+      const sql = normalized(call[0]);
+      expect(sql).toContain("LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id");
+      expect(sql).toContain(`${canonical} ILIKE $1`);
+      expect(sql).toContain(`LOWER(TRIM(${canonical}))=LOWER(TRIM($2)) OR EXISTS`);
+      expect(call[1]?.slice(0, 2)).toEqual(["%CLI-001%", "CLI-001"]);
+    }
+    const listSql = normalized(queryMock.mock.calls[1]?.[0]);
+    expect(listSql).toContain(`${canonical} AS client_code`);
+    expect(listSql).toContain(`${canonical} AS piece_client_code`);
+    expect(listSql).toContain(`ORDER BY ${canonical} ASC`);
+  });
+
+  it("never exposes a legacy technical client id as the article customer code", async () => {
+    queryMock.mockReset();
+    queryMock.mockResolvedValue({ rows: [] });
+    expect(await repoGetArticle("11111111-1111-4111-8111-111111111111")).toBeNull();
+    const sql = normalized(queryMock.mock.calls[0]?.[0]);
+    expect(sql).toContain("LEFT JOIN public.clients piece_client ON piece_client.client_id = pt.client_id");
+    const canonical = "COALESCE(NULLIF(btrim(piece_client.client_code), ''), NULLIF(NULLIF(btrim(pt.code_client), ''), btrim(pt.client_id)))";
+    expect(sql).toContain(`${canonical} AS client_code`);
+    expect(sql).toContain(`${canonical} AS piece_client_code`);
+    expect(sql).not.toContain("pt.code_client AS client_code");
   });
 });

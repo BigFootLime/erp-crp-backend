@@ -31,7 +31,15 @@ export function drawEditorialDocumentHeader(
   const { marginX: x, marginTop: top, width, colors: c } = geometry
   const logoWidth = 122
   const logoHeight = logoWidth / CERP_LOGO_RATIO
-  doc.image(CERP_LOGO_PNG, x, top, { width: logoWidth })
+  const brandLogo = header.branding ? readableRaster(header.branding.logo) : CERP_LOGO_PNG
+  if (brandLogo) {
+    doc.image(brandLogo, x, top, { width: logoWidth })
+  } else {
+    // An external issuer without a configured logo keeps its own textual identity; it must
+    // never silently inherit the CERP mark.
+    doc.font(documentFont(doc, true)).fontSize(12).fillColor(c.ink)
+    doc.text(safeText(header.branding?.name.trim() || "Émetteur"), x, top + 8, { width: logoWidth })
+  }
   doc.font(documentFont(doc, true)).fontSize(10).fillColor(c.brand)
   const typeWidth = width - logoWidth - 32
   const type = safeText(header.documentType.toUpperCase())

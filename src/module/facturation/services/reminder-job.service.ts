@@ -12,6 +12,7 @@ import type { FinanceActorContext } from "../repository/workflow.repository.shar
 import type { ReminderCycleResult, ReminderSuggestion } from "../types/reminders.types";
 import { createReminderProvider, type ReminderProvider } from "../providers/reminder.provider";
 import crypto from "node:crypto";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import { runWithObservabilityContext } from "../../../shared/observability/context";
 import { errorFingerprint, logger, safeErrorCode } from "../../../shared/observability/logger";
 import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
@@ -123,21 +124,22 @@ function boundedInteger(raw: string | undefined, fallback: number, minimum: numb
   return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
-export function startReminderMaintenance(environment = process.env): () => void {
+export function startReminderMaintenance(
+  environment = process.env,
+  options: Readonly<{ cycle?: () => Promise<void> }> = {}
+): () => void | Promise<void> {
   const enabled = (environment.ADV_REMINDERS_JOB_ENABLED ?? "false").trim().toLowerCase() === "true";
   if (!enabled) return () => undefined;
   const intervalMs = boundedInteger(environment.ADV_REMINDERS_JOB_INTERVAL_MS, 300_000, 60_000, 86_400_000);
   const limit = boundedInteger(environment.ADV_REMINDERS_JOB_BATCH_SIZE, 100, 1, 500);
-  let running = false;
-  const timer = setInterval(() => {
-    if (running) {
-      logger.warn("critical_job_overlap_skipped", { job: REMINDER_JOB_NAME });
+  const cycle = async (): Promise<void> => {
+    if (options.cycle) {
+      await options.cycle();
       return;
     }
-    running = true;
     const correlationId = crypto.randomUUID();
     const startedAt = Date.now();
-    runWithObservabilityContext({ requestId: correlationId, correlationId }, () => {
+    await new Promise<void>((resolve) => runWithObservabilityContext({ requestId: correlationId, correlationId }, () => {
       markJobStarted(REMINDER_JOB_NAME, startedAt);
       logger.info("critical_job_started", { job: REMINDER_JOB_NAME, batch_limit: limit });
       void runReminderCycle({ now: new Date(), limit, actor: null })
@@ -162,10 +164,12 @@ export function startReminderMaintenance(environment = process.env): () => void 
           });
         })
         .finally(() => {
-          running = false;
+          resolve();
         });
-    });
-  }, intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+    }));
+  };
+  return startDrainableRecurringTask(cycle, intervalMs, {
+    immediate: false,
+    onOverlap: () => logger.warn("critical_job_overlap_skipped", { job: REMINDER_JOB_NAME }),
+  }).stop;
 }

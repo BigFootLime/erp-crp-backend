@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import pool from '../../../config/database';
 import { HttpError } from '../../../utils/httpError';
 import type { MasterPlanOrderSource, MasterPlanPeriod } from '../types/planning-master-plan.types';
@@ -76,6 +77,14 @@ export async function readMasterPlanSource(query: MasterPlanQuery) {
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const result=await readMasterPlanSourceTx(tx,query);
+    await tx.query('COMMIT');
+    return result;
+  } catch (error) { await tx.query('ROLLBACK'); throw error; }
+  finally { tx.release(); }
+}
+
+export async function readMasterPlanSourceTx(tx:PoolClient,query: MasterPlanQuery) {
     const periods = (await tx.query<MasterPlanPeriod>(MASTER_PLAN_PERIODS_SQL, [query.start, query.weeks])).rows
       .map(period => ({ ...period, start: new Date(period.start).toISOString(), end: new Date(period.end).toISOString() }));
     const checkpointsInstalled = (await tx.query<{ installed: boolean }>(CUTOVER_WIP_CHECKPOINTS_INSTALLED_SQL)).rows[0]?.installed === true;
@@ -89,8 +98,5 @@ export async function readMasterPlanSource(query: MasterPlanQuery) {
     const snapshot = await readCentralSnapshot({ from: periods[0].start, to: periods.at(-1)!.end, limit: 10000,
       includeTaskIds: orders.flatMap(order => order.taskIds), include_coverage: false, snapshot_revision: query.revision }, tx, false);
     if (snapshot.nextCursor) throw new HttpError(422, 'MASTER_PLAN_SCOPE_TOO_LARGE', 'La synthèse dépasse 10 000 opérations. Aucune synthèse partielle n’a été produite.');
-    await tx.query('COMMIT');
     return { periods, orders, snapshot };
-  } catch (error) { await tx.query('ROLLBACK'); throw error; }
-  finally { tx.release(); }
 }

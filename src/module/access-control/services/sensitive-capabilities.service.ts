@@ -31,11 +31,11 @@ export const sensitiveCapabilityMutationSchema = z.object({
 type GrantRow = { capability: SensitiveCapability; granted: boolean; version: string };
 const directoryTargetAssuranceSchema = z.object({
   profile: z.object({ status: z.string(), mfa_reenrollment_required: z.boolean() }),
-  mfa_factor_id: z.string().uuid().nullable(),
+  mfa_factor_id: z.string().guid().nullable(),
 }).passthrough();
 const directoryAdminAssuranceSchema = z.object({
   profile: z.object({ status: z.string(), is_superadmin: z.boolean(), mfa_reenrollment_required: z.boolean() }),
-  mfa_factor_id: z.string().uuid().nullable(),
+  mfa_factor_id: z.string().guid().nullable(),
 }).passthrough();
 
 async function assertSensitiveGrantActorAssured(directoryProfileId?: string | null) {

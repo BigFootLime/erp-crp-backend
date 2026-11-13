@@ -68,7 +68,7 @@ export const readClientApprovalHistory: RequestHandler = async (
     res.json({
       data: await clientApprovalHistory(
         actor(req),
-        z.string().uuid().parse(req.params.scopeId),
+        z.string().guid().parse(req.params.scopeId),
       ),
     });
   } catch (error) {

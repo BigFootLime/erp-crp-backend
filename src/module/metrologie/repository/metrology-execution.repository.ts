@@ -37,6 +37,7 @@ import {
   type PeriodicityUnit,
 } from "../domain/metrology-schedule";
 import { computeExecutionVerdict, evaluateMeasurement, type MeasurementInput } from "../domain/metrology-verdict";
+import { executionProfileMatchesEquipment, metrologyProfileCodeFromSpecifications } from "../domain/metrology-equipment-profiles";
 import type {
   CancelCertificateBodyDTO,
   CancelExecutionBodyDTO,
@@ -222,8 +223,8 @@ export async function repoCreateExecution(params: {
     });
     if (claim.replay && typeof claim.replay.id === "string") return claim.replay.id;
 
-    const equip = await client.query<{ id: string; etat: string; designation: string }>(
-      `SELECT id::text AS id, etat, designation FROM public.metrologie_equipements
+    const equip = await client.query<{ id: string; etat: string; designation: string; specifications: unknown }>(
+      `SELECT id::text AS id, etat, designation, specifications FROM public.metrologie_equipements
         WHERE id = $1::uuid AND deleted_at IS NULL FOR UPDATE`,
       [equipementId]
     );
@@ -233,6 +234,17 @@ export async function repoCreateExecution(params: {
         409,
         "METROLOGY_EQUIPMENT_RETIRED",
         "Un équipement retiré ne reçoit plus d'étalonnage ni de vérification."
+      );
+    }
+
+    const instrumentProfile = metrologyProfileCodeFromSpecifications(equip.rows[0].specifications);
+    const executionProfile = body.environnement.fiche_metrologie?.profile_code ?? null;
+    if (!executionProfileMatchesEquipment(instrumentProfile, executionProfile)) {
+      throw new HttpError(
+        422,
+        "METROLOGY_EXECUTION_PROFILE_MISMATCH",
+        "Le profil relevé pour l'exécution ne correspond pas à la fiche de l'équipement.",
+        { fields: { "environnement.fiche_metrologie.profile_code": ["Le profil doit correspondre à la fiche instrument."] } }
       );
     }
 

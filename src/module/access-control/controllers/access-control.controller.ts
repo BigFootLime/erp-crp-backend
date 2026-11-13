@@ -52,7 +52,12 @@ export const getAccessProfile: RequestHandler = asyncHandler(async (req, res) =>
   if (!user || typeof user.id !== "number") {
     throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
   }
-  res.json(await service.getAccessProfile(user.id));
+  const profile = await service.getAccessProfile(user.id);
+  const company = req.businessCompanyAccess?.context;
+  res.json(company ? {
+    ...profile,
+    modules: profile.modules.map(module => ({ ...module, allowed: module.allowed && company.module_keys.includes(module.module_key) })),
+  } : profile);
 });
 
 export const getOverview: RequestHandler = asyncHandler(async (_req, res) => {

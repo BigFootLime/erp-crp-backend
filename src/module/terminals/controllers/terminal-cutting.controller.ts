@@ -26,7 +26,7 @@ export const dossier = asyncHandler(async (req, res) => {
     res.json(await nativeCuttingDossier(req.terminal!, req.station!, p.of_id, p.operation_id));
 });
 export const scanBar = asyncHandler(async (req, res) => {
-    const p = scope(req), b = z.object({ code: z.string().trim().min(1).max(256), eventId: z.string().uuid() }).strict().parse(req.body);
+    const p = scope(req), b = z.object({ code: z.string().trim().min(1).max(256), eventId: z.string().guid() }).strict().parse(req.body);
     res.json(await scanStationCutting(req.station!, p.of_id, p.operation_id, b.code, b.eventId));
 });
 export const debit = asyncHandler(async (req, res) => {

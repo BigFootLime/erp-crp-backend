@@ -16,7 +16,7 @@ function parseBoolean(value: unknown): boolean | undefined {
 export const packPreviewParamsSchema = livraisonIdParamsSchema
 
 export const packDownloadParamsSchema = livraisonIdParamsSchema.extend({
-  documentId: z.string().uuid(),
+  documentId: z.string().guid(),
 }).strict()
 
 const includeDocumentsSchema = z
@@ -38,8 +38,8 @@ export const packGenerateBodySchema = z
 export type PackGenerateBodyDTO = z.infer<typeof packGenerateBodySchema>
 
 export const packRevokeParamsSchema = z.object({
-  id: z.string().uuid(),
-  versionId: z.string().uuid(),
+  id: z.string().guid(),
+  versionId: z.string().guid(),
 })
 
 export const qualityDossierFreezeBodySchema = z.object({

@@ -225,6 +225,7 @@ CREATE TABLE public.commande_historique (
   id bigserial PRIMARY KEY,
   commande_id bigint NOT NULL REFERENCES public.commande_client(id) ON DELETE CASCADE,
   user_id integer REFERENCES public.users(id),
+  nouveau_statut text,
   action text NOT NULL DEFAULT '',
   details jsonb,
   date_action timestamptz NOT NULL DEFAULT now(),
@@ -343,9 +344,23 @@ CREATE TABLE public.gestion_outils_outil (
   designation text NOT NULL DEFAULT '',
   id_famille integer REFERENCES public.gestion_outils_famille(id_famille),
   id_geometrie integer REFERENCES public.gestion_outils_geometrie(id_geometrie),
+  -- Historical production identity used by the catalogue uniqueness migration.
+  -- The supplier/manufacturer reference tables are introduced by the later
+  -- runtime contract, so this legacy baseline deliberately has no FK here.
+  id_fabricant integer,
   esquisse text,
   plan text,
   image text
+);
+
+-- This is an existing production table, not an Outillage catalogue addition.
+-- It must be present before additive schema patches are replayed: the catalogue
+-- provenance patch extends it with inventory verification metadata.
+CREATE TABLE public.gestion_outils_stock (
+  id_outil integer PRIMARY KEY REFERENCES public.gestion_outils_outil(id_outil) ON DELETE CASCADE,
+  quantite numeric(18,3) NOT NULL DEFAULT 0,
+  quantite_minimale numeric(18,3) NOT NULL DEFAULT 0,
+  date_maj timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE public.gestion_outils_historique_prix (

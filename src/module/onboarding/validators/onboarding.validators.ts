@@ -4,7 +4,7 @@ export const progressSchema=z.object({current_step:z.enum(SETUP_STEPS)}).strict(
 const text=z.string().trim().max(200);
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(v=>!Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10)===v,"Date invalide");
 export const companySchema=z.object({
-  biller_id:z.string().uuid().nullable(), expected_updated_at:z.string().nullable(),
+  biller_id:z.string().guid().nullable(), expected_updated_at:z.string().nullable(),
   biller_name:text.min(2,"Raison sociale requise"),street:text.min(1,"Adresse requise"),house_number:text,
   postal_code:text.min(1,"Code postal requis"),city:text.min(1,"Ville requise"),country:z.string().trim().length(2,"Code pays à deux lettres").transform(v=>v.toUpperCase()),
   phone:text,email:z.string().trim().email("Email invalide").max(254),

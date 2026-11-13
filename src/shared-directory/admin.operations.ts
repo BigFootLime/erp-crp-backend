@@ -12,7 +12,7 @@ import {repoInsertAuditLog} from '../module/audit-logs/repository/audit-logs.rep
 import type {DirectorySession} from './model';
 type Wrap=(work:(req:Request,res:Response)=>Promise<void>)=>RequestHandler;
 const sourceSession=z.string().regex(/^dir_[a-f0-9]{64}$/);
-const productionSuperadminMutationSchema=z.object({profile_id:z.string().uuid(),is_superadmin:z.boolean(),expected_version:z.number().int().nonnegative()}).strict();
+const productionSuperadminMutationSchema=z.object({profile_id:z.string().guid(),is_superadmin:z.boolean(),expected_version:z.number().int().nonnegative()}).strict();
 type ProductionSuperadminMutation=z.infer<typeof productionSuperadminMutationSchema>;
 
 export async function assertDirectoryStatusMutationAllowed(db:Pool,profileId:string,nextStatus:string|undefined){
@@ -83,7 +83,7 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
   res.json(await work(actor,body.input));
  }));
  const target=async(actor:Awaited<ReturnType<typeof validateDirectorySession>>,id:string)=>{
-  const profile=await directoryProfileForSite(db,actor.database,z.string().uuid().parse(id));
+  const profile=await directoryProfileForSite(db,actor.database,z.string().guid().parse(id));
   const owner=await isDirectoryOwner(db,actor);
   const protectedTarget=(await db.query("SELECT 1 FROM public.cerp_directory_memberships WHERE profile_id=$1::uuid AND database_id='cerp_prod'",[id])).rows.length>0;
   if(!owner&&protectedTarget&&actor.profile_id!==id)throw new HttpError(403,'DIRECTORY_OWNER_REQUIRED','Ce compte dispose d’un accès Production.');
@@ -99,7 +99,7 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
   const users=await admin.listUsers(),ids=(await db.query('SELECT profile_id,user_id FROM public.cerp_directory_profiles')).rows;
   const mapped=[];for(const id of ids){const profile=await directoryProfileForSite(db,actor.database,id.profile_id),user=users.find(u=>u.id===id.user_id);if(user)mapped.push({profile,user:{...user,role:profile.role,roles:profile.roles,status:profile.status,is_superadmin:profile.is_superadmin}});}return mapped;
  });
- endpoint('admin-user',async(actor,input)=>detail(actor,z.object({profile_id:z.string().uuid()}).strict().parse(input).profile_id));
+ endpoint('admin-user',async(actor,input)=>detail(actor,z.object({profile_id:z.string().guid()}).strict().parse(input).profile_id));
  endpoint('admin-user-superadmin',async(actor,input)=>{
   const body=productionSuperadminMutationSchema.parse(input);
   await requireDirectoryOwner(db,actor);
@@ -115,7 +115,7 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
   return {...await detail(actor,profileId),replayed:result.replayed};
  });
  endpoint('admin-user-update',async(actor,input)=>{
-  const envelope=z.object({profile_id:z.string().uuid(),input:z.unknown()}).strict().parse(input);
+  const envelope=z.object({profile_id:z.string().guid(),input:z.unknown()}).strict().parse(input);
   const body={profile_id:envelope.profile_id,input:adminUpdateUserSchema.parse({params:{id:'1'},body:envelope.input}).body};
   await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
   await assertDirectoryStatusMutationAllowed(db,body.profile_id,body.input.status);
@@ -137,21 +137,21 @@ export function mountDirectoryAdmin(app:Express,db:Pool,wrap:Wrap){
   return detail(actor,body.profile_id);
  });
  endpoint('admin-user-invite',async(actor,input)=>{
-  const body=z.object({profile_id:z.string().uuid(),key:z.string().uuid()}).strict().parse(input),profile=await target(actor,body.profile_id);
+  const body=z.object({profile_id:z.string().guid(),key:z.string().guid()}).strict().parse(input),profile=await target(actor,body.profile_id);
   adminCreateInvitationSchema.parse({params:{id:String(profile.source_user_id)},headers:{idempotencyKey:body.key},body:{}});
   const result=await admin.createAccountInvitationByAdmin({userId:profile.source_user_id,actorUserId:actor.source_user_id,idempotencyKey:body.key});return {...result,profile_id:body.profile_id};
  });
  endpoint('admin-user-reset-token',async(actor,input)=>{
-  const body=z.object({profile_id:z.string().uuid(),key:z.string().uuid()}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
+  const body=z.object({profile_id:z.string().guid(),key:z.string().guid()}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
   adminCreatePasswordResetSchema.parse({params:{id:String(profile.source_user_id)},headers:{idempotencyKey:body.key},body:{}});
   return {...await admin.createPasswordResetTokenByAdmin({userId:profile.source_user_id,actorUserId:actor.source_user_id,idempotencyKey:body.key}),profile_id:body.profile_id};
  });
  endpoint('admin-user-password',async(actor,input)=>{
-  const body=z.object({profile_id:z.string().uuid(),input:resetPasswordByAdminSchema.shape.body}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
+  const body=z.object({profile_id:z.string().guid(),input:resetPasswordByAdminSchema.shape.body}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
   await admin.resetUserPasswordByAdmin({userId:String(profile.source_user_id),actorUserId:actor.source_user_id,token:body.input.token,newPassword:body.input.newPassword});return {reset:true};
  });
  endpoint('admin-user-recover',async(actor,input)=>{
-  const body=z.object({profile_id:z.string().uuid(),key:z.string().uuid(),input:adminRecoverAccountSchema.shape.body}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
+  const body=z.object({profile_id:z.string().guid(),key:z.string().guid(),input:adminRecoverAccountSchema.shape.body}).strict().parse(input);await requireDirectoryOwner(db,actor);const profile=await target(actor,body.profile_id);
   requireDirectoryAdmin(actor);
   return {...await recoverAccountBySuperadmin({userId:profile.source_user_id,actorUserId:actor.source_user_id,actorSessionEpoch:actor.global_session_epoch,actorFactorId:actor.mfa_factor_id,actorFactorVersion:actor.mfa_factor_version,idempotencyKey:body.key,reason:body.input.reason,meta:{ip:null,user_agent:null,device_type:null,os:null,browser:null,path:'/directory/admin-user-recover'}}),profile_id:body.profile_id};
  });

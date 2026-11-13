@@ -8,7 +8,7 @@ const nullableText=z.string().nullable().optional();
 const payloadSchema=z.object({
   type:z.literal('BON_DE_COMMANDE_FOURNISSEUR'),version:z.number().int().positive(),
   code:z.string().min(1),statut:z.literal('APPROUVEE'),
-  fournisseur:z.object({id:z.string().uuid(),code:nullableText,nom:z.string().min(1)}),
+  fournisseur:z.object({id:z.string().guid(),code:nullableText,nom:z.string().min(1)}),
   devise:z.string().min(1),date_besoin:nullableText,incoterm:nullableText,conditions_paiement:nullableText,
   mode_transport:nullableText,commentaire_public:nullableText,
   general_terms:generalTermsSnapshotSchema.nullable(),

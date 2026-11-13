@@ -28,6 +28,7 @@ export type PreparationItem = {
   scope: "VERSION" | "OF";
 };
 export type PreparationDecisions = {
+  part_variant?: string | null;
   material?: { mode: "REQUIRED" | "NOT_REQUIRED"; reason?: string };
   treatment?: { mode: "REQUIRED" | "NOT_REQUIRED"; reason?: string };
   subcontract?: { mode: "REQUIRED" | "NOT_REQUIRED"; reason?: string };

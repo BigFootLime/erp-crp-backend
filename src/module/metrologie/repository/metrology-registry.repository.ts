@@ -8,7 +8,10 @@
 import crypto from "node:crypto";
 import type { PoolClient } from "pg";
 
-import { generateMetrologieEquipementCode } from "../../../shared/codes/code-generator.service";
+import {
+  generateMetrologieEquipementCode,
+  generateMetrologyProfileEquipmentCode,
+} from "../../../shared/codes/code-generator.service";
 import { HttpError } from "../../../utils/httpError";
 
 import {
@@ -33,6 +36,12 @@ import {
   type DueEvaluation,
   type SchedulePlan,
 } from "../domain/metrology-schedule";
+import {
+  findMetrologyEquipmentProfile,
+  listMetrologyEquipmentProfiles,
+  mergeMetrologySpecifications,
+  metrologyProfileCodeFromSpecifications,
+} from "../domain/metrology-equipment-profiles";
 import type {
   CreateEquipmentBodyDTO,
   CreatePlanBodyDTO,
@@ -165,6 +174,11 @@ export async function repoListCategories(
     values
   );
   return { items: res.rows };
+}
+
+/** Référentiel MD15 lu par l'UI ; il ne contient aucune donnée d'inventaire. */
+export function repoListEquipmentProfiles() {
+  return { items: listMetrologyEquipmentProfiles() };
 }
 
 export async function repoUpsertCategory(params: {
@@ -966,6 +980,8 @@ export function mapImpactListRow(
 type EquipmentLock = {
   id: string;
   code: string | null;
+  categorie_code: string;
+  specifications: unknown;
   etat: MetrologyEquipmentState;
   updated_at: string;
   created_at: string;
@@ -976,7 +992,7 @@ type EquipmentLock = {
 async function lockEquipment(client: PoolClient, id: string): Promise<EquipmentLock> {
   const res = await client.query<EquipmentLock>(
     `
-      SELECT id::text AS id, code, etat, criticite, designation,
+      SELECT id::text AS id, code, categorie_code, specifications, etat, criticite, designation,
              updated_at::text AS updated_at, created_at::text AS created_at
       FROM public.metrologie_equipements
       WHERE id = $1::uuid AND deleted_at IS NULL
@@ -1061,6 +1077,65 @@ function assertSpecificationsMatchCategory(
   }
 }
 
+function metrologyProfileCode(body: Pick<CreateEquipmentBodyDTO, "specifications">): string | null {
+  return metrologyProfileCodeFromSpecifications(body.specifications);
+}
+
+function assertProfileMatchesEquipment(params: {
+  code: string | null;
+  categorieCode: string;
+  specifications: unknown;
+}): void {
+  const profileCode = metrologyProfileCodeFromSpecifications(params.specifications);
+  if (!profileCode) return;
+  const profile = findMetrologyEquipmentProfile(profileCode);
+  if (!profile) {
+    throw new HttpError(422, "METROLOGY_PROFILE_UNKNOWN", "Profil de fiche métrologie inconnu.", {
+      fields: { "specifications.fiche_metrologie.profile_code": ["Profil de fiche inconnu."] },
+    });
+  }
+  if (profile.categorie_code !== params.categorieCode) {
+    throw new HttpError(422, "METROLOGY_PROFILE_CATEGORY_MISMATCH", "Le profil ne correspond pas à la catégorie de l'équipement.", {
+      fields: { categorie_code: ["La catégorie doit correspondre au profil de fiche sélectionné."] },
+    });
+  }
+  if (params.code && !params.code.startsWith(`${profile.code_prefix}-`)) {
+    throw new HttpError(422, "METROLOGY_EQUIPMENT_CODE_PROFILE_MISMATCH", "Le code immuable ne correspond pas au profil de fiche.", {
+      fields: { code: ["Le préfixe du code doit correspondre au profil de fiche."] },
+    });
+  }
+}
+
+async function resolveEquipmentCode(client: PoolClient, body: CreateEquipmentBodyDTO): Promise<string> {
+  const profileCode = metrologyProfileCode(body);
+  const profile = profileCode ? findMetrologyEquipmentProfile(profileCode) : null;
+  if (profileCode && !profile) {
+    throw new HttpError(422, "METROLOGY_PROFILE_UNKNOWN", "Profil de fiche métrologie inconnu.", {
+      fields: { "specifications.fiche_metrologie.profile_code": ["Profil de fiche inconnu."] },
+    });
+  }
+  if (profile && profile.categorie_code !== body.categorie_code) {
+    throw new HttpError(422, "METROLOGY_PROFILE_CATEGORY_MISMATCH", "Le profil ne correspond pas à la catégorie de l'équipement.", {
+      fields: { categorie_code: ["La catégorie doit correspondre au profil de fiche sélectionné."] },
+    });
+  }
+  if (body.code) {
+    if (!profile || !body.code.startsWith(`${profile.code_prefix}-`)) {
+      throw new HttpError(422, "METROLOGY_EQUIPMENT_CODE_PROFILE_MISMATCH", "Le code de l'équipement ne correspond pas au profil de fiche.", {
+        fields: { code: ["Le préfixe du code doit correspondre au profil de fiche."] },
+      });
+    }
+    return body.code;
+  }
+  if (profile) {
+    return generateMetrologyProfileEquipmentCode(client, {
+      prefix: profile.code_prefix,
+      minNextNumber: profile.min_next_number,
+    });
+  }
+  return generateMetrologieEquipementCode(client);
+}
+
 export async function repoCreateEquipment(params: {
   body: CreateEquipmentBodyDTO;
   actor: MetrologyActor;
@@ -1083,9 +1158,9 @@ export async function repoCreateEquipment(params: {
     }
     assertSpecificationsMatchCategory(requirements, body);
 
-    // Le code visible est alloué par le serveur, dans la transaction, et devient
-    // immuable (trigger). Un code proposé par le client n'est jamais retenu.
-    const code = await generateMetrologieEquipementCode(client);
+    // Le code repris est contrôlé par le profil; sinon le serveur l'alloue dans
+    // la transaction. Après insertion il demeure immuable par trigger.
+    const code = await resolveEquipmentCode(client, body);
 
     let newId: string;
     try {
@@ -1200,6 +1275,13 @@ export async function repoUpdateEquipment(params: {
       currentUpdatedAt: current.updated_at,
     });
 
+    const specifications = mergeMetrologySpecifications(current.specifications, body.specifications);
+    assertProfileMatchesEquipment({
+      code: current.code,
+      categorieCode: body.categorie_code,
+      specifications,
+    });
+
     const requirements = await assertCategoryUsable(client, body.categorie_code, "categorie_code");
     if (body.sous_categorie_code) {
       await assertCategoryUsable(client, body.sous_categorie_code, "sous_categorie_code");
@@ -1254,7 +1336,7 @@ export async function repoUpdateEquipment(params: {
           body.restrictions,
           body.etalon_reference,
           body.exige_certificat,
-          JSON.stringify(body.specifications ?? {}),
+          JSON.stringify(specifications),
           actor.user_id,
         ]
       );

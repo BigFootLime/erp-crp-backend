@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts as drawnPages } from "../../../__tests__/helpers/pdf-text";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -65,52 +65,7 @@ vi.mock("../repository/commande-ar.repository", () => ({
 import { buildCommandeArPdfBuffer, renderCommandeArOfficialPdf, svcGenerateCommandeAr, svcSendCommandeAr } from "./commande-ar.service";
 import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 
-const WINANSI = new TextDecoder("windows-1252");
 
-function drawnPages(bytes: Buffer): string[] {
-  const decodeOperands = (operands: string): string =>
-    [...operands.matchAll(/<([0-9a-fA-F\s]*)>|\(((?:\\.|[^\\)])*)\)/g)]
-      .map((match) =>
-        match[1] !== undefined
-          ? WINANSI.decode(Buffer.from(match[1].replace(/\s+/g, ""), "hex"))
-          : match[2].replace(/\\([()\\])/g, "$1")
-      )
-      .join("");
-
-  const pages: string[] = [];
-  let cursor = 0;
-  for (;;) {
-    const start = bytes.indexOf("stream", cursor);
-    if (start < 0) break;
-    let from = start + "stream".length;
-    if (bytes[from] === 0x0d) from += 1;
-    if (bytes[from] === 0x0a) from += 1;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    cursor = end + "endstream".length;
-
-    let content: string;
-    try {
-      content = inflateSync(bytes.subarray(from, end)).toString("latin1");
-    } catch {
-      continue;
-    }
-    if (!content.includes("BT")) continue;
-    pages.push(
-      [
-        ...[...content.matchAll(/\[([^\]]*)\]\s*TJ/g)].map((match) =>
-          decodeOperands(match[1])
-        ),
-        ...[
-          ...content.matchAll(
-            /(<[0-9a-fA-F\s]*>|\((?:\\.|[^\\)])*\))\s*Tj/g
-          ),
-        ].map((match) => decodeOperands(match[1])),
-      ].join("\n")
-    );
-  }
-  return pages;
-}
 
 const ISSUER = {
   company_name: "CROIX ROUSSE PRECISION",
@@ -228,6 +183,15 @@ describe("new AR customer notes and immutable archived snapshots", () => {
     expect(text).toContain("Priorite: CRITIQUE");
     expect(archive.sourceSnapshot.public_comment).toBe(raw);
     expect(text).not.toContain("Délai de livraison");
+    const splitArchive = structuredClone(archive);
+    const snapshot = splitArchive.sourceSnapshot as { lines: { promise_schedule?: { due_date: string; quantity: string }[] }[] };
+    snapshot.lines[0].promise_schedule = [
+      { due_date: "2026-11-05", quantity: "1" },
+      { due_date: "2026-11-12", quantity: "1" },
+    ];
+    const splitText = drawnPages(await renderCommandeArOfficialPdf({ archive: splitArchive })).join("\n");
+    expect(splitText).toContain("05/11/2026");
+    expect(splitText).toContain("12/11/2026");
   });
 });
 

@@ -12,9 +12,9 @@ export const legacyDocumentLocation = z.string().trim().min(3).max(1000).refine(
         return false;
     }
 }, 'Indiquez un chemin serveur Windows ou une adresse HTTPS sans identifiants.');
-export const legacyDocumentIdentity = z.object({ id: z.string().uuid() });
+export const legacyDocumentIdentity = z.object({ id: z.string().guid() });
 export const legacyDocumentCommand = z.object({
-    idempotencyKey: z.string().uuid(),
+    idempotencyKey: z.string().guid(),
     type: z.enum(['PLAN', 'CERTIFICAT_MP', 'CERTIFICAT_TRAITEMENT', 'CONTROLE', 'AUTRE']),
     label: z.string().trim().min(3).max(200),
     location: legacyDocumentLocation,

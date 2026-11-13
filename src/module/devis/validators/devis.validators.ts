@@ -69,12 +69,12 @@ export const devisIdParamsSchema = z.object({
 
 export const devisDocumentIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
-  docId: z.string().uuid("docId must be a UUID"),
+  docId: z.string().guid("docId must be a UUID"),
 });
 
 export const devisOfficialDocumentParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
-  documentId: z.string().uuid("documentId must be a UUID"),
+  documentId: z.string().guid("documentId must be a UUID"),
 });
 
 export const devisOfficialDocumentBodySchema = z.object({
@@ -84,7 +84,7 @@ export const devisOfficialDocumentBodySchema = z.object({
 }).strict();
 
 export const devisArticleParamsSchema = z.object({
-  articleId: z.string().uuid("articleId must be a UUID"),
+  articleId: z.string().guid("articleId must be a UUID"),
 });
 
 export const devisArticleDevisCodeParamsSchema = z.object({
@@ -142,8 +142,8 @@ const devisLineSchema = z.preprocess((value) => {
   return v;
 },
 z.object({
-  article_id: z.string().uuid().optional().nullable(),
-  piece_technique_id: z.string().uuid().optional().nullable(),
+  article_id: z.string().guid().optional().nullable(),
+  piece_technique_id: z.string().guid().optional().nullable(),
   code_piece: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   description: z.string().trim().min(1),
   quantite: z.coerce.number().positive().optional().default(1),
@@ -154,9 +154,9 @@ z.object({
   article_devis: z.preprocess(
     emptyArticlePreparationToUndefined,
     z.object({
-      id: z.string().uuid().optional().nullable(),
-      root_article_devis_id: z.string().uuid().optional().nullable(),
-      parent_article_devis_id: z.string().uuid().optional().nullable(),
+      id: z.string().guid().optional().nullable(),
+      root_article_devis_id: z.string().guid().optional().nullable(),
+      parent_article_devis_id: z.string().guid().optional().nullable(),
       version_number: z.coerce.number().int().positive().optional(),
       code: z.string().trim().min(1),
       designation: z.string().trim().min(1),
@@ -165,19 +165,19 @@ z.object({
       family_code: z.string().trim().min(1),
       plan_index: z.coerce.number().int().positive().optional().default(1),
       projet_id: z.coerce.number().int().positive().optional().nullable(),
-      source_official_article_id: z.string().uuid().optional().nullable(),
+      source_official_article_id: z.string().guid().optional().nullable(),
     }).optional()
   ),
   dossier_technique_piece_devis: z.preprocess(
     (value) => emptyPreparationToUndefined(value, dossierPreparationFields),
     z.object({
-      id: z.string().uuid().optional().nullable(),
-      root_dossier_devis_id: z.string().uuid().optional().nullable(),
-      parent_dossier_devis_id: z.string().uuid().optional().nullable(),
+      id: z.string().guid().optional().nullable(),
+      root_dossier_devis_id: z.string().guid().optional().nullable(),
+      parent_dossier_devis_id: z.string().guid().optional().nullable(),
       version_number: z.coerce.number().int().positive().optional(),
       code_piece: z.string().trim().min(1),
       designation: z.string().trim().min(1),
-      source_official_piece_technique_id: z.string().uuid().optional().nullable(),
+      source_official_piece_technique_id: z.string().guid().optional().nullable(),
       payload: z.record(z.string(), z.unknown()).optional().default({}),
     }).optional()
   ),
@@ -194,12 +194,12 @@ z.object({
 export const createDevisBodySchema = z.object({
   numero: z.preprocess(emptyStringToUndefined, z.string().trim().min(1).max(30)).optional(),
   client_id: z.string().trim().min(1),
-  contact_id: z.string().uuid().optional().nullable(),
+  contact_id: z.string().guid().optional().nullable(),
   user_id: z.coerce.number().int().positive().optional(),
-  adresse_facturation_id: z.string().uuid().optional().nullable(),
-  adresse_livraison_id: z.string().uuid().optional().nullable(),
-  mode_reglement_id: z.string().uuid().optional().nullable(),
-  compte_vente_id: z.string().uuid().optional().nullable(),
+  adresse_facturation_id: z.string().guid().optional().nullable(),
+  adresse_livraison_id: z.string().guid().optional().nullable(),
+  mode_reglement_id: z.string().guid().optional().nullable(),
+  compte_vente_id: z.string().guid().optional().nullable(),
   date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   statut: z.preprocess(normalizeDevisStatut, z.enum(DEVIS_STATUTS)),
@@ -208,7 +208,7 @@ export const createDevisBodySchema = z.object({
   total_ttc: z.coerce.number().min(0).optional().default(0),
   commentaires: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   conditions_paiement_id: z.coerce.number().int().positive().optional().nullable(),
-  biller_id: z.string().uuid().optional().nullable(),
+  biller_id: z.string().guid().optional().nullable(),
   lignes: z.array(devisLineSchema).min(1),
 });
 
@@ -220,12 +220,12 @@ export const updateDevisBodySchema = z.object({
   // au `updated_at` courant sous FOR UPDATE ; divergence -> 409 DEVIS_STALE.
   expected_updated_at: z.preprocess(emptyStringToUndefined, z.string().trim().min(1)).optional(),
   client_id: z.string().trim().min(1).optional(),
-  contact_id: z.string().uuid().optional().nullable(),
+  contact_id: z.string().guid().optional().nullable(),
   user_id: z.coerce.number().int().positive().optional(),
-  adresse_facturation_id: z.string().uuid().optional().nullable(),
-  adresse_livraison_id: z.string().uuid().optional().nullable(),
-  mode_reglement_id: z.string().uuid().optional().nullable(),
-  compte_vente_id: z.string().uuid().optional().nullable(),
+  adresse_facturation_id: z.string().guid().optional().nullable(),
+  adresse_livraison_id: z.string().guid().optional().nullable(),
+  mode_reglement_id: z.string().guid().optional().nullable(),
+  compte_vente_id: z.string().guid().optional().nullable(),
   date_creation: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   date_validite: z.preprocess(emptyStringToNull, isoDate).optional().nullable(),
   statut: z.preprocess((v) => (v === undefined ? undefined : normalizeDevisStatut(v)), z.enum(DEVIS_STATUTS).optional()),
@@ -234,7 +234,7 @@ export const updateDevisBodySchema = z.object({
   total_ttc: z.coerce.number().min(0).optional(),
   commentaires: z.preprocess(emptyStringToNull, z.string().trim().min(1)).optional().nullable(),
   conditions_paiement_id: z.coerce.number().int().positive().optional().nullable(),
-  biller_id: z.string().uuid().optional().nullable(),
+  biller_id: z.string().guid().optional().nullable(),
   lignes: z.array(devisLineSchema).optional(),
 });
 

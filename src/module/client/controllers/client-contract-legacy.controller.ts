@@ -5,7 +5,7 @@ import { legacyContractBindSchema, legacyContractOrderIdSchema, legacyContractQu
 import { bindLegacyContractOrder, getLegacyContractOrders, getLegacyContractPreview } from "../services/client-contract-legacy.service";
 import { clientContractAuditContext } from "./client-contract.controller";
 
-const contractId = z.string().uuid().transform(value => value.toLowerCase());
+const contractId = z.string().guid().transform(value => value.toLowerCase());
 export const listLegacyContractOrders: RequestHandler = async (req, res, next) => {
   try {
     res.setHeader("Cache-Control", "private, no-store, max-age=0");

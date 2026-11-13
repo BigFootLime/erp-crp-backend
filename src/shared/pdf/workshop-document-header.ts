@@ -13,7 +13,15 @@ export function drawWorkshopDocumentHeader(
 ): number {
   const { marginX: x, marginTop: y, width } = geometry
   const logoWidth = 105
-  doc.image(CERP_LOGO_PNG, x, y, { width: logoWidth })
+  const brandLogo = header.branding ? readableRaster(header.branding.logo) : CERP_LOGO_PNG
+  if (brandLogo) {
+    doc.image(brandLogo, x, y, { width: logoWidth })
+  } else {
+    // The frozen issuer brand is authoritative on customer-facing documents. Do not fall
+    // back to the CERP logo when the issuer has not configured an image.
+    doc.font(documentFont(doc, true)).fontSize(11).fillColor("#101418")
+    doc.text(safe(header.branding?.name.trim() || "Émetteur"), x, y + 8, { width: logoWidth })
+  }
   const clientImage = header.appearance === "clients-v3" || header.appearance === "module-v1" ? readableRaster(header.entityImage) : null
   if (clientImage) {
     doc.image(clientImage, x + width - 105, y, { fit: [105, 64], align: "center", valign: "center" })

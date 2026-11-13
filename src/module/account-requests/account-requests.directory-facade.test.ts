@@ -14,6 +14,8 @@ describe('Directory account-request error boundary', () => {
 
   it.each([
     [409, 'ACCOUNT_REQUEST_VERSION_CONFLICT', 409],
+    [409, 'BUSINESS_COMPANY_MEMBERSHIP_VERSION_CONFLICT', 409],
+    [422, 'ACCOUNT_REQUEST_COMPANY_UNAVAILABLE', 422],
     [428, 'MFA_STEP_UP_REQUIRED', 428],
   ])('preserves the allowlisted %s/%s business contract', (status, code, expectedStatus) => {
     const error = mapDirectoryAccountRequestError(Object.assign(new Error('private authority detail'), { status, code }));

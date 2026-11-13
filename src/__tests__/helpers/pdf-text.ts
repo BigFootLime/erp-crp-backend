@@ -1,12 +1,21 @@
 import { inflateSync } from "node:zlib";
 
 /** Reads PDFKit text through the embedded font's ToUnicode map, including Inter. */
+const winAnsi = new TextDecoder("windows-1252");
+
 export function pdfPageTexts(bytes: Buffer): string[] {
   const raw=bytes.toString("latin1");
   const objects=new Map([...raw.matchAll(/(\d+) 0 obj\s*([\s\S]*?)endobj/g)].map(m=>[Number(m[1]),m[2]]));
   const stream=(object:string):string=>{
-    const m=/stream\r?\n([\s\S]*?)\r?\n?endstream/.exec(object);if(!m)return "";
-    try{return inflateSync(Buffer.from(m[1],"latin1")).toString("latin1");}catch{return m[1];}
+    // PDF streams are binary. A compressed stream may legitimately end in 0x0A or
+    // 0x0D, so delimiter-based capture silently drops its last byte and corrupts
+    // the ToUnicode map. Honour the explicit byte length when it is available.
+    const header=/\/Length\s+(\d+)[\s\S]*?stream\r?\n/.exec(object);
+    const encoded=header
+      ? Buffer.from(object.slice(header.index + header[0].length, header.index + header[0].length + Number(header[1])),"latin1")
+      : (()=>{const m=/stream\r?\n([\s\S]*?)\r?\n?endstream/.exec(object);return m?Buffer.from(m[1],"latin1"):Buffer.alloc(0);})();
+    if(!encoded.length)return "";
+    try{return inflateSync(encoded).toString("latin1");}catch{return encoded.toString("latin1");}
   };
   const unicode=(hex:string):string=>{
     const b=Buffer.from(hex.replace(/\s/g,""),"hex");let s="";for(let i=0;i+1<b.length;i+=2)s+=String.fromCharCode(b.readUInt16BE(i));return s;
@@ -37,7 +46,7 @@ export function pdfPageTexts(bytes: Buffer): string[] {
       if(token[2]){
         const hex=token[2].replace(/\s/g,""),map=fonts.get(font);
         if(map){for(let i=0;i+3<hex.length;i+=4)text+=map.get(parseInt(hex.slice(i,i+4),16))??"";}
-        else text+=Buffer.from(hex,"hex").toString("latin1");
+        else text += winAnsi.decode(Buffer.from(hex, "hex"));
       }else text+=(token[3]??"").replace(/\\([()\\])/g,"$1");
     }
     pages.push(text);

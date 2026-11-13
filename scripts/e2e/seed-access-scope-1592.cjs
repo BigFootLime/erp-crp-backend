@@ -53,10 +53,14 @@ const FIXTURE_USERS = [
 // its descriptive job title.  A new fixture account starts closed.
 const ACCOUNT_ACCESS = [
   { username: "E2E_STANDARD", grants: [] },
+  // Dedicated non-admin secretary for the real /commandes journey. Keep
+  // E2E_SALES closed: it is a negative access-scope fixture.
+  { username: "E2E_ORDER_SECRETARY", grants: ["commandes-clients"] },
   { username: "E2E_SALES", grants: [] },
   { username: "E2E_PLANNER", grants: ["production", "planning"] },
   { username: "E2E_OPERATOR", grants: ["production"] },
   { username: "E2E_QUALITY", grants: ["ged"] },
+  { username: "E2E_OF_QUALITY", grants: ["production", "pieces-techniques", "ged", "qualite"] },
   { username: "E2E_PURCHASING", grants: [] },
   { username: "E2E_ACCOUNTANT", grants: ["facturation"] },
   ...FIXTURE_USERS.map(({ username, grants }) => ({ username, grants })),
@@ -96,7 +100,7 @@ async function requireModuleCatalog(client) {
       ORDER BY module_key`
   );
   const available = new Set(modules.rows.map((row) => row.module_key));
-  for (const moduleKey of ["planning", "devis"]) {
+  for (const moduleKey of ["planning", "devis", "commandes-clients"]) {
     if (!available.has(moduleKey)) throw new Error(`access-scope fixture requires active ${moduleKey} module`);
   }
 }
@@ -194,7 +198,7 @@ async function normalizeSensitiveCapabilities(client, actorId) {
       [accountant.id, capability, actorId]
     );
   }
-  for (const username of ["E2E_SALES", "E2E_PURCHASING", ...FIXTURE_USERS.map((user) => user.username)]) {
+  for (const username of ["E2E_SALES", "E2E_ORDER_SECRETARY", "E2E_PURCHASING", ...FIXTURE_USERS.map((user) => user.username)]) {
     await client.query(
       `UPDATE public.app_user_sensitive_capabilities
           SET granted=false,updated_by=$2,updated_at=now()

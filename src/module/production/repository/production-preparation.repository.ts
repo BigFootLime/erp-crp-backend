@@ -1,4 +1,8 @@
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
+import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
+import { readImprovementReturns } from "./improvement-returns.repository";
+import { importedInspection } from "../domain/imported-inspection";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -74,7 +78,10 @@ export type PreparationOrder = {
   updated_at: string;
   technical_snapshot_sha256: string | null;
   preparation_rules_version: number | null;
+  version_selection_mode?: "AUTO" | "MANUAL";
   technical_preparation?: {
+    operation_programming?: Record<string, ProgrammingPreparation>;
+    version_selection_mode?: "AUTO" | "MANUAL";
     execution_programming?: NonNullable<PreparationDecisions['programming']>;
     execution_quality?: Pick<TechnicalSources, 'quality_plan' | 'characteristics'>;
   };
@@ -84,12 +91,15 @@ export type PreparationOrder = {
   };
 };
 type TechnicalSources = {
+  improvement_returns?: number;
   version: {
     id: string;
     statut: string;
     is_current: boolean;
     manufacturing_mode: string;
     indice: string;
+    indice_externe_original?: string | null;
+    version_interne?: number | null;
     updated_at: string;
     effective?: boolean;
     date_effet?: string | null;
@@ -98,6 +108,8 @@ type TechnicalSources = {
   purchases: PurchaseEvidence[];
   documents: Array<{
     id: string;
+    original_name?: string;
+    mime_type?: string;
     version_id: string;
     role: string;
     sha256: string | null;
@@ -182,8 +194,7 @@ export async function loadPreparationOrder(
   const row = (
     await tx.query<PreparationOrder>(
       `SELECT o.id::bigint::int AS id,o.numero,o.statut::text,o.technical_readiness,o.piece_technique_id::text,o.article_id::text,o.client_id,
-    COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
-      NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,
+    COALESCE(${effectivePreparationVersionSql("o")},
       (SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=o.piece_technique_id
        AND v.statut<>'OBSOLETE' ORDER BY v.is_current DESC,v.created_at DESC,v.id LIMIT 1))::text AS version_id,
     o.quantite_lancee::float8,o.updated_at::text,o.technical_snapshot_sha256,o.preparation_rules_version,o.technical_snapshot,o.technical_preparation
@@ -260,12 +271,24 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     `
     WITH v AS (SELECT * FROM public.piece_technique_versions WHERE id=$1::uuid AND piece_technique_id=$2::uuid),
     g AS (SELECT * FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current ORDER BY created_at DESC,id LIMIT 1),
-    docs AS (SELECT d.id::text,dv.id::text AS version_id,l.link_role AS role,blob.sha256
+    inspection_links AS (
+      SELECT l.document_id FROM public.ged_document_links l
+      JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
+      WHERE l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=$1::text AND l.link_role='FICHE_AUTOCONTROLE'
+    ),
+    docs AS (SELECT DISTINCT d.id::text,dv.id::text AS version_id,
+      CASE WHEN l.entity_type='PIECE_TECHNIQUE' THEN 'FICHE_AUTOCONTROLE' ELSE l.link_role END AS role,
+      blob.sha256,dv.original_name,blob.mime_type
       FROM public.ged_document_links l JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
       JOIN public.ged_document_versions dv ON dv.id=d.current_version_id AND dv.status='APPLICABLE'
       JOIN public.ged_blobs blob ON blob.id=dv.blob_id
       JOIN public.ged_upload_sessions us ON us.id=dv.upload_session_id AND us.scan_status='clean' AND us.quarantine_status='released'
-      WHERE l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=$1::text),
+      WHERE (l.entity_type='PIECE_TECHNIQUE_VERSION' AND l.entity_id=$1::text)
+        OR (l.entity_type='PIECE_TECHNIQUE' AND l.entity_id=$2::text
+          AND l.link_role='DOSSIER_TECHNIQUE' AND d.class_key='RELEVE_CONTROLE'
+          AND lower(concat_ws(' ',d.title,dv.original_name)) ~ '(auto[ _-]?contr[oô]le|(^|[^a-z0-9])md[ _-]?07([^0-9]|$))'
+          AND NOT EXISTS (SELECT 1 FROM inspection_links)
+          AND (SELECT count(DISTINCT COALESCE(indice_externe_original,indice)) FROM public.piece_technique_versions WHERE piece_technique_id=$2::uuid)=1)),
     qp AS (SELECT q.* FROM public.quality_control_plan q WHERE q.piece_version_id=$1::uuid AND q.status='PUBLISHED'
       AND q.archived_at IS NULL AND (q.effective_from IS NULL OR q.effective_from<=now()) AND (q.effective_to IS NULL OR q.effective_to>now())
       AND q.trigger_type IN ('IN_PROCESS','FINAL','FIRST_ARTICLE') ORDER BY q.published_at DESC,q.id LIMIT 1)
@@ -279,6 +302,9 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
       'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')}),'[]'),
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
+      -- Keep the historical empty feedback counter in PostgreSQL's JSONB order.
+      -- Live scans are returned separately and never change the signed definition.
+      'improvement_returns',0,
       'characteristics',COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY c.position,c.id) FROM public.quality_control_plan_characteristic c WHERE c.plan_id=(SELECT id FROM qp)),'[]'),
       'missing_documents',(SELECT count(*) FROM public.piece_version_document_requirements r WHERE r.piece_technique_version_id=$1::uuid AND NOT EXISTS(SELECT 1 FROM docs WHERE role=r.document_type_code)),
       'programming_task_valid',EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id AND u.status='Active' WHERE p.id=$3::uuid AND p.piece_technique_version_id=$1::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) AND p.estimated_hours>0)
@@ -290,6 +316,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       id,
     ],
   );
+  const improvementReturns = await readImprovementReturns(tx, id);
   const frozenSources = of.technical_snapshot?.preparation_evidence;
   const rulesVersion = preparationRulesVersion(of);
   const sources = frozenSources && !frozenSources.quality_plan
@@ -375,12 +402,27 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       (of.technical_snapshot_sha256
         ? Boolean(stockReview)
         : stockReview?.source_hash === stockHash),
-    sheet_current: sheet?.state === "READY",
+    sheet_current: sheet?.state === "READY" || (rulesVersion >= 2 && Boolean(importedInspection(sources.documents))),
   };
   const items = evaluatePreparation(f, rulesVersion);
-  const sharedReady = isPreparationReady(
-    items.filter((i) => i.scope === "VERSION"),
-  );
+  const importedSheet = importedInspection(sources.documents);
+  if (importedSheet && sheet?.state !== "READY") {
+    const item = items.find((entry) => entry.key === "self_inspection");
+    if (item) item.detail = `Fiche importée depuis la pièce technique : ${importedSheet.original_name ?? "document GED"}. Aucun nouvel import requis.`;
+    const quality = items.find((entry) => entry.key === "quality");
+    if (quality && !f.quality_plan_id) {
+      quality.detail = "La fiche importée est disponible. Les caractéristiques numériques ne sont nécessaires que pour la saisie des mesures dans CERP.";
+    }
+  }
+  const inspectionConflict = !importedSheet && sources.documents.filter(doc => doc.role === "FICHE_AUTOCONTROLE").length > 1;
+  if (inspectionConflict) {
+    const item = items.find(entry => entry.key === "self_inspection");
+    if (item) item.detail = "Plusieurs fiches sont applicables. La Qualité doit identifier le modèle à conserver pour cet indice.";
+  }
+  if (improvementReturns.length) {
+    items.push({ key: "index_review", label: "Fiche d’amélioration continue", status: "MISSING", required: false,
+      detail: "Retour de production à consulter pour cette pièce.", scope: "VERSION" });
+  }
   const programmingTask =
     (
       await tx.query(
@@ -409,10 +451,10 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   ).rows;
   const sharedImpact = (
     await tx.query<{ mutable_of_ids: number[]; frozen_count: number }>(
-      `SELECT COALESCE(array_agg(o.id::bigint::int ORDER BY o.id) FILTER(WHERE o.statut='BROUILLON' AND o.technical_snapshot_sha256 IS NULL),'{}'::int[]) AS mutable_of_ids,
+      `SELECT COALESCE(array_agg(o.id::bigint::int ORDER BY o.id) FILTER(WHERE o.statut='BROUILLON' AND o.technical_snapshot_sha256 IS NULL AND COALESCE(o.technical_readiness,'')<>'VALIDATED'),'{}'::int[]) AS mutable_of_ids,
       count(*) FILTER(WHERE o.technical_snapshot_sha256 IS NOT NULL)::int AS frozen_count
      FROM public.ordres_fabrication o WHERE o.piece_technique_id=$1::uuid AND o.statut NOT IN ('ANNULE','TERMINE','CLOTURE')
-     AND COALESCE(o.piece_technique_version_id,NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
+     AND COALESCE(${effectivePreparationVersionSql("o")},
        (SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=$1::uuid AND v.statut<>'OBSOLETE' ORDER BY v.is_current DESC,v.created_at DESC,v.id LIMIT 1))=$2::uuid`,
       [of.piece_technique_id, of.version_id],
     )
@@ -423,8 +465,35 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       [id],
     )
   ).rows[0];
+  const centreRows = (await tx.query<{id:string; label:string}>(
+    `SELECT id::text, concat_ws(' ',code,designation,type_cf) AS label FROM public.centres_frais WHERE id::text=ANY($1::text[])`,
+    [sources.operations.map(op => op.cf_id).filter(Boolean)])).rows;
+  const centres = new Map(centreRows.map(row => [row.id, row.label]));
+  const programmingOperations = sources.operations.filter(op => needsProgramming(op, centres)).map(op => {
+    const saved = of.technical_preparation?.operation_programming?.[op.id];
+    const current = programmingPreparationCurrent(op, of.version_id, saved);
+    return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
+      estimated_hours: current ? saved!.estimated_hours : null, status: current ? 'PREPARED' as const : 'TODO' as const};
+  });
+  const programmingItem = items.find(item => item.key === 'programming');
+  if (programmingItem && programmingOperations.length) {
+    const prepared = programmingOperations.filter(op => op.status === 'PREPARED');
+    programmingItem.detail = `${prepared.length}/${programmingOperations.length} opérations préparées · ${prepared.reduce((sum,op)=>sum+(op.estimated_hours??0),0)} h prévues. La réalisation du programme CN reste à confirmer avant usinage.`;
+    // Estimates belong to the OF and do not replace legacy mandatory program evidence.
+    if (!programmingItem.required && programmingItem.status !== 'BLOCKED') {
+      programmingItem.scope = 'OF';
+      programmingItem.status = prepared.length === programmingOperations.length ? 'READY' : 'MISSING';
+    }
+  }
+  const sharedReady = isPreparationReady(items.filter(item => item.scope === 'VERSION'));
   return {
-    of,
+    programming_operations: programmingOperations,
+    of: {
+      ...of,
+      // Existing drafts predate the flag and deliberately follow the
+      // compatible revision by default; only an explicit value locks it.
+      version_selection_mode: of.technical_preparation?.version_selection_mode === "MANUAL" ? "MANUAL" : "AUTO",
+    },
     version: sources.version,
     profile_version: profile?.version ?? 0,
     decisions,
@@ -442,6 +511,9 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     stock_candidates: candidates,
     stock_review: stockReview,
     sheet,
+    imported_inspection: importedSheet,
+    inspection_conflict: inspectionConflict,
+    improvement_returns: improvementReturns,
     sources,
     programming_task: programmingTask,
     programming_assignment_allowed: Boolean(of.technical_snapshot_sha256 && !programmingDecisionDefined(decisions.programming)
@@ -470,6 +542,10 @@ export async function persistPreparationEvaluation(tx: Db, id: number) {
     ],
   );
   return evaluation;
+}
+
+export function repoOfImprovementReturns(id: number) {
+  return readImprovementReturns(pool, id);
 }
 
 export async function repoPreparationWorkbench(id: number) {
@@ -557,8 +633,8 @@ export async function invalidateCompatibleDrafts(
   const rows = (
     await tx.query<{ id: number }>(
       `UPDATE public.ordres_fabrication SET technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,
-    updated_at=now(),updated_by=$3 WHERE piece_technique_id=$1::uuid AND statut='BROUILLON' AND technical_snapshot_sha256 IS NULL
-    AND COALESCE(NULLIF(technical_preparation->>'selected_version_id','')::uuid,NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)=$2::uuid
+    updated_at=now(),updated_by=$3 WHERE piece_technique_id=$1::uuid AND statut='BROUILLON' AND technical_snapshot_sha256 IS NULL AND COALESCE(technical_readiness,'')<>'VALIDATED'
+    AND ${effectivePreparationVersionSql("ordres_fabrication")}=$2::uuid
     RETURNING id::bigint::int AS id`,
       [pieceId, versionId, audit.user_id],
     )
@@ -572,7 +648,7 @@ export async function invalidateCompatibleDrafts(
 
 export async function repoSelectPreparationVersion(
   id: number,
-  input: { expected_updated_at: string; version_id: string },
+  input: { expected_updated_at: string; version_id: string; version_selection_mode?: "AUTO" | "MANUAL" },
   audit: AuditContext,
 ) {
   return withRealtimeOutboxTransaction(await pool.connect(), async (tx) => {
@@ -600,9 +676,9 @@ export async function repoSelectPreparationVersion(
       // The physical snapshot identity is populated atomically during validation.
       // A draft selection must not partially attach that immutable snapshot.
       `UPDATE public.ordres_fabrication SET
-      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text),
+      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode',COALESCE($5::text,'MANUAL')),
       preparation_rules_version=$3,technical_readiness='INCOMPLETE',updated_at=now(),updated_by=$4 WHERE id=$1`,
-      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id],
+      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id, input.version_selection_mode],
     );
     await preparationAudit(
       tx,

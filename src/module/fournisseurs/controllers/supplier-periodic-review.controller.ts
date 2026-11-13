@@ -8,7 +8,7 @@ import {
   supplierReviewWrite,
 } from "../services/supplier-periodic-review.service";
 function supplier(req: Request) {
-  const parsed = z.string().uuid().safeParse(req.params.id);
+  const parsed = z.string().guid().safeParse(req.params.id);
   if (!parsed.success)
     throw new HttpError(
       422,

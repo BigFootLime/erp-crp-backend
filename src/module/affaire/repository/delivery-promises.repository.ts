@@ -8,6 +8,7 @@ import { centralCanonicalJson } from "../../planning/domain/central-canonical-js
 import { assertPromiseParts, measureDeliveryPromises, type DeliveryMeasure } from "../domain/delivery-promises";
 import type { AuditContext } from "../types/affaire.types";
 import type { ReviseDeliveryPromisesInput } from "../validators/delivery-promises.validators";
+import type { RecordDeliveryPromiseEvidenceInput } from "../validators/delivery-promises.validators";
 type Root = {
     id: string;
     allocation_id: string;
@@ -30,6 +31,7 @@ type Part = {
     due_date: string;
     retired_at: string | null;
     shipped_quantity: number;
+    departure_due_date?: string | null;
 };
 type Shipment = {
     root_id: string;
@@ -166,6 +168,34 @@ export async function reviseDeliveryPromises(affaireId: number, input: ReviseDel
         return { root_id: root.id, version: root.version + 1, event_id: event.id, replayed: false };
     });
 }
+
+/** Records only explicit operational evidence. Existing AR dates are not reused as dispatch dates. */
+export async function recordDeliveryPromiseEvidence(affaireId: number, input: RecordDeliveryPromiseEvidenceInput, audit: AuditContext) {
+    const client = await pool.connect();
+    return withRealtimeOutboxTransaction(client, async tx => {
+        const root = (await tx.query<Root>(rootsSql + " WHERE r.id=$1::uuid AND r.affaire_id=$2 FOR UPDATE OF r", [input.root_id, affaireId])).rows[0];
+        if (!root) throw new HttpError(404, "PROMISE_NOT_FOUND", "Engagement introuvable dans cette affaire.");
+        if (root.version !== input.expected_version) throw new HttpError(409, "PROMISE_STALE", "La répartition a changé. Rechargez l'affaire.");
+        const existing = (await tx.query<{ request: unknown }>(`SELECT request FROM public.delivery_promise_departure_events WHERE actor_id=$1 AND request_key=$2
+          UNION ALL SELECT request FROM public.delivery_promise_site_evidence WHERE actor_id=$1 AND request_key=$2||':site'`, [audit.user_id, input.request_key])).rows[0];
+        if (existing) {
+            if (centralCanonicalJson(existing.request) !== centralCanonicalJson({ affaireId, ...input })) throw new HttpError(409, "IDEMPOTENCY_KEY_REUSED", "Cette clé a déjà servi à une autre modification.");
+            return { root_id: root.id, version: root.version, replayed: true };
+        }
+        const part = (await tx.query<{ id: string }>("SELECT id::text FROM public.delivery_promise_parts WHERE id=$1::uuid AND root_id=$2::uuid AND retired_at IS NULL FOR SHARE", [input.part_id, root.id])).rows[0];
+        if (!part) throw new HttpError(409, "PROMISE_PART_NOT_ACTIVE", "La partie d'engagement n'est plus active.");
+        if (input.delivery_address_id) {
+            const address = await tx.query("SELECT 1 FROM public.commande_client WHERE id=$1 AND destinataire_id=$2::uuid FOR SHARE", [root.commande_id, input.delivery_address_id]);
+            if (!address.rowCount) throw new HttpError(409, "PROMISE_SITE_NOT_ORDER_ADDRESS", "Le site doit être le destinataire vérifié de la commande.");
+            await tx.query("INSERT INTO public.delivery_promise_site_evidence(root_id,delivery_address_id,actor_id,request_key,request) VALUES($1::uuid,$2::uuid,$3,$4,$5::jsonb)", [root.id, input.delivery_address_id, audit.user_id, `${input.request_key}:site`, JSON.stringify({ affaireId, ...input })]);
+        }
+        if (input.departure_due_date) await tx.query(`INSERT INTO public.delivery_promise_departure_events(root_id,part_id,root_version,due_date,actor_id,request_key,request,reason)
+          VALUES($1::uuid,$2::uuid,$3,$4::date,$5,$6,$7::jsonb,$8)`, [root.id, part.id, root.version, input.departure_due_date, audit.user_id, input.request_key, JSON.stringify({ affaireId, ...input }), input.reason]);
+        await tx.query("UPDATE public.delivery_promise_roots SET version=version+1 WHERE id=$1::uuid", [root.id]);
+        await repoInsertAuditLog({ tx, user_id: audit.user_id, ip: audit.ip, user_agent: audit.user_agent, device_type: audit.device_type, os: audit.os, browser: audit.browser, body: { event_type: "ACTION", action: "affaire.delivery-promise.evidence", entity_type: "affaire", entity_id: String(affaireId), page_key: audit.page_key, path: audit.path, client_session_id: audit.client_session_id, details: { root_id: root.id, part_id: part.id, delivery_address_id: input.delivery_address_id ?? null, departure_due_date: input.departure_due_date ?? null, reason: input.reason } } });
+        return { root_id: root.id, version: root.version + 1, replayed: false };
+    });
+}
 /** Called inside the canonical shipment transaction. The due date becomes evidence. */
 export async function captureShipmentPromises(tx: PoolClient, deliveryId: string) {
     const allocations = (await tx.query<{
@@ -180,13 +210,14 @@ export async function captureShipmentPromises(tx: PoolClient, deliveryId: string
         if ((await tx.query("SELECT id FROM public.delivery_promise_shipments WHERE bl_allocation_id=$1 LIMIT 1", [allocation.id])).rowCount)
             continue;
         const parts = (await tx.query<Part>(`SELECT p.id::text,p.root_id::text,p.quantity::float8,p.due_date::text,p.retired_at::text,
+      (SELECT event.due_date::text FROM public.delivery_promise_departure_events event WHERE event.part_id=p.id ORDER BY event.created_at DESC,event.id DESC LIMIT 1) AS departure_due_date,
       COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)::float8 AS shipped_quantity
       FROM public.delivery_promise_parts p WHERE p.root_id=$1 AND p.retired_at IS NULL ORDER BY p.due_date,p.created_at,p.id FOR UPDATE`, [allocation.root_id])).rows;
         let remaining = allocation.quantity;
         for (const part of parts) {
             const quantity = Math.min(remaining, Math.max(0, part.quantity - part.shipped_quantity));
             if (quantity > 0)
-                await tx.query(`INSERT INTO public.delivery_promise_shipments(part_id,bl_allocation_id,quantity,due_date_at_shipment) VALUES($1,$2,$3,$4)`, [part.id, allocation.id, quantity, part.due_date]);
+                await tx.query(`INSERT INTO public.delivery_promise_shipments(part_id,bl_allocation_id,quantity,due_date_at_shipment,departure_due_date_at_shipment) VALUES($1,$2,$3,$4,$5::date)`, [part.id, allocation.id, quantity, part.due_date, part.departure_due_date ?? null]);
             remaining -= quantity;
         }
         if (remaining > 0.000001)

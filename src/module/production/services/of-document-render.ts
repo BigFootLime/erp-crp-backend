@@ -121,7 +121,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
     {
       appearance: payload.documentCharter === "module-v1" ? "module-v1" : "legacy-v1",
       module: "production",
-      designVersion: payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || payload.templateVersion === "of-ordre-fabrication/1.6" || payload.templateVersion === "of-ordre-fabrication/1.5" ? "workshop-v4" : payload.templateVersion === "of-ordre-fabrication/1.4" ? "workshop-v3" : payload.templateVersion === "of-ordre-fabrication/1.3" ? "editorial-v2" : "classic-v1",
+      designVersion: payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || payload.templateVersion === "of-ordre-fabrication/1.7" || payload.templateVersion === "of-ordre-fabrication/1.6" || payload.templateVersion === "of-ordre-fabrication/1.5" ? "workshop-v4" : payload.templateVersion === "of-ordre-fabrication/1.4" ? "workshop-v3" : payload.templateVersion === "of-ordre-fabrication/1.3" ? "editorial-v2" : "classic-v1",
       documentType: "Ordre de fabrication",
       name: payload.ofNumero,
       code: payload.revisionCode,
@@ -136,7 +136,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
       // Le gabarit figure au pied : deux PDF de même contenu rendus par deux
       // gabarits différents ne sont pas le même document, et une réimpression
       // doit pouvoir le prouver sans ouvrir la base.
-      footerNote: payload.templateVersion === "of-ordre-fabrication/1.3" || payload.templateVersion === "of-ordre-fabrication/1.4" || payload.templateVersion === "of-ordre-fabrication/1.5" || payload.templateVersion === "of-ordre-fabrication/1.6" || payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION
+      footerNote: payload.templateVersion === "of-ordre-fabrication/1.3" || payload.templateVersion === "of-ordre-fabrication/1.4" || payload.templateVersion === "of-ordre-fabrication/1.5" || payload.templateVersion === "of-ordre-fabrication/1.6" || payload.templateVersion === "of-ordre-fabrication/1.7" || payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION
         ? `${payload.ofNumero} ${payload.revisionCode} — gabarit ${payload.templateVersion}`
         : `${payload.ofNumero} ${payload.revisionCode} — instantané ${payload.snapshotId} — gabarit ${payload.templateVersion}`,
       title: `Ordre de fabrication ${payload.ofNumero} ${payload.revisionCode}`,
@@ -148,7 +148,7 @@ export async function renderOfDocument(payload: OfDocumentPayload): Promise<OfDo
         renderWorkshopOfDocumentV14(ctx, payload);
         return;
       }
-      if (payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION) {
+      if (payload.templateVersion === "of-ordre-fabrication/1.7" || payload.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION) {
         renderWorkshopOfDocument(ctx, payload);
         return;
       }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { canonicalizeStockUnitCode } from '../../../shared/stock-unit';
 import { parseCumpDecimal } from '../domain/cump-decimal';
 
-const uuid=z.string().uuid().transform(value=>value.toLowerCase());
+const uuid=z.string().guid().transform(value=>value.toLowerCase());
 const unit=z.string().min(1).max(32).refine(value=>canonicalizeStockUnitCode(value)===value,
   'Sélectionnez l’unité proposée pour le stock d’ouverture.');
 const digest=z.string().regex(/^[0-9a-f]{64}$/);

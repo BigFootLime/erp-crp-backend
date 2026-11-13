@@ -6,9 +6,14 @@ import { strongPasswordReset, strictEmail } from "../../auth/validators/_helpers
 import { AVATAR_KEYS } from "../../auth/validators/test-registration.validator";
 
 const personName = z.string().trim().min(2).max(80);
-const requestId = z.string().uuid();
+const requestId = z.string().guid();
 const version = z.number().int().min(0);
 const moduleKey = z.string().trim().min(1).max(64).regex(/^[a-z0-9-]+$/);
+const companyAccess = z.object({
+  company_id: z.string().uuid(),
+  /** Zero creates an explicit membership; a later change must name its version. */
+  expected_membership_version: version,
+}).strict();
 
 export const submitAccountRequestSchema = z.object({
   body: z.object({
@@ -30,19 +35,25 @@ export const listAccountRequestsSchema = z.object({
   query: z.object({
     status: z.enum(["PENDING", "PROJECTION_PENDING", "APPROVED", "REJECTED", "EXPIRED"]).optional().default("PENDING"),
     limit: z.coerce.number().int().min(1).max(100).optional().default(50),
-    cursor: z.string().uuid().optional(),
+    cursor: z.string().guid().optional(),
   }).strict(),
 });
 
 export const approveAccountRequestSchema = z.object({
   params: z.object({ id: requestId }),
-  headers: z.object({ idempotencyKey: z.string().uuid() }),
+  headers: z.object({ idempotencyKey: z.string().guid() }),
   body: z.object({
     expected_version: version,
     primary_role: z.enum(PRIMARY_USER_ROLES),
     roles: z.array(z.enum(ASSIGNABLE_USER_ROLES)).min(1).max(ASSIGNABLE_USER_ROLES.length),
     administrative_kind: z.enum(["STANDARD", "BUSINESS_ADMIN"]),
     module_keys: z.array(moduleKey).max(100).refine((values) => new Set(values).size === values.length, "Modules dupliqués"),
+    // This is deliberately only a company selection.  The server derives the
+    // effective modules from the reviewed decision and the company ceiling.
+    company_access: z.array(companyAccess).max(100).refine(
+      (values) => new Set(values.map((value) => value.company_id.toLowerCase())).size === values.length,
+      "Entreprises dupliquées",
+    ).optional(),
     link_historical_user_id: z.number().int().positive().nullable().optional(),
   }).strict().superRefine((value, ctx) => {
     if (!value.roles.includes(value.primary_role)) {
@@ -53,13 +64,13 @@ export const approveAccountRequestSchema = z.object({
 
 export const rejectAccountRequestSchema = z.object({
   params: z.object({ id: requestId }),
-  headers: z.object({ idempotencyKey: z.string().uuid() }),
+  headers: z.object({ idempotencyKey: z.string().guid() }),
   body: z.object({ expected_version: version, reason: z.string().trim().max(500).optional() }).strict(),
 });
 
 export const deleteAccountRequestSchema = z.object({
   params: z.object({ id: requestId }),
-  headers: z.object({ idempotencyKey: z.string().uuid() }),
+  headers: z.object({ idempotencyKey: z.string().guid() }),
   body: z.object({ expected_version: version }).strict(),
 });
 

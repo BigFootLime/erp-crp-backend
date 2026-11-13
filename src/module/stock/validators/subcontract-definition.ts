@@ -1,7 +1,7 @@
 import { z } from "zod";
 export const subcontractDefinitionSchema=z.object({
-  piece_technique_id:z.string().uuid(),
-  piece_technique_version_id:z.string().uuid(),
+  piece_technique_id:z.string().guid(),
+  piece_technique_version_id:z.string().guid(),
   family_label:z.string().trim().min(1).max(200),
   description:z.string().trim().min(1).max(4000),
   material_provider:z.enum(["CRP","SUPPLIER"]),

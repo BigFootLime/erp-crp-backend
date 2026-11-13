@@ -50,6 +50,7 @@ export type AdresseLivraisonLite = {
   name: string | null
   street: string | null
   house_number: string | null
+  address_complement?: string | null
   postal_code: string | null
   city: string | null
   country: string | null

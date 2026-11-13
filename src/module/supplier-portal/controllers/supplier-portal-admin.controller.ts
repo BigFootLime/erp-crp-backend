@@ -1,0 +1,12 @@
+import type { RequestHandler } from "express";
+import { HttpError } from "../../../utils/httpError";
+import * as service from "../services/supplier-portal.service";
+import { decisionSchema,inviteSchema } from "../validators/supplier-portal.validators";
+const key=(req:any)=>{const value=req.header("Idempotency-Key")?.trim();if(!value||value.length<8||value.length>120)throw new HttpError(400,"SUPPLIER_PORTAL_IDEMPOTENCY_REQUIRED","Une clé d’idempotence est requise.");return value;};
+const param=(req:any,name:string)=>{const value=req.params[name];if(typeof value!=="string")throw new HttpError(400,"SUPPLIER_PORTAL_PARAM_INVALID","Paramètre invalide.");return value;};
+export const access:RequestHandler=async(_req,res,next)=>{try{res.json({items:await service.access()});}catch(e){next(e);}};
+export const invite:RequestHandler=async(req,res,next)=>{try{const body=inviteSchema.parse(req.body);res.status(201).json(await service.invite({supplierId:body.supplier_id,email:body.email,orderIds:body.order_ids,expiresAt:body.expires_at}));}catch(e){next(e);}};
+export const reset:RequestHandler=async(req,res,next)=>{try{res.json(await service.resetByAdmin(param(req,"id")));}catch(e){next(e);}};
+export const disable:RequestHandler=async(req,res,next)=>{try{res.json(await service.disable(param(req,"id")));}catch(e){next(e);}};
+export const reviews:RequestHandler=async(_req,res,next)=>{try{res.json({items:await service.reviews()});}catch(e){next(e);}};
+export const decision:RequestHandler=async(req,res,next)=>{try{const body=decisionSchema.parse(req.body);res.json(await service.decide(param(req,"id"),body.decision,body.note,req.user!.id,key(req)));}catch(e){next(e);}};

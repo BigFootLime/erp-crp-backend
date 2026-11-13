@@ -6,6 +6,8 @@
 
 import { z } from "zod";
 
+import { findMetrologyEquipmentProfile } from "../domain/metrology-equipment-profiles";
+import { metrologyAdditionalFieldsSchema, metrologyControlSchema } from "../domain/metrology-control-schema";
 import {
   METROLOGY_EQUIPMENT_STATES,
   METROLOGY_IMPACT_DECISIONS,
@@ -14,7 +16,7 @@ import {
   METROLOGY_VERDICTS,
 } from "../domain/metrology-policy";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const optionalUuid = uuid.nullable().optional();
 
 const isoDate = z
@@ -49,6 +51,30 @@ const categoryCode = z
 
 const reason = (min: number, max = 2000) =>
   z.string().trim().min(min, `Motif d'au moins ${min} caractères requis`).max(max);
+const METROLOGY_PROFILE_CODES = ["BF", "BL", "CA", "JP", "ME", "MES", "MI", "OUT", "PC", "TF", "TFD", "TLD"] as const;
+const historicalBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "oui"].includes(normalized)) return true;
+  if (["false", "0", "non"].includes(normalized)) return false;
+  return value;
+}, z.boolean().nullable());
+const optionalHistoricalDate = z.preprocess((value) => value === "" ? null : value, z.iso.date().nullable().optional());
+
+const historicalSheetSchema = z.object({
+  COCONTR: z.string().trim().max(200).nullable().optional(),
+  IDCONTROLE: z.string().trim().max(120).nullable().optional(), PRECIS: z.string().trim().max(200).nullable().optional(),
+  PERIOD: z.string().trim().max(80).nullable().optional(), DATEENTR: optionalHistoricalDate, DATEDERN: optionalHistoricalDate,
+  REBUT: historicalBoolean.optional(), ETREF: z.string().trim().max(200).nullable().optional(), MIREF: z.string().trim().max(200).nullable().optional(),
+  MAREF: z.string().trim().max(200).nullable().optional(), APMI: z.string().trim().max(200).nullable().optional(), APMA: z.string().trim().max(200).nullable().optional(),
+  CODEEMP: z.string().trim().max(120).nullable().optional(), COSERVICE: z.string().trim().max(120).nullable().optional(), DATESO: optionalHistoricalDate,
+  TYPEP_RIODE: z.string().trim().max(80).nullable().optional(), OBS: z.string().trim().max(5000).nullable().optional(),
+  DESA1: z.string().trim().max(500).nullable().optional(), MARQU: z.string().trim().max(200).nullable().optional(), NUMSERIE: z.string().trim().max(200).nullable().optional(),
+}).catchall(z.unknown());
+const ficheMetrologieSchema = z.object({
+  version: z.literal(1), profile_code: z.enum(METROLOGY_PROFILE_CODES), historique: historicalSheetSchema.default({}),
+  control_schema: metrologyControlSchema.nullable().optional(),
+}).strict();
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -115,7 +141,7 @@ const equipmentSpecShape = {
   etalon_reference: shortText(200).nullable().default(null),
   exige_certificat: z.boolean().default(false),
   // Complément libre : jamais source de vérité pour l'éligibilité.
-  specifications: z.record(z.string().max(60), z.unknown()).default({}),
+  specifications: z.object({ fiche_metrologie: ficheMetrologieSchema.optional() }).catchall(z.unknown()).default({}),
 };
 
 const equipmentIdentityShape = {
@@ -136,13 +162,37 @@ const equipmentIdentityShape = {
   notes: longText(5000).nullable().default(null),
 };
 
-// Le `code` est ABSENT de l'entrée : il est alloué par le serveur. Envoyer un
-// code déclenche donc une 422 par `.strict()`, ce qui est le comportement voulu.
+// Le code d'une fiche existante peut être repris. Le dépôt le rapproche du
+// profil puis contrôle son unicité dans la transaction.
 export const createEquipmentSchema = z.object({
   body: z
-    .object({ ...equipmentIdentityShape, ...equipmentSpecShape })
+    .object({ code: z.string().trim().regex(/^[A-Z]{2,8}-[0-9]{2,6}$/, "Code de fiche invalide (ex. PC-01)").nullable().optional().default(null), ...equipmentIdentityShape, ...equipmentSpecShape })
     .strict()
-    .superRefine(assertRangeCoherent),
+      .superRefine((value, ctx) => {
+      assertRangeCoherent(value, ctx);
+      const profileCode = value.specifications.fiche_metrologie?.profile_code;
+      if (profileCode) {
+        const profile = findMetrologyEquipmentProfile(profileCode);
+        if (profile && profile.categorie_code !== value.categorie_code) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["categorie_code"], message: "La catégorie doit correspondre au profil de fiche sélectionné." });
+        }
+      }
+      if (!value.code) return;
+      if (!profileCode) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["specifications", "fiche_metrologie"], message: "La reprise d'un code exige son profil de fiche." });
+      } else if (!value.code.startsWith(`${profileCode}-`)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["code"], message: "Le préfixe du code doit correspondre au profil de fiche." });
+      } else {
+        // Un seul rendu est admis pour éviter les alias PC-0001 / PC-01 ou
+        // l'émission de PC-00. Les codes historiques déjà enregistrés ne sont
+        // jamais renommés par cette validation de création.
+        const numericPart = value.code.slice(profileCode.length + 1);
+        const numericValue = Number.parseInt(numericPart, 10);
+        if (numericValue < 1 || numericPart !== String(numericValue).padStart(2, "0")) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["code"], message: "Le numéro du code doit être canonique (ex. PC-01, jamais PC-00 ni PC-0001)." });
+        }
+      }
+    }),
 });
 export type CreateEquipmentBodyDTO = z.infer<typeof createEquipmentSchema>["body"];
 
@@ -152,6 +202,9 @@ export const updateEquipmentSchema = z.object({
       ...expectedVersion,
       ...equipmentIdentityShape,
       ...equipmentSpecShape,
+      // PATCH conserve les spécifications précédentes si le client n'en porte
+      // pas. Le dépôt effectue ensuite la fusion non destructive.
+      specifications: z.object({ fiche_metrologie: ficheMetrologieSchema.optional() }).catchall(z.unknown()).optional(),
       date_retrait: isoDate.nullable().default(null),
     })
     .strict()
@@ -351,6 +404,20 @@ export const createExecutionSchema = z.object({
           humidite_pct: measure.nullable().default(null),
           pression_hpa: measure.nullable().default(null),
           commentaire: longText(500).nullable().default(null),
+          // Relevé MD15 : trace documentaire, sans jamais remplacer l'identité
+          // de l'opérateur authentifié ni le verdict contrôlé.
+          fiche_metrologie: z
+            .object({
+              version: z.literal(1),
+              profile_code: z.enum(METROLOGY_PROFILE_CODES),
+              visa: shortText(120).nullable().default(null),
+              etat_mecanique: longText(500).nullable().default(null),
+              entretien: longText(500).nullable().default(null),
+              additional_fields: metrologyAdditionalFieldsSchema.optional(),
+            })
+            .strict()
+            .nullable()
+            .default(null),
         })
         .strict()
         .default({
@@ -358,6 +425,7 @@ export const createExecutionSchema = z.object({
           humidite_pct: null,
           pression_hpa: null,
           commentaire: null,
+          fiche_metrologie: null,
         }),
       observations: longText(5000).nullable().default(null),
     })
@@ -668,6 +736,26 @@ export const timelineQuerySchema = paginationSchema
   })
   .strict();
 export type TimelineQueryDTO = z.infer<typeof timelineQuerySchema>;
+
+/* Reprise legacy : les classeurs sont préalablement placés dans le coffre
+ * d'import par l'opérateur. Une API ne reçoit jamais un chemin serveur. */
+export const legacyImportRowResolutionSchema = z.object({
+  params: z.object({ id: uuid, childId: uuid }),
+  body: z.object({
+    equipement_id: optionalUuid,
+    disposition: z.enum(["IMPORTED", "AMBIGUOUS", "SKIPPED", "CONFLICT"]),
+    reason: z.string().trim().min(3).max(1000),
+  }).strict(),
+});
+const legacyGroupSchema = z.object({ group_id: z.string().trim().min(1).max(120), group_kind: z.literal("registry-apparatus"), observed_code_verbatim: z.string().trim().min(1).max(120), identity_status: z.enum(["exact", "legacy-dated-code"]), designation: z.string().trim().min(1).max(500), marque: z.string().trim().max(200).nullable().optional(), numero_serie: z.string().trim().max(200).nullable().optional(), historique: z.record(z.string(), z.unknown()).default({}), source_sha256: z.string().regex(/^[a-fA-F0-9]{64}$/) }).strict();
+export const legacyImportPreviewSchema = z.object({ body: z.object({ groups: z.array(legacyGroupSchema).min(1).max(500) }).strict() });
+export const legacyImportApplySchema = z.object({ body: legacyGroupSchema });
+export const legacyImportListQuerySchema = paginationSchema.strict();
+export const legacyImportRowsQuerySchema = paginationSchema.extend({
+  disposition: z.enum(["PENDING", "IMPORTED", "AMBIGUOUS", "SKIPPED", "CONFLICT"]).optional(),
+  source_file_id: uuid.optional(),
+  kind: z.string().trim().min(1).max(80).optional(),
+}).strict();
 
 export const usageQuerySchema = paginationSchema
   .extend({

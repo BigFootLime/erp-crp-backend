@@ -91,6 +91,54 @@ describe("shared realtime control plane", () => {
     resetRealtimeControlPlaneMetrics();
   });
 
+  it("validates a healthy snapshot without waiting on an allocator write lock", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FOR UPDATE")) throw new Error("allocator is locked by another runtime");
+      if (sql.includes("FROM public.realtime_event_sequence_state state")) {
+        return { rows: [{ latest_sequence: "42", earliest_sequence: null, pruned_through: "42", max_event_sequence: null }] };
+      }
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    mocks.connect.mockResolvedValueOnce({ query, release });
+    await expect(new PostgresRealtimeControlPlane().validatedLatestSequence()).resolves.toBe(42n);
+    expect(query).toHaveBeenCalledWith("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    expect(query).toHaveBeenCalledWith("COMMIT");
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("still quarantines a gap and commits a serialized resync barrier", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM public.realtime_event_sequence_state state")) {
+        return { rows: [{ latest_sequence: "42", earliest_sequence: "42", pruned_through: "40", max_event_sequence: "42" }] };
+      }
+      if (sql.includes("UPDATE public.realtime_event_sequence_state")) return { rows: [{ barrier: "43" }] };
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    mocks.connect.mockResolvedValueOnce({ query, release });
+    await expect(new PostgresRealtimeControlPlane().validatedLatestSequence()).resolves.toBe(43n);
+    expect(query.mock.calls.some(([sql]) => sql.includes("realtime_event_quarantine"))).toBe(true);
+    expect(query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("fails closed and destroys its connection if a barrier loses a snapshot race", async () => {
+    const conflict = Object.assign(new Error("serialization conflict"), { code: "40001" });
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM public.realtime_event_sequence_state state")) {
+        return { rows: [{ latest_sequence: "42", earliest_sequence: "42", pruned_through: "40", max_event_sequence: "42" }] };
+      }
+      if (sql.includes("UPDATE public.realtime_event_sequence_state")) throw conflict;
+      return { rows: [] };
+    });
+    const release = vi.fn();
+    mocks.connect.mockResolvedValueOnce({ query, release });
+    await expect(new PostgresRealtimeControlPlane().validatedLatestSequence()).rejects.toBe(conflict);
+    expect(query).toHaveBeenCalledWith("ROLLBACK");
+    expect(release).toHaveBeenCalledWith(conflict);
+    expect(query).not.toHaveBeenCalledWith("COMMIT");
+  });
+
   it("retires v1 safely and supports both a clean database and an applied-v1 database", () => {
     const patch = readFileSync(patchPath, "utf8");
     // V1 is intentionally absent from disk, but every consumer pins the exact

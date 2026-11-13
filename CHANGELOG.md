@@ -1,5 +1,47 @@
 # Changelog
 
+## Livraison CERP 2.0.52 — modèle MD07-E et programmation par opération (3 novembre 2026)
+
+- Le champ Type (variation) lit la variante physique `part_variant` des décisions de préparation de la révision ; il ne dérive jamais du type de changement Évolution/Modification. Les décisions et documents des OF figés sont préservés.
+
+- Génère un classeur Excel MD07-E avec l’identité de l’OF, l’indice et la version. Les champs sont écrits comme texte, le modèle garde ses zones d’impression et n’est jamais une preuve de conformité.
+- Enregistre les estimations de programmation par opération de fraisage/tournage avec contrôle du dossier, de la révision et de l’empreinte de l’opération. Un OF annulé, planifié ou figé refuse la modification.
+- Autorise la préparation des conditions industrielles d’un contrat brouillon et détecte les modifications concurrentes depuis la fiche client. Cela n’active pas le contrat.
+- Deux routes authentifiées ajoutées à l’inventaire HTTP ; aucun patch de base nécessaire. Livraison fondée sur les vérifications ciblées déjà réalisées, sans relance de la campagne complète à la demande du responsable.
+
+## En recette — commandes ouvertes et dépôts CARCO
+
+- Une ouverture sur contrat actif conserve le numéro du cadre, la version du contrat et l’auteur. Les ouvertures simultanées retrouvent le même dossier. Les appels fermes et les OF suivent leurs circuits existants.
+- Les dépôts CARCO internes et portail partagent le même contrôle des versions. L’ADV peut confirmer le contrat des lignes ouvertes sans référence et qualifier la nature d’une échéance identifiée. Le portail vérifie le client, le compte et le site avant chaque dépôt.
+
+## En recette — préparation de l’ordre de fabrication (#1498)
+
+- La validation technique exige le rôle Qualité. Le serveur vérifie le visa et conserve l’auteur dans l’OF.
+- La fiche d’autocontrôle de la révision a priorité sur un modèle historique identifiable. Le PDF applicable peut accompagner le dossier atelier sans génération d’un second document.
+- Les retours d’amélioration de la pièce restent consultables au fil des révisions et des OF. Le support de préparation imprimé indique le motif lorsqu’un scan applicable existe.
+
+## En recette — relevés CLAYENS et annulation des commandes
+
+- L’ADV conserve les versions par client et site, voit les soldes et les livraisons déclarées et examine les échéances ambiguës sans les apparier par date. Une transmission partielle conserve les lignes à qualifier.
+- Le calcul d’une révision utilise les rattachements commerciaux vérifiés. La préparation d’un appel ferme peut consommer sa prévision dans le registre contractuel natif.
+- La liste respecte l’état annulé et l’annulation retire les étapes ouvertes. Le dépôt répété d’un PDF de commande conserve un seul lien pour le même contenu.
+- Le projet de retour CSV sépare la confirmation source et les promesses CRP enregistrées. La mise en service chez le client reste conditionnée à la recette ADV.
+
+## Candidat du 2 novembre 2026 — demande et atelier
+
+- La fiche commande affiche la chronologie et retire le panneau latéral de rôle. La secrétaire prépare le document depuis l’onglet AR. CERP vérifie la préparation et les créneaux des OF avant la génération et l’envoi d’un AR. Une commande servie directement sur stock exige la couverture du solde.
+- Pour un appel ferme sous contrat dont la cible mensuelle est échue, Planning sépare le reste à livrer du manque après stock et encours. Il propose un créneau après gel et distingue fin de fabrication et réception estimée. Une donnée manquante renvoie le dossier en arbitrage.
+- Les Achats peuvent saisir une estimation de retour de traitement. Planning indique le risque sur la date de besoin, sans ajouter de stock disponible. Le module d’accès fournisseur est préparé et fermé par défaut.
+- L’adaptateur Vision lit le solde et l’unité des anciens tableaux. Les clés absentes ou ambiguës passent en revue. Voir le [rapport de recette](docs/release/DEMAND_PILOT_20261031_20261101.md) et la [qualification des quatre programmes historiques](docs/release/VISION_FOUR_CYCLE_RETROSPECTIVE_20261102.md).
+
+## Préparé — pilote de demande, preuves portail et sandbox fournisseur (2026-10-31/11-01)
+
+- Imports de demandes, décisions, contre-propositions, brouillons fermes, files d'AR et propositions industrielles sont séparés des commandes ERP et restent idempotents ; aucun import ne crée à lui seul un OF, une commande, une réservation ou un AR.
+- Le portail client est borné aux contrats et sites explicitement liés. Les preuves de réception et d'échéance de départ sont append-only ; aucune échéance n'est inférée.
+- Le sandbox fournisseur est exclusivement local/test, fail-closed, et ses routes métier exigent un JWT à audience dédiée. Il ne vaut ni activation du portail fournisseur ni publication Production. Le pilote de quatre semaines n'a pas été exécuté.
+- Ordre des migrations et état de qualification : `docs/release/DEMAND_PILOT_20261031_20261101.md`.
+
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.

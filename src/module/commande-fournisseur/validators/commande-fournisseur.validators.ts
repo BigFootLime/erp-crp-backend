@@ -1,8 +1,6 @@
 import { z } from "zod";
 
-import {
-  COMMANDE_FOURNISSEUR_STATUTS,
-} from "../domain/commande-fournisseur-transitions";
+import { COMMANDE_FOURNISSEUR_STATUTS } from "../domain/commande-fournisseur-transitions";
 
 /**
  * Validation Zod stricte (#172) — params/query/body en mode strict : les champs inconnus
@@ -18,15 +16,27 @@ const dateOnly = z
     const t = Date.parse(`${v}T00:00:00Z`);
     return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v;
   }, "Date calendaire invalide");
+export const supplierPromiseExceptionsQuerySchema = z.object({
+  query: z.object({ today: dateOnly.optional() }).strict(),
+});
 const isoDateTime = z.string().datetime({ offset: true });
 // Les fiches et le verrou renvoient updated_at::text avec sa précision PostgreSQL.
 // Valider la forme sans transformer le jeton comparé exactement par le dépôt.
 const revisionToken = z.union([
   isoDateTime,
-  z.string().max(64)
-    .regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?[+-]\d{2}(?::\d{2})?$/)
-    .refine((value) => isoDateTime.safeParse(value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00")).success,
-      "Jeton de version invalide"),
+  z
+    .string()
+    .max(64)
+    .regex(
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?[+-]\d{2}(?::\d{2})?$/,
+    )
+    .refine(
+      (value) =>
+        isoDateTime.safeParse(
+          value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"),
+        ).success,
+      "Jeton de version invalide",
+    ),
 ]);
 const money = z.number().finite().min(0).max(99_999_999);
 const pct = z.number().finite().min(0).max(100);
@@ -35,11 +45,39 @@ const positiveInt = z.number().int().min(0).max(100_000);
 const shortText = z.string().trim().min(1).max(200);
 const longText = z.string().trim().max(4000);
 
-export const ORIGINES = ["MANUEL", "SEUIL_STOCK", "RUPTURE_OF", "PROPOSITION_MRP", "SOUS_TRAITANCE", "AUTRE"] as const;
-export const LIGNE_TYPES = ["ARTICLE", "MATIERE", "COMPOSANT", "SOUS_TRAITANCE", "PRESTATION", "LIBRE_CONTROLEE"] as const;
-export const INCOTERMS = ["EXW", "FCA", "FAS", "FOB", "CFR", "CIF", "CPT", "CIP", "DAP", "DPU", "DDP"] as const;
+export const ORIGINES = [
+  "MANUEL",
+  "SEUIL_STOCK",
+  "RUPTURE_OF",
+  "PROPOSITION_MRP",
+  "SOUS_TRAITANCE",
+  "AUTRE",
+] as const;
+export const LIGNE_TYPES = [
+  "ARTICLE",
+  "MATIERE",
+  "COMPOSANT",
+  "SOUS_TRAITANCE",
+  "PRESTATION",
+  "LIBRE_CONTROLEE",
+] as const;
+export const INCOTERMS = [
+  "EXW",
+  "FCA",
+  "FAS",
+  "FOB",
+  "CFR",
+  "CIF",
+  "CPT",
+  "CIP",
+  "DAP",
+  "DPU",
+  "DDP",
+] as const;
 
-export const commandeFournisseurStatutSchema = z.enum(COMMANDE_FOURNISSEUR_STATUTS);
+export const commandeFournisseurStatutSchema = z.enum(
+  COMMANDE_FOURNISSEUR_STATUTS,
+);
 
 /* ----------------------------- params / query ----------------------------- */
 
@@ -60,11 +98,17 @@ export const officialDocumentIdParamSchema = z.object({
 });
 
 export const officialDocumentRequestSchema = z.object({
-  body: z.object({
-    // Exact server-issued aggregate `updated_at` token; not a client snapshot hash.
-    source_revision: z.string().trim().min(1).max(160, "Révision source invalide"),
-    reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
-  }).strict(),
+  body: z
+    .object({
+      // Exact server-issued aggregate `updated_at` token; not a client snapshot hash.
+      source_revision: z
+        .string()
+        .trim()
+        .min(1)
+        .max(160, "Révision source invalide"),
+      reissue_reason: z.string().trim().min(3).max(500).optional().nullable(),
+    })
+    .strict(),
 });
 
 export const listCommandesQuerySchema = z.object({
@@ -72,7 +116,10 @@ export const listCommandesQuerySchema = z.object({
     .object({
       q: z.string().trim().max(120).optional(),
       statut: z
-        .union([commandeFournisseurStatutSchema, z.array(commandeFournisseurStatutSchema).max(9)])
+        .union([
+          commandeFournisseurStatutSchema,
+          z.array(commandeFournisseurStatutSchema).max(9),
+        ])
         .optional(),
       fournisseur_id: uuid.optional(),
       origine: z.enum(ORIGINES).optional(),
@@ -81,7 +128,16 @@ export const listCommandesQuerySchema = z.object({
       date_to: dateOnly.optional(),
       page: z.coerce.number().int().min(1).max(10_000).default(1),
       page_size: z.coerce.number().int().min(1).max(100).default(25),
-      sort: z.enum(["created_at", "date_besoin", "date_promesse", "code", "total_ttc", "updated_at"]).default("created_at"),
+      sort: z
+        .enum([
+          "created_at",
+          "date_besoin",
+          "date_promesse",
+          "code",
+          "total_ttc",
+          "updated_at",
+        ])
+        .default("created_at"),
       dir: z.enum(["asc", "desc"]).default("desc"),
     })
     .strict(),
@@ -106,7 +162,7 @@ const exigenceQualiteSchema = z
   })
   .strict();
 
-export const ligneInputSchema = z
+const ligneInputObjectSchema = z
   .object({
     type: z.enum(LIGNE_TYPES).default("ARTICLE"),
     article_id: uuid.nullish(),
@@ -133,38 +189,72 @@ export const ligneInputSchema = z
     operation_libelle: z.string().trim().max(200).nullish(),
     magasin_id: uuid.nullish(),
     exigences_qualite: z.array(exigenceQualiteSchema).max(20).default([]),
-    documents_attendus: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    documents_attendus: z
+      .array(z.string().trim().min(1).max(120))
+      .max(20)
+      .default([]),
     besoins: z
       .array(
         z
           .object({
-            besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL", "MANUEL"]),
+            besoin_type: z.enum([
+              "PIECE_TECHNIQUE_ACHAT",
+              "STOCK_LEVEL",
+              "MANUEL",
+            ]),
             besoin_ref: z.string().trim().min(1).max(120),
             of_id: z.number().int().positive().nullish(),
             quantite_couverte: qty,
           })
-          .strict()
+          .strict(),
       )
       .max(20)
       .default([]),
   })
-  .strict()
-  .superRefine((val, ctx) => {
-    if (val.type !== "LIBRE_CONTROLEE" && val.type !== "PRESTATION" && !val.article_id && !val.catalogue_id) {
+  .strict();
+
+export const ligneInputSchema = ligneInputObjectSchema.superRefine((val, ctx) => {
+    if (
+      val.type !== "LIBRE_CONTROLEE" &&
+      val.type !== "PRESTATION" &&
+      !val.article_id &&
+      !val.catalogue_id
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["article_id"],
-        message: "Un article ou une entrée de catalogue est requis pour ce type de ligne.",
+        message:
+          "Un article ou une entrée de catalogue est requis pour ce type de ligne.",
       });
     }
     if ((val.coef_conversion == null) !== (val.unite_stock == null)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["coef_conversion"],
-        message: "Conversion d'unité incomplète : fournir l'unité de stock ET le coefficient.",
+        message:
+          "Conversion d'unité incomplète : fournir l'unité de stock ET le coefficient.",
       });
     }
-  });
+});
+
+// A PATCH must preserve omission. `partial()` alone retains Zod defaults from
+// the creation schema, which would silently rewrite prices, quantities' type
+// or requirements that the caller did not send.
+const lignePatchSchema = ligneInputObjectSchema.partial().extend({
+  type: z.enum(LIGNE_TYPES).optional(),
+  prix_unitaire_ht: money.nullable().optional(),
+  remise_pct: pct.optional(),
+  tva_pct: pct.optional(),
+  frais_ht: money.optional(),
+  exigences_qualite: z.array(exigenceQualiteSchema).max(20).optional(),
+  documents_attendus: z.array(z.string().trim().min(1).max(120)).max(20).optional(),
+  besoins: z.array(z.object({
+    besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL", "MANUEL"]),
+    besoin_ref: z.string().trim().min(1).max(120),
+    of_id: z.number().int().positive().nullish(),
+    quantite_couverte: qty,
+  }).strict()).max(20).optional(),
+}).strict();
 
 /* --------------------------------- création -------------------------------- */
 
@@ -192,7 +282,9 @@ export const createCommandeSchema = z.object({
     })
     .strict(),
 });
-export type CreateCommandeBodyDTO = z.infer<typeof createCommandeSchema>["body"];
+export type CreateCommandeBodyDTO = z.infer<
+  typeof createCommandeSchema
+>["body"];
 
 /* ------------------------------ PATCH (tri-state) --------------------------- */
 
@@ -218,10 +310,17 @@ export const updateCommandeSchema = z.object({
     })
     .strict(),
 });
-export type UpdateCommandeBodyDTO = z.infer<typeof updateCommandeSchema>["body"];
+export type UpdateCommandeBodyDTO = z.infer<
+  typeof updateCommandeSchema
+>["body"];
 
 export const addLigneSchema = z.object({
-  body: z.object({ ligne: ligneInputSchema, expected_updated_at: revisionToken.optional() }).strict(),
+  body: z
+    .object({
+      ligne: ligneInputSchema,
+      expected_updated_at: revisionToken.optional(),
+    })
+    .strict(),
 });
 export type AddLigneBodyDTO = z.infer<typeof addLigneSchema>["body"];
 
@@ -229,17 +328,17 @@ export const updateLigneSchema = z.object({
   body: z
     .object({
       expected_updated_at: revisionToken.optional(),
-      patch: ligneInputSchema
-        .innerType()
-        .partial()
-        .strict(),
+      patch: lignePatchSchema,
     })
     .strict(),
 });
 export type UpdateLigneBodyDTO = z.infer<typeof updateLigneSchema>["body"];
 
 export const deleteLigneSchema = z.object({
-  body: z.object({ expected_updated_at: revisionToken.optional() }).strict().optional(),
+  body: z
+    .object({ expected_updated_at: revisionToken.optional() })
+    .strict()
+    .optional(),
 });
 
 export const reorderLignesSchema = z.object({
@@ -266,25 +365,43 @@ export const transitionSchema = z.object({
 });
 export type TransitionBodyDTO = z.infer<typeof transitionSchema>["body"];
 
-export const acknowledgementLineSchema = z.object({
-  ligne_id: uuid,
-  prix_unitaire_ht: money,
-  frais_ht: money.optional(),
-  update_catalogue: z.boolean().optional(),
-  expected_catalogue_updated_at: revisionToken.optional(),
-}).strict().superRefine((line,ctx)=>{
-  if(line.update_catalogue && !line.expected_catalogue_updated_at)
-    ctx.addIssue({code:"custom",path:["expected_catalogue_updated_at"],message:"Actualisez les conditions fournisseur avant de les confirmer."});
-});
+export const acknowledgementLineSchema = z
+  .object({
+    ligne_id: uuid,
+    prix_unitaire_ht: money,
+    frais_ht: money.optional(),
+    update_catalogue: z.boolean().optional(),
+    expected_catalogue_updated_at: revisionToken.optional(),
+  })
+  .strict()
+  .superRefine((line, ctx) => {
+    if (line.update_catalogue && !line.expected_catalogue_updated_at)
+      ctx.addIssue({
+        code: "custom",
+        path: ["expected_catalogue_updated_at"],
+        message:
+          "Actualisez les conditions fournisseur avant de les confirmer.",
+      });
+  });
 export const accuseSchema = z.object({
   body: z
     .object({
       reference_fournisseur: shortText,
       date_accuse: isoDateTime.optional(),
-      lignes: z.array(acknowledgementLineSchema).max(500).optional().superRefine((lines,ctx)=>{
-        if(lines && new Set(lines.map(l=>l.ligne_id)).size!==lines.length)
-          ctx.addIssue({code:"custom",message:"Une ligne ne peut être confirmée qu’une fois."});
-      }),
+      lignes: z
+        .array(acknowledgementLineSchema)
+        .max(500)
+        .optional()
+        .superRefine((lines, ctx) => {
+          if (
+            lines &&
+            new Set(lines.map((l) => l.ligne_id)).size !== lines.length
+          )
+            ctx.addIssue({
+              code: "custom",
+              message: "Une ligne ne peut être confirmée qu’une fois.",
+            });
+        }),
       date_promesse: dateOnly.nullish(),
       expected_updated_at: revisionToken.optional(),
     })
@@ -301,7 +418,9 @@ export const generateDocumentSchema = z.object({
     .strict()
     .optional(),
 });
-export type GenerateDocumentBodyDTO = z.infer<typeof generateDocumentSchema>["body"];
+export type GenerateDocumentBodyDTO = z.infer<
+  typeof generateDocumentSchema
+>["body"];
 
 export const simulateTotauxSchema = z.object({
   body: z
@@ -318,27 +437,34 @@ export const simulateTotauxSchema = z.object({
               tva_pct: pct.default(20),
               frais_ht: money.default(0),
             })
-            .strict()
+            .strict(),
         )
         .max(200),
     })
     .strict(),
 });
-export type SimulateTotauxBodyDTO = z.infer<typeof simulateTotauxSchema>["body"];
+export type SimulateTotauxBodyDTO = z.infer<
+  typeof simulateTotauxSchema
+>["body"];
 
 /* ------------------------------- propositions ------------------------------- */
 
 export const propositionsPreviewSchema = z.object({
   body: z
     .object({
-      origines: z.array(z.enum(["SEUIL_STOCK", "RUPTURE_OF"])).min(1).max(2),
+      origines: z
+        .array(z.enum(["SEUIL_STOCK", "RUPTURE_OF"]))
+        .min(1)
+        .max(2),
       of_ids: z.array(z.number().int().positive()).max(50).optional(),
       fournisseur_id: uuid.optional(),
       limit: z.number().int().min(1).max(200).default(100),
     })
     .strict(),
 });
-export type PropositionsPreviewBodyDTO = z.infer<typeof propositionsPreviewSchema>["body"];
+export type PropositionsPreviewBodyDTO = z.infer<
+  typeof propositionsPreviewSchema
+>["body"];
 
 export const propositionsConfirmSchema = z.object({
   body: z
@@ -355,7 +481,10 @@ export const propositionsConfirmSchema = z.object({
                 .array(
                   z
                     .object({
-                      besoin_type: z.enum(["PIECE_TECHNIQUE_ACHAT", "STOCK_LEVEL"]),
+                      besoin_type: z.enum([
+                        "PIECE_TECHNIQUE_ACHAT",
+                        "STOCK_LEVEL",
+                      ]),
                       besoin_ref: z.string().trim().min(1).max(120),
                       of_id: z.number().int().positive().nullish(),
                       article_id: uuid.nullish(),
@@ -369,22 +498,38 @@ export const propositionsConfirmSchema = z.object({
                       date_besoin: dateOnly.nullish(),
                       delai_jours: positiveInt.nullish(),
                     })
-                    .strict()
+                    .strict(),
                 )
                 .min(1)
                 .max(100),
             })
-            .strict()
+            .strict(),
         )
         .min(1)
         .max(20),
     })
     .strict(),
 });
-export type PropositionsConfirmBodyDTO = z.infer<typeof propositionsConfirmSchema>["body"];
+export type PropositionsConfirmBodyDTO = z.infer<
+  typeof propositionsConfirmSchema
+>["body"];
+
+export const treatmentEstimateSchema = z.object({
+  params: z.object({ id: uuid, ligneId: uuid }),
+  body: z
+    .object({
+      estimated_return_date: dateOnly,
+      reason: z.string().trim().min(3).max(1000),
+      source_version: z.string().trim().min(8).max(128),
+    })
+    .strict(),
+});
 
 /* -------------------------------- duplication ------------------------------- */
 
 export const duplicateSchema = z.object({
-  body: z.object({ note: z.string().trim().max(500).optional() }).strict().optional(),
+  body: z
+    .object({ note: z.string().trim().max(500).optional() })
+    .strict()
+    .optional(),
 });

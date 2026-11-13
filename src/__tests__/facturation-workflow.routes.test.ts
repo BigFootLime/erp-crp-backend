@@ -167,6 +167,39 @@ describe("BUG-CERP-0016 - contrat HTTP workflow facture v1", () => {
     expect(mocks.createDraft).toHaveBeenNthCalledWith(1, expect.objectContaining({
       idempotencyKey: "facture-draft-attempt-001",
       actor: expect.objectContaining({ userId: 7, requestId: "request-test-001" }),
+      input: expect.objectContaining({
+        global_discount_percent: "0.0000",
+        sources: [expect.objectContaining({ quantity: "2.000" })],
+      }),
+    }));
+  });
+
+  it("canonicalise la remise courte de l'UI avant le preview", async () => {
+    mocks.preview.mockResolvedValue({ preview_hash: "b".repeat(64), blockers: [] });
+
+    const response = await request(testApp())
+      .post("/factures/workflow/preview")
+      .send({
+        client_id: "CLI-1",
+        sources: [{
+          source_type: "DELIVERY_LINE",
+          source_id: source.source_id,
+          source_line_id: source.source_line_id,
+          quantity: "2.000",
+        }],
+        global_discount_percent: "0",
+        due_dates: [{ due_date: "2026-08-31", label: "Echeance principale" }],
+        regulatory: {
+          billing_frame_code: "B1",
+          operation_category: "GOODS",
+          transaction_scope: "FR_PRIVATE_B2B",
+        },
+      });
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    expect(mocks.preview).toHaveBeenCalledWith(expect.objectContaining({
+      global_discount_percent: "0.0000",
+      sources: [expect.objectContaining({ quantity: "2.000" })],
     }));
   });
 

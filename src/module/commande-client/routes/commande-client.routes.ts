@@ -1,5 +1,6 @@
 import type { RequestHandler } from "express"
 import { Router } from "express"
+import openOrders from "./open-orders.routes"
 import { generalTermsHandlers } from "../../../shared/commercial-terms/commercial-terms.http"
 
 import { authenticateToken } from "../../auth/middlewares/auth.middleware"
@@ -86,6 +87,7 @@ const parseCommandeBody: RequestHandler = (req, res, next) => {
 }
 
 const router = Router()
+router.use("/open-orders", authenticateToken, openOrders)
 
 const requireAcknowledgementExport: RequestHandler = (req, _res, next) => {
   if (

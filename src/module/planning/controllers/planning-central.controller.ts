@@ -19,7 +19,7 @@ export const centralWorkshopCalendar: RequestHandler = asyncHandler(async(_req,r
   res.setHeader('Cache-Control','no-store');res.json(await readWorkshopCalendar());
 });
 export const centralSetWorkshopCalendar: RequestHandler = asyncHandler(async(req,res)=>{
-  const input=z.object({calendar_id:z.string().uuid(),expected_revision:z.string().regex(/^\d+$/)}).strict().parse(req.body);
+  const input=z.object({calendar_id:z.string().guid(),expected_revision:z.string().regex(/^\d+$/)}).strict().parse(req.body);
   res.json(await setWorkshopCalendar(input,buildAuditContext(req),key(req.headers['idempotency-key'])));
 });
 export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
@@ -35,7 +35,7 @@ export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
   } finally {res.off('close',onClose);}
 });
 export const centralObservations: RequestHandler = asyncHandler(async(req,res)=>{
-  const operationId=z.string().uuid().parse(req.params.operationId);
+  const operationId=z.string().guid().parse(req.params.operationId);
   const query=centralObservationsSchema.parse(req.query);
   const result=await readTaskObservations(pool,operationId,query.offset,query.limit,query.resource_id);
   if(!result)throw new HttpError(404,'PLANNING_TASK_NOT_FOUND','Opération introuvable.');
@@ -60,10 +60,10 @@ export const centralSimulate: RequestHandler = asyncHandler(async(req,res)=>{
   res.status(201).json(await createCentralSimulation(input,buildAuditContext(req),key(req.headers["idempotency-key"])));
 });
 export const centralGetSimulation: RequestHandler = asyncHandler(async(req,res)=>{
-  const id=z.string().uuid().parse(req.params.id);
+  const id=z.string().guid().parse(req.params.id);
   res.setHeader("Cache-Control","no-store");res.json(await getCentralSimulation(id,buildAuditContext(req)));
 });
 export const centralApply: RequestHandler = asyncHandler(async(req,res)=>{
-  const id=z.string().uuid().parse(req.params.id),input=centralApplySchema.parse(req.body);
+  const id=z.string().guid().parse(req.params.id),input=centralApplySchema.parse(req.body);
   res.json(await applyCentralSimulation(id,input.revision,buildAuditContext(req),key(req.headers["idempotency-key"])));
 });

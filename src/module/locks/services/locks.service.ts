@@ -5,6 +5,7 @@ import {
   realtimeAccessProfileAllowsModule,
 } from "../../../shared/realtime/realtime-room-policy";
 import { HttpError } from "../../../utils/httpError";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import {
   repoAcquireLock,
   repoExpireLocks,
@@ -150,7 +151,10 @@ function expiredLockSweepIntervalMs(): number {
 }
 
 /** Starts the server-owned expiry path; safe on multi-instance deployments. */
-export function startExpiredLockMaintenance(): () => void {
+export function startExpiredLockMaintenance(
+  dependencies: Readonly<{ expireLocks?: typeof repoExpireLocks; intervalMs?: number }> = {},
+): () => void | Promise<void> {
+  const expireLocks = dependencies.expireLocks ?? repoExpireLocks;
   let stopped = false;
   let running = false;
   const sweep = async () => {
@@ -159,7 +163,7 @@ export function startExpiredLockMaintenance(): () => void {
     try {
       let expired: number;
       do {
-        expired = await repoExpireLocks(EXPIRED_LOCK_SWEEP_BATCH);
+        expired = await expireLocks(EXPIRED_LOCK_SWEEP_BATCH);
       } while (!stopped && expired === EXPIRED_LOCK_SWEEP_BATCH);
     } catch (error) {
       console.warn(JSON.stringify({
@@ -170,11 +174,9 @@ export function startExpiredLockMaintenance(): () => void {
       running = false;
     }
   };
-  const timer = setInterval(() => void sweep(), expiredLockSweepIntervalMs());
-  timer.unref();
-  void sweep();
-  return () => {
+  const task = startDrainableRecurringTask(sweep, dependencies.intervalMs ?? expiredLockSweepIntervalMs());
+  return async () => {
     stopped = true;
-    clearInterval(timer);
+    await task.stop();
   };
 }

@@ -7,6 +7,7 @@ import pool from "../../../config/database";
 import { readCommandeDuplicateLinesTx } from "./commande-duplicate-lines.repository";
 import { readFullyReservedCommandeCoverage } from "./commande-reserved-coverage.repository";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
+import { repoCreateDropshipPurchaseOrderTx } from "../../entreprises/intercompany/commercial-catalogue.repository";
 import { HttpError } from "../../../utils/httpError";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
@@ -71,12 +72,14 @@ import {
 import {
   assertCommandeFullyInvoiced,
   assertCommandeFullyShipped,
-  assertCommandeHasActiveOf,
   assertCommandeHasPreparedDelivery,
   assertCommandeProductionCompleted,
   assertCommandeProductionStarted,
   assertCommandeQualityReleased,
 } from "./commande-fulfillment-guards.repository";
+import {
+  assertOrderManufacturingPlanned,
+} from "./commande-ar-readiness.repository";
 import {
   allocateCompatibleStock,
 } from "../domain/stock-scope-allocation";
@@ -147,6 +150,69 @@ function hasOwn(obj: object, key: string): boolean {
 
 type Queryable = Pick<PoolClient, "query">;
 
+type IntercompanyDeliveryAddress = NonNullable<CreateCommandeInput["intercompany_delivery_address"]>;
+
+function structuredIntercompanyDeliveryAddress(value: IntercompanyDeliveryAddress): IntercompanyDeliveryAddress {
+  if (!value.address_line_1 || !value.postal_code || !value.city) {
+    throw new HttpError(
+      400,
+      "INTERCOMPANY_DELIVERY_ADDRESS_STRUCTURED_REQUIRED",
+      "La livraison directe exige rue, code postal et ville structurés pour le transporteur."
+    );
+  }
+  return {
+    ...value,
+    recipient_name: value.recipient_name.trim(),
+    address_line_1: value.address_line_1.trim(),
+    ...(value.address_line_2?.trim() ? { address_line_2: value.address_line_2.trim() } : {}),
+    postal_code: value.postal_code.trim(),
+    city: value.city.trim(),
+    ...(value.country_code?.trim() ? { country_code: value.country_code.trim().toUpperCase() } : {}),
+    address_lines: [
+      value.address_line_1.trim(),
+      ...(value.address_line_2?.trim() ? [value.address_line_2.trim()] : []),
+      `${value.postal_code.trim()} ${value.city.trim()}`,
+    ],
+  };
+}
+
+async function resolveIntercompanyDeliveryAddress(
+  db: Queryable,
+  input: CreateCommandeInput
+): Promise<IntercompanyDeliveryAddress> {
+  if (input.intercompany_delivery_address) {
+    return structuredIntercompanyDeliveryAddress(input.intercompany_delivery_address);
+  }
+  if (!input.client_id) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_ADDRESS_REQUIRED", "Un client avec une adresse de livraison est requis pour la livraison directe.");
+  }
+  const result = await db.query<{
+    recipient_name: string | null; street: string | null; house_number: string | null;
+    address_complement: string | null; postal_code: string | null; city: string | null; country: string | null;
+  }>(`
+    SELECT COALESCE(NULLIF(btrim(address.name), ''), NULLIF(btrim(client.company_name), '')) AS recipient_name,
+      address.street, address.house_number, address.address_complement,
+      address.postal_code, address.city, address.country
+    FROM public.clients client
+    JOIN public.adresse_livraison address ON address.delivery_address_id = client.delivery_address_id
+    WHERE client.client_id = $1
+    FOR SHARE OF client, address
+  `, [input.client_id]);
+  const row = result.rows[0];
+  const line1 = [row?.house_number, row?.street].filter((part): part is string => Boolean(part?.trim())).join(" ");
+  if (!row?.recipient_name || !line1 || !row.postal_code?.trim() || !row.city?.trim()) {
+    throw new HttpError(409, "INTERCOMPANY_DELIVERY_ADDRESS_REQUIRED", "Le client doit posséder une adresse de livraison complète avant la soumission fournisseur.");
+  }
+  return structuredIntercompanyDeliveryAddress({
+    recipient_name: row.recipient_name,
+    address_line_1: line1,
+    ...(row.address_complement?.trim() ? { address_line_2: row.address_complement.trim() } : {}),
+    postal_code: row.postal_code,
+    city: row.city,
+    ...(row.country?.trim().length === 2 ? { country_code: row.country.trim().toUpperCase() } : {}),
+  });
+}
+
 type CommandeLineArticleResolution = {
   article_id: string;
   article_code: string;
@@ -163,7 +229,7 @@ type CommandeLineArticleResolution = {
   commande_client_ineligibility_code: CommandeArticleIneligibilityCode | null;
 };
 
-type AuditContext = {
+export type AuditContext = {
   user_id: number;
   user_role: string | null;
   ip: string | null;
@@ -242,7 +308,8 @@ async function insertCommandeEvent(db: Queryable, params: {
 async function resolveCommandeLineArticle(
   db: Queryable,
   line: CreateCommandeInput["lignes"][number],
-  lineIndex: number
+  lineIndex: number,
+  allowDropshipPurchasedArticle = false,
 ): Promise<CommandeLineArticleResolution> {
   const requestedArticleId = typeof line.article_id === "string" && line.article_id.trim() ? line.article_id.trim() : null;
   const requestedCode = typeof line.code_piece === "string" && line.code_piece.trim() ? line.code_piece.trim() : null;
@@ -310,7 +377,11 @@ async function resolveCommandeLineArticle(
     article.commande_client_eligible === true
       ? null
       : article.commande_client_ineligibility_code ?? commandeArticleIneligibilityFromState(article);
-  if (ineligibilityCode) {
+  // The commercial buyer deliberately creates a PURCHASED, non-stock article
+  // for a supplier-direct mapping. The mapping is verified later in the same
+  // transaction before a PO/outbox message can exist; ordinary CRP orders
+  // keep the stock-managed eligibility rule.
+  if (ineligibilityCode && !(allowDropshipPurchasedArticle && line.intercompany_catalogue_mapping_id && ineligibilityCode === "ARTICLE_NOT_STOCK_MANAGED")) {
     throw commandeArticleEligibilityError({
       code: ineligibilityCode,
       articleId: article.article_id,
@@ -1201,9 +1272,9 @@ function normalizedCommandeStatusSql(rawExpr: string): string {
     CASE
       WHEN ${rawExpr} IS NULL THEN 'BROUILLON'
       WHEN ${rawExpr} IN (
-        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
+        'BROUILLON','EN_ANALYSE','ATTENTE_TECHNIQUE','ATTENTE_FOURNISSEUR','ATTENTE_STOCK','ATTENTE_OF','ATTENTE_PLANNING','PLANNING_VALIDE',
         'AR_PRET','AR_ENVOYE','EN_PRODUCTION','PRODUCTION_TERMINEE','CONTROLE_QUALITE',
-        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE'
+        'PRET_LIVRAISON','LIVRE','FACTURE','ARCHIVE','BLOQUE','ANNULE'
       ) THEN ${rawExpr}
       WHEN ${rawExpr} = 'ENREGISTREE' THEN 'EN_ANALYSE'
       WHEN ${rawExpr} = 'PLANIFIEE' THEN 'PLANNING_VALIDE'
@@ -1815,9 +1886,24 @@ type CommandeWorkflowHeader = {
   numero: string;
   client_id: string | null;
   order_type: string | null;
+  fulfilment_mode?: string | null;
   statut: CommandeWorkflowStatus;
   raw_statut: string | null;
 };
+
+function isSupplierDropship(fulfilmentMode: unknown): boolean {
+  return String(fulfilmentMode ?? "").trim().toUpperCase() === "SUPPLIER_DROPSHIP";
+}
+
+function assertCommercialOnlyDropship(fulfilmentMode: unknown): void {
+  if (isSupplierDropship(fulfilmentMode)) {
+    throw new HttpError(
+      409,
+      "SUPPLIER_DROPSHIP_INDUSTRIAL_FLOW_FORBIDDEN",
+      "Une commande en dropship fournisseur ne peut pas créer d'affaire, d'OF, de réservation ou d'étape stock locale."
+    );
+  }
+}
 
 type WorkflowCheckpointRow = {
   id: string;
@@ -1860,6 +1946,7 @@ function mapWorkflowCheckpoint(row: WorkflowCheckpointRow) {
 }
 
 function checkpointSeedStatus(definitionStatus: CommandeWorkflowStatus, currentStatus: CommandeWorkflowStatus, activeAssigned: { value: boolean }) {
+  if (currentStatus === "ANNULE") return "skipped" as const;
   if (currentStatus !== "BLOQUE" && COMMANDE_WORKFLOW_STATUS_ORDER[definitionStatus] <= COMMANDE_WORKFLOW_STATUS_ORDER[currentStatus]) {
     return "done" as CommandeCheckpointStatus;
   }
@@ -1895,6 +1982,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
     numero: string;
     client_id: string | null;
     order_type: string | null;
+    fulfilment_mode: string | null;
     raw_statut: string | null;
   }>(
     `
@@ -1903,6 +1991,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
         cc.numero,
         cc.client_id,
         cc.order_type,
+        cc.fulfilment_mode,
         st.nouveau_statut AS raw_statut
       FROM commande_client cc
       LEFT JOIN LATERAL (
@@ -1926,6 +2015,7 @@ async function loadCommandeWorkflowHeaderWithStatus(
     numero: row.numero,
     client_id: row.client_id,
     order_type: row.order_type,
+    fulfilment_mode: row.fulfilment_mode,
     raw_statut: row.raw_statut,
     statut,
   };
@@ -1981,6 +2071,14 @@ export async function repoEnsureCommandeWorkflowCheckpoints(
   commandeId: number,
   currentStatus: CommandeWorkflowStatus
 ) {
+  const fulfilment = await tx.query<{ fulfilment_mode: string | null }>(
+    "SELECT fulfilment_mode FROM public.commande_client WHERE id = $1",
+    [commandeId]
+  );
+  // Supplier dropship commands are commercial-only on the buyer. Shipment and
+  // invoice synchronisation advance their status, but they never receive the
+  // local stock/OF checkpoint template as a side effect of a workflow read.
+  if (isSupplierDropship(fulfilment.rows[0]?.fulfilment_mode)) return;
   const activeAssigned = { value: false };
   for (const checkpoint of COMMANDE_WORKFLOW_CHECKPOINTS) {
     const status = checkpointSeedStatus(checkpoint.status_when_done, currentStatus, activeAssigned);
@@ -2085,7 +2183,7 @@ function buildWorkflowView(
     checkpoints,
     can_act: canAct,
     action_forbidden_reason: actionForbiddenReason,
-    available_actions: action && activeCheckpoint?.status === "active" && canAct
+    available_actions: action && action.key !== "prepare_ar" && action.key !== "mark_ar_sent" && activeCheckpoint?.status === "active" && canAct
       ? [{
           key: action.key,
           label: action.label,
@@ -2245,6 +2343,7 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
     if (!header) {
       return null;
     }
+    assertCommercialOnlyDropship(header.fulfilment_mode);
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
 
     const existing = await client.query<WorkflowCheckpointRow>(
@@ -2285,11 +2384,12 @@ export async function repoUpdateCommandeWorkflowCheckpoint(
       throw new HttpError(403, "WORKFLOW_CHECKPOINT_FORBIDDEN", "This checkpoint is assigned to another role or user.");
     }
 
-    if (body.metadata && Object.prototype.hasOwnProperty.call(body.metadata, "previous_status_before_block")) {
+    if (body.metadata && ["previous_status_before_block", "stock_only_flow", "flow_version", "commercial_validation"]
+      .some(key => Object.prototype.hasOwnProperty.call(body.metadata, key))) {
       throw new HttpError(
         400,
         "RESERVED_CHECKPOINT_METADATA",
-        "previous_status_before_block is managed by the workflow engine."
+        "Les preuves de progression et de couverture sont gérées par CERP."
       );
     }
 
@@ -2499,6 +2599,13 @@ export async function repoRunCommandeWorkflowAction(
       "Utilisez Vérifier le stock et lancer : cette étape doit réserver OLD/NEW, préparer le BL ou créer les OF du manquant."
     );
   }
+  if (action.key === "prepare_ar") {
+    throw new HttpError(
+      409,
+      "COMMAND_AR_DOCUMENT_REQUIRED",
+      "Générez l’AR depuis le dossier de commande. Sa préparation et son planning seront vérifiés avant édition.",
+    );
+  }
   if (action.key === "mark_ar_sent") {
     throw new HttpError(
       409,
@@ -2516,6 +2623,7 @@ export async function repoRunCommandeWorkflowAction(
     if (!header) {
       return null;
     }
+    assertCommercialOnlyDropship(header.fulfilment_mode);
     await repoEnsureCommandeWorkflowCheckpoints(client, commandeId, header.statut);
 
     const checkpointRes = await client.query<{ status: string; responsible_role: string; assigned_user_id: number | null }>(
@@ -2558,7 +2666,10 @@ export async function repoRunCommandeWorkflowAction(
     // Expensive/domain assertions are intentionally after the locked replay
     // check: the second identical request must be a read-only success even if
     // downstream state has already moved on.
-    if (action.key === "validate_planning") await assertCommandeHasActiveOf(client, commandeId);
+    // These milestones cannot be completed by the role panel alone. The
+    // readiness proof is recomputed under the command lock, so a direct API
+    // call has exactly the same gates as the official planning/AR flows.
+    if (action.key === "validate_planning") await assertOrderManufacturingPlanned(client, commandeId);
     if (action.key === "start_production") await assertCommandeProductionStarted(client, commandeId);
     if (action.key === "complete_production") await assertCommandeProductionCompleted(client, commandeId);
     if (action.key === "validate_quality") await assertCommandeQualityReleased(client, commandeId);
@@ -3246,6 +3357,8 @@ type InsertCommandeLignesOptions = {
   actor_user_id: number | null;
   creation_flow_version: 1 | 2;
   save_intent: "DRAFT" | "VALIDATE";
+  skip_sale_price_reference?: boolean;
+  fulfilment_mode?: string;
   existing_line_ids?: ReadonlySet<number>;
   /** Internal requirements are operational only and must never change the
    * commercial reference price of an article. */
@@ -3591,7 +3704,8 @@ async function insertCommandeLignes(
       resolved = await resolveCommandeLineArticle(
         client,
         { ...l, article_id: promoted.article_id, code_piece: undefined },
-        lineIndex
+        lineIndex,
+        isSupplierDropship(options.fulfilment_mode)
       );
       // Le resolver canonique doit rester l'autorité sur l'éligibilité et son
       // contrat d'erreur. Une fois l'article accepté, garantir le sous-type
@@ -3603,7 +3717,7 @@ async function insertCommandeLignes(
         resolved.piece_technique_id
       );
     } else {
-      resolved = await resolveCommandeLineArticle(client, l, lineIndex);
+      resolved = await resolveCommandeLineArticle(client, l, lineIndex, isSupplierDropship(options.fulfilment_mode));
     }
 
     let effectiveVersionId = l.piece_technique_version_id ?? null;
@@ -3676,15 +3790,15 @@ async function insertCommandeLignes(
     const referencePrice = options.skip_sale_price_reference
       ? { reference_price: null, reference_source: null, decision: "KEEP" as const, history_id: null }
       : await applyOrderLineSalePriceTx(client, {
-        article_id: resolved.article_id,
-        proposed_price: l.prix_unitaire_ht,
-        decision: l.reference_price_decision ?? null,
-        source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
-        source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
-        source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
-        actor_user_id: options.actor_user_id,
-        line_index: lineIndex,
-      });
+      article_id: resolved.article_id,
+      proposed_price: l.prix_unitaire_ht,
+      decision: l.reference_price_decision ?? null,
+      source: quoteLineId !== null ? "QUOTE" : "CUSTOMER_ORDER",
+      source_entity_type: quoteLineId !== null ? "DEVIS_LIGNE" : "COMMANDE",
+      source_entity_id: quoteLineId !== null ? String(quoteLineId) : commandeId,
+      actor_user_id: options.actor_user_id,
+      line_index: lineIndex,
+    });
 
     const insertRes = await client.query<{ id: string }>(
       `
@@ -3716,7 +3830,8 @@ async function insertCommandeLignes(
             reconciliation_sources = $24::jsonb,
             reconciliation_decisions = $25::jsonb,
             reconciliation_resolved_at = $26::timestamptz,
-            reconciliation_resolved_by = $27::bigint
+            reconciliation_resolved_by = $27::bigint,
+            intercompany_catalogue_mapping_id = $29::uuid
           WHERE $28::bigint IS NOT NULL
             AND id = $28::bigint
             AND commande_id = $1::bigint
@@ -3750,6 +3865,7 @@ async function insertCommandeLignes(
           ,reconciliation_decisions
           ,reconciliation_resolved_at
           ,reconciliation_resolved_by
+          ,intercompany_catalogue_mapping_id
           )
           SELECT
           $1,
@@ -3779,6 +3895,7 @@ async function insertCommandeLignes(
           $25::jsonb,
           $26::timestamptz,
           $27::bigint
+          ,$29::uuid
           WHERE $28::bigint IS NULL
           RETURNING id::bigint::text AS id
         )
@@ -3815,6 +3932,7 @@ async function insertCommandeLignes(
         reconciliation?.status === "RESOLVED" ? new Date().toISOString() : null,
         reconciliation?.status === "RESOLVED" ? options.actor_user_id : null,
         requestedLineId,
+        l.intercompany_catalogue_mapping_id ?? null,
       ]
     );
 
@@ -3997,6 +4115,27 @@ async function insertCommandeDocuments(
   for (const doc of documents) {
     const documentId = crypto.randomUUID();
     const isPdf = doc.originalname.toLowerCase().endsWith(".pdf");
+    if (isPdf && doc.sha256) {
+      // The order is locked throughout the create/update transaction.
+      const existing = await client.query<{id: string; sha256: string | null}>(
+        `SELECT d.id::text, cd.upload_sha256 AS sha256 FROM commande_documents cd
+         JOIN documents_clients d ON d.id=cd.document_id
+         WHERE cd.commande_id=$1 AND cd.type='PDF'
+           AND (cd.upload_sha256=$2 OR (cd.upload_sha256 IS NULL AND d.document_name=$3))`,
+        [commandeId, doc.sha256, doc.originalname],
+      );
+      let matched = false;
+      for (const stored of existing.rows) {
+        if (stored.sha256 === doc.sha256) { matched = true; break; }
+        try {
+          const bytes = await fs.readFile(path.join(ensureDocumentStoragePath(), stored.id + ".pdf"));
+          if (crypto.createHash("sha256").update(bytes).digest("hex") === doc.sha256) { matched = true; break; }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      if (matched) continue;
+    }
     const docType = isPdf ? "PDF" : doc.mimetype;
 
     const extCandidate = path.extname(doc.originalname).toLowerCase();
@@ -4018,10 +4157,10 @@ async function insertCommandeDocuments(
 
     await client.query(
       `
-      INSERT INTO commande_documents (commande_id, document_id, type)
-      VALUES ($1, $2, $3)
+      INSERT INTO commande_documents (commande_id, document_id, type, upload_sha256)
+      VALUES ($1, $2, $3, $4)
       `,
-      [commandeId, documentId, isPdf ? "PDF" : null]
+      [commandeId, documentId, isPdf ? "PDF" : null, isPdf ? doc.sha256 ?? null : null]
     );
   }
 }
@@ -4163,23 +4302,56 @@ export async function repoCreateCommandeCutoverDraftTx(
   return { id: commandeIdInt, numero };
 }
 
-export async function repoCreateCommande(
+export async function repoCreateCommandeDraftTx(
+  client: PoolClient,
   input: CreateCommandeInput,
-  documents: UploadedDocument[],
-  actorUserId: number | null = null
-) {
-  const client = await pool.connect();
-  let notifications: AppNotification[] = [];
-  let commandeIdForReconciliation: string | null = null;
-  const movedDocuments: CommandeDocumentMove[] = [];
-  let result: { id: number };
-  try {
-    result = await withUploadTransaction({
-      client,
-      files: documents,
-      context: "commande-client.create",
-      work: async () => {
+  actorUserId: number,
+  origin: "cutover" | "client_demand" = "cutover",
+): Promise<{ id: number; numero: string }> {
+  const contractCall = await prepareContractCall(client, input, actorUserId, []);
+  await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
+  const idRes = await client.query<{ id: string }>("SELECT nextval('public.commande_client_id_seq')::bigint::text AS id");
+  const rawId = idRes.rows[0]?.id;
+  if (!rawId) throw new Error("Failed to allocate commande id");
+  const commandeIdInt = toInt(rawId, "commande_client.id");
+  const numero = await generateCommandeCode(client, { client_code: input.code_client ?? input.client_id ?? "CMD", date: input.date_commande ? new Date(input.date_commande) : undefined });
+  const orderType = input.order_type ?? "FERME";
+  const initialWorkflowStatus: CommandeWorkflowStatus = origin === "client_demand" ? "BROUILLON" : "ATTENTE_TECHNIQUE";
+  const inserted = await client.query<{ id: string }>(`
+    INSERT INTO commande_client (id,numero,client_id,contact_id,destinataire_id,adresse_facturation_id,emetteur,code_client,date_commande,arc_edi,arc_date_envoi,compteur_affaire_id,type_affaire,order_type,cadre_start_date,cadre_end_date,dest_stock_magasin_id,dest_stock_emplacement_id,mode_port_id,mode_reglement_id,conditions_paiement_id,biller_id,compte_vente_id,commentaire,remise_globale,total_ht,total_ttc,devis_id,source_devis_version_id,creation_flow_version,delivery_prepayment_requirement)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31) RETURNING id::text AS id`, [
+      commandeIdInt, numero, input.client_id ?? null, input.contact_id ?? null, input.destinataire_id ?? null, input.adresse_facturation_id ?? null, input.emetteur ?? null, input.code_client ?? null, input.date_commande, input.arc_edi ?? false, input.arc_date_envoi ?? null, input.compteur_affaire_id ?? null, "livraison", orderType, input.cadre_start_date ?? null, input.cadre_end_date ?? null, input.dest_stock_magasin_id ?? null, input.dest_stock_emplacement_id ?? null, input.mode_port_id ?? null, input.mode_reglement_id ?? null, input.conditions_paiement_id ?? null, input.biller_id ?? null, input.compte_vente_id ?? null, input.commentaire ?? null, input.remise_globale ?? 0, input.total_ht ?? 0, input.total_ttc ?? 0, input.devis_id ?? null, input.source_devis_version_id ?? input.devis_id ?? null, input.creation_flow_version ?? 1, orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+    ]);
+  const commandeId = inserted.rows[0]?.id;
+  if (!commandeId) throw new Error("Failed to create commande");
+  await insertCommandeLignes(client, commandeId, input.lignes, { officialize_preparatory_data: input.officialize_preparatory_data ?? false, commande_id_int: commandeIdInt, actor_user_id: actorUserId, creation_flow_version: input.creation_flow_version ?? 1, save_intent: "DRAFT", skip_sale_price_reference: orderType === "INTERNE" });
+  await recordContractCall(client, contractCall, commandeId, input);
+  await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
+  await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
+  await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+  await client.query("INSERT INTO commande_historique (commande_id,user_id,ancien_statut,nouveau_statut,commentaire) VALUES ($1,$2,$3,$4,$5)", [commandeIdInt, actorUserId, null, initialWorkflowStatus, origin === "client_demand" ? "Brouillon issu du programme client, à vérifier par l’ADV" : "Commande de reprise creee - brouillon a verifier"]);
+  await insertCommandeEvent(client, { commande_id: commandeIdInt, event_type: "WORKFLOW_INITIALIZED", old_values: { statut: null }, new_values: { statut: initialWorkflowStatus, active_checkpoint: origin === "client_demand" ? "order_intake" : "technical_analysis", cutover_draft: origin === "cutover" }, user_id: actorUserId });
+  return { id: commandeIdInt, numero };
+}
 
+/** @deprecated compatibility name for data-cutover callers. */
+export const repoCreateCommandeCutoverDraftTx = repoCreateCommandeDraftTx;
+/** Compatibility alias for transactional intercompany creation. */
+/**
+ * The ordinary customer-order creation writes, joined to the caller's transaction.
+ * Keeps technical, price, workflow, notification and document rules identical to
+ * the upload entry point. The caller owns transaction/outbox scope and rollback.
+ * Call with no documents for a server-to-server intake; uploaded files continue
+ * to use the upload transaction wrapper below.
+ */
+export async function repoCreateCommandeNativeTx(
+  client: PoolClient,
+  input: CreateCommandeInput,
+  actorUserId: number | null,
+  documents: UploadedDocument[] = [],
+  movedDocuments: CommandeDocumentMove[] = [],
+): Promise<{ id: number; numero: string }> {
+  let notifications: AppNotification[] = [];
     const contractCall=await prepareContractCall(client,input,actorUserId,documents);
 
     await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
@@ -4200,7 +4372,15 @@ export async function repoCreateCommande(
 
     const orderType = input.order_type ?? "FERME";
 
-    const initialWorkflowStatus: CommandeWorkflowStatus = orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
+    // A commercial company may submit its normal customer-order form without a
+    // special dropship address field. Resolve that customer's persisted delivery
+    // address while this transaction owns the creation, then persist the exact
+    // structured snapshot before the supplier PO/outbox is created.
+    const resolvedIntercompanyDeliveryAddress = input.fulfilment_mode === "SUPPLIER_DROPSHIP"
+      ? await resolveIntercompanyDeliveryAddress(client, input)
+      : input.intercompany_delivery_address ?? null;
+
+    const initialWorkflowStatus: CommandeWorkflowStatus = input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "ATTENTE_FOURNISSEUR" : orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
     const insertSql = `
       INSERT INTO commande_client (
         id,
@@ -4233,9 +4413,11 @@ export async function repoCreateCommande(
         devis_id,
         source_devis_version_id,
         creation_flow_version,
-        delivery_prepayment_requirement
+        delivery_prepayment_requirement,
+        fulfilment_mode,
+        intercompany_delivery_address
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33::jsonb
       )
       RETURNING id::text AS id
     `;
@@ -4271,11 +4453,12 @@ export async function repoCreateCommande(
       input.source_devis_version_id ?? input.devis_id ?? null,
       input.creation_flow_version ?? 1,
       orderType === "INTERNE" ? "NOT_REQUIRED" : input.delivery_prepayment_requirement ?? "NOT_REQUIRED",
+      input.fulfilment_mode ?? "STANDARD",
+      JSON.stringify(resolvedIntercompanyDeliveryAddress),
     ];
     const ins = await client.query<{ id: string }>(insertSql, insertParams);
     const commandeId = ins.rows[0]?.id;
     if (!commandeId) throw new Error("Failed to create commande");
-    commandeIdForReconciliation = commandeId;
 
     await insertCommandeLignes(client, commandeId, input.lignes, {
       officialize_preparatory_data: input.officialize_preparatory_data ?? false,
@@ -4283,19 +4466,31 @@ export async function repoCreateCommande(
       actor_user_id: actorUserId,
       creation_flow_version: input.creation_flow_version ?? 1,
       save_intent: input.save_intent ?? "VALIDATE",
+      fulfilment_mode: input.fulfilment_mode,
     });
+    if (input.fulfilment_mode === "SUPPLIER_DROPSHIP") {
+      if (actorUserId == null) throw new HttpError(401, "UNAUTHORIZED", "Un acteur authentifié est requis pour une commande fournisseur directe.");
+      const runtime = (await import("../../entreprises/runtime/company-runtime.config")).companyRuntimeConfiguration();
+      if (!runtime.enabled) throw new HttpError(409, "INTERCOMPANY_RUNTIME_REQUIRED", "Le flux fournisseur direct exige une instance entreprise configurée.");
+      await repoCreateDropshipPurchaseOrderTx(client, {
+        buyerCompanyId: runtime.company_id,
+        buyerSalesOrderId: commandeIdInt,
+        mappingIds: input.lignes.map(line => line.intercompany_catalogue_mapping_id!).filter(Boolean),
+        audit: { user_id: actorUserId, role: null, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: null, page_key: "commandes", client_session_id: null },
+      });
+    }
     await recordContractCall(client,contractCall,commandeId,input);
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
-    await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
+    if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
 
     await client.query(
       `
         INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
         VALUES ($1, $2, $3, $4, $5)
       `,
-      [commandeIdInt, null, null, initialWorkflowStatus, "Commande créée — contrôle stock et lancement à préparer"]
+      [commandeIdInt, null, null, initialWorkflowStatus, input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "Commande créée — attente preuve d'expédition fournisseur" : "Commande créée — contrôle stock et lancement à préparer"]
     );
 
     await insertCommandeEvent(client, {
@@ -4304,12 +4499,12 @@ export async function repoCreateCommande(
       old_values: { statut: null },
       new_values: {
         statut: initialWorkflowStatus,
-        active_checkpoint: orderType === "INTERNE" ? "of_generation" : "stock_check",
+        active_checkpoint: input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "supplier_shipment_sync" : orderType === "INTERNE" ? "of_generation" : "stock_check",
       },
       user_id: null,
     });
 
-    notifications = await notifyWorkflowRole(client, {
+    if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") notifications = await notifyWorkflowRole(client, {
       commande: {
         id: commandeIdInt,
         numero: numeroForInsert,
@@ -4342,7 +4537,28 @@ export async function repoCreateCommande(
       actorUserId: null,
     });
 
-    return { id: toInt(commandeId, "commande.id") };
+    return { id: toInt(commandeId, "commande.id"), numero: numeroForInsert };
+}
+
+export async function repoCreateCommande(
+  input: CreateCommandeInput,
+  documents: UploadedDocument[],
+  actorUserId: number | null = null
+) {
+  const client = await pool.connect();
+  let commandeIdForReconciliation: string | null = null;
+  const movedDocuments: CommandeDocumentMove[] = [];
+  let result: { id: number };
+  try {
+    result = await withUploadTransaction({
+      client,
+      files: documents,
+      context: "commande-client.create",
+      work: async () => {
+
+        const created = await repoCreateCommandeNativeTx(client, input, actorUserId, documents, movedDocuments);
+        commandeIdForReconciliation = String(created.id);
+        return { id: created.id };
       },
       reconcile: async () => commandeIdForReconciliation
         ? reconcileCommandeUploadCommit(commandeIdForReconciliation, movedDocuments, "create")
@@ -4531,6 +4747,7 @@ export async function repoUpdateCommande(
       dest_stock_emplacement_id: string | null;
       ar_sent_at: string | null;
       creation_flow_version: number;
+      fulfilment_mode: string | null;
     }>(
       `
       SELECT
@@ -4538,6 +4755,7 @@ export async function repoUpdateCommande(
         client_id,
         devis_id::text AS devis_id,
         order_type,
+        fulfilment_mode,
         adresse_facturation_id::text AS adresse_facturation_id,
         cadre_start_date::text AS cadre_start_date,
         cadre_end_date::text AS cadre_end_date,
@@ -4555,6 +4773,13 @@ export async function repoUpdateCommande(
     const existing = existingRes.rows[0] ?? null;
     if (!existing) {
       return null;
+    }
+    if (isSupplierDropship(existing.fulfilment_mode)) {
+      throw new HttpError(
+        409,
+        "SUPPLIER_DROPSHIP_REVISION_UNSUPPORTED",
+        "La révision locale d'une commande dropship transmise est refusée tant qu'une révision inter-sociétés atomique n'est pas disponible."
+      );
     }
     await assertContractCallMutable(client,id,input);
 
@@ -4697,6 +4922,7 @@ export async function repoUpdateCommande(
       actor_user_id: actorUserId,
       creation_flow_version: existingFlowVersion,
       save_intent: input.save_intent ?? "VALIDATE",
+      fulfilment_mode: input.fulfilment_mode,
       existing_line_ids: existingLineIds,
     });
     await insertCommandeEcheances(client, id, input.echeances ?? []);
@@ -4727,9 +4953,9 @@ export async function repoDeleteCommande(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const lockedCommande = await client.query<{ order_type: string }>(
+    const lockedCommande = await client.query<{ order_type: string; fulfilment_mode: string | null }>(
       `
-        SELECT order_type
+        SELECT order_type, fulfilment_mode
         FROM public.commande_client
         WHERE id = $1::bigint
         FOR UPDATE
@@ -4740,6 +4966,13 @@ export async function repoDeleteCommande(
     if (!lockedRow) {
       await client.query("ROLLBACK");
       return false;
+    }
+    if (isSupplierDropship(lockedRow.fulfilment_mode)) {
+      throw new HttpError(
+        409,
+        "SUPPLIER_DROPSHIP_CANCELLATION_UNSUPPORTED",
+        "L'annulation locale d'une commande dropship transmise est refusée tant que la demande partenaire n'est pas synchronisée."
+      );
     }
     await assertNoContractCall(client,commandeId);
 
@@ -4881,6 +5114,7 @@ async function analyzeCommandeStockTx(
     id: number;
     client_id: string | null;
     order_type: string;
+    fulfilment_mode: string | null;
     dest_stock_magasin_id: string | null;
     dest_stock_emplacement_id: string | null;
   }>(
@@ -4889,6 +5123,7 @@ async function analyzeCommandeStockTx(
         id::bigint::int AS id,
         client_id,
         order_type,
+        fulfilment_mode,
         dest_stock_magasin_id::text AS dest_stock_magasin_id,
         dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id
       FROM commande_client
@@ -4899,6 +5134,7 @@ async function analyzeCommandeStockTx(
   );
   const commande = commandeRes.rows[0] ?? null;
   if (!commande) return null;
+  assertCommercialOnlyDropship(commande.fulfilment_mode);
   const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
     && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
@@ -5005,9 +5241,20 @@ export async function repoAnalyzeCommandeStock(id: string, audit: AuditContext) 
 }
 
 export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAffairesV3BodyDTO, audit: AuditContext) {
-  const commandeId = toInt(id, "commande_id");
   const client = await pool.connect();
-  return withRealtimeOutboxTransaction(client, async (client) => {
+  return withRealtimeOutboxTransaction(client, (tx) =>
+    repoGenerateAffairesFromOrderTx(tx, id, body, audit),
+  );
+}
+
+/** Native order launch inside an existing transaction. */
+export async function repoGenerateAffairesFromOrderTx(
+  client: PoolClient,
+  id: string,
+  body: GenerateAffairesV3BodyDTO,
+  audit: AuditContext,
+) {
+    const commandeId = toInt(id, "commande_id");
     let recoveredInvalidPlanningState = false;
 
     const commandeRes = await client.query<{
@@ -5021,9 +5268,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
       ar_sent_at: string | null;
       updated_at: string | null;
       creation_flow_version: number;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero,
+      SELECT client_id, type_affaire, order_type, devis_id::text AS devis_id, numero, fulfilment_mode,
              dest_stock_magasin_id::text AS dest_stock_magasin_id,
              dest_stock_emplacement_id::bigint::text AS dest_stock_emplacement_id,
              ar_sent_at::text AS ar_sent_at,
@@ -5039,6 +5287,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
     if (!commande) {
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
     const assemblyFeatureEnabled = commande.order_type !== "INTERNE"
       && await isCommandAssemblyFlowEnabled(client, audit.user_id);
 
@@ -5966,7 +6215,6 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
         ...generationWarnings,
       ])],
     };
-  });
 }
 
 type AffaireCreationInput = {
@@ -7551,9 +7799,9 @@ export async function repoPreviewAffairesFromCommande(id: string) {
   try {
     await client.query("BEGIN");
 
-    const commandeRes = await client.query<{ client_id: string | null }>(
+    const commandeRes = await client.query<{ client_id: string | null; fulfilment_mode: string | null }>(
       `
-      SELECT client_id
+      SELECT client_id, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       `,
@@ -7564,6 +7812,7 @@ export async function repoPreviewAffairesFromCommande(id: string) {
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7611,9 +7860,10 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
     const commandeRes = await client.query<{
       client_id: string | null;
       type_affaire: string;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire
+      SELECT client_id, type_affaire, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -7625,6 +7875,7 @@ export async function repoGenerateAffairesFromCommande(id: string, body: Generat
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7731,9 +7982,10 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
     const commandeRes = await client.query<{
       client_id: string | null;
       type_affaire: string;
+      fulfilment_mode: string | null;
     }>(
       `
-      SELECT client_id, type_affaire
+      SELECT client_id, type_affaire, fulfilment_mode
       FROM commande_client
       WHERE id = $1
       FOR UPDATE
@@ -7745,6 +7997,7 @@ export async function repoConfirmGenerateAffaires(id: string, body: ConfirmGener
       await client.query("ROLLBACK");
       return null;
     }
+    assertCommercialOnlyDropship(commande.fulfilment_mode);
 
     if (!commande.client_id) {
       throw new HttpError(400, "COMMANDE_CLIENT_REQUIRED", "Cannot generate affaire from a commande without client_id");
@@ -7826,8 +8079,9 @@ export async function repoDuplicateCommande(id: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const source=(await client.query<{order_type:string}>('SELECT order_type FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
+    const source=(await client.query<{order_type:string;fulfilment_mode:string|null}>('SELECT order_type,fulfilment_mode FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
     if(source?.order_type==='CADRE')throw new HttpError(409,'CLIENT_MASTER_CONTRACT_REQUIRED','Créez un nouvel appel depuis le contrat de la fiche client');
+    if(isSupplierDropship(source?.fulfilment_mode))throw new HttpError(409,'SUPPLIER_DROPSHIP_DUPLICATION_UNSUPPORTED',"Dupliquez une commande dropship depuis le flux commercial natif afin de recréer son PO inter-sociétés.");
     await assertNoContractCall(client,originalCommandeId);
 
     const originalRes = await client.query(

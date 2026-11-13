@@ -984,18 +984,20 @@ export async function repoCreateCommandeFournisseurTx(
 
 export async function repoCreateCommandeFournisseur(
   body: CreateCommandeBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?: PoolClient,
 ): Promise<{ id: string; code: string; idempotent_replay: boolean }> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     const result = await repoCreateCommandeFournisseurTx(body, audit, client);
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return result;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     // Double-clic concurrent : la même clé a gagné dans une autre transaction -> rejouer.
-    if (body.idempotency_key && isPgUniqueViolation(err)) {
+    if (ownsTransaction && body.idempotency_key && isPgUniqueViolation(err)) {
       const replayRes = await db.query<{ id: string; code: string }>(
         `SELECT id, code FROM public.commande_fournisseur WHERE idempotency_key = $1`,
         [body.idempotency_key]
@@ -1005,7 +1007,7 @@ export async function repoCreateCommandeFournisseur(
     }
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
