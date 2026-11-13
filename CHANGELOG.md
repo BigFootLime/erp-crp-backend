@@ -1,5 +1,11 @@
 # Changelog
 
+## Préparé — Baseline 2.0.84 et fiabilité des contrats (13 novembre 2026)
+
+- Les tests de création des sous-états couvrent le texte Informations multiligne et la valeur absente, avec le contrat SQL à cinq paramètres. Les cas existants sont conservés.
+- Documentation explicite de la paire source 2.0.84 et des limites de provenance du runtime composite ; aucune modification de production.
+
+
 ## 2026-11-12 — Informations des sous-états matière
 
 - Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.

@@ -94,7 +94,7 @@ describe("/api/v1/stock", () => {
       const query = String(sql);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
       if (query.includes("INSERT INTO public.stock_sous_etats")) {
-        return { rows: [{ id: 41, etat_id: null, code: "REC", designation: "Recuit", is_active: true }] };
+        return { rows: [{ id: 41, etat_id: null, code: "REC", designation: "Recuit", informations: "Recuit sous atmosphère contrôlée.\nAttendre le refroidissement complet.", is_active: true }] };
       }
       if (query.includes("INSERT INTO public.audit_logs")) return { rows: [] };
       return { rows: [] };
@@ -103,24 +103,40 @@ describe("/api/v1/stock", () => {
     const res = await request(app)
       .post("/api/v1/stock/matiere-sous-etats")
       .set("Authorization", "Bearer fake")
-      .send({ code: "REC", designation: "Recuit" });
+      .send({
+        code: "REC",
+        designation: "Recuit",
+        informations: "Recuit sous atmosphère contrôlée.\nAttendre le refroidissement complet.",
+      });
 
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ id: 41, etat_id: null, code: "REC", designation: "Recuit" });
+    expect(res.body).toMatchObject({
+      id: 41,
+      etat_id: null,
+      code: "REC",
+      designation: "Recuit",
+      informations: "Recuit sous atmosphère contrôlée.\nAttendre le refroidissement complet.",
+    });
     const insert = mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"));
-    expect(insert?.[1]).toEqual([null, "REC", "Recuit", true]);
+    expect(insert?.[1]).toEqual([
+      null,
+      "REC",
+      "Recuit",
+      "Recuit sous atmosphère contrôlée.\nAttendre le refroidissement complet.",
+      true,
+    ]);
   });
 
   it("POST /api/v1/stock/matiere-sous-etats accepts a code-only standalone sub-state", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const query = String(sql);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK" || query.includes("audit_logs")) return { rows: [] };
-      if (query.includes("INSERT INTO public.stock_sous_etats")) return { rows: [{ id: 42, etat_id: null, code: "BRUT", designation: "", is_active: true }] };
+      if (query.includes("INSERT INTO public.stock_sous_etats")) return { rows: [{ id: 42, etat_id: null, code: "BRUT", designation: "", informations: null, is_active: true }] };
       return { rows: [] };
     });
     const res = await request(app).post("/api/v1/stock/matiere-sous-etats").set("Authorization", "Bearer fake").send({ code: "BRUT" });
     expect(res.status).toBe(201);
-    expect(mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "BRUT", "", true]);
+    expect(mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"))?.[1]).toEqual([null, "BRUT", "", null, true]);
   });
 
   it("reports authenticated referential capability independently from Stock roles", async () => {
