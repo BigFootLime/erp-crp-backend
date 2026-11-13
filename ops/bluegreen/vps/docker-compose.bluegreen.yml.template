@@ -1,0 +1,40 @@
+# Staged VPS pair. Run only from a root-owned directory outside Coolify's
+# generated application directory, after the release review. Neither service
+# publishes a host port; Traefik reaches the private `coolify` network only.
+services:
+  cerp-api-blue:
+    image: ${CERP_IMAGE_BLUE:?pin an immutable image digest}
+    container_name: cerp-api-blue
+    restart: unless-stopped
+    env_file:
+      - /etc/cerp/bluegreen/shared.env
+      - /etc/cerp/bluegreen/blue.env
+    expose: ["5000"]
+    mem_limit: 3g
+    cpus: 1.5
+    volumes:
+      - /data/coolify/volumes/crp-backend-data:/app/data
+      - /data/coolify/volumes/crp-backend-clamav:/var/lib/clamav
+      - /data/coolify/volumes/crp-backend-uploads:/app/uploads
+      - /data/coolify/applications/rcccokw0wgcw0ck44g0wk0ck/etc/cerp/healthcheck.sh:/etc/cerp/healthcheck.sh:ro
+    networks: [coolify]
+  cerp-api-green:
+    image: ${CERP_IMAGE_GREEN:?pin an immutable image digest}
+    container_name: cerp-api-green
+    restart: unless-stopped
+    env_file:
+      - /etc/cerp/bluegreen/shared.env
+      - /etc/cerp/bluegreen/green.env
+    expose: ["5000"]
+    mem_limit: 3g
+    cpus: 1.5
+    volumes:
+      - /data/coolify/volumes/crp-backend-data:/app/data
+      - /data/coolify/volumes/crp-backend-clamav:/var/lib/clamav
+      - /data/coolify/volumes/crp-backend-uploads:/app/uploads
+      - /data/coolify/applications/rcccokw0wgcw0ck44g0wk0ck/etc/cerp/healthcheck.sh:/etc/cerp/healthcheck.sh:ro
+    networks: [coolify]
+networks:
+  coolify:
+    external: true
+    name: coolify

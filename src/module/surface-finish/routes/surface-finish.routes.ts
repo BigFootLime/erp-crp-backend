@@ -9,6 +9,7 @@ import {
   attachRevisionDocument,
   createFinish,
   createFinishFamily,
+  updateFinishFamily,
   createRevision,
   getFinish,
   listFinishes,
@@ -32,6 +33,7 @@ import {
   attachDocumentBodySchema,
   createFinishBodySchema,
   createFinishFamilyBodySchema,
+  updateFinishFamilyBodySchema,
   createRevisionBodySchema,
   finishHistoryQuerySchema,
   listFinishesQuerySchema,
@@ -57,6 +59,8 @@ router.post(
   validate(createFinishFamilyBodySchema),
   createFinishFamily
 );
+
+router.patch("/familles/:familyCode",requireSurfaceFinishCapability("library_draft_write"),validate(updateFinishFamilyBodySchema),updateFinishFamily);
 
 // #226 — Contrôle des doublons. DÉCLARÉ AVANT `/:finishId` : les deux motifs
 // n'ont qu'un segment, et Express retient le premier inscrit — placé après,

@@ -223,9 +223,9 @@ describe("/api/v1/planning", () => {
   });
 
   it("GET /api/v1/planning/events returns {items,total}", async () => {
-    mocks.poolQuery
-      .mockResolvedValueOnce({ rows: [{ total: 1 }] })
-      .mockResolvedValueOnce({
+    const eventQueryResults = [
+      { rows: [{ total: 1 }] },
+      {
         rows: [
           {
             id: "33333333-3333-3333-3333-333333333333",
@@ -265,7 +265,19 @@ describe("/api/v1/planning", () => {
              blockers: [],
            },
          ],
-       });
+       },
+    ];
+    mocks.poolQuery.mockImplementation(async (sql: string) => {
+      // This legacy frozen OF has a validated definition and predates completion receipts.
+      if (sql.includes("validation.value AS validation")) return { rows: [{
+        id: "7", status: "PLANIFIE", technical_readiness: "VALIDATED",
+        technical_snapshot_sha256: "a".repeat(64), revision: "published-version", quantity: 1,
+        preparation_rules_version: 1, validation: null,
+        operations: [{ id: "operation", phase: 10, label: "Usinage", status: "TODO",
+          setup: 1, unit: 1, base: 1, coefficient: 1, planned: false, start: null, end: null, resource: null }],
+      }] };
+      return eventQueryResults.shift() ?? { rows: [] };
+    });
 
     const res = await request(app)
       .get("/api/v1/planning/events")

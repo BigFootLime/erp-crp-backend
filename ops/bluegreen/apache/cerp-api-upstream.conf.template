@@ -1,0 +1,6 @@
+# Managed by switch-apache-upstream.sh only after an approved release.
+# It is intentionally loopback-only: no port or firewall rule is added.
+ProxyPass        /api/ http://127.0.0.1:__PORT__/api/ retry=0 connectiontimeout=2 timeout=25
+ProxyPassReverse /api/ http://127.0.0.1:__PORT__/api/
+ProxyPass        /socket.io/ ws://127.0.0.1:__PORT__/socket.io/ retry=0 connectiontimeout=2 timeout=25
+ProxyPassReverse /socket.io/ ws://127.0.0.1:__PORT__/socket.io/

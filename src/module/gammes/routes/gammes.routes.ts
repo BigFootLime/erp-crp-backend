@@ -1,3 +1,5 @@
+import { readGammeProfitability } from "../controllers/gammes.controller";
+import { profitabilityQuerySchema } from "../validators/gammes.validators";
 // src/module/gammes/routes/gammes.routes.ts — monté sur /gammes
 //
 // Les routes de LECTURE et d'ÉCRITURE des opérations déclarent désormais leur
@@ -111,5 +113,7 @@ router.post(
   validate(publishGammeSchema),
   publishGamme
 )
+
+router.get("/:gammeId/profitability",requireMethodesCapability("gamme_operation_read"),requireMethodesCapability("tarif_read"),validate(gammeIdParamSchema),validate(profitabilityQuerySchema),readGammeProfitability);
 
 export default router

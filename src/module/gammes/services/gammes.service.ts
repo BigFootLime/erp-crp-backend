@@ -1,3 +1,4 @@
+import { repoGammeProfitability } from "../repository/gamme-profitability.repository";
 // src/module/gammes/services/gammes.service.ts
 // GPAO B2.2 — service gammes (logique fine dans les repositories).
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository"
@@ -60,3 +61,5 @@ export const reorderGammeOperationsSVC = (gammeId: string, order: string[], audi
 export const gammePublicationReadinessSVC = (gammeId: string) => repoGammePublicationReadiness(gammeId)
 export const publishGammeSVC = (gammeId: string, expectedUpdatedAt: string, audit: AuditContext) =>
   repoPublishGamme(gammeId, expectedUpdatedAt, audit)
+
+export const gammeProfitabilitySVC=(gammeId:string,quantity:number)=>repoGammeProfitability(gammeId,quantity);

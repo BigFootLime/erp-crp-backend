@@ -140,13 +140,16 @@ const familyCode = z
   .regex(/^[A-Z0-9_]+$/, "Le code famille accepte uniquement A-Z, 0-9 et _.");
 
 export const createFinishFamilyBodySchema = z.object({
-  code: familyCode,
+  code: familyCode.optional(), // Legacy payloads are accepted; the server never uses this value.
+  nom_diminutif: z.string().trim().toUpperCase().regex(/^[A-Z][A-Z0-9]{0,19}$/, "Saisissez 1 à 20 lettres ou chiffres, en commençant par une lettre."),
   label: shortText,
   description: optionalText(2000),
   commentaire_template: optionalText(4000),
   sort_order: z.coerce.number().int().min(0).max(10_000).optional().default(100),
 });
 export type CreateFinishFamilyBodyDTO = z.infer<typeof createFinishFamilyBodySchema>;
+export const updateFinishFamilyBodySchema = createFinishFamilyBodySchema.omit({ code: true }).extend({ expected_updated_at: z.string().min(1) }).strict();
+export type UpdateFinishFamilyBodyDTO = z.infer<typeof updateFinishFamilyBodySchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Bibliothèque — contrôle des doublons (#226)                                 */
@@ -223,8 +226,9 @@ export type FinishHistoryQueryDTO = z.infer<typeof finishHistoryQuerySchema>;
 /* -------------------------------------------------------------------------- */
 
 export const createFinishBodySchema = z.object({
+  applicable: z.boolean().optional().default(false),
   family_code: shortText,
-  procede: shortText,
+  procede: shortText.optional(),
   designation_courte: shortText,
   designation_longue: optionalText(300),
   description: optionalText(2000),
@@ -408,6 +412,8 @@ export type ConfirmFinishBodyDTO = z.infer<typeof confirmFinishBodySchema>;
  * redemandées : les deux routes conservent donc des contrats séparés.
  */
 export const stockArticleFinishPreviewBodySchema = z.object({
+  family_code: optionalText(60),
+  supplier_order_text: optionalText(2000),
   piece_technique_id: uuid,
   piece_technique_version_id: uuid,
   finish_revision_id: uuid,

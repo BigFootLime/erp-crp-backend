@@ -1,3 +1,4 @@
+import {assertStockReviewVersionTx,prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
 import {createHash} from "node:crypto";
 import type {PoolClient} from "pg";
 import pool from "../../../config/database";
@@ -68,22 +69,9 @@ export async function repoOfDossier(id:number) {
     return result;
   } catch(error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
 }
-export async function repoCompleteOfDossier(id:number,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext) {
-  return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
-    // Same lock order as central planning: planning revision before the OF.
-    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
-    await tx.query("SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE",[id]);
-    if(!await materialWorkflowEnabled(tx)) throw new HttpError(409,"MATERIAL_WORKFLOW_DISABLED","Le parcours matière n’est pas activé.");
-    const payloadHash=createHash("sha256").update(JSON.stringify([id,body.expectedVersion])).digest("hex");
-    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[body.idempotencyKey]);
-    const replay=(await tx.query("SELECT * FROM public.of_material_commands WHERE idempotency_key=$1::uuid",[body.idempotencyKey])).rows[0];
-    if(replay){
-      if(replay.actor_id!==audit.user_id||Number(replay.of_id)!==id||replay.command_type!=="COMPLETE"||replay.payload_hash!==payloadHash)
-        throw new HttpError(409,"IDEMPOTENCY_KEY_REUSED","Cette action a déjà été utilisée avec un autre contenu.");
-      return replay.response;
-    }
-    const current=await readOfDossierTx(tx,id);
-    if(current.version!==body.expectedVersion) throw new HttpError(409,"DOSSIER_CHANGED","Le dossier a changé. Relis ses conséquences avant de valider.");
+export async function completePreparedDossierTx(tx:DossierDb,id:number,audit:AuditContext,current?:Awaited<ReturnType<typeof readOfDossierTx>>) {
+  current ??= await readOfDossierTx(tx,id);
+  if (!current.operations.length) throw new HttpError(422,'GAMME_REQUIRED','Le dossier doit contenir au moins une opération.');
     if(!current.canComplete) throw new HttpError(409,"DOSSIER_INCOMPLETE","Validez la définition technique avant de passer le dossier à Complet.",{blockers:current.blockers});
     const preparation=await evaluateOfPreparation(tx,id);
     if(!preparation.ready) throw new HttpError(409,"DOSSIER_TECHNICAL_CHANGED","La préparation technique doit être revue.",{items:preparation.items});
@@ -94,7 +82,28 @@ export async function repoCompleteOfDossier(id:number,body:{expectedVersion:stri
       // Never changes execution status or actual dates.
       await preparationAudit(tx,audit,id,"production.of.dossier.complete",{sourceHash:current.sourceHash,operations:current.planning.total});
     }
-    const response=await readOfDossierTx(tx,id);
+  return readOfDossierTx(tx,id);
+}
+
+export async function repoCompleteOfDossier(id:number,body:{expectedVersion:string;idempotencyKey:string;materialReviewVersion?:string},audit:AuditContext,canPurchase=false,stockRights?:{reserve:boolean;deplete:boolean}) {
+  return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
+    // Same lock order as central planning: planning revision before the OF.
+    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+    await tx.query("SELECT id FROM public.ordres_fabrication WHERE id=$1 FOR UPDATE",[id]);
+    if(!await materialWorkflowEnabled(tx)) throw new HttpError(409,"MATERIAL_WORKFLOW_DISABLED","Le parcours matière n’est pas activé.");
+    const payloadHash=createHash("sha256").update(JSON.stringify([id,body.expectedVersion,...(body.materialReviewVersion?[body.materialReviewVersion]:[])])).digest("hex");
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[body.idempotencyKey]);
+    const replay=(await tx.query("SELECT * FROM public.of_material_commands WHERE idempotency_key=$1::uuid",[body.idempotencyKey])).rows[0];
+    if(replay){
+      if(replay.actor_id!==audit.user_id||Number(replay.of_id)!==id||replay.command_type!=="COMPLETE"||replay.payload_hash!==payloadHash)
+        throw new HttpError(409,"IDEMPOTENCY_KEY_REUSED","Cette action a déjà été utilisée avec un autre contenu.");
+      return replay.response;
+    }
+    const current=await readOfDossierTx(tx,id);
+    if(current.version!==body.expectedVersion) throw new HttpError(409,"DOSSIER_CHANGED","Le dossier a changé. Relis ses conséquences avant de valider.");
+    const reviewedSources=body.materialReviewVersion?await assertStockReviewVersionTx(tx,id,body.materialReviewVersion):undefined;
+    const procurement=await prepareAutomaticPlanningPurchasesTx(tx,id,audit,canPurchase,stockRights&&reviewedSources?{...stockRights,reviewedSources}:undefined);
+    const response={...await completePreparedDossierTx(tx,id,audit),materialDrafts:procurement?.orders??[]};
     await tx.query("INSERT INTO public.of_material_commands(idempotency_key,actor_id,of_id,command_type,payload_hash,response) VALUES($1::uuid,$2,$3,'COMPLETE',$4,$5::jsonb)",[body.idempotencyKey,audit.user_id,id,payloadHash,JSON.stringify(response)]);
     return response;
   });

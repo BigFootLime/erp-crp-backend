@@ -1,0 +1,21 @@
+# File-provider route for the public production API only.
+# Priority 100 is deliberate: greater than the current legacy generic Host+
+# PathPrefix route (implicit rule-length priority), lower than the existing
+# production GED (210) and test (220) routes. Those specialised routes keep
+# their current targets and authorisation boundaries.
+http:
+  routers:
+    cerp-public-api-bluegreen:
+      entryPoints: [https]
+      rule: Host(`erp-backend.croix-rousse-precision.fr`) && PathPrefix(`/`)
+      priority: 100
+      service: cerp-api-__SLOT__
+      tls:
+        certResolver: letsencrypt
+  services:
+    cerp-api-blue:
+      loadBalancer:
+        servers: [{ url: http://cerp-api-blue:5000 }]
+    cerp-api-green:
+      loadBalancer:
+        servers: [{ url: http://cerp-api-green:5000 }]

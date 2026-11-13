@@ -6,7 +6,7 @@ vi.mock('./production-preparation.repository',async()=>{
   const actual=await vi.importActual<typeof import('./production-preparation.repository')>('./production-preparation.repository');
   return {...actual,loadPreparationOrder:mocks.load,evaluateOfPreparation:mocks.evaluate,persistPreparationEvaluation:mocks.persist,preparationAudit:mocks.audit};
 });
-import {repoPrepareOperationProgramming} from './preparation-actions.repository';
+import {repoPrepareOperationProgramming,repoSaveProgrammingTask} from './preparation-actions.repository';
 const operationId='00000000-0000-4000-8000-000000000042';
 const of={id:7,version_id:operationId,updated_at:'2026-11-03T12:00:00Z',statut:'BROUILLON',technical_snapshot_sha256:null};
 const input={expected_updated_at:of.updated_at,operation_id:operationId,operation_hash:'a'.repeat(64),estimated_hours:1.5};
@@ -39,5 +39,28 @@ describe('operation programming preparation guards',()=>{
     expect(sql).toContain('operation_programming');expect(sql).not.toContain('piece_version_programming_tasks');
     expect(JSON.parse(params[3])).toMatchObject({estimated_hours:1.5,version_id:of.version_id,prepared_by:7});
     expect(mocks.persist).toHaveBeenCalledWith(expect.anything(),7);
+  });
+});
+describe('programming progress on a frozen dossier',()=>{
+  const task={id:operationId,updated_at:'task-v1',status:'TODO',assignee_id:2,estimated_hours:'4',program_reference:'CN-001',progress_percent:0};
+  const progressInput={expected_updated_at:of.updated_at,expected_task_updated_at:task.updated_at,assignee_id:2,estimated_hours:4,status:'TODO' as const,progress_percent:25};
+  beforeEach(()=>{
+    mocks.load.mockResolvedValue({...of,statut:'PLANIFIE',technical_snapshot_sha256:'frozen',technical_snapshot:{preparation_decisions:{programming:{mode:'TASK',task_id:operationId,estimated_hours:4}}}});
+    mocks.query.mockImplementation(async(sql:string)=>({rows:sql.includes('SELECT id::text,updated_at::text,status')?[task]:sql.includes('SELECT u.id')?[{id:2}]:sql.includes('INSERT INTO public.piece_version_programming_tasks')?[{id:operationId}]:[]}));
+  });
+  it('enregistre le palier sans invalider la définition ni engager de créneau',async()=>{
+    await repoSaveProgrammingTask(7,progressInput,audit);
+    const writes=mocks.query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO public.piece_version_programming_tasks'));
+    expect(writes).toHaveLength(1);expect(writes[0][1][7]).toBe(25);
+    expect(mocks.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO public.piece_version_preparation')||sql.includes('planning_events'))).toBe(false);
+    expect(mocks.persist).toHaveBeenCalledWith(expect.anything(),7);
+  });
+  it('refuse un palier si la tâche a été modifiée entretemps',async()=>{
+    await expect(repoSaveProgrammingTask(7,{...progressInput,expected_task_updated_at:'stale'},audit)).rejects.toMatchObject({code:'CONCURRENT_MODIFICATION'});
+    expect(mocks.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO'))).toBe(false);
+  });
+  it('refuse de changer le responsable sous couvert de progression',async()=>{
+    await expect(repoSaveProgrammingTask(7,{...progressInput,assignee_id:3},audit)).rejects.toMatchObject({code:'PROGRAMMING_DEFINITION_FROZEN'});
+    expect(mocks.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO'))).toBe(false);
   });
 });

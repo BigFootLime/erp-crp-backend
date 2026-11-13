@@ -1,4 +1,7 @@
+import {readProcurementWarningsTx} from '../../planning/repository/planning-procurement-readiness';
 import { applicableBomScopeSql } from "../../pieces-techniques/repository/bom-version-scope.sql";
+import { prepareOperationResources } from './workstation-defaults.repository';
+import { readGammePublicationBlockersTx } from "../../gammes/repository/gamme-operations.repository";
 import { needsProgramming, programmingPreparationCurrent, type ProgrammingPreparation } from '../domain/operation-programming';
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { readImprovementReturns } from "./improvement-returns.repository";
@@ -25,14 +28,8 @@ import {
 } from "../domain/preparation-rules";
 
 type Db = Pick<PoolClient, "query">;
-/** Same active-role eligibility for the picker and the assignment transaction. */
-export const PROGRAMMING_ASSIGNEE_PREDICATE_SQL = `u.status='Active' AND EXISTS (
-  SELECT 1 FROM public.app_roles r
-  WHERE r.is_active AND lower(r.role_key) SIMILAR TO '%(admin|directeur|program|method|méthod|production)%'
-    AND (r.role_key=u.role OR EXISTS (
-      SELECT 1 FROM public.user_role_assignments a WHERE a.user_id=u.id AND a.role_key=r.role_key
-    ))
-)`;
+import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "./programming-assignee.sql";
+export { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "./programming-assignee.sql";
 
 export async function usesPreparationRules(tx: Db, id?: number) {
   const result = await tx.query<{ enabled: boolean }>(
@@ -116,6 +113,9 @@ type TechnicalSources = {
   }>;
   operations: Array<{
     id: string;
+    phase?: number | null;
+    machine_id?: string | null;
+    poste_id?: string | null;
     designation: string;
     type_operation?: string | null;
     machine_family_code: string | null;
@@ -373,7 +373,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     ).length,
     required_documents_missing: Number(sources.missing_documents),
     routing_count:
-      sources.gamme?.statut === "APPLICABLE" && sources.gamme.is_current
+      sources.gamme && ["BROUILLON", "EN_VALIDATION", "APPLICABLE"].includes(sources.gamme.statut) && sources.gamme.is_current
         ? sources.operations.length
         : 0,
     invalid_operations: sources.operations.filter((o) => preparationOperationIssues(o).length > 0).length,
@@ -405,6 +405,16 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     sheet_current: sheet?.state === "READY" || (rulesVersion >= 2 && Boolean(importedInspection(sources.documents))),
   };
   const items = evaluatePreparation(f, rulesVersion);
+  if (sources.version?.effective === false) {
+    const index = items.find(item => item.key === 'index');
+    if (index) { index.status = 'BLOCKED'; index.detail = 'La date d’effet de cet indice est future. Corrigez-la avant de valider.'; }
+  }
+  const routing = items.find(item => item.key === 'routing');
+  if (routing && sources.gamme && sources.gamme.statut !== 'APPLICABLE') {
+    const blockers = await readGammePublicationBlockersTx(tx, sources.gamme.id);
+    if (blockers.length) { routing.status = 'BLOCKED'; routing.detail = blockers.map(blocker => blocker.message).join(' ; '); }
+    else if (routing.status === 'READY') routing.detail = 'Gamme complète : elle deviendra applicable avec la validation du dossier.';
+  }
   const importedSheet = importedInspection(sources.documents);
   if (importedSheet && sheet?.state !== "READY") {
     const item = items.find((entry) => entry.key === "self_inspection");
@@ -426,7 +436,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   const programmingTask =
     (
       await tx.query(
-        `SELECT p.id::text,p.assignee_id,p.estimated_hours::float8,p.status,p.program_reference,p.updated_at::text,concat_ws(' ',u.name,u.surname) AS assignee_name
+        `SELECT p.id::text,p.assignee_id,p.estimated_hours::float8,p.status,p.program_reference,p.updated_at::text,concat_ws(' ',u.name,u.surname) AS assignee_name,
+          COALESCE((to_jsonb(p)->>'progress_percent')::int,CASE WHEN p.status='DONE' THEN 100 ELSE 0 END) AS progress_percent
     FROM public.piece_version_programming_tasks p JOIN public.users u ON u.id=p.assignee_id WHERE p.piece_technique_version_id=$1::uuid
       AND CASE WHEN $3::boolean THEN p.id=$2::uuid AND (p.of_id IS NULL OR p.of_id=$4::bigint) ELSE p.of_id IS NULL END`,
         [of.version_id, decisions.programming?.task_id ?? null, Boolean(of.technical_snapshot_sha256), id],
@@ -473,20 +484,32 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     const saved = of.technical_preparation?.operation_programming?.[op.id];
     const current = programmingPreparationCurrent(op, of.version_id, saved);
     return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
-      estimated_hours: current ? saved!.estimated_hours : null, status: current ? 'PREPARED' as const : 'TODO' as const};
+      estimated_hours: current ? saved!.estimated_hours : null, status: current ? saved?.mode === 'NOT_REQUIRED' ? 'NOT_REQUIRED' as const : 'PREPARED' as const : 'TODO' as const};
   });
   const programmingItem = items.find(item => item.key === 'programming');
   if (programmingItem && programmingOperations.length) {
-    const prepared = programmingOperations.filter(op => op.status === 'PREPARED');
+    const prepared = programmingOperations.filter(op => op.status !== 'TODO');
     programmingItem.detail = `${prepared.length}/${programmingOperations.length} opérations préparées · ${prepared.reduce((sum,op)=>sum+(op.estimated_hours??0),0)} h prévues. La réalisation du programme CN reste à confirmer avant usinage.`;
     // Estimates belong to the OF and do not replace legacy mandatory program evidence.
     if (!programmingItem.required && programmingItem.status !== 'BLOCKED') {
       programmingItem.scope = 'OF';
       programmingItem.status = prepared.length === programmingOperations.length ? 'READY' : 'MISSING';
     }
+    if(programmingOperations.every(operation=>operation.status==='NOT_REQUIRED')){
+      programmingItem.scope='OF';programmingItem.required=false;programmingItem.status='NOT_REQUIRED';
+      programmingItem.detail='Absence de programmation confirmée pour chacune des opérations concernées de cet OF.';
+    }
   }
   const sharedReady = isPreparationReady(items.filter(item => item.scope === 'VERSION'));
+  const purchasing=sources.purchases.some(p=>['MATIERE','SOUS_TRAITANCE','TRAITEMENT'].includes(p.type_achat));
+  if(purchasing){const messages=[...(await readProcurementWarningsTx(tx,id,of.version_id,of.quantite_lancee,sources.purchases)).values()].flat();
+    items.push({key:'procurement',label:'Dates prévues et achats fournisseur',scope:'OF',required:false,status:messages.length?'MISSING':'READY',detail:[...new Set(messages)].join(' · ')||'Prévisions et brouillons préparés. Les réceptions réelles restent à confirmer avant fabrication.'});}
+  const resourcePreparation=await prepareOperationResources(tx,sources.operations,id);
+  const resourceIssues=resourcePreparation.filter(operation=>operation.issue);
+  items.push({key:'resources',label:'Ressources de fabrication',scope:'OF',required:!of.technical_snapshot_sha256,
+    status:resourceIssues.length?'MISSING':'READY',detail:resourceIssues.length?resourceIssues.map(operation=>`${operation.label} : ${operation.issue}`).join(' · '):'Postes habituels et familles de machines disponibles. Le choix des créneaux reste à faire dans le planning.'});
   return {
+    resource_preparation:resourcePreparation,
     programming_operations: programmingOperations,
     of: {
       ...of,
@@ -654,6 +677,8 @@ export async function repoSelectPreparationVersion(
   return withRealtimeOutboxTransaction(await pool.connect(), async (tx) => {
     const of = await loadPreparationOrder(tx, id, true);
     assertPreparationMutable(of, input.expected_updated_at);
+    if(of.technical_preparation?.version_selection_mode==='MANUAL' && of.version_id && input.version_id!==of.version_id)
+      throw new HttpError(409,'OF_DOSSIER_PINNED','L’indice et la révision de cet OF sont conservés. Complétez ce dossier ; un nouveau plan client suit son propre dossier.');
     if (of.technical_snapshot_sha256)
       throw new HttpError(
         409,
@@ -676,9 +701,9 @@ export async function repoSelectPreparationVersion(
       // The physical snapshot identity is populated atomically during validation.
       // A draft selection must not partially attach that immutable snapshot.
       `UPDATE public.ordres_fabrication SET
-      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode',COALESCE($5::text,'MANUAL')),
+      technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode','MANUAL'),
       preparation_rules_version=$3,technical_readiness='INCOMPLETE',updated_at=now(),updated_by=$4 WHERE id=$1`,
-      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id, input.version_selection_mode],
+      [id, input.version_id, PREPARATION_RULES_VERSION, audit.user_id],
     );
     await preparationAudit(
       tx,

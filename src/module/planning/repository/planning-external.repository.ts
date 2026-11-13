@@ -13,6 +13,8 @@ import type {
 import { expandCalendar } from "../domain/central-calendar";
 import { externalCompletion } from "../domain/external-schedule";
 import { readExternalPreparationsTx } from '../../subcontract/subcontract-planning-preparation.repository';
+import {readSubcontractForecastPredecessorsTx} from '../../commande-fournisseur/repository/subcontract-purchase.repository';
+import {provisionalServiceQuantity} from '../domain/procurement-forecast';
 
 export async function hydrateExternalPlanning(
   tx: Pick<PoolClient, "query">,
@@ -98,8 +100,14 @@ export async function hydrateExternalPlanning(
   }
   const transfers = await readExternalTransfers(tx, flows);
   for (const task of external) {
+    const progress=await readSubcontractForecastPredecessorsTx(tx,task.operationId!);
+    task.quantity=provisionalServiceQuantity(task.quantity,progress).quantity;
     const packages = flows.filter((p) => p.operationId === task.operationId);
-    const preparation = prepared.get(task.operationId!);
+    const savedPreparation = prepared.get(task.operationId!);
+    // Purchasing keeps its original forecast evidence. Planning projects the
+    // current conforming population without rewriting that evidence or any PO.
+    const preparation = savedPreparation && {...savedPreparation,
+      preparations:savedPreparation.preparations.map(p=>({...p,quantity:task.quantity}))};
     task.resourceIds = [
       ...new Set([...packages.map((p) => "supplier:" + p.supplierId),
         ...(preparation?.preparations??[]).filter(p=>packages.filter(work=>p.orderLineIds.includes(work.orderLineId))
@@ -139,7 +147,7 @@ export async function hydrateExternalPlanning(
       if (task.commitment !== "DONE") task.commitment = "STARTED";
     }
     task.version = createHash("sha256")
-      .update(task.version + JSON.stringify([packages,preparation]))
+      .update(task.version + JSON.stringify([packages,preparation,progress]))
       .digest("hex");
     for (const edge of dependencies.filter((d) => d.predecessorId === task.id))
       edge.releasedQuantity = transfers

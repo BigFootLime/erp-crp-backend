@@ -204,22 +204,23 @@ describe("Source-backed production preparation", () => {
       expect(preparationWarnings(evaluatePreparation(f)).map(i => i.key)).toContain(key === "sheet_current" ? "self_inspection" : "stock_compatibility");
     },
   );
-  it("rejects obsolete and non-current revisions", () => {
+  it("rejects obsolete revisions and retains an explicitly selected non-current revision (#1833)", () => {
     const f = complete();
     f.version_status = "OBSOLETE";
     expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
     f.version_status = "APPLICABLE";
     f.version_current = false;
-    expect(isPreparationReady(evaluatePreparation(f))).toBe(false);
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
   });
-  it("accepts the four rubrics while every secondary section is unfinished", () => {
+  it("keeps the former empty-routing input blocked while quality and other secondary sections remain warnings", () => {
     const f = {...complete(), routing_count:0, invalid_operations:1, quality_plan_id:null,
       quality_characteristic_count:0, required_documents_missing:2, stock_review_current:false, sheet_current:false,
       decisions:{treatment:complete().decisions.treatment,subcontract:complete().decisions.subcontract}};
     const items = evaluatePreparation(f);
-    expect(isPreparationReady(items)).toBe(true);
-    expect(preparationWarnings(items).map(i=>i.key)).toEqual(["documents","routing","quality","programming","stock_compatibility","self_inspection"]);
-    expect(items.filter(i=>i.required).map(i=>i.key)).toEqual(["plan","material"]);
+    expect(isPreparationReady(items)).toBe(false);
+    expect(preparationWarnings(items).map(i=>i.key)).toEqual(["documents","quality","programming","stock_compatibility","self_inspection"]);
+    expect(items.filter(i=>i.required).map(i=>i.key)).toEqual(["plan","material","routing"]);
+    expect(isPreparationReady(evaluatePreparation({...f,routing_count:1,invalid_operations:0}))).toBe(true);
   });
   it("accepts no direct material only for a justified assembly without material purchases", () => {
     const f = complete();

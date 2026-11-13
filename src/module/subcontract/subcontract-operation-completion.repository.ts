@@ -3,6 +3,8 @@ import { repoInsertAuditLog } from '../audit-logs/repository/audit-logs.reposito
 import { readSubcontractFlows } from './subcontract-flow.repository';
 import { completedSubcontractEvidence } from './subcontract-operation-completion';
 import { assertReceiptLotQualityEligibility } from '../qualite/repository/quality-operational-gate.repository';
+import {readSubcontractPredecessorsTx} from '../commande-fournisseur/repository/subcontract-purchase.repository';
+import {provisionalServiceQuantity} from '../planning/domain/procurement-forecast';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -26,7 +28,10 @@ export async function syncClosedSubcontractOperationTx(tx: Db, operationId: stri
   if ((await tx.query(`SELECT 1 FROM public.subcontract_work_packages p
       WHERE p.of_operation_id=$1::uuid AND p.status='CANCELLED' AND EXISTS(
         SELECT 1 FROM public.subcontract_work_package_ledger e WHERE e.package_id=p.id) LIMIT 1`,[operationId])).rows.length) return false;
-  const evidence = completedSubcontractEvidence(operation.target,await readSubcontractFlows(tx,[operationId]));
+  const predecessors=await readSubcontractPredecessorsTx(tx,operationId);
+  const target=provisionalServiceQuantity(operation.target,predecessors);
+  if(predecessors.length&&!target.final)return false;
+  const evidence = completedSubcontractEvidence(target.quantity,await readSubcontractFlows(tx,[operationId]));
   if (!evidence) return false;
   // Lock the current receipt decisions as well as the operation. A newer hold
   // must not race between the projection above and recording the proof.

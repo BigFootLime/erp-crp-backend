@@ -29,6 +29,7 @@ function wrappedLines(doc: PDFKit.PDFDocument, text: string, width: number, bold
 
 export type WorkshopFieldBox = {
   title: string
+  backgroundColor?: string | null
   columns?: 1 | 2
   columnWeights?: readonly [number, number]
   fields: ReadonlyArray<{ label: string; value: string | null; prominent?: boolean; span?: 2 }>
@@ -100,6 +101,8 @@ export function renderWorkshopBoxes(ctx: CerpDocumentContext, boxes: readonly Wo
   const top = ctx.y
   measured.forEach((item, index) => {
     const x = X + index * (width + gap)
+    if (item.box.backgroundColor)
+      ctx.doc.save().rect(x, top, width, height).fill(item.box.backgroundColor).restore()
     ctx.doc.save().rect(x, top, width, headingHeight).fill(C.graphite).restore()
     ctx.doc.font("Helvetica-Bold").fontSize(10).fillColor(C.paper)
     item.title.forEach((line, i) => ctx.text(line, x + pad, top + headingPad + i * 12, { width: width - pad * 2 }))

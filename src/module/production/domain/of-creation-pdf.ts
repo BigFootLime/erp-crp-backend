@@ -83,7 +83,7 @@ export async function queueRootOfCreationPdf(
     entityId: root.id,
     documentKind: "OF_CREATION_SNAPSHOT",
     documentVersion: 1,
-    renderVersion: "of-creation-snapshot-v1",
+    renderVersion: "of-creation-snapshot-v1+style-20261019",
     idempotencyKey: `ordre-fabrication:${root.id}:creation:v1`,
     title: `Création OF ${root.numero}`,
     originalName: `of-${root.id}-creation-v1.pdf`,

@@ -5,7 +5,8 @@ const mocks=vi.hoisted(()=>({preview:vi.fn(),apply:vi.fn(),candidates:vi.fn()}))
 vi.mock('../module/planning/services/recovery-consolidation.service',()=>({svcPreviewRecoveryGrouping:mocks.preview,svcApplyRecoveryGrouping:mocks.apply,svcListRecoveryGroupingCandidates:mocks.candidates}));
 vi.mock('../module/planning/controllers/planning-central.controller',()=>Object.fromEntries([
   'centralApply','centralGetSimulation','centralSimulate','centralSnapshot','centralStatus','centralUnplan','centralObservations',
-  'centralPreview','centralWorkshopCalendar','centralSetWorkshopCalendar'].map(name=>[name,vi.fn()])));
+  'centralPreview','centralWorkshopCalendar','centralSetWorkshopCalendar',
+  'centralOfProcurement','centralSaveOfProcurement','centralAutoOf'].map(name=>[name,vi.fn()])));
 vi.mock('../module/planning/controllers/planning-master-plan.controller',()=>({masterPlan:vi.fn()}));
 vi.mock('../module/planning/controllers/urgency-approval.controller',()=>({approveRecovery:vi.fn(),previewRecoveryApproval:vi.fn()}));
 vi.mock('../module/planning/controllers/planning.controller',()=>({buildAuditContext:(req:express.Request)=>({user_id:req.user!.id,role:req.user!.role})}));

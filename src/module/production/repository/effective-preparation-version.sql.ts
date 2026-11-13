@@ -1,7 +1,7 @@
 /**
- * A preparation draft may deliberately follow a newer compatible technical
- * revision before its immutable snapshot is created.  Once an OF is engaged
- * or frozen, its physical snapshot reference remains the only authority.
+ * A preparation draft uses its explicitly selected technical definition. Legacy
+ * AUTO values remain readable but no longer retarget an OF when a revision is
+ * created (#1833). Engaged or frozen OFs use their physical snapshot reference.
  */
 export function effectivePreparationVersionSql(orderAlias: string) {
   const preparation = `${orderAlias}.technical_preparation`;
@@ -23,7 +23,7 @@ export type PreparationVersionState = {
   physicalVersionId: string | null;
 };
 
-export function canAutoFollowCompatibleRevision(input: {
+export function canAutoFollowCompatibleRevision(_input: {
   mode?: "AUTO" | "MANUAL" | null;
   state: Pick<PreparationVersionState, "statut" | "technicalSnapshotSha256" | "technicalReadiness">;
   effectiveVersionId: string | null;
@@ -33,8 +33,6 @@ export function canAutoFollowCompatibleRevision(input: {
   targetChangeLevel?: "MINOR" | "MAJOR";
   targetInterchangeable?: boolean;
 }) {
-  return input.mode !== "MANUAL" && input.state.statut === "BROUILLON" && !input.state.technicalSnapshotSha256
-    && input.state.technicalReadiness !== "VALIDATED" && input.effectiveVersionId === input.sourceVersionId
-    && !!input.sourceClientIndex && input.sourceClientIndex === input.targetClientIndex
-    && (input.targetChangeLevel ?? "MINOR") === "MINOR" && input.targetInterchangeable !== true;
+  // Revisions are chosen for the OF and no longer follow technical edits automatically.
+  return false;
 }

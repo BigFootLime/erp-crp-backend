@@ -10,6 +10,7 @@
 //   - `temps_total` et `cout_mo` sont CALCULÉS, jamais reçus du client.
 
 import type { PoolClient } from "pg";
+import { preparationOperationIssues } from "../../production/domain/preparation-rules";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -51,8 +52,12 @@ export const OP_COLS = `
   o.ordre, o.phase, o.designation, o.designation_2, o.designation_auto, o.type_operation,
   o.machine_id::text AS machine_id, o.poste_id::text AS poste_id, o.cf_id::text AS cf_id,
   o.machine_family_code, o.numero_programme,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix,'longueur_mm',p.longueur_mm,'quantite_pieces',p.quantite_pieces,'coefficient_chute',p.coefficient_chute) ORDER BY a.code,p.id)
+    FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id WHERE p.gamme_operation_id=o.id AND p.type_achat='MATIERE'),'[]'::jsonb) AS matieres,
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',f.designation_courte,'fournisseur_nom',p.fournisseur_nom,'fournisseur_id',p.fournisseur_id) ORDER BY r.slot)
+    FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id JOIN public.articles a ON a.id=r.article_id LEFT JOIN public.pieces_techniques_achats p ON p.id=r.achat_ligne_id WHERE r.gamme_operation_id=o.id),'[]'::jsonb) AS procedes_speciaux,
   o.tp::float8 AS tp, o.tf_unit::float8 AS tf_unit, o.qte::float8 AS qte, o.coef::float8 AS coef,
-  o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
+  o.prix_vente_horaire::float8 AS prix_vente_horaire, o.taux_horaire::float8 AS taux_horaire, o.taux_horaire_source, o.taux_horaire_effective_at::text AS taux_horaire_effective_at,
   o.taux_horaire_legacy::float8 AS taux_horaire_legacy, o.cf_rate_id::text AS cf_rate_id,
   o.prix::float8 AS prix, o.temps_fabrication::float8 AS temps_fabrication,
   o.temps_total::float8 AS temps_total, o.cout_mo::float8 AS cout_mo, o.consignes,
@@ -74,6 +79,10 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  preparation_issues?: string[];
+  prix_vente_horaire: number|null;
+  procedes_speciaux?: Array<{achat_id:string|null;article_id:string;code:string;designation:string;fournisseur_nom:string|null;fournisseur_id:string|null}>;
+  matieres?: Array<{achat_id:string;article_id:string;code:string;designation:string;quantite:number;unite:string|null;longueur_mm?:number|null;quantite_pieces?:number|null;coefficient_chute?:number|null}>;
   id: string;
   piece_technique_id: string;
   gamme_id: string | null;
@@ -145,7 +154,22 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
       (validFrom !== null && at < validFrom) ||
       (validTo !== null && at > validTo));
 
+  const preparationIssues = preparationOperationIssues({
+    designation: String(row.designation ?? ''), type_operation: (row.type_operation as string | null) ?? null,
+    cf_id: (row.cf_id as string | null) ?? null, machine_family_code: (row.machine_family_code as string | null) ?? null,
+    tp: Number(row.tp), tf_unit: Number(row.tf_unit),
+  });
+  const familyCode = (row.machine_family_code as string | null) ?? null;
+  const families = new Map<string, MachineFamilyRef>();
+  if (familyCode) families.set(familyCode, {code:familyCode,libelle:String(row.machine_family_libelle ?? familyCode),
+    programme_requis:Boolean(row.famille_programme_requis),actif:true});
+  const publicationIssues = collectPublicationBlockers([{
+    id: String(row.id), phase: row.phase == null ? null : Number(row.phase), designation: String(row.designation ?? ''),
+    machine_family_code: familyCode, numero_programme: (row.numero_programme as string | null) ?? null,
+  }],families).filter(issue => issue.code !== 'OPERATION_DESIGNATION_REQUIRED').map(issue => issue.message);
+
   return {
+    preparation_issues: [...new Set([...preparationIssues,...publicationIssues])],
     id: String(row.id),
     piece_technique_id: String(row.piece_technique_id),
     gamme_id: (row.gamme_id as string | null) ?? null,
@@ -178,6 +202,9 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
     temps_unitaire_minutes: hoursToMinutes(toNum(row.tf_unit, 0)),
     temps_fabrication_minutes: hoursToMinutes(toNum(row.temps_fabrication, 0)),
     temps_final_minutes: hoursToMinutes(tempsTotal),
+    matieres: Array.isArray(row.matieres) ? row.matieres : [],
+    procedes_speciaux: Array.isArray(row.procedes_speciaux) ? row.procedes_speciaux : [],
+    prix_vente_horaire: row.prix_vente_horaire==null?null:toNum(row.prix_vente_horaire),
     taux_horaire: tauxConnu,
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: (row.taux_horaire_effective_at as string | null) ?? null,
@@ -412,6 +439,8 @@ export type OperationWriteInput = {
   machine_id?: string | null;
   poste_id?: string | null;
   cf_id?: string | null;
+  taux_horaire_override?: number | null;
+  prix_vente_horaire?: number | null;
   numero_programme?: string | null;
   /** Unité de saisie de l'interface. Prioritaire sur la variante en heures. */
   temps_preparation_minutes?: number | null;
@@ -476,13 +505,14 @@ type ResolvedOperation = {
   temps_fabrication: number;
   temps_total: number;
   taux_horaire: number;
-  taux_horaire_source: "CENTRE_FRAIS" | "ABSENT";
+  taux_horaire_source: "CENTRE_FRAIS" | "ABSENT" | "OPERATION";
   taux_horaire_effective_at: string | null;
   cf_rate_id: string | null;
   cout_mo: number;
 };
 
 type ExistingOperation = {
+  taux_horaire?: number | null; taux_horaire_source?: string | null;
   id: string;
   phase: number | null;
   designation: string;
@@ -554,8 +584,9 @@ async function resolveOperation(
 
   // --- Tarif figé ----------------------------------------------------------
   const rate = cfId ? await repoResolveCostCenterRate(tx, cfId, at) : null;
-  const tauxSource: "CENTRE_FRAIS" | "ABSENT" = rate ? "CENTRE_FRAIS" : "ABSENT";
-  const taux = rate?.taux_horaire ?? 0;
+  const override=input.taux_horaire_override !== undefined ? input.taux_horaire_override : existing?.taux_horaire_source === 'OPERATION' ? existing.taux_horaire : null;
+  const tauxSource: "CENTRE_FRAIS" | "ABSENT" | "OPERATION" = override != null ? 'OPERATION' : rate ? 'CENTRE_FRAIS' : 'ABSENT';
+  const taux = override ?? rate?.taux_horaire ?? 0;
 
   // --- Phase ---------------------------------------------------------------
   const phasesRes = await tx.query<{ id: string; phase: number | null }>(
@@ -627,7 +658,7 @@ async function resolveOperation(
     taux_horaire_source: tauxSource,
     taux_horaire_effective_at: rate?.date_effet ?? null,
     cf_rate_id: rate?.id ?? null,
-    cout_mo: computeLabourCost(times.temps_final, rate ? rate.taux_horaire : null) ?? 0,
+    cout_mo: computeLabourCost(times.temps_final, tauxSource !== "ABSENT" ? taux : null) ?? 0,
   };
 }
 
@@ -665,8 +696,8 @@ export async function repoCreateGammeOperation(
         (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, designation_auto,
          type_operation, machine_id, poste_id, cf_id, machine_family_code, numero_programme,
          tp, tf_unit, qte, coef, taux_horaire, taux_horaire_source, taux_horaire_effective_at,
-         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27)
+         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by, prix_vente_horaire)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27,$28)
        RETURNING id::text AS id`,
       [
         gamme.piece_technique_id,
@@ -696,6 +727,7 @@ export async function repoCreateGammeOperation(
         resolved.cout_mo,
         input.consignes ?? null,
         audit.user_id,
+        input.prix_vente_horaire ?? null,
       ]
     );
     createdId = res.rows[0].id;
@@ -732,7 +764,7 @@ export async function repoUpdateGammeOperation(
       `SELECT id::text AS id, gamme_id::text AS gamme_id, phase, designation, designation_auto,
               machine_family_code, machine_id::text AS machine_id, cf_id::text AS cf_id, numero_programme,
               tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
-              type_operation, updated_at::text AS updated_at
+              taux_horaire::float8 AS taux_horaire,taux_horaire_source,prix_vente_horaire,type_operation, updated_at::text AS updated_at
          FROM public.pieces_techniques_operations WHERE id = $1 FOR UPDATE`,
       [operationId]
     );
@@ -748,6 +780,7 @@ export async function repoUpdateGammeOperation(
     });
 
     const existing: ExistingOperation = {
+      taux_horaire:current.taux_horaire,taux_horaire_source:current.taux_horaire_source,
       id: String(current.id),
       phase: current.phase === null ? null : Number(current.phase),
       designation: String(current.designation ?? ""),
@@ -773,7 +806,7 @@ export async function repoUpdateGammeOperation(
          tp = $12, tf_unit = $13, qte = $14, coef = $15,
          taux_horaire = $16, taux_horaire_source = $17, taux_horaire_effective_at = $18, cf_rate_id = $19,
          prix = COALESCE($20, prix), temps_fabrication = $21, temps_total = $22, cout_mo = $23,
-         consignes = COALESCE($24, consignes), updated_by = $25, updated_at = now()
+         consignes = COALESCE($24, consignes), updated_by = $25, prix_vente_horaire=$26, updated_at = now()
        WHERE id = $1`,
       [
         operationId,
@@ -801,12 +834,14 @@ export async function repoUpdateGammeOperation(
         resolved.cout_mo,
         input.consignes ?? null,
         audit.user_id,
+        input.prix_vente_horaire !== undefined ? input.prix_vente_horaire : current.prix_vente_horaire,
       ]
     );
     await insertAudit(client, audit, "gammes.operations.update", "gamme_operation", operationId, {
       gamme_id: gammeId,
       phase_avant: existing.phase,
       phase_apres: resolved.phase,
+      taux_horaire_avant:current.taux_horaire,taux_horaire_apres:resolved.taux_horaire,prix_vente_horaire_avant:current.prix_vente_horaire,prix_vente_horaire_apres:input.prix_vente_horaire!==undefined?input.prix_vente_horaire:current.prix_vente_horaire,
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -989,14 +1024,18 @@ export async function repoGammePublicationReadiness(gammeId: string): Promise<Pu
  * garde de publication est rejouée DANS la transaction, sur les lignes
  * verrouillées : un aperçu « publiable » ne vaut pas autorisation.
  */
-export async function repoPublishGamme(
-  gammeId: string,
-  expectedUpdatedAt: string | null | undefined,
-  audit: AuditContext
+export async function readGammePublicationBlockersTx(tx: Pick<PoolClient, "query">, gammeId: string) {
+  const operations = await tx.query(`SELECT id::text,phase,designation,machine_family_code,numero_programme
+    FROM public.pieces_techniques_operations WHERE gamme_id=$1`, [gammeId]);
+  return collectPublicationBlockers(operations.rows.map(row => ({
+    id: String(row.id), phase: row.phase == null ? null : Number(row.phase), designation: row.designation,
+    machine_family_code: row.machine_family_code, numero_programme: row.numero_programme,
+  })), await loadFamilyMap(tx));
+}
+
+export async function publishGammeTx(
+  client: PoolClient, gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
 ): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
     const gamme = await loadGammeContext(client, gammeId, true);
     assertGammeEditable(gamme.statut);
     assertOptimisticVersion({
@@ -1037,12 +1076,18 @@ export async function repoPublishGamme(
     await insertAudit(client, audit, "gammes.publish", "gamme", gammeId, {
       operations: operations.rowCount ?? 0,
     });
-    await client.query("COMMIT");
     return res.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
+}
+
+export async function repoPublishGamme(
+  gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
+): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await publishGammeTx(client, gammeId, expectedUpdatedAt, audit);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { client.release(); }
 }

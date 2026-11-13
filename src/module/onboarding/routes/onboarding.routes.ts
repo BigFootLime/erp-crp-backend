@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { requireErpConfiguration } from "../../access-control/middlewares/require-erp-configuration";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
-import { status,progress,companies,company } from "../controllers/onboarding.controller";
+import { status,progress,companies,company,workstations,saveWorkstations } from "../controllers/onboarding.controller";
 const router=Router();
 router.use(authenticateToken,requireErpConfiguration);
 router.get("/status",status);
 router.put("/progress",progress);
 router.get("/company",companies);
 router.put("/company",company);
+router.get("/workstations",workstations);
+router.put("/workstations",saveWorkstations);
 export default router;

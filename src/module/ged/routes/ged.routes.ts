@@ -9,6 +9,7 @@ import { Router } from "express";
 import * as controller from "../controllers/ged.controller";
 import { requireGedCapability } from "../middlewares/require-ged-capability";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
+import { requireCutoverParentAccess } from "../middlewares/require-cutover-parent-access";
 
 const router = Router();
 
@@ -27,25 +28,26 @@ router.delete("/quarantine/:sessionId", requireGedCapability("admin"), controlle
 
 /* Documents */
 router.get("/piece-revisions/:revisionId/reusable-documents", requireGedCapability("upload"), controller.listReusableRevisionDocuments);
-router.post("/documents/:id/revision-links", requireGedCapability("upload"), controller.reuseRevisionDocument);
+router.post("/documents/:id/revision-links", requireGedCapability("upload"), requireCutoverParentAccess, controller.reuseRevisionDocument);
 router.get("/documents", requireGedCapability("read"), controller.listDocuments);
 router.post("/documents", requireGedCapability("upload"), upload.single("file"), controller.postDocument);
-router.get("/documents/:id", requireGedCapability("read"), controller.getDocument);
-router.get("/documents/:id/history", requireGedCapability("read"), controller.getDocumentHistory);
+router.get("/documents/:id", requireGedCapability("read"), requireCutoverParentAccess, controller.getDocument);
+router.get("/documents/:id/history", requireGedCapability("read"), requireCutoverParentAccess, controller.getDocumentHistory);
 router.post(
   "/documents/:id/versions",
   requireGedCapability("upload"),
+  requireCutoverParentAccess,
   upload.single("file"),
   controller.postDocumentVersion
 );
 
 /* Cycle de vie */
-router.post("/versions/:versionId/submit", requireGedCapability("submit"), controller.submitVersion);
-router.post("/versions/:versionId/approve", requireGedCapability("approve"), controller.approveVersion);
-router.post("/versions/:versionId/publish", requireGedCapability("publish"), controller.publishVersion);
-router.post("/versions/:versionId/obsolete", requireGedCapability("obsolete"), controller.obsoleteVersion);
+router.post("/versions/:versionId/submit", requireGedCapability("submit"), requireCutoverParentAccess, controller.submitVersion);
+router.post("/versions/:versionId/approve", requireGedCapability("approve"), requireCutoverParentAccess, controller.approveVersion);
+router.post("/versions/:versionId/publish", requireGedCapability("publish"), requireCutoverParentAccess, controller.publishVersion);
+router.post("/versions/:versionId/obsolete", requireGedCapability("obsolete"), requireCutoverParentAccess, controller.obsoleteVersion);
 
 /* Contenu */
-router.get("/versions/:versionId/content", requireGedCapability("download"), controller.downloadVersion);
+router.get("/versions/:versionId/content", requireGedCapability("download"), requireCutoverParentAccess, controller.downloadVersion);
 
 export default router;

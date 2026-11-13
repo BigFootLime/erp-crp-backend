@@ -15,9 +15,9 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: CMD-2026-0001",
   },
   affaire: {
-    regex: /^(AFF-\d{4}-\d{4}|AFF-LIV-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
-    example: "AFF-2026-0001",
-    hintText: "Format attendu: AFF-2026-0001",
+    regex: /^(AFF-\d{4}-\d{4}|AFF-LIV-\d{2}-\d{5,}|AFF-LIV-CLI-\d{3}-\d{4}-\d{4}|AFF-\d+)$/,
+    example: "AFF-LIV-26-24000",
+    hintText: "Formats acceptés : AFF-LIV-26-24000 ou référence historique.",
   },
   pieceTechnique: {
     regex: /^(?:[A-Z0-9]+(?:-[A-Z0-9]+){2,}|P-\d{3,})$/,
@@ -30,9 +30,9 @@ export const CODE_FORMATS = {
     hintText: "Format attendu: OF-2026-000001",
   },
   bonLivraison: {
-    regex: /^BL-\d{8}$/,
-    example: "BL-00000001",
-    hintText: "Format attendu: BL-00000001",
+    regex: /^(BL-\d{8}|BL-\d{2}-\d{5,})$/,
+    example: "BL-26-15000",
+    hintText: "Formats acceptés : BL-26-15000 ou référence historique.",
   },
   reception: {
     regex: /^RF-\d{8}$/,

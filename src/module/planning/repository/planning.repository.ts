@@ -1,9 +1,13 @@
+import { resolvePlanningClientColor } from "../domain/planning-client-color";
 import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { readWorkstationDefaults } from '../../production/repository/workstation-defaults.repository';
+import { isWorkstationType, resolveDefaultPoste } from '../../production/domain/workstation-defaults';
+import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
 import {assertMaintenanceMachineUnblockedTx} from "../../production/repository/operator-maintenance-read.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
@@ -382,7 +386,8 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
@@ -443,7 +448,7 @@ async function selectPlanningEventListItemById(q: DbQueryer, id: string): Promis
     of_numero: row.of_numero,
     client_id: row.client_id,
     client_company_name: row.client_company_name,
-    client_color: row.client_color,
+    client_color: resolvePlanningClientColor(row.client_id, row.client_company_name, row.client_color),
     client_blocked: toNullableBoolean(row.client_blocked),
     client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,
@@ -664,11 +669,15 @@ export async function assertOperationResourceCompatible(params: {
   if (!row) throw new HttpError(404, "OF_OPERATION_NOT_FOUND", "OF operation not found");
   // A manual route explicitly assigns its autonomous workstation on the OF.
   // Never infer a qualification from a label or accept an arbitrary workstation.
-  if (!row.required_machine_family_code && ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(row.operation_type ?? "")) {
+  if (isWorkstationType(row.operation_type) && !row.machine_id && !params.resource.machine_id) {
     if (!row.machine_id && !row.operation_machine_id && !params.resource.machine_id && row.poste_active &&
         row.assigned_poste_id && row.assigned_poste_id === row.selected_poste_id) return;
+    if(!row.operation_machine_id&&!row.assigned_poste_id&&row.poste_active){
+      const setup=await readWorkstationDefaults(params.tx);
+      if(resolveDefaultPoste(row.operation_type,setup.defaults,setup.postes)?.id===row.selected_poste_id)return;
+    }
     throw new HttpError(422, "PLANNING_MANUAL_POSTE_REQUIRED",
-      "Affectez un poste autonome actif à cette opération manuelle dans la fiche OF, puis sélectionnez ce poste.",
+      "Aucun poste de travail utilisable : sélectionnez le poste habituel du configurateur ERP ou le poste affecté à cet OF.",
       { operation_id: row.operation_id });
   }
   if (!row.required_machine_family_code) {
@@ -1114,26 +1123,26 @@ async function loadCommandeIdForOf(tx: DbQueryer, ofId: number): Promise<number 
   return toNullableInt(res.rows[0]?.commande_id ?? null, "ordres_fabrication.commande_id");
 }
 
-async function enqueuePlanningRealtime(tx: DbQueryer, params: {
+export async function enqueuePlanningRealtime(tx: DbQueryer, params: {
   event_id: string;
   of_id?: number | null;
   commande_id?: number | null;
   action: "created" | "updated" | "deleted" | "status_changed";
   mutation_key: string;
 }) {
-  const invalidateKeys = ["planning:events", `planning:event:${params.event_id}`, "production:ofs"];
-  if (typeof params.of_id === "number") invalidateKeys.push(`production:of:${params.of_id}`);
-  if (typeof params.commande_id === "number") {
-    invalidateKeys.push("commandes:list", `commandes:detail:${params.commande_id}`);
-  }
-
   await enqueueEntityChanged(tx, {
     entityType: "PLANNING_EVENTS",
     entityId: params.event_id,
     action: params.action,
     module: "production",
     at: new Date().toISOString(),
-    invalidateKeys,
+    invalidateKeys: [
+      "planning:events",
+      `planning:event:${params.event_id}`,
+      "production:ofs",
+      ...(typeof params.of_id === "number" ? [`production:of:${params.of_id}`] : []),
+      ...(typeof params.commande_id === "number" ? ["commandes:list", `commandes:detail:${params.commande_id}`] : []),
+    ],
   }, {
     deduplicationKey: `planning:${params.event_id}:${params.mutation_key}`,
   });
@@ -1471,6 +1480,8 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
   const fromP = push(filters.from);
   const toP = push(filters.to);
   where.push(`tstzrange(e.start_ts, e.end_ts, '[)') && tstzrange(${fromP}::timestamptz, ${toP}::timestamptz, '[)')`);
+  const eligibleOfIds = await readPlanningEligibleOfIds(pool, filters.of_id ? [filters.of_id] : undefined);
+  where.push(`(COALESCE(e.of_id,op.of_id) IS NULL OR COALESCE(e.of_id,op.of_id)=ANY(${push(eligibleOfIds)}::bigint[]))`);
 
   if (filters.machine_id) where.push(`e.machine_id = ${push(filters.machine_id)}::uuid`);
   if (filters.poste_id) where.push(`e.poste_id = ${push(filters.poste_id)}::uuid`);
@@ -1571,7 +1582,8 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
         o.numero AS of_numero,
         o.client_id::text AS client_id,
         c.company_name AS client_company_name,
-        COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') AS client_color,
+        CASE WHEN to_jsonb(c) ? 'planning_color_hex' THEN to_jsonb(c)->>'planning_color_hex'
+             ELSE COALESCE(to_jsonb(c)->>'color_hex', to_jsonb(c)->>'color') END AS client_color,
         c.blocked AS client_blocked,
         c.reason AS client_block_reason,
         pt.code_piece AS piece_code,
@@ -1630,7 +1642,7 @@ export async function repoListPlanningEvents(filters: ListPlanningEventsQueryDTO
     of_numero: row.of_numero,
     client_id: row.client_id,
     client_company_name: row.client_company_name,
-    client_color: row.client_color,
+    client_color: resolvePlanningClientColor(row.client_id, row.client_company_name, row.client_color),
     client_blocked: toNullableBoolean(row.client_blocked),
     client_block_reason: row.client_block_reason,
     piece_code: row.piece_code,

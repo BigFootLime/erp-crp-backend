@@ -129,6 +129,94 @@ describe("#226 routage", () => {
 });
 
 describe("#226 contrôle des doublons", () => {
+  it("conserve la création sans applicable en brouillon avec sa première révision", async () => {
+    const createdId = "11111111-1111-4111-8111-111111111111";
+    const revisionId = "22222222-2222-4222-8222-222222222222";
+    mocks.clientQuery.mockImplementation((sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ code: "ANODISATION", nom_diminutif: "ANO" }]));
+      if (text.includes("fn_next_issued_code_value")) return Promise.resolve(rows([{ v: "12" }]));
+      if (text.includes("INSERT INTO public.surface_finishes")) return Promise.resolve(rows([{ id: createdId }]));
+      if (text.includes("INSERT INTO public.surface_finish_revisions")) return Promise.resolve(rows([{ id: revisionId }]));
+      return Promise.resolve(empty());
+    });
+    mocks.poolQuery.mockImplementation((sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("FROM public.surface_finishes f")) {
+        return Promise.resolve(rows([finishRow({ id: createdId, code: "FIN-000012", procede: "ANO", statut: "BROUILLON", current_revision_id: revisionId })]));
+      }
+      if (text.includes("FROM public.surface_finish_revisions r")) return Promise.resolve(empty());
+      return Promise.resolve(empty());
+    });
+
+    const res = await request(app).post(FIN_BASE).send({
+      family_code: "ANODISATION",
+      designation_courte: "Anodisation noire 20 µm",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.statut).toBe("BROUILLON");
+    const inserts = mocks.clientQuery.mock.calls.filter(([sql]) => /INSERT INTO public\.surface_finish(?:es|_revisions)/.test(String(sql)));
+    expect(inserts).toHaveLength(2);
+    expect(inserts[0]?.[1]).toContain("BROUILLON");
+    expect(inserts[1]?.[1]).toContain("BROUILLON");
+  });
+
+  it("refuse applicable sans habilitation avant toute écriture", async () => {
+    // The current matrix has no draft-only role: achats has neither capability.
+    // This still proves the public route cannot open a transaction for an
+    // unapproved applicable request.
+    mocks.currentRole.value = "achats";
+
+    const res = await request(app).post(FIN_BASE).send({
+      applicable: true,
+      family_code: "ANODISATION",
+      designation_courte: "Anodisation noire 20 µm",
+    });
+
+    expect(res.status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it("crée finish et première révision ACTIVE atomiquement pour un approbateur", async () => {
+    const createdId = "33333333-3333-4333-8333-333333333333";
+    const revisionId = "44444444-4444-4444-8444-444444444444";
+    mocks.clientQuery.mockImplementation((sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ code: "ANODISATION", nom_diminutif: "ANO" }]));
+      if (text.includes("fn_next_issued_code_value")) return Promise.resolve(rows([{ v: "13" }]));
+      if (text.includes("INSERT INTO public.surface_finishes")) return Promise.resolve(rows([{ id: createdId }]));
+      if (text.includes("INSERT INTO public.surface_finish_revisions")) return Promise.resolve(rows([{ id: revisionId }]));
+      return Promise.resolve(empty());
+    });
+    mocks.poolQuery.mockImplementation((sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("FROM public.surface_finishes f")) {
+        return Promise.resolve(rows([finishRow({ id: createdId, code: "FIN-000013", procede: "ANO", statut: "ACTIVE", current_revision_id: revisionId })]));
+      }
+      if (text.includes("FROM public.surface_finish_revisions r")) return Promise.resolve(empty());
+      return Promise.resolve(empty());
+    });
+
+    const res = await request(app).post(FIN_BASE).send({
+      applicable: true,
+      family_code: "ANODISATION",
+      designation_courte: "Anodisation noire 20 µm",
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.statut).toBe("ACTIVE");
+    const finishInsertAt = mocks.clientQuery.mock.calls.findIndex(([sql]) => String(sql).includes("INSERT INTO public.surface_finishes"));
+    const revisionInsertAt = mocks.clientQuery.mock.calls.findIndex(([sql]) => String(sql).includes("INSERT INTO public.surface_finish_revisions"));
+    const commitAt = mocks.clientQuery.mock.calls.findIndex(([sql]) => String(sql).trim() === "COMMIT");
+    expect(finishInsertAt).toBeGreaterThanOrEqual(0);
+    expect(revisionInsertAt).toBeGreaterThan(finishInsertAt);
+    expect(commitAt).toBeGreaterThan(revisionInsertAt);
+    expect(mocks.clientQuery.mock.calls[finishInsertAt]?.[1]).toContain("ACTIVE");
+    expect(mocks.clientQuery.mock.calls[revisionInsertAt]?.[1]).toEqual([createdId, 42, "ACTIVE"]);
+    expect(String(mocks.clientQuery.mock.calls[revisionInsertAt]?.[0])).toContain("approbateur_user_id, approved_at");
+  });
+
   it("classe un triplet identique en IDENTIQUE et l'explique", async () => {
     mocks.poolQuery.mockResolvedValueOnce(
       rows([
@@ -195,7 +283,7 @@ describe("#226 contrôle des doublons", () => {
     // C'est l'index `surface_finishes_identity_uq` qui parle ici, pas le code.
     mocks.clientQuery.mockImplementation((sql: unknown) => {
       const text = String(sql);
-      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ ok: 1 }]));
+      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ code: "ANODISATION", nom_diminutif: "ANO" }]));
       // Le code FIN-NNNNNN est alloué par le générateur autoritaire avant
       // l'INSERT : sans cette réponse, le test échouerait AVANT le doublon.
       if (text.includes("fn_next_issued_code_value")) return Promise.resolve(rows([{ v: "1" }]));
@@ -208,7 +296,7 @@ describe("#226 contrôle des doublons", () => {
 
     const res = await request(app).post(FIN_BASE).send({
       family_code: "ANODISATION",
-      procede: "Anodisation sulfurique",
+      procede: "ANO",
       designation_courte: "Anodisation noire 20 µm",
     });
 

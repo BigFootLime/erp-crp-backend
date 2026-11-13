@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {syncProvisionalSubcontractDraftsTx} from '../../subcontract/subcontract-draft-sync.repository';
 import {HttpError} from '../../../utils/httpError';
 import type {AuditContext} from './production.repository';
 import type {MaterialDebitCorrection} from '../validators/of-material.validators';
@@ -48,6 +49,7 @@ export async function correctMaterialDebit(ofId:number,body:MaterialDebitCorrect
     for(const s of inverses)await tx.query(`INSERT INTO public.production_material_debit_sources(debit_id,need_id,reservation_id,stock_movement_id,planned_qty,actual_qty,yield_good,yield_scrap)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8)`,[correctionId,s.need_id,s.reservation_id,s.movementId,-s.planned,-s.actual,s.yield_good===null?null:-s.yield_good,s.yield_scrap===null?null:-s.yield_scrap]);
     await syncMaterialOfQuantitiesTx(tx,ofId,audit.user_id);
+    await syncProvisionalSubcontractDraftsTx(tx,ofId,audit);
     return {coverage:await readMaterialTx(tx,ofId),correctionId};
   });
 }

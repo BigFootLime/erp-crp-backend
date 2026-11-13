@@ -8,6 +8,17 @@ import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
 import {synchronizeDirectoryCompany} from '../../../shared-directory/company.projection';
 import { companyRuntimeConfiguration } from '../../entreprises/runtime/company-runtime.config';
 import { HttpError } from '../../../utils/httpError';
+import { readWorkstationSetup, saveWorkstationSetup } from '../../production/repository/workstation-defaults.repository';
+import { workstationDefaultsSchema } from '../../production/domain/workstation-defaults';
+export const workstations = asyncHandler(async (req,res) => {
+ if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
+ res.setHeader('Cache-Control','no-store');res.json(await readWorkstationSetup());
+});
+export const saveWorkstations = asyncHandler(async (req,res) => {
+ if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
+ const input=workstationDefaultsSchema.extend({expected_updated_at:z.string().nullable()}).parse(req.body);
+ res.json(await saveWorkstationSetup(input,req.user!.id));
+});
 export const status=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control","no-store");const directory=sharedDirectoryClient(),counts=directory?await directory.call<{login_count:number}>('login-count',{directory_session:req.user!.directory_session}):null;res.json(await getSetupStatus(req.user!.id,counts?.login_count,req.businessCompanyAccess?.context.profile));});
 export const progress=asyncHandler(async(req,res)=>{const input=progressSchema.parse(req.body);if(req.businessCompanyAccess?.context.profile==='COMMERCIAL'&&!['company','finance','review'].includes(input.current_step))throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Cette étape ne concerne pas une entreprise commerciale.');await saveSetupStep(req.user!.id,input.current_step);res.status(204).end();});
 export const companies=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control","no-store");const directory=companyRuntimeConfiguration().enabled?null:sharedDirectoryClient();res.json(directory?await directory.call('company-list',{directory_session:req.user!.directory_session,input:{}}):await readSetupCompanies());});

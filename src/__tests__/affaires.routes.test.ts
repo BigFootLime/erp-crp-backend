@@ -357,10 +357,12 @@ describe("/api/v1/affaires", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "7" }] }) // nextval(affaire_id_seq)
+      .mockResolvedValueOnce({ rows: [{ relation: null }] }) // migration de bascule absente : générateur historique
       .mockResolvedValueOnce({ rows: [{ v: "1" }] }) // fn_next_issued_code_value (AFF:<year>)
       .mockResolvedValueOnce({ rows: [{ id: "7", updated_at: "2026-02-02T10:00:00.000Z" }] }) // INSERT
       .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
       .mockResolvedValueOnce({ rows: [] }) // pg_notify
+      .mockResolvedValueOnce({ rows: [] }) // contexte commercial de l'instantané PDF
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     // Le client tente d'imposer une référence : elle DOIT être ignorée (code serveur).
@@ -403,10 +405,12 @@ describe("/api/v1/affaires", () => {
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: "9" }] }) // nextval
+      .mockResolvedValueOnce({ rows: [{ relation: null }] }) // migration de bascule absente : générateur historique
       .mockResolvedValueOnce({ rows: [{ v: "2" }] }) // code
       .mockResolvedValueOnce({ rows: [{ id: "9", updated_at: "2026-02-02T10:00:00.000Z" }] }) // INSERT
       .mockResolvedValueOnce({ rows: [{ id: "audit-1", created_at: "2026-02-01T10:00:00.000Z" }] }) // audit
       .mockResolvedValueOnce({ rows: [] }) // notify
+      .mockResolvedValueOnce({ rows: [] }) // contexte commercial de l'instantané PDF
       .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
     const res = await request(app).post("/api/v1/affaires").send({ type_affaire: "projet" });

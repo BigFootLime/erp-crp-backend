@@ -9,6 +9,10 @@ import { renderWorkshopTable } from "../shared/pdf/workshop-document-blocks";
 const content = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps the saved 1.7 rendering byte-identical", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7" }));
+    expect((await renderOfDocument(payload)).sha256).toBe("1a216613415712dd5763a97ed02aa3d6d87f5f5cffbaba8c938ef2647cff99aa");
+  });
   it("keeps the saved 1.6 rendering unchanged", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.6" }));
     expect(payload.documentCharter).toBeUndefined();

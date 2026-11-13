@@ -1,3 +1,4 @@
+import { syncOperationFinishTitleTx } from "./surface-finish-purchase-link.repository";
 // #210 — Résolution d'article de sous-traitance depuis une opération de gamme.
 //
 // Deux commandes seulement :
@@ -10,6 +11,7 @@
 import type { PoolClient } from "pg";
 
 import db from "../../../config/database";
+import { allocateSpecialProcessArticleCode, specialProcessTechnicalReference } from "../../../shared/codes/special-process-code";
 import { HttpError } from "../../../utils/httpError";
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository";
 import {
@@ -75,11 +77,20 @@ import { insertFinishAudit, mapRevision, revisionColumns, type RevisionRow } fro
 
 type Queryer = Pick<PoolClient, "query">;
 
+async function ensureSpecialProcessClient(tx:Queryer,articleId:string,context:OperationFinishContext,audit:AuditContext){
+  if(!context.client_id)return;
+  const inserted=await tx.query(`INSERT INTO public.article_client_links(article_id,client_id,created_by) VALUES($1::uuid,$2,$3) ON CONFLICT DO NOTHING`,[articleId,context.client_id,audit.user_id]);
+  const updated=await tx.query(`UPDATE public.articles SET commercial_scope='CLIENTS',updated_at=now() WHERE id=$1::uuid AND commercial_scope IS DISTINCT FROM 'CLIENTS'`,[articleId]);
+  if(inserted.rowCount||updated.rowCount)await insertFinishAudit(tx,audit,'finitions.article.client.link','articles',articleId,{piece_technique_id:context.piece_technique_id,client_id:context.client_id});
+}
+
+
 /* -------------------------------------------------------------------------- */
 /* Contexte — lu côté serveur, jamais reconstruit depuis la requête           */
 /* -------------------------------------------------------------------------- */
 
 type ContextRow = {
+  client_id: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;
@@ -109,6 +120,7 @@ async function loadContext(tx: Queryer, gammeId: string, operationId: string): P
     `SELECT
        pt.id::text                 AS piece_technique_id,
        pt.code_piece               AS code_piece,
+       pt.client_id::text          AS client_id,
        pt.designation              AS designation_piece,
        ptv.id::text                AS piece_technique_version_id,
        ptv.indice                  AS indice,
@@ -141,6 +153,7 @@ async function loadContext(tx: Queryer, gammeId: string, operationId: string): P
   return {
     piece_technique_id: row.piece_technique_id,
     code_piece: row.code_piece,
+    client_id: row.client_id,
     designation_piece: row.designation_piece,
     piece_technique_version_id: row.piece_technique_version_id,
     indice: row.indice,
@@ -176,7 +189,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
             f.code                AS finish_code,
             f.designation_courte  AS finish_designation,
             f.family_code         AS finish_family,
-            f.procede             AS finish_procede,
+            fam.nom_diminutif     AS finish_procede,
             fam.commentaire_template AS family_commentaire_template,
             f.statut              AS finish_statut
      FROM public.surface_finish_revisions r
@@ -187,6 +200,7 @@ async function loadRevision(tx: Queryer, revisionId: string) {
   );
   const row = res.rows[0];
   if (!row) throw new HttpError(404, "NOT_FOUND", "Révision de finition introuvable.");
+  if (!row.finish_procede) throw new HttpError(422,"FAMILY_ABBREVIATION_REQUIRED","Configurez le nom diminutif de la famille de cette finition.");
   return {
     revision: mapRevision(row),
     finish: {
@@ -325,15 +339,16 @@ export type GenerationResult = {
  */
 export function generateTexts(params: {
   context: OperationFinishContext;
-  finish: { code: string; designation_courte: string; family_commentaire_template?: string | null };
+  finish: { code: string; procede?: string; designation_courte: string; family_commentaire_template?: string | null };
   revision: SurfaceFinishRevisionDetail;
   spec: CanonicalFinishSpec;
 }): GenerationResult {
   const { context, finish, revision, spec } = params;
 
   const designation = buildGeneratedDesignation({
-    code_piece: context.code_piece,
+    code_piece: specialProcessTechnicalReference(context.plan_reference, context.indice),
     indice: context.indice,
+    nom_diminutif: finish.procede,
     finition_courte: finish.designation_courte,
     teinte_ral: spec.teinte_ral,
     couleur: spec.couleur,
@@ -427,6 +442,35 @@ async function findExactMatch(tx: Queryer, fingerprint: string): Promise<Article
     [fingerprint]
   );
   return res.rows[0] ?? null;
+}
+
+/**
+ * An archived service article remains historical and reserves its issued code,
+ * but it must not retain the active requirement fingerprint of its replacement.
+ */
+async function releaseArchivedFingerprint(
+  tx: Queryer,
+  fingerprint: string,
+  replacementCode: string,
+  audit: AuditContext
+): Promise<void> {
+  const retired = await tx.query<{ article_id: string }>(
+    `UPDATE public.articles_traitement t
+     SET superseded_at = now(), updated_at = now()
+     FROM public.articles a
+     WHERE a.id = t.article_id
+       AND a.is_active = false
+       AND t.spec_fingerprint = $1
+       AND t.superseded_at IS NULL
+     RETURNING t.article_id::text AS article_id`,
+    [fingerprint]
+  );
+  for (const old of retired.rows) {
+    await insertFinishAudit(tx, audit, "finitions.article.replace_archived", "articles", old.article_id, {
+      spec_fingerprint: fingerprint,
+      replacement_code: replacementCode,
+    });
+  }
 }
 
 /**
@@ -528,11 +572,12 @@ function buildClassification(): PlannedArticleClassification {
     lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
     // Le code réel est alloué par le serveur à la confirmation : on annonce le
     // format, jamais une valeur qui pourrait ne pas être celle attribuée.
-    code_hint: `ART-${GENERATED_ARTICLE_TAXONOMY.default_family_code}-…`,
+    code_hint: "PS-<nom diminutif>-<référence plan>-<indice>",
   };
 }
 
 type StockContextRow = {
+  client_id: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;
@@ -556,6 +601,7 @@ async function loadStockContext(
     `SELECT
        pt.id::text AS piece_technique_id,
        pt.code_piece,
+       pt.client_id::text AS client_id,
        pt.designation AS designation_piece,
        ptv.id::text AS piece_technique_version_id,
        ptv.indice,
@@ -579,6 +625,7 @@ async function loadStockContext(
   return {
     piece_technique_id: row.piece_technique_id,
     code_piece: row.code_piece,
+    client_id: row.client_id,
     designation_piece: row.designation_piece,
     piece_technique_version_id: row.piece_technique_version_id,
     indice: row.indice,
@@ -603,6 +650,7 @@ export async function repoPreviewStockFinishArticle(
 ): Promise<SurfaceFinishPreview> {
   const context = await loadStockContext(db, body.piece_technique_id, body.piece_technique_version_id);
   const { revision, finish } = await loadRevision(db, body.finish_revision_id);
+  if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
   const resolved = resolveOperationSpec(revision, body.overrides);
   const spec = buildCanonicalFinishSpec({
     piece_technique_version_id: context.piece_technique_version_id,
@@ -695,13 +743,14 @@ export async function repoConfirmStockFinishArticle(
   body: StockArticleFinishConfirmBodyDTO,
   audit: AuditContext,
   actor: { role: string | null },
-  idempotencyKey: string
+  idempotencyKey: string,
+  transactionClient?: PoolClient
 ): Promise<StockFinishArticleResult> {
   const commandType = "surface_finish.stock_article.confirm";
   const incomingHash = requestHash(commandType, body);
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
   try {
-    await client.query("BEGIN");
+    if (!transactionClient) await client.query("BEGIN");
     const receipt = await client.query<{ request_hash: string; result: StockFinishArticleResult }>(
       `SELECT request_hash, result
        FROM public.surface_finish_command_receipts
@@ -712,12 +761,13 @@ export async function repoConfirmStockFinishArticle(
     const receiptDecision = decideReceipt(existingReceipt?.request_hash, incomingHash);
     assertNoIdempotencyConflict(receiptDecision);
     if (receiptDecision === "REPLAY") {
-      await client.query("ROLLBACK");
+      if (!transactionClient) await client.query("ROLLBACK");
       return existingReceipt.result;
     }
 
     const context = await loadStockContext(client, body.piece_technique_id, body.piece_technique_version_id);
     const { revision, finish } = await loadRevision(client, body.finish_revision_id);
+    if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
     assertRevisionSelectable(revision.statut);
     const resolved = resolveOperationSpec(revision, body.overrides);
     const spec = buildCanonicalFinishSpec({
@@ -783,6 +833,12 @@ export async function repoConfirmStockFinishArticle(
       articleFamily = classification.rows[0]?.family_code ?? articleFamily;
       articleCategories = classification.rows[0]?.category_codes ?? articleCategories;
     } else {
+      const specialProcessCode = await allocateSpecialProcessArticleCode(
+        client,
+        finish.procede,
+        specialProcessTechnicalReference(context.plan_reference, context.indice)
+      );
+      await releaseArchivedFingerprint(client, fingerprint, specialProcessCode, audit);
       const created = await repoCreateArticleTx(
         client,
         {
@@ -791,6 +847,7 @@ export async function repoConfirmStockFinishArticle(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
+          // The owning finish workflow records the PT/client link after resolving the service article.
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           stock_managed: GENERATED_ARTICLE_TAXONOMY.stock_managed,
           lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
@@ -802,7 +859,8 @@ export async function repoConfirmStockFinishArticle(
           projet_id: null,
           piece_technique_id: null,
         } satisfies CreateArticleBodyDTO,
-        audit
+        audit,
+        { specialProcessCode }
       );
       articleId = created.id;
       articleCode = created.code;
@@ -881,10 +939,11 @@ export async function repoConfirmStockFinishArticle(
        VALUES ($1,$2,$3,$4::jsonb,$5)`,
       [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
     );
-    await client.query("COMMIT");
+    await ensureSpecialProcessClient(client,articleId,context,audit);
+    if (!transactionClient) await client.query("COMMIT");
     return payload;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (!transactionClient) await client.query("ROLLBACK").catch(() => {});
     if ((error as { code?: string } | null)?.code === "23505") {
       throw new HttpError(
         409,
@@ -894,7 +953,7 @@ export async function repoConfirmStockFinishArticle(
     }
     throw error;
   } finally {
-    client.release();
+    if (!transactionClient) client.release();
   }
 }
 
@@ -906,6 +965,7 @@ export async function repoPreviewOperationFinish(
 ): Promise<SurfaceFinishPreview> {
   const context = await loadContext(db, gammeId, operationId);
   const { revision, finish } = await loadRevision(db, body.finish_revision_id);
+  if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
 
   const resolved = resolveOperationSpec(revision, body.overrides);
   const spec = buildCanonicalFinishSpec({
@@ -1084,7 +1144,7 @@ export async function repoGetOperationFinish(
 ): Promise<OperationFinishRequirement | null> {
   const res = await db.query<RequirementRow>(
     `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM}
-     WHERE fin.gamme_id = $1::uuid AND fin.gamme_operation_id = $2::uuid`,
+     WHERE fin.gamme_id = $1::uuid AND fin.gamme_operation_id = $2::uuid AND fin.slot=1`,
     [gammeId, operationId]
   );
   const row = res.rows[0];
@@ -1093,7 +1153,7 @@ export async function repoGetOperationFinish(
 
 async function readRequirement(tx: Queryer, operationId: string): Promise<OperationFinishRequirement | null> {
   const res = await tx.query<RequirementRow>(
-    `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM} WHERE fin.gamme_operation_id = $1::uuid`,
+    `SELECT ${REQUIREMENT_COLS} ${REQUIREMENT_FROM} WHERE fin.gamme_operation_id = $1::uuid AND fin.slot=1`,
     [operationId]
   );
   const row = res.rows[0];
@@ -1165,6 +1225,7 @@ export async function repoConfirmOperationFinish(
 
     /* 3) Révision active obligatoire. */
     const { revision, finish } = await loadRevision(client, body.finish_revision_id);
+    if ("family_code" in body && body.family_code && body.family_code !== finish.family_code) throw new HttpError(422,"FINISH_FAMILY_MISMATCH","La finition doit appartenir à la famille sélectionnée.");
     assertRevisionSelectable(revision.statut);
 
     /* 4) Recalcul serveur de la spécification et de l'empreinte. */
@@ -1236,6 +1297,12 @@ export async function repoConfirmOperationFinish(
       );
       articleFamily = fam.rows[0]?.family_code ?? articleFamily;
     } else {
+      const specialProcessCode = await allocateSpecialProcessArticleCode(
+        client,
+        finish.procede,
+        specialProcessTechnicalReference(context.plan_reference, context.indice)
+      );
+      await releaseArchivedFingerprint(client, fingerprint, specialProcessCode, audit);
       const created = await repoCreateArticleTx(
         client,
         {
@@ -1244,6 +1311,7 @@ export async function repoConfirmOperationFinish(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
+          // The owning finish workflow records the PT/client link after resolving the service article.
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           // Une prestation ne se stocke pas : la pièce traitée et ses lots
           // restent tracés par les domaines OF, sous-traitance et réception.
@@ -1257,7 +1325,8 @@ export async function repoConfirmOperationFinish(
           projet_id: null,
           piece_technique_id: null,
         } satisfies CreateArticleBodyDTO,
-        audit
+        audit,
+        { specialProcessCode }
       );
       articleId = created.id;
       articleCode = created.code;
@@ -1300,6 +1369,7 @@ export async function repoConfirmOperationFinish(
     }
 
     /* 8) Exigence de finition — créée ou mise à jour, jamais dupliquée. */
+    if((await client.query(`SELECT 1 FROM public.gamme_operation_finitions WHERE gamme_operation_id=$1::uuid AND slot=2 AND article_id=$2::uuid`,[operationId,articleId])).rowCount)throw new HttpError(409,"OPERATION_FINISH_ALREADY_LINKED","Cet article est déjà rattaché comme deuxième procédé spécial à cette opération.");
     const previous = await readRequirement(client, operationId);
     if (previous && body.expected_finition_updated_at) {
       assertOptimisticVersion({
@@ -1375,7 +1445,7 @@ export async function repoConfirmOperationFinish(
          $33,$34,$35,
          $36,$36
        )
-       ON CONFLICT (gamme_operation_id) DO UPDATE SET
+       ON CONFLICT (gamme_operation_id,slot) DO UPDATE SET
          gamme_id = EXCLUDED.gamme_id,
          piece_technique_version_id = EXCLUDED.piece_technique_version_id,
          finish_revision_id = EXCLUDED.finish_revision_id,
@@ -1418,15 +1488,15 @@ export async function repoConfirmOperationFinish(
     /* 9) Ligne de nomenclature d'achat — liée par FK, jamais par la phase. */
     const lineRes = await client.query<{ id: string; quantite: string }>(
       `INSERT INTO public.pieces_techniques_achats (
-         piece_technique_id, phase, article_id, quantite, unite_prix,
+         id, piece_technique_id, phase, article_id, quantite, unite_prix,
          designation, designation_snapshot, type_achat,
          gamme_operation_id, gamme_id, piece_technique_version_id, source
        ) VALUES (
-         $1::uuid, $2, $3::uuid, $4, $5,
+         COALESCE((SELECT p.id FROM public.pieces_techniques_achats p WHERE p.id=$11::uuid AND p.gamme_operation_id=$8::uuid),gen_random_uuid()), $1::uuid, $2, $3::uuid, $4, $5,
          $6, $6, $7,
          $8::uuid, $9::uuid, $10::uuid, 'GAMME_FINITION'
        )
-       ON CONFLICT (gamme_operation_id) WHERE gamme_operation_id IS NOT NULL AND type_achat = 'TRAITEMENT'
+       ON CONFLICT (id)
        DO UPDATE SET
          article_id = EXCLUDED.article_id,
          quantite = EXCLUDED.quantite,
@@ -1449,18 +1519,22 @@ export async function repoConfirmOperationFinish(
         context.operation_id,
         context.gamme_id,
         context.piece_technique_version_id,
+        previous?.achat_ligne_id ?? null,
       ]
     );
     const purchaseLineId = lineRes.rows[0].id;
+    await client.query(`UPDATE public.pieces_techniques_achats SET gamme_operation_id=$2::uuid WHERE id=$1::uuid AND gamme_operation_id IS DISTINCT FROM $2::uuid`,[purchaseLineId,operationId]);
+    await syncOperationFinishTitleTx(client,operationId);
 
     await client.query(
       `UPDATE public.gamme_operation_finitions SET achat_ligne_id = $2::uuid, updated_at = now()
-       WHERE gamme_operation_id = $1::uuid`,
+       WHERE gamme_operation_id = $1::uuid AND slot=1`,
       [operationId, purchaseLineId]
     );
 
     /* 10) Audit append-only — la décision reste explicable des mois plus tard. */
     await insertFinishAudit(client, audit, "finitions.operation.confirm", "gamme_operation_finition", operationId, {
+      operation_designation: finish.designation_courte,
       gamme_id: context.gamme_id,
       piece_technique_version_id: context.piece_technique_version_id,
       finish_revision_id: revision.id,
@@ -1511,6 +1585,7 @@ export async function repoConfirmOperationFinish(
       [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
     );
 
+    await ensureSpecialProcessClient(client,articleId,context,audit);
     await client.query("COMMIT");
     return payload;
   } catch (err) {
@@ -1555,7 +1630,7 @@ export async function repoDetachOperationFinish(
       `SELECT id::text AS id, updated_at::text AS updated_at, article_id::text AS article_id,
               achat_ligne_id::text AS achat_ligne_id
        FROM public.gamme_operation_finitions
-       WHERE gamme_operation_id = $1::uuid FOR UPDATE`,
+       WHERE gamme_operation_id = $1::uuid AND slot=1 FOR UPDATE`,
       [operationId]
     );
     const row = current.rows[0];
@@ -1574,8 +1649,9 @@ export async function repoDetachOperationFinish(
         [row.achat_ligne_id]
       );
     }
-    await client.query(`DELETE FROM public.gamme_operation_finitions WHERE gamme_operation_id = $1::uuid`, [operationId]);
+    await client.query(`DELETE FROM public.gamme_operation_finitions WHERE gamme_operation_id = $1::uuid AND slot=1`, [operationId]);
 
+    await syncOperationFinishTitleTx(client,operationId);
     await insertFinishAudit(client, audit, "finitions.operation.detach", "gamme_operation_finition", operationId, {
       gamme_id: gammeId,
       motif: body.motif,

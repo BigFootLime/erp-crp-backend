@@ -18,6 +18,7 @@ export const centralWindowSchema = z.object({
 }).refine(q => Date.parse(q.to) > Date.parse(q.from) && Date.parse(q.to) - Date.parse(q.from) <= 367 * 86400000,
   { message: "La fenêtre doit couvrir entre un instant et douze mois." });
 export const centralSimulationSchema = z.object({
+  preserveCommitted:z.boolean().optional(),
   revision: z.string().regex(/^\d+$/), from: instant, to: instant,
   urgency: z.object({client_id:z.string().trim().min(1).max(100),promise_event_id:z.string().guid()}).strict().optional(),
   changes: z.array(z.object({ taskId: z.string().min(1).max(100), expectedVersion: z.string().min(1).max(200),

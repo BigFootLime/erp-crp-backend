@@ -13,6 +13,7 @@ import {
   capabilitiesSVC,
   confirmOperationFinishSVC,
   createFinishFamilySVC,
+  updateFinishFamilySVC,
   createFinishDraftSVC,
   createRevisionSVC,
   detachOperationFinishSVC,
@@ -114,6 +115,10 @@ export const createFinishFamily: RequestHandler = async (req, res, next) => {
   }
 };
 
+export const updateFinishFamily: RequestHandler = async (req,res,next) => {
+  try { res.json(await updateFinishFamilySVC(routeParam(req,"familyCode"),req.body,buildAuditContext(req))); } catch(error) { next(error); }
+};
+
 export const listFinishes: RequestHandler = async (req, res, next) => {
   try {
     // L'identité du lecteur vient du jeton : c'est elle qui décide de `favori`.
@@ -191,7 +196,7 @@ export const listFinishHistory: RequestHandler = async (req, res, next) => {
 
 export const createFinish: RequestHandler = async (req, res, next) => {
   try {
-    const created = await createFinishDraftSVC(req.body, buildAuditContext(req));
+    const created = await createFinishDraftSVC(req.body, buildAuditContext(req), actorOf(req));
     res.status(201).json(created);
   } catch (err) {
     next(err);

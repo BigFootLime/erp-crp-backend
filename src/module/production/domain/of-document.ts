@@ -21,6 +21,7 @@ import {
 import { documentOperationLoad } from "./of-document-operation-load";
 import type { WorkshopDocumentTechnicalEvidence } from "./of-document-technical-source";
 import { formatWorkshopDuration } from "../../../shared/pdf/workshop-duration";
+import { planningClientPastel } from "../../planning/domain/planning-client-color";
 
 export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
 
@@ -37,7 +38,7 @@ export const OF_DOCUMENT_SCHEMA = "of-document/1" as const;
  */
 export const OF_DOCUMENT_TEMPLATE_VERSION = "of-ordre-fabrication/1.3" as const;
 /** Opt-in while the modern commercial/material read models are being corrected. */
-export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.8" as const;
+export const OF_WORKSHOP_TEMPLATE_VERSION = "of-ordre-fabrication/1.9" as const;
 
 // ---------------------------------------------------------------------------
 // Formatage
@@ -389,6 +390,8 @@ export type OfDocumentPayload = {
   commandeNumero: string | null;
   clientCode: string | null;
   clientNom: string | null;
+  /** Shared planning color, frozen at edition time. Absent on historical templates. */
+  clientPlanningColor?: string | null;
   affaires: OfDocumentAffaire[];
   cadenceLivraison: OfDocumentCadence[];
   quantites: OfQuantityCoverage;
@@ -451,6 +454,7 @@ export type OfDocumentBuildInput = {
   commandeNumero: string | null;
   clientCode: string | null;
   clientNom: string | null;
+  clientPlanningColor?: string | null;
   affaires: OfDocumentAffaire[];
   cadenceLivraison: OfDocumentCadence[];
   quantites: OfQuantityInput;
@@ -498,7 +502,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
   const familles = input.familles;
   const avertissements: OfDocumentWarning[] = [];
   const templateVersion = input.templateVersion ?? OF_DOCUMENT_TEMPLATE_VERSION;
-  const workshop = templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.7" || templateVersion === "of-ordre-fabrication/1.6" || templateVersion === "of-ordre-fabrication/1.5" || templateVersion === "of-ordre-fabrication/1.4";
+  const workshop = templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.8" || templateVersion === "of-ordre-fabrication/1.7" || templateVersion === "of-ordre-fabrication/1.6" || templateVersion === "of-ordre-fabrication/1.5" || templateVersion === "of-ordre-fabrication/1.4";
 
   const phases = operations.map<OfDocumentPhase>((operation) => {
     const { fabricationHours: fabrication, finalHours: final } = documentOperationLoad(operation, workshop ? input.quantiteLancee : undefined);
@@ -651,7 +655,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     templateVersion,
     // The charter is versioned with the issued payload. Archives prior to the workshop
     // edition retain their historical font metrics and byte-identical rendering.
-    ...(templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? { documentCharter: "module-v1" as const } : {}),
+    ...(templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || templateVersion === "of-ordre-fabrication/1.8" ? { documentCharter: "module-v1" as const } : {}),
     snapshotId: input.snapshotId,
     snapshotSha256: input.snapshotSha256,
     auteur: input.auteur,
@@ -661,6 +665,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     commandeNumero: input.commandeNumero,
     clientCode: input.clientCode,
     clientNom: input.clientNom,
+    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION ? { clientPlanningColor: planningClientPastel(input.clientPlanningColor) } : {}),
     affaires: [...input.affaires].sort((a, b) => a.affaireId - b.affaireId),
     cadenceLivraison: [...input.cadenceLivraison].sort((a, b) => a.date.localeCompare(b.date)),
     quantites,
@@ -669,7 +674,7 @@ export function buildOfDocumentPayload(input: OfDocumentBuildInput): OfDocumentP
     ...(workshop && input.commercialScope ? { commercialScope: input.commercialScope } : {}),
     ...(workshop && input.commandes ? { commandes: structuredClone(input.commandes) } : {}),
     ...(workshop && input.sourceOrders ? { sourceOrders: structuredClone(input.sourceOrders) } : {}),
-    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.7" || input.templateVersion === "of-ordre-fabrication/1.6" ? { internalDueDate: input.internalDueDate ?? null } : {}),
+    ...(input.templateVersion === OF_WORKSHOP_TEMPLATE_VERSION || input.templateVersion === "of-ordre-fabrication/1.8" || input.templateVersion === "of-ordre-fabrication/1.7" || input.templateVersion === "of-ordre-fabrication/1.6" ? { internalDueDate: input.internalDueDate ?? null } : {}),
     cadenceProduction: [...input.cadenceProduction].sort((a, b) => a.date.localeCompare(b.date)),
     derniereFabrication: input.derniereFabrication,
 

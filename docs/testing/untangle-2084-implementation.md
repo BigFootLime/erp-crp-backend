@@ -1,0 +1,23 @@
+# Maintenance de la baseline CERP 2.0.84
+
+Tâche locale proposée : `UNTANGLE-2084-BASELINE-20261113`. Le lot reste local, sans déploiement, migration, changement de service ni publication.
+
+Les deux tests de création de sous-état de `src/__tests__/stock.routes.test.ts` conservent leurs cas et vérifient désormais la cinquième valeur SQL `informations`. Le cas renseigné contrôle le texte multiligne dans la réponse et les paramètres SQL ; le cas code seul vérifie `NULL`. Ces tests simulés ne prouvent pas une persistance en base réelle.
+
+La référence applicative backend est `9f1153d858f8bf27f666946f41866b77cdc21cf3`, suivie du HEAD documentaire `dfeb995b`. La référence de la paire source et des artefacts connus est maintenue dans le dépôt frontend, sous `docs/release/baselines/2.0.84.json`, avec le vérificateur en lecture seule `scripts/release/verify-baseline.mjs` et le rapport `docs/testing/untangle-2084-implementation.md`.
+
+La provenance de la livraison historique reste celle de [l’assemblage du 12 novembre](../operational-provenance/2026-11-12-substate-informations.md). Le paquet d’overlay ne permet pas de certifier tous les fichiers des runtimes déployés. Aucun contrat workflow n’est régénéré avant accord sur le candidat backend complet de consolidation.
+
+
+## Lot contrats — catalogue statique des invalidations
+
+Le candidat source complet de départ est `04e843e1d0c687cd506f011f4fb7a517e9bd2143`. Le catalogue versionné `contracts/realtime-invalidation.v1.json` inventorie 59 formes statiquement extractibles des producteurs. Le générateur utilise l’AST TypeScript pour les littéraux de tableaux et spreads en ligne ; les constantes scalaires (chaînes et templates) sont résolues, mais tout binding de tableau reste volontairement non résolu car son absence de mutation ou d’alias ne peut pas être prouvée. Il exclut les fichiers et dossiers de tests, refuse les options CLI inconnues et signale les valeurs dynamiques. Le mode `--check` ne réécrit pas le fichier et échoue si le catalogue dérive.
+
+Les deux expressions Qualité initialement signalées sont des branches conditionnelles finies. Leur union est extraite sans exécuter la condition ; la baseline actuelle a zéro site non résolu et déclare `exhaustive: true` pour la syntaxe supportée. Le producteur planning construit directement au seam d’outbox le tableau en ligne avec des spreads conditionnels : il conserve l’ordre et les conditions des trois clés de base, de l’OF optionnel et de la commande optionnelle. Cette extraction statique ne prouve pas des mutations arbitraires ou des flux interprocéduraux ; tout nouveau site non résolu fait échouer la couverture consommateur. Aucun payload public ni règle d’autorisation n’est modifié. Les tests ciblés couvrent extraction, drift, cycle/ombre/mutabilité, exclusions, refus sans écriture des arguments invalides et la matrice planning avec/sans OF ni commande.
+
+Le frontend vérifie son artefact généré et la couverture des formes du catalogue. `proformas` est une exception examinée : aucun cache React Query de l’interface source ne consomme cet événement ; son comportement sans invalidation reste explicite et testé. Les autres formes concernées sont traduites vers les vrais préfixes consommateurs, sans invalidation globale de tous les caches.
+
+
+## Budget de validation CI
+
+Le backend reprend un budget explicite analogue au frontend : deux workers par défaut et 15 secondes par test quand `CI` est défini. Les assertions restent inchangées ; hors CI, le budget normal de cinq secondes et le parallélisme local par défaut sont conservés. Cet ajustement traite la contention observée sur les imports/fixtures de routes dans la campagne commune, sans ignorer les erreurs.

@@ -11,6 +11,14 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261113_stock_nuance_library.sql": "9317b8db4125b567035bc6463b2a90780edec0b13ac3dd5f18f4956cc3c1bc8d",
+  '20261106_procurement_conforming_completion_1836.sql': 'eab590ad5aca08ed61fe3c1ee2de3cab5a690c5db0af61dfb855f89b64161032',
+  '20261105_programming_progress_1834.sql': '09687df858c17fd1c1ff76d2718bf3df28f767cd89a796d81e55fa984768b904',
+  '20261105_operation_profitability_1833.sql': 'fde4c45cf9af0f2ed155b7debea0f3b784ac3f7a7e03dd5d970b6f06e6ecf7c1',
+  '20261105_purchase_capacity_1833.sql': '416f5aa588bf5d7abaf32007707afc5d99c9579c31f1f25a48dc9e90c56faef4',
+  '20261105_fixed_of_dossier_1833.sql': 'da10acae9cb75275b9bd54635491ae3167902d60114afe6e201865b20a1991e0',
+  '20261105_material_operation_links_1833.sql': 'd6214f6e079e4326b699a931a2444b02a9d371da64d7e6bb7bbd1f05a673ce80',
+  '20261104_special_process_family_identity_1831.sql': '417a1bea8130ef0c8639f091b17be987906bdd2a87a08e20cc8ba6f38b7e56a0',
   "20261102_open_orders_carco_1031.sql": "4573ad3b70173f61e1ad1acfc231ac87533f4a1e4dfcabc68029bdff5a3e1329",
   "20261031_client_portal_delivery_receipts_1802.sql": "59cb1e123d4666eca575206032db4a076060594d9d1116adf3dc0db7d21824a8",
   "20261031_demand_pilot_1801.sql": "62ac4a173f739086fe31fd984384016777d306a455bac8e88b65cc4614c70f1b",

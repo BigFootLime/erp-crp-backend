@@ -14,6 +14,7 @@ import {
   repoAttachRevisionDocument,
   repoCreateFinishDraft,
   repoCreateFinishFamily,
+  repoUpdateFinishFamily,
   repoCreateRevision,
   repoGetFinish,
   repoListFinishes,
@@ -44,6 +45,7 @@ import type {
   ArchiveFinishBodyDTO,
   AttachDocumentBodyDTO,
   CreateFinishFamilyBodyDTO,
+  UpdateFinishFamilyBodyDTO,
   ConfirmFinishBodyDTO,
   CreateFinishBodyDTO,
   DetachFinishBodyDTO,
@@ -84,6 +86,10 @@ export async function createFinishFamilySVC(
   audit: AuditContext
 ): Promise<SurfaceFinishFamily> {
   return repoCreateFinishFamily(body, audit);
+}
+
+export async function updateFinishFamilySVC(code: string, body: UpdateFinishFamilyBodyDTO, audit: AuditContext): Promise<SurfaceFinishFamily> {
+  return repoUpdateFinishFamily(code,body,audit);
 }
 
 export async function listFinishesSVC(
@@ -149,7 +155,8 @@ export async function listFinishHistorySVC(
   return repoListFinishHistory(finishId, query);
 }
 
-export async function createFinishDraftSVC(body: CreateFinishBodyDTO, audit: AuditContext): Promise<SurfaceFinishDetail> {
+export async function createFinishDraftSVC(body: CreateFinishBodyDTO, audit: AuditContext, actor?: Actor): Promise<SurfaceFinishDetail> {
+  if (body.applicable) assertSurfaceFinishCapability(actor?.role, "library_approve");
   return repoCreateFinishDraft(body, audit);
 }
 

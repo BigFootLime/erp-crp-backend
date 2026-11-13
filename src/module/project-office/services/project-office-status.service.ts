@@ -1,4 +1,6 @@
 import { drawCerpRawSection, renderCerpRawBody } from "../../../shared/pdf/raw-document-body";
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("systeme");
 import { HttpError } from "../../../utils/httpError";
 import { repoGetProjectById, repoListActivity } from "../repository/project-office.repository";
 import { repoGetProjectStats } from "../repository/project-office-report.repository";
@@ -104,7 +106,7 @@ export function statusReportToPdf(r: StatusReport): Promise<Buffer> {
     subject:"Synthèse, jalons, risques et actions du projet",creationDate:new Date(r.generated_at) }, doc=>{
 
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor("#555")
+    doc.fontSize(10).fillColor(C.steel)
       .text(`${r.project.code} · généré le ${r.generated_at.slice(0, 16).replace("T", " ")} · santé : ${r.health}`);
     doc.moveDown();
 

@@ -20,8 +20,29 @@ describe("automatic creation PDFs: alternate transaction paths", () => {
   const stock = read("src/module/stock/repository/stock.repository.ts");
   const quotes = read("src/module/devis/repository/devis.repository.ts");
 
-  it("queues the supplier PO snapshot after lines/totals/transition and before commit for normal, proposal-confirm and duplicate draft creates", () => {
-    for (const marker of ["export async function repoCreateCommandeFournisseur", "export async function repoConfirmPropositions", "export async function repoDuplicateAsDraft"]) {
+  it("queues supplier PO snapshots after lines/totals/transitions and before the owning transaction commits", () => {
+    const normalTx = body(supplier, "export async function repoCreateCommandeFournisseurTx");
+    const normalQueue = normalTx.indexOf("queueSupplierPurchaseOrderCreationPdfTx");
+    const normalTotals = normalTx.indexOf("recomputeTotauxTx");
+    const normalTransition = normalTx.indexOf("insertTransitionRow");
+    expect(normalQueue).toBeGreaterThanOrEqual(0);
+    expect(normalTotals).toBeGreaterThanOrEqual(0);
+    expect(normalTransition).toBeGreaterThanOrEqual(0);
+    expect(normalQueue).toBeGreaterThan(normalTotals);
+    expect(normalQueue).toBeGreaterThan(normalTransition);
+    expect(normalTx).not.toContain('client.query("COMMIT")');
+    expect(normalTx).not.toContain('client.query("ROLLBACK")');
+
+    // The normal path delegates the business writes and queue insertion to its
+    // transaction helper; its public wrapper owns the COMMIT. Keep both sides
+    // of that boundary in the contract so the post-commit snapshot guarantee
+    // remains explicit after the helper extraction.
+    const normalWrapper = body(supplier, "export async function repoCreateCommandeFournisseur(");
+    const normalHelperCall = normalWrapper.indexOf("repoCreateCommandeFournisseurTx(body, audit, client)");
+    expect(normalHelperCall).toBeGreaterThanOrEqual(0);
+    expect(normalWrapper.lastIndexOf('client.query("COMMIT")')).toBeGreaterThan(normalHelperCall);
+
+    for (const marker of ["export async function repoConfirmPropositions", "export async function repoDuplicateAsDraft"]) {
       const slice = body(supplier, marker);
       const queue = slice.indexOf("queueSupplierPurchaseOrderCreationPdfTx");
       expect(queue).toBeGreaterThan(slice.indexOf("recomputeTotauxTx"));

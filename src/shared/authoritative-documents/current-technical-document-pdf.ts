@@ -1,3 +1,4 @@
+import { archiveDocumentCategory, baseDocumentRenderVersion, hasModuleAppearance } from "../pdf/document-appearance";
 import { renderCerpDocument, type CerpLineRow } from "../pdf/cerp-document";
 import { issuerIdentityLine, issuerLegalMentions } from "../pdf/legal-mentions";
 import { parseInternalCreationSnapshot } from "./internal-creation-snapshot-pdf";
@@ -12,7 +13,7 @@ export async function renderCurrentTechnicalDocumentPdf({
   const sheet = archive.documentKind === "TECHNICAL_SHEET";
   if (
     (!sheet && archive.documentKind !== "OF_TRAVELER") ||
-    !(sheet ? ["technical-sheet-v1"] : ["of-traveler-v1", "of-traveler-v2"]).includes(archive.renderVersion)
+    !(sheet ? ["technical-sheet-v1"] : ["of-traveler-v1", "of-traveler-v2"]).includes(baseDocumentRenderVersion(archive.renderVersion))
   )
     throw new Error("TECHNICAL_DOCUMENT_RENDER_VERSION_UNSUPPORTED");
   const source = parseInternalCreationSnapshot(archive),
@@ -29,6 +30,9 @@ export async function renderCurrentTechnicalDocumentPdf({
   return renderCerpDocument(
     {
       module: "production",
+      category: archiveDocumentCategory(archive.renderVersion, "production"),
+      appearance: hasModuleAppearance(archive.renderVersion) ? undefined
+        : archive.renderVersion.endsWith("+module-v1") ? "module-v1" : "legacy-v1",
       documentType: name,
       name: source.entity_label,
       code: source.reference,

@@ -55,13 +55,13 @@ export async function runPlanningForecastOnce(){
         // Routing and programming dates are resolved by the existing dependency graph.
         const timedCodes=['PREDECESSOR_REQUIRED','FULL_MATERIAL_REQUIRED','QUANTITY_UNAVAILABLE','OPERATION_NOT_PLANNED'];
         if((incoming.get(task.id)??[]).some(d=>d.predecessorId.includes('program:')))timedCodes.push('PROGRAM_REQUIRED');
-        const blocking=op.blockers.filter(b=>!timedCodes.includes(b.code)&&b.code!=='QUANTITY_COMPLETE');
+        const blocking=op.blockers.filter(b=>!timedCodes.includes(b.code)&&b.code!=='QUANTITY_COMPLETE'&&b.target!=='matiere');
         task.blockers.push(...blocking.map(b=>b.message));
-        let earliest=now;
+        let earliest=task.earliestStart&&task.earliestStart>now?task.earliestStart:now;
         for(const demand of projection.demands.filter(n=>n.coverage?.operationId===task.operationId)){
           const supply=demand.coverage!;
           // A late but confirmed date shifts the forecast, not the commitment.
-          if(!supply.availableAt)task.blockers.push(...supply.issues);
+          if(!supply.availableAt&&!task.procurementWarnings?.length)task.blockers.push(...supply.issues);
           if(supply.availableAt&&supply.availableAt>earliest)earliest=supply.availableAt;
         }
         task.earliestStart=task.blockers.length?null:earliest;

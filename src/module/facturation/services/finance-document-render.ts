@@ -246,7 +246,7 @@ function summaryBlock(
     { label: "Base HT", w: taxWidth * 0.39, align: "right" as const },
     { label: "Montant TVA", w: taxWidth * 0.39, align: "right" as const },
   ];
-  ctx.doc.font("Helvetica").fontSize(6.9).fillColor("#6E7681");
+  ctx.doc.font("Helvetica").fontSize(6.9).fillColor(ctx.colors.steel);
   let colX = taxX;
   for (const col of cols) {
     ctx.text(col.label.toUpperCase(), colX, top, { width: col.w - 6, align: col.align, characterSpacing: 0.75 });
@@ -254,14 +254,14 @@ function summaryBlock(
   }
 
   ctx.doc.save();
-  ctx.doc.lineWidth(0.8).strokeColor("#101418");
+  ctx.doc.lineWidth(0.8).strokeColor(ctx.colors.ink);
   ctx.doc.moveTo(taxX, top + 11).lineTo(taxX + taxWidth, top + 11).stroke();
   ctx.doc.restore();
 
   let taxY = top + 16;
   const rows = taxes.length ? taxes : null;
   if (!rows) {
-    ctx.doc.font("Helvetica").fontSize(9.5).fillColor("#6E7681");
+    ctx.doc.font("Helvetica").fontSize(9.5).fillColor(ctx.colors.steel);
     ctx.text("Aucune taxe applicable.", taxX, taxY, { width: taxWidth });
     taxY += 14;
   } else {
@@ -272,7 +272,7 @@ function summaryBlock(
         ctx.doc
           .font(index === 0 ? "Helvetica-Bold" : "Helvetica")
           .fontSize(9)
-          .fillColor("#101418");
+          .fillColor(ctx.colors.ink);
         ctx.text(cell, colX, taxY, { width: cols[index].w - 6, align: cols[index].align });
         colX += cols[index].w;
       });
@@ -286,10 +286,10 @@ function summaryBlock(
     ctx.doc
       .font(row.strong ? "Helvetica-Bold" : "Helvetica")
       .fontSize(row.strong ? 11 : 9.5)
-      .fillColor("#101418");
+      .fillColor(ctx.colors.ink);
     if (row.strong) {
       ctx.doc.save();
-      ctx.doc.lineWidth(0.8).strokeColor("#B90101");
+      ctx.doc.lineWidth(0.8).strokeColor(ctx.colors.brand);
       ctx.doc.moveTo(totalsX, totalsY - 4).lineTo(totalsX + totalsWidth, totalsY - 4).stroke();
       ctx.doc.restore();
     }
@@ -299,7 +299,7 @@ function summaryBlock(
   }
 
   ctx.y = Math.max(taxY, totalsY);
-  ctx.doc.fillColor("#101418");
+  ctx.doc.fillColor(ctx.colors.ink);
 }
 
 function partyCards(input: FinanceDocumentInput): CerpAddressCard[] {

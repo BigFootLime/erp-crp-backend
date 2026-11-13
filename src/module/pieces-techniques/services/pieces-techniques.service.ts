@@ -1,3 +1,4 @@
+import { repoLinkExistingPurchaseOperation } from "../repository/pieces-techniques.repository";
 // src/module/pieces-techniques/services/pieces-techniques.service.ts
 import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
@@ -97,7 +98,7 @@ export const pieceTechniquesSummarySVC = (filters: ListPiecesTechniquesQueryDTO)
 
 export const getPieceTechniqueSVC = (id: string, includes: Set<string>) => repoGetPieceTechnique(id, includes);
 
-export const getPieceTechniqueFabricationTreeSVC = (id: string) => repoGetFabricationTree(id);
+export const getPieceTechniqueFabricationTreeSVC = (id: string,versionId?:string) => repoGetFabricationTree(id,50,versionId??null);
 
 /** Hash du DTO validé, commun au pré-contrôle HTTP et à la transaction de création. */
 export function pieceTechniqueCreateRequestHash(body: CreatePieceTechniqueBodyDTO): string {
@@ -285,14 +286,19 @@ export async function reorderOperationsSVC(pieceTechniqueId: string, order: stri
   return repoReorderOperations(pieceTechniqueId, order);
 }
 
-export async function addAchatSVC(pieceTechniqueId: string, body: AddAchatBodyDTO) {
+export async function addAchatSVC(pieceTechniqueId: string, body: AddAchatBodyDTO, audit?: import("../repository/pieces-techniques.repository").AuditContext) {
   return repoAddAchat(pieceTechniqueId, {
     ...body,
     ...computeAchat(body),
-  });
+  }, audit);
 }
 
-export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, body: UpdateAchatBodyDTO) {
+export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, body: UpdateAchatBodyDTO,audit?:import("../repository/pieces-techniques.repository").AuditContext) {
+  if(!Object.keys(body).length)throw new HttpError(422,"PURCHASE_EMPTY_UPDATE","Aucune modification de la ligne n’a été transmise.");
+  if(body.gamme_operation_id!==undefined){
+    if(!audit||Object.keys(body).some(key=>key!=="gamme_operation_id"))throw new HttpError(422,"PURCHASE_LINK_COMMAND","Enregistrez le rattachement séparément des autres modifications de la ligne.");
+    return repoLinkExistingPurchaseOperation(pieceTechniqueId,achatId,body.gamme_operation_id,audit);
+  }
   const computed = computeAchat(body);
   return repoUpdateAchat(pieceTechniqueId, achatId, { ...body, ...computed });
 }

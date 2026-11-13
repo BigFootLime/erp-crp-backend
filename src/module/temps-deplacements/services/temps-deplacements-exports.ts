@@ -1,3 +1,5 @@
+import { documentColors } from "../../../shared/pdf/document-appearance";
+const C = documentColors("systeme");
 import crypto from "node:crypto";
 import { renderCerpDocument } from "../../../shared/pdf/cerp-document";
 

@@ -14,6 +14,16 @@ const documentId = "11111111-1111-4111-8111-111111111111";
 afterEach(() => vi.resetAllMocks());
 
 describe("GED parent-record download authorization", () => {
+  it("allows a real cutover preparation parent only to SuperAdmin, including for reads", async () => {
+    mocks.exists.mockResolvedValue(true);
+    mocks.links.mockResolvedValue([{ entity_type: "CUTOVER_ROW", entity_id: documentId }]);
+    mocks.profile.mockResolvedValue({ is_superadmin: false, modules: [{ module_key: "data-cutover", allowed: true }] });
+    await expect(assertGedParentLinkWritable(7, { entity_type: "CUTOVER_ROW", entity_id: documentId })).rejects.toMatchObject({ status: 404, code: "GED_VERSION_NOT_FOUND" });
+    await expect(assertGedVersionParentReadable(7, documentId)).rejects.toMatchObject({ status: 404, code: "GED_VERSION_NOT_FOUND" });
+    mocks.profile.mockResolvedValue({ is_superadmin: true, modules: [] });
+    await expect(assertGedParentLinkWritable(1, { entity_type: "CUTOVER_ROW", entity_id: documentId })).resolves.toMatchObject({ entityType: "CUTOVER_ROW", entityId: documentId });
+    await expect(assertGedVersionParentReadable(1, documentId)).resolves.toMatchObject({ entityType: "CUTOVER_ROW", entityId: documentId });
+  });
   it("requires one supported, live parent and its current module grant", async () => {
     mocks.links.mockResolvedValue([{ entity_type: "commande-client", entity_id: "42" }]);
     mocks.exists.mockResolvedValue(true);

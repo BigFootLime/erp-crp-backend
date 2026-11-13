@@ -34,8 +34,17 @@ describe("planning machine qualification invariant", () => {
   ])("rejects an unassigned, inactive or machine-backed manual poste: %j", async (override) => {
     const tx = queryer({ operation_id: operationId, operation_type: "CONTROLE", required_machine_family_code: null,
       machine_id: null, assigned_poste_id: "poste-1", selected_poste_id: "poste-1", poste_active: true, ...override });
+    if ('assigned_poste_id' in override) {
+      // No configured default and no available workstation: these are separate
+      // queries, not another copy of the operation row.
+      tx.query.mockReset().mockResolvedValueOnce({ rows: [{ operation_id: operationId, operation_type: "CONTROLE", required_machine_family_code: null,
+        machine_id: null, assigned_poste_id: null, selected_poste_id: "poste-1", poste_active: true }] })
+        .mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+    }
+    const machineBacked = 'machine_id' in override;
     await expect(assertOperationResourceCompatible({ tx, of_operation_id: operationId,
-      resource: { machine_id: null, poste_id: "poste-1" } })).rejects.toMatchObject({ code: "PLANNING_MANUAL_POSTE_REQUIRED" });
+      resource: { machine_id: machineBacked ? machineId : null, poste_id: machineBacked ? null : "poste-1" } })).rejects.toMatchObject({
+        status: 422, code: machineBacked ? "PLANNING_OPERATION_FAMILY_REQUIRED" : "PLANNING_MANUAL_POSTE_REQUIRED" });
   });
 
   it.each(["FRAISAGE", "SOUS_TRAITANCE", null])("never exempts an unknown, CNC or external operation: %s", async (operation_type) => {

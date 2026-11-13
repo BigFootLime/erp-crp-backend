@@ -120,6 +120,8 @@ export type GedTreeNode = {
 };
 
 export type GedListFilters = {
+  /** Server-computed privacy scope, never accepted from HTTP query parameters. */
+  exclude_cutover?: boolean;
   q?: string | null;
   class_key?: string | null;
   domain?: string | null;

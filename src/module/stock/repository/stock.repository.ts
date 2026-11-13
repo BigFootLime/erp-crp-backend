@@ -22,6 +22,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
+import { nuanceIdentity, resolveNuanceIdentity, nuanceNormeFields } from "../domain/nuance-library";
 import {
   generateArticleBusinessCode,
   generateFabricatedArticleBusinessCode,
@@ -120,6 +121,9 @@ import type {
   CreateMatiereEtatBodyDTO,
   CreateMatiereNuanceBodyDTO,
   CreateMatiereSousEtatBodyDTO,
+  UpdateMatiereNuanceBodyDTO,
+  UpdateMatiereEtatBodyDTO,
+  UpdateMatiereSousEtatBodyDTO,
   CreateArticleBodyDTO,
   CreateArticleFamilyBodyDTO,
   CreateEmplacementBodyDTO,
@@ -457,7 +461,7 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-async function insertAuditLog(
+export async function insertAuditLog(
   tx: Pick<PoolClient, "query">,
   audit: AuditContext,
   entry: {
@@ -1028,6 +1032,20 @@ export async function repoCreateArticleFamily(
   return row;
 }
 
+export async function repoUpdateArticleFamily(input:{category:ArticleCategory;code:string;designation:string;expected_updated_at:string},audit:AuditContext):Promise<StockArticleFamily> {
+  const client=await db.connect();
+  try {
+    await client.query('BEGIN');
+    const table=articleFamilyTable(input.category);
+    const current=(await client.query<StockArticleFamily>(`SELECT *, $2::text AS category,updated_at::text AS updated_at FROM public.${table} WHERE code=$1 FOR UPDATE`,[input.code,input.category])).rows[0];
+    if(!current) throw new HttpError(404,'ARTICLE_FAMILY_NOT_FOUND','Famille introuvable.');
+    if(new Date(current.updated_at!).getTime()!==new Date(input.expected_updated_at).getTime()) throw new HttpError(409,'ARTICLE_FAMILY_CHANGED','La famille a changé. Actualisez avant de modifier.');
+    const saved=(await client.query<StockArticleFamily>(`UPDATE public.${table} SET designation=$2,updated_at=now() WHERE code=$1 RETURNING code,designation,is_active,created_at::text,updated_at::text,$3::text AS category`,[input.code,input.designation,input.category])).rows[0]!;
+    await insertAuditLog(client,audit,{action:'stock.article-families.update',entity_type:'article_families',entity_id:`${input.category}:${input.code}`,details:{before:current,after:saved}});
+    await client.query('COMMIT');return saved;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
 function isPgForeignKeyViolation(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "23503";
 }
@@ -1112,7 +1130,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   if (filters.q) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
-    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p})`);
+    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p} OR n.norme_fr ILIKE ${p} OR n.norme_en ILIKE ${p} OR n.norme_werkstoff ILIKE ${p} OR n.norme_usa ILIKE ${p})`);
   }
   if (typeof filters.is_active === "boolean") {
     where.push(`n.is_active = ${push(filters.is_active)}`);
@@ -1131,11 +1149,13 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
     densite: string | number | null;
     is_active: boolean;
     etat_ids: number[];
+    norme_fr: string | null; norme_en: string | null; norme_werkstoff: string | null; norme_usa: string | null;
+    designation_principale: "FR" | "EN" | "WERKSTOFF" | "USA" | "LEGACY";
   }>(
     `
       SELECT
         n.id::int AS id,
-        n.code,
+        n.code, n.norme_fr, n.norme_en, n.norme_werkstoff, n.norme_usa, n.designation_principale,
         n.designation,
         COALESCE(
           NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric,
@@ -1156,6 +1176,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   );
 
   return res.rows.map((row) => ({
+    ...nuanceIdentity(row),
     id: row.id,
     code: row.code,
     designation: row.designation && row.designation.trim() ? row.designation : null,
@@ -1166,7 +1187,8 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
 }
 
 export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
-  const code = normalizeStockReferentialCode(body.code, "Nuance");
+  const identity = resolveNuanceIdentity(body);
+  const code = normalizeStockReferentialCode(body.code ?? identity.libelle, "Nuance");
   // Compatibilité pré-patch : la colonne historique est NOT NULL et stocke
   // des kg/dm³. L'API, elle, est désormais exclusivement en kg/m³.
   const designation = body.designation?.trim() || "";
@@ -1179,19 +1201,20 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
   try {
     await client.query("BEGIN");
 
+    await client.query("SELECT pg_advisory_xact_lock(20261113, 84)");
     let ins;
     try {
       ins = await client.query<{ id: number }>(
         `
-          INSERT INTO public.stock_nuances (code, designation, densite, is_active)
-          VALUES ($1,$2,$3,$4)
+          INSERT INTO public.stock_nuances (code, designation, densite, is_active, norme_fr, norme_en, norme_werkstoff, norme_usa, designation_principale)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           RETURNING id::int AS id
         `,
-        [code, designation, legacyDensiteKgDm3, is_active]
+        [code, designation, legacyDensiteKgDm3, is_active, ...nuanceNormeFields.map(key => identity[key]), identity.designation_principale]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
-        throw new HttpError(409, "DUPLICATE_NUANCE", `Nuance ${code} already exists`);
+        throw new HttpError(409, "DUPLICATE_NUANCE", "Une nuance possède déjà cette désignation. Recherchez-la dans la bibliothèque, y compris parmi les nuances inactives.");
       }
       throw err;
     }
@@ -1220,7 +1243,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
         entity_id: String(nuanceId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
+        details: { ...identity, code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1233,6 +1256,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
     await client.query("COMMIT");
 
     return {
+      ...identity,
       id: nuanceId,
       code,
       designation: designation || null,
@@ -1425,9 +1449,10 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
   const res = await db.query<{
     id: number;
-    etat_id: number;
+    etat_id: number | null;
     code: string;
     designation: string;
+    informations: string | null;
     is_active: boolean;
   }>(
     `
@@ -1436,6 +1461,7 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
         se.etat_id::int AS etat_id,
         se.code,
         se.designation,
+        se.informations,
         se.is_active
       FROM public.stock_sous_etats se
       ${whereSql}
@@ -1447,9 +1473,11 @@ export async function repoListMatiereSousEtats(filters: ListMatiereSousEtatsQuer
 }
 
 export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyDTO, audit: AuditContext): Promise<StockMatiereSousEtat> {
-  const etat_id = Math.trunc(body.etat_id);
+  const etat_id = typeof body.etat_id === "number" ? Math.trunc(body.etat_id) : null;
   const code = normalizeStockReferentialCode(body.code, "Sous-etat");
-  const designation = body.designation.trim();
+  // Historical schema keeps this column NOT NULL while the API permits code-only values.
+  const designation = body.designation?.trim() || "";
+  const informations = body.informations?.trim() || null;
   const is_active = body.is_active;
 
   const client = await db.connect();
@@ -1460,15 +1488,15 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
     try {
       ins = await client.query<StockMatiereSousEtat>(
         `
-          INSERT INTO public.stock_sous_etats (etat_id, code, designation, is_active)
-          VALUES ($1::bigint,$2,$3,$4)
-          RETURNING id::int AS id, etat_id::int AS etat_id, code, designation, is_active
+          INSERT INTO public.stock_sous_etats (etat_id, code, designation, informations, is_active)
+          VALUES ($1::bigint,$2,$3,$4,$5)
+          RETURNING id::int AS id, etat_id::int AS etat_id, code, designation, informations, is_active
         `,
-        [etat_id, code, designation, is_active]
+        [etat_id, code, designation, informations, is_active]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
-        throw new HttpError(409, "DUPLICATE_SOUS_ETAT", `Sous-etat ${code} already exists for this etat`);
+        throw new HttpError(409, "DUPLICATE_SOUS_ETAT", `Sous-etat ${code} already exists`);
       }
       if (isPgForeignKeyViolation(err)) {
         throw new HttpError(400, "INVALID_ETAT", "etat_id is invalid");
@@ -1489,7 +1517,7 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
         entity_id: String(row.id),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { etat_id, code, designation, is_active },
+        details: { etat_id, code, designation, informations, is_active },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1507,6 +1535,124 @@ export async function repoCreateMatiereSousEtat(body: CreateMatiereSousEtatBodyD
   } finally {
     client.release();
   }
+}
+
+type ReferentialPatch = Record<string, string | number | boolean | null | undefined>;
+
+async function updateMatiereReferential<T>(args: {
+  table: "stock_nuances" | "stock_etats" | "stock_sous_etats";
+  id: number;
+  patch: ReferentialPatch | ((previous: Record<string, unknown>) => ReferentialPatch);
+  audit: AuditContext;
+  action: string;
+  read: (tx: Pick<PoolClient, "query">, id: number) => Promise<T | null>;
+}): Promise<T | null> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    if (args.table === "stock_nuances") await client.query("SELECT pg_advisory_xact_lock(20261113, 84)");
+    const before = await client.query<Record<string, unknown>>(
+      `SELECT to_jsonb(r) AS row FROM public.${args.table} r WHERE r.id = $1 FOR UPDATE`, [args.id]
+    );
+    const previous = before.rows[0]?.row;
+    if (!previous) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const patch = typeof args.patch === "function" ? args.patch(previous as Record<string, unknown>) : args.patch;
+    const values: unknown[] = [args.id];
+    const assignments: string[] = [];
+    for (const [column, value] of Object.entries(patch)) {
+      if (value === undefined) continue;
+      values.push(value);
+      assignments.push(`${column} = $${values.length}`);
+    }
+    assignments.push("updated_at = now()");
+    await client.query(`UPDATE public.${args.table} SET ${assignments.join(", ")} WHERE id = $1`, values);
+    const out = await args.read(client, args.id);
+    if (!out) throw new Error(`Updated ${args.table} could not be read`);
+
+    await repoInsertAuditLog({
+      user_id: args.audit.user_id,
+      body: {
+        event_type: "ACTION", action: args.action, page_key: args.audit.page_key,
+        entity_type: args.table, entity_id: String(args.id), path: args.audit.path,
+        client_session_id: args.audit.client_session_id,
+        details: { before: previous, patch },
+      },
+      ip: args.audit.ip, user_agent: args.audit.user_agent, device_type: args.audit.device_type,
+      os: args.audit.os, browser: args.audit.browser, tx: client,
+    });
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    if (isPgUniqueViolation(err)) throw new HttpError(409, "DUPLICATE_REFERENTIAL_CODE", "Une valeur possède déjà ce code ou cette désignation. Consultez aussi les entrées inactives.");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function readMatiereNuanceTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereNuance | null> {
+  const res = await tx.query<Omit<StockMatiereNuance, "densite"> & { densite: string | number | null }>(`
+    SELECT n.id::int AS id, n.code, n.designation, n.norme_fr, n.norme_en, n.norme_werkstoff, n.norme_usa, n.designation_principale,
+      COALESCE(NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric, n.densite * 1000) AS densite,
+      n.is_active, COALESCE(array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL), ARRAY[]::int[]) AS etat_ids
+    FROM public.stock_nuances n LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id=n.id
+    WHERE n.id=$1 GROUP BY n.id`, [id]);
+  const row = res.rows[0];
+  return row ? { ...row, ...nuanceIdentity(row), designation: row.designation?.trim() || null, densite: row.densite === null ? null : Number(row.densite), etat_ids: row.etat_ids ?? [] } : null;
+}
+
+async function readMatiereEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereEtat | null> {
+  const res = await tx.query<{ id: number; code: string; designation: string | null; unite_achat: number; is_active: boolean; nuance_ids: number[] }>(`
+    SELECT e.id::int AS id, e.code, e.designation, e.unite_achat::int AS unite_achat, e.is_active,
+      COALESCE(array_agg(ne.nuance_id::int ORDER BY ne.nuance_id) FILTER (WHERE ne.nuance_id IS NOT NULL), ARRAY[]::int[]) AS nuance_ids
+    FROM public.stock_etats e LEFT JOIN public.stock_nuance_etats ne ON ne.etat_id=e.id
+    WHERE e.id=$1 GROUP BY e.id`, [id]);
+  const row = res.rows[0];
+  return row ? { ...row, designation: row.designation?.trim() || null, nuance_ids: row.nuance_ids ?? [] } : null;
+}
+
+async function readMatiereSousEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereSousEtat | null> {
+  const res = await tx.query<StockMatiereSousEtat>(`SELECT id::int AS id, etat_id::int AS etat_id, code, designation, informations, is_active FROM public.stock_sous_etats WHERE id=$1`, [id]);
+  return res.rows[0] ?? null;
+}
+
+export function repoUpdateMatiereNuance(id: number, body: UpdateMatiereNuanceBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_nuances", id, audit, action: "stock.matiere-nuances.update", read: readMatiereNuanceTx,
+    patch: previous => {
+      const identity = resolveNuanceIdentity(body, previous);
+      const changesIdentity = nuanceNormeFields.some(key => body[key] !== undefined) || body.designation_principale !== undefined;
+      if (body.code !== undefined && body.code !== previous.code && identity.designation_principale !== "LEGACY") {
+        throw new HttpError(400, "NUANCE_CODE_IMMUTABLE", "Le code technique d’une nuance classée est conservé pour la traçabilité des articles.");
+      }
+      return {
+        ...(changesIdentity ? Object.fromEntries([...nuanceNormeFields, "designation_principale" as const].map(key => [key, identity[key]])) : {}),
+        code: body.code === undefined || body.code === previous.code ? undefined : normalizeStockReferentialCode(body.code, "Nuance"),
+        designation: body.designation === undefined ? undefined : body.designation ?? "",
+        densite: body.densite === undefined ? undefined : body.densite === null ? null : body.densite / 1000,
+        is_active: body.is_active,
+      };
+    },
+  });
+}
+
+export function repoUpdateMatiereEtat(id: number, body: UpdateMatiereEtatBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_etats", id, audit, action: "stock.matiere-etats.update", read: readMatiereEtatTx,
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", unite_achat: body.unite_achat, is_active: body.is_active },
+  });
+}
+
+export function repoUpdateMatiereSousEtat(id: number, body: UpdateMatiereSousEtatBodyDTO, audit: AuditContext) {
+  return updateMatiereReferential({
+    table: "stock_sous_etats", id, audit, action: "stock.matiere-sous-etats.update", read: readMatiereSousEtatTx,
+    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Sous-etat"), designation: body.designation === undefined ? undefined : body.designation ?? "", informations: body.informations === undefined ? undefined : body.informations?.trim() || null, is_active: body.is_active },
+  });
 }
 
 async function ensureArticleFamilyEntry(
@@ -3158,6 +3304,9 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
            'assembly_supply_strategy', av.assembly_supply_strategy
          ) END AS applicable_version,
          a.notes,
+         (SELECT jsonb_build_object('piece_technique_id', t.piece_technique_id,
+           'piece_technique_version_id', t.piece_technique_version_id, 'finish_revision_id', t.finish_revision_id)
+           FROM public.articles_traitement t WHERE t.article_id = a.id) AS finish_definition,
          CASE
            WHEN ${normalizedArticleCategorySql("a.article_category")} <> 'matiere' THEN NULL
            WHEN am.article_id IS NULL THEN NULL
@@ -3677,8 +3826,17 @@ export async function queueStockArticleCreationSnapshotTx(
 export async function repoCreateArticleTx(
   client: PoolClient,
   body: CreateArticleBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  identity?: { specialProcessCode: string }
 ): Promise<CreatedArticleSummary> {
+  if (
+    identity
+    && (body.article_category !== "traitement"
+      || !/^PS-[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(identity.specialProcessCode)
+      || identity.specialProcessCode.length > 80)
+  ) {
+    throw new HttpError(422, "SPECIAL_PROCESS_CODE_INVALID", "Code de procédé spécial invalide.");
+  }
   const normalized = await normalizeArticleState({
     article_type: body.article_type,
     article_category: body.article_category,
@@ -3730,11 +3888,11 @@ export async function repoCreateArticleTx(
       })()
     : null;
 
-  const generatedCode = normalized.article_category === "fabrique"
+  const generatedCode = identity?.specialProcessCode ?? (normalized.article_category === "fabrique"
     ? normalized.code
     : material
       ? material.code
-      : await generateArticleBusinessCode(client, normalized.family_code);
+      : await generateArticleBusinessCode(client, normalized.family_code));
 
   const designation = (body.designation ?? "").trim() || material?.designation || "";
   if (!designation) {
@@ -3980,9 +4138,10 @@ export async function repoUpdateArticle(
   id: string,
   patch: UpdateArticleBodyDTO,
   audit: AuditContext,
-  includeCosts = false
+  includeCosts = false,
+  transactionClient?: PoolClient
 ): Promise<StockArticleDetail | null> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
   const sets: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -3991,7 +4150,7 @@ export async function repoUpdateArticle(
   };
 
   try {
-    await client.query("BEGIN");
+    if (!transactionClient) await client.query("BEGIN");
 
     const currentRes = await client.query<{
       id: string;
@@ -4049,7 +4208,7 @@ export async function repoUpdateArticle(
     );
     const current = currentRes.rows[0] ?? null;
     if (!current) {
-      await client.query("ROLLBACK");
+      if (!transactionClient) await client.query("ROLLBACK");
       return null;
     }
     if (patch.expected_row_version !== current.row_version) {
@@ -4194,17 +4353,18 @@ export async function repoUpdateArticle(
       },
     });
 
-    await client.query("COMMIT");
+    if (!transactionClient) await client.query("COMMIT");
 
-    return repoGetArticle(id, includeCosts);
+    // The outer command reads the final detail after its own commit.
+    return transactionClient ? null : repoGetArticle(id, includeCosts);
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!transactionClient) await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
   } finally {
-    client.release();
+    if (!transactionClient) client.release();
   }
 }
 
@@ -6112,15 +6272,19 @@ async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { cli
   return id;
 }
 
-export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
+/**
+ * Creates one OLD opening movement in the caller's transaction.
+ *
+ * This is deliberately transaction-neutral: the cutover coordinator owns the
+ * commit together with its crosswalk and audit records.  The public endpoint
+ * continues to use {@link repoCreateHistoricalImport}, which owns its own
+ * transaction.
+ */
+export async function repoCreateHistoricalImportTx(client: PoolClient, body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
     const command = await beginStockCommand(client, { audit, idempotency_key: idempotencyKey, command_type: "MOVEMENT_CREATE", request_payload: { historical_import: body } });
     if (command.existing) {
       const data = command.existing.result_payload as HistoricalStockImport | null;
       if (!data) throw new Error("Historical import receipt has no result");
-      await client.query("COMMIT");
       return { ...data, replayed: true };
     }
     let articleId: string;
@@ -6131,7 +6295,7 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
       else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
       const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE OF a`, [articleId]);
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
-      shelf = a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
+      shelf = body.historical_shelf?.trim() || a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {
       if (body.article_id) {
         const selected = await client.query<{ id: string; category: string; is_active: boolean; piece_technique_id: string | null; client_code: string | null }>(
@@ -6166,11 +6330,26 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
           articleId = (await repoCreateArticleTx(client, { designation: body.designation, article_type: "PIECE_TECHNIQUE", article_category: "fabrique", article_categories: ["piece_finie_fabriquee"], commercial_scope:"CLIENTS", client_ids:[historicalClient], family_code: family, piece_technique_id: ptId, stock_managed: true, lot_tracking: true, is_sold: true, is_active: true, status: "VALIDE" }, audit)).id;
         }
       }
-      shelf = body.client_number.trim();
+      shelf = body.historical_shelf?.trim() || body.client_number.trim();
     }
     await ensureArticleStockManaged(client, articleId);
-    const historicalTechnicalVersionId = body.kind === "PF"
-      ? (await client.query<{ id: string }>(
+    let historicalTechnicalVersionId: string | null = null;
+    if (body.kind === "PF" && body.technical_version_id) {
+      const selectedVersion = await client.query<{ id: string }>(
+        `SELECT version.id::text AS id
+         FROM public.articles article
+         JOIN public.piece_technique_versions version
+           ON version.piece_technique_id = article.piece_technique_id
+         WHERE article.id = $1::uuid AND version.id = $2::uuid
+         FOR SHARE OF article, version`,
+        [articleId, body.technical_version_id]
+      );
+      if (!selectedVersion.rows[0]?.id) {
+        throw new HttpError(422, "PF_TECHNICAL_VERSION_MISMATCH", "La version technique sélectionnée ne correspond pas à l'article fini.");
+      }
+      historicalTechnicalVersionId = selectedVersion.rows[0].id;
+    } else if (body.kind === "PF") {
+      historicalTechnicalVersionId = (await client.query<{ id: string }>(
           `SELECT version.id::text AS id
            FROM public.articles article
            JOIN public.piece_technique_versions version
@@ -6183,34 +6362,56 @@ export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, 
              version.created_at DESC
            LIMIT 1`,
           [articleId]
-        )).rows[0]?.id ?? null
-      : null;
+        )).rows[0]?.id ?? null;
+    }
     const position = await ensureHistoricalPositionTx(client, body.kind, shelf, audit);
     const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
-    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, lot_status, piece_technique_version_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5,$6,'OLD','OLD','OLD','EN_ATTENTE',$7::uuid,$8,$8) RETURNING id::text AS id`, [articleId, lotCode, body.kind === "MP" ? body.lot_number : null, body.notes ?? null, trace, `CERP-STOCK:${trace}`, historicalTechnicalVersionId, audit.user_id]);
+    const lot = await client.query<{ id: string }>(`INSERT INTO public.lots (article_id, lot_code, supplier_lot_code, notes, material_properties, stock_trace_code, qr_payload, origin_stock_scope, source_scope, stock_scope, lot_status, piece_technique_version_id, client_proprietaire_id, created_by, updated_by) VALUES ($1::uuid,$2,$3,$4,$5::jsonb,$6,$7,'OLD','OLD','OLD',$8,$9::uuid,$10::varchar,$11,$11) RETURNING id::text AS id`, [articleId, lotCode, body.supplier_lot_code ?? (body.kind === "MP" ? body.lot_number : null), body.notes ?? null, JSON.stringify(body.historical_traceability ?? {}), trace, `CERP-STOCK:${trace}`, body.historical_lot_status ?? "EN_ATTENTE", historicalTechnicalVersionId, body.owner_client_id ?? null, audit.user_id]);
     const lotId = lot.rows[0]?.id;
     if (!lotId) throw new Error("Unable to create historical lot");
     const refs: Array<["OF" | "MP_LOT" | "TRAITEMENT_LOT", string[]]> = body.kind === "PF"
       ? [["OF", body.of_affaire_refs], ["MP_LOT", body.mp_lot_refs], ["TRAITEMENT_LOT", body.traitement_lot_refs]]
       : [["MP_LOT", [body.lot_number]]];
     for (const [type, values] of refs) for (const value of values) await client.query(`INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by) VALUES ($1::uuid,$2,$3,$4) ON CONFLICT DO NOTHING`, [lotId, type, value, audit.user_id]);
-    const unitId = await resolveUnitIdForArticle(client, articleId, body.kind === "MP" ? body.unite ?? null : null);
+    if (body.historical_lot_reference) await client.query(`INSERT INTO public.stock_lot_trace_references (lot_id, reference_type, reference_value, created_by) VALUES ($1::uuid,'HISTORICAL_LOT',$2,$3) ON CONFLICT DO NOTHING`, [lotId, body.historical_lot_reference, audit.user_id]);
+    const suppliedUnit = body.unite ?? null;
+    const unitId = await resolveUnitIdForArticle(client, articleId, suppliedUnit);
+    if (body.kind === "PF" && suppliedUnit) {
+      const articleUnitId = await resolveUnitIdForArticle(client, articleId, null);
+      if (unitId !== articleUnitId) {
+        throw new HttpError(422, "PF_ARTICLE_UNIT_MISMATCH", "L'unité du stock historique ne correspond pas à l'unité de l'article fini.");
+      }
+    }
     const levelId = await ensureStockLevel(client, { article_id: articleId, unit_id: unitId, warehouse_id: position.warehouse_id, location_id: position.location_id, actor_user_id: audit.user_id });
     const batchId = await ensureStockBatchId(client, { stock_level_id: levelId, lot_id: lotId });
     const movementNo = await reserveMovementNo(client);
     const movement = await client.query<{ id: string }>(`INSERT INTO public.stock_movements (movement_no,movement_type,status,article_id,stock_level_id,stock_batch_id,qty,currency,effective_at,posted_at,posted_by,source_document_type,reason_code,notes,correlation_id,user_id,created_by,updated_by) VALUES ($1,'IN','POSTED',$2::uuid,$3::uuid,$4::uuid,$5,'EUR',now(),now(),$6,'CERP_HISTORICAL_OPENING','HISTORICAL_OPENING',$7,$8::uuid,$6,$6,$6) RETURNING id::text AS id`, [movementNo, articleId, levelId, batchId, body.quantity, audit.user_id, body.notes ?? null, command.correlation_id]);
     const movementId = movement.rows[0]?.id;
     if (!movementId) throw new Error("Unable to post historical opening movement");
-    await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.kind === "MP" ? body.unite ?? null : null, position.magasinId, position.emplacementId, audit.user_id]);
+    await client.query(`INSERT INTO public.stock_movement_lines (movement_id,line_no,article_id,lot_id,qty,unite,dst_magasin_id,dst_emplacement_id,created_by,updated_by) VALUES ($1::uuid,1,$2::uuid,$3::uuid,$4,$5,$6::uuid,$7::bigint,$8,$8)`, [movementId, articleId, lotId, body.quantity, body.unite ?? null, position.magasinId, position.emplacementId, audit.user_id]);
     await insertMovementEvent(client, { movement_id: movementId, event_type: "CREATED_POSTED", old_values: null, new_values: { status: "POSTED", source: "CERP_HISTORICAL_OPENING" }, user_id: audit.user_id });
     const result: HistoricalStockImport = { article_id: articleId, lot_id: lotId, lot_code: lotCode, movement_id: movementId, stock_trace_code: trace, qr_payload: `CERP-STOCK:${trace}`, replayed: false };
     await insertAuditLog(client, audit, { action: "stock.historical-import.create", entity_type: "stock_movements", entity_id: movementId, details: { kind: body.kind, article_id: articleId, lot_id: lotId, stock_scope: "OLD" } });
     await completeStockCommand(client, { audit, command, command_type: "MOVEMENT_CREATE", resource_type: "stock_movement", resource_id: movementId, result_payload: result });
+    return result;
+}
+
+/** Endpoint-safe wrapper retaining the established standalone transaction. */
+export async function repoCreateHistoricalImport(body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await repoCreateHistoricalImportTx(client, body, audit, idempotencyKey);
     await client.query("COMMIT");
     return result;
-  } catch (err) { await client.query("ROLLBACK"); throw err; } finally { client.release(); }
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function repoListBalances(filters: ListBalancesQueryDTO): Promise<Paginated<StockBalanceRow>> {

@@ -67,3 +67,24 @@ export const centralApply: RequestHandler = asyncHandler(async(req,res)=>{
   const id=z.string().guid().parse(req.params.id),input=centralApplySchema.parse(req.body);
   res.json(await applyCentralSimulation(id,input.revision,buildAuditContext(req),key(req.headers["idempotency-key"])));
 });
+
+export const centralOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const {readPlanningProcurement}=await import('../repository/planning-procurement.repository');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ const rights=await consumableRights(req);res.setHeader('Cache-Control','no-store');
+ res.json({...await readPlanningProcurement(ofId,rights.prices),canSave:requestHasElevatedAccountModuleAccess(req)||roleHasPlanningCapability(req.user?.role,'manage_schedule'),canPurchase:rights.purchase});
+});
+export const centralSaveOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const {savePlanningProcurement,savePlanningProcurementSchema}=await import('../repository/planning-procurement.repository');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ res.json(await savePlanningProcurement(ofId,savePlanningProcurementSchema.parse(req.body),buildAuditContext(req),(await consumableRights(req)).purchase));
+});
+export const centralAutoOf:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const input=z.object({earliestStart:z.string().datetime({offset:true}),autoAssign:z.boolean().default(true)}).strict().parse(req.body);
+ const {createOfAutoSimulation}=await import('../services/planning-central.service');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ res.status(201).json(await createOfAutoSimulation(ofId,input.earliestStart,input.autoAssign,buildAuditContext(req),key(req.headers['idempotency-key']),(await consumableRights(req)).purchase));
+});

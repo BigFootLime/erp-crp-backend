@@ -18,6 +18,11 @@ describe('whole-OF raw material policy', () => {
   it('refuses unresolved genealogy instead of treating it as a verified origin', () => {
     expect(() => assertMaterialOriginLimit(policy(), ['unknown'])).toThrow('origine matière');
   });
+  it('does not let a paper-only opening trace be bypassed by a new reservation', () => {
+    const openingOnly = { ...policy(), unresolvedOpeningOrigins: ['CUTOVER:checkpoint:purchase:trace'] };
+    expect(() => assertMaterialOriginLimit(openingOnly, ['second'])).toThrow('traçabilité historique');
+    expect(assertMaterialOriginLimit(openingOnly, [])).toEqual(['heat-a']);
+  });
   it('requires the physical remainder after recorded consumption', () => {
     expect(missingPhysicalMaterial([{ key: 'raw', designation: 'Aluminium', unit: 'mm', required: 1000,
       consumed: 700, usableReserved: 300, blockers: [] }])).toEqual([]);

@@ -12,3 +12,9 @@ export const planningReferenceOfParamSchema = z.object({
 });
 
 export type PlanningReferenceOfListQuery = z.infer<typeof planningReferenceOfListQuerySchema>;
+
+export const planningReferenceClientQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+});
+export type PlanningReferenceClientQuery = z.infer<typeof planningReferenceClientQuerySchema>;

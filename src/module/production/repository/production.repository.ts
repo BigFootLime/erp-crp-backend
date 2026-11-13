@@ -1,3 +1,6 @@
+import {assertStockReviewVersionTx,prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
+import { publishPreparationDefinitionTx } from "./preparation-publication.repository";
+import { completePreparedDossierTx } from "./of-dossier.repository";
 import {preparationAudit} from './production-preparation.repository';
 import {synchronizeDraftChildrenTx} from './preparation-children.repository';
 import type { PoolClient } from "pg";
@@ -76,7 +79,7 @@ import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operat
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
-import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules } from './production-preparation.repository';
+import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules, loadPreparationOrder } from './production-preparation.repository';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx} from './operation-readiness.repository';
 import { releasePrelaunchPurchaseAllocationsTx } from "./of-prelaunch-cancellation.repository";
 import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
@@ -402,7 +405,7 @@ async function reconcileMachineMutation(
   return "uncertain";
 }
 
-async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
+export async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
   action: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -3555,8 +3558,39 @@ export async function repoCreateOrdreFabrication(params: {
 }): Promise<OrdreFabricationDetail> {
   const client = await pool.connect();
   try {
-    const ofId = await withRealtimeOutboxTransaction(client, async (client) => {
-    if (await usesPreparationRules(client)) {
+    const ofId = await withRealtimeOutboxTransaction(client, async (tx) =>
+      repoCreateOrdreFabricationTx(tx, params)
+    );
+    const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
+    if (!out) throw new Error("Failed to load created OF");
+    return out;
+  } catch (err) {
+    if (isPgUniqueViolation(err)) {
+      throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
+    }
+    throw err;
+  }
+}
+
+export type OfCreationTxOptions = {
+  /** Only the cutover writer may supply an already checked historical snapshot. */
+  technical?: Awaited<ReturnType<typeof loadApplicableTechnicalSnapshot>>;
+  /** Prevents the normal recursive preparation path for a single opening cohort. */
+  forceDirect?: boolean;
+};
+
+/**
+ * Native OF creation inside an already-owned transaction.  The public
+ * repository above remains the sole ordinary entrypoint; this export exists
+ * for the cutover transaction so its receipt, opening checkpoints and OF
+ * cannot commit separately.
+ */
+export async function repoCreateOrdreFabricationTx(
+  client: PoolClient,
+  params: { body: CreateOfBodyDTO; audit: AuditContext },
+  options: OfCreationTxOptions = {}
+): Promise<number> {
+    if (!options.forceDirect && await usesPreparationRules(client)) {
       if (params.body.statut !== 'BROUILLON') throw new HttpError(422,'OF_PREPARATION_REQUIRED','Créez cet OF en brouillon puis complétez sa préparation.');
       const generated = await createRecursiveOrdresFabrication(client,{
         source_type:'MANUAL',commande_id:params.body.commande_id??null,commande_numero:null,commande_ligne_id:null,
@@ -3581,7 +3615,7 @@ export async function repoCreateOrdreFabrication(params: {
 
     // #170 : sélection/validation de version et snapshot unifiés avec le moteur
     // de génération récursive (aucun chemin ne contourne la même porte).
-    const technical = await loadApplicableTechnicalSnapshot(client, params.body.piece_technique_id, {
+    const technical = options.technical ?? await loadApplicableTechnicalSnapshot(client, params.body.piece_technique_id, {
       pinned_version_id: params.body.piece_technique_version_id,
     });
     const technicalSnapshot = technical.snapshot;
@@ -3709,17 +3743,7 @@ export async function repoCreateOrdreFabrication(params: {
     // back OF creation.
     await queueRootOfCreationPdf(client, { ofId, actorUserId: params.audit.user_id });
 
-      return ofId;
-    });
-    const out = await repoGetOrdreFabrication({ id: ofId, user_id: params.audit.user_id });
-    if (!out) throw new Error("Failed to load created OF");
-    return out;
-  } catch (err) {
-    if (isPgUniqueViolation(err)) {
-      throw new HttpError(409, "OF_NUMERO_EXISTS", "An OF with this number already exists");
-    }
-    throw err;
-  }
+    return ofId;
 }
 
 export async function repoUpdateOrdreFabrication(params: {
@@ -4500,7 +4524,7 @@ async function getOfTechnicalPreparationTx(db: DbQueryer, id: number) {
   if (!row) return null;
   if (await usesPreparationRules(db, id)) {
     const evaluation = await evaluateOfPreparation(db, id);
-    return { ...row, items: evaluation.items, missing_sections: evaluation.items.filter(i => i.required && i.status !== 'READY').map(i => i.key) };
+    return { ...row, items: evaluation.items, missing_sections: evaluation.items.filter(i => i.status === 'BLOCKED' || (i.required && i.status !== 'READY')).map(i => i.key) };
   }
   return { ...row, missing_sections: missingTechnicalPreparationSections(row.technical_preparation) };
 }
@@ -4612,9 +4636,12 @@ export async function repoValidateOfTechnicalPreparation(params: {
   id: number;
   body: ValidateOfTechnicalPreparationBodyDTO;
   audit: AuditContext;
+  canPurchase?: boolean;
+  stockRights?: {reserve:boolean;deplete:boolean};
 }) {
   const client = await pool.connect();
   return withRealtimeOutboxTransaction(client, async (tx) => {
+    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     const current = await tx.query<{
       statut: string;
       technical_readiness: string;
@@ -4657,18 +4684,32 @@ export async function repoValidateOfTechnicalPreparation(params: {
     );
     const row = current.rows[0];
     if (!row) return null;
-    if (row.statut !== "BROUILLON" || row.technical_readiness !== "READY_FOR_REVIEW") {
-      throw new HttpError(409, "OF_TECHNICAL_REVIEW_REQUIRED", "Soumettez d'abord le dossier technique complet.");
+    if (row.statut !== "BROUILLON") {
+      throw new HttpError(409, "OF_TECHNICAL_PREPARATION_LOCKED", "La préparation technique de cet OF est verrouillée.");
     }
+    const finishValidation = async () => {
+      const state = (await tx.query<{statut:string}>('SELECT statut::text FROM public.ordres_fabrication WHERE id=$1',[params.id])).rows[0];
+      const procurement=state?.statut==='BROUILLON'
+        ?await prepareAutomaticPlanningPurchasesTx(tx,params.id,params.audit,params.canPurchase===true,params.stockRights&&reviewedSources?{...params.stockRights,reviewedSources}:undefined)
+        :null;
+      if (state?.statut === 'BROUILLON' && await usesPreparationRules(tx,params.id))
+        await completePreparedDossierTx(tx,params.id,params.audit);
+      return {...await getOfTechnicalPreparationTx(tx,params.id),materialDrafts:procurement?.orders??[]};
+    };
     if (params.body.expected_updated_at && Date.parse(params.body.expected_updated_at) !== Date.parse(row.updated_at)) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
     }
+    const reviewedSources=params.body.material_review_version?await assertStockReviewVersionTx(tx,params.id,params.body.material_review_version):undefined;
+    if (row.technical_readiness === 'VALIDATED') return finishValidation();
     const selected = typeof row.technical_preparation?.selected_version_id === "string"
       ? row.technical_preparation.selected_version_id
       : null;
     let preparationEvidence: Awaited<ReturnType<typeof assertOfPreparationReady>> | undefined;
     if (await usesPreparationRules(tx, params.id)) {
-      const evaluation = preparationEvidence = await assertOfPreparationReady(tx, params.id);
+      let evaluation = await assertOfPreparationReady(tx, params.id);
+      if (!evaluation.of.version_id) throw new HttpError(422,'VERSION_REQUIRED','Sélectionnez l’indice de cet OF.');
+      await publishPreparationDefinitionTx(tx,row.piece_technique_id,evaluation.of.version_id,params.audit);
+      evaluation = preparationEvidence = await assertOfPreparationReady(tx, params.id);
       await tx.query(`INSERT INTO public.piece_version_preparation(piece_technique_version_id,decisions,approved_source_hash,approved_at,approved_by,updated_by)
         VALUES($1::uuid,$2::jsonb,$3,now(),$4,$4) ON CONFLICT(piece_technique_version_id) DO UPDATE
         SET approved_source_hash=excluded.approved_source_hash,approved_at=now(),approved_by=excluded.approved_by`,
@@ -4676,7 +4717,15 @@ export async function repoValidateOfTechnicalPreparation(params: {
       await tx.query(`UPDATE public.ordres_fabrication SET preparation_rules_version=$2,
         technical_preparation=technical_preparation||jsonb_build_object('self_inspection_sheet_id',$3::text,'prepared_source_hash',$4::text) WHERE id=$1`,[params.id,evaluation.rules_version,evaluation.sheet?.id,evaluation.source_hash]);
     }
-    const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, { pinned_version_id: selected, preparation_evidence:preparationEvidence?.sources });
+    if (!preparationEvidence) {
+      const missing = missingTechnicalPreparationSections(row.technical_preparation);
+      if (missing.length) throw new HttpError(422,'OF_TECHNICAL_PREPARATION_INCOMPLETE','Le dossier technique est incomplet.',{missing_sections:missing});
+      const legacy = await loadPreparationOrder(tx,params.id);
+      if (!legacy.version_id) throw new HttpError(422,'VERSION_REQUIRED','Sélectionnez l’indice de cet OF.');
+      await publishPreparationDefinitionTx(tx,row.piece_technique_id,legacy.version_id,params.audit);
+    }
+    const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, {
+      pinned_version_id: preparationEvidence?.of.version_id ?? selected, preparation_evidence:preparationEvidence?.sources });
     if(preparationEvidence){
       const affected=await synchronizeDraftChildrenTx(tx,params.id,params.audit.user_id);
       for(const childId of affected)await preparationAudit(tx,params.audit,childId,'production.preparation.structure.synchronize',{parent_of_id:params.id});
@@ -4776,7 +4825,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
             replaced_placeholder_of: true,
           },
         });
-        return getOfTechnicalPreparationTx(tx, params.id);
+        return finishValidation();
       }
       const generated = await createRecursiveOrdresFabrication(tx, {
         source_type: "COMMANDE_CLIENT",
@@ -4840,7 +4889,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
           purchase_requirement_ids: artifacts.purchase_requirement_ids,
         },
       });
-      return getOfTechnicalPreparationTx(tx, params.id);
+      return finishValidation();
     }
     await tx.query(
       `INSERT INTO public.of_technical_snapshots (
@@ -4871,6 +4920,6 @@ export async function repoValidateOfTechnicalPreparation(params: {
       entity_id: String(params.id),
       details: { piece_technique_version_id: technical.version_id, snapshot_sha256: technical.sha256, operations_count: operationsCount },
     });
-    return getOfTechnicalPreparationTx(tx, params.id);
+    return finishValidation();
   });
 }

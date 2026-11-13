@@ -14,6 +14,8 @@ import type { BonLivraisonHeader, BonLivraisonLigne, BonLivraisonLigneAllocation
  */
 
 export type BonLivraisonDocumentInput = {
+  /** Server-side archive replay only. */
+  legacyAppearance?: boolean
   header: BonLivraisonHeader
   lignes: Array<Pick<BonLivraisonLigne, "ordre" | "designation" | "code_piece" | "quantite" | "unite" | "delai_client"> & {
     allocations: Array<Pick<BonLivraisonLigneAllocation, "lot_code">>

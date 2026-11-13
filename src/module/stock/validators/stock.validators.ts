@@ -1,6 +1,7 @@
 import { subcontractDefinitionSchema } from "./subcontract-definition";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
+import { nuanceNormeShape } from "../domain/nuance-library";
 import { materialBarMovementCommandSchema } from './material-bar-movement.validators';
 import { materialBarInventoryCommand } from './material-bars.validators';
 
@@ -176,7 +177,8 @@ export type ListMatiereNuancesQueryDTO = z.infer<typeof listMatiereNuancesQueryS
 export const createMatiereNuanceSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(40),
+      ...nuanceNormeShape,
+      code: z.string().trim().min(1).max(40).optional(),
       designation: z
         .union([z.string().trim().max(160), z.null()])
         .optional()
@@ -190,9 +192,33 @@ export const createMatiereNuanceSchema = z.object({
       etat_ids: z.array(positiveInt).optional().default([]),
       is_active: z.boolean().optional().default(true),
     })
-    .strict(),
+    .strict().superRefine((value, ctx) => {
+      if (![value.norme_fr, value.norme_en, value.norme_werkstoff, value.norme_usa].some(Boolean)) {
+        ctx.addIssue({ code: "custom", path: ["norme_fr"], message: "Renseignez au moins une désignation normalisée." });
+      }
+      const keys = { FR: "norme_fr", EN: "norme_en", WERKSTOFF: "norme_werkstoff", USA: "norme_usa" } as const;
+      if (value.designation_principale === "LEGACY" || (value.designation_principale && !value[keys[value.designation_principale]])) {
+        ctx.addIssue({ code: "custom", path: ["designation_principale"], message: "La désignation principale doit être renseignée." });
+      }
+    }),
 });
 export type CreateMatiereNuanceBodyDTO = z.infer<typeof createMatiereNuanceSchema>["body"];
+
+export const matiereReferentialIdParamSchema = z.object({ params: z.object({ id: positiveInt }) });
+const optionalReferentialCode = z.string().trim().min(1).max(40).optional();
+const optionalReferentialDesignation = z.union([z.string().trim().max(160), z.null()]).optional()
+  .transform((value) => (value === undefined ? undefined : value && value.length > 0 ? value : null));
+
+export const updateMatiereNuanceSchema = z.object({
+  body: z.object({
+    ...nuanceNormeShape,
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    densite: z.coerce.number().min(100).max(30_000).nullable().optional(),
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereNuanceBodyDTO = z.infer<typeof updateMatiereNuanceSchema>["body"];
 
 export const listMatiereEtatsQuerySchema = z.object({
   q: z.string().trim().optional(),
@@ -223,6 +249,17 @@ export const createMatiereEtatSchema = z.object({
 });
 export type CreateMatiereEtatBodyDTO = z.infer<typeof createMatiereEtatSchema>["body"];
 
+export const updateMatiereEtatSchema = z.object({
+  body: z.object({
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    // Backward-compatible only; procurement length is material-driven.
+    unite_achat: optionalPositiveInt,
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereEtatBodyDTO = z.infer<typeof updateMatiereEtatSchema>["body"];
+
 export const listMatiereSousEtatsQuerySchema = z.object({
   q: z.string().trim().optional(),
   etat_id: optionalPositiveInt,
@@ -233,14 +270,29 @@ export type ListMatiereSousEtatsQueryDTO = z.infer<typeof listMatiereSousEtatsQu
 export const createMatiereSousEtatSchema = z.object({
   body: z
     .object({
-      etat_id: positiveInt,
+      // A sub-state is a standalone referential. The optional field remains
+      // accepted to keep legacy clients compatible during rollout.
+      etat_id: nullablePositiveInt.optional(),
       code: z.string().trim().min(1).max(40),
-      designation: z.string().trim().min(1).max(160),
+      designation: z.union([z.string().trim().max(160), z.null()]).optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
+      informations: z.union([z.string().trim().max(10000), z.null()]).optional()
+        .transform((value) => (value && value.length > 0 ? value : null)),
       is_active: z.boolean().optional().default(true),
     })
     .strict(),
 });
 export type CreateMatiereSousEtatBodyDTO = z.infer<typeof createMatiereSousEtatSchema>["body"];
+
+export const updateMatiereSousEtatSchema = z.object({
+  body: z.object({
+    code: optionalReferentialCode,
+    designation: optionalReferentialDesignation,
+    informations: z.union([z.string().trim().max(10000), z.null()]).optional(),
+    is_active: z.boolean().optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, "At least one field is required"),
+});
+export type UpdateMatiereSousEtatBodyDTO = z.infer<typeof updateMatiereSousEtatSchema>["body"];
 
 /**
  * #164 — Aperçu SERVEUR de la référence matière.
@@ -811,6 +863,12 @@ const historicalPfImportSchema = z.object({
     kind: z.literal("PF"),
     client_number: z.string().trim().min(1).max(40),
     article_id: uuid.optional(),
+    // Optional for the established historical-import endpoint.  Controlled
+    // cutover supplies it after an exact plan/revision lookup so an OLD lot
+    // cannot silently attach to the current technical version.
+    technical_version_id: uuid.optional().nullable(),
+    unite: z.string().trim().min(1).max(30).optional().nullable(),
+    supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
     reference: z.string().trim().min(1).max(120).optional(),
     indice: z.string().trim().min(1).max(40).optional().nullable(),
     family_code: z.string().trim().min(1).max(40).optional(),
@@ -819,6 +877,15 @@ const historicalPfImportSchema = z.object({
     of_affaire_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
     mp_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
     traitement_lot_refs: z.array(z.string().trim().min(1).max(120)).max(4).optional().default([]),
+    historical_lot_reference: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_shelf: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_status: z.enum(["LIBERE", "QUARANTAINE", "BLOQUE", "EN_ATTENTE"]).optional(),
+    owner_client_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+    historical_traceability: z.object({
+      certificate_reference: z.string().trim().min(1).max(120).optional(),
+      heat_number: z.string().trim().min(1).max(120).optional(),
+      source: z.object({ legacy_key: z.string().trim().min(1).max(240), source_id: z.string().trim().min(1).max(240), sheet: z.string().trim().min(1).max(240), row_number: z.number().int().positive() }).strict(),
+    }).strict().optional(),
     notes: z.string().trim().min(1).max(2000).optional().nullable(),
   }).strict();
 const historicalMpImportSchema = z.object({
@@ -828,6 +895,16 @@ const historicalMpImportSchema = z.object({
     quantity: z.coerce.number().positive(),
     unite: z.string().trim().min(1).max(30).optional().nullable(),
     lot_number: z.string().trim().min(1).max(120),
+    supplier_lot_code: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_reference: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_shelf: z.string().trim().min(1).max(120).optional().nullable(),
+    historical_lot_status: z.enum(["LIBERE", "QUARANTAINE", "BLOQUE", "EN_ATTENTE"]).optional(),
+    owner_client_id: z.string().trim().regex(/^[0-9]{3}$/).optional().nullable(),
+    historical_traceability: z.object({
+      certificate_reference: z.string().trim().min(1).max(120).optional(),
+      heat_number: z.string().trim().min(1).max(120).optional(),
+      source: z.object({ legacy_key: z.string().trim().min(1).max(240), source_id: z.string().trim().min(1).max(240), sheet: z.string().trim().min(1).max(240), row_number: z.number().int().positive() }).strict(),
+    }).strict().optional(),
     notes: z.string().trim().min(1).max(2000).optional().nullable(),
   }).strict();
 export const historicalImportSchema = z.object({ body: z.discriminatedUnion("kind", [historicalPfImportSchema, historicalMpImportSchema]) }).superRefine((value, ctx) => {

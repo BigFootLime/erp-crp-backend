@@ -19,7 +19,14 @@ vi.mock("pg", () => {
   const emitter = new EventEmitter();
   const pool = {
     on: emitter.on.bind(emitter),
-    query: mocks.poolQuery,
+    query: (...args: unknown[]) => {
+      const sql = String(args[0]);
+      // Ordinary fixture documents have no private cutover parent. These
+      // independent authorization reads must not consume document SQL fixtures.
+      if (sql.includes("AS private") && sql.includes("ged_document_links")) return Promise.resolve({ rows: [{ private: false }], rowCount: 1 });
+      if (sql.includes("COALESCE(is_superadmin, false) AS is_superadmin")) return Promise.resolve({ rows: [{ is_superadmin: false }], rowCount: 1 });
+      return mocks.poolQuery(...args);
+    },
     connect: mocks.poolConnect,
   };
   mocks.poolConnect.mockResolvedValue({

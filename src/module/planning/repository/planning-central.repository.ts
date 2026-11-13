@@ -1,3 +1,6 @@
+import { resolvePlanningClientColor } from "../domain/planning-client-color";
+import { readOperationQualifications } from "./planning-operation-resources.repository";
+import { hydratePlanningSupply } from './planning-supply-state';
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
 import pool from "../../../config/database";
@@ -12,6 +15,9 @@ import {readPlanningCoverageTx} from './planning-coverage.repository';
 import {emptyPlanningCoverage} from '../domain/planning-material-coverage';
 import {hydrateExternalPlanning} from './planning-external.repository';
 import {earliestReplenishmentTarget,readReplenishmentPlanningTargets} from './planning-replenishment-targets.repository';
+import { readPlanningEligibleOfIds } from './planning-of-eligibility.repository';
+import { readWorkstationDefaults } from '../../production/repository/workstation-defaults.repository';
+import { WORKSTATION_TYPES, WORKSTATION_LABELS, resolveDefaultPoste, isWorkstationType } from '../../production/domain/workstation-defaults';
 
 export type CentralQuery = Pick<PoolClient, "query">;
 type Row = Record<string, unknown>;
@@ -66,19 +72,6 @@ WITH operation_rows AS (
  WHERE o.statut<>'ANNULE' AND op.status::text<>'CANCELLED'
    AND(op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
    AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
-), draft_rows AS (
- SELECT t.id,NULL::text AS operation_id,NULL::text AS programming_id,t.draft_of_id,
-   t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
-   o.id,o.commande_id,o.numero,pt.code_piece,o.piece_technique_version_id::text,'Opérations à définir'::text,0::int,
-   'machines'::text,cc.order_type='INTERNE',cc.internal_order_purpose,o.quantite_lancee,0::numeric,0::numeric,0::numeric,0::numeric,
-   NULL::text,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,NULL::timestamptz,'TODO'::text,
-   o.technical_readiness,CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END,1::int,o.created_at,o.updated_at,0::numeric,NULL::numeric,'DRAFT'::text
- FROM public.planning_tasks t JOIN public.ordres_fabrication o ON o.id=t.draft_of_id
- JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
- LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
- LEFT JOIN public.commande_ligne cl ON cl.id=o.commande_ligne_id
- WHERE o.statut='BROUILLON' AND NOT EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id=o.id)
-   AND NOT EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE')
 ), legacy_program_rows AS (
  SELECT t.id,NULL::text AS operation_id,pr.id::text AS programming_id,NULL::bigint AS draft_of_id,
    t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
@@ -101,9 +94,10 @@ WITH operation_rows AS (
    t.version,t.envelope_minutes,t.earliest_start,t.forecast_start,t.forecast_end,t.forecast_resource_ids,t.locked,t.blockers,t.configuration_key,
     o.id,o.commande_id,o.numero,pt.code_piece,v.id::text,
    'Préparer le programme — indice '||v.indice||' · révision interne '||COALESCE(v.version_interne::text,'non renseignée'),0::int,
-    'programming'::text,COALESCE(cc.order_type='INTERNE',false),cc.internal_order_purpose,1::numeric,CASE WHEN pr.status='DONE' THEN 1 ELSE 0 END::numeric,
+    'programming'::text,COALESCE(cc.order_type='INTERNE',false),cc.internal_order_purpose,1::numeric,
+    COALESCE((to_jsonb(pr)->>'progress_percent')::numeric,CASE WHEN pr.status='DONE' THEN 100 ELSE 0 END)/100,
    0::numeric,0::numeric,0::numeric,'person:'||pr.assignee_id::text,t.committed_start,t.committed_end,
-   NULL::timestamptz,pr.completed_at,pr.status,'VALIDATED'::text,NULL::text,1::int,
+    NULL::timestamptz,pr.completed_at,CASE WHEN pr.status='DONE' THEN 'DONE' WHEN COALESCE((to_jsonb(pr)->>'progress_percent')::int,0)>0 THEN 'RUNNING' ELSE pr.status END,'VALIDATED'::text,NULL::text,1::int,
    pr.updated_at,pr.updated_at,0::numeric,pr.estimated_hours*60,'PROGRAMMING'::text
  FROM public.planning_tasks t JOIN public.piece_version_programming_tasks pr ON pr.id=t.version_programming_id
  JOIN public.piece_technique_versions v ON v.id=pr.piece_technique_version_id
@@ -113,20 +107,22 @@ WITH operation_rows AS (
  WHERE v.statut<>'OBSOLETE' OR t.locked OR t.committed_start IS NOT NULL OR pr.status<>'TODO'
    OR EXISTS(SELECT 1 FROM public.ordres_fabrication consumer
      WHERE consumer.piece_technique_version_id=v.id AND consumer.statut::text NOT IN ('ANNULE','TERMINE'))
-), tasks AS (SELECT * FROM operation_rows UNION ALL SELECT * FROM draft_rows UNION ALL
+), tasks AS (SELECT * FROM operation_rows UNION ALL
  SELECT * FROM legacy_program_rows UNION ALL SELECT * FROM version_program_rows), filtered AS (
 SELECT tasks.*,owner.client_id,customer.company_name AS client_name,
   (SELECT max(addition.created_at) FROM public.production_recovery_consolidation_additions addition
     WHERE addition.producer_of_id=tasks.of_id AND addition.evidence->'resumptions'
       @> jsonb_build_array(jsonb_build_object('operation_id',tasks.operation_id))) AS cycle_started_at,
-  COALESCE(to_jsonb(customer)->>'color_hex',to_jsonb(customer)->>'color') AS client_color,
+  CASE WHEN to_jsonb(customer) ? 'planning_color_hex' THEN to_jsonb(customer)->>'planning_color_hex'
+       ELSE COALESCE(to_jsonb(customer)->>'color_hex',to_jsonb(customer)->>'color') END AS client_color,
   COALESCE(promise.due::text,tasks.due) AS commercial_due
   FROM tasks LEFT JOIN public.ordres_fabrication owner ON owner.id=tasks.of_id
   LEFT JOIN public.clients customer ON customer.client_id=owner.client_id
   LEFT JOIN LATERAL (SELECT min(p.due_date) AS due FROM public.delivery_promise_roots r
     JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
     WHERE r.line_id=owner.commande_ligne_id AND p.quantity>COALESCE((SELECT sum(s.quantity) FROM public.delivery_promise_shipments s WHERE s.part_id=p.id),0)) promise ON true
- WHERE ($3::bigint IS NULL OR of_id=$3)
+ WHERE (tasks.of_id IS NULL OR tasks.of_id=ANY($13::bigint[]))
+ AND ($3::bigint IS NULL OR of_id=$3)
  AND ($4::text IS NULL OR reference ILIKE '%'||$4||'%' OR of_number ILIKE '%'||$4||'%' OR label ILIKE '%'||$4||'%')
    AND ($5::text IS NULL OR resource_id=$5 OR (committed_start IS NULL AND $5=ANY(forecast_resource_ids)))
   AND ($12::text IS NULL OR owner.client_id=$12)
@@ -157,11 +153,12 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
   const committed = interval(row.committed_start,row.committed_end);
   return { id:String(row.id),source:row.source as CentralTask["source"],operationId:str(row.operation_id),
     programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
-    clientName:str(row.client_name),clientColor:str(row.client_color),cycleStartedAt:instant(row.cycle_started_at),
+    clientName:str(row.client_name),clientColor:resolvePlanningClientColor(str(row.client_id),str(row.client_name),str(row.client_color)),cycleStartedAt:instant(row.cycle_started_at),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
     phase:row.source==="OPERATION" && row.phase != null ? num(row.phase) : null,
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
     released:num(row.released),resourceIds,eligibleResourceIds:resourceIds,
+    ...(row.source==='PROGRAMMING'?{progressPercent:Math.round(good/Math.max(quantity,1)*100)}:{}),
     forecastResourceIds:row.forecast_resource_ids == null ? null : strings(row.forecast_resource_ids),
     committed,forecast:interval(row.forecast_start,row.forecast_end),actual:row.actual_start || row.actual_end ?
       { ...(row.actual_start ? {start:instant(row.actual_start)!}:{}), ...(row.actual_end ? {end:instant(row.actual_end)!}:{}) } : null,
@@ -179,11 +176,13 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
         m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
           AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL) AS capacity_enabled
         FROM public.machines m WHERE m.archived_at IS NULL
-      UNION ALL SELECT 'poste:'||id::text,'POSTE',code||' · '||label,COALESCE('machine:'||machine_id::text,'poste:'||id::text),true FROM public.postes WHERE is_active
+      UNION ALL SELECT 'poste:'||id::text,'POSTE',code||' · '||label,COALESCE('machine:'||machine_id::text,'poste:'||id::text),true FROM public.postes WHERE is_active AND archived_at IS NULL
       UNION ALL SELECT 'person:'||u.id::text,'PERSON',COALESCE(rc.display_label,u.username),'person:'||u.id::text,true
         FROM public.users u LEFT JOIN public.planning_resource_calendars rc ON rc.user_id=u.id
         WHERE rc.user_id IS NOT NULL OR EXISTS(SELECT 1 FROM public.programmations p WHERE p.programmer_user_id=u.id AND p.archived_at IS NULL)
           OR EXISTS(SELECT 1 FROM public.piece_version_programming_tasks p WHERE p.assignee_id=u.id)
+          OR EXISTS(SELECT 1 FROM public.erp_settings s WHERE s.key='production.workstation_defaults'
+            AND s.value_json->'programmer_user_ids' @> jsonb_build_array(u.id))
     )
     SELECT r.*,c.timezone,c.working_days,c.day_start::text,c.day_end::text,c.id IS NOT NULL AS calendar_configured,
       COALESCE(rc.version,mc.version,0)::text||':'||c.updated_at::text AS version,
@@ -207,6 +206,7 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
     FROM resources r LEFT JOIN public.planning_resource_calendars rc ON rc.resource_id=r.id
     LEFT JOIN public.planning_resource_calendars mc ON mc.resource_id=r.capacity_id AND r.capacity_id<>r.id
     LEFT JOIN public.programmation_calendars c ON c.id=COALESCE(rc.calendar_id,mc.calendar_id,
+      (SELECT workshop_calendar_id FROM public.planning_central_settings WHERE singleton),
       (SELECT id FROM public.programmation_calendars WHERE active AND (SELECT count(*) FROM public.programmation_calendars WHERE active)=1)) AND c.active
     ORDER BY r.kind,r.label,r.id`,[from,to]);
   const cache = new Map<string, Resource["availability"]>();
@@ -278,9 +278,10 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
   const settings = await readCentralSettings(tx);
   if (query.snapshot_revision && query.snapshot_revision !== settings.revision)
     throw new HttpError(409,'PLANNING_SNAPSHOT_OBSOLETE','Le planning a changé. Actualisez la liste.');
+  const eligibleOfIds = await readPlanningEligibleOfIds(tx, query.of_id ? [query.of_id] : undefined);
   const { rows } = await tx.query<Row>(TASK_QUERY,[query.from,query.to,query.of_id ?? null,query.search ?? null,
     query.resource_id ?? null,query.cursor ?? null,query.limit+1,query.includeTaskIds ?? [],query.placement ?? null,
-    query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null]);
+    query.taskIdsOnly??false,query.capacityResourceIds??null,query.client_id??null,eligibleOfIds]);
   const more = rows.length > query.limit;
   const visible = more ? rows.slice(0,query.limit) : rows;
   const targets=await readReplenishmentPlanningTargets(tx,visible.flatMap(row=>row.of_id==null?[]:[num(row.of_id)]));
@@ -291,41 +292,26 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
   const tasks = visible.map(row => taskFromRow(row));
   const operationIds = tasks.flatMap(task => task.operationId ? [task.operationId] : []);
   if (operationIds.length) {
-    const { rows: qualifications } = await tx.query<{id:string;family:string|null;operation_type:string|null;eligible:string[]}>(`
-      WITH qualified_resources AS (
-        SELECT 'machine:'||m.id::text AS id,upper(btrim(m.machine_family_code)) AS family
-        FROM public.machines m WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL)
-          AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
-        UNION ALL
-        SELECT 'poste:'||p.id::text,upper(btrim(m.machine_family_code))
-        FROM public.postes p JOIN public.machines m ON m.id=p.machine_id
-        WHERE p.is_active AND m.archived_at IS NULL AND m.status::text='ACTIVE' AND m.is_available IS NOT FALSE AND NOT EXISTS(SELECT 1 FROM public.production_maintenance_holds h WHERE h.machine_id=m.id AND h.resolved_at IS NULL)
-          AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)
-      )
-      SELECT op.id::text,NULLIF(btrim(op.machine_family_code),'') AS family,frozen.operation_type,
-        CASE WHEN NULLIF(btrim(op.machine_family_code),'') IS NULL
-          AND frozen.operation_type IN ('DECOUPE','ASSEMBLAGE','CONTROLE','LAVAGE','EMBALLAGE','AUTRE')
-          AND p.id IS NOT NULL AND p.is_active AND p.archived_at IS NULL AND p.machine_id IS NULL AND op.machine_id IS NULL
-          THEN ARRAY['poste:'||p.id::text]
-          ELSE COALESCE(array_agg(r.id ORDER BY r.id) FILTER(WHERE r.id IS NOT NULL),'{}'::text[]) END AS eligible
-      FROM public.of_operations op
-      JOIN public.ordres_fabrication o ON o.id=op.of_id
-      LEFT JOIN public.postes p ON p.id=op.poste_id
-      LEFT JOIN LATERAL (SELECT value->>'type_operation' AS operation_type
-        FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
-        WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
-      LEFT JOIN qualified_resources r
-        ON r.family=upper(NULLIF(btrim(op.machine_family_code),''))
-      WHERE op.id=ANY($1::uuid[]) GROUP BY op.id,p.id,frozen.operation_type`,[operationIds]);
+    const setup = await readWorkstationDefaults(tx);
+    const defaultPostes = Object.fromEntries(WORKSTATION_TYPES.map(type => [type,resolveDefaultPoste(type,setup.defaults,setup.postes)?.id ?? null]));
+    const qualifications = await readOperationQualifications(tx,operationIds,defaultPostes);
     const byId = new Map(qualifications.map(row => [row.id,row]));
     for (const task of tasks) if (task.operationId && task.view!=='external') {
       const qualification = byId.get(task.operationId);
       task.operationType = str(qualification?.operation_type);
       task.eligibleResourceIds = qualification?.eligible ?? [];
-      if (!qualification?.family) {
-        const manual = ["DECOUPE", "ASSEMBLAGE", "CONTROLE", "LAVAGE", "EMBALLAGE", "AUTRE"].includes(qualification?.operation_type ?? "");
-        if (!manual) task.blockers.push("Famille machine à définir dans la gamme.");
-        else if (!task.eligibleResourceIds.length) task.blockers.push("Poste de travail à affecter dans la fiche OF.");
+      const type = qualification?.operation_type;
+      if (isWorkstationType(type)) {
+        if (!task.eligibleResourceIds.length) {
+          const issue={code:"WORKSTATION_NOT_CONFIGURED",message:`Aucun poste de travail utilisable pour ${WORKSTATION_LABELS[type]} (phase ${task.phase ?? '—'}). Configurez un poste autonome actif ou vérifiez l’affectation de cet OF.`,actionPath:"/administration/erp-settings?setup=machines&view=postes"};
+          task.resourceIssues=[issue];task.blockers.push(issue.message);
+        } else if (!task.resourceIds.length && !task.committed && task.eligibleResourceIds.length===1) {
+          // Resolve the reusable default without writing an assignment or a slot.
+          task.resourceIds=[task.eligibleResourceIds[0]];
+        }
+      } else if (!qualification?.family || !task.eligibleResourceIds.length) {
+        const message=!qualification?.family ? "Famille machine à définir dans la gamme." : `Aucune machine active qualifiée pour la famille ${qualification.family}.`;
+        task.resourceIssues=[{code:"MACHINE_QUALIFICATION_MISSING",message,actionPath:"/production/machines"}];task.blockers.push(message);
       }
       task.version = createHash("sha256").update(task.version+JSON.stringify([task.eligibleResourceIds,task.operationType])).digest("hex");
     }
@@ -333,6 +319,11 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
       task.operationType = str(byId.get(task.operationId)?.operation_type);
   }
   const resources = await readCentralResources(tx,query.from,query.to,query.includeResourceAvailability);
+  for (const task of tasks) if (task.view!=='external' && task.eligibleResourceIds.length &&
+    task.eligibleResourceIds.every(id=>resources.find(resource=>resource.id===id)?.calendarConfigured!==true)) {
+    const issue={code:"RESOURCE_CALENDAR_MISSING",message:`Aucun calendrier de travail actif pour ${task.label}. Configurez les horaires de l’atelier ou de la ressource.`,actionPath:"/administration/erp-settings?setup=workshop"};
+    task.resourceIssues=[...(task.resourceIssues??[]),issue];task.blockers.push(issue.message);
+  }
   await hydrateDurationEstimates(tx,tasks,resources,settings.activation==='LEARN');
   if(settings.activation==='LEARN') for(const task of tasks) task.version=createHash('sha256')
     .update(task.version+JSON.stringify(task.estimate)+JSON.stringify(task.resourceEstimates)).digest('hex');
@@ -340,6 +331,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
   // Keep boundary edges for the inspector and scheduler, without sending the complete graph on every UI page.
   const dependencies = (await readCentralDependencies(tx)).filter(d=>taskIds.has(d.predecessorId)||taskIds.has(d.successorId));
   await hydrateExternalPlanning(tx,tasks,resources,dependencies,query.from,query.to);
+  await hydratePlanningSupply(tx,tasks);
   // Historical transfers covered the previous cycle. A restarted successor
   // must wait for the newly added pieces when forecasting the complete batch.
   const byTaskId=new Map(tasks.map(task=>[task.id,task]));

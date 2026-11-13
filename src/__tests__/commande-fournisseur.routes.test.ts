@@ -214,7 +214,7 @@ describe("/api/v1/commandes-fournisseurs — création", () => {
       entityType: "commande-fournisseur",
       entityId: UUID,
       documentKind: "SUPPLIER_PURCHASE_ORDER",
-      renderVersion: "supplier-po-pdf-v1",
+      renderVersion: "supplier-po-pdf-v1+style-20261019",
     }));
 
     const forbidden = await request(app)

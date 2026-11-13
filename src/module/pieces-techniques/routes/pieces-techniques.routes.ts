@@ -1,3 +1,4 @@
+import { requireMethodesCapability } from "../../methodes/middlewares/methodes-authorization.middleware"
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
 import {
@@ -51,6 +52,7 @@ import {
   createPieceTechnique,
   previewPieceTechniqueCode,
   deletePieceTechnique,
+  archivePieceTechnique,
   deleteAchat,
   deleteBomLine,
   deleteOperation,
@@ -110,6 +112,7 @@ import {
   updateVersion,
   updateVersionStatus,
   publishVersion,
+  preparePieceEdit,
 } from "../controllers/versions.controller"
 import { createOrLinkArticleFabrique, getPieceArticlePrincipal } from "../controllers/piece-article.controller"
 import {
@@ -119,6 +122,7 @@ import {
   versionIdParamSchema,
   versionStatusSchema,
   publishVersionSchema,
+  preparePieceEditSchema,
 } from "../validators/versions.validators"
 import {
   getTechnicalCompleteness,
@@ -210,6 +214,7 @@ router.post("/:id/creation-snapshot/:documentId/print-intents", validate(idParam
 router.get("/:id", validate(idParamSchema), getPieceTechnique)
 router.patch("/:id", validate(idParamSchema), validate(updatePieceTechniqueSchema), updatePieceTechnique)
 router.delete("/:id", requireDeleteRole, validate(idParamSchema), deletePieceTechnique)
+router.post("/:id/archive",requireDeleteRole,validate(idParamSchema),archivePieceTechnique)
 
 router.post("/:id/duplicate", validate(idParamSchema), duplicatePieceTechnique)
 router.post("/:id/status", validate(idParamSchema), validate(pieceTechniqueStatusSchema), updatePieceTechniqueStatus)
@@ -220,6 +225,7 @@ router.post("/:id/create-or-link-article-fabrique", validate(idParamSchema), cre
 
 // Versions / indices (GPAO B2.1) — source de vérité indice/plan/statut.
 router.get("/:id/versions", validate(idParamSchema), listVersions)
+router.post("/:id/prepare-edit", validate(idParamSchema), validate(preparePieceEditSchema), preparePieceEdit)
 // Version-scoped technical PDF; never replaces the immutable creation receipt.
 router.get("/:id/versions/:versionId/technical-sheet/source", technicalSheetSource)
 router.get("/:id/versions/:versionId/technical-sheet", listTechnicalSheets)
@@ -258,8 +264,8 @@ router.patch("/:id/operations/:opId", validate(operationIdParamSchema), validate
 router.delete("/:id/operations/:opId", validate(operationIdParamSchema), deleteOperation)
 router.post("/:id/operations/reorder", validate(idParamSchema), validate(reorderSchema), reorderOperations)
 
-router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), addAchat)
-router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), updateAchat)
+router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), addAchat)
+router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), (req,res,next)=>req.body?.gamme_operation_id !== undefined ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), updateAchat)
 router.delete("/:id/achats/:achatId", validate(achatIdParamSchema), deleteAchat)
 router.post("/:id/achats/reorder", validate(idParamSchema), validate(reorderSchema), reorderAchats)
 

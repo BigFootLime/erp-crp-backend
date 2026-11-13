@@ -20,6 +20,7 @@ import {
   documentIdParamSchema,
   getPieceTechniqueQuerySchema,
   idParamSchema,
+  fabricationTreeQuerySchema,
   listPiecesTechniquesQuerySchema,
   operationIdParamSchema,
   pieceTechniqueStatusSchema,
@@ -262,7 +263,8 @@ export const getPieceTechnique: RequestHandler = async (req, res, next) => {
 export const getPieceTechniqueFabricationTree: RequestHandler = async (req, res, next) => {
   try {
     const { id } = idParamSchema.parse({ params: req.params }).params
-    const out = await getPieceTechniqueFabricationTreeSVC(id)
+    const {version_id}=fabricationTreeQuerySchema.parse({query:req.query}).query
+    const out = await getPieceTechniqueFabricationTreeSVC(id,version_id)
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return
@@ -327,6 +329,16 @@ export const updatePieceTechniqueStatus: RequestHandler = async (req, res, next)
   } catch (err) {
     next(err)
   }
+}
+
+/** Archive the catalogue record while keeping its stable code and all OF links. */
+export const archivePieceTechnique:RequestHandler=async(req,res,next)=>{
+  try{
+    const {id}=idParamSchema.parse({params:req.params}).params
+    const result=await updatePieceTechniqueStatusSVC(id,{next_statut:'OBSOLETE',commentaire:'Archivage de la pièce technique.'},buildAuditContext(req))
+    if(!result)throw new HttpError(404,'PIECE_NOT_FOUND','Pièce technique introuvable.')
+    res.json(result)
+  }catch(error){next(error)}
 }
 
 function isMulterFile(value: unknown): value is Express.Multer.File {
@@ -609,7 +621,7 @@ export const addAchat: RequestHandler = async (req, res, next) => {
   try {
     const { id } = idParamSchema.parse({ params: req.params }).params
     const body = req.body as AddAchatBodyDTO
-    const out = await addAchatSVC(id, body)
+    const out = await addAchatSVC(id, body, buildAuditContext(req))
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return
@@ -624,7 +636,7 @@ export const updateAchat: RequestHandler = async (req, res, next) => {
   try {
     const { id, achatId } = achatIdParamSchema.parse({ params: req.params }).params
     const body = req.body as UpdateAchatBodyDTO
-    const out = await updateAchatSVC(id, achatId, body)
+    const out = await updateAchatSVC(id, achatId, body, buildAuditContext(req))
     if (!out) {
       res.status(404).json({ error: "Not found" })
       return

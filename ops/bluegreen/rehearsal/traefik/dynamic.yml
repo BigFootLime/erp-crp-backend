@@ -1,0 +1,11 @@
+http:
+  routers:
+    cerp-rehearsal-private:
+      entryPoints: [private]
+      rule: Host(`cerp-rehearsal.internal`)
+      service: cerp-rehearsal-api
+  services:
+    cerp-rehearsal-api:
+      loadBalancer:
+        servers:
+          - url: http://cerp-api-rehearsal-1710:5000

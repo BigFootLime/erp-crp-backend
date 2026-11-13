@@ -8,6 +8,11 @@ import { describe, expect, it } from "vitest";
 
 import { HttpError } from "../utils/httpError";
 import {
+  allocateSpecialProcessArticleCode,
+  specialProcessArticleCode,
+  specialProcessTechnicalReference,
+} from "../shared/codes/special-process-code";
+import {
   ARTICLE_DECISIONS,
   assertArticleDecisionConsistent,
   assertGammeEditable,
@@ -103,6 +108,35 @@ function expectHttpError(fn: () => unknown, status: number, code: string): void 
   }
   throw new Error(`Expected HttpError ${status} ${code} but nothing was thrown`);
 }
+
+describe("#1830/1832 références de procédés spéciaux", () => {
+  it("dérive la référence PS du plan et de l'indice, jamais du client", () => {
+    expect(specialProcessTechnicalReference(" plan 42 / a ", " ind. 03 ")).toBe("PLAN-42-A-IND-03");
+    expect(specialProcessArticleCode("Anodisation noire", "PLAN-42-A-IND-03")).toBe("PS-ANODISATION-NOIRE-PLAN-42-A-IND-03");
+  });
+
+  it("refuse une référence technique incomplète", () => {
+    expectHttpError(() => specialProcessTechnicalReference(null, "A"), 422, "SPECIAL_PROCESS_PLAN_REQUIRED");
+    expectHttpError(() => specialProcessTechnicalReference("PLAN-42", "  "), 422, "SPECIAL_PROCESS_INDEX_REQUIRED");
+  });
+
+  it("sérialise l'allocation et ne réutilise jamais un code archivé ou déjà émis", async () => {
+    const calls: Array<{ sql: string; values?: unknown[] }> = [];
+    const tx = {
+      query: async (sql: string, values?: unknown[]) => {
+        calls.push({ sql, values });
+        if (sql.includes("FROM public.articles")) {
+          return { rows: [{ code: "PS-ANO-PLAN-42-A" }, { code: "PS-ANO-PLAN-42-A-02" }] };
+        }
+        return { rows: [] };
+      },
+    };
+
+    await expect(allocateSpecialProcessArticleCode(tx, "ANO", "PLAN-42-A")).resolves.toBe("PS-ANO-PLAN-42-A-03");
+    expect(calls[0]?.sql).toContain("pg_advisory_xact_lock");
+    expect(calls[1]?.sql).toContain("FROM public.articles");
+  });
+});
 
 /* -------------------------------------------------------------------------- */
 /* 1) Capacités RBAC — refus par défaut                                       */
@@ -559,13 +593,13 @@ describe("#210 désignation générée", () => {
     zones: [] as string[],
   };
 
-  it("respecte le modèle ST — {pièce} ind. {indice} — {finition}", () => {
+  it("respecte le modèle PS/{nom diminutif}-{plan}-{indice} — {finition}", () => {
     expect(buildGeneratedDesignation({ ...ctx, teinte_ral: null, couleur: null, epaisseur_nominale_um: null, epaisseur_min_um: null }))
-      .toBe("ST — CAP-100 ind. C — Anodisation noire");
+      .toBe("PS/CAP-100 — Anodisation noire");
   });
 
   it("ajoute les qualificatifs discriminants disponibles", () => {
-    expect(buildGeneratedDesignation(ctx)).toBe("ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm");
+    expect(buildGeneratedDesignation(ctx)).toBe("PS/CAP-100 — Anodisation noire RAL 9005 20 µm");
   });
 
   it("retombe sur l'épaisseur minimale quand la nominale manque", () => {
@@ -615,11 +649,7 @@ describe("#210 désignation générée", () => {
       422,
       "SURFACE_FINISH_DESIGNATION_CONTEXT_INCOMPLETE"
     );
-    expectHttpError(
-      () => buildGeneratedDesignation({ ...ctx, indice: "   " }),
-      422,
-      "SURFACE_FINISH_DESIGNATION_CONTEXT_INCOMPLETE"
-    );
+    expect(buildGeneratedDesignation({ ...ctx, indice: "   " })).toContain("PS/CAP-100");
   });
 
   it("tronque sans couper au milieu d'un mot quand c'est possible", () => {

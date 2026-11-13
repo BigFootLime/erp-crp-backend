@@ -8,6 +8,7 @@ import {
   repoGetVersion,
   repoListVersions,
   repoPublishVersion,
+  repoPreparePieceEdit,
   repoUpdateVersion,
   repoUpdateVersionStatus,
 } from "../repository/versions.repository"
@@ -34,6 +35,7 @@ export function isValidVersionTransition(from: VersionStatutDTO, to: VersionStat
 }
 
 export const listVersionsSVC = (pieceTechniqueId: string) => repoListVersions(pieceTechniqueId)
+export const preparePieceEditSVC = (pieceTechniqueId: string, audit: AuditContext) => repoPreparePieceEdit(pieceTechniqueId, audit)
 
 export const createVersionSVC = (pieceTechniqueId: string, body: CreateVersionBodyDTO, audit: AuditContext) =>
   repoCreateVersion(pieceTechniqueId, body, audit)

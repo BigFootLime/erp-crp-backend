@@ -20,6 +20,7 @@ import { productionReceiptLanesOperation } from './production-receipt-lanes-cont
 import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 import { metrologyDocumentsOperation } from './metrology-documents-contract';
+import { nuanceLibraryOperation } from './nuance-library-contract';
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -112,6 +113,7 @@ const SUPPLIER_PORTAL_CREDENTIAL_OPERATIONS = new Set([
 ]);
 
 const IDEMPOTENT_OPERATIONS = new Set([
+  "post /stock/articles/{id}/reconfigure",
   "post /admin/webhooks/subscriptions",
   "patch /admin/webhooks/subscriptions/{id}",
   "post /admin/webhooks/subscriptions/{id}/rotate-secret",
@@ -304,6 +306,24 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
+  if (key === "post /stock/articles/{id}/reconfigure") {
+    operation.summary = "Reconfigurer un article et choisir l'application aux pièces techniques";
+    operation.description = "Commande atomique et idempotente : REPLACE_ALL remplace les liens modifiables et prépare des brouillons pour les versions applicables ; ARCHIVE_OLD archive la source en préservant ses références ; KEEP_BOTH conserve les deux articles. Coûts masqués selon les droits. Droits d'archivage et de gestion fournisseur vérifiés selon le contenu. Les contrats article et finish réutilisent respectivement createArticleSchema et stockArticleFinishConfirmBodySchema. Aucune réécriture des versions obsolètes, OF, documents ou stocks existants.";
+    operation.requestBody = { required: true, content: { "application/json": { schema: {
+      type: "object", additionalProperties: false, required: ["expected_row_version", "action"],
+      properties: {
+        expected_row_version: { type: "integer", minimum: 1 },
+        action: { type: "string", enum: ["REPLACE_ALL", "ARCHIVE_OLD", "KEEP_BOTH"] },
+        article: { type: "object", required: ["article_category", "family_code"], additionalProperties: true,
+          description: "Configuration complète conforme au contrat de création Article ; code attribué par le serveur.",
+          properties: { article_category: { type: "string", enum: ["matiere", "achat"] }, family_code: { type: "string", minLength: 1, maxLength: 40 }, article_matiere: { type: "object" }, subcontract_definition: { type: "object" } } },
+        finish: { type: "object", required: ["piece_technique_id", "piece_technique_version_id", "finish_revision_id", "decision", "preview_hash", "spec_fingerprint"],
+          description: "Confirmation conforme au contrat stockArticleFinishConfirmBodySchema, avec les empreintes de l'aperçu serveur.", additionalProperties: true },
+      },
+      oneOf: [{ required: ["article"], not: { required: ["finish"] } }, { required: ["finish"], not: { required: ["article"] } }],
+    } } } };
+  }
+  if (route.path.startsWith("/stock/matiere-nuances")) return nuanceLibraryOperation(key, operation);
   if (route.path.startsWith("/entreprises")) return companyOperation(key, operation);
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
   return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));

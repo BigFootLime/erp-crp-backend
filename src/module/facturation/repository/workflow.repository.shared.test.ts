@@ -2,8 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { PoolClient } from "pg";
 
 import { HttpError } from "../../../utils/httpError";
+import { assertFinancialCutoverEmissionAllowedTx } from "./financial-cutover-guard";
+vi.mock("./financial-cutover-guard", () => ({
+  assertFinancialCutoverEmissionAllowedTx: vi.fn().mockResolvedValue({ phase: "IDLE" }),
+}));
 import {
   acquireFinanceIdempotency,
+  activateCutoverFinanceSharedSeriesTx,
+  allocateLegalNumber,
   type DbQueryer,
   requireFinanceIssuerSnapshotAt,
 } from "./workflow.repository.shared";
@@ -113,5 +119,63 @@ describe("finance workflow idempotency race guard", () => {
       commandType: "FACTURE_DRAFT_CREATE",
       requestPayload: { preview_hash: "b".repeat(64) },
     })).rejects.toMatchObject({ status: 409, code: "IDEMPOTENCY_KEY_REUSED" });
+  });
+});
+
+describe("cutover finance common series", () => {
+  it("uses one atomic series for invoices and credit notes only when it is active", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("to_regclass")) return { rows: [{ relation: "public.cutover_finance_shared_sequences" }] };
+      if (sql.includes("cutover_finance_shared_sequences")) {
+        return { rows: [{ allocated_value: "5412", facture_prefix: "FV-26-", avoir_prefix: "AV-26-", padding: 5 }] };
+      }
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await expect(allocateLegalNumber({ client: { query } as unknown as PoolClient, documentType: "FACTURE", entityCode: "CRP", issueDate: "2026-10-20" }))
+      .resolves.toEqual({ legalNumber: "FV-26-05412", periodKey: "2026", sequenceValue: 5412 });
+    await expect(allocateLegalNumber({ client: { query } as unknown as PoolClient, documentType: "AVOIR", entityCode: "CRP", issueDate: "2026-10-20" }))
+      .resolves.toEqual({ legalNumber: "AV-26-05412", periodKey: "2026", sequenceValue: 5412 });
+    expect(
+      query.mock.calls
+        .filter(([sql]) => String(sql).includes("cutover_finance_shared_sequences"))
+        .every(([sql]) => String(sql).includes("SET next_value = next_value + 1")),
+    ).toBe(true);
+  });
+
+  it("falls back to the existing independent finance configuration while the common series is inactive", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("to_regclass")) return { rows: [{ relation: "public.cutover_finance_shared_sequences" }] };
+      if (sql.includes("cutover_finance_shared_sequences")) return { rows: [] };
+      if (sql.includes("FROM public.finance_legal_sequences")) return { rows: [{ id: "legacy", prefix: "FAC-", next_value: "9", padding: 4 }] };
+      if (sql.includes("UPDATE public.finance_legal_sequences")) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await expect(allocateLegalNumber({ client: { query } as unknown as PoolClient, documentType: "FACTURE", entityCode: "CRP", issueDate: "2026-10-20" }))
+      .resolves.toEqual({ legalNumber: "FAC-0009", periodKey: "2026", sequenceValue: 9 });
+  });
+
+  it("does not fall back to independent legal series after the shared cutover becomes active for another period", async () => {
+    vi.mocked(assertFinancialCutoverEmissionAllowedTx).mockResolvedValueOnce({ phase: "ACTIVE" });
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("to_regclass")) return { rows: [{ relation: "public.cutover_finance_shared_sequences" }] };
+      if (sql.includes("cutover_finance_shared_sequences")) return { rows: [] };
+      if (sql.includes("finance_legal_sequences")) throw new Error("legacy fallback must not run after activation");
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await expect(allocateLegalNumber({ client: { query } as unknown as PoolClient, documentType: "FACTURE", entityCode: "CRP", issueDate: "2027-01-02" }))
+      .rejects.toMatchObject({ status: 409, code: "FINANCIAL_CUTOVER_SHARED_SERIES_PERIOD_REQUIRED" });
+  });
+
+  it("refuses automatic activation when a legacy legal sequence must be reviewed", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM public.finance_legal_sequences")) return { rows: [{ document_type: "AVOIR" }] };
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    await expect(activateCutoverFinanceSharedSeriesTx({
+      client: { query } as unknown as PoolClient,
+      entityCode: "CRP", periodKey: "2026", nextValue: 5412,
+      facturePrefix: "FV-26-", avoirPrefix: "AV-26-", padding: 5,
+      actorId: 7, evidenceReference: "balance-validated-2026-10-20",
+    })).rejects.toMatchObject({ code: "CUTOVER_FINANCE_LEGACY_SEQUENCE_REVIEW_REQUIRED" });
   });
 });
