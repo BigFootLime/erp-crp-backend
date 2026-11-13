@@ -11,6 +11,7 @@ import { syncOperationFinishTitleTx } from "./surface-finish-purchase-link.repos
 import type { PoolClient } from "pg";
 
 import db from "../../../config/database";
+import { allocateSpecialProcessArticleCode, specialProcessTechnicalReference } from "../../../shared/codes/special-process-code";
 import { HttpError } from "../../../utils/httpError";
 import type { AuditContext } from "../../pieces-techniques/repository/pieces-techniques.repository";
 import {
@@ -338,15 +339,16 @@ export type GenerationResult = {
  */
 export function generateTexts(params: {
   context: OperationFinishContext;
-  finish: { code: string; designation_courte: string; family_commentaire_template?: string | null };
+  finish: { code: string; procede?: string; designation_courte: string; family_commentaire_template?: string | null };
   revision: SurfaceFinishRevisionDetail;
   spec: CanonicalFinishSpec;
 }): GenerationResult {
   const { context, finish, revision, spec } = params;
 
   const designation = buildGeneratedDesignation({
-    code_piece: context.code_piece,
+    code_piece: specialProcessTechnicalReference(context.plan_reference, context.indice),
     indice: context.indice,
+    nom_diminutif: finish.procede,
     finition_courte: finish.designation_courte,
     teinte_ral: spec.teinte_ral,
     couleur: spec.couleur,
@@ -440,6 +442,35 @@ async function findExactMatch(tx: Queryer, fingerprint: string): Promise<Article
     [fingerprint]
   );
   return res.rows[0] ?? null;
+}
+
+/**
+ * An archived service article remains historical and reserves its issued code,
+ * but it must not retain the active requirement fingerprint of its replacement.
+ */
+async function releaseArchivedFingerprint(
+  tx: Queryer,
+  fingerprint: string,
+  replacementCode: string,
+  audit: AuditContext
+): Promise<void> {
+  const retired = await tx.query<{ article_id: string }>(
+    `UPDATE public.articles_traitement t
+     SET superseded_at = now(), updated_at = now()
+     FROM public.articles a
+     WHERE a.id = t.article_id
+       AND a.is_active = false
+       AND t.spec_fingerprint = $1
+       AND t.superseded_at IS NULL
+     RETURNING t.article_id::text AS article_id`,
+    [fingerprint]
+  );
+  for (const old of retired.rows) {
+    await insertFinishAudit(tx, audit, "finitions.article.replace_archived", "articles", old.article_id, {
+      spec_fingerprint: fingerprint,
+      replacement_code: replacementCode,
+    });
+  }
 }
 
 /**
@@ -541,7 +572,7 @@ function buildClassification(): PlannedArticleClassification {
     lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
     // Le code réel est alloué par le serveur à la confirmation : on annonce le
     // format, jamais une valeur qui pourrait ne pas être celle attribuée.
-    code_hint: `ART-${GENERATED_ARTICLE_TAXONOMY.default_family_code}-…`,
+    code_hint: "PS-<nom diminutif>-<référence plan>-<indice>",
   };
 }
 
@@ -802,6 +833,12 @@ export async function repoConfirmStockFinishArticle(
       articleFamily = classification.rows[0]?.family_code ?? articleFamily;
       articleCategories = classification.rows[0]?.category_codes ?? articleCategories;
     } else {
+      const specialProcessCode = await allocateSpecialProcessArticleCode(
+        client,
+        finish.procede,
+        specialProcessTechnicalReference(context.plan_reference, context.indice)
+      );
+      await releaseArchivedFingerprint(client, fingerprint, specialProcessCode, audit);
       const created = await repoCreateArticleTx(
         client,
         {
@@ -822,7 +859,8 @@ export async function repoConfirmStockFinishArticle(
           projet_id: null,
           piece_technique_id: null,
         } satisfies CreateArticleBodyDTO,
-        audit
+        audit,
+        { specialProcessCode }
       );
       articleId = created.id;
       articleCode = created.code;
@@ -1259,6 +1297,12 @@ export async function repoConfirmOperationFinish(
       );
       articleFamily = fam.rows[0]?.family_code ?? articleFamily;
     } else {
+      const specialProcessCode = await allocateSpecialProcessArticleCode(
+        client,
+        finish.procede,
+        specialProcessTechnicalReference(context.plan_reference, context.indice)
+      );
+      await releaseArchivedFingerprint(client, fingerprint, specialProcessCode, audit);
       const created = await repoCreateArticleTx(
         client,
         {
@@ -1281,7 +1325,8 @@ export async function repoConfirmOperationFinish(
           projet_id: null,
           piece_technique_id: null,
         } satisfies CreateArticleBodyDTO,
-        audit
+        audit,
+        { specialProcessCode }
       );
       articleId = created.id;
       articleCode = created.code;

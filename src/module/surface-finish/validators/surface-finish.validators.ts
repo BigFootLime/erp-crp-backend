@@ -226,6 +226,7 @@ export type FinishHistoryQueryDTO = z.infer<typeof finishHistoryQuerySchema>;
 /* -------------------------------------------------------------------------- */
 
 export const createFinishBodySchema = z.object({
+  applicable: z.boolean().optional().default(false),
   family_code: shortText,
   procede: shortText.optional(),
   designation_courte: shortText,

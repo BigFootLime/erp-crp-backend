@@ -3826,8 +3826,17 @@ export async function queueStockArticleCreationSnapshotTx(
 export async function repoCreateArticleTx(
   client: PoolClient,
   body: CreateArticleBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  identity?: { specialProcessCode: string }
 ): Promise<CreatedArticleSummary> {
+  if (
+    identity
+    && (body.article_category !== "traitement"
+      || !/^PS-[A-Z0-9]+(?:-[A-Z0-9]+)*$/.test(identity.specialProcessCode)
+      || identity.specialProcessCode.length > 80)
+  ) {
+    throw new HttpError(422, "SPECIAL_PROCESS_CODE_INVALID", "Code de procédé spécial invalide.");
+  }
   const normalized = await normalizeArticleState({
     article_type: body.article_type,
     article_category: body.article_category,
@@ -3879,11 +3888,11 @@ export async function repoCreateArticleTx(
       })()
     : null;
 
-  const generatedCode = normalized.article_category === "fabrique"
+  const generatedCode = identity?.specialProcessCode ?? (normalized.article_category === "fabrique"
     ? normalized.code
     : material
       ? material.code
-      : await generateArticleBusinessCode(client, normalized.family_code);
+      : await generateArticleBusinessCode(client, normalized.family_code));
 
   const designation = (body.designation ?? "").trim() || material?.designation || "";
   if (!designation) {

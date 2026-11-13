@@ -155,7 +155,8 @@ export async function listFinishHistorySVC(
   return repoListFinishHistory(finishId, query);
 }
 
-export async function createFinishDraftSVC(body: CreateFinishBodyDTO, audit: AuditContext): Promise<SurfaceFinishDetail> {
+export async function createFinishDraftSVC(body: CreateFinishBodyDTO, audit: AuditContext, actor?: Actor): Promise<SurfaceFinishDetail> {
+  if (body.applicable) assertSurfaceFinishCapability(actor?.role, "library_approve");
   return repoCreateFinishDraft(body, audit);
 }
 

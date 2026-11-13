@@ -543,7 +543,7 @@ export async function repoCreateFinishDraft(
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO public.surface_finishes
          (code, family_code, procede, designation_courte, designation_longue, description, synonymes, statut, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'BROUILLON',$8,$8)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$9,$8,$8)
        RETURNING id::text AS id`,
       [
         code,
@@ -554,17 +554,18 @@ export async function repoCreateFinishDraft(
         body.description,
         body.synonymes,
         audit.user_id,
+        body.applicable ? "ACTIVE" : "BROUILLON",
       ]
     );
     finishId = inserted.rows[0].id;
 
-    // Toute finition naît avec sa révision 1 en brouillon : une finition sans
-    // révision ne veut rien dire techniquement.
+    // A permitted applicable creation publishes the finish and its first
+    // revision atomically; legacy callers continue to create a draft.
     const revision = await client.query<{ id: string }>(
-      `INSERT INTO public.surface_finish_revisions (finish_id, revision, statut, created_by, updated_by)
-       VALUES ($1::uuid, 1, 'BROUILLON', $2, $2)
+      `INSERT INTO public.surface_finish_revisions (finish_id, revision, statut, created_by, updated_by, approbateur_user_id, approved_at)
+       VALUES ($1::uuid, 1, $3, $2, $2, CASE WHEN $3 = 'ACTIVE' THEN $2::integer ELSE NULL END, CASE WHEN $3 = 'ACTIVE' THEN now() ELSE NULL END)
        RETURNING id::text AS id`,
-      [finishId, audit.user_id]
+      [finishId, audit.user_id, body.applicable ? "ACTIVE" : "BROUILLON"]
     );
 
     await client.query(`UPDATE public.surface_finishes SET current_revision_id = $2::uuid WHERE id = $1::uuid`, [
@@ -576,6 +577,8 @@ export async function repoCreateFinishDraft(
       code,
       family_code: body.family_code,
       procede: body.procede,
+      statut: body.applicable ? "ACTIVE" : "BROUILLON",
+      revision_id: revision.rows[0].id,
     });
 
     await client.query("COMMIT");

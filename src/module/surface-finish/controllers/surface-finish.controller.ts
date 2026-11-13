@@ -196,7 +196,7 @@ export const listFinishHistory: RequestHandler = async (req, res, next) => {
 
 export const createFinish: RequestHandler = async (req, res, next) => {
   try {
-    const created = await createFinishDraftSVC(req.body, buildAuditContext(req));
+    const created = await createFinishDraftSVC(req.body, buildAuditContext(req), actorOf(req));
     res.status(201).json(created);
   } catch (err) {
     next(err);
