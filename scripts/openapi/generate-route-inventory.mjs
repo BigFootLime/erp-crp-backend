@@ -57,6 +57,24 @@ function literalPath(node) {
 }
 
 const moduleCache = new Map();
+const helperSources = new Set();
+const helperModuleCache = new Map();
+
+function isOrderedMountHelperModule(filePath) {
+  const absolute = path.resolve(filePath);
+  const canonicalHelper = path.join(root, "src", "routes", "route-mount-order.ts");
+  if (absolute !== canonicalHelper) return false;
+  const cached = helperModuleCache.get(absolute);
+  if (cached !== undefined) return cached;
+  const sf = sourceFile(absolute);
+  const exported = sf.statements.some((statement) =>
+    ts.isFunctionDeclaration(statement)
+    && statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+    && statement.name?.text === "mountOrderedRouteGroup",
+  );
+  helperModuleCache.set(absolute, exported);
+  return exported;
+}
 
 function importedRouter(imported) {
   if (!imported) return null;
@@ -73,6 +91,9 @@ function analyzeModule(filePath) {
 
   const sf = sourceFile(absolute);
   const imports = new Map();
+  const orderedMountFunctions = new Map();
+  const orderedMountNamespaces = new Map();
+  const invalidOrderedMountFunctions = new Set();
   const routers = new Set();
   const actions = new Map();
   const exportedRouters = new Map();
@@ -92,7 +113,17 @@ function analyzeModule(filePath) {
             file: resolved,
             exportName: binding.propertyName?.text ?? binding.name.text,
           });
+          if ((binding.propertyName?.text ?? binding.name.text) === "mountOrderedRouteGroup") {
+            if (isOrderedMountHelperModule(resolved)) {
+              orderedMountFunctions.set(binding.name.text, resolved);
+            } else {
+              invalidOrderedMountFunctions.add(binding.name.text);
+            }
+          }
         }
+      }
+      if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings) && isOrderedMountHelperModule(resolved)) {
+        orderedMountNamespaces.set(clause.namedBindings.name.text, resolved);
       }
     }
     if (ts.isVariableStatement(statement)) {
@@ -119,10 +150,84 @@ function analyzeModule(filePath) {
     }
   }
 
+  function orderedMountHelper(call) {
+    if (ts.isIdentifier(call.expression)) return orderedMountFunctions.get(call.expression.text) ?? null;
+    if (
+      ts.isPropertyAccessExpression(call.expression)
+      && ts.isIdentifier(call.expression.expression)
+      && call.expression.name.text === "mountOrderedRouteGroup"
+    ) {
+      return orderedMountNamespaces.get(call.expression.expression.text) ?? null;
+    }
+    return null;
+  }
+
+  function assertNoOrderedMountBindingMutation() {
+    function visit(node) {
+      if (ts.isBinaryExpression(node) && ts.isAssignmentOperator(node.operatorToken.kind) && ts.isIdentifier(node.left) && orderedMountFunctions.has(node.left.text)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup import binding cannot be reassigned`);
+      }
+      if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) && ts.isIdentifier(node.operand) && orderedMountFunctions.has(node.operand.text)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup import binding cannot be reassigned`);
+      }
+      if (
+        ts.isBinaryExpression(node)
+        && ts.isAssignmentOperator(node.operatorToken.kind)
+        && ts.isPropertyAccessExpression(node.left)
+        && ts.isIdentifier(node.left.expression)
+        && orderedMountNamespaces.has(node.left.expression.text)
+        && node.left.name.text === "mountOrderedRouteGroup"
+      ) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup namespace binding cannot be reassigned`);
+      }
+      ts.forEachChild(node, visit);
+    }
+    ts.forEachChild(sf, visit);
+  }
+
+  function isTypeReference(node) {
+    for (let current = node.parent; current; current = current.parent) {
+      if (ts.isTypeNode(current)) return true;
+      if (ts.isSourceFile(current) || ts.isStatement(current)) return false;
+    }
+    return false;
+  }
+
+  function isDirectFunctionCallee(node) {
+    return ts.isCallExpression(node.parent) && node.parent.expression === node;
+  }
+
+  function isDirectNamespaceCallee(node) {
+    const access = node.parent;
+    return ts.isPropertyAccessExpression(access)
+      && access.expression === node
+      && access.name.text === "mountOrderedRouteGroup"
+      && ts.isCallExpression(access.parent)
+      && access.parent.expression === access;
+  }
+
+  function assertNoOrderedMountValueCapture() {
+    function visit(node) {
+      if (ts.isIdentifier(node) && invalidOrderedMountFunctions.has(node.text) && !ts.isImportSpecifier(node.parent)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup must resolve to src/routes/route-mount-order.ts`);
+      }
+      if (ts.isIdentifier(node) && orderedMountFunctions.has(node.text) && !ts.isImportSpecifier(node.parent) && !isTypeReference(node) && !isDirectFunctionCallee(node)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup import binding may only be invoked directly`);
+      }
+      if (ts.isIdentifier(node) && orderedMountNamespaces.has(node.text) && !ts.isNamespaceImport(node.parent) && !isTypeReference(node) && !isDirectNamespaceCallee(node)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup namespace binding may only be invoked directly`);
+      }
+      ts.forEachChild(node, visit);
+    }
+    ts.forEachChild(sf, visit);
+  }
+
   function visitStatement(statement) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) return;
     const call = statement.expression;
-    if (ts.isIdentifier(call.expression) && call.expression.text === "mountOrderedRouteGroup") {
+    const helperSource = orderedMountHelper(call);
+    if (helperSource) {
+      helperSources.add(helperSource);
       const [parent, mounts] = call.arguments;
       if (!parent || !ts.isIdentifier(parent) || !routers.has(parent.text)) {
         throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(call.getStart(sf)).line + 1} mountOrderedRouteGroup requires a declared Router identifier`);
@@ -213,6 +318,25 @@ function analyzeModule(filePath) {
     });
   }
 
+  assertNoOrderedMountBindingMutation();
+  assertNoOrderedMountValueCapture();
+  function assertOrderedMountCallsAreTopLevel(node, parent) {
+    const helperSource = ts.isCallExpression(node) ? orderedMountHelper(node) : null;
+    if (ts.isCallExpression(node) && !helperSource && (
+      (ts.isIdentifier(node.expression) && node.expression.text === "mountOrderedRouteGroup")
+      || (ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "mountOrderedRouteGroup")
+    )) {
+      throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup must resolve to the supported route-mount-order helper`);
+    }
+    if (helperSource) {
+      const supported = ts.isExpressionStatement(parent) && parent.expression === node && parent.parent === sf;
+      if (!supported) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} mountOrderedRouteGroup must be a top-level expression statement`);
+      }
+    }
+    ts.forEachChild(node, (child) => assertOrderedMountCallsAreTopLevel(child, node));
+  }
+  assertOrderedMountCallsAreTopLevel(sf, null);
   for (const statement of sf.statements) visitStatement(statement);
   if (defaultRouter && !routers.has(defaultRouter)) {
     throw new Error(`${path.relative(root, absolute)} default export is not a Router`);
@@ -331,7 +455,7 @@ function renderCoverage(routes, sourceHash) {
 
 try {
   const routes = generatedInventory();
-  const sources = [...moduleCache.keys()].sort();
+  const sources = [...new Set([...moduleCache.keys(), ...helperSources])].sort();
   const sourceHash = crypto.createHash("sha256")
     .update(sources.map((file) => {
       const portablePath = path.relative(root, file).replace(/\\/g, "/");

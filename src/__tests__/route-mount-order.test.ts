@@ -2,7 +2,7 @@ import express, { Router } from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
-import { mountOrderedRouteGroup } from "./route-mount-order";
+import { mountOrderedRouteGroup } from "../routes/route-mount-order";
 
 describe("mountOrderedRouteGroup", () => {
   it("registers each collision-sensitive mount in its declared order", () => {

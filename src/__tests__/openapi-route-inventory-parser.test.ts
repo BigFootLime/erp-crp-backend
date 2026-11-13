@@ -13,6 +13,15 @@ function fixture(entryBody: string): string {
   fixtures.push(root);
   fs.mkdirSync(path.join(root, "src/routes"), { recursive: true });
   fs.writeFileSync(path.join(root, "src/routes/v1.routes.ts"), entryBody, "utf8");
+  fs.copyFileSync(
+    path.resolve(process.cwd(), "src/routes/route-mount-order.ts"),
+    path.join(root, "src/routes/route-mount-order.ts"),
+  );
+  fs.writeFileSync(
+    path.join(root, "src/routes/other-helper.ts"),
+    'export function mountOrderedRouteGroup(_router: unknown, _mounts: readonly unknown[]) {}\n',
+    "utf8",
+  );
   fs.writeFileSync(
     path.join(root, "src/routes/specialized.routes.ts"),
     'import { Router } from "express";\nconst router = Router();\nrouter.get("/specialized", (_req, res) => res.json({ specialized: true }));\nexport default router;\n',
@@ -36,6 +45,20 @@ function mountCall(parent: string, mounts: string): string {
     `mountOrderedRouteGroup(${parent}, ${mounts});`,
     "export default router;",
   ].join("\n");
+}
+
+function aliasMountCall(parent: string, mounts: string): string {
+  return mountCall(parent, mounts).replace(
+    'import { mountOrderedRouteGroup } from "./route-mount-order";',
+    'import { mountOrderedRouteGroup as mountRoutes } from "./route-mount-order";',
+  ).replace("mountOrderedRouteGroup(", "mountRoutes(");
+}
+
+function namespaceMountCall(parent: string, mounts: string): string {
+  return mountCall(parent, mounts).replace(
+    'import { mountOrderedRouteGroup } from "./route-mount-order";',
+    'import * as mountOrder from "./route-mount-order";',
+  ).replace("mountOrderedRouteGroup(", "mountOrder.mountOrderedRouteGroup(");
 }
 
 function grouped(mounts: string): string {
@@ -91,6 +114,17 @@ describe("OpenAPI ordered-route parser", () => {
   });
 
   it.each([
+    ["named import alias", aliasMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')],
+    ["namespace import", namespaceMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')],
+  ])("accepts supported %s helper bindings", (_name, entry) => {
+    const root = fixture(entry);
+    const result = run(root);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("3 operations");
+  });
+
+  it.each([
     ["non-literal mount array", mountCall("router", "mounts"), "mountOrderedRouteGroup requires a literal mount array"],
     ["unresolved parent alias", mountCall("missingRouter", "[]"), "mountOrderedRouteGroup requires a declared Router identifier"],
     ["parent expression", mountCall("Router()", "[]"), "mountOrderedRouteGroup requires a declared Router identifier"],
@@ -99,11 +133,35 @@ describe("OpenAPI ordered-route parser", () => {
     ["getter", grouped('{ get prefix() { return "/shared"; }, router: specializedRoutes },'), "has an unsupported ordered mount property"],
     ["computed prefix", grouped('{ ["prefix"]: "/shared", router: specializedRoutes },'), "has an unsupported ordered mount property"],
     ["unresolved router", grouped('{ prefix: "/shared", router: missingRouter },'), "has an unresolved ordered mounted router"],
+    ["nested named helper alias", `import { Router } from "express";\nimport specializedRoutes from "./specialized.routes";\nimport { mountOrderedRouteGroup as mountRoutes } from "./route-mount-order";\nconst router = Router();\nif (true) mountRoutes(router, [{ prefix: "/shared", router: specializedRoutes }]);\nexport default router;`, "mountOrderedRouteGroup must be a top-level expression statement"],
+    ["captured named helper alias", `${aliasMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')}\nconst forward = mountRoutes;\nforward(router, []);`, "mountOrderedRouteGroup import binding may only be invoked directly"],
+    ["captured namespace helper alias", `${namespaceMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')}\nconst forward = mountOrder.mountOrderedRouteGroup;\nforward(router, []);`, "mountOrderedRouteGroup namespace binding may only be invoked directly"],
+    ["destructured namespace helper", `import { Router } from "express";\nimport * as mountOrder from "./route-mount-order";\nconst router = Router();\nconst { mountOrderedRouteGroup: forward } = mountOrder;\nforward(router, []);\nexport default router;`, "mountOrderedRouteGroup namespace binding may only be invoked directly"],
+    ["computed namespace helper", `import { Router } from "express";\nimport * as mountOrder from "./route-mount-order";\nconst router = Router();\nmountOrder["mountOrderedRouteGroup"](router, []);\nexport default router;`, "mountOrderedRouteGroup namespace binding may only be invoked directly"],
+    ["noncanonical helper module", `import { Router } from "express";\nimport specializedRoutes from "./specialized.routes";\nimport { mountOrderedRouteGroup as mountRoutes } from "./other-helper";\nconst router = Router();\nmountRoutes(router, [{ prefix: "/shared", router: specializedRoutes }]);\nexport default router;`, "mountOrderedRouteGroup must resolve to src/routes/route-mount-order.ts"],
+    ["unresolved helper property", `import { Router } from "express";\nconst router = Router();\nconst dynamicHelper = {};\ndynamicHelper.mountOrderedRouteGroup(router, []);\nexport default router;`, "mountOrderedRouteGroup must resolve to the supported route-mount-order helper"],
+    ["mutated named helper alias", `${aliasMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')}\nmountRoutes = (() => undefined) as never;`, "mountOrderedRouteGroup import binding cannot be reassigned"],
+    ["mutated namespace helper alias", `${namespaceMountCall("router", '[{ prefix: "/shared", router: specializedRoutes }]')}\nmountOrder.mountOrderedRouteGroup = (() => undefined) as never;`, "mountOrderedRouteGroup namespace binding cannot be reassigned"],
+    ["non-literal namespace mount", namespaceMountCall("router", "mounts"), "mountOrderedRouteGroup requires a literal mount array"],
   ])("rejects %s instead of silently dropping routes", (_name, entry, error) => {
     const root = fixture(entry);
     const result = run(root);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(error);
+  });
+
+  it("hashes the consumed ordered-mount helper source", () => {
+    const root = fixture(grouped('{ prefix: "/shared", router: specializedRoutes },'));
+    const initial = run(root);
+    expect(initial.status).toBe(0);
+    const initialInventory = fs.readFileSync(path.join(root, "src/swagger/generated-route-inventory.ts"), "utf8");
+
+    fs.appendFileSync(path.join(root, "src/routes/route-mount-order.ts"), "// helper implementation changed\n", "utf8");
+    const changed = run(root, ["--check"]);
+
+    expect(changed.status).toBe(1);
+    expect(changed.stderr).toContain("generated-route-inventory.ts is stale");
+    expect(initialInventory).toContain("GENERATED_ROUTE_SOURCE_SHA256");
   });
 });

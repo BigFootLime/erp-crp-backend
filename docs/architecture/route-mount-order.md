@@ -30,3 +30,10 @@ résolu échoue au build au lieu de retirer silencieusement des opérations. Les
 provenances de ligne peuvent changer lors d'un regroupement ; les méthodes,
 chemins, middlewares, état d'authentification et RBAC du contrat généré restent
 inchangés.
+
+Le générateur reconnaît l’import nommé, son alias et l’import d’espace de noms
+du module canonique `src/routes/route-mount-order.ts`. L’appel doit rester une
+expression directe au niveau du module ; captures, références indirectes,
+réaffectations et accès calculés échouent explicitement. Le contenu du helper
+consommé participe à l’empreinte : modifier son implémentation invalide aussi
+les artefacts générés, même si le fichier de montage n’a pas changé.
