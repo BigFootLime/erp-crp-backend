@@ -1,0 +1,14 @@
+import type { RequestHandler } from "express";
+import { HttpError } from "../../../utils/httpError";
+import * as service from "../services/supplier-portal.service";
+import { activateSchema,loginSchema,promiseSchema,recoverSchema,resetSchema } from "../validators/supplier-portal.validators";
+const identity=(req:any)=>{if(!req.supplierPortalIdentity)throw new HttpError(401,"SUPPLIER_PORTAL_SESSION_REQUIRED","Session fournisseur requise.");return req.supplierPortalIdentity;};
+const param=(req:any,name:string)=>{const value=req.params[name];if(typeof value!=="string")throw new HttpError(400,"SUPPLIER_PORTAL_PARAM_INVALID","Paramètre invalide.");return value;};
+const key=(req:any)=>{const value=req.header("Idempotency-Key")?.trim();if(!value||value.length<8||value.length>120)throw new HttpError(400,"SUPPLIER_PORTAL_IDEMPOTENCY_REQUIRED","Une clé d’idempotence est requise.");return value;};
+export const login:RequestHandler=async(req,res,next)=>{try{res.json(await service.login(loginSchema.parse(req.body)));}catch(e){next(e);}};
+export const activate:RequestHandler=async(req,res,next)=>{try{res.json(await service.activate(activateSchema.parse(req.body)));}catch(e){next(e);}};
+export const recover:RequestHandler=async(req,res,next)=>{try{await service.recover(recoverSchema.parse(req.body).email);res.status(202).json({accepted:true});}catch(e){next(e);}};
+export const reset:RequestHandler=async(req,res,next)=>{try{res.json(await service.reset(resetSchema.parse(req.body)));}catch(e){next(e);}};
+export const portalContext:RequestHandler=async(req,res,next)=>{try{res.setHeader("Cache-Control","no-store");res.json(await service.context(identity(req)));}catch(e){next(e);}};
+export const orders:RequestHandler=async(req,res,next)=>{try{res.setHeader("Cache-Control","no-store");res.json({items:await service.orders(identity(req))});}catch(e){next(e);}};
+export const promise:RequestHandler=async(req,res,next)=>{try{const body=promiseSchema.parse(req.body),version=req.header("If-Match");if(!version)throw new HttpError(428,"SUPPLIER_PORTAL_VERSION_REQUIRED","If-Match est requis.");const out=await service.promise(identity(req),{orderId:param(req,"orderId"),lineId:param(req,"lineId"),date:body.promised_date,quantity:body.promised_quantity,reason:body.reason,version,key:key(req),estimatedReturn:body.estimated_treatment_return_date??null,estimateReason:body.estimate_reason??null});res.status(out.replayed?200:201).json(out);}catch(e){next(e);}};

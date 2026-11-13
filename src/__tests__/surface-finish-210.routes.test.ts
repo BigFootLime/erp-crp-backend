@@ -77,6 +77,7 @@ const OP_BASE = `/api/v1/gammes/${GAMME_ID}/operations/${OPERATION_ID}/finition`
 type Row = Record<string, unknown>;
 
 const contextRow = (overrides: Row = {}): Row => ({
+  client_id: null,
   piece_technique_id: PIECE_ID,
   code_piece: "CAP-100",
   designation_piece: "Capot moteur",
@@ -139,7 +140,8 @@ const revisionRow = (overrides: Row = {}): Row => ({
   finish_code: "FIN-000012",
   finish_designation: "Anodisation noire",
   finish_family: "ANODISATION",
-  finish_procede: "Anodisation sulfurique",
+  finish_procede: "ANO",
+  family_commentaire_template: null,
   finish_statut: "ACTIVE",
   ...overrides,
 });
@@ -199,6 +201,7 @@ function installQueryRouter(scenario: Scenario = {}) {
     if (/FROM public\.pieces_techniques pt/.test(sql) && /JOIN public\.piece_technique_versions ptv/.test(sql)) {
       return one({
         piece_technique_id: PIECE_ID,
+        client_id: null,
         code_piece: "CAP-100",
         designation_piece: "Capot moteur",
         piece_technique_version_id: VERSION_ID,
@@ -261,6 +264,7 @@ async function fetchStockPreview(): Promise<{ status: number; body: Record<strin
   const res = await request(app)
     .post(`${FIN_BASE}/stock-article/preview`)
     .send({
+      family_code: "ANODISATION",
       piece_technique_id: PIECE_ID,
       piece_technique_version_id: VERSION_ID,
       finish_revision_id: REVISION_ID,
@@ -319,6 +323,7 @@ describe("#210 authentification et RBAC", () => {
       .send({ family_code: "ANODISATION", procede: "Anodisation", designation_courte: "Anodisation noire" });
     expect(write.status).toBe(403);
   });
+
 
   it("refuse la configuration d'opération à un rôle Production", async () => {
     mocks.currentRole.value = "Operateur production";
@@ -391,7 +396,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
     expect(preview.status).toBe(200);
     expect(preview.body.spec_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(preview.body.generated_designation).toBe(
-      "ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm cl. AA20"
+      "PS/ANO-PL-4521-C — Anodisation noire RAL 9005 20 µm cl. AA20"
     );
     expect(String(preview.body.generated_comment)).toContain("Norme / spécification : ISO 7599");
     expect(mocks.poolConnect).not.toHaveBeenCalled();
@@ -405,6 +410,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
       .post(`${FIN_BASE}/stock-article/confirm`)
       .set("Idempotency-Key", "stock-finish-confirm-164-0001")
       .send({
+        family_code: "ANODISATION",
         piece_technique_id: PIECE_ID,
         piece_technique_version_id: VERSION_ID,
         finish_revision_id: REVISION_ID,
@@ -432,6 +438,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
       .post(`${FIN_BASE}/stock-article/confirm`)
       .set("Idempotency-Key", "stock-finish-confirm-164-0002")
       .send({
+        family_code: "ANODISATION",
         piece_technique_id: PIECE_ID,
         piece_technique_version_id: VERSION_ID,
         finish_revision_id: REVISION_ID,
@@ -445,6 +452,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
   it("rejoue une double soumission identique sans recréer d'article", async () => {
     const { body: preview } = await fetchStockPreview();
     const payload = {
+      family_code: "ANODISATION",
       piece_technique_id: PIECE_ID,
       piece_technique_version_id: VERSION_ID,
       finish_revision_id: REVISION_ID,
@@ -493,7 +501,7 @@ describe("#210 aperçu", () => {
     expect(status).toBe(200);
     expect(body.spec_fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(body.preview_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(body.generated_designation).toBe("ST — CAP-100 ind. C — Anodisation noire RAL 9005 20 µm cl. AA20");
+    expect(body.generated_designation).toBe("PS/ANO-PL-4521-C — Anodisation noire RAL 9005 20 µm cl. AA20");
     expect(String(body.generated_comment)).toContain("Norme / spécification : ISO 7599");
     expect(String(body.generated_comment)).not.toMatch(/null|undefined/i);
   });
@@ -517,7 +525,7 @@ describe("#210 aperçu", () => {
     const spec = res.body.spec_canonical as Record<string, unknown>;
     expect(spec.teinte_ral).toBeNull();
     expect(spec.couleur).toBeNull();
-    expect(res.body.generated_designation).toBe("ST — CAP-100 ind. C — Anodisation noire 20 µm cl. AA20");
+    expect(res.body.generated_designation).toBe("PS/ANO-PL-4521-C — Anodisation noire 20 µm cl. AA20");
   });
 
   it("annonce la classification CAT sans jamais inventer le code article", async () => {
@@ -528,7 +536,7 @@ describe("#210 aperçu", () => {
     expect(classification.article_categories).toEqual(["traitement_surface"]);
     expect(classification.stock_managed).toBe(false);
     expect(classification.lot_tracking).toBe(false);
-    expect(String(classification.code_hint)).toContain("…");
+    expect(classification.code_hint).toBe("PS-<nom diminutif>-<référence plan>-<indice>");
   });
 
   it("N'ÉCRIT RIEN : aucune transaction, aucun INSERT, aucun UPDATE", async () => {

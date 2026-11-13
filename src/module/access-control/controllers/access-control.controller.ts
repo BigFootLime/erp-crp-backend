@@ -6,6 +6,7 @@ import { HttpError } from "../../../utils/httpError";
 import { getClientIp, parseDevice } from "../../../utils/requestMeta";
 import * as service from "../services/access-control.service";
 import * as reviewService from "../services/access-review.service";
+import { AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY } from "../domain/module-catalog";
 import { getSensitiveCapabilityOverview, setSensitiveCapability, sensitiveCapabilityMutationSchema } from "../services/sensitive-capabilities.service";
 import type { AccessAuditContext } from "../types/access-control.types";
 import {
@@ -52,7 +53,17 @@ export const getAccessProfile: RequestHandler = asyncHandler(async (req, res) =>
   if (!user || typeof user.id !== "number") {
     throw new HttpError(401, "UNAUTHORIZED", "Authentification requise.");
   }
-  res.json(await service.getAccessProfile(user.id));
+  const profile = await service.getAccessProfile(user.id);
+  const company = req.businessCompanyAccess?.context;
+  res.json(company ? {
+    ...profile,
+    modules: profile.modules.map(module => ({
+      ...module,
+      allowed: module.module_key === AUTHENTICATED_MATIERE_REFERENTIAL_MODULE_KEY
+        ? true
+        : module.allowed && company.module_keys.includes(module.module_key),
+    })),
+  } : profile);
 });
 
 export const getOverview: RequestHandler = asyncHandler(async (_req, res) => {

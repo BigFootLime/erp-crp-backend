@@ -1,3 +1,5 @@
+import { gammeProfitabilitySVC } from "../services/gammes.service";
+import { profitabilityQuerySchema } from "../validators/gammes.validators";
 // src/module/gammes/controllers/gammes.controller.ts
 // GPAO B2.2 — HTTP handlers gammes + opérations de gamme.
 import type { Request, RequestHandler } from "express"
@@ -208,3 +210,5 @@ export const publishGamme: RequestHandler = async (req, res, next) => {
     next(err)
   }
 }
+
+export const readGammeProfitability:RequestHandler=async(req,res,next)=>{try{const {quantity}=profitabilityQuerySchema.parse({query:req.query}).query;res.json(await gammeProfitabilitySVC(parseUuidRouteParam(req.params,"gammeId"),quantity));}catch(error){next(error);}};

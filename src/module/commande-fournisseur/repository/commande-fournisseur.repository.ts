@@ -178,7 +178,7 @@ export async function queueSupplierPurchaseOrderCreationPdfTx(
     entityId: input.commandeId,
     documentKind: "SUPPLIER_PURCHASE_ORDER",
     documentVersion: 1,
-    renderVersion: "supplier-po-pdf-v1",
+    renderVersion: "supplier-po-pdf-v1+style-20261019",
     idempotencyKey: `commande-fournisseur:${input.commandeId}:creation:v1`,
     title: `Bon de commande fournisseur ${input.code}`,
     originalName: authoritativePdfFilename(["BCF", input.code, "v1"]),
@@ -984,18 +984,20 @@ export async function repoCreateCommandeFournisseurTx(
 
 export async function repoCreateCommandeFournisseur(
   body: CreateCommandeBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?: PoolClient,
 ): Promise<{ id: string; code: string; idempotent_replay: boolean }> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
+  const ownsTransaction = !transactionClient;
   try {
-    await client.query("BEGIN");
+    if (ownsTransaction) await client.query("BEGIN");
     const result = await repoCreateCommandeFournisseurTx(body, audit, client);
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return result;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (ownsTransaction) await client.query("ROLLBACK");
     // Double-clic concurrent : la même clé a gagné dans une autre transaction -> rejouer.
-    if (body.idempotency_key && isPgUniqueViolation(err)) {
+    if (ownsTransaction && body.idempotency_key && isPgUniqueViolation(err)) {
       const replayRes = await db.query<{ id: string; code: string }>(
         `SELECT id, code FROM public.commande_fournisseur WHERE idempotency_key = $1`,
         [body.idempotency_key]
@@ -1005,7 +1007,7 @@ export async function repoCreateCommandeFournisseur(
     }
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -1443,9 +1445,9 @@ export async function repoTransitionCommandeFournisseur(
          WHERE commande_id=$1::uuid AND version=$2`, [id,header.version_document])).rows[0]?.revision;
       // Legacy preparations remain usable only when no applicable qualification was configured.
       const hasDecision = qualification && ([qualification.global,...qualification.domains].some(scope=>scope.decision)||qualification.client_approvals?.some(check=>check.policies.length));
-      if (qualification && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
+      if (qualification && qualification.enabled !== false && (qualificationProof || hasDecision) && qualificationProof !== purchaseQualificationRevision(qualification)) {
         throw new HttpError(409,"SUPPLIER_QUALIFICATION_DOCUMENT_STALE",
-          "L’homologation ou le périmètre d’achat a changé. Régénérez le bon de commande avant l’envoi.");
+          "Le contrôle du fournisseur a changé. Générez de nouveau le bon de commande avant de l’envoyer.");
       }
     }
     if (kind === "cancel") {
@@ -1825,7 +1827,7 @@ export async function repoQueueSupplierPoOfficialDocument(
     const edition=Number(currentArchive.rows[0]?.edition??1);
     const archive = await queueFrozenCommercialPdfArchive(client, {
       entityType: "commande-fournisseur", entityId: id, documentKind: "SUPPLIER_PURCHASE_ORDER",
-      documentVersion: edition, renderVersion: "supplier-po-pdf-v1", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
+      documentVersion: edition, renderVersion: "supplier-po-pdf-v1+style-20261019", idempotencyKey, title: `Bon de commande fournisseur ${code}`,
       originalName: authoritativePdfFilename(["BCF", code, `v${edition}`]),
       sourceRevision,
       sourceSnapshot:{...sourceSnapshot,frozen_document:{id:frozen.id,version:Number(frozen.version)}},actorUserId:audit.user_id,
@@ -2359,7 +2361,7 @@ export type MaterialDraftLine = {
   type?:"MATIERE"|"ARTICLE"|"SOUS_TRAITANCE";stockUnit?:string;coefficient?:number;catalogueId?:string|null;supplierReference?:string|null;delay?:number|null;
   subcontract?:{operationId:string;materialOriginId:string|null;snapshot:unknown};
   requirements: string[]; operation: string;
-  allocations?: Array<{needId:string;sourceRef:string;ofId:number;assigned:number}>;
+  allocations?: Array<{needId:string|null;sourceRef:string;ofId:number;assigned:number}>;
 };
 /** Called inside the coverage transaction, after reservations and net-shortage checks. */
 export async function createMaterialDraftsTx(tx: PoolClient, lines: MaterialDraftLine[], audit: AuditContext) {

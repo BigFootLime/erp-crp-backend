@@ -128,6 +128,10 @@ export function schedule(input: {
         waiting.set(d.successorId,remaining);
         if (remaining === 0) readyIds.push(d.successorId);
       }
+      if (t.source === "DRAFT" || t.readiness !== "READY") {
+        conflict(t.id, "DOSSIER_INCOMPLETE", "Terminez et validez la préparation de l’OF avant de le planifier.");
+        continue;
+      }
       if(t.external){
         let earliest=Math.max(ms(input.from),ms(requests.get(t.id)?.earliestStart??input.from));
         let unavailable=false;
@@ -139,7 +143,13 @@ export function schedule(input: {
         }
         if(unavailable)continue;
         const requested=requests.get(t.id),actual=t.external.packages.flatMap(p=>p.departedAt&&(!t.cycleStartedAt||ms(p.departedAt)>=ms(t.cycleStartedAt))?[p.departedAt]:[]).sort()[0];
-        const projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
+        let projection=externalCompletion(t.external.packages,t.quantity,iso(earliest),input.resources,input.from,t.external.preparations,t.external.preparationIssues);
+        const assumption=t.external.plannedReturnAt??(t.external.forecastLeadDays!==undefined?iso(earliest+t.external.forecastLeadDays*86400000):undefined);
+        if(!projection.fullReadyAt&&assumption&&!t.external.packages.some(p=>p.departedAt||p.issued>0||p.returned>0||p.released>0)){
+          if(ms(assumption)<=earliest){conflict(t.id,'SUPPLIER_FORECAST_TOO_EARLY','Le retour prévu doit être postérieur à la fin des opérations précédentes.');continue;}
+          projection={...projection,fullReadyAt:assumption,issues:[]};
+          for(const message of t.procurementWarnings??[])result.conflicts.push({taskId:t.id,code:'PROCUREMENT_FORECAST',message,blocking:false});
+        }
         if(!projection.fullReadyAt){for(const issue of projection.issues)conflict(t.id,'EXTERNAL_RETURN_UNAVAILABLE',issue);continue;}
         if(requested?.resourceIds && requested.resourceIds.join('|')!==t.resourceIds.join('|')){conflict(t.id,'EXTERNAL_SUPPLIER_FIXED','Le fournisseur est celui de la commande liée.');continue;}
         const slot={start:actual??iso(earliest),end:projection.fullReadyAt};
@@ -160,7 +170,10 @@ export function schedule(input: {
         return resource && (!resource.qualifiedTaskIds || resource.qualifiedTaskIds.includes(t.id));
       }).sort() : req?.resourceIds ?? t.resourceIds;
       const resources = ids.map(id => resourceMap.get(id)).filter((r): r is Resource => !!r);
-      if (!ids.length || resources.length !== ids.length) { conflict(t.id, "RESOURCE_MISSING", "Ressource ou calendrier à définir."); continue; }
+      if (!ids.length || resources.length !== ids.length) {
+        const issue=t.resourceIssues?.[0];
+        conflict(t.id, issue?.code ?? "RESOURCE_MISSING", issue?.message ?? "Aucune ressource affectée ou admissible pour cette opération. Vérifiez les postes et les machines dans la préparation de l’OF."); continue;
+      }
       if (ids.some(id => !t.eligibleResourceIds.includes(id)) ||
           resources.some(r => r.qualifiedTaskIds && !r.qualifiedTaskIds.includes(t.id))) {
         conflict(t.id, "RESOURCE_NOT_QUALIFIED", "La ressource n'est pas qualifiée pour cette opération."); continue;
@@ -176,7 +189,8 @@ export function schedule(input: {
           (!parent?.external || d.releasedQuantity>=t.quantity)) continue;
         const date = predecessorDate(parent);
         if (!date || conflicted.has(d.predecessorId)) {
-          conflict(t.id, "PREDECESSOR_UNAVAILABLE", "Un prérequis n'a pas de disponibilité réalisable.", d.predecessorId); blocked = true; break;
+          const cause=parent?.resourceIssues?.[0]?.message;
+          conflict(t.id, "PREDECESSOR_UNAVAILABLE", `${parent?.label ?? 'L’étape précédente'} doit pouvoir être planifiée avant cette opération.${cause ? ' '+cause : ''}`, d.predecessorId); blocked = true; break;
         }
         earliest = Math.max(earliest, ms(date.end) + d.lagMinutes * 60000);
       }
@@ -193,6 +207,7 @@ export function schedule(input: {
       if (!slot) { conflict(t.id, "NO_CAPACITY", "Aucun créneau réalisable dans les calendriers chargés."); continue; }
       if (req?.autoAssign) ids = [alternatives[0].id];
       reserve(ids, slot); result.forecasts[t.id] = slot;
+      for(const message of t.procurementWarnings??[])result.conflicts.push({taskId:t.id,code:'PROCUREMENT_FORECAST',message,blocking:false});
       if (!t.committed || t.committed.start !== slot.start || t.committed.end !== slot.end ||
         ids.join("|") !== t.resourceIds.join("|")) result.changes.push({ taskId: t.id, before: t.committed, beforeResourceIds: t.resourceIds, after: slot, resourceIds: ids });
     }

@@ -1,3 +1,4 @@
+import { hasModuleAppearance } from "../../../shared/pdf/document-appearance";
 import crypto from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { sendTransactionalEmail, type ResendSendResult } from "../../../shared/email/resend.service";
@@ -69,7 +70,7 @@ export type CommandeArOfficialSnapshot = {
   public_comment: string | null;
   bill_address: CommandeArAddress;
   delivery_address: CommandeArAddress;
-  lines: Array<{ designation: string; code_piece: string | null; quantite: string; unite: string | null; prix_unitaire_ht: string; taux_tva: string | null; total_ttc: string; /** Optional only for historical snapshots. */ delai_client?: string | null }>;
+  lines: Array<{ designation: string; code_piece: string | null; quantite: string; unite: string | null; prix_unitaire_ht: string; taux_tva: string | null; total_ttc: string; /** Optional only for historical snapshots. */ delai_client?: string | null; promise_schedule?: {quantity:string;due_date:string}[] }>;
   issuer: LegalParty;
 };
 
@@ -185,6 +186,8 @@ async function waitForCommandeArOfficialArchiveId(
 }
 
 export async function buildCommandeArPdfBuffer(params: {
+  /** Server-side archive replay only. */
+  legacyAppearance?: boolean;
   general_terms?: GeneralTermsSnapshot | null;
   /** Versioned acknowledgement reference, for example AR-00000042-v1. */
   reference: string;
@@ -213,6 +216,7 @@ export async function buildCommandeArPdfBuffer(params: {
     total_ttc: number | string;
     /** Civil delivery date; absent only from historical archived snapshots. */
     delai_client?: string | null;
+    promise_schedule?: {quantity:string;due_date:string}[];
   }>;
   /**
    * Instantane de l'emetteur : identite legale et mentions obligatoires.
@@ -242,7 +246,7 @@ export async function buildCommandeArPdfBuffer(params: {
       total_ttc: formatCurrencyEUR(line.total_ttc),
     },
     // Archived AR sources predating this field keep their original rendering.
-    meta: line.delai_client === undefined ? null : `Délai de livraison : ${line.delai_client ? formatCivilDateFR(line.delai_client) : "à confirmer"}`,
+    meta: line.promise_schedule?.length ? line.promise_schedule.map(p=>`${p.quantity} ${line.unite??""} : ${formatCivilDateFR(p.due_date)}`).join(" · ") : line.delai_client === undefined ? null : `Délai de livraison : ${line.delai_client ? formatCivilDateFR(line.delai_client) : "à confirmer"}`,
     metaColumn: "designation",
   }));
 
@@ -335,6 +339,7 @@ export async function renderCommandeArOfficialPdf({ archive }: { archive: Author
   const archivedAt = new Date(archive.createdAt);
   if (Number.isNaN(archivedAt.getTime())) throw new Error("COMMANDE_AR_ARCHIVE_CREATED_AT_INVALID");
   return buildCommandeArPdfBuffer({
+    legacyAppearance: !hasModuleAppearance(archive.renderVersion),
     general_terms: source.general_terms,
     issuer: source.issuer, reference: source.acknowledgement_number, orderNumber: source.order_number,
     companyName: source.customer_name ?? null,
@@ -344,7 +349,7 @@ export async function renderCommandeArOfficialPdf({ archive }: { archive: Author
     documentVersion: archive.documentVersion,
     totalHt: source.total_ht ?? "0", totalTtc: source.total_ttc ?? "0", commentaire: source.public_comment ?? null,
     clientEmail: null, clientPhone: null, billAddress: source.bill_address ?? {}, deliveryAddress: source.delivery_address ?? {},
-    lines: source.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece ?? null, quantite: line.quantite, unite: line.unite ?? null, prix_unitaire_ht: line.prix_unitaire_ht, taux_tva: line.taux_tva, total_ttc: line.total_ttc, delai_client: line.delai_client })),
+    lines: source.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece ?? null, quantite: line.quantite, unite: line.unite ?? null, prix_unitaire_ht: line.prix_unitaire_ht, taux_tva: line.taux_tva, total_ttc: line.total_ttc, delai_client: line.delai_client,...(line.promise_schedule?.length?{promise_schedule:line.promise_schedule}:{}) })),
   });
 }
 
@@ -391,7 +396,7 @@ export async function svcGenerateCommandeAr(params: {
       date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
       public_comment: publicComment, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
       delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
-      lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc), delai_client: line.delai_client ?? null })), issuer,
+      lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc), delai_client: line.delai_client ?? null,...(line.promise_schedule?.length?{promise_schedule:line.promise_schedule}:{}) })), issuer,
     };
     const contentSnapshot = buildCommandeArContentSnapshot(data);
     const contentFingerprint = sha256Canonical(contentSnapshot);
@@ -633,6 +638,7 @@ export async function svcListCommandeArVersions(params: {
 }): Promise<CommandeArVersionsResult> {
   await repoAuthorizeCommandeArGeneration({
     tx: pool,
+    stage: "history",
     commande_id: params.commande_id,
     user_id: params.user_id,
     user_role: params.user_role,

@@ -1,0 +1,1 @@
+DO $$ BEGIN IF to_regclass('public.client_portal_accounts') IS NULL OR to_regclass('public.client_contracts') IS NULL THEN RAISE EXCEPTION 'commercial cockpit prerequisites are missing'; END IF; END $$;

@@ -20,6 +20,7 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { lockLegacyControlForWrite } from "./quality-legacy-write.repository";
 import { resolveNcControlContext } from "./nc-control-context.repository";
 import { HttpError } from "../../../utils/httpError";
+import { reconcileOrdersForQualityEvidence } from "../../commande-client/repository/commande-quality-milestone.repository";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { repoGetMetrologieBlockState } from "../../metrologie/repository/metrologie.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2017,6 +2018,15 @@ type NcSnapshot = {
   };
 };
 
+async function reconcileReleasedNcScope(tx: DbQueryer, before: NcSnapshot, after: NcSnapshot | null, actor: number | null) {
+  const old = before.non_conformity;
+  const updated = after?.non_conformity;
+  if (old.of_id == null || old.status === "CLOSED" || old.status === "CANCELLED" || !updated) return;
+  if (updated.of_id !== old.of_id || updated.status === "CLOSED" || updated.status === "CANCELLED") {
+    await reconcileOrdersForQualityEvidence(tx, old, actor);
+  }
+}
+
 async function selectNcSnapshot(q: DbQueryer, id: string): Promise<NcSnapshot | null> {
   type Row = {
     id: string;
@@ -2632,6 +2642,7 @@ export async function repoPatchNonConformity(params: { id: string; body: PatchNo
     ]);
 
     const after = await selectNcSnapshot(tx, id);
+    await reconcileReleasedNcScope(tx, before, after, audit.user_id);
 
     await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
@@ -2683,6 +2694,7 @@ export async function repoUpdateNonConformityStatus(params: {
     await tx.query(`UPDATE non_conformity SET ${sets.join(", ")} WHERE id = $1::uuid`, values);
 
     const after = await selectNcSnapshot(tx, id);
+    await reconcileReleasedNcScope(tx, before, after, audit.user_id);
     await insertQualityEvent(tx, {
       entity_type: "NON_CONFORMITY",
       entity_id: id,

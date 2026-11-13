@@ -6,6 +6,17 @@ import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { SetupCompany } from "../validators/onboarding.validators";
 
+export async function readCommercialSetupFacts(userId: number) {
+ const { rows } = await pool.query(`SELECT
+   (SELECT count(*)::int FROM public.auth_login_logs WHERE user_id=$1 AND success) AS login_count,
+   (SELECT current_step FROM public.erp_setup_progress WHERE user_id=$1) AS current_step,
+   (SELECT value_text FROM public.erp_settings WHERE key='company.primary_biller_id') AS primary_biller_id,
+   EXISTS(SELECT 1 FROM public.erp_settings s JOIN public.factureur f ON f.biller_id::text=s.value_text WHERE s.key='company.primary_biller_id'
+    AND length(btrim(f.biller_name))>1 AND length(btrim(f.street))>0 AND length(btrim(f.city))>0
+    AND length(btrim(f.postal_code))>0 AND length(btrim(f.country))>0 AND length(btrim(f.email))>0) AS company_ready`, [userId]);
+ return rows[0];
+}
+
 export const readSetupFacts=async (userId:number) => {
  const {rows}=await pool.query(`WITH today AS (SELECT (now() AT TIME ZONE 'Europe/Paris')::date AS d), fleet AS (
    SELECT m.id,m.name,m.code,m.cf_id,

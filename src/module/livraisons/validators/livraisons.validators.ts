@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { BonLivraisonStatut } from "../types/livraisons.types"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format AAAA-MM-JJ")
 const nullableText = (max: number) => z.string().trim().min(1).max(max).optional().nullable()
 
@@ -224,13 +224,13 @@ export type LivraisonProofBodyDTO = z.infer<typeof livraisonProofBodySchema>
 
 export const preparationCartQuerySchema = z.object({
   reservation_ids: z.preprocess(value => typeof value === "string" ? value.split(",") : value,
-    z.array(z.string().uuid()).min(1).max(200).optional()),
+    z.array(z.string().guid()).min(1).max(200).optional()),
   include_contract_scope: z.enum(["true", "false"]).transform(value => value === "true").optional(),
   q: z.string().trim().min(1).max(160).optional(),
   client_id: z.string().trim().min(1).max(120).optional(),
   commande_id: z.coerce.number().int().positive().optional(),
   affaire_id: z.coerce.number().int().positive().optional(),
-  bon_livraison_id: z.string().uuid().optional(),
+  bon_livraison_id: z.string().guid().optional(),
   source_scope: z.enum(["OLD", "NEW"]).optional(),
   page: z.coerce.number().int().positive().optional().default(1),
   pageSize: z.coerce.number().int().positive().max(200).optional().default(100),
@@ -239,7 +239,7 @@ export type PreparationCartQueryDTO = z.infer<typeof preparationCartQuerySchema>
 
 export const verifyPreparationLotBodySchema = z
   .object({
-    reservation_id: z.string().uuid(),
+    reservation_id: z.string().guid(),
     qty: z.coerce.number().positive(),
     scanned_lot_code: z.string().trim().min(1).max(160),
     of_number: z.string().trim().min(1).max(80).optional().nullable(),
@@ -251,7 +251,7 @@ export type VerifyPreparationLotBodyDTO = z.infer<typeof verifyPreparationLotBod
 
 export const correctPreparationStockBodySchema = z
   .object({
-    reservation_id: z.string().uuid(),
+    reservation_id: z.string().guid(),
     actual_qty: z.coerce.number().min(0).optional(),
     reason: z.string().trim().min(3).max(2000),
     lot_code: z.string().trim().min(1).max(160).optional(),
@@ -282,7 +282,7 @@ export const createLivraisonFromReservationsBodySchema = z
       .array(
         z
           .object({
-            reservation_id: z.string().uuid(),
+            reservation_id: z.string().guid(),
             qty: z.coerce.number().positive(),
           })
           .strict()

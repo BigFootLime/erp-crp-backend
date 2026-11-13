@@ -3,7 +3,7 @@ import { z } from "zod";
 import { WEBHOOK_EVENT_REGISTRY } from "./webhook.domain";
 
 const registeredEvents = WEBHOOK_EVENT_REGISTRY.map((entry) => entry.type) as [string, ...string[]];
-const idSchema = z.string().uuid();
+const idSchema = z.string().guid();
 const timestampSchema = z.string().datetime({ offset: true });
 
 export const webhookIdParamsSchema = z.object({ id: idSchema }).strict();

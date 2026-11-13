@@ -17,7 +17,7 @@ export const testRegistrationOptions=asyncHandler(async (_req,res) => {
 export const testRegistration=asyncHandler(async (req,res) => {
   res.setHeader("Cache-Control","no-store");
   const input=testRegistrationSchema.parse(req.body);
-  const key=z.string().uuid("Identifiant de demande requis").parse(req.header("Idempotency-Key"));
+  const key=z.string().guid("Identifiant de demande requis").parse(req.header("Idempotency-Key"));
   const user_agent=req.headers["user-agent"]?.toString() ?? null;
   const directory=sharedDirectoryClient();
   if(directory){

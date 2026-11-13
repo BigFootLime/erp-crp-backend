@@ -25,11 +25,11 @@ export const readAssemblyWithdrawals = asyncHandler(async (req, res) => {
 });
 export const previewAssemblyReturn = asyncHandler(async (req, res) => {
   const allowed = await canReturnAssemblyComponents(req);
-  res.json({ ...await getAssemblyComponentReturn(ofId.parse(req.params.id), z.string().uuid().parse(req.params.withdrawalId)),
+  res.json({ ...await getAssemblyComponentReturn(ofId.parse(req.params.id), z.string().guid().parse(req.params.withdrawalId)),
     permissions: { return: allowed } });
 });
 export const submitAssemblyReturn = asyncHandler(async (req, res) => {
   if (!await canReturnAssemblyComponents(req)) throw new HttpError(403, 'ASSEMBLY_COMPONENT_RETURN_FORBIDDEN', 'Les droits de correction stock sont nécessaires.');
-  res.json(await returnAssemblyComponents(ofId.parse(req.params.id), z.string().uuid().parse(req.params.withdrawalId),
+  res.json(await returnAssemblyComponents(ofId.parse(req.params.id), z.string().guid().parse(req.params.withdrawalId),
     assemblyComponentReturnSchema.parse(req.body), buildAuditContext(req)));
 });

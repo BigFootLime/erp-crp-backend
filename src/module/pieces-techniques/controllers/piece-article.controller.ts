@@ -12,7 +12,7 @@ import type { AuditContext } from "../../stock/repository/stock.repository"
 import { createStockArticleSVC } from "../../stock/services/stock.service"
 import { createArticleSchema } from "../../stock/validators/stock.validators"
 
-const uuidSchema = z.string().uuid()
+const uuidSchema = z.string().guid()
 const createOrLinkSchema = z.object({
   designation: z.string().trim().min(1).max(400).optional(),
   family_code: z.string().trim().min(1).max(40),

@@ -80,6 +80,21 @@ beforeEach(() => {
 });
 
 describe("/api/v1/pieces-techniques", () => {
+  it("reserves prepare-edit for writers and rejects revision choices in its payload",async()=>{
+    const url="/api/v1/pieces-techniques/11111111-1111-4111-8111-111111111111/prepare-edit";
+    expect((await request(app).post(url).set("x-test-role","Secretaire").send({})).status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    expect((await request(app).post(url).set("x-test-role","Directeur").send({indice:"B"})).status).toBe(400);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    expect((await request(app).post(url).set("x-test-role","Directeur").send({})).status).toBe(404);
+    expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
+  });
+
+  it("keeps archive behind its dedicated permission",async()=>{
+    expect((await request(app).post("/api/v1/pieces-techniques/11111111-1111-4111-8111-111111111111/archive").set("x-test-role","Responsable Programmation").send({})).status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
   it.each([
     "Employee | Method",
     "Employee | Responsable Programmation",

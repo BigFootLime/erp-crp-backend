@@ -6,7 +6,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../shared/realtime/realtime-outbox.service", () => ({
   enqueueEntityChanged: mocks.enqueueEntityChanged,
+  enqueueAppNotificationCreated: vi.fn(),
 }));
+
+vi.mock("../config/database", () => ({ default: {} }));
 
 import { enqueueMetrologieEquipmentChanged } from "../module/metrologie/repository/metrologie.repository";
 import { enqueueMetrologyEquipmentChanged } from "../module/metrologie/repository/metrology-shared.repository";
@@ -14,6 +17,7 @@ import { enqueueProductionOfChanged } from "../module/production/repository/prod
 import { enqueueQualityEntityChanged } from "../module/qualite/repository/qualite.repository";
 import { enqueueQuality360EntityChanged } from "../module/qualite/repository/quality-360.repository";
 import { enqueueReceptionChanged } from "../module/receptions/repository/receptions-realtime.repository";
+import { enqueuePlanningRealtime } from "../module/planning/repository/planning.repository";
 
 const tx = { query: vi.fn() } as never;
 const occurredAt = "2026-08-04T12:00:00.000Z";
@@ -144,5 +148,29 @@ describe("module-owned durable realtime producers", () => {
       action: "status_changed",
       invalidateKeys: ["receptions:list", "receptions:kpis", "receptions:detail:reception-1"],
     }), { deduplicationKey: "reception-audit:audit-reception-1" });
+  });
+
+  it.each([
+    ["with OF and customer order", { of_id: 42, commande_id: 7 }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:42", "commandes:list", "commandes:detail:7"]],
+    ["with only OF", { of_id: 42, commande_id: null }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:42"]],
+    ["with only customer order", { of_id: null, commande_id: 7 }, ["planning:events", "planning:event:planning-1", "production:ofs", "commandes:list", "commandes:detail:7"]],
+    ["with null optional identities", { of_id: null, commande_id: null }, ["planning:events", "planning:event:planning-1", "production:ofs"]],
+    ["with numeric zero identities", { of_id: 0, commande_id: 0 }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:0", "commandes:list", "commandes:detail:0"]],
+    ["without optional identities", {}, ["planning:events", "planning:event:planning-1", "production:ofs"]],
+  ])("keeps planning outbox invalidation keys %s", async (_label, optional, invalidateKeys) => {
+    await enqueuePlanningRealtime(tx, {
+      event_id: "planning-1",
+      action: "updated",
+      mutation_key: "planning-audit-1",
+      ...optional,
+    });
+
+    expect(mocks.enqueueEntityChanged).toHaveBeenCalledWith(tx, expect.objectContaining({
+      entityType: "PLANNING_EVENTS",
+      entityId: "planning-1",
+      module: "production",
+      action: "updated",
+      invalidateKeys,
+    }), { deduplicationKey: "planning:planning-1:planning-audit-1" });
   });
 });

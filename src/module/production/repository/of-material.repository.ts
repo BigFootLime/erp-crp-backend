@@ -1,3 +1,4 @@
+import {readPlanningSupplyStates} from '../../planning/repository/planning-supply-state';
 import type {PoolClient} from "pg";
 import {readOperationalLotQualityEligibility} from "../../qualite/repository/quality-operational-gate.repository";
 import type {MaterialLotVerification,MaterialSupplier} from "../validators/of-material.validators";
@@ -7,7 +8,7 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
-import {materialPropertiesFingerprint,coverageFingerprint,debitQuantity,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {physicalMaterialInventoryBlockers} from '../domain/of-material-bars';
 import {readMaterialBarCoverageTx} from './material-bar-coverage.repository';
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
@@ -23,21 +24,26 @@ import {fetchFournisseurMini,assertFournisseurCommandable} from '../../commande-
 import {proposeMaterialConfiguration} from '../domain/material-configuration-proposal';
 import {readMaterialConfigurationDefaults} from './material-configuration-defaults.repository';
 import {readWipMaterialOpeningProjectionTx} from '../wip-material-opening/wip-material-opening.repository';
+import {effectivePreparationVersionSql} from './effective-preparation-version.sql';
 
 const emptyRequirements=():MaterialRequirements=>({grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]});
-type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null};
+type Purchase={id:string;article_id:string|null;nom?:string;designation?:string;quantite:number;unite_prix:string|null;fournisseur_id:string|null;pu_achat?:number|null;type_achat:string;gamme_operation_id?:string|null;phase?:number|null;longueur_mm?:number|null;quantite_brut_mm?:number|null;quantite_pieces?:number|null};
 type NeedRow={id:string;source_ref:string;designation:string;technical_version_id:string;technical_hash:string;operation_id:string|null;article_id:string|null;required_qty:number;unit:string|null;supply_mode:"PURCHASE"|"CUSTOMER";requirements:MaterialRequirements;specification_reviewed_at:string|null;debit_rule:DebitRule|null;allow_partial:boolean;supplier_id:string|null;destination_id:string|null;row_version:number;superseded_at:string|null};
 export type NeedConfiguration={operationId:string;requirements:MaterialRequirements;supplyMode:"PURCHASE"|"CUSTOMER";debitRule:DebitRule;allowPartial:boolean;supplierId:string|null;destinationId:string|null};
 export type Candidate=MaterialLot&{magasinId:string;emplacementId:number;version:string;properties:Record<string,unknown>;propertiesHash:string;qualityControlId:string|null;qualityExplanation:string[];documents:Array<{id:string;label:string;receptionId:string}>};
+const cuttingForPurchase=(purchase:Purchase,finishedPieces:number)=>{
+  const longueurCoupeMm=Number(purchase.longueur_mm),piecesParBrut=Number(purchase.quantite_pieces);
+  if(!Number.isSafeInteger(finishedPieces)||finishedPieces<0||!Number.isFinite(piecesParBrut)||piecesParBrut<=0)return null;
+  const nombreBruts=Math.ceil(finishedPieces/piecesParBrut-1e-9);
+  const cut=Number.isFinite(longueurCoupeMm)&&longueurCoupeMm>0?longueurCoupeMm:null;
+  return {longueurCoupeMm:cut,piecesParBrut,brutsParPiece:1/piecesParBrut,nombreBruts,longueurTotaleMm:cut===null?null:quantity(nombreBruts*cut)};
+};
 
-export async function readMaterialTx(tx:DossierDb,ofId:number){
+export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfiguration=false){
   const dossier=await readOfDossierTx(tx,ofId);
-  const of=(await tx.query(`SELECT o.piece_technique_version_id::text AS revision,o.technical_snapshot_sha256 AS hash,o.client_id,
-    COALESCE(o.technical_snapshot->'achats',o.technical_snapshot->'preparation_evidence'->'purchases',
-      (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id
-        AND (p.piece_technique_version_id=o.piece_technique_version_id OR (p.piece_technique_version_id IS NULL AND NOT EXISTS(
-          SELECT 1 FROM public.pieces_techniques_achats scoped WHERE scoped.piece_technique_version_id=o.piece_technique_version_id
-        )))),'[]'::jsonb) AS purchases
+  const of=(await tx.query(`SELECT ${effectivePreparationVersionSql("o")}::text AS revision,o.technical_snapshot_sha256 AS hash,o.client_id,o.technical_preparation,
+    COALESCE(o.technical_snapshot->'preparation_evidence'->'purchases',
+      (SELECT jsonb_agg(to_jsonb(p)) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=o.piece_technique_id AND p.piece_technique_version_id=${effectivePreparationVersionSql("o")}),'[]'::jsonb) AS purchases
     FROM public.ordres_fabrication o WHERE o.id=$1`,[ofId])).rows[0];
   const purchases=(of.purchases as Purchase[]).filter(p=>p.type_achat==="MATIERE");
   const saved=(await tx.query<NeedRow>("SELECT * FROM public.of_material_needs WHERE of_id=$1 AND need_kind='MATIERE' ORDER BY created_at,id",[ofId])).rows;
@@ -87,6 +93,11 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const articleIds=[...new Set(purchases.flatMap(p=>p.article_id?[p.article_id]:[]))];
   const futureSupplies=await readFutureMaterialSupplyTx(tx,articleIds);
   const defaults=await readMaterialConfigurationDefaults(tx,articleIds,dossier.operations.map(o=>o.id));
+  const draftOperations=previewConfiguration&&!of.hash&&of.revision?(await tx.query<{id:string;phase:number;label:string;sourceId:string}>(
+    `SELECT p.id::text,p.phase,p.designation AS label,p.id::text AS "sourceId"
+     FROM public.pieces_techniques_operations p WHERE p.gamme_id=(
+       SELECT id FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current ORDER BY created_at DESC,id LIMIT 1
+     ) ORDER BY p.phase,p.id`,[of.revision])).rows:[];
   const articles=defaults.articles;
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",
@@ -129,20 +140,29 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
   const usedLegacy=new Set<string>();
   const needs=purchases.map(p=>{
     const row=saved.find(n=>n.source_ref===p.id&&n.technical_version_id===of.revision&&!n.superseded_at);
-    const article=articles.find(a=>a.id===p.article_id),requirements=row?.requirements??emptyRequirements();
-    const operation=dossier.operations.find(op=>op.id===row?.operation_id)??null;
+    const article=articles.find(a=>a.id===p.article_id);
+    const configurationProposal=proposeMaterialConfiguration(p,article,draftOperations.length?draftOperations:defaults.operations,of.client_id);
+    const proposed=previewConfiguration&&!row&&configurationProposal.operationId&&configurationProposal.debitRule?.form!=='SHEET'?configurationProposal:null;
+    const requirements=row?.requirements??proposed?.requirements??emptyRequirements();
+    const debitRule=row?.debit_rule??proposed?.debitRule??null;
+    const operation=[...dossier.operations,...draftOperations].find(op=>op.id===(row?.operation_id??proposed?.operationId))??null;
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===row?.id||!r.material_need_id&&r.article_id===p.article_id&&!usedLegacy.has(r.id));
     attached.filter(r=>!r.material_need_id).forEach(r=>usedLegacy.add(r.id));
     const expected=promises.filter(b=>effectiveNeed(b.material_need_id)===row?.id||!b.material_need_id&&b.besoin_ref===p.id);
     const customer=customerCalls.filter(c=>c.need_id===row?.id&&c.status!=='CANCELLED');
     let required=Number(p.quantite)*dossier.quantity;
-    if(row?.debit_rule)required=debitQuantity(row.debit_rule,dossier.quantity);
+    // Before methods confirm the proposal, a complete PT cutting yield is still
+    // authoritative enough to reserve whole blanks. Keep every legacy line and
+    // every confirmed/reserved rule on its current path.
+    if(debitRule)required=materialRequirementForPieces(debitRule,dossier.quantity);
+    else if(configurationProposal.debitRule?.piecesPerBlank !== undefined && configurationProposal.debitRule.form!=="SHEET")
+      required=materialRequirementForPieces(configurationProposal.debitRule,dossier.quantity);
     const consumptionAdjustment=row?.id?adjustmentsByNeed.get(row.id)??0:0;
     required=quantity(Math.max(0,required+consumptionAdjustment));
     const physical=attached.filter(r=>r.status==="ACTIVE"&&r.unexpired).reduce((sum,r)=>sum+Math.max(0,r.qty_reserved-r.qty_consumed),0);
     const openingConsumed=openingConsumedBySource.get(p.id)??0;
     const consumed=attached.reduce((sum,r)=>sum+(r.status==="CONSUMED"?r.qty_reserved:r.qty_consumed),0)+openingConsumed;
-    const need:MaterialNeed={key:p.id,articleId:p.article_id,unit:row?.unit??p.unite_prix??article?.unite??null,required,requirements,
+    const need:MaterialNeed={key:p.id,articleId:p.article_id,unit:row?.unit??proposed?.debitRule?.stockUnit??p.unite_prix??article?.unite??null,required,requirements,
       reserved:physical,consumed,expected:expected.reduce((sum,b)=>sum+Math.max(0,b.assigned-b.received),0)+customer.reduce((sum,c)=>sum+Math.max(0,c.quantity-c.received),0),receivedBlocked:expected.reduce((sum,b)=>sum+Math.max(0,b.received-b.transferred),0)+customer.reduce((sum,c)=>sum+Math.max(0,c.received-c.transferred),0)};
     const blockers:string[]=[];
     if(!of.hash)blockers.push("Valider et figer la définition technique de cet OF.");
@@ -151,14 +171,17 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     if(!need.articleId)blockers.push("Renseigner l’article matière dans la définition technique.");
     if(!need.unit||need.unit.toUpperCase()!==article?.unite?.toUpperCase())blockers.push("Compléter l’unité de stock et la règle de conversion.");
     if(expected.some(p=>p.unite?.trim().toUpperCase()!==need.unit?.trim().toUpperCase()))blockers.push("Vérifier la conversion des approvisionnements déjà affectés à ce besoin.");
-    const supplierId=row?.supplier_id??p.fournisseur_id;
+    const choice=of.technical_preparation?.material_supplier_choices?.[p.id];
+    const currentChoice=choice?.version===of.revision?choice:null;
+    const supplierId=currentChoice?currentChoice.supplierId??null:row?row.supplier_id:p.fournisseur_id;
     const catalog=catalogs.find(c=>c.article_id===p.article_id&&c.fournisseur_id===supplierId&&c.unite===need.unit&&(!c.coef_conversion||c.coef_conversion===1));
     const price=catalog?.prix_unitaire??(supplierId&&supplierId===p.fournisseur_id&&p.unite_prix===need.unit?p.pu_achat:null)??null;
     return {...need,id:row?.id??null,designation:p.designation??p.nom??article?.code??"Matière à définir",articleCode:article?.code??null,articleUnit:article?.unite??null,
-      operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??"PURCHASE",allowPartial:row?.allow_partial??false,
-      debitRule:row?.debit_rule??null,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:row?.destination_id??null,
+      operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??proposed?.supplyMode??"PURCHASE",allowPartial:row?.allow_partial??false,
+      debitRule,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:currentChoice?currentChoice.destinationId??null:row?.destination_id??null,
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
-      configurationProposal:proposeMaterialConfiguration(p,article,defaults.operations,of.client_id),
+      configurationProposal,
+      cutting:cuttingForPurchase(p,dossier.quantity),
       rowVersion:row?.row_version??null,consumptionAdjustment,openingConsumed,
       consumptionOrigins:openingConsumed>0?["CUTOVER_OPENING" as const]:[]};
   });
@@ -199,7 +222,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number){
     technicalVersion:of.revision as string|null,technicalHash:of.hash as string|null,needs:coverage,previousNeeds,operations:dossier.operations}),ofId,'MATIERE');
   return {enabled:true as const,ofId,number:dossier.number,quantity:dossier.quantity,dossierStatus:dossier.status,executionStatus:dossier.executionStatus,technicalVersion:of.revision as string|null,
     technicalHash:of.hash as string|null,clientId:of.client_id as string|null,operations:dossier.operations,originPolicy,references:defaults.references,
-    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,openingMaterial,destinations,reconciliations,originPolicy,defaults,barInventories}),needs:coverage,customerCalls,debits,
+    version:coverageFingerprint({dossier:dossier.version,saved,reservations,promises,lots,checks,catalogs,documents,futureSupplies,customerCalls,debitAdjustments,debits,openingMaterial,destinations,reconciliations,originPolicy,defaults,draftOperations,barInventories}),needs:coverage,customerCalls,debits,
     previousNeeds,purchasePreparations:preparation.items,purchasePreparationsSyncRequired:preparation.requiresSync,
     retainedNeeds:historicalNeeds.filter(n=>reconciliations.some(r=>r.previous_need_id===n.id&&r.disposition==='KEEP_SEPARATE')),reconciliations,
     suppliers:(await tx.query("SELECT id::text,COALESCE(nom,raison_sociale) AS name FROM public.fournisseurs WHERE actif IS NOT FALSE ORDER BY COALESCE(nom,raison_sociale)")).rows,
@@ -251,6 +274,21 @@ export async function materialCommand<T>(ofId:number,type:string,body:{expectedV
   });
 }
 
+export async function saveMaterialConfigurationTx(tx:PoolClient,ofId:number,technicalVersion:string,technicalHash:string,
+  need:{key:string;articleId:string|null;designation:string},configuration:NeedConfiguration,total:number,actor:AuditContext['user_id']){
+    await tx.query(`INSERT INTO public.of_material_needs(of_id,source_ref,technical_version_id,technical_hash,operation_id,article_id,designation,required_qty,unit,supply_mode,requirements,specification_reviewed_at,specification_reviewed_by,debit_rule,allow_partial,supplier_id,destination_id,created_by,updated_by)
+      VALUES($1,$2,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,$9,$10,$11::jsonb,now(),$12,$13::jsonb,$14,$15::uuid,$16::uuid,$12,$12)
+      ON CONFLICT(of_id,technical_version_id,source_ref) WHERE superseded_at IS NULL DO UPDATE SET operation_id=EXCLUDED.operation_id,required_qty=EXCLUDED.required_qty,unit=EXCLUDED.unit,supply_mode=EXCLUDED.supply_mode,requirements=EXCLUDED.requirements,specification_reviewed_at=now(),specification_reviewed_by=EXCLUDED.specification_reviewed_by,debit_rule=EXCLUDED.debit_rule,allow_partial=EXCLUDED.allow_partial,supplier_id=EXCLUDED.supplier_id,destination_id=EXCLUDED.destination_id,row_version=of_material_needs.row_version+1,updated_at=now(),updated_by=EXCLUDED.updated_by`,
+      [ofId,need.key,technicalVersion,technicalHash,configuration.operationId,need.articleId,need.designation,total,configuration.debitRule.stockUnit,configuration.supplyMode,JSON.stringify(configuration.requirements),actor,JSON.stringify(configuration.debitRule),configuration.allowPartial,configuration.supplierId,configuration.destinationId]);
+}
+
+export async function linkUnassignedMaterialPurchasesTx(tx:PoolClient,ofId:number,sourceRef:string,technicalVersion:string,orderIds:string[],audit:AuditContext){
+  if(orderIds.length){
+      const linked=await tx.query<{id:string}>(`UPDATE public.commande_fournisseur_ligne_besoin b SET material_need_id=n.id FROM public.of_material_needs n,public.commande_fournisseur_ligne l WHERE n.of_id=$1 AND n.source_ref=$2 AND n.technical_version_id=$3::uuid AND n.superseded_at IS NULL AND b.besoin_of_id=n.of_id AND b.besoin_ref=n.source_ref AND b.besoin_type='OF_MATERIAL' AND b.material_need_id IS NULL AND NOT b.annule AND l.id=b.ligne_id AND l.commande_id=ANY($4::uuid[]) AND l.article_id=n.article_id AND COALESCE(l.unite_stock,l.unite)=n.unit RETURNING b.id::text`,[ofId,sourceRef,technicalVersion,orderIds]);
+      if(linked.rowCount)await preparationAudit(tx,audit,ofId,'production.material.forecast-allocation.linked',{sourceRef,allocation_ids:linked.rows.map(r=>r.id)});
+    }
+}
+
 export async function configureOfMaterial(ofId:number,sourceRef:string,body:{expectedVersion:string;idempotencyKey:string;configuration:NeedConfiguration},audit:AuditContext){
   return materialCommand(ofId,"CONFIGURE",{...body,sourceRef},audit,async(tx,current)=>{
     const need=current.needs.find(n=>n.key===sourceRef),c=body.configuration;
@@ -265,15 +303,15 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
     if(c.supplyMode==="PURCHASE"&&c.requirements.ownerClientId)throw new HttpError(422,"MATERIAL_OWNER_INVALID","La matière achetée par CERP ne peut pas utiliser les lots appartenant à un client.");
     const article=(await tx.query("SELECT unite FROM public.articles WHERE id=$1::uuid",[need.articleId])).rows[0];
     if(!article||c.debitRule.stockUnit!==article.unite)throw new HttpError(422,"MATERIAL_STOCK_UNIT_REQUIRED","La conversion doit aboutir à l’unité de stock de l’article.");
-    const total=debitQuantity(c.debitRule,(await readOfDossierTx(tx,ofId)).quantity);
+    const total=materialRequirementForPieces(c.debitRule,(await readOfDossierTx(tx,ofId)).quantity);
     const before={operationId:need.operationId,requirements:need.requirements,supplyMode:need.supplyMode,debitRule:need.debitRule,allowPartial:need.allowPartial,supplierId:need.supplierId,destinationId:need.destinationId};
     const hasCommitments=need.reserved+need.consumed+need.expected+need.receivedBlocked>0;
     if(need.id&&hasCommitments&&materialPropertiesFingerprint(before)!==materialPropertiesFingerprint(c))
       await tx.query("UPDATE public.of_material_needs SET superseded_at=now(),updated_at=now(),updated_by=$2 WHERE id=$1::uuid AND superseded_at IS NULL",[need.id,audit.user_id]);
-    await tx.query(`INSERT INTO public.of_material_needs(of_id,source_ref,technical_version_id,technical_hash,operation_id,article_id,designation,required_qty,unit,supply_mode,requirements,specification_reviewed_at,specification_reviewed_by,debit_rule,allow_partial,supplier_id,destination_id,created_by,updated_by)
-      VALUES($1,$2,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,$9,$10,$11::jsonb,now(),$12,$13::jsonb,$14,$15::uuid,$16::uuid,$12,$12)
-      ON CONFLICT(of_id,technical_version_id,source_ref) WHERE superseded_at IS NULL DO UPDATE SET operation_id=EXCLUDED.operation_id,required_qty=EXCLUDED.required_qty,unit=EXCLUDED.unit,supply_mode=EXCLUDED.supply_mode,requirements=EXCLUDED.requirements,specification_reviewed_at=now(),specification_reviewed_by=EXCLUDED.specification_reviewed_by,debit_rule=EXCLUDED.debit_rule,allow_partial=EXCLUDED.allow_partial,supplier_id=EXCLUDED.supplier_id,destination_id=EXCLUDED.destination_id,row_version=of_material_needs.row_version+1,updated_at=now(),updated_by=EXCLUDED.updated_by`,
-      [ofId,sourceRef,current.technicalVersion,current.technicalHash,c.operationId,need.articleId,need.designation,total,c.debitRule.stockUnit,c.supplyMode,JSON.stringify(c.requirements),audit.user_id,JSON.stringify(c.debitRule),c.allowPartial,c.supplierId,c.destinationId]);
+    await saveMaterialConfigurationTx(tx,ofId,current.technicalVersion,current.technicalHash,need,c,total,audit.user_id);
+    await tx.query(`UPDATE public.ordres_fabrication SET technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('material_supplier_choices',COALESCE(technical_preparation->'material_supplier_choices','{}'::jsonb)||jsonb_build_object($2::text,$3::jsonb)) WHERE id=$1`,[ofId,sourceRef,JSON.stringify({version:current.technicalVersion,supplierId:c.supplierId,destinationId:c.destinationId})]);
+    const supply=(await readPlanningSupplyStates(tx,[ofId])).get(ofId)?.entries.find(e=>e.kind==='MATIERE'&&e.sourceRef===sourceRef);
+    await linkUnassignedMaterialPurchasesTx(tx,ofId,sourceRef,current.technicalVersion,supply?.orders.map(o=>o.id)??[],audit);
     await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=now(),invalidation_reason='La préparation matière ou les règles de débit ont changé.' WHERE of_id=$1 AND invalidated_at IS NULL",[ofId]);
     return readMaterialTx(tx,ofId);
   });
@@ -291,12 +329,13 @@ export async function chooseOfMaterialSupplier(ofId:number,sourceRef:string,body
   return materialCommand(ofId,'CHOOSE_SUPPLIER',{...body,sourceRef},audit,async(tx,current)=>{
     if(['TERMINE','CLOTURE','ANNULE'].includes(current.executionStatus))throw new HttpError(409,'MATERIAL_OF_CLOSED','Cet OF est terminé ou annulé ; ses préparations restent consultables.');
     const need=current.needs.find(n=>n.key===sourceRef);
-    if(!need?.id||need.blockers.length||need.supplyMode!=='PURCHASE')throw new HttpError(409,'MATERIAL_DEFINITION_REQUIRED','Confirmez la définition matière avant de choisir son fournisseur.');
+    if(!need||need.supplyMode!=='PURCHASE')throw new HttpError(409,'MATERIAL_DEFINITION_REQUIRED','Choisissez un besoin de matière achetée pour cet OF.');
     if(!current.suppliers.some(s=>s.id===body.supplierId))throw new HttpError(422,'MATERIAL_SUPPLIER_INVALID','Choisissez un fournisseur actif.');
     assertFournisseurCommandable(await fetchFournisseurMini(tx,body.supplierId));
     if(body.destinationId&&!current.destinations.some(d=>d.id===body.destinationId))throw new HttpError(422,'MATERIAL_DESTINATION_INVALID','Choisissez un magasin existant.');
     if(body.destinationId!==need.destinationId&&need.reserved+need.consumed+need.expected+need.receivedBlocked>0)
       throw new HttpError(409,'MATERIAL_DESTINATION_COMMITTED','Des engagements existent déjà dans ce magasin. Rapprochez-les avant de changer de destination.');
+    await tx.query(`UPDATE public.ordres_fabrication SET technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('material_supplier_choices',COALESCE(technical_preparation->'material_supplier_choices','{}'::jsonb)||jsonb_build_object($2::text,$3::jsonb)),updated_at=now(),updated_by=$4 WHERE id=$1`,[ofId,sourceRef,JSON.stringify({version:current.technicalVersion,supplierId:body.supplierId,destinationId:body.destinationId}),audit.user_id]);
     await tx.query(`UPDATE public.of_material_needs SET supplier_id=$2::uuid,destination_id=$3::uuid,
       updated_by=$4,updated_at=now(),row_version=row_version+1 WHERE id=$1::uuid`,[need.id,body.supplierId,body.destinationId,audit.user_id]);
     const live=await readMaterialTx(tx,ofId);

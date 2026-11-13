@@ -1150,6 +1150,13 @@ export async function repoCancelOrder(params: {
        VALUES ($1,'ORDER_CANCELLED',$2::jsonb,$3::jsonb,$4)`,
       [params.commandeId, JSON.stringify({ statut: current }), JSON.stringify({ statut: "ANNULE", reason_code: params.input.reason_code }), params.actor.user_id],
     );
+    await tx.query(
+      `UPDATE public.commande_client_workflow_checkpoint
+       SET metadata=COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('skip_reason','order_cancelled','previous_status',status),
+           status='skipped', updated_at=now()
+       WHERE commande_id=$1 AND status IN ('pending','active','blocked')`,
+      [params.commandeId],
+    );
     const response = { commande_id: params.commandeId, status: "ANNULE", idempotent_replay: false };
     await insertAudit(tx, params.actor, {
       action: "commercial.order.cancel", entity_type: "commande_client", entity_id: String(params.commandeId),

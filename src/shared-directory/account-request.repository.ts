@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import type { Pool, PoolClient } from 'pg';
 import { HttpError } from '../utils/httpError';
 import type { DirectorySession } from './model';
+import { approvedCompanyDecision, sameApprovedCompanyDecision, deriveApprovedCompanyAccess, type ApprovedCompanyAccess, type CompanyAccessCeiling, type DerivedCompanyAccess, type ApprovedCompanyDecision } from './account-request-company-access';
+import { assertCurrentBusinessCompanyOwner } from '../module/entreprises/repository/company-directory.repository';
 
 export type AccountRequestStatus = 'PENDING' | 'PROJECTION_PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
 export type AccountRequestApproval = {
@@ -11,6 +13,7 @@ export type AccountRequestApproval = {
   roles: string[];
   administrative_kind: 'STANDARD' | 'BUSINESS_ADMIN';
   module_keys: string[];
+  company_access?: ApprovedCompanyAccess[];
 };
 type RequestRow = {
   id: string; status: AccountRequestStatus; version: number; name: string; surname: string; email: string;
@@ -69,6 +72,50 @@ async function saveMutation(tx: PoolClient, requestId: string, operation: 'APPRO
   await tx.query('INSERT INTO public.cerp_directory_account_request_mutations(request_id,operation,idempotency_key,payload_hash,response) VALUES($1::uuid,$2,$3::uuid,$4,$5::jsonb)', [requestId, operation, key, payloadHash, JSON.stringify(response)]);
 }
 
+async function applyApprovedCompanyAccess(
+  tx: PoolClient,
+  profileId: string,
+  approvedModules: readonly string[],
+  selections: readonly ApprovedCompanyAccess[],
+  actorUserId: number,
+): Promise<Array<DerivedCompanyAccess & { membership_version: number }>> {
+  if (!selections.length) return [];
+  const ceilings: CompanyAccessCeiling[] = [];
+  for (const selection of selections) {
+    const company = (await tx.query<CompanyAccessCeiling>(
+      `SELECT c.company_id::text,c.code,c.name,c.profile,c.status,c.enabled_module_keys,c.enabled_commercial_projection_capabilities,
+        coalesce((SELECT m.version FROM public.cerp_business_company_memberships m WHERE m.company_id=c.company_id AND m.profile_id=$2::uuid FOR UPDATE),0) AS membership_version
+       FROM public.cerp_business_companies c WHERE c.company_id=$1::uuid FOR KEY SHARE`,
+      [selection.company_id, profileId],
+    )).rows[0];
+    if (company) ceilings.push(company);
+  }
+  const derived = deriveApprovedCompanyAccess(approvedModules, selections, ceilings);
+  const applied: Array<DerivedCompanyAccess & { membership_version: number }> = [];
+  for (const access of derived) {
+    const row = (await tx.query<{ version: number }>(
+      `INSERT INTO public.cerp_business_company_memberships(company_id,profile_id,status,allowed_module_keys,denied_module_keys,enabled_commercial_projection_capabilities,created_by_user_id,updated_by_user_id)
+       VALUES($1::uuid,$2::uuid,'ACTIVE',$3::text[],ARRAY[]::text[],$4::text[],$5,$5)
+       ON CONFLICT(company_id,profile_id) DO UPDATE SET status='ACTIVE',allowed_module_keys=excluded.allowed_module_keys,denied_module_keys=ARRAY[]::text[],enabled_commercial_projection_capabilities=excluded.enabled_commercial_projection_capabilities,version=public.cerp_business_company_memberships.version+1,updated_by_user_id=excluded.updated_by_user_id,updated_at=now()
+       RETURNING version`,
+      [access.company_id, profileId, access.allowed_module_keys, access.enabled_commercial_projection_capabilities, actorUserId],
+    )).rows[0];
+    await tx.query(
+      `INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
+       SELECT p.profile_id,i.site_id,u.role,coalesce((SELECT array_agg(ra.role_key ORDER BY ra.role_key) FROM public.user_role_assignments ra WHERE ra.user_id=u.id),ARRAY[u.role]::text[]),
+         'Inactive',false
+       FROM public.cerp_directory_profiles p JOIN public.users u ON u.id=p.user_id
+       JOIN public.cerp_business_companies c ON c.company_id=$1::uuid
+       JOIN public.cerp_business_company_instances i ON i.company_id=c.company_id
+       WHERE p.profile_id=$2::uuid AND i.site_id ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
+       ON CONFLICT(profile_id,database_id) DO UPDATE SET role_key=excluded.role_key,roles=excluded.roles,status=excluded.status,version=public.cerp_directory_memberships.version+1`,
+      [access.company_id, profileId],
+    );
+    applied.push({ ...access, membership_version: row.version });
+  }
+  return applied;
+}
+
 export async function submitDirectoryAccountRequest(db: Pool, input: { name: string; surname: string; email: string; password: string; avatar_key: string; username_base: string }) {
   const receipt = randomBytes(32).toString('base64url');
   const tx = await db.connect(); await tx.query('BEGIN');
@@ -108,10 +155,24 @@ export async function listDirectoryAccountRequests(db: Pool, status: AccountRequ
     WHERE status=$1 AND redacted_at IS NULL AND ($2::uuid IS NULL OR id>$2::uuid) ORDER BY id LIMIT $3`, [status, cursor ?? null, limit])).rows;
   return { requests, next_cursor: requests.length === limit ? requests.at(-1)?.id ?? null : null };
 }
+/** Company picker data intentionally excludes ACL inputs; approval derives them server-side. */
+export async function listDirectoryAccountRequestCompanyOptions(db: Pool, requestId: string) {
+  const request = (await db.query<{ id: string; version: number; status: AccountRequestStatus }>(
+    `SELECT id::text,version,status FROM public.cerp_directory_account_requests WHERE id=$1::uuid AND redacted_at IS NULL`, [requestId],
+  )).rows[0];
+  if (!request) throw new HttpError(404, 'ACCOUNT_REQUEST_NOT_FOUND', 'Demande introuvable.');
+  if (request.status !== 'PENDING') throw new HttpError(409, 'ACCOUNT_REQUEST_COMPANY_SELECTION_CLOSED', 'La sélection des entreprises est déjà figée par la validation.');
+  const companies = (await db.query(
+    `SELECT company_id::text,code,name,profile,version FROM public.cerp_business_companies WHERE status='ACTIVE' ORDER BY code`,
+  )).rows.map((company) => ({ ...company, expected_membership_version: 0 }));
+  return { request_id: request.id, request_version: request.version, companies };
+}
 export async function approveDirectoryAccountRequest(db: Pool, actor: DirectorySession, id: string, input: AccountRequestApproval, idempotencyKey: string) {
   const tx = await db.connect(); await tx.query('BEGIN');
   try {
-    const payloadHash = mutationHash({ expected_version: input.expected_version, primary_role: input.primary_role, roles: unique(input.roles), administrative_kind: input.administrative_kind, module_keys: unique(input.module_keys) });
+    const requestedCompanyAccess = input.company_access;
+    let selections = [...(requestedCompanyAccess ?? [])].sort((left, right) => left.company_id.localeCompare(right.company_id));
+    const payloadHash = mutationHash({ expected_version: input.expected_version, primary_role: input.primary_role, roles: unique(input.roles), administrative_kind: input.administrative_kind, module_keys: unique(input.module_keys), company_access: requestedCompanyAccess === undefined ? null : selections });
     // Lock the request before consulting the idempotency record: a successful
     // activation may have happened since the original PREPARED response.
     const row = await locked(tx, id);
@@ -125,10 +186,18 @@ export async function approveDirectoryAccountRequest(db: Pool, actor: DirectoryS
     }
     if (row.status === 'PROJECTION_PENDING' || row.status === 'APPROVED') {
       if (!sameApproval(row, input)) throw new HttpError(409, 'ACCOUNT_REQUEST_DECISION_CONFLICT', 'La demande a déjà reçu une décision différente.');
-      const result = preparedApproval(row);
+      const prior = (await tx.query<{ decision: ApprovedCompanyDecision }>(
+        `SELECT response->'company_access_decision' AS decision FROM public.cerp_directory_account_request_mutations
+         WHERE request_id=$1::uuid AND operation='APPROVE' AND response ? 'company_access_decision' LIMIT 1`, [id],
+      )).rows[0]?.decision ?? approvedCompanyDecision(undefined);
+      if (!sameApprovedCompanyDecision(input.company_access, prior)) throw new HttpError(409, 'ACCOUNT_REQUEST_DECISION_CONFLICT', 'La sélection des entreprises a déjà été validée. Modifiez les accès depuis la fiche du compte.');
+      const result = { ...preparedApproval(row), company_access_decision: prior };
       await saveMutation(tx, id, 'APPROVE', idempotencyKey, payloadHash, result); await tx.query('COMMIT'); return result;
     }
     if (row.status !== 'PENDING' || row.password_hash === null || row.version !== input.expected_version) throw new HttpError(409, 'ACCOUNT_REQUEST_VERSION_CONFLICT', 'La demande a été modifiée.');
+    // Bind account creation and its company grants to the same still-current
+    // privileged source actor, not only to an earlier HTTP authorization check.
+    await assertCurrentBusinessCompanyOwner(tx, actor);
     const roles = unique(input.roles), modules = unique(input.module_keys);
     let username = '', user: { id: number } | undefined;
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -153,9 +222,20 @@ export async function approveDirectoryAccountRequest(db: Pool, actor: DirectoryS
     await tx.query(`INSERT INTO public.cerp_directory_memberships(profile_id,database_id,role_key,roles,status,is_superadmin)
       VALUES($1::uuid,'cerp_prod',$2,$3::text[],'Inactive',false),
             ($1::uuid,'cerp_test',$2,$3::text[],'Inactive',false)`, [profileId, input.primary_role, roles]);
+    // Historic approvals predate the company picker. Retain their primary
+    // site's approved access without hardcoding the installation's company.
+    if (requestedCompanyAccess === undefined) {
+      const primary = (await tx.query<{ company_id: string }>(
+        `SELECT c.company_id::text FROM public.cerp_business_companies c
+         JOIN public.cerp_business_company_instances i ON i.company_id=c.company_id
+         WHERE i.site_id='cerp_prod' AND i.environment='cerp_prod' AND i.active AND c.status='ACTIVE'`,
+      )).rows[0];
+      if (primary) selections = [{ company_id: primary.company_id, expected_membership_version: 0 }];
+    }
+    const companyAccess = await applyApprovedCompanyAccess(tx, profileId, modules, selections, actor.source_user_id);
     await tx.query(`UPDATE public.cerp_directory_account_requests SET status='PROJECTION_PENDING',version=version+1,password_hash=NULL,approved_username=$2,profile_id=$3::uuid,primary_role=$4,roles=$5::text[],administrative_kind=$6,module_keys=$7::text[],reviewed_by_profile_id=$8::uuid,reviewed_at=now() WHERE id=$1::uuid`, [id, username, profileId, input.primary_role, roles, input.administrative_kind, modules, actor.profile_id]);
     await event(tx, id, 'APPROVAL_PREPARED', actor.profile_id, { profile_id: profileId, administrative_kind: input.administrative_kind });
-    const next = await locked(tx, id), result = preparedApproval(next);
+    const next = await locked(tx, id), result = { ...preparedApproval(next), company_access: companyAccess, company_access_decision: approvedCompanyDecision(requestedCompanyAccess) };
     await saveMutation(tx, id, 'APPROVE', idempotencyKey, payloadHash, result); await tx.query('COMMIT'); return result;
   } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
 }
@@ -172,8 +252,20 @@ export async function activateDirectoryAccountRequest(db: Pool, actor: Directory
       ON CONFLICT(profile_id,database_id) DO NOTHING`, [row.profile_id,row.primary_role,row.roles]);
     const membership = await tx.query("UPDATE public.cerp_directory_memberships SET status='Active',version=version+1 WHERE profile_id=$1::uuid AND database_id IN ('cerp_prod','cerp_test') AND status='Inactive' AND NOT is_superadmin AND role_key=$2 AND roles=$3::text[]", [row.profile_id,row.primary_role,row.roles]);
     if (membership.rowCount !== 2) throw new HttpError(409, 'ACCOUNT_REQUEST_MEMBERSHIP_CONFLICT', 'Les accès Production et Test ne peuvent pas être activés.');
+    // Preparation may create the company-scoped membership record, but it
+    // must not turn a tenant login on before the global review is activated.
+    const companyMembership = await tx.query(
+      `UPDATE public.cerp_directory_memberships dm SET status='Active',version=version+1
+       FROM public.cerp_business_company_memberships m
+       JOIN public.cerp_business_companies c ON c.company_id=m.company_id AND c.status='ACTIVE'
+       JOIN public.cerp_business_company_instances i ON i.company_id=c.company_id AND i.active
+       WHERE dm.profile_id=$1::uuid AND dm.database_id=i.site_id
+         AND dm.database_id ~ '^cerp_company_[a-f0-9]{32}_(prod|test)$'
+         AND m.profile_id=$1::uuid AND m.status='ACTIVE' AND dm.status='Inactive'`,
+      [row.profile_id],
+    );
     await tx.query("UPDATE public.cerp_directory_account_requests SET status='APPROVED',version=version+1 WHERE id=$1::uuid", [row.id]);
-    await event(tx, row.id, 'ACTIVATED', actor.profile_id, { profile_id: row.profile_id, databases: ['cerp_prod','cerp_test'] });
+    await event(tx, row.id, 'ACTIVATED', actor.profile_id, { profile_id: row.profile_id, databases: ['cerp_prod','cerp_test'], activated_company_memberships: companyMembership.rowCount ?? 0 });
     await tx.query('COMMIT'); return { request_id: row.id, status: 'APPROVED' as const, username: row.approved_username! };
   } catch (error) { await tx.query('ROLLBACK'); throw error; } finally { tx.release(); }
 }

@@ -403,6 +403,31 @@ export async function generateMetrologieEquipementCode(tx: DbQueryer): Promise<s
   return `MET-${pad(seq, 6)}`;
 }
 
+/**
+ * Code de parc issu du registre métrologique historique (PC-01, ME-01...).
+ * Le préfixe est un profil serveur, jamais une chaîne libre transmise par l'UI.
+ */
+export async function generateMetrologyProfileEquipmentCode(
+  tx: DbQueryer,
+  input: { prefix: string; minNextNumber: number }
+): Promise<string> {
+  const prefix = normalizeSegment(input.prefix, "Metrology profile");
+  if (!Number.isSafeInteger(input.minNextNumber) || input.minNextNumber < 1) {
+    throw new Error("Invalid metrology profile allocation floor");
+  }
+  for (let attempts = 0; attempts < 1000; attempts += 1) {
+    const allocated = await nextCodeValue(tx, `MTR:${prefix}`);
+    if (allocated < input.minNextNumber) continue;
+    const code = `${prefix}-${pad(allocated, 2)}`;
+    const exists = await tx.query<{ exists: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM public.metrologie_equipements WHERE code = $1) AS exists",
+      [code]
+    );
+    if (!exists.rows[0]?.exists) return code;
+  }
+  throw new Error(`Unable to allocate a free metrology profile code for '${prefix}'`);
+}
+
 /** #229 — Exécution métrologique (étalonnage/vérification) : MEX-AAAA-NNNNNN. */
 export async function generateMetrologieExecutionCode(
   tx: DbQueryer,

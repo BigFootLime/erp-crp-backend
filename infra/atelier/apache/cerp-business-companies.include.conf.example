@@ -1,0 +1,14 @@
+# Example integration point only. This is not an active Apache configuration.
+#
+# Generate the real fragment from a reviewed, non-secret manifest:
+#   node scripts/entreprises/render-company-proxy.mjs --input companies.json \
+#     --output infra/atelier/apache/cerp-business-companies.include.conf
+#
+# Put the generated Include before the existing legacy ProxyPass /api/ and
+# ProxyPass /socket.io/ catch-alls in cerp-local.conf / the WireGuard boundary.
+# It routes only registered company+database pairs to fixed targets. It does not
+# replace backend JWT/company authorization and must never be used as a dynamic
+# proxy template. The VPS public proxy must preserve both headers and the full
+# Socket.IO query string to this Apache boundary.
+#
+# IncludeOptional /etc/apache2/conf-available/cerp-business-companies.include.conf

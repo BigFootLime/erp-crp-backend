@@ -1,6 +1,10 @@
 import { asyncHandler } from "../../../utils/asyncHandler";
-import { svcGetPlanningReferenceOf, svcListPlanningReferenceOfs } from "../services/planning-references.service";
-import { planningReferenceOfListQuerySchema, planningReferenceOfParamSchema } from "../validators/planning-references.validators";
+import { svcGetPlanningReferenceOf, svcListPlanningReferenceOfs, svcListPlanningReferenceClients } from "../services/planning-references.service";
+import { planningReferenceOfListQuerySchema, planningReferenceOfParamSchema, planningReferenceClientQuerySchema } from "../validators/planning-references.validators";
+export const listPlanningReferenceClients = asyncHandler(async (req, res) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json(await svcListPlanningReferenceClients(planningReferenceClientQuerySchema.parse(req.query)));
+});
 export const listPlanningReferenceOfs = asyncHandler(async (req, res) => {
   res.setHeader("Cache-Control", "private, no-store");
   res.json(await svcListPlanningReferenceOfs(planningReferenceOfListQuerySchema.parse(req.query)));

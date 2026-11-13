@@ -1,3 +1,7 @@
+import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
+import { operationProgrammingSchema } from '../validators/production-workbench.validators';
+import { svcPrepareOperationProgramming } from '../services/production-workbench.service';
+import { svcGenerateInspectionTemplate } from '../services/production-workbench.service';
 import { svcProductionWorkbenchConfig } from "../services/production-workbench.service";
 import { z } from "zod";
 import { svcSynchronizePreparationChildren } from "../services/production-workbench.service";
@@ -33,6 +37,7 @@ import {
 } from "../validators/production-workbench.validators";
 import {
   svcProductionWorklist,
+  svcOfImprovementReturns,
   svcPreparationWorkbench,
   svcReviewPreparationStock,
   svcSavePreparationDecisions,
@@ -52,6 +57,10 @@ export const synchronizePreparationChildren = asyncHandler(async (req, res) => {
       buildAuditContext(req),
     ),
   );
+});
+export const prepareOperationProgramming = asyncHandler(async (req,res) => {
+  res.json(await svcPrepareOperationProgramming(ofIdParamSchema.parse({params:req.params}).params.id,
+    operationProgrammingSchema.parse(req.body),buildAuditContext(req)));
 });
 export const reusePreparationStock = asyncHandler(async (req, res) => {
   res.json(
@@ -97,23 +106,23 @@ export const createConsolidation = asyncHandler(async (req, res) => {
     );
 });
 export const getConsolidation = asyncHandler(async (req, res) => {
-  res.json(await svcGetConsolidation(z.string().uuid().parse(req.params.id)));
+  res.json(await svcGetConsolidation(z.string().guid().parse(req.params.id)));
 });
 export const dissolveConsolidation = asyncHandler(async (req, res) => {
   res.json(
     await svcDissolveConsolidation(
-      z.string().uuid().parse(req.params.id),
+      z.string().guid().parse(req.params.id),
       dissolveConsolidationSchema.parse(req.body),
       buildAuditContext(req),
     ),
   );
 });
+export const ofImprovementReturns = asyncHandler(async (req, res) => {
+  res.json(await svcOfImprovementReturns(ofIdParamSchema.parse({ params: req.params }).params.id));
+});
 export const preparationWorkbench = asyncHandler(async (req, res) => {
-  res.json(
-    await svcPreparationWorkbench(
-      ofIdParamSchema.parse({ params: req.params }).params.id,
-    ),
-  );
+  const data = await svcPreparationWorkbench(ofIdParamSchema.parse({ params: req.params }).params.id);
+  res.json({ ...data, can_validate: canValidateTechnicalDossier(req.user) });
 });
 export const savePreparationDecisions = asyncHandler(async (req, res) => {
   res.json(
@@ -155,11 +164,19 @@ export const generateSelfInspection = asyncHandler(async (req, res) => {
     ),
   );
 });
+export const generateInspectionTemplate = asyncHandler(async (req,res) => {
+  const id=ofIdParamSchema.parse({params:req.params}).params.id;
+  const body=z.object({expected_updated_at:z.string().min(1)}).strict().parse(req.body);
+  const pdf=await svcGenerateInspectionTemplate(id,body.expected_updated_at,buildAuditContext(req));
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition',`attachment; filename="MD07-E-OF-${id}.xlsx"`);
+  res.send(pdf);
+});
 export const downloadSelfInspection = asyncHandler(async (req, res) => {
   const params = z
     .object({
       id: z.coerce.number().int().positive(),
-      sheetId: z.string().uuid(),
+      sheetId: z.string().guid(),
     })
     .parse(req.params);
   const pdf = await svcDownloadSelfInspection(

@@ -4,7 +4,7 @@ import { z } from "zod"
 import { uuidRouteParam } from "../../../utils/routeParams"
 import { packagingPolicySchema } from "../../stock/domain/finished-packaging"
 
-const uuid = z.string().uuid()
+const uuid = z.string().guid()
 
 export const versionStatutSchema = z.enum(["BROUILLON", "EN_VALIDATION", "APPLICABLE", "OBSOLETE"])
 export type VersionStatutDTO = z.infer<typeof versionStatutSchema>
@@ -34,6 +34,7 @@ export const versionIdParamSchema = z.object({
 })
 
 const versionCoreBody = z.object({
+  client_requirement_confirmed: z.literal(true).optional(),
   indice: z.string().trim().min(1, "Indice requis").max(20),
   plan_reference: z.string().trim().max(160).optional().nullable(),
   matiere_prevue: z.string().trim().max(200).optional().nullable(),
@@ -50,6 +51,7 @@ const versionCoreBody = z.object({
 
 export const createVersionSchema = z.object({ body: versionCoreBody })
 export type CreateVersionBodyDTO = z.infer<typeof createVersionSchema>["body"]
+export const preparePieceEditSchema=z.object({body:z.object({}).strict().default({})})
 
 export const updateVersionSchema = z.object({
   body: versionCoreBody.partial().extend({
@@ -87,5 +89,11 @@ export const publishVersionSchema = z.object({
 export type PublishVersionBodyDTO = z.infer<typeof publishVersionSchema>["body"]
 
 // "Nouvel indice / nouvelle évolution / nouvelle modification" (remplace le duplicate cassé).
-export const createNextVersionSchema = z.object({ body: versionCoreBody.extend({change_level:z.enum(["MAJOR","MINOR"]).optional()}) })
+export const createNextVersionSchema = z.object({
+  body: versionCoreBody.extend({ change_level: z.enum(["MAJOR", "MINOR"]).optional() })
+    .refine(value => value.client_requirement_confirmed === true && (value.raison_changement?.trim().length ?? 0) >= 3, {
+      path: ["client_requirement_confirmed"],
+      message: "Confirmez l’exigence client ou le nouveau plan et renseignez son motif.",
+    }),
+})
 export type CreateNextVersionBodyDTO = z.infer<typeof createNextVersionSchema>["body"]

@@ -86,6 +86,12 @@ export type StockArticleFamily = {
 };
 
 export type StockMatiereNuance = {
+  norme_fr?: string | null;
+  norme_en?: string | null;
+  norme_werkstoff?: string | null;
+  norme_usa?: string | null;
+  designation_principale?: "FR" | "EN" | "WERKSTOFF" | "USA" | "LEGACY";
+  libelle?: string;
   id: number;
   code: string;
   designation: string | null;
@@ -106,9 +112,12 @@ export type StockMatiereEtat = {
 
 export type StockMatiereSousEtat = {
   id: number;
-  etat_id: number;
+  /** Historical rows can retain their original state link. New entries do not require one. */
+  etat_id: number | null;
   code: string;
   designation: string;
+  /** Optional explanatory paragraph displayed as a contextual hint in material selectors. */
+  informations: string | null;
   is_active: boolean;
 };
 
@@ -279,6 +288,7 @@ export type StockAvailableLotItem = {
 };
 
 export type StockArticleDetail = StockArticleListItem & {
+  finish_definition?: { piece_technique_id: string; piece_technique_version_id: string; finish_revision_id: string } | null;
   subcontract_definition?: import("../validators/subcontract-definition").SubcontractDefinition & {piece_reference:string;piece_designation:string;indice:string} | null;
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;

@@ -8,7 +8,7 @@ import {
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date attendue au format YYYY-MM-DD");
 const isoDateTime = z.string().datetime({ offset: true });
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 export const procurementOverviewQuerySchema = z.object({
   from: isoDate,

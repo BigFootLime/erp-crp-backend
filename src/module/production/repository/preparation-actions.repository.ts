@@ -1,4 +1,5 @@
 import { programmingDecisionDefined, type PreparationDecisions } from "../domain/preparation-rules";
+import { programmingProgress } from '../domain/programming-progress';
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
@@ -12,7 +13,32 @@ import {
   persistPreparationEvaluation,
   preparationAudit,
   invalidateCompatibleDrafts,
+  evaluateOfPreparation,
 } from "./production-preparation.repository";
+import type { z } from 'zod';
+import type { operationProgrammingSchema } from '../validators/production-workbench.validators';
+
+/** Estimate preparation effort per route operation. This never marks a CNC program DONE. */
+export async function repoPrepareOperationProgramming(id: number, input: z.infer<typeof operationProgrammingSchema>, audit: AuditContext) {
+  return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
+    const of = await loadPreparationOrder(tx, id, true);
+    assertPreparationMutable(of, input.expected_updated_at);
+    if (of.technical_snapshot_sha256) throw new HttpError(409, 'PROGRAMMING_PREPARATION_FROZEN', 'La préparation de cet OF est déjà validée.');
+    const evaluation = await evaluateOfPreparation(tx, id);
+    const operation = evaluation.programming_operations.find(op => op.operation_id === input.operation_id);
+    if (!of.version_id || !operation) throw new HttpError(422, 'PROGRAMMING_OPERATION_INVALID', 'Sélectionnez une opération de fraisage ou de tournage de cet OF.');
+    if (operation.operation_hash !== input.operation_hash) throw new HttpError(409, 'PROGRAMMING_OPERATION_CHANGED', 'La gamme a changé. Actualisez avant de préparer la programmation.');
+    const saved = {version_id: of.version_id, operation_hash: operation.operation_hash, estimated_hours: input.estimated_hours,
+      mode: input.mode ?? 'REQUIRED', reason: input.reason,
+      prepared_at: new Date().toISOString(), prepared_by: audit.user_id};
+    await tx.query(`UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2,
+      technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('operation_programming',
+        COALESCE(technical_preparation->'operation_programming','{}'::jsonb)||jsonb_build_object($3::text,$4::jsonb)) WHERE id=$1`,
+      [id,audit.user_id,input.operation_id,JSON.stringify(saved)]);
+    await preparationAudit(tx,audit,id,'production.preparation.operation-programming.prepare',{operation_id:input.operation_id,...saved});
+    return persistPreparationEvaluation(tx,id);
+  });
+}
 export async function repoSynchronizePreparationChildren(
   id: number,
   expected: string,
@@ -53,6 +79,7 @@ export async function repoSaveProgrammingTask(
     assignee_id: number;
     estimated_hours: number;
     status: "TODO" | "DONE";
+    progress_percent?: number;
     program_reference?: string;
   },
   audit: AuditContext,
@@ -84,8 +111,10 @@ export async function repoSaveProgrammingTask(
         assignee_id: number;
         estimated_hours: string;
         program_reference: string | null;
+        progress_percent: number;
       }>(
-        `SELECT id::text,updated_at::text,status,assignee_id,estimated_hours,program_reference FROM public.piece_version_programming_tasks
+        `SELECT id::text,updated_at::text,status,assignee_id,estimated_hours,program_reference,
+          COALESCE((to_jsonb(piece_version_programming_tasks)->>'progress_percent')::int,CASE WHEN status='DONE' THEN 100 ELSE 0 END) AS progress_percent FROM public.piece_version_programming_tasks
          WHERE piece_technique_version_id=$1::uuid AND
            (CASE WHEN $3::boolean THEN of_id=$2::bigint WHEN $4::uuid IS NOT NULL THEN id=$4::uuid AND of_id IS NULL ELSE of_id IS NULL END) FOR UPDATE`,
         [of.version_id, id, ownTask, of.technical_snapshot_sha256 ? choice?.task_id ?? null : null],
@@ -97,6 +126,10 @@ export async function repoSaveProgrammingTask(
         "CONCURRENT_MODIFICATION",
         "La tâche a changé. Actualisez-la.",
       );
+    const progress=programmingProgress(input.status,input.progress_percent,task?.progress_percent??0);
+    if(task?.status==='DONE' && input.progress_percent!==undefined)throw new HttpError(409,'PROGRAMMING_ALREADY_COMPLETED','Ce programme est déjà réalisé. Son avancement reste à 100 %.');
+    const progressOnly=Boolean(task && input.progress_percent!==undefined && !input.decisions &&
+      input.assignee_id===task.assignee_id && input.estimated_hours===Number(task.estimated_hours));
     if (lateProgramming) {
       assertExecutionEvidenceMutable(of, input.expected_updated_at);
       const started = (await tx.query<{started:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.of_operations op
@@ -110,7 +143,7 @@ export async function repoSaveProgrammingTask(
       of.technical_snapshot_sha256 && !lateProgramming &&
       (choice?.mode !== 'TASK' || !task ||
         task.status === "DONE" ||
-        input.status !== "DONE" ||
+        (input.status !== "DONE" && !progressOnly) ||
         input.assignee_id !== task.assignee_id ||
         input.estimated_hours !== Number(task.estimated_hours))
     )
@@ -133,22 +166,23 @@ export async function repoSaveProgrammingTask(
       );
     const saved = (
       await tx.query<{ id: string }>(
-        `INSERT INTO public.piece_version_programming_tasks(piece_technique_version_id,assignee_id,estimated_hours,status,program_reference,completed_at,completed_by,updated_by,of_id)
-      VALUES($1::uuid,$2,$3,$4,$5,CASE WHEN $4='DONE' THEN now() END,CASE WHEN $4='DONE' THEN $6::integer END,$6,$7)
+        `INSERT INTO public.piece_version_programming_tasks(piece_technique_version_id,assignee_id,estimated_hours,status,program_reference,completed_at,completed_by,updated_by,of_id,progress_percent)
+      VALUES($1::uuid,$2,$3,$4,$5,CASE WHEN $4='DONE' THEN now() END,CASE WHEN $4='DONE' THEN $6::integer END,$6,$7,$8)
       ON CONFLICT ${ownTask ? '(of_id) WHERE of_id IS NOT NULL' : '(piece_technique_version_id) WHERE of_id IS NULL'} DO UPDATE SET assignee_id=excluded.assignee_id,estimated_hours=excluded.estimated_hours,status=excluded.status,
-      program_reference=excluded.program_reference,completed_at=excluded.completed_at,completed_by=excluded.completed_by,updated_by=excluded.updated_by,updated_at=now() RETURNING id::text`,
+       program_reference=excluded.program_reference,progress_percent=excluded.progress_percent,completed_at=excluded.completed_at,completed_by=excluded.completed_by,updated_by=excluded.updated_by,updated_at=now() RETURNING id::text`,
         [
           of.version_id,
           input.assignee_id,
           input.estimated_hours,
           input.status,
-          input.program_reference ?? null,
+          input.program_reference ?? task?.program_reference ?? null,
           audit.user_id,
           ownTask ? id : null,
+          progress,
         ],
       )
     ).rows[0];
-    if (!of.technical_snapshot_sha256) {
+    if (!of.technical_snapshot_sha256 && !progressOnly) {
       const profile = (
         await tx.query<{ version: number }>(
           "SELECT version FROM public.piece_version_preparation WHERE piece_technique_version_id=$1::uuid FOR UPDATE",
@@ -184,7 +218,7 @@ export async function repoSaveProgrammingTask(
     if (!of.technical_snapshot_sha256 && task) {
       const referenced = (await tx.query<{used:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.ordres_fabrication
         WHERE technical_snapshot_sha256 IS NOT NULL AND technical_snapshot->'preparation_decisions'->'programming'->>'task_id'=$1) AS used`, [task.id])).rows[0]?.used;
-      if (referenced && (task.status === 'DONE' || input.status !== 'DONE' || input.assignee_id !== task.assignee_id || input.estimated_hours !== Number(task.estimated_hours)))
+      if (referenced && (task.status === 'DONE' || (input.status !== 'DONE' && !progressOnly) || input.assignee_id !== task.assignee_id || input.estimated_hours !== Number(task.estimated_hours)))
         throw new HttpError(409, 'PROGRAMMING_DEFINITION_FROZEN', 'Cette programmation est déjà prévue dans un dossier validé. Seule sa réalisation peut être enregistrée.');
     }
     }

@@ -1,0 +1,148 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-13T13:43:27.448121+00:00",
+  "purpose": "Paired Git integration qualification; no deployment or production mutation",
+  "validated_source_pair": {
+    "frontend": {
+      "repository": "BigFootLime/crp-systems-web",
+      "commit": "d479ae965226f970fbdf799aae72e8c2af1f0a0f",
+      "tree": "1c90ad69af7ebfe2041315ad1dcbafd72a572280"
+    },
+    "backend": {
+      "repository": "BigFootLime/erp-crp-backend",
+      "commit": "95186c7a87df0bb0943ea10c841e3e1fe3eec2a3",
+      "tree": "75b7a35b27492deee537d0d200e0a1ee3570ad73"
+    }
+  },
+  "qualification_scope": "Complete unit suites and affected browser journey; not an exhaustive browser certification.",
+  "unit_test_source_commits": {
+    "frontend": "7104b629e784a7fdefa97dc04fb838a735f16166",
+    "backend": "b8e221014cbdbc4c6c6bee9fc7d53c5df672d6cc"
+  },
+  "anthropic_skills": {
+    "repository": "anthropics/skills",
+    "verified_upstream_head": "2c5958ecac7cee2b583967a2c4981d0f4a75c579"
+  },
+  "tests": {
+    "frontend": {
+      "passed": 4685,
+      "failed": 0,
+      "conditional_skips": 0,
+      "total": 4685,
+      "report": "qualified-frontend-unit.json",
+      "sha256": "2ba10357cb4a60049d0af43681b9c174a6afc9ccca48e1c1e94a80ba844cbb77"
+    },
+    "backend": {
+      "passed": 9401,
+      "failed": 0,
+      "conditional_skips": 349,
+      "total": 9750,
+      "report": "qualified-backend-unit.json",
+      "sha256": "b58fb9e6680ce343c72a9a64d2a2b59f84bf78cc4d0c0181e4eebd5bcffd6497",
+      "original_full_run_success": false,
+      "initial_unloaded_files": 2,
+      "resolved_by_focused_rerun": {
+        "passed": 34,
+        "report": "qualified-backend-loader-fixes.json",
+        "sha256": "e15a7eea67dd4108debf8794f795098451f2d679b5b843ad67f08f33f16cf0b3",
+        "test_only_commit": "95186c7a87df0bb0943ea10c841e3e1fe3eec2a3"
+      }
+    },
+    "affected_workbench_browser": {
+      "total": 1,
+      "expected": 1,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0,
+      "report": "test-results\\sol-05\\results.json",
+      "sha256": "9f1274d7c85dae3a6ce342c5a256e0c62cbe1153ec79ffcbef14eba3c5855673"
+    },
+    "reader_policy_http": {
+      "passed": 77,
+      "failed": 0,
+      "skipped": 0,
+      "report": "reader-policy-endpoints.json",
+      "sha256": "a897c640a8ed7e5ae337321d98f1de24d58913d76e7cebc6fadca6c188299321"
+    },
+    "material_review_http": {
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "report": "reader-material-review.json",
+      "sha256": "63693d01267ead4dfb4a7293ec9a1f51757b63fb21b10b04d6b086e18f7e694c"
+    },
+    "reader_policy_components": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "report": "reader-policy-frontend-2.json",
+      "sha256": "d18c56b1dbd4199464cea970b966d49647383316ee26c092551c36e34d0bad9b"
+    },
+    "runtime_log_gate": {
+      "status": "passed",
+      "report": "test-results\\sol-05\\runtime-log-gate.json",
+      "sha256": "a37c6545863d9368b752d3d6fc8c30b27358b2031aba7e95a86d0abf0c6a82b3"
+    }
+  },
+  "interrupted_full_browser_campaign": {
+    "canonical_inventory": 402,
+    "status": "cancelled for urgent Nuance delivery",
+    "last_started_case": 326,
+    "failures_recorded_before_cancellation": 28,
+    "exhaustive_rerun_performed": false,
+    "evidence": "cancelled-402/status.json"
+  },
+  "earlier_source_evidence": {
+    "python_skill_browser": {
+      "passed": 7,
+      "page_errors": 0,
+      "report": "python-browser-frozen-2/results.json"
+    },
+    "nuance_postgresql": {
+      "passed": 23,
+      "report": "nuance-postgres-combined.log"
+    }
+  },
+  "preserved_originals": {
+    "frontend": {
+      "files_checked": 760,
+      "mismatches": 0
+    },
+    "backend": {
+      "files_checked": 335,
+      "mismatches": 0
+    }
+  },
+  "git_workflow": {
+    "frontend_dev_pr": 1840,
+    "backend_dev_pr": 1502,
+    "promotion": "integration -> dev -> main, normal merges only"
+  },
+  "deployment_hold": {
+    "broader_integration_hold_active": true,
+    "coolify_frontend_auto_deploy": false,
+    "coolify_backend_auto_deploy": false,
+    "repository_webhooks": [],
+    "this_integration_train_modified_production": false,
+    "separate_exception": "The user separately authorized an urgent Nuance-only deployment through the coordinating chat; its runtime and migration evidence are outside this Git-integration manifest."
+  },
+  "limitations": [
+    "Historical composite backend runtime equivalence is not fully verified; this source candidate has independent qualification.",
+    "Existing conditional PostgreSQL unit cases remain separately reported; the isolated full-stack browser and migration recipes are distinct evidence.",
+    "Directory-specific account-request authority requires its dedicated fixture and is not certified by the legacy local-authentication stack.",
+    "Previously documented GED global-title issue U04 remains a small follow-up outside this frozen integration batch.",
+    "The full 402-case browser campaign was interrupted. Final verification covers the affected OF journey; it does not certify every browser scenario on the final pair.",
+    "Nuance activation requires native-equivalent routes; the old EC code-only adapter must not precede them. Only the urgent Nuance feature has separate deployment/migration authorization."
+  ],
+  "managed_runtime_source": {
+    "frontend_commit": "e48c54244d5a9ae0bbe463c20ff4111b9cd24466",
+    "backend_repository_commit": "95186c7a87df0bb0943ea10c841e3e1fe3eec2a3",
+    "backend_runtime_commit": "b8e221014cbdbc4c6c6bee9fc7d53c5df672d6cc",
+    "frontend_asset": "/assets/index-BAi0Z7-K.js",
+    "frontend_asset_sha256": "c50096576b34948910ad6bb8bf2d3ca393b351d7dc59c1158a0325bdc624d16d",
+    "frontend_commit_present_in_served_bundle": true,
+    "report": "managed-runtime-source-proof.json",
+    "sha256": "bfaf34db9ce106c6087389a1cb7174256fa0143a2dc8783c4bee26ff76f7e290"
+  },
+  "supplemental_source_changes": "Frontend follow-up contains navigation containment and browser failure diagnostics/queue selection; its real 390/768/1024px geometry assertions remain active. Backend follow-up only repairs the two previously unloadable test fixtures. The original full-unit report and focused rerun are both retained."
+}

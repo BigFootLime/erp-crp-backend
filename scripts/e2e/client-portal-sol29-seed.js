@@ -27,14 +27,21 @@ async function main() {
          status='client'`
     );
     await client.query(
+      `INSERT INTO public.adresse_livraison (delivery_address_id,address,postal_code,city,country)
+       VALUES ('92900001-0000-4000-8000-000000000001','Site A SOL-29','69001','Lyon','France'),
+              ('92900001-0000-4000-8000-000000000002','Site B SOL-29','69002','Lyon','France')
+       ON CONFLICT (delivery_address_id) DO NOTHING`
+    );
+    await client.query(
       `INSERT INTO public.commande_client (
-         id,numero,client_id,date_commande,order_type,total_ht,total_ttc
+         id,numero,client_id,destinataire_id,date_commande,order_type,total_ht,total_ttc
        ) VALUES
-         (9290001,'SOL29-ORDER-A','901',DATE '2026-08-14','FERME',100,120),
-         (9290002,'SOL29-ORDER-B','902',DATE '2026-08-14','FERME',200,240)
+         (9290001,'SOL29-ORDER-A','901','92900001-0000-4000-8000-000000000001',DATE '2026-08-14','FERME',100,120),
+         (9290002,'SOL29-ORDER-B','902','92900001-0000-4000-8000-000000000002',DATE '2026-08-14','FERME',200,240)
        ON CONFLICT (id) DO UPDATE SET
          numero=EXCLUDED.numero,
          client_id=EXCLUDED.client_id,
+         destinataire_id=EXCLUDED.destinataire_id,
          date_commande=EXCLUDED.date_commande,
          order_type=EXCLUDED.order_type,
          total_ht=EXCLUDED.total_ht,

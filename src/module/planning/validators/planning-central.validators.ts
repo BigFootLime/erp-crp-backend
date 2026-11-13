@@ -18,8 +18,9 @@ export const centralWindowSchema = z.object({
 }).refine(q => Date.parse(q.to) > Date.parse(q.from) && Date.parse(q.to) - Date.parse(q.from) <= 367 * 86400000,
   { message: "La fenêtre doit couvrir entre un instant et douze mois." });
 export const centralSimulationSchema = z.object({
+  preserveCommitted:z.boolean().optional(),
   revision: z.string().regex(/^\d+$/), from: instant, to: instant,
-  urgency: z.object({client_id:z.string().trim().min(1).max(100),promise_event_id:z.string().uuid()}).strict().optional(),
+  urgency: z.object({client_id:z.string().trim().min(1).max(100),promise_event_id:z.string().guid()}).strict().optional(),
   changes: z.array(z.object({ taskId: z.string().min(1).max(100), expectedVersion: z.string().min(1).max(200),
     earliestStart: instant, resourceIds: z.array(z.string().min(1).max(100)).min(1).max(4).optional(), autoAssign: z.boolean().optional()
   }).refine(change => !change.autoAssign || !change.resourceIds, { message: "Choisissez une affectation automatique ou une ressource explicite." })).min(1).max(100),

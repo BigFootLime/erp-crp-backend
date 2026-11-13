@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { AuthRateLimitConfig } from "../config/auth-rate-limit";
+import { loadAuthRateLimitConfig, type AuthRateLimitConfig } from "../config/auth-rate-limit";
 import type {
   AuthRateLimitStore,
   AuthRateLimitStoreCounter,
   AuthRateLimitStoreInput,
 } from "../module/auth/domain/auth-rate-limit";
-import { AuthRateLimiter } from "../module/auth/services/auth-rate-limit.service";
+import { AuthRateLimiter, startAuthRateLimitMaintenance } from "../module/auth/services/auth-rate-limit.service";
 
 type SharedCounter = { count: number; expiresAt: number };
 
@@ -111,6 +111,49 @@ function testConfig(overrides: Partial<AuthRateLimitConfig> = {}): AuthRateLimit
 }
 
 describe("distributed auth rate limiter", () => {
+  it("drains an active cleanup before stop resolves", async () => {
+    vi.useFakeTimers();
+    let finish: (() => void) | undefined;
+    const store = {
+      consume: vi.fn(),
+      deleteExpired: vi.fn(() => new Promise<number>((resolve) => { finish = () => resolve(0); })),
+    } as unknown as AuthRateLimitStore;
+    const stop = startAuthRateLimitMaintenance(store, testConfig({ cleanupIntervalMs: 10 }));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.deleteExpired).toHaveBeenCalledTimes(1);
+    const stopping = stop();
+    let settled = false;
+    void stopping.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(settled).toBe(false);
+    expect(store.deleteExpired).toHaveBeenCalledTimes(1);
+    finish?.();
+    await stopping;
+    vi.useRealTimers();
+  });
+
+  it("persists company exchange counters in valid, pseudonymous PostgreSQL scopes", async () => {
+    const store = new SharedDeterministicStore(() => 1_000);
+    const config = loadAuthRateLimitConfig({ NODE_ENV: "test" });
+    const limiter = new AuthRateLimiter(store, config);
+    const ticket = "a".repeat(64);
+    await expect(limiter.check("companySwitch", [
+      { dimension: "ip", value: "ipv4:198.51.100.42" },
+      { dimension: "token", value: ticket },
+    ])).resolves.toMatchObject({ status: "allowed" });
+    expect(store.lastInputs.map(input => input.scope)).toEqual([
+      "auth:company-switch:ip", "auth:company-switch:token",
+    ]);
+    for (const input of store.lastInputs) {
+      expect(input.scope).toMatch(/^[a-z][a-z0-9:_-]{2,63}$/);
+      expect(input.subjectHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(input.subjectHash).not.toBe(ticket);
+    }
+    store.fail = true;
+    await expect(limiter.check("companySwitch", [
+      { dimension: "token", value: ticket },
+    ])).resolves.toMatchObject({ status: "unavailable", failurePolicy: "closed-error" });
+  });
   it("admits twenty different employees behind one IP while keeping receipt and submission scopes separate", async () => {
     const store = new SharedDeterministicStore(() => 1_000);
     const limiter = new AuthRateLimiter(store, testConfig());

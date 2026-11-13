@@ -1,6 +1,7 @@
 // src/module/billers/repository/billers.repository.ts
 import pool from "../../../config/database";
 import {sharedDirectoryClient} from '../../../shared-directory/site-runtime';
+import { companyRuntimeConfiguration } from '../../entreprises/runtime/company-runtime.config';
 
 export async function repoListBillers(q = "") {
   const like = `%${q.toLowerCase()}%`;
@@ -8,7 +9,7 @@ export async function repoListBillers(q = "") {
     `SELECT biller_id, biller_name
      FROM factureur
      WHERE ($1='%%' OR LOWER(biller_name) LIKE $1)
-     ${sharedDirectoryClient()?"AND biller_id IN (SELECT biller_id FROM public.cerp_directory_company_bindings)":''}
+     ${sharedDirectoryClient()&&!companyRuntimeConfiguration().enabled?"AND biller_id IN (SELECT biller_id FROM public.cerp_directory_company_bindings)":''}
      ORDER BY biller_name ASC`,
     [like]
   );

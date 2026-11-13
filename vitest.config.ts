@@ -21,6 +21,10 @@ export default defineConfig({
     },
   },
   test: {
+    // Route fixtures share CPU with frontend/browser checks in the local gate.
+    // Bound CI contention without changing assertions or the normal local budget.
+    maxWorkers: process.env.CI ? 2 : undefined,
+    testTimeout: process.env.CI ? 15_000 : 5_000,
     include: ["src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
     exclude: [
       ".claude/**",

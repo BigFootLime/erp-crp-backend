@@ -6,7 +6,11 @@ import { createServer } from "http";
 import pool from "./config/database";
 import {assertManagedDatabaseAtStartup} from './config/managed-database';
 import {initializeSharedDirectorySite} from './shared-directory/site-runtime';
-import { assertE2EIsolation, e2eListenHost } from "./config/e2e-isolation";
+import { assertCompanyRuntimeAtStartup } from './module/entreprises/runtime/company-runtime.service';
+import { resolveCompanyBackgroundProfile, selectCompanyBackgroundStarters } from './module/entreprises/runtime/company-background-profile';
+import { startIntercompanyDeliveryMaintenance } from './module/entreprises/intercompany/intercompany-worker';
+import { intercompanyTransportConfiguration } from './module/entreprises/intercompany/intercompany-transport';
+import { assertE2EIsolation } from "./config/e2e-isolation";
 import { assertMfaStartupConfiguration } from "./module/auth/domain/mfa";
 import { startAuthRateLimitMaintenance } from "./module/auth/services/auth-rate-limit.service";
 import { startMfaArtifactMaintenance } from "./module/auth/services/mfa.service";
@@ -18,10 +22,13 @@ import { startEReportingMaintenance } from "./module/facturation/electronic-invo
 import { startWebhookDeliveryMaintenance } from "./module/integrations/webhooks/webhook.service";
 import { startAuthoritativePdfArchiveMaintenance } from "./shared/authoritative-documents/authoritative-document.worker";
 import { startPlanningForecastMaintenance } from "./module/planning/services/planning-forecast.worker";
+import { startIndustrialPlanMaintenance } from "./module/planning/services/industrial-runs.service";
+import { startDemandAutomation } from "./module/demand-pilot/services/demand-auto.worker";
 import { startDurationLearningMaintenance } from "./module/planning/services/duration-learning.worker";
 import { startCumpProjectionMaintenance } from "./module/stock/services/cump-projection.worker";
 import { createApplicationShutdown } from "./shared/runtime/application-shutdown";
 import { startBackgroundLifecycle } from "./shared/runtime/background-lifecycle";
+import { runtimeListenHost } from "./shared/runtime/runtime-listen-host";
 import { preflightCriticalStorageAtStartup } from "./shared/runtime/critical-storage-preflight";
 import { preflightSecureUploadStorageRoots } from "./shared/uploads/secure-upload";
 import { getUploadScannerStartupConfiguration } from "./shared/uploads/upload-scanner";
@@ -38,6 +45,9 @@ async function start(): Promise<void> {
   assertMfaStartupConfiguration();
   await assertManagedDatabaseAtStartup(pool);
   await initializeSharedDirectorySite(pool);
+  await assertCompanyRuntimeAtStartup(pool);
+  const companyBackgroundProfile = await resolveCompanyBackgroundProfile();
+  intercompanyTransportConfiguration();
   // Run the GED identity/RW proof before the generic upload-root preflight:
   // otherwise a missing mount could be replaced by a newly created directory
   // on the system disk before the sentinel has been checked.
@@ -66,25 +76,28 @@ async function start(): Promise<void> {
   const httpServer = createServer(app);
   const backgroundLifecycle = startBackgroundLifecycle({
     pool,
-    starters: [
-      startAuthRateLimitMaintenance,
-      startMfaArtifactMaintenance,
-      startReminderMaintenance,
-      startElectronicInvoiceMaintenance,
-      startSupplierInvoiceMaintenance,
-      startEReportingMaintenance,
-      startWebhookDeliveryMaintenance,
-      startAuthoritativePdfArchiveMaintenance,
-      startPlanningForecastMaintenance,
-      startDurationLearningMaintenance,
-      startCumpProjectionMaintenance,
-      startExpiredLockMaintenance,
-    ],
+    starters: selectCompanyBackgroundStarters(companyBackgroundProfile, [
+      { key: "auth-rate-limit", start: startAuthRateLimitMaintenance },
+      { key: "mfa", start: startMfaArtifactMaintenance },
+      { key: "locks", start: startExpiredLockMaintenance },
+      { key: "reminders", start: startReminderMaintenance },
+      { key: "electronic-invoices", start: startElectronicInvoiceMaintenance },
+      { key: "supplier-invoices", start: startSupplierInvoiceMaintenance },
+      { key: "e-reporting", start: startEReportingMaintenance },
+      { key: "webhooks", start: startWebhookDeliveryMaintenance },
+      { key: "authoritative-documents", start: startAuthoritativePdfArchiveMaintenance },
+      { key: "planning-forecast", start: startPlanningForecastMaintenance },
+      { key: "industrial-plan", start: startIndustrialPlanMaintenance },
+      { key: "demand-decisions", start: startDemandAutomation },
+      { key: "duration-learning", start: startDurationLearningMaintenance },
+      { key: "cump-projection", start: startCumpProjectionMaintenance },
+      ...(companyBackgroundProfile === "LEGACY" ? [] : [{ key: "intercompany-delivery", start: startIntercompanyDeliveryMaintenance }]),
+    ]),
   });
 
   initSocketServer(httpServer);
 
-  const listenHost = process.env.CERP_MANAGED_TEST_ID ? '127.0.0.1':e2eListenHost();
+  const listenHost = runtimeListenHost(backgroundLifecycle.mode);
   httpServer.listen(port, listenHost, () => {
     logger.info("upload_scanner_initialized", {
       mode: uploadScanner.mode,
@@ -101,9 +114,7 @@ async function start(): Promise<void> {
   const shutdown = createApplicationShutdown({
     httpServer,
     stopRealtime: shutdownRealtimeSocketServer,
-    stopMaintenance: [
-      () => backgroundLifecycle.stop(),
-    ],
+    stopMaintenance: [backgroundLifecycle.stop],
     closeDatabase: () => pool.end(),
     log: (type, fields) => logger.error(type, fields),
   }, shutdownTimeoutMs);

@@ -1,3 +1,4 @@
+import { hasModuleAppearance } from "../../../shared/pdf/document-appearance";
 import { renderCerpDocument } from "../../../shared/pdf/cerp-document";
 import { renderWorkshopBoxes, renderWorkshopTable } from "../../../shared/pdf/workshop-document-blocks";
 import { money, quantity, rate, unitPrice } from "../../../shared/pdf/format-fr";
@@ -18,7 +19,7 @@ export type ProformaDocumentSnapshot = {
 };
 
 /** Only frozen commercial facts are printed; payment coverage is a separate live read. */
-export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot, options: { example?: boolean } = {}): Promise<Buffer> {
+export async function renderProformaDocument(snapshot: ProformaDocumentSnapshot, options: { example?: boolean; legacyAppearance?: boolean } = {}): Promise<Buffer> {
   const issuedAt = new Date(snapshot.issued_at);
   if (!Number.isFinite(issuedAt.getTime()) || snapshot.document_type !== "PROFORMA" || snapshot.fiscal_invoice_created !== false) {
     throw new Error("PROFORMA_DOCUMENT_SOURCE_INVALID");

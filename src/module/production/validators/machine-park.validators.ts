@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const isoDateTime = z.string().datetime({ offset: true });
 const optionalText = (max: number) => z.string().trim().min(1).max(max).optional().nullable();
 
@@ -89,6 +89,11 @@ export const createMachineMaintenancePlanSchema = z.object({
 
 export const updateMachineMaintenancePlanSchema = z.object({
   body: machineMaintenancePlanBody.partial().extend({
+    // Do not reactivate, clear, or relabel a plan when a PATCH changes an
+    // unrelated field. These defaults are creation-only.
+    status: z.enum(["ACTIVE", "PAUSED", "COMPLETED"]).optional(),
+    checklist: z.array(z.object({ id: z.string().trim().min(1).max(80), label: z.string().trim().min(1).max(240),blocks_machine:z.boolean().optional().default(true) }).strict()).max(100).optional(),
+    source: z.string().trim().min(1).max(120).optional(),
     expected_updated_at: isoDateTime,
   }).strict(),
 }).strict();

@@ -1,6 +1,80 @@
 // Deployed filenames and checksums stay immutable. Dependencies take precedence
 // over their historical filename order in every migration entry point.
 const DEPENDENCIES = Object.freeze({
+  "20261105_operation_profitability_1833.sql": ["20261105_purchase_capacity_1833.sql"],
+  "20261105_purchase_capacity_1833.sql": ["20261105_material_operation_links_1833.sql"],
+  "20261105_fixed_of_dossier_1833.sql": ["20261104_special_process_family_identity_1831.sql","20260905_production_preparation_consolidation_01.sql","20260729_methodes_gamme_referentials.sql"],
+  "20261105_material_operation_links_1833.sql": ["20261105_fixed_of_dossier_1833.sql"],
+  "20261104_special_process_family_identity_1831.sql": ["20260728_surface_finish_library_210.sql","20260730_surface_finish_family_comment_244.sql"],
+  "20261102_open_orders_carco_1031.sql": ["20261102_carco_review_1032.sql","20261009_client_contract_catalog_1031.sql"],
+  "20261102_supplier_portal_pilot_1806.sql": ["20260721_commandes_fournisseurs_core.sql"],
+  "20261102_supplier_treatment_estimate_commands_1807.sql": ["20261102_supplier_portal_pilot_1806.sql"],
+  "20261102_supplier_portal_recovery_request_1808.sql": ["20261102_supplier_portal_pilot_1806.sql"],
+  "20261102_carco_review_1032.sql": ["20261101_demand_reference_mapping_1032.sql","20261031_demand_revision_receipts_1032.sql"],
+  "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql": ["20261102_consolidation_good_output_trigger_fix_1810.sql"],
+  "20261102_consolidation_good_output_trigger_fix_1810.sql": ["20261102_consolidation_good_output_invariants_1809.sql"],
+  "20261102_consolidation_good_output_invariants_1809.sql": [
+    "20260905_production_preparation_consolidation_01.sql",
+    "20261101_industrial_proposal_execution_1032.sql"
+  ],
+  "20261101_demand_reference_mapping_1032.sql": ["20261031_demand_pilot_1801.sql","20261031_industrial_planning_1032.sql"],
+  "20261101_industrial_assumptions_1032.sql": ["20261031_industrial_planning_1032.sql"],
+  "20261102_industrial_yield_qualification_1032.sql": ["20261031_industrial_planning_1032.sql"],
+  // 2026-10-31/11-01 demand and portal pilot release.  Keep this explicit:
+  // lexical filenames alone do not express cross-module foreign keys.
+  "20261031_client_portal_delivery_receipts_1802.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20260724_expedition_deliveries_226.sql"
+  ],
+  "20261031_demand_pilot_1801.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261031_demand_revision_receipts_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261031_industrial_planning_1032.sql": [
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261031_supplier_sandbox_1803.sql": [
+    "20260721_commandes_fournisseurs_core.sql"
+  ],
+  "20261101_client_portal_commercial_cockpit_1804.sql": [
+    "20260814_client_portal_sol29.sql",
+    "20261009_client_contract_forecasts_1032.sql"
+  ],
+  "20261101_client_portal_operational_notices_1805.sql": [
+    "20261031_client_portal_delivery_receipts_1802.sql"
+  ],
+  "20261101_delivery_service_evidence_1803.sql": [
+    "20261031_client_portal_delivery_receipts_1802.sql",
+    "20261007_delivery_promises_821.sql"
+  ],
+  "20261101_demand_firm_bindings_1032.sql": [
+    "20261031_demand_pilot_1801.sql",
+    "20261007_delivery_promises_821.sql"
+  ],
+  "20261101_demand_firm_drafts_1032.sql": [
+    "20261101_demand_firm_bindings_1032.sql"
+  ],
+  "20261101_demand_materialization_operations_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261101_demand_auto_decisions_1032.sql": [
+    "20261031_demand_pilot_1801.sql",
+    "20261031_industrial_planning_1032.sql"
+  ],
+  "20261101_demand_counter_offers_1032.sql": [
+    "20261031_demand_pilot_1801.sql"
+  ],
+  "20261101_demand_acknowledgement_queue_1032.sql": [
+    "20261101_demand_firm_bindings_1032.sql",
+    "20261101_demand_materialization_operations_1032.sql",
+    "20261031_industrial_planning_1032.sql"
+  ],
+  "20261101_industrial_proposal_execution_1032.sql": [
+    "20261031_industrial_planning_1032.sql"
+  ],
   "20261016_account_mfa_requirement_1372.sql": [
     "20260815_privileged_mfa_sol32.sql"
   ],
@@ -17,6 +91,19 @@ const DEPENDENCIES = Object.freeze({
   ],
   "20261014_finance_ged_profile_1268.sql": [
     "20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql"
+  ],
+  // The SQL files are immutable and their lexical 20261027 names predate the
+  // historical GED bridge. Keep the canonical runner and rehearsal aligned
+  // with the actual schema contracts instead of renaming an applied seed.
+  "20261027_metrology_ged_entity_type_1780.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20260823_authoritative_pdf_ged_compatibility_bridge.sql",
+    "20261027_metrology_ged_entity_type_1780_compat.sql",
+    "20261027_metrology_scan_documents_1780.sql"
+  ],
+  "20261027_metrology_ged_entity_type_1780_compat.sql": [
+    "20260227_metrologie_calibration.sql",
+    "20261014_finance_ged_profile_1268.sql"
   ],
   "20261014_refund_reversals_1268.sql": [
     "20261014_advance_amount_credits_1268.sql"
@@ -276,6 +363,16 @@ const DEPENDENCIES = Object.freeze({
   ]
 });
 
+function sortPatchNames(filenames) {
+  return [...filenames].sort((left, right) => {
+    const a = left.slice(0, -4);
+    const b = right.slice(0, -4);
+    if (b.startsWith(`${a}_`)) return -1;
+    if (a.startsWith(`${b}_`)) return 1;
+    return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
+  });
+}
+
 function orderPatchDependencies(filenames) {
   const present = new Set(filenames);
   const visited = new Set();
@@ -297,4 +394,4 @@ function orderPatchDependencies(filenames) {
   return ordered;
 }
 
-module.exports = { DEPENDENCIES, orderPatchDependencies };
+module.exports = { DEPENDENCIES, orderPatchDependencies, sortPatchNames };

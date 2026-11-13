@@ -62,7 +62,16 @@ describe("SOL-28 generated OpenAPI contract", () => {
         expect(operation["x-cerp-rbac"]).toBeTruthy();
       } else if (route.middleware.includes("authenticateClientPortal")) {
         expect(security, `${route.method} ${route.path}`).toEqual([{ clientPortalBearerAuth: [] }]);
-        expect(operation["x-cerp-rbac"]).toEqual(["clientPortalTenantBoundary"]);
+        expect(operation["x-cerp-rbac"]).toEqual([
+          "clientPortalTenantBoundary",
+          ...(route.middleware.includes("requireClientTransactions") ? ["requireClientTransactions"] : []),
+        ]);
+      } else if (route.middleware.includes("authenticateSupplierPortal")) {
+        expect(security).toEqual([{ supplierPortalBearerAuth: [] }]);
+        expect(operation["x-cerp-rbac"]).toEqual(expect.arrayContaining(["supplierPortalTenantBoundary", "supplierPortalPilotOnly"]));
+      } else if (route.middleware.includes("authenticateSupplierSandbox")) {
+        expect(security).toEqual([{ supplierSandboxBearerAuth: [] }]);
+        expect(operation["x-cerp-rbac"]).toEqual(expect.arrayContaining(["supplierSandboxTenantBoundary", "supplierSandboxLocalOnly"]));
       } else if (route.middleware.includes("requireTerminalDevice")) {
         const sessionRequired = route.middleware.includes("requireTerminalSession");
         expect(security, `${route.method} ${route.path}`).toEqual([
@@ -90,6 +99,18 @@ describe("SOL-28 generated OpenAPI contract", () => {
     );
     expect(new Set(operationIds).size).toBe(operationIds.length);
     for (const ref of collectRefs(swaggerSpec)) expect(resolveRef(swaggerSpec, ref), ref).toBeDefined();
+  });
+
+  it("declares the intercompany peer signature independently of user Bearer authentication", () => {
+    const operation = record(record(record(swaggerSpec.paths)["/intercompany/messages"]).post);
+    expect(operation.security).toEqual([{ intercompanySignature: [] }]);
+    expect(operation.responses).toHaveProperty("401");
+    expect(operation.responses).toHaveProperty("403");
+    expect(operation.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "X-CERP-Intercompany-Destination", required: true }),
+      expect.objectContaining({ name: "X-CERP-Intercompany-Environment", required: true }),
+      expect.objectContaining({ name: "X-CERP-Intercompany-Time", required: true }),
+    ]));
   });
 
   it("publishes deployment provenance without exposing secrets", () => {

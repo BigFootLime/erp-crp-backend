@@ -9,8 +9,14 @@ final runtime stage; build tooling remains available in the builder stage.
 ## Runtime reductions
 
 - `libcrypto3` and `libssl3` are explicitly installed at `3.5.9-r0`; `zlib`
-  is explicitly installed at `1.3.2-r1`. These are the Alpine v3.24 security
+  is explicitly installed at `1.4-r0`. These are the Alpine v3.24 security
   patches selected during the F11 review.
+- The integration build on 2026-11-13 updates the unavailable zlib pin to
+  `1.4-r0`, confirmed in the signed Alpine v3.24 package index. The image
+  retains the security floor `1.3.2-r1` for CVE-2026-85091; it does not fall
+  back to the base image's vulnerable `1.3.2-r0`.
+  Sources: [Alpine package index](https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/)
+  and [Alpine security tracker](https://security.alpinelinux.org/vuln/CVE-2026-85091).
 - The final stage removes global `npm`, `npx`, and Corepack binaries and their
   global package trees after `npm ci --omit=dev`. The application starts with
   `node dist/index.js`; no entrypoint, health check, or shipped operational

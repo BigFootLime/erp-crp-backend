@@ -121,6 +121,7 @@ const outilUpsertBaseSchema = z.object({
   nombre_dents: nullableInt.optional(),
 
   fournisseurs: positiveIntegerArray,
+  fournisseur_ids: z.array(z.string().uuid()).optional(),
   revetements: positiveIntegerArray,
   prix_fournisseurs: z
     .array(
@@ -151,6 +152,11 @@ const outilUpsertBaseSchema = z.object({
     return parsed === null ? undefined : parsed
   }, z.number().finite().nonnegative().optional()),
 
+  catalogue_source: z.object({
+    selection_id: z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,191}$/),
+    reference_confirmed: z.literal(true),
+  }).strict().optional(),
+
   esquisse_file: z.unknown().optional().nullable(),
   plan_file: z.unknown().optional().nullable(),
   image_file: z.unknown().optional().nullable(),
@@ -168,6 +174,13 @@ export const outilUpsertSchema = outilUpsertBaseSchema.superRefine((value, ctx) 
       message: "Le fournisseur et le prix initial doivent etre renseignes ensemble",
     })
   }
+  if (value.catalogue_source && value.quantite_stock !== 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["quantite_stock"],
+      message: "Une fiche issue du catalogue doit rester à zéro jusqu'à l'inventaire physique",
+    })
+  }
 })
 
 export const outilUpdateSchema = outilUpsertBaseSchema.omit({
@@ -176,6 +189,7 @@ export const outilUpdateSchema = outilUpsertBaseSchema.omit({
   stock_initial_note: true,
   stock_initial_id_fournisseur: true,
   stock_initial_prix_unitaire: true,
+  catalogue_source: true,
 })
 
 export type CreateOutilInput = z.infer<typeof outilUpsertSchema>
@@ -204,8 +218,13 @@ export type RetourStockInput = z.infer<typeof retourStockSchema>
 export const reapprovisionnementSchema = z.object({
   id_outil: positiveInt,
   quantite: positiveQuantity,
-  prix: z.preprocess((value) => toFiniteNumber(value), z.number().finite().nonnegative()),
-  id_fournisseur: positiveInt,
+  prix_unitaire_ht: z.preprocess((value) => toFiniteNumber(value), z.number().finite().nonnegative()),
+  fournisseur_id: z.string().uuid(),
+  purchased_at: z.string().date(),
+  devise: z.string().trim().min(1).max(10),
+  unite: z.string().trim().min(1).max(30),
+  reception_ref: z.string().trim().min(1).max(200),
+  idempotency_key: z.string().trim().min(8).max(200),
   reason: optionalString,
   note: optionalString,
   affaire_id: optionalPositiveInt,
@@ -248,9 +267,28 @@ export const adjustStockSchema = z.object({
 
 export type AdjustStockInput = z.infer<typeof adjustStockSchema>
 
+export const linkToolSupplierOfferSchema = z.object({
+  catalogue_id: z.string().uuid(),
+  source: z.union([z.object({
+    document: z.string().trim().min(1).max(500),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+    page: z.number().int().positive(),
+    rect: z.array(z.number().finite()).length(4),
+    source_date: z.string().date().nullable().optional(),
+    tax_basis: z.enum(["HT", "UNKNOWN"]).default("UNKNOWN"),
+  }).strict(), z.object({ kind: z.literal("MANUAL"), note: z.string().trim().min(3).max(1000) }).strict()]),
+}).strict()
+
+export const priceVariationReportQuerySchema = z.object({
+  from: z.string().date(),
+  to: z.string().date(),
+  devise: z.string().trim().min(1).max(10),
+  unite: z.string().trim().min(1).max(30),
+}).strict()
+
 export const createFabricantSchema = z.object({
   nom_fabricant: requiredString,
-  id_fournisseurs: positiveIntegerArray,
+  fournisseur_ids: z.array(z.string().uuid()).default([]),
 })
 
 export const updateFabricantSchema = createFabricantSchema

@@ -11,6 +11,8 @@ import {
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
+import { assertOrderArReady, readOrderArCoverage } from "./commande-ar-readiness.repository";
+import { reconcileCommandeProductionMilestonesInTransaction } from "./commande-production-milestone.repository";
 import { authoritativePdfFilename } from "../../../shared/authoritative-documents/authoritative-document.filename";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import {
@@ -128,6 +130,7 @@ type CommandeArLine = {
   total_ttc: number;
   delai_client: string | null;
   delai_interne: string | null;
+  promise_schedule?: {quantity:string;due_date:string}[];
 };
 
 export type CommandeArAllocation = {
@@ -270,6 +273,7 @@ export async function repoAuthorizeCommandeArGeneration(params: {
   commande_id: number;
   user_id: number;
   user_role: string | null | undefined;
+  stage?: "preview" | "generate" | "send" | "history";
 }): Promise<void> {
   const access = await params.tx.query<{
     raw_statut: string | null;
@@ -292,7 +296,10 @@ export async function repoAuthorizeCommandeArGeneration(params: {
         LIMIT 1
       ) st ON TRUE
       LEFT JOIN public.commande_client_workflow_checkpoint cp
-        ON cp.commande_id = cc.id AND cp.checkpoint_code = 'ar_sent'
+        ON cp.commande_id = cc.id AND cp.checkpoint_code = CASE
+          WHEN st.nouveau_statut IN ('PLANNING_VALIDE', 'PLANIFIEE') THEN 'ar_preparation'
+          ELSE 'ar_sent'
+        END
       WHERE cc.id = $1::bigint
       LIMIT 1
     `,
@@ -323,12 +330,35 @@ export async function repoAuthorizeCommandeArGeneration(params: {
     user_role: params.user_role,
   });
 
-  if (currentStatus !== "AR_PRET" || row.checkpoint_status !== "active") {
+  const preparing = currentStatus === "PLANNING_VALIDE" && params.stage !== "send";
+  // A generated/sent AR remains readable to the authorized workflow role,
+  // without turning history into a bypass for generation or dispatch.
+  if (params.stage === "history") {
+    const existing = await params.tx.query(
+      "SELECT 1 FROM public.commande_ar_log WHERE commande_id=$1 LIMIT 1",
+      [params.commande_id],
+    );
+    if (existing.rows.length) return;
+  }
+  if ((!preparing && currentStatus !== "AR_PRET") || row.checkpoint_status !== "active") {
     throw new HttpError(
       409,
       "COMMAND_AR_GENERATION_NOT_ALLOWED",
       "L'AR ne peut être généré que lorsque son checkpoint d'envoi est actif."
     );
+  }
+  await assertOrderArReady(params.tx, params.commande_id);
+  if (preparing && params.stage === "generate") {
+    await repoApplyCommandeWorkflowMilestone({
+      tx: params.tx,
+      commande_id: params.commande_id,
+      user_id: params.user_id,
+      nouveau_statut: "AR_PRET",
+      cause: "checkpoint",
+      commentaire: "Préparation de l’AR officiel après vérification des lignes et du planning.",
+      completed_checkpoint_codes: ["ar_preparation"],
+      active_checkpoint_code: "ar_sent",
+    });
   }
 }
 
@@ -342,8 +372,9 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
         cc.code_client AS customer_reference,
         cc.contact_id::text AS selected_contact_id,
         CASE COALESCE(st.nouveau_statut, 'BROUILLON')
+          WHEN 'PLANNING_VALIDE' THEN 'AR_PRET'
+          WHEN 'PLANIFIEE' THEN 'AR_PRET'
           WHEN 'ENREGISTREE' THEN 'EN_ANALYSE'
-          WHEN 'PLANIFIEE' THEN 'PLANNING_VALIDE'
           WHEN 'AR_ENVOYEE' THEN 'AR_ENVOYE'
           WHEN 'LIVREE' THEN 'LIVRE'
           ELSE COALESCE(st.nouveau_statut, 'BROUILLON')
@@ -401,6 +432,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
     total_ttc: number;
     delai_client: string | null;
     delai_interne: string | null;
+    promise_schedule: {quantity:string;due_date:string}[] | null;
   }>(
     `
       SELECT
@@ -414,6 +446,15 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
         cl.total_ttc::float8 AS total_ttc
         ,cl.delai_client::text AS delai_client
         ,cl.delai_interne::text AS delai_interne
+        ,CASE WHEN EXISTS(SELECT 1 FROM public.delivery_promise_events ev JOIN public.delivery_promise_roots root ON root.id=ev.root_id WHERE root.line_id=cl.id)
+         THEN (SELECT jsonb_agg(jsonb_build_object('quantity',q.quantity::text,'due_date',q.due_date::text) ORDER BY q.due_date) FROM
+          (SELECT due_date,sum(quantity) AS quantity FROM (
+            SELECT p.due_date,p.quantity FROM public.delivery_promise_roots root JOIN public.delivery_promise_parts p ON p.root_id=root.id
+             WHERE root.line_id=cl.id AND p.retired_at IS NULL
+            UNION ALL SELECT sh.due_date_at_shipment,sh.quantity FROM public.delivery_promise_roots root JOIN public.delivery_promise_parts p ON p.root_id=root.id
+             JOIN public.delivery_promise_shipments sh ON sh.part_id=p.id WHERE root.line_id=cl.id AND p.retired_at IS NOT NULL
+          ) promised GROUP BY due_date) q)
+         END AS promise_schedule
       FROM public.commande_ligne cl
       WHERE cl.commande_id = $1
       ORDER BY cl.id ASC
@@ -470,6 +511,7 @@ export async function repoLoadCommandeArGenerationData(tx: DbQueryer, commandeId
       total_ttc: Number(row.total_ttc),
       delai_client: row.delai_client,
       delai_interne: row.delai_interne,
+      ...(row.promise_schedule?.length?{promise_schedule:row.promise_schedule}:{}),
     })),
     allocations: allocationsRes.rows.map((row) => ({
       ...row,
@@ -553,6 +595,7 @@ export async function repoCreateCommandeArDraft(params: {
     // that committed in the meantime cannot be followed by a stale draft.
     await repoAuthorizeCommandeArGeneration({
       tx,
+      stage: "generate",
       commande_id: params.commande_id,
       user_id: params.user_id,
       user_role: params.user_role,
@@ -709,7 +752,7 @@ export async function repoCreateCommandeArDraft(params: {
         entityId: String(params.commande_id),
         documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT",
         documentVersion,
-        renderVersion: "customer-ar-pdf-v1",
+        renderVersion: "customer-ar-pdf-v1+style-20261019",
         idempotencyKey: params.official_request_idempotency_key ?? `commande-client:${params.commande_id}:acknowledgement:${documentVersion}:${arId}`,
         title: `Accusé de réception ${version.reference}`,
         originalName: authoritativePdfFilename([version.reference]),
@@ -1149,6 +1192,7 @@ async function repoClaimCommandeArSendLegacy(params: {
 
     // The open transaction and row locks are the send claim. A concurrent call
     // waits here and observes SENT after commit, so it never invokes the provider.
+    await assertOrderArReady(client, params.commande_id);
     return { kind: "claimed", client, draft };
   } catch (err) {
     await client.query("ROLLBACK");
@@ -1211,7 +1255,10 @@ async function repoFinalizeCommandeArSendLegacy(params: {
       `,
       [params.commande_id]
     );
-    const stockOnlyFlow = stockOnlyFlowRes.rows[0]?.stock_only_flow === true;
+    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true
+      ? await readOrderArCoverage(tx, params.commande_id)
+      : null;
+    const stockOnlyFlow = cover?.complete === true && !cover.has_of;
 
     const statusOut = await repoApplyCommandeWorkflowMilestone({
       tx,
@@ -1272,6 +1319,9 @@ async function repoFinalizeCommandeArSendLegacy(params: {
       },
       { deduplicationKey: `commande-ar:${params.ar_id}:sent` }
     );
+    if (!stockOnlyFlow) {
+      await reconcileCommandeProductionMilestonesInTransaction({ client: tx, actorUserId: params.sent_by, orderIds: [params.commande_id] });
+    }
 
     return {
       result: {
@@ -1401,6 +1451,7 @@ export async function repoClaimCommandeArSend(params: {
 
     await repoAuthorizeCommandeArGeneration({
       tx: client,
+      stage: "send",
       commande_id: params.commande_id,
       user_id: params.user_id,
       user_role: params.user_role,
@@ -1595,7 +1646,10 @@ export async function repoFinalizeCommandeArSend(params: {
       `SELECT COALESCE((metadata->>'stock_only_flow')::boolean, false) AS stock_only_flow FROM public.commande_client_workflow_checkpoint WHERE commande_id = $1::bigint AND checkpoint_code = 'ar_sent' LIMIT 1`,
       [params.commande_id]
     );
-    const stockOnlyFlow = stockOnlyFlowRes.rows[0]?.stock_only_flow === true;
+    const cover = stockOnlyFlowRes.rows[0]?.stock_only_flow === true
+      ? await readOrderArCoverage(tx, params.commande_id)
+      : null;
+    const stockOnlyFlow = cover?.complete === true && !cover.has_of;
     const statusOut = await repoApplyCommandeWorkflowMilestone({
       tx,
       commande_id: params.commande_id,
@@ -1641,6 +1695,9 @@ export async function repoFinalizeCommandeArSend(params: {
       at: sentAt,
       invalidateKeys: ["commandes:list", `commandes:detail:${params.commande_id}`],
     }, { deduplicationKey: `commande-ar:${params.ar_id}:sent` });
+    if (!stockOnlyFlow) {
+      await reconcileCommandeProductionMilestonesInTransaction({ client: tx, actorUserId: params.sent_by, orderIds: [params.commande_id] });
+    }
     return {
       result: {
         ar_id: draft.ar_id,

@@ -14,7 +14,7 @@ import {authRateLimitConfig} from '../config/auth-rate-limit';
 
 const session=z.string().regex(/^dir_[a-f0-9]{64}$/);
 const pin=z.string().regex(/^\d{4}$/);
-const deviceId=z.string().uuid();
+const deviceId=z.string().guid();
 const deviceSecret=z.string().regex(/^[a-f0-9]{64}$/);
 const pairingCode=z.string().regex(/^[a-f0-9]{32}$/);
 const deviceName=z.string().trim().min(1).max(80);

@@ -9,6 +9,8 @@ import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repos
 import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
 import { COPY_VERSION_PURCHASES_SQL } from "./version-purchases.sql"
+import { canCarryMinorRevisionDocuments, copyMinorRevisionDocumentsTx } from "./minor-revision-documents"
+import { canAutoFollowCompatibleRevision } from "../../production/repository/effective-preparation-version.sql"
 import type {
   CreateNextVersionBodyDTO,
   CreateVersionBodyDTO,
@@ -179,6 +181,9 @@ export async function repoCreateVersion(
   try {
     await client.query("BEGIN")
     const isAssembly = await assertPieceExists(client, pieceTechniqueId)
+    await client.query('SELECT id FROM public.pieces_techniques WHERE id=$1::uuid FOR UPDATE',[pieceTechniqueId]);
+    const priorVersion=await client.query(`SELECT 1 FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid LIMIT 1`,[pieceTechniqueId]);
+    if(priorVersion.rowCount && (body.client_requirement_confirmed!==true || (body.raison_changement?.trim().length??0)<3)) throw new HttpError(422,"CLIENT_REVISION_REQUIRED","Utilisez Nouveau plan / exigence client pour créer une révision supplémentaire.");
     const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, body.plan_reference, body.indice)
 
     const res = await client.query<PieceTechniqueVersionRow>(
@@ -409,7 +414,8 @@ export async function repoUpdateVersionStatus(
  * exposer au client un état partiellement publié si le gel documentaire
  * échoue ensuite.
  */
-export async function repoPublishVersion(
+export async function publishVersionTx(
+  client: PoolClient,
   pieceTechniqueId: string,
   versionId: string,
   extra: {
@@ -420,9 +426,6 @@ export async function repoPublishVersion(
   },
   audit: AuditContext
 ): Promise<PieceTechniqueVersionRow | null> {
-  const client = await db.connect()
-  try {
-    await client.query("BEGIN")
     const cur = await client.query<PieceTechniqueVersionRow>(
       `SELECT ${VERSION_COLUMNS}
          FROM public.piece_technique_versions
@@ -432,7 +435,6 @@ export async function repoPublishVersion(
     )
     const current = cur.rows[0] ?? null
     if (!current) {
-      await client.query("ROLLBACK").catch(() => {})
       return null
     }
     if (extra.expected_updated_at && extra.expected_updated_at !== current.updated_at) {
@@ -465,10 +467,8 @@ export async function repoPublishVersion(
           date_effet_updated: true,
           date_effet: extra.date_effet,
         })
-        await client.query("COMMIT")
         return row
       }
-      await client.query("COMMIT")
       return current
     }
 
@@ -528,36 +528,48 @@ export async function repoPublishVersion(
       document_requirements_frozen: frozen ? !frozen.already_frozen : false,
       document_requirements_count: frozen?.frozen_count ?? null,
     })
-    await client.query("COMMIT")
     return row
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
-    throw e
-  } finally {
-    client.release()
-  }
 }
 
-// "Créer une nouvelle version depuis une version existante" (Nouvel indice / évolution / modification).
-export async function repoCreateNextVersion(
+export async function repoPublishVersion(
   pieceTechniqueId: string,
-  sourceVersionId: string,
-  body: CreateNextVersionBodyDTO,
+  versionId: string,
+  extra: {
+    date_application: string | null;
+    date_effet?: string | null;
+    commentaire_validation: string | null;
+    expected_updated_at?: string;
+  },
   audit: AuditContext
-): Promise<PieceTechniqueVersionCloneResult> {
+): Promise<PieceTechniqueVersionRow | null> {
   const client = await db.connect()
   try {
     await client.query("BEGIN")
+    const result = await publishVersionTx(client, pieceTechniqueId, versionId, extra, audit)
+    await client.query("COMMIT")
+    return result
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error }
+  finally { client.release() }
+}
+
+/** Copy immutable technical evidence; transaction and intent are owned by the caller. */
+async function cloneTechnicalVersionTx(
+  client: PoolClient, pieceTechniqueId: string, sourceVersionId: string,
+  body: CreateNextVersionBodyDTO, audit: AuditContext, routineEdit: boolean,
+  options: { autoFollowDraftOrders?: boolean } = {},
+): Promise<PieceTechniqueVersionCloneResult> {
     // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
     // Même verrou que les ajouts/modifications de composants, avant toute allocation.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
+    const piece = (await client.query<{ statut: string }>("SELECT statut::text FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE", [pieceTechniqueId])).rows[0]
+    if (!piece) throw new HttpError(404, "PIECE_NOT_FOUND", "Pièce technique introuvable.")
+    if (piece.statut === "OBSOLETE") throw new HttpError(409, "PIECE_ARCHIVED", "Cette pièce est archivée ; son dossier reste consultable.")
     const src = await client.query<PieceTechniqueVersionRow>(
       `SELECT ${VERSION_COLUMNS} FROM public.piece_technique_versions
        WHERE id = $1 AND piece_technique_id = $2 FOR SHARE`,
       [sourceVersionId, pieceTechniqueId]
     )
     if (src.rowCount === 0) {
-      await client.query("ROLLBACK").catch(() => {})
       throw new HttpError(404, "NOT_FOUND", "Version source introuvable")
     }
     const source = src.rows[0]
@@ -602,6 +614,8 @@ export async function repoCreateNextVersion(
       version_nomenclature_lines: 0,
     }
 
+    const operationIds = new Map<string, string>()
+    let copiedGammeId: string | null = null
     const sourceGamme = await client.query<{ id: string }>(
       `SELECT id::text AS id
          FROM public.gammes
@@ -622,13 +636,20 @@ export async function repoCreateNextVersion(
          RETURNING id::text AS id`,
         [row.id, sourceGammeId, audit.user_id]
       )
-      const copiedGammeId = gamme.rows[0]?.id
+      copiedGammeId = gamme.rows[0]?.id ?? null
       if (!copiedGammeId) throw new Error("Impossible de copier la gamme courante de la version source")
       copied.current_gamme = true
 
-      copied.gamme_operations = await copyGammeOperationsTx(client, sourceGammeId, copiedGammeId, audit.user_id)
+      copied.gamme_operations = await copyGammeOperationsTx(client, sourceGammeId, copiedGammeId, audit.user_id, operationIds)
     }
 
+    // Pin the effective legacy BOM to its source before introducing a scoped copy.
+    // Otherwise the first scoped BOM would hide the historical unscoped lines.
+    const pinnedLegacyBom = await client.query(`UPDATE public.pieces_techniques_nomenclature n
+      SET parent_piece_technique_version_id=$2::uuid
+      WHERE n.parent_piece_technique_id=$1::uuid AND n.parent_piece_technique_version_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM public.pieces_techniques_nomenclature scoped
+          WHERE scoped.parent_piece_technique_id=$1::uuid AND scoped.parent_piece_technique_version_id IS NOT NULL)`, [pieceTechniqueId, sourceVersionId])
     const copiedBom = await client.query(
       `INSERT INTO public.pieces_techniques_nomenclature
         (parent_piece_technique_id, parent_piece_technique_version_id, child_piece_technique_id,
@@ -649,27 +670,134 @@ export async function repoCreateNextVersion(
     )
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
-    await client.query(
+    const linkedPurchases = await client.query<{ gamme_operation_id: string }>(
+      `SELECT DISTINCT gamme_operation_id::text FROM public.pieces_techniques_achats
+       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$2::uuid AND gamme_operation_id IS NOT NULL`, [pieceTechniqueId, sourceVersionId])
+    if (linkedPurchases.rows.some(purchase => !operationIds.has(purchase.gamme_operation_id)))
+      throw new HttpError(409, "PURCHASE_OPERATION_NOT_COPIED", "Un achat vise une opération hors de la gamme courante. Vérifiez son rattachement avant de modifier le dossier.")
+    const purchases = await client.query<{ old_id: string; new_id: string }>(
       COPY_VERSION_PURCHASES_SQL,
-      [pieceTechniqueId, row.id, sourceVersionId]
+      [pieceTechniqueId, row.id, sourceVersionId, JSON.stringify(Object.fromEntries(operationIds)), copiedGammeId]
     )
+    for (const purchase of purchases.rows) await client.query(`UPDATE public.gamme_operation_finitions target
+      SET achat_ligne_id=$2::uuid FROM public.gamme_operation_finitions source
+      WHERE source.achat_ligne_id=$1::uuid AND target.gamme_id=$3::uuid
+        AND target.gamme_operation_id=($4::jsonb->>source.gamme_operation_id::text)::uuid AND target.slot=source.slot`,
+      [purchase.old_id, purchase.new_id, copiedGammeId, JSON.stringify(Object.fromEntries(operationIds))])
+    await client.query(`INSERT INTO public.piece_version_tool_requirements
+      (piece_technique_version_id,id_outil,required_quantity,usage_notes,created_by,updated_by)
+      SELECT $2::uuid,id_outil,required_quantity,usage_notes,$3,$3
+      FROM public.piece_version_tool_requirements WHERE piece_technique_version_id=$1::uuid`,
+      [sourceVersionId, row.id, audit.user_id])
+    const copiedDocuments = canCarryMinorRevisionDocuments({ changeLevel, sourceIndex: source.indice,
+      targetIndex: body.indice, sourcePlan: source.plan_reference, targetPlan: planReference })
+      ? await copyMinorRevisionDocumentsTx(client, pieceTechniqueId, sourceVersionId, row.id, audit.user_id) : 0
 
-    await insertAudit(client, audit, "pieces-techniques.version.create-next", row.id, {
+    // The legacy compatibility inputs remain available, while #1833 pins every OF
+    // selection. canAutoFollowCompatibleRevision therefore denies retargeting
+    // even for a compatible minor revision or a legacy AUTO value.
+    const autoFollowedOfIds: number[] = []
+    const compatibleAutoTarget = canAutoFollowCompatibleRevision({
+      state: { statut: "BROUILLON", technicalSnapshotSha256: null, technicalReadiness: "INCOMPLETE" },
+      effectiveVersionId: sourceVersionId,
+      sourceVersionId,
+      sourceClientIndex: source.indice_externe_original?.trim() || source.indice.trim() || null,
+      targetClientIndex: row.indice_externe_original?.trim() || row.indice.trim() || null,
+      targetChangeLevel: row.change_level,
+      targetInterchangeable: row.impact_interchangeabilite === true,
+    })
+    // Article reconfiguration also explicitly denies retargeting. Its caller-owned
+    // transaction and this legacy option remain compatible with existing consumers.
+    if (compatibleAutoTarget && options.autoFollowDraftOrders !== false) {
+      const synchronized = await client.query<{ id: number }>(
+        `UPDATE public.ordres_fabrication o SET
+          technical_preparation=COALESCE(o.technical_preparation,'{}'::jsonb)||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode','AUTO'),
+          technical_readiness='INCOMPLETE',technical_submitted_at=NULL,technical_submitted_by=NULL,updated_at=now(),updated_by=$3
+        WHERE o.piece_technique_id=$1::uuid AND o.statut='BROUILLON'
+          AND o.technical_snapshot_sha256 IS NULL AND COALESCE(o.technical_readiness,'')<>'VALIDATED'
+          AND COALESCE(o.technical_preparation->>'version_selection_mode','AUTO')='AUTO'
+          AND COALESCE(NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,o.piece_technique_version_id)=$4::uuid
+          AND EXISTS(SELECT 1 FROM public.piece_technique_versions source, public.piece_technique_versions target
+            WHERE source.id=$4::uuid AND target.id=$2::uuid
+              AND target.change_level='MINOR' AND COALESCE(target.impact_interchangeabilite,false)=false
+              AND COALESCE(NULLIF(btrim(source.indice_externe_original),''),NULLIF(btrim(source.indice),'')) IS NOT NULL
+              AND COALESCE(NULLIF(btrim(source.indice_externe_original),''),NULLIF(btrim(source.indice),''))=
+                  COALESCE(NULLIF(btrim(target.indice_externe_original),''),NULLIF(btrim(target.indice),'')))
+        RETURNING o.id::bigint::int AS id`,
+        [pieceTechniqueId, row.id, audit.user_id, sourceVersionId],
+      )
+      if (synchronized.rowCount)
+        await client.query("DELETE FROM public.of_preparation_evaluations WHERE of_id=ANY($1::bigint[])", [synchronized.rows.map((of) => of.id)])
+      autoFollowedOfIds.push(...synchronized.rows.map((of) => of.id))
+    }
+
+    await insertAudit(client, audit, routineEdit ? "pieces-techniques.edit.prepare" : "pieces-techniques.version.create-next", row.id, {
+      client_requirement_confirmed: body.client_requirement_confirmed === true,
+      purpose: routineEdit ? "EDIT" : body.client_requirement_confirmed === true ? "CLIENT_PLAN" : "INTERNAL_CLONE",
+      raison_changement: body.raison_changement,
       piece_technique_id: pieceTechniqueId,
       source_version_id: sourceVersionId,
       indice: row.indice,
       type_changement: row.type_changement,
+      copied_documents: copiedDocuments,
+      legacy_bom_lines_pinned: pinnedLegacyBom.rowCount ?? 0,
+      auto_followed_of_ids: autoFollowedOfIds,
       copied,
     })
-    await client.query("COMMIT")
     return { ...row, copied }
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
-    if ((e as { code?: string })?.code === "23505") {
-      throw new HttpError(409, "CONFLICT", "Une donnée de la nouvelle version entre en conflit avec une donnée existante. Actualisez les indices avant de réessayer.")
+}
+
+/** Ordinary editing keeps the client plan/index. Repeated openings reuse its working definition. */
+export async function repoPreparePieceEdit(pieceTechniqueId:string,audit:AuditContext){
+  const client=await db.connect()
+  try{
+    await client.query("BEGIN")
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))",[pieceTechniqueId])
+    const piece=(await client.query<{statut:string}>("SELECT statut::text FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE",[pieceTechniqueId])).rows[0]
+    if(!piece)throw new HttpError(404,"PIECE_NOT_FOUND","Pièce technique introuvable.")
+    if(piece.statut==="OBSOLETE")throw new HttpError(409,"PIECE_ARCHIVED","Cette pièce est archivée ; son dossier reste consultable.")
+    const versions=(await client.query<PieceTechniqueVersionRow>(
+      "SELECT "+VERSION_COLUMNS+" FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid ORDER BY CASE statut WHEN 'EN_VALIDATION' THEN 0 WHEN 'BROUILLON' THEN 1 ELSE 2 END,created_at DESC,version_interne DESC,id DESC FOR UPDATE",[pieceTechniqueId])).rows
+    const working=versions.find(v=>["BROUILLON","EN_VALIDATION"].includes(v.statut))
+    if(working){await client.query("COMMIT");return {version:working,created:false}}
+    const source=versions.find(v=>v.statut==="APPLICABLE")??versions.find(v=>v.statut==="OBSOLETE")
+    if(!source){await client.query("COMMIT");return {version:null,created:false}}
+    const version=await cloneTechnicalVersionTx(client,pieceTechniqueId,source.id,{
+      indice:source.indice,plan_reference:source.plan_reference,change_level:"MINOR",
+      commentaire_revision:"Modification du dossier technique",raison_changement:"Modification du dossier technique",
+      type_changement:"MODIFICATION",date_effet:null
+    },audit,true)
+    await client.query("COMMIT")
+    return {version,created:true}
+  }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error}
+  finally{client.release()}
+}
+
+/** Public client-plan changes require confirmation; internal clones may borrow their caller's transaction. */
+export async function repoCreateNextVersion(
+  pieceTechniqueId: string,
+  sourceVersionId: string,
+  body: CreateNextVersionBodyDTO,
+  audit: AuditContext,
+  transactionClient?: PoolClient,
+  options: { autoFollowDraftOrders?: boolean } = {},
+): Promise<PieceTechniqueVersionCloneResult> {
+  if (!transactionClient && (body.client_requirement_confirmed !== true || (body.raison_changement?.trim().length ?? 0) < 3)) {
+    throw new HttpError(422, "CLIENT_REVISION_REQUIRED", "Utilisez Nouveau plan client pour changer de version.")
+  }
+  const client = transactionClient ?? await db.connect()
+  try {
+    if (!transactionClient) await client.query("BEGIN")
+    const result = await cloneTechnicalVersionTx(client, pieceTechniqueId, sourceVersionId, body, audit, false, options)
+    if (!transactionClient) await client.query("COMMIT")
+    return result
+  } catch (error) {
+    if (!transactionClient) await client.query("ROLLBACK").catch(() => {})
+    if ((error as { code?: string })?.code === "23505") {
+      throw new HttpError(409, "CONFLICT", "Une donnée du nouveau plan entre en conflit. Actualisez le dossier avant de réessayer.")
     }
-    throw e
+    throw error
   } finally {
-    client.release()
+    if (!transactionClient) client.release()
   }
 }

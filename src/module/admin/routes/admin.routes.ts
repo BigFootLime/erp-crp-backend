@@ -1,5 +1,6 @@
 // src/module/admin/routes/admin.routes.ts
 import { Router } from "express";
+import { getCompanyAccountAccess, updateCompanyAccountAccess } from "../controllers/company-account-access.controller";
 import { authenticateToken } from "../../auth/middlewares/auth.middleware";
 import { requireRecentMfaForMutations } from "../../auth/middlewares/mfa-assurance.middleware";
 import { requireSuperadmin } from "../../access-control/middlewares/require-superadmin";
@@ -45,6 +46,8 @@ router.use(requireRecentMfaForMutations);
 router.get("/users", listUsersAdmin);
 router.get("/roles", listRolesAdmin);
 router.get("/users/:id", getUserAdmin);
+  router.get("/users/:id/company-access-options", getCompanyAccountAccess);
+  router.put("/users/:id/company-access-options", updateCompanyAccountAccess);
 router.post("/users", createUserAdmin);
 router.put('/users/:id/avatar', avatarUpload.single('avatar'), uploadAdminUserAvatar);
 router.patch("/users/:id", patchUserAdmin);

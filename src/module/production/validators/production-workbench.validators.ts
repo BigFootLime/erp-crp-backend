@@ -1,6 +1,16 @@
 import { z } from "zod";
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const reason = z.string().trim().min(3).max(2000);
+export const operationProgrammingSchema = z.object({
+  expected_updated_at: z.string().min(1), operation_id: uuid,
+  operation_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  estimated_hours: z.number().finite().min(0).max(10000),
+  mode: z.enum(['REQUIRED','NOT_REQUIRED']).optional(),
+  reason: z.string().trim().min(3).max(2000).optional(),
+}).strict().superRefine((v,ctx)=>{
+  if(v.mode === 'NOT_REQUIRED' ? !v.reason : v.estimated_hours <= 0)
+    ctx.addIssue({code:'custom',path:[v.mode === 'NOT_REQUIRED'?'reason':'estimated_hours'],message:'Confirmez l’absence de programmation ou indiquez un temps positif.'});
+});
 export const worklistQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
   queue: z
@@ -30,6 +40,7 @@ const requirement = z.discriminatedUnion("mode", [
 ]);
 export const preparationDecisionsSchema = z
   .object({
+    part_variant: z.string().trim().max(160).nullable().optional(),
     material: requirement.optional(),
     treatment: requirement.optional(),
     subcontract: requirement.optional(),
@@ -63,7 +74,7 @@ export const savePreparationDecisionsSchema = z
   })
   .strict();
 export const preparationVersionSchema = z
-  .object({ expected_updated_at: z.string().min(1), version_id: uuid })
+  .object({ expected_updated_at: z.string().min(1), version_id: uuid, version_selection_mode: z.enum(["AUTO", "MANUAL"]).optional() })
   .strict();
 export const preparationReviewSchema = z
   .object({
@@ -124,13 +135,14 @@ export const programmingTaskSchema = z
     assignee_id: z.number().int().positive(),
     estimated_hours: z.number().positive().max(10000),
     status: z.enum(["TODO", "DONE"]),
+    progress_percent: z.union([z.literal(0),z.literal(25),z.literal(50),z.literal(75),z.literal(100)]).optional(),
     program_reference: z.string().trim().min(1).max(200).optional(),
   })
   .strict()
   .refine((x) => x.status !== "DONE" || Boolean(x.program_reference), {
     path: ["program_reference"],
     message: "La référence du programme réalisé est requise.",
-  });
+  }).refine(x=>x.progress_percent===undefined || (x.status==='DONE')===(x.progress_percent===100),{path:['progress_percent'],message:'100 % exige un programme réalisé et référencé.'});
 export const importPurchasesSchema = z
   .object({
     expected_updated_at: z.string().min(1),

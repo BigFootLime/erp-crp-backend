@@ -1,4 +1,5 @@
 import {createPreparationDraftTree} from './preparation-generation';
+import { assignGeneratedWorkstationDefaults } from '../repository/workstation-defaults.repository';
 import {synchronizeDraftChildrenTx} from '../repository/preparation-children.repository';
 import { PREPARATION_RULES_VERSION } from './preparation-rules';
 // Moteur unique de génération récursive des OF (#55/#141/#170).
@@ -323,7 +324,7 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
         pto.cf_id,
         cf.code AS cf_code_snapshot,
         pto.cf_rate_id,
-        NULL::uuid AS poste_id,
+        NULLIF(to_jsonb(pto)->>'poste_id','')::uuid AS poste_id,
         pto.machine_id,
         pto.machine_family_code,
         pto.numero_programme,
@@ -353,6 +354,7 @@ export async function copyPieceOperationsToOf(tx: Queryable, params: {
     [params.of_id, params.piece_technique_id, params.gamme_id]
   );
 
+  await assignGeneratedWorkstationDefaults(tx,params.of_id);
   return operationsInsert.rowCount ?? 0;
 }
 
@@ -450,9 +452,10 @@ export async function loadApplicableTechnicalSnapshot(
       WHERE v.piece_technique_id = $1::uuid
         AND (
           ($3::boolean AND v.id=$2::uuid AND v.statut IN ('APPLICABLE','OBSOLETE'))
-          OR
-          (NOT $3::boolean AND v.statut = 'APPLICABLE'
-            AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE))
+          OR (NOT $3::boolean AND (
+            ($2::uuid IS NOT NULL AND v.id=$2::uuid AND v.statut <> 'OBSOLETE')
+            OR ($2::uuid IS NULL AND v.statut = 'APPLICABLE')
+          ) AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE))
         )
       ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
       LIMIT 1
@@ -465,7 +468,7 @@ export async function loadApplicableTechnicalSnapshot(
     throw new HttpError(
       422,
       "VERSION_NOT_APPLICABLE",
-      `La pièce technique ${pieceTechniqueId} ne possède pas de version applicable pour générer un OF.`,
+      `La pièce technique ${pieceTechniqueId} ne possède pas d’indice et de révision disponibles pour générer un OF.`,
       details ?? { piece_technique_id: pieceTechniqueId, code_piece: null, designation: null, versions: [] }
     );
   }
@@ -617,8 +620,9 @@ export async function loadApplicableTechnicalSnapshot(
 
 /**
  * Cutover-only resolver for a version explicitly evidenced as the version
- * used before CERP.  It can retain a published obsolete version; the regular
- * OF path above continues to use current APPLICABLE versions only.
+ * used before CERP. It can retain a published obsolete version. The regular
+ * OF path accepts an explicitly chosen non-obsolete definition and otherwise
+ * falls back to an applicable version; it never gains this historical opt-in.
  */
 export async function loadHistoricalPublishedTechnicalSnapshot(
   tx: Queryable,

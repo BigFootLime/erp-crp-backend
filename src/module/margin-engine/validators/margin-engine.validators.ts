@@ -29,7 +29,7 @@ export const createMarginInputSchema = z.object({
   availability: availabilitySchema,
   amount_ht: amountSchema.nullable().optional(),
   quantity: amountSchema.nullable().optional(),
-  rate_id: z.string().uuid().nullable().optional(),
+  rate_id: z.string().guid().nullable().optional(),
   rate_effective_at: z.string().date().nullable().optional(),
   source_type: z.string().trim().min(1).max(80),
   source_ref: z.string().trim().max(200).nullable().optional(),
@@ -43,7 +43,7 @@ export const createMarginInputSchema = z.object({
   source_document_ref: z.string().trim().min(1).max(200).nullable().optional(),
   assumption: z.string().trim().min(1).max(1000).nullable().optional(),
   assumption_date: z.string().date().nullable().optional(),
-  supersedes_id: z.string().uuid().nullable().optional(),
+  supersedes_id: z.string().guid().nullable().optional(),
 }).superRefine((value, ctx) => {
   if (value.period_end < value.period_start) {
     ctx.addIssue({ code: "custom", path: ["period_end"], message: "La fin de période doit suivre son début." });
@@ -83,7 +83,7 @@ export const createRateVersionSchema = z.object({
   source_reliability: z.enum(["ESTIMATED", "DECLARED", "VERIFIED"]),
   assumption_date: z.string().date(),
   notes: z.string().trim().max(2000).nullable().optional(),
-  supersedes_id: z.string().uuid().nullable().optional(),
+  supersedes_id: z.string().guid().nullable().optional(),
   rates: z.array(z.object({
     rate_code: z.string().trim().min(1).max(80),
     category: z.enum(MARGIN_COST_CATEGORIES),

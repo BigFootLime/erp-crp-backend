@@ -15,7 +15,7 @@ export const eReportingTransactionBodySchema = z.discriminatedUnion("source_type
   }).strict(),
   z.object({
     source_type: z.literal("SUPPLIER_INVOICE"),
-    source_id: z.string().uuid(),
+    source_id: z.string().guid(),
     expected_version: expectedVersion,
   }).strict(),
 ]);

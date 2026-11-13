@@ -1,3 +1,4 @@
+import { syncOperationFinishTitleTx } from "../../surface-finish/repository/surface-finish-purchase-link.repository";
 // src/module/pieces-techniques/repository/pieces-techniques.repository.ts
 import type { PoolClient } from "pg";
 import { currentDossierTotalsSql } from "./dossier-totals.sql";
@@ -14,6 +15,8 @@ import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/author
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { applicableBomScopeSql } from './bom-version-scope.sql';
+import { linkPurchaseOperationTx } from "./purchase-operation-link.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
@@ -1359,7 +1362,7 @@ function mapFabricationTreeRow(row: FabricationTreeRow): FabricationTreeNode {
   };
 }
 
-export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth = 50): Promise<FabricationTreeResponse | null> {
+export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth = 50,versionId:string|null=null): Promise<FabricationTreeResponse | null> {
   const depth = Math.max(1, Math.min(50, Math.trunc(maxDepth)));
   const res = await db.query<FabricationTreeRow>(
     `
@@ -1376,6 +1379,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           p.en_fabrication,
           p.ensemble,
           p.version_number,
+          COALESCE($3::uuid,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=p.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)) AS technical_version_id,
           0::int AS level,
           ARRAY[p.id]::uuid[] AS path_ids,
           ARRAY[0]::int[] AS order_path,
@@ -1387,6 +1391,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
         FROM pieces_techniques p
         WHERE p.id = $1::uuid
           AND p.deleted_at IS NULL
+          AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM public.piece_technique_versions v WHERE v.id=$3::uuid AND v.piece_technique_id=p.id))
 
         UNION ALL
 
@@ -1402,6 +1407,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           child.en_fabrication,
           child.ensemble,
           child.version_number,
+          COALESCE(n.child_piece_technique_version_id,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=child.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)),
           tree.level + 1 AS level,
           tree.path_ids || child.id AS path_ids,
           tree.order_path || n.rang AS order_path,
@@ -1412,7 +1418,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           n.designation AS line_designation
         FROM tree
         JOIN pieces_techniques_nomenclature n
-          ON n.parent_piece_technique_id = tree.piece_technique_id
+          ON ${applicableBomScopeSql('n','tree.piece_technique_id','tree.technical_version_id')}
         JOIN pieces_techniques child
           ON child.id = n.child_piece_technique_id
          AND child.deleted_at IS NULL
@@ -1438,6 +1444,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           en_fabrication::int AS en_fabrication,
           ensemble,
           version_number::int AS version_number,
+          technical_version_id,
           level,
           array_to_string(path_ids::text[], '/') AS path_text,
           ordre_affichage,
@@ -1459,8 +1466,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       FROM enriched e
       LEFT JOIN LATERAL (
         SELECT v.id FROM public.piece_technique_versions v
-        WHERE v.piece_technique_id = e.piece_technique_id::uuid
-          AND v.statut <> 'OBSOLETE'
+        WHERE v.id=e.technical_version_id
         ORDER BY CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
           v.version_interne DESC NULLS LAST, v.created_at DESC, v.id DESC
         LIMIT 1
@@ -1468,7 +1474,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       ${currentDossierTotalsSql("e.piece_technique_id::uuid", "current_version.id")}
       ORDER BY e.order_path ASC, e.piece_technique_id ASC
     `,
-    [pieceTechniqueId, depth]
+    [pieceTechniqueId, depth,versionId]
   );
 
   if (!res.rows.length) return null;
@@ -1552,6 +1558,7 @@ async function repoListOperations(pieceTechniqueId: string): Promise<Operation[]
 }
 
 type AchatRow = {
+  gamme_operation_id?: string | null;
   piece_technique_version_id: string | null;
   article_id: string | null;
   id: string;
@@ -1580,10 +1587,11 @@ type AchatRow = {
   designation_3: string | null;
 };
 
-async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
+async function repoListAchats(pieceTechniqueId: string,queryer:Pick<PoolClient,"query">=db): Promise<Achat[]> {
   const sql = `
     SELECT
       id::text AS id,
+      gamme_operation_id::text AS gamme_operation_id,
       phase,
       type_achat,
       article_id::text AS article_id,
@@ -1613,9 +1621,10 @@ async function repoListAchats(pieceTechniqueId: string): Promise<Achat[]> {
     WHERE piece_technique_id = $1::uuid
     ORDER BY phase NULLS LAST, id ASC
   `;
-  const res = await db.query<AchatRow>(sql, [pieceTechniqueId]);
+  const res = await queryer.query<AchatRow>(sql, [pieceTechniqueId]);
   return res.rows.map((r) => ({
     id: r.id,
+    gamme_operation_id: r.gamme_operation_id,
     phase: r.phase,
     type_achat: (r.type_achat as TypeAchat) ?? "DIVERS",
     article_id: r.article_id,
@@ -2390,6 +2399,22 @@ export async function repoDeletePieceTechnique(id: string, audit: AuditContext):
   }
 }
 
+/** OF preparation can activate its draft piece; it never restarts an obsolete piece or production. */
+export async function activatePreparedPieceTx(tx: PoolClient, id: string, audit: AuditContext) {
+  const row = (await tx.query<{statut:PieceTechniqueStatut}>(`SELECT statut::text FROM public.pieces_techniques
+    WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE`,[id])).rows[0];
+  if (!row) throw new HttpError(404,'PIECE_NOT_FOUND','Pièce technique introuvable.');
+  if (row.statut === 'OBSOLETE') throw new HttpError(409,'PIECE_OBSOLETE','Une pièce obsolète ne peut pas être activée par la préparation.');
+  if (row.statut !== 'DRAFT') return;
+  const commentaire='Activation lors de la validation du dossier de préparation OF.';
+  await tx.query(`UPDATE public.pieces_techniques SET statut='ACTIVE',en_fabrication=0,updated_by=$2,updated_at=now()
+    WHERE id=$1::uuid`,[id,audit.user_id]);
+  await tx.query(`INSERT INTO public.pieces_techniques_historique(piece_technique_id,user_id,ancien_statut,nouveau_statut,commentaire)
+    VALUES($1::uuid,$2,'DRAFT','ACTIVE',$3)`,[id,audit.user_id,commentaire]);
+  await insertAuditLog(tx,audit,{action:'pieces-techniques.status',entity_type:'pieces_techniques',entity_id:id,
+    details:{from:'DRAFT',to:'ACTIVE',commentaire}});
+}
+
 export async function repoUpdatePieceTechniqueStatus(
   id: string,
   ancienStatut: PieceTechniqueStatut,
@@ -3041,26 +3066,38 @@ export async function repoReorderBom(pieceTechniqueId: string, order: string[]):
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))",[pieceTechniqueId]);
 
-    const current = await client.query<{ id: string }>(
-      `SELECT id::text AS id FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid`,
+    const current = await client.query<{ id: string;rang:number }>(
+      `SELECT id::text AS id,rang::int FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid FOR UPDATE`,
       [pieceTechniqueId]
     );
     const currentIds = new Set(current.rows.map((r) => r.id));
+    if(!order.length||new Set(order).size!==order.length)throw new HttpError(422,'INVALID_ORDER','Chaque ligne doit apparaître une seule fois.');
     for (const id of order) {
       if (!currentIds.has(id)) throw new HttpError(422, "INVALID_ORDER", "Order contains invalid line id");
     }
 
+    // Ranks are unique across all client plans. Keep historical lines intact,
+    // and stage swaps above the full range before assigning the working order.
+    const selected=new Set(order);
+    const outsideMax=Math.max(0,...current.rows.filter(r=>!selected.has(r.id)).map(r=>Number(r.rang)||0));
+    const allMax=Math.max(outsideMax,...current.rows.map(r=>Number(r.rang)||0));
+    if(allMax+order.length*20+10>2147483647)throw new HttpError(422,'INVALID_ORDER','La numérotation des lignes doit être revue.');
     const params: unknown[] = [pieceTechniqueId];
+    const stageParams:unknown[]=[pieceTechniqueId];
     const cases: string[] = [];
     for (let i = 0; i < order.length; i++) {
       params.push(order[i]);
-      params.push((i + 1) * 10);
+      params.push(outsideMax+(i + 1) * 10);
+      stageParams.push(order[i],allMax+order.length*10+(i+1)*10);
       const idParam = `$${params.length - 1}`;
       const rankParam = `$${params.length}`;
       cases.push(`WHEN id = ${idParam}::uuid THEN ${rankParam}`);
     }
     const inList = order.map((_, i) => `$${2 + i * 2}`).join(", ");
+    const reorderSql=`UPDATE pieces_techniques_nomenclature SET rang=CASE ${cases.join(' ')} ELSE rang END WHERE parent_piece_technique_id=$1::uuid AND id IN (${inList})`;
+    await client.query(reorderSql,stageParams);
     await client.query(
       `
         UPDATE pieces_techniques_nomenclature
@@ -3271,12 +3308,36 @@ export async function repoReorderOperations(pieceTechniqueId: string, order: str
 
 export async function repoAddAchat(
   pieceTechniqueId: string,
-  body: AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number }
+  body: AddAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number },
+  audit?: AuditContext
 ): Promise<Achat | null> {
-  const exists = await db.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
-  if (!exists.rows[0]?.ok) return null;
+  const client=await db.connect();
+  try {
+  await client.query("BEGIN");
+  const exists = await client.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
+  if (!exists.rows[0]?.ok) {await client.query("ROLLBACK");return null;}
 
-  const res = await db.query<AchatRow>(
+  if(body.type_achat==='MATIERE'){
+    if(body.piece_technique_version_id)await client.query('SELECT 1 FROM public.piece_technique_versions WHERE id=$1::uuid FOR UPDATE',[body.piece_technique_version_id]);
+    else await client.query('SELECT 1 FROM public.pieces_techniques WHERE id=$1::uuid FOR UPDATE',[pieceTechniqueId]);
+    const count=Number((await client.query(`SELECT count(*) AS count FROM public.pieces_techniques_achats WHERE piece_technique_id=$1::uuid AND piece_technique_version_id IS NOT DISTINCT FROM $2::uuid AND type_achat='MATIERE'`,[pieceTechniqueId,body.piece_technique_version_id??null])).rows[0].count);
+    if(count>=2)throw new HttpError(422,'MATERIAL_LIMIT_REACHED','Deux matières premières au maximum par dossier de pièce.');
+  }
+  let linked: {id:string;phase:number;designation:string;short_name:string|null}|undefined;
+  if(body.gamme_operation_id){
+    if(!["TRAITEMENT","MATIERE"].includes(body.type_achat)||!body.article_id||!body.piece_technique_version_id||!audit) throw new HttpError(422,"PS_OPERATION_CONTEXT","Sélectionnez l’article et la version de pièce avant de rattacher une opération.");
+    linked=body.type_achat === "MATIERE" ? (await client.query<{id:string;phase:number;designation:string;short_name:null}>(`SELECT o.id::text,o.phase,o.designation,NULL::text AS short_name FROM public.pieces_techniques_operations o JOIN public.gammes g ON g.id=o.gamme_id JOIN public.articles a ON a.id=$4::uuid AND a.article_category='matiere' AND a.is_active WHERE o.id=$1::uuid AND o.piece_technique_id=$2::uuid AND g.piece_technique_version_id=$3::uuid AND o.type_operation='DECOUPE' AND o.phase IS NOT NULL AND g.statut IN ('BROUILLON','EN_VALIDATION') FOR UPDATE OF o,g`,[body.gamme_operation_id,pieceTechniqueId,body.piece_technique_version_id,body.article_id])).rows[0] : (await client.query<{id:string;phase:number;designation:string;short_name:string|null}>(`
+      SELECT o.id::text,o.phase,o.designation,f.designation_courte AS short_name
+      FROM public.pieces_techniques_operations o JOIN public.gammes g ON g.id=o.gamme_id
+      JOIN public.articles_traitement t ON t.article_id=$4::uuid AND t.piece_technique_id=$2::uuid
+      JOIN public.surface_finish_revisions r ON r.id=t.finish_revision_id JOIN public.surface_finishes f ON f.id=r.finish_id
+      WHERE o.id=$1::uuid AND g.piece_technique_version_id=$3::uuid AND o.piece_technique_id=$2::uuid
+      AND o.type_operation='SOUS_TRAITANCE' AND o.phase IS NOT NULL AND g.statut IN ('BROUILLON','EN_VALIDATION') FOR UPDATE OF o,g`,
+      [body.gamme_operation_id,pieceTechniqueId,body.piece_technique_version_id,body.article_id])).rows[0];
+    if(!linked) throw new HttpError(422,"PS_OPERATION_MISMATCH","Choisissez une opération compatible dans une gamme modifiable du même indice et de la même révision : découpe pour une matière, sous-traitance pour un procédé spécial.");
+    body={...body,phase:linked.phase};
+  }
+  const res = await client.query<AchatRow>(
     `
       INSERT INTO pieces_techniques_achats (
         piece_technique_id,
@@ -3369,7 +3430,7 @@ export async function repoAddAchat(
   );
 
   const r = res.rows[0];
-  return {
+  const saved:Achat = {
     id: r.id,
     article_id: r.article_id,
     piece_technique_version_id: r.piece_technique_version_id,
@@ -3397,6 +3458,21 @@ export async function repoAddAchat(
     designation_2: r.designation_2,
     designation_3: r.designation_3,
   };
+  if(linked&&saved?.id&&audit){
+    const binding=await linkPurchaseOperationTx(client,{pieceId:pieceTechniqueId,lineId:saved.id,operationId:linked.id,actorId:audit.user_id});
+    await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:saved.id,details:binding},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
+    saved.gamme_operation_id=linked.id;
+  }
+  await client.query('COMMIT');return saved;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:string,operationId:string|null,audit:AuditContext):Promise<Achat|null>{
+ const client=await db.connect();
+ try{await client.query('BEGIN');const binding=await linkPurchaseOperationTx(client,{pieceId,lineId,operationId,actorId:audit.user_id});
+  await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:lineId,details:binding},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
+  const result=(await repoListAchats(pieceId,client)).find(line=>line.id===lineId)??null;await client.query('COMMIT');return result;
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
 export async function repoUpdateAchat(
@@ -3504,11 +3580,16 @@ export async function repoUpdateAchat(
 }
 
 export async function repoDeleteAchat(pieceTechniqueId: string, achatId: string): Promise<boolean> {
-  const { rowCount } = await db.query(
-    `DELETE FROM pieces_techniques_achats WHERE id = $1::uuid AND piece_technique_id = $2::uuid`,
-    [achatId, pieceTechniqueId]
-  );
-  return (rowCount ?? 0) > 0;
+ const client=await db.connect();
+ try{await client.query('BEGIN');
+  const row=(await client.query<{gamme_operation_id:string|null;statut:string|null}>(`SELECT p.gamme_operation_id::text,g.statut FROM public.pieces_techniques_achats p LEFT JOIN public.gammes g ON g.id=p.gamme_id WHERE p.id=$1::uuid AND p.piece_technique_id=$2::uuid FOR UPDATE OF p`,[achatId,pieceTechniqueId])).rows[0];
+  if(!row){await client.query('ROLLBACK');return false;}
+  if(row.gamme_operation_id&&row.statut&&!['BROUILLON','EN_VALIDATION'].includes(row.statut))throw new HttpError(409,'GAMME_NOT_EDITABLE','Cette gamme est figée : créez une gamme de travail avant de modifier ses rattachements.');
+  await client.query('DELETE FROM public.gamme_operation_finitions WHERE achat_ligne_id=$1::uuid',[achatId]);
+  await client.query('DELETE FROM public.pieces_techniques_achats WHERE id=$1::uuid',[achatId]);
+  if(row.gamme_operation_id)await syncOperationFinishTitleTx(client,row.gamme_operation_id);
+  await client.query('COMMIT');return true;
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
 export async function repoReorderAchats(pieceTechniqueId: string, order: string[]): Promise<Achat[] | null> {

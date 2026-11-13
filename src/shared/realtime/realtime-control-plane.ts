@@ -846,9 +846,12 @@ export class PostgresRealtimeControlPlane implements RealtimeControlPlane {
     try {
       await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
       transactionOpen = true;
-      await client.query(
-        "SELECT last_sequence FROM public.realtime_event_sequence_state WHERE singleton = true FOR UPDATE"
-      );
+      // A repeatable-read snapshot already couples the allocator, retention
+      // watermark and event rows atomically. Locking the allocator here makes
+      // every healthy poll an exclusive writer and holds up other runtimes
+      // across the complete history scan (including WireGuard round trips).
+      // Quarantine/barrier updates below still acquire PostgreSQL's write lock;
+      // a conflicting snapshot fails closed through the existing rollback path.
       const retention = await readRetentionState(client);
       let cursor = retention.prunedThrough;
       while (cursor < retention.latestSequence) {

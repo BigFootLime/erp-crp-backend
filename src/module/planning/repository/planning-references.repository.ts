@@ -1,6 +1,16 @@
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import type { PlanningReferenceOfListQuery } from "../validators/planning-references.validators";
+import type { PlanningReferenceOfListQuery, PlanningReferenceClientQuery } from "../validators/planning-references.validators";
+import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
+
+/** Minimal planning lookup, without customer contacts, prices or editing rights. */
+export async function repoListPlanningReferenceClients(query: PlanningReferenceClientQuery) {
+  const result = await pool.query<{ client_id: string; company_name: string }>(`
+    SELECT client_id,company_name FROM public.clients
+    WHERE ($1::text IS NULL OR company_name ILIKE '%'||$1||'%' OR client_id ILIKE '%'||$1||'%')
+    ORDER BY company_name,client_id LIMIT $2::int`, [query.q || null, query.limit + 1]);
+  return { items: result.rows.slice(0, query.limit), hasMore: result.rows.length > query.limit };
+}
 
 export type PlanningOfListItem = {
   id: number; numero: string; affaire_id: number | null; commande_id: number | null; parent_of_id: number | null; root_of_id: number | null; generation_batch_id: string | null; generation_level: number; source_bom_line_id: string | null; structure_path: string | null; quantity_per_parent: number; quantity_cumulative: number; client_id: string | null; client_company_name: string | null;
@@ -31,6 +41,7 @@ export async function repoListPlanningReferenceOfs(query: PlanningReferenceOfLis
   const where: string[] = [];
   const values: unknown[] = [];
   const push = (value: unknown) => { values.push(value); return '$' + values.length; };
+  where.push(`o.id=ANY(${push(await readPlanningEligibleOfIds(pool))}::bigint[])`);
   if (query.q) {
     const p = push('%' + query.q + '%');
     where.push(`(o.numero ILIKE ${p} OR pt.code_piece ILIKE ${p} OR pt.designation ILIKE ${p} OR COALESCE(c.company_name, '') ILIKE ${p})`);

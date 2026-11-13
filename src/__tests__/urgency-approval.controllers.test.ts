@@ -5,7 +5,8 @@ const mocks = vi.hoisted(() => ({ preview: vi.fn(), approve: vi.fn() }));
 vi.mock('../module/planning/services/urgency-approval.service', () => ({ svcPreviewUrgencyApproval: mocks.preview, svcApproveUrgencyRecovery: mocks.approve }));
 vi.mock('../module/planning/controllers/planning-central.controller', () => Object.fromEntries([
   'centralApply','centralGetSimulation','centralSimulate','centralSnapshot','centralStatus','centralUnplan','centralObservations',
-  'centralPreview','centralWorkshopCalendar','centralSetWorkshopCalendar'].map(name => [name,vi.fn()])));
+  'centralPreview','centralWorkshopCalendar','centralSetWorkshopCalendar',
+  'centralOfProcurement','centralSaveOfProcurement','centralAutoOf'].map(name => [name,vi.fn()])));
 vi.mock('../module/planning/controllers/planning-master-plan.controller', () => ({ masterPlan: vi.fn() }));
 vi.mock('../module/planning/controllers/planning.controller', () => ({ buildAuditContext: (req: express.Request) => ({ user_id: req.user!.id, role: req.user!.role }) }));
 import centralRouter from '../module/planning/routes/planning-central.routes';

@@ -1,5 +1,153 @@
 # Changelog
 
+## En préparation — Réconciliation de la préparation #1834 (3f590a01)
+
+- Source originale : feat(production): configure reusable workstations and explain planning blockers (#1834). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1836 (04e52afe)
+
+- Source originale : fix(production): validate material stock and separate treatment purchasing (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1836 (5ad9f3bd)
+
+- Source originale : docs(release): record approved procurement guard and API promotion (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1836 (2bb50a95)
+
+- Source originale : chore(db): qualify the immutable procurement completion patch (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1836 (2f58ded3)
+
+- Source originale : feat(procurement): prepare OF purchase forecasts and follow conforming output (#1836). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Planning de l’OF complet et achats liés (#1835)
+
+- Réconcilier les routes et transactions de préparation fournisseur et de simulation de toutes les opérations du dossier, en conservant les engagements et les contrôles de ressources.
+- Conserver les couleurs client, l'éligibilité des dossiers et les contrats plus récents de la consolidation. Aucun déploiement de ce lot.
+
+## En préparation — Réconciliation de la préparation #1833 (97cdc72c)
+
+- Source originale : feat(gammes): expose canonical preparation issues per operation (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1833 (7f80413d)
+
+- Source originale : fix(production): validate and publish a complete dossier in one action (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1833 (f9d17be5)
+
+- Source originale : fix(planning): require completed OF preparation before scheduling (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1833 (6b15d947)
+
+- Source originale : feat(methodes): make attachments reversible and calculate route profitability (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1833 (710a6b2b)
+
+- Source originale : fix(methodes): support two finishes per phase and cap raw materials (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Réconciliation de la préparation #1833 (1bf835bc)
+
+- Source originale : fix(methodes): link purchases to route operations and apply finish title (#1833). Les éléments de livraison et gardes plus récents restent conservés. Aucun déploiement de cette consolidation.
+
+## En préparation — Identités des familles de finition (#1831)
+
+- Conserver le code de famille attribué par le serveur et son nom diminutif partagé ; vérifier la famille de finition lors des aperçus et confirmations.
+- Réintroduire la migration immuable requise par le dossier OF #1833 et ses supports de vérification. Aucun script n'est appliqué à la production par cette consolidation.
+
+## En préparation — Dossier OF choisi et préparation (#1833)
+
+- Conserver le dossier technique choisi pour chaque OF, y compris pour les anciennes entrées AUTO : aucune révision technique ne déplace automatiquement cette sélection.
+- Compléter les achats et la préparation sans créer de révision ; exiger confirmation et motif pour un nouveau plan client.
+- Conserver les règles de droits, les instantanés figés et les références historiques. Les migrations ciblées restent des sources de livraison ; elles ne sont pas appliquées à la production par cette consolidation.
+
+## En préparation — Modification et archivage des PT (#1837)
+
+- Obtenir ou créer atomiquement le dossier de travail au même plan/indice, avec droit de modification et protection des pièces archivées.
+- Remapper achats, opérations, finitions et besoins d'outillage lors du clonage ; conserver les nomenclatures et documents historiques compatibles.
+- Archiver sans renommer ni supprimer les références. Les clones de reconfiguration conservent la transaction appelante et ne modifient aucun OF existant.
+
+## Préparé — Consolidation complète et régressions (13 novembre 2026)
+
+- Réconciliation dev/main/2.0.84, reconfiguration articles transactionnelle et conservation des OF existants.
+- Couleurs client partagées, édition OF 1.9 et contrôle des octets historiques de l'édition 1.8.
+- API native d'acceptation des relations CRP, gardes profil/module, prévalidation des clés de reprise et image reproductible avec zlib corrigé.
+- Détails et preuves : `docs/testing/complete-main-integration-20261113.md`.
+
+## Prepared — Nuance library (#1839, ERP baseline 2.0.84)
+
+- Four optional standard designations with a required populated title on new identities; searchable correspondences and stable historical workshop codes.
+- Atomic validation/audit and normalized database uniqueness, including inactive and concurrent writes. Additive migration preserves original IDs, article/state links and density; unclassified historical codes remain explicitly LEGACY.
+- Migration preflight/verification, non-destructive rollback guidance, OpenAPI details and isolated PostgreSQL regression harness. No production migration/deployment. See [runbook](docs/http/nuance-library-1839.md).
+
+## Préparé — Baseline 2.0.84 et fiabilité des contrats (13 novembre 2026)
+
+- Catalogue statique versionné des clés d’invalidation temps réel et contrôle de fraîcheur en lecture seule ; les branches conditionnelles Qualité sont couvertes sans exécution du code, et aucun site statique ne reste non résolu. Les payloads et producteurs runtime sont conservés. Le budget CI est borné pour limiter la contention sans modifier les assertions.
+
+- Les tests de création des sous-états couvrent le texte Informations multiligne et la valeur absente, avec le contrat SQL à cinq paramètres. Les cas existants sont conservés.
+- Documentation explicite de la paire source 2.0.84 et des limites de provenance du runtime composite ; aucune modification de production.
+
+
+## 2026-11-12 — Informations des sous-états matière
+
+- Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.
+- Les API natives et la compatibilité EC partagent ce contrat, sans modifier les propriétés des nuances ou états ni l’autorisation existante.
+- Le patch additif de colonne nullable et sa contrainte sont idempotents et validés sur PostgreSQL 17 isolé. Après autorisation explicite, ils ont été appliqués en CRP et EC, Test puis Production, avec sauvegarde et vérification de conservation des valeurs existantes. L’API VPS et l’API native CRP partagent la même base Production ; le patch n’a pas été appliqué en double.
+
+## Préparé — Référentiels matière éditables
+
+- Les nuances, états et sous-états matière disposent de PATCH atomiques auditables : code, désignation, statut et les seules propriétés propres au référentiel peuvent évoluer sans modifier les relations historiques.
+- Les doublons de code normalisé retournent `409`, une cible absente `404`, et les écritures utilisent exactement la même autorisation que les créations d'articles ; le contrat de capacités permet à l'interface de rester fermée par défaut.
+- Un sous-état peut désormais être créé ou rendu sans désignation : la compatibilité de la colonne historique non nulle est conservée en stockant une chaîne vide. `unite_achat` reste compatible côté API, mais n'est pas un défaut de longueur d'approvisionnement.
+
+## Préparé — Sous-états matière autonomes
+
+- Les sous-états matière peuvent être créés sans état parent tout en conservant les rattachements historiques existants.
+- Le patch de schéma rend le lien parent facultatif et protège les codes des sous-états autonomes sans réécrire de données ni modifier l'index des entrées historiques.
+- Contrôles ciblés : route de création, typage et build/OpenAPI.
+
+## 2.0.34 — Entreprises autorisées depuis la gestion des comptes
+## Livraison CERP 2.0.52 — modèle MD07-E et programmation par opération (3 novembre 2026)
+
+- Le champ Type (variation) lit la variante physique `part_variant` des décisions de préparation de la révision ; il ne dérive jamais du type de changement Évolution/Modification. Les décisions et documents des OF figés sont préservés.
+
+- Génère un classeur Excel MD07-E avec l’identité de l’OF, l’indice et la version. Les champs sont écrits comme texte, le modèle garde ses zones d’impression et n’est jamais une preuve de conformité.
+- Enregistre les estimations de programmation par opération de fraisage/tournage avec contrôle du dossier, de la révision et de l’empreinte de l’opération. Un OF annulé, planifié ou figé refuse la modification.
+- Autorise la préparation des conditions industrielles d’un contrat brouillon et détecte les modifications concurrentes depuis la fiche client. Cela n’active pas le contrat.
+- Deux routes authentifiées ajoutées à l’inventaire HTTP ; aucun patch de base nécessaire. Livraison fondée sur les vérifications ciblées déjà réalisées, sans relance de la campagne complète à la demande du responsable.
+
+## En recette — commandes ouvertes et dépôts CARCO
+
+- Une ouverture sur contrat actif conserve le numéro du cadre, la version du contrat et l’auteur. Les ouvertures simultanées retrouvent le même dossier. Les appels fermes et les OF suivent leurs circuits existants.
+- Les dépôts CARCO internes et portail partagent le même contrôle des versions. L’ADV peut confirmer le contrat des lignes ouvertes sans référence et qualifier la nature d’une échéance identifiée. Le portail vérifie le client, le compte et le site avant chaque dépôt.
+
+## En recette — préparation de l’ordre de fabrication (#1498)
+
+- La validation technique exige le rôle Qualité. Le serveur vérifie le visa et conserve l’auteur dans l’OF.
+- La fiche d’autocontrôle de la révision a priorité sur un modèle historique identifiable. Le PDF applicable peut accompagner le dossier atelier sans génération d’un second document.
+- Les retours d’amélioration de la pièce restent consultables au fil des révisions et des OF. Le support de préparation imprimé indique le motif lorsqu’un scan applicable existe.
+
+## En recette — relevés CLAYENS et annulation des commandes
+
+- L’ADV conserve les versions par client et site, voit les soldes et les livraisons déclarées et examine les échéances ambiguës sans les apparier par date. Une transmission partielle conserve les lignes à qualifier.
+- Le calcul d’une révision utilise les rattachements commerciaux vérifiés. La préparation d’un appel ferme peut consommer sa prévision dans le registre contractuel natif.
+- La liste respecte l’état annulé et l’annulation retire les étapes ouvertes. Le dépôt répété d’un PDF de commande conserve un seul lien pour le même contenu.
+- Le projet de retour CSV sépare la confirmation source et les promesses CRP enregistrées. La mise en service chez le client reste conditionnée à la recette ADV.
+
+## Candidat du 2 novembre 2026 — demande et atelier
+
+- La fiche commande affiche la chronologie et retire le panneau latéral de rôle. La secrétaire prépare le document depuis l’onglet AR. CERP vérifie la préparation et les créneaux des OF avant la génération et l’envoi d’un AR. Une commande servie directement sur stock exige la couverture du solde.
+- Pour un appel ferme sous contrat dont la cible mensuelle est échue, Planning sépare le reste à livrer du manque après stock et encours. Il propose un créneau après gel et distingue fin de fabrication et réception estimée. Une donnée manquante renvoie le dossier en arbitrage.
+- Les Achats peuvent saisir une estimation de retour de traitement. Planning indique le risque sur la date de besoin, sans ajouter de stock disponible. Le module d’accès fournisseur est préparé et fermé par défaut.
+- L’adaptateur Vision lit le solde et l’unité des anciens tableaux. Les clés absentes ou ambiguës passent en revue. Voir le [rapport de recette](docs/release/DEMAND_PILOT_20261031_20261101.md) et la [qualification des quatre programmes historiques](docs/release/VISION_FOUR_CYCLE_RETROSPECTIVE_20261102.md).
+
+## Préparé — pilote de demande, preuves portail et sandbox fournisseur (2026-10-31/11-01)
+
+- Imports de demandes, décisions, contre-propositions, brouillons fermes, files d'AR et propositions industrielles sont séparés des commandes ERP et restent idempotents ; aucun import ne crée à lui seul un OF, une commande, une réservation ou un AR.
+- Le portail client est borné aux contrats et sites explicitement liés. Les preuves de réception et d'échéance de départ sont append-only ; aucune échéance n'est inférée.
+- Le sandbox fournisseur est exclusivement local/test, fail-closed, et ses routes métier exigent un JWT à audience dédiée. Il ne vaut ni activation du portail fournisseur ni publication Production. Le pilote de quatre semaines n'a pas été exécuté.
+- Ordre des migrations et état de qualification : `docs/release/DEMAND_PILOT_20261031_20261101.md`.
+
+
 ## Charte commune des PDF — #1442
 
 - Tous les nouveaux PDF de données reprennent la structure OF / Clients, Inter incorporée et la couleur du module ; filigranes, mentions et pagination conservés.
@@ -58,6 +206,12 @@
 - Qualification de livraison : le Vite utilisé par Vitest passe de 7.3.6 à 7.3.7 dans les deux lockfiles pour corriger GHSA-587h-7wmj-h5pm ; aucune dépendance de production ne change.
 - Qualification locale et limites de livraison dans `docs/testing/account-request-functions-1372.md`. Aucun déploiement ni migration n'est inclus.
 
+## Préparé — Couleur client commune au planning et aux OF (21 octobre 2026)
+
+- Couleur pastel commune à l’atelier, enregistrée sur le client et modifiable par un utilisateur habilité à planifier ; écriture auditée, rouge réservé aux problèmes.
+- Les nouveaux OF (gabarit 1.9) figent cette couleur en fond de la case « Client et documents ». Les textes, mesures, pages et éditions archivées 1.4 à 1.8 sont conservés.
+- Migration additive `20261021_shared_planning_client_color.sql` à appliquer avant le backend ; aucun changement de base effectué par ce lot local. Voir `docs/planning-client-color.md` pour l’intégration et la reprise des anciennes préférences.
+
 ## Préparé — Reprise native des encours CLIPPER et Excel (#167)
 
 - Préparer un OF brouillon à partir d'une cohorte physique constatée, avec version technique publiée, demande native précise et checkpoints d'avancement. La reprise d'une phase commencée sans pièce produite conserve cette réalité sans inventer de temps passé.
@@ -69,6 +223,12 @@
 - Le canal Socket.IO applique la même frontière que l’authentification HTTP : une session explicitement refusée ou périmée par l’annuaire est révoquée ; une indisponibilité technique ferme seulement le transport avec une demande de reconnexion.
 - Les erreurs transitoires de l’annuaire ou de la lecture d’autorisation ne déclenchent plus l’événement de révocation de session consommé par les clients web et Electron. Les raisons de déconnexion sont journalisées dans une liste fixe, sans jeton ni donnée personnelle.
 - Correctif sans migration, modification MFA, durée de session, habilitation ou changement de flux métier. La qualification locale ne permet pas d’attribuer rétrospectivement un incident utilisateur à l’annuaire.
+
+## Préparé — Harmonisation PDF par module (19 octobre 2026)
+
+- Couleurs Production, Commerce, Qualité, Stock et Système appliquées aux PDF et rapports, avec logo CRP conservé. Encadrés et bandeaux légèrement arrondis ; dimensions, informations, positions, polices et sauts de page conservés.
+- Gabarit OF 1.8 et habillage des nouvelles archives versionnés ; les éditions historiques gardent leur rendu. Aucun changement de données, de schéma ou de règles métier.
+- Inventaire, comparaisons de géométrie, contrôles couleur/gris et limites de qualification : `docs/pdf-module-style-20261019.md`. Lot local à intégrer avec le frontend, sans déploiement direct.
 
 ## Préparé — Retrait des comptes locaux historiques (#1378)
 

@@ -223,9 +223,9 @@ describe("/api/v1/planning", () => {
   });
 
   it("GET /api/v1/planning/events returns {items,total}", async () => {
-    mocks.poolQuery
-      .mockResolvedValueOnce({ rows: [{ total: 1 }] })
-      .mockResolvedValueOnce({
+    const eventQueryResults = [
+      { rows: [{ total: 1 }] },
+      {
         rows: [
           {
             id: "33333333-3333-3333-3333-333333333333",
@@ -265,7 +265,19 @@ describe("/api/v1/planning", () => {
              blockers: [],
            },
          ],
-       });
+       },
+    ];
+    mocks.poolQuery.mockImplementation(async (sql: string) => {
+      // This legacy frozen OF has a validated definition and predates completion receipts.
+      if (sql.includes("validation.value AS validation")) return { rows: [{
+        id: "7", status: "PLANIFIE", technical_readiness: "VALIDATED",
+        technical_snapshot_sha256: "a".repeat(64), revision: "published-version", quantity: 1,
+        preparation_rules_version: 1, validation: null,
+        operations: [{ id: "operation", phase: 10, label: "Usinage", status: "TODO",
+          setup: 1, unit: 1, base: 1, coefficient: 1, planned: false, start: null, end: null, resource: null }],
+      }] };
+      return eventQueryResults.shift() ?? { rows: [] };
+    });
 
     const res = await request(app)
       .get("/api/v1/planning/events")
@@ -533,7 +545,10 @@ describe("/api/v1/planning", () => {
     expect(mocks.clientQuery).not.toHaveBeenCalled();
   });
 
-  it("POST /api/v1/planning/events promotes commande to PLANIFIEE and creates notifications", async () => {
+  it.each([
+    ["when every active operation is planned", 0, true],
+    ["when another active operation is still unplanned", 1, false],
+  ])("POST /api/v1/planning/events advances the order only %s", async (_caseName, incomplete, advances) => {
     mocks.poolQuery.mockResolvedValueOnce({
       rows: [
         {
@@ -657,6 +672,13 @@ describe("/api/v1/planning", () => {
       if (q.includes("UPDATE public.of_operations")) {
         return { rows: [] };
       }
+      // The planning promotion now recomputes every active OF operation under
+      // the order lock. This fixture represents the one-operation, fully
+      // planned case; a mere first event must not be treated as enough when
+      // the readiness query reports an incomplete sibling operation.
+      if (q.includes("WITH manufacturing AS") && q.includes("AS incomplete")) {
+        return { rows: [{ orders: 1, incomplete }] };
+      }
       if (q.includes("FROM public.ordres_fabrication o") && q.includes("active_events")) {
         return {
           rows: [
@@ -742,8 +764,8 @@ describe("/api/v1/planning", () => {
       });
 
     expect(res.status).toBe(201);
-    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(true);
-    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toHaveLength(1);
+    expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("INSERT INTO commande_historique"))).toBe(advances);
+    expect(mocks.clientQuery.mock.calls.filter((call) => String(call[0]).includes("INSERT INTO public.app_notifications"))).toHaveLength(advances ? 1 : 0);
   });
 
   it("POST /api/v1/planning/events rejects a blocked machine", async () => {

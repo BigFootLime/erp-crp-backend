@@ -1,5 +1,15 @@
 # Planning central — première publication (#717)
 
+## OF complet et prévisions d’approvisionnement — 2.0.70 / #1835
+
+`POST /planning/v2/ofs/:ofId/auto-plan` reçoit `earliestStart` et `autoAssign`. Il relit la route et les programmations liées, génère une simulation versionnée et conserve les créneaux engagés par `preserveCommitted`. Il renvoie l’intention et les tâches complètes pour l’aperçu. La validation canonique séparée reste nécessaire ; la limite de 100 opérations ne produit jamais un OF partiellement demandé.
+
+`GET/POST /planning/v2/ofs/:ofId/preparation` lit et conserve les dates et choix fournisseur. Le POST attend `expectedVersion`, `idempotencyKey` et des entrées `{key,due,supplierId,catalogueId}`. Les quantités, articles et liens OF proviennent du serveur. La permission Planning autorise les dates ; les droits Achats restent nécessaires aux brouillons. Les prix ne sont pas renvoyés par ce contrat. Les écritures utilisent les verrous et l’idempotence du parcours d’approvisionnement, sans événement de planning.
+
+Les hypothèses sont conservées sous `technical_preparation.planning_supply`, avec identité technique et révision OF ; elles expirent si la définition change. Le planning utilise la disponibilité matière prévue et, pour une prestation sans fait réel de départ/retour, un retour estimé manuel lorsque la projection fournisseur n’est pas disponible. Les conflits `PROCUREMENT_FORECAST` sont non bloquants et ne transforment pas une estimation en stock réel. Les gardes de démarrage, de réception et de qualité sont conservées. Les besoins incomplets sont présentés comme non bloquants dans la préparation technique.
+
+Les brouillons emploient le service canonique de commandes, les quantités manquantes, minima et unités applicables et les liaisons OF/besoins/prestations. Sans fournisseur ou unité exploitable, le besoin est conservé à compléter. Les achats libres attendus et les barres à vérifier imposent un rapprochement avant une nouvelle création. Les lignes globales de prestation sans origine connue sont marquées prévisionnelles ; leur remplacement ultérieur par les origines réelles est transactionnel, audité et annule les anciennes lignes sans supprimer leurs preuves. Les commandes déjà confirmées ne sont pas remplacées. Aucune migration de schéma n’est nécessaire. La livraison est autorisée sans tests et sans planifier de données atelier.
+
 L’apprentissage des durées (#965) est décrit dans [le runbook dédié](duration-learning-965.md) :
 mesures validées, correction, reprise d’historique et activation `LEARN`.
 
@@ -10,7 +20,19 @@ L’API `/planning/v2` lit les opérations canoniques, conserve les commandes av
 
 Depuis #721, les ressources machines affichent uniquement leur nom dans les lignes et les sélecteurs du planning central. Le code et l’identifiant machine restent conservés dans le référentiel ; les affectations et capacités utilisent toujours les mêmes identifiants.
 
-Le calcul reprend l’ordre des phases de gamme en l’absence de dépendance explicite. Il choisit une machine qualifiée selon priorité, échéance, ancienneté puis identifiant stable. Machines et postes liés partagent la capacité. Les absences et événements de maintenance sont soustraits aux calendriers. Une affectation de calendrier explicite prime ; à défaut, le calendrier atelier actif est repris uniquement s’il est unique. Aucun horaire n’est inventé lorsqu’il manque.
+Le calcul reprend l’ordre des phases de gamme en l’absence de dépendance explicite. Il choisit une machine qualifiée selon priorité, échéance, ancienneté puis identifiant stable. Machines et postes liés partagent la capacité. Les absences et événements de maintenance sont soustraits aux calendriers. Une affectation de calendrier explicite prime ; à défaut, le calendrier atelier sélectionné est repris, puis l’unique calendrier actif éventuel. Aucun horaire n’est inventé lorsqu’il manque.
+
+## Complément local #1834 — postes réutilisables et erreurs explicites
+
+Ce complément n’est pas déployé. `GET/PUT /api/v1/admin/onboarding/workstations` utilisent l’authentification et `requireErpConfiguration`, et refusent le profil commercial. Le PUT attend `expected_updated_at` (texte serveur ou null), `postes` (types DECOUPE/CONTROLE/EMBALLAGE/LAVAGE/ASSEMBLAGE/AUTRE vers UUID ou null) et `programmer_user_ids` (utilisateurs actifs habilités). Le GET renvoie les choix résolus, leur version, le catalogue et les problèmes. Une version périmée produit `409 WORKSTATION_CONFIGURATION_CHANGED`. Aucun compte, poste ou créneau n’est créé par cette commande. Le catalogue de postes conserve ses commandes existantes.
+
+Le paramètre `erp_settings.production.workstation_defaults` choisit les postes habituels. Une affectation explicite d’OF prime, y compris si elle est devenue invalide : elle doit être corrigée. Sans choix enregistré pour un type, un unique poste autonome actif de code canonique exact assure la compatibilité avec les catalogues existants. Une valeur null interdit ce repli. Les nouvelles opérations reprennent les postes habituels ; les opérations existantes sont résolues en lecture, sans réécrire leur définition figée. Les opérations manuelles acceptent leur poste autonome même avec une famille technique DECOUPE ; les opérations d’usinage restent qualifiées par machine/famille.
+
+Les tâches exposent `resourceIssues: [{code,message,actionPath}]`. Les codes `WORKSTATION_NOT_CONFIGURED`, `MACHINE_QUALIFICATION_MISSING` et `RESOURCE_CALENDAR_MISSING` sont repris dans la simulation, et les erreurs de prérequis nomment l’opération amont et sa cause. Le frontend les montre avant le calcul et ouvre le configurateur ou la fiche OF. La simulation et l’enregistrement du paramétrage n’engagent rien.
+
+La commande de programmation existante accepte `progress_percent` parmi 0/25/50/75/100. Les paliers sont monotones et protégés par la version de tâche. 100 exige DONE et la référence du programme ; un dossier figé accepte la progression de la tâche prévue sans changement de responsable/charge. Le planning expose `progressPercent`, réduit l’estimation restante et distingue cet avancement du temps réellement pointé. Les opérations physiques gardent les déclarations canoniques de pièces, rebuts et transferts ; aucun palier ne crée de stock.
+
+Avant déploiement de l’API, appliquer le patch **exact** `20261105_programming_progress_1834.sql` par le runner canonique après préflight/sauvegarde/validation humaine. Il ajoute la colonne et ses contraintes ; un trigger conserve la compatibilité des anciens clients qui terminent sans pourcentage. Les scripts support `verify` et `rollback` accompagnent le patch ; le rollback refuse toute progression partielle. Aucun de ces scripts n’a été appliqué aux bases atelier durant ce chantier. La recette PostgreSQL dédiée `workstation-resources.postgres.test.ts` exige l’URL, le nom de base, le rôle et le répertoire du cluster jetable attendus.
 
 Cette publication couvre les vues et la planification validée. Les écritures de couverture future, les modifications des réceptions/contrôles qualité et l’apprentissage continu restent hors de ce lot. La réponse indique `coverageAvailable: false` et ne publie pas une projection inachevée. Le moteur statistique pur reste testé mais non raccordé aux observations canoniques. Ne pas activer `EXECUTE` ou `LEARN` pour cette livraison.
 

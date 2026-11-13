@@ -60,6 +60,11 @@ import operationalMediaRoutes from "../module/operational-media/routes/operation
 import subcontractRoutes from "../module/subcontract/subcontract.routes";
 import supplierInvoiceRoutes from "../module/supplier-invoices/supplier-invoice.routes";
 import onboardingRoutes from "../module/onboarding/routes/onboarding.routes";
+import demandPilotRoutes from "../module/demand-pilot/routes/demand-pilot.routes";
+import demandPilotPortalRoutes from "../module/demand-pilot/routes/demand-pilot-portal.routes";
+import supplierSandboxRoutes from "../module/supplier-sandbox/routes/supplier-sandbox.routes";
+import supplierPortalRoutes from "../module/supplier-portal/routes/supplier-portal.routes";
+import supplierPortalAdminRoutes from "../module/supplier-portal/routes/supplier-portal-admin.routes";
 
 import traceabilityRoutes from "../module/traceability/routes/traceability.routes"
 import traceability360Routes from "../module/traceability/routes/traceability-360.routes"
@@ -83,14 +88,23 @@ import commercialReferencesRoutes from "../module/commercial-references/routes/c
 import { moduleAccessGate } from "../module/access-control/middlewares/module-access-gate"
 import { runWithAccountModuleAccessScope } from "../module/access-control/context/account-module-access.context"
 import documentServiceCapabilitiesRoutes from "../shared/document-services/document-service-capabilities.routes"
+import entreprisesRoutes from "../module/entreprises/routes/entreprises.routes";
+import { intercompanyDeliveryRoutes, intercompanyRequestRoutes, intercompanyPurchaseTrackingRoutes } from "../module/entreprises/intercompany/intercompany.routes";
+import intercompanyFulfilmentRoutes from "../module/commande-client/routes/intercompany-fulfilment.routes";
 const router = Router()
 
 router.use((_req, _res, next) => runWithAccountModuleAccessScope(next))
 
 // --- Routes publiques (avant authentification) ---
 router.use("/auth", authRoutes)
+router.use("/entreprises", entreprisesRoutes)
+router.use("/intercompany", intercompanyDeliveryRoutes)
 router.use("/terminals", terminalRoutes)
 router.use("/portal", clientPortalRoutes)
+// Customer demand uses the verified portal account binding; it never trusts a client_id from the body.
+router.use("/client-portal/demand", demandPilotPortalRoutes)
+router.use("/supplier-sandbox", supplierSandboxRoutes)
+router.use("/supplier-portal", supplierPortalRoutes)
 router.use("/electronic-invoicing/webhooks", electronicInvoiceWebhookRoutes)
 router.use(openApiRoutes)
 // Borne physique : les commandes sont authentifiées par le token opaque de la
@@ -119,9 +133,13 @@ router.use("/operational-media", operationalMediaRoutes)
 // Gouvernance transverse de l'accueil : rollback ARIANE/V2 et métriques
 // d'adoption agrégées. Ce n'est pas un module métier restrictible.
 router.use("/dashboard-governance", dashboardGovernanceRoutes)
+// Demand evidence and decisions are separate from the planning-central industrial solver.
+router.use("/demand-pilot", demandPilotRoutes)
 
 router.use("/outils", outilRoutes)
 router.use("/banking-info", bankingInfoRoutes)  
+router.use("/commandes/intercompany/requests", intercompanyRequestRoutes)
+router.use("/commandes/intercompany/fulfilment-receipts", intercompanyFulfilmentRoutes)
 router.use("/commandes", commandeClientRoutes) // ✅  
 router.use("/clients", clientRoutes);
 router.use("/payment-modes", paymentModeRoutes);  
@@ -146,6 +164,7 @@ router.use("/audit-logs", auditLogsRoutes)
 router.use("/admin/access", accessControlRoutes);
 router.use("/admin/webhooks", webhookAdminRoutes);
 router.use("/admin/client-portal", clientPortalAdminRoutes);
+router.use("/supplier-portal-admin", supplierPortalAdminRoutes);
 router.use("/admin/reference-data", referenceDataRoutes);
 // Resolve delegated ERP configuration before the legacy admin superadmin guard.
 router.use("/admin/onboarding", onboardingRoutes);
@@ -192,6 +211,7 @@ router.use("/livraisons", livraisonsRoutes);
 router.use("/stock", stockRoutes);
 router.use("/dossiers", operationDossiersRoutes);
 router.use("/fournisseurs", fournisseursRoutes);
+router.use("/commandes-fournisseurs", intercompanyPurchaseTrackingRoutes);
 router.use("/commandes-fournisseurs", commandeFournisseurRoutes); // Module « Commandes fournisseurs » (#172) — BCF
 router.use("/subcontract-work-packages", subcontractRoutes); // #626
 router.use("/procurement-reliability", procurementReliabilityRoutes); // SOL-18 — scorecards et rapprochement achats

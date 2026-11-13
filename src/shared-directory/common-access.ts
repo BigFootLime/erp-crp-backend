@@ -20,13 +20,13 @@ const MARKER='DIRECTORY_COMMON_ACCESS_PROJECTED';
 const unavailable=()=>new HttpError(503,'DIRECTORY_UNAVAILABLE','Les droits communs sont momentanément indisponibles.');
 // Production may read its own signed ACL snapshot for shared configuration;
 // the projection endpoint below still rejects Production callers explicitly.
-const bindingSchema=z.object({authority_id:directoryIdSchema,profile_id:z.string().uuid(),target_site:siteIdSchema}).strict();
+const bindingSchema=z.object({authority_id:directoryIdSchema,profile_id:z.string().guid(),target_site:siteIdSchema}).strict();
 const dataSchema=bindingSchema.extend({
  epoch:z.string().regex(/^(0|[1-9][0-9]{0,39})$/),
  modules:z.array(z.object({module_key:z.string().min(1).max(100),allowed:z.boolean()}).strict()).max(1000),
  capabilities:z.array(z.enum(SENSITIVE_CAPABILITIES)).max(SENSITIVE_CAPABILITIES.length),
 }).strict();
-const replySchema=dataSchema.extend({policy_hash:z.string().regex(/^[a-f0-9]{64}$/),request_nonce:z.string().uuid(),issued_at:z.number().int().positive()}).strict();
+const replySchema=dataSchema.extend({policy_hash:z.string().regex(/^[a-f0-9]{64}$/),request_nonce:z.string().guid(),issued_at:z.number().int().positive()}).strict();
 export type CommonAccessPolicy=z.infer<typeof replySchema>;
 const policyHash=(value:z.infer<typeof dataSchema>)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function policyData(policy:CommonAccessPolicy){
@@ -87,7 +87,7 @@ export async function readCommonAccessSource(binding:z.infer<typeof bindingSchem
 
 export function mountDirectoryCommonAccess(app:Express,db:Pool,authorityId:string,keys:()=>Promise<ReadonlyMap<string,string>>,wrap:(work:any)=>RequestHandler,transport:typeof fetch=fetch){
  app.post('/internal/directory/common-access-policy',wrap(async(req:any,res:any)=>{
-  const input=z.object({profile_id:z.string().uuid()}).strict().parse(req.body),site=req.directoryCaller!;
+  const input=z.object({profile_id:z.string().guid()}).strict().parse(req.body),site=req.directoryCaller!;
   if(site==='cerp_prod')throw new HttpError(403,'COMMON_ACCESS_TEST_REQUIRED','Cette projection est réservée aux bases Test.');
   const allowed=await keys();if(!allowed.has(site))throw unavailable();
   const send=(value:unknown)=>{const bytes=Buffer.from(JSON.stringify(value));res.setHeader('Cache-Control','no-store');res.setHeader('X-CERP-Common-Access-Site-Signature',commonAccessReplyMac('site',allowed.get(site)!,req.directoryRequestNonce!,bytes).toString('hex'));res.type('application/json').send(bytes);};

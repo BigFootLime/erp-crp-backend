@@ -1,5 +1,15 @@
 # OF dossier completion and material coverage
 
+## Stock en fin de préparation et achats séparés — 9 novembre 2026
+
+Le contrôle lit la proposition canonique de lots et les besoins de la nomenclature. Le bouton de validation confirme la synthèse matière et transmet sa version. Le serveur rejette une proposition périmée avant de figer le dossier. Les références incomplètes et rendements de tôle non vérifiés se traitent dans la définition matière. Les barres sont réservées selon leurs longueurs physiques et les règles FIFO. La sortie des bruts unitaires utilise la réservation et le mouvement de stock canoniques, avec les droits de réservation et de sortie. Ces écritures et le brouillon pour le manque partagent la transaction de validation.
+
+Les tarifs historiques proviennent de commandes approuvées ou plus avancées, pour le même article, fournisseur et unité d’achat. Une unité d’achat différente doit avoir une conversion explicite dans le catalogue. Les quantités affectées au besoin restent exprimées en unité de stock. La quantité en brouillon respecte le minimum et le conditionnement du fournisseur.
+
+Le traitement se prépare depuis sa phase du planning. Le brouillon est lié à cette phase. La commande, la date annoncée ou l’estimation restent consultables depuis la phase. Les quantités conformes et les origines suivent les contrôles de sortie d’usinage existants avant engagement de la prestation.
+
+`purchases.supplier_quality` utilise le registre des paramètres ERP de l’entreprise active. Le réglage s’applique à la qualification du fournisseur et aux agréments client lors des achats. Sur les sites historiques `cerp_prod` et `cerp_test` de Croix Rousse, sa valeur par défaut est désactivée. Un choix explicite et audité la remplace. Les contrôles des pièces, des lots et les non-conformités conservent leurs règles.
+
 ## Rendement observé par source matière — 7 octobre 2026 (#877)
 
 La commande de débit accepte `sources[].yield: { good, scrap }`. Les nombres entiers déclarés sont contrôlés séparément pour chaque besoin matière : leur somme par besoin doit égaler les bons et rebuts de la déclaration. Avec une source unique, une ancienne requête sans `yield` peut reprendre ces totaux sans ambiguïté. Plusieurs sources exigent leur répartition observée ; aucune quantité n'est calculée au prorata des millimètres. Une conversion unitaire doit être exacte pour chaque source. Les écarts de rendement mesuré demandent une explication, même lorsque leurs sommes se compensent.

@@ -1,4 +1,4 @@
-import { effectiveRoleHasAny } from "../auth/domain/roles";
+import { effectiveRoleHasAny, hasAnyAssignedRole, normalizeAssignedRoles } from "../auth/domain/roles";
 import { hasGrantedAccountModuleAccess } from "../access-control/context/account-module-access.context";
 
 export const ARTICLE_WRITE_ROLES = [
@@ -32,6 +32,15 @@ export const ARTICLE_APPROVE_ROLES = [
 ] as const;
 
 export const ARTICLE_DOCUMENT_WRITE_ROLES = ARTICLE_WRITE_ROLES;
+
+/** Mirrors authorizeRole(...ARTICLE_WRITE_ROLES) for capability discovery. */
+export function canWriteStockArticles(user: { role?: string | null; primary_role?: string | null; roles?: readonly string[] | null } | null | undefined): boolean {
+  if (!user) return false;
+  const primaryRole = user.primary_role ?? user.role;
+  const assignedRoles = normalizeAssignedRoles(primaryRole, user.roles);
+  return hasAnyAssignedRole(primaryRole, assignedRoles, ARTICLE_WRITE_ROLES)
+    || effectiveRoleHasAny(user.role, ARTICLE_WRITE_ROLES);
+}
 
 export const ARTICLE_COST_ROLES = [
   "Directeur",

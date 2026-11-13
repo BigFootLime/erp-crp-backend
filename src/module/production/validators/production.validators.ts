@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 
 function parseBoolean(value: unknown): boolean | undefined {
   if (value === undefined || value === null) return undefined;
@@ -442,6 +442,7 @@ export type SubmitOfTechnicalPreparationBodyDTO = z.infer<typeof submitOfTechnic
 
 export const validateOfTechnicalPreparationSchema = z.object({
   body: z.object({
+    material_review_version: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     expected_updated_at: z.string().datetime({ offset: true }).optional(),
   }).strict().default({}),
 });

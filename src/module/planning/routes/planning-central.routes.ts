@@ -1,16 +1,21 @@
 import { Router } from "express";
-import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar } from "../controllers/planning-central.controller";
+import industrialRouter from "./industrial-plan.routes";
+import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar,centralOfProcurement,centralSaveOfProcurement,centralAutoOf } from "../controllers/planning-central.controller";
 import { requirePlanningCapability } from "../middlewares/planning-authorization.middleware";
 import { masterPlan } from '../controllers/planning-master-plan.controller';
 import { approveRecovery, previewRecoveryApproval } from '../controllers/urgency-approval.controller';
 import { cancelDeliveryUrgencyRetainingProduction, restoreDeliveryUrgency } from '../../livraisons/controllers/delivery-urgency.controller';
 import { previewRecoveryGrouping,applyRecoveryGrouping,listRecoveryGroupingCandidates } from '../controllers/recovery-consolidation.controller';
 const router=Router();
+router.use('/industrial',industrialRouter);
 // Authentication and module scope are enforced by the parent planning router.
 router.get("/status",requirePlanningCapability("read"),centralStatus);
 router.get('/master-plan',requirePlanningCapability('read_capacity'),masterPlan);
 router.get("/workshop-calendar",requirePlanningCapability("read"),centralWorkshopCalendar);
 router.post("/workshop-calendar",requirePlanningCapability("manage_schedule"),centralSetWorkshopCalendar);
+router.get('/ofs/:ofId/preparation',requirePlanningCapability('read'),centralOfProcurement);
+router.post('/ofs/:ofId/preparation',requirePlanningCapability('manage_schedule'),centralSaveOfProcurement);
+router.post('/ofs/:ofId/auto-plan',requirePlanningCapability('manage_schedule'),centralAutoOf);
 router.get("/snapshot",requirePlanningCapability("read"),centralSnapshot);
 router.get("/operations/:operationId/observations",requirePlanningCapability("read"),centralObservations);
 router.post("/simulations",requirePlanningCapability("manage_schedule"),centralSimulate);

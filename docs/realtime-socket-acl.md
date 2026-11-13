@@ -2,6 +2,23 @@
 
 ## Security boundary
 
+Incident du 26 octobre 2026 (#1450, supervision frontend #1771) : la lecture
+d'intégrité du journal ne prend plus `FOR UPDATE` sur l'allocateur global.
+Le snapshot `REPEATABLE READ` maintient une vue atomique de l'allocateur, du
+watermark et des événements ; toutes les lignes retenues restent validées.
+Les publications et corrections de corruption continuent à écrire dans la
+transaction, avec verrou PostgreSQL au moment de l'écriture. Un conflit de
+snapshot provoque toujours le rollback et le refus de disponibilité. Aucune
+dépendance de readiness ni vérification d'autorisation n'est désactivée.
+
+Recette : 55 tests contrôle partagé/ACL Socket.IO, compilation TypeScript du
+module et de ses dépendances, puis PostgreSQL 17 isolé sans réseau externe.
+Sur le même verrou concurrent, la version précédente échoue avec `55P03` ;
+la nouvelle lit son snapshot en 34 ms. Un trou de séquence reste mis en
+quarantaine et produit la barrière de resynchronisation attendue. Le contrôle
+TypeScript global avec le `node_modules` partagé du poste rencontre des
+incompatibilités Zod 3/4 hors du module ; aucune dépendance n'a été modifiée.
+
 Socket.IO is an authenticated delivery optimization, never an authorization
 source. Clients send a structured subscription (`module`, `entity`, or
 `station`); they never provide a room name. The server normalizes the request,

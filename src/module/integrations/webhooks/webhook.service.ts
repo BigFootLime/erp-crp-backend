@@ -5,6 +5,7 @@ import net from "node:net";
 
 import { logger } from "../../../shared/observability/logger";
 import { markJobFinished, markJobStarted } from "../../../shared/observability/metrics";
+import { startDrainableRecurringTask } from "../../../shared/runtime/drainable-recurring-task";
 import { HttpError } from "../../../utils/httpError";
 import {
   WEBHOOK_EVENT_REGISTRY,
@@ -390,7 +391,10 @@ export async function processNextWebhookDelivery(fetchImpl?: WebhookFetch): Prom
   return true;
 }
 
-export function startWebhookDeliveryMaintenance(): () => void {
+export function startWebhookDeliveryMaintenance(options: Readonly<{ cycle?: () => Promise<void> }> = {}): () => void | Promise<void> {
+  // Internal test seam; it must not depend on deployment-only encryption
+  // configuration in order to prove draining of the actual starter.
+  if (options.cycle) return startDrainableRecurringTask(options.cycle, 30_000).stop;
   if (process.env.CERP_WEBHOOK_DELIVERY_ENABLED === "0") {
     logger.warn("webhook_delivery_disabled", { reason_code: "EXPLICITLY_DISABLED" });
     return () => undefined;
@@ -418,10 +422,7 @@ export function startWebhookDeliveryMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), intervalMs);
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(cycle, intervalMs).stop;
 }
 
 export async function getWebhookSubscription(id: string) {

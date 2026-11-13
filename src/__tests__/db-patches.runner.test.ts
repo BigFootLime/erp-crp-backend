@@ -39,6 +39,74 @@ type RunnerModule = {
 
 const require = createRequire(import.meta.url);
 const runner = require(resolve(repoRoot, "scripts/db-patches.js")) as RunnerModule;
+const md15PatchFilename = "20261026_metrology_md15_profile_codes.sql";
+const md15PatchChecksum =
+  "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d";
+
+it("freezes the conforming subcontract completion patch for a single-patch preview", async () => {
+  const filename='20261106_procurement_conforming_completion_1836.sql';
+  const patches=runner.listPatches(resolve(repoRoot,'db/patches'));
+  const selected=runner.immutableOnlyPatch(patches,filename)!;
+  expect(selected.sha256).toBe('eab590ad5aca08ed61fe3c1ee2de3cab5a690c5db0af61dfb855f89b64161032');
+  expect(runner.parseArgs(['up','--dry-run','--only',filename])).toMatchObject({only:filename,dryRun:true});
+  expect(()=>runner.immutableOnlyPatch([{...selected,sha256:'0'.repeat(64)}],filename)).toThrow(/checksum mismatch/);
+  const client=inventoryClient();
+  await runner.runUp({query:client.query},[selected],{dryRun:true,only:filename});
+  expect(client.query.mock.calls.some(([sql])=>String(sql).includes('CREATE OR REPLACE FUNCTION public.guard_subcontract_completion_1273'))).toBe(false);
+});
+
+it("accepts only the frozen business-company cohort and rejects content substitutions", () => {
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const companies = patches.filter(patch => patch.filename.endsWith("_1454.sql"));
+  expect(companies).toHaveLength(14);
+  for (const patch of companies) {
+    expect(runner.parseArgs(["up", "--dry-run", "--only", patch.filename]).only).toBe(patch.filename);
+    expect(runner.immutableOnlyPatch(patches, patch.filename)).toBe(patch);
+    expect(() => runner.immutableOnlyPatch([{ ...patch, sha256: "0".repeat(64) }], patch.filename)).toThrow(/checksum mismatch/);
+  }
+  // Shared identity and private site routing are separate inventories, never business patches.
+  expect(() => runner.parseArgs(["up", "--only", "20261026_business_companies_1454.sql"])).toThrow(/not registered/);
+});
+
+it("permits only the exact MD15 patch with its canonical LF checksum", async () => {
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const selected = runner.immutableOnlyPatch(patches, md15PatchFilename)!;
+  const unrelatedPendingSql = "SELECT 'UNRELATED_PENDING';\n";
+  const unrelatedPending = {
+    filename: "20261023_independent_business_code_counters_1423.sql",
+    sql: unrelatedPendingSql,
+    sha256: runner.sha256Sql(unrelatedPendingSql),
+  };
+  const client = inventoryClient();
+
+  expect(selected).toMatchObject({ filename: md15PatchFilename, sha256: md15PatchChecksum });
+  expect(runner.parseArgs(["up", "--dry-run", "--only", md15PatchFilename])).toMatchObject({
+    only: md15PatchFilename,
+    dryRun: true,
+  });
+  expect(() => runner.parseArgs(["up", "--only", unrelatedPending.filename])).toThrow(
+    /not registered as an immutable patch selection/
+  );
+
+  await runner.runUp(
+    { query: client.query },
+    [unrelatedPending, selected],
+    { dryRun: true, only: md15PatchFilename }
+  );
+
+  const statements = client.query.mock.calls.map(([statement]) => String(statement));
+  expect(statements.some((statement) => statement.includes("UNRELATED_PENDING"))).toBe(false);
+  expect(statements.some((statement) => statement.includes("metrology_md15_code_floor_20261026"))).toBe(false);
+});
+
+it("permits the exact qualified Outillage patch and rejects a substituted checksum", () => {
+  const filename = "20261025_outillage_catalogue_provenance.sql";
+  const patches = runner.listPatches(resolve(repoRoot, "db/patches"));
+  expect(runner.parseArgs(["up", "--dry-run", "--only", filename])).toMatchObject({ only: filename, dryRun: true });
+  const selected = runner.immutableOnlyPatch(patches, filename);
+  expect(selected).toMatchObject({ filename, sha256: "634a2197b1218936d51fbdd48b57d8940ba02706b0de0ab8d690bccb94560bf8" });
+  expect(() => runner.immutableOnlyPatch([{ ...selected!, sha256: "0".repeat(64) }], filename)).toThrow(/checksum mismatch/);
+});
 it("orders immutable dependent patches identically for the canonical runner and release rehearsal", () => {
   const files = runner.listPatches(resolve(repoRoot, "db/patches")).map((patch) => patch.filename);
   const gate = require(resolve(repoRoot, "scripts/migrations/release-gate.js"));
@@ -49,6 +117,10 @@ it("orders immutable dependent patches identically for the canonical runner and 
   expect(files.indexOf("20260909_consumables.sql")).toBeLessThan(files.indexOf("20260909_consumable_procurement.sql"));
   expect(files.indexOf("20260909_consumable_procurement.sql")).toBeLessThan(files.indexOf("20260909_grouped_supplier_receipts.sql"));
   expect(files.indexOf("20260908_supplier_consultations.sql")).toBeLessThan(files.indexOf("20260908_consultation_documents.sql"));
+  expect(files.indexOf("20260227_metrologie_calibration.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780.sql"));
+  expect(files.indexOf("20260823_authoritative_pdf_ged_compatibility_bridge.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780.sql"));
+  expect(files.indexOf("20261014_finance_ged_profile_1268.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780_compat.sql"));
+  expect(files.indexOf("20260227_metrologie_calibration.sql")).toBeLessThan(files.indexOf("20261027_metrology_ged_entity_type_1780_compat.sql"));
   const materialOrder = orderPatchDependencies([
     '20261012_physical_material_bar_quality_1246.sql',
     '20261012_physical_material_bar_counts_1246.sql',

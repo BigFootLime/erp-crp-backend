@@ -14,6 +14,8 @@ import type { BonLivraisonHeader, BonLivraisonLigne, BonLivraisonLigneAllocation
  */
 
 export type BonLivraisonDocumentInput = {
+  /** Server-side archive replay only. */
+  legacyAppearance?: boolean
   header: BonLivraisonHeader
   lignes: Array<Pick<BonLivraisonLigne, "ordre" | "designation" | "code_piece" | "quantite" | "unite" | "delai_client"> & {
     allocations: Array<Pick<BonLivraisonLigneAllocation, "lot_code">>
@@ -29,6 +31,11 @@ export type BonLivraisonDocumentInput = {
    * jusqu'ici qu'une raison sociale.
    */
   issuer?: LegalParty
+  /**
+   * Explicit issuer-brand opt-in from an immutable external-company snapshot.
+   * Ordinary CRP deliveries omit it and retain their established CRP presentation.
+   */
+  branding?: { name: string; logo?: Buffer | null } | null
 }
 
 export function formatDateFR(iso: string | null | undefined): string {
@@ -138,6 +145,9 @@ export async function renderBonLivraisonDocument(input: BonLivraisonDocumentInpu
       subtitle: clientName,
       status: clean(bl.date_expedition) ? "Expédié" : "À expédier",
       monogramName: clientName,
+      // Branding is never inferred merely from an issuer name: ordinary CRP deliveries keep
+      // their published logo. Intercompany delivery snapshots opt in explicitly.
+      branding: input.branding ?? null,
       generatedAt: formatDateFR(bl.date_expedition ?? bl.date_creation),
       generatedBy: null,
       title: `Bon de livraison ${bl.numero}`,

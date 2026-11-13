@@ -175,6 +175,15 @@ describe("Gate d'accès module — passages sans interrogation de la base", () =
     expect(accountPolicyInstalled).toBe(false);
   });
 
+  it("laisse passer uniquement les référentiels matière authentifiés sans ouvrir Stock", async () => {
+    const referential = await run("/stock/matiere-nuances");
+    expect(referential.next).toHaveBeenCalledOnce();
+    expect(repo.repoResolveAccessProfile).not.toHaveBeenCalled();
+
+    const stock = await run("/stock/articles");
+    expect(stock.res.statusCode).toBe(503);
+  });
+
   it("laisse passer le module protégé vers son garde SuperAdmin, sans matrice ordinaire", async () => {
     const { res, next, accountPolicyInstalled } = await run("/admin/users");
     expect(next).toHaveBeenCalledOnce();

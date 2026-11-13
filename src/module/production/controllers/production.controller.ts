@@ -1,4 +1,6 @@
+import {consumableRights} from './consumable-procurement.controller';
 import type { Request } from "express";
+import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
@@ -407,7 +409,7 @@ export const getOfTechnicalPreparation = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const out = await svcGetOfTechnicalPreparation({ id });
   if (!out) { res.status(404).json({ error: "Not found" }); return; }
-  res.status(200).json(out);
+  res.status(200).json({ ...out, can_validate: canValidateTechnicalDossier(req.user) });
 });
 
 export const patchOfTechnicalPreparation = asyncHandler(async (req, res) => {
@@ -429,7 +431,8 @@ export const submitOfTechnicalPreparation = asyncHandler(async (req, res) => {
 export const validateOfTechnicalPreparation = asyncHandler(async (req, res) => {
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const body = validateOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
-  const out = await svcValidateOfTechnicalPreparation({ id, body, audit: buildAuditContext(req) });
+  const rights=await consumableRights(req);
+  const out = await svcValidateOfTechnicalPreparation({ id, body, audit: buildAuditContext(req), canPurchase:rights.purchase, stockRights:rights });
   if (!out) { res.status(404).json({ error: "Not found" }); return; }
   res.status(200).json(out);
 });

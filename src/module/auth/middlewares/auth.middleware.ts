@@ -13,6 +13,7 @@ import {
 import { findAuthenticatedAccountState } from "../repository/auth.repository";
 import pool from '../../../config/database';
 import {sharedDirectoryClient,validateSiteDirectoryToken} from '../../../shared-directory/site-runtime';
+import { enforceAuthenticatedCompany } from '../../entreprises/runtime/company-runtime.middleware';
 
 interface JwtPayload {
   id: number;
@@ -109,7 +110,8 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
     req.user = decoded;
     if(sharedDirectoryClient()){
       void validateSiteDirectoryToken(pool,decoded).then(identity=>{
-        req.user={...decoded,username:identity.username,email:identity.email??'',role:identity.role,primary_role:identity.role,roles:identity.roles};next();
+        req.user={...decoded,username:identity.username,email:identity.email??'',role:identity.role,primary_role:identity.role,roles:identity.roles};
+        enforceAuthenticatedCompany(req, res, next);
       }).catch(error=>{
         const failure = directoryAuthenticationFailure(error);
         console.warn(JSON.stringify({ type: "directory_auth_failure", reason: failure.reason, status: failure.status }));
@@ -117,7 +119,10 @@ export const authenticateToken: RequestHandler = (req, res, next) => {
         res.status(unavailable?503:401).json({code:unavailable?'DIRECTORY_UNAVAILABLE':'MFA_REQUIRED',message:unavailable?'L’annuaire commun est momentanément indisponible.':'Une nouvelle connexion est requise.'});
       });return;
     }
-    requireActiveAccount(req, res, next);
+    requireActiveAccount(req, res, (error?: unknown) => {
+      if (error) { next(error); return; }
+      enforceAuthenticatedCompany(req, res, next);
+    });
   } catch (err) {
     console.warn(
       JSON.stringify({

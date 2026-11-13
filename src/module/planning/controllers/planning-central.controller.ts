@@ -19,7 +19,7 @@ export const centralWorkshopCalendar: RequestHandler = asyncHandler(async(_req,r
   res.setHeader('Cache-Control','no-store');res.json(await readWorkshopCalendar());
 });
 export const centralSetWorkshopCalendar: RequestHandler = asyncHandler(async(req,res)=>{
-  const input=z.object({calendar_id:z.string().uuid(),expected_revision:z.string().regex(/^\d+$/)}).strict().parse(req.body);
+  const input=z.object({calendar_id:z.string().guid(),expected_revision:z.string().regex(/^\d+$/)}).strict().parse(req.body);
   res.json(await setWorkshopCalendar(input,buildAuditContext(req),key(req.headers['idempotency-key'])));
 });
 export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
@@ -35,7 +35,7 @@ export const centralPreview: RequestHandler = asyncHandler(async(req,res)=>{
   } finally {res.off('close',onClose);}
 });
 export const centralObservations: RequestHandler = asyncHandler(async(req,res)=>{
-  const operationId=z.string().uuid().parse(req.params.operationId);
+  const operationId=z.string().guid().parse(req.params.operationId);
   const query=centralObservationsSchema.parse(req.query);
   const result=await readTaskObservations(pool,operationId,query.offset,query.limit,query.resource_id);
   if(!result)throw new HttpError(404,'PLANNING_TASK_NOT_FOUND','Opération introuvable.');
@@ -60,10 +60,31 @@ export const centralSimulate: RequestHandler = asyncHandler(async(req,res)=>{
   res.status(201).json(await createCentralSimulation(input,buildAuditContext(req),key(req.headers["idempotency-key"])));
 });
 export const centralGetSimulation: RequestHandler = asyncHandler(async(req,res)=>{
-  const id=z.string().uuid().parse(req.params.id);
+  const id=z.string().guid().parse(req.params.id);
   res.setHeader("Cache-Control","no-store");res.json(await getCentralSimulation(id,buildAuditContext(req)));
 });
 export const centralApply: RequestHandler = asyncHandler(async(req,res)=>{
-  const id=z.string().uuid().parse(req.params.id),input=centralApplySchema.parse(req.body);
+  const id=z.string().guid().parse(req.params.id),input=centralApplySchema.parse(req.body);
   res.json(await applyCentralSimulation(id,input.revision,buildAuditContext(req),key(req.headers["idempotency-key"])));
+});
+
+export const centralOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const {readPlanningProcurement}=await import('../repository/planning-procurement.repository');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ const rights=await consumableRights(req);res.setHeader('Cache-Control','no-store');
+ res.json({...await readPlanningProcurement(ofId,rights.prices),canSave:requestHasElevatedAccountModuleAccess(req)||roleHasPlanningCapability(req.user?.role,'manage_schedule'),canPurchase:rights.purchase});
+});
+export const centralSaveOfProcurement:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const {savePlanningProcurement,savePlanningProcurementSchema}=await import('../repository/planning-procurement.repository');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ res.json(await savePlanningProcurement(ofId,savePlanningProcurementSchema.parse(req.body),buildAuditContext(req),(await consumableRights(req)).purchase));
+});
+export const centralAutoOf:RequestHandler=asyncHandler(async(req,res)=>{
+ const ofId=z.coerce.number().int().positive().parse(req.params.ofId);
+ const input=z.object({earliestStart:z.string().datetime({offset:true}),autoAssign:z.boolean().default(true)}).strict().parse(req.body);
+ const {createOfAutoSimulation}=await import('../services/planning-central.service');
+ const {consumableRights}=await import('../../production/controllers/consumable-procurement.controller');
+ res.status(201).json(await createOfAutoSimulation(ofId,input.earliestStart,input.autoAssign,buildAuditContext(req),key(req.headers['idempotency-key']),(await consumableRights(req)).purchase));
 });

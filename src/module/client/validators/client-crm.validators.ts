@@ -4,12 +4,12 @@ import { CRM_CHANNELS, CRM_CONTACT_POLICIES, CRM_CUSTOMER_KINDS, CRM_OUTCOMES,
 
 // The canonical client key is varchar, including legacy imported identities.
 export const crmClientIdSchema = z.string().trim().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/);
-export const crmIdempotencySchema = z.string().uuid().transform(value => value.toLowerCase());
+export const crmIdempotencySchema = z.string().guid().transform(value => value.toLowerCase());
 const userId = z.number().int().positive().max(2147483647);
 const version = z.number().int().positive().max(2147483646);
 const timestamp = z.string().datetime({ offset: true }).refine(value => Number.isFinite(Date.parse(value)), "Date invalide");
 const note = z.string().trim().max(2000).nullable();
-const contactId = z.string().uuid().nullable();
+const contactId = z.string().guid().nullable();
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
   const parsed = new Date(value + "T00:00:00Z");
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
@@ -22,11 +22,11 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("PLAN"), expected_profile_version: version.or(z.literal(0)),
     contact_id: contactId, owner_user_id: userId, channel: z.enum(CRM_CHANNELS), purpose: z.enum(CRM_PURPOSES),
     title: z.string().trim().min(3).max(160).nullable(), due_at: timestamp }).strict(),
-  z.object({ action: z.literal("RESCHEDULE"), followup_id: z.string().uuid(), expected_version: version,
+  z.object({ action: z.literal("RESCHEDULE"), followup_id: z.string().guid(), expected_version: version,
     due_at: timestamp, owner_user_id: userId, reason: z.enum(CRM_RESCHEDULE_REASONS), note }).strict(),
-  z.object({ action: z.literal("COMPLETE"), followup_id: z.string().uuid(), expected_version: version,
+  z.object({ action: z.literal("COMPLETE"), followup_id: z.string().guid(), expected_version: version,
     outcome: z.enum(CRM_OUTCOMES), note }).strict(),
-  z.object({ action: z.literal("CANCEL"), followup_id: z.string().uuid(), expected_version: version,
+  z.object({ action: z.literal("CANCEL"), followup_id: z.string().guid(), expected_version: version,
     reason: z.string().trim().min(3).max(500) }).strict(),
   z.object({ action: z.literal("LOG_INTERACTION"), contact_id: contactId, channel: z.enum(CRM_CHANNELS),
     outcome: z.enum(CRM_OUTCOMES), occurred_at: timestamp, note }).strict(),

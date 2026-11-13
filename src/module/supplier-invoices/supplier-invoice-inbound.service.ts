@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { startDrainableRecurringTask } from "../../shared/runtime/drainable-recurring-task";
 
 import { logger } from "../../shared/observability/logger";
 import { markJobFinished, markJobStarted } from "../../shared/observability/metrics";
@@ -147,12 +148,22 @@ export async function flushSupplierInvoiceProviderStatusesOnce(limit = 25): Prom
   return processed;
 }
 
-export function startSupplierInvoiceMaintenance(): () => void {
+export function startSupplierInvoiceMaintenance(
+  dependencies: Readonly<{
+    flushProviderStatuses?: typeof flushSupplierInvoiceProviderStatusesOnce;
+    syncInbound?: typeof syncInboundSupplierInvoicesOnce;
+    now?: () => number;
+    intervalMs?: number;
+  }> = {},
+): () => void | Promise<void> {
   if (process.env.EINVOICE_PROVIDER?.trim().toLowerCase() !== "super-pdp") return () => undefined;
   const configuration = loadSuperPdpConfiguration();
   if (!configuration.clientId || !configuration.clientSecret) return () => undefined;
   const configured = Number.parseInt(process.env.SUPPLIER_INVOICE_SYNC_INTERVAL_MS ?? "300000", 10);
   const syncIntervalMs = Number.isSafeInteger(configured) && configured >= 60_000 ? configured : 300_000;
+  const flushProviderStatuses = dependencies.flushProviderStatuses ?? flushSupplierInvoiceProviderStatusesOnce;
+  const syncInbound = dependencies.syncInbound ?? syncInboundSupplierInvoicesOnce;
+  const now = dependencies.now ?? Date.now;
   let nextSyncAt = 0;
   let running = false;
   const cycle = async () => {
@@ -160,10 +171,10 @@ export function startSupplierInvoiceMaintenance(): () => void {
     running = true;
     markJobStarted("supplier_invoice_inbound");
     try {
-      await flushSupplierInvoiceProviderStatusesOnce();
-      if (Date.now() >= nextSyncAt) {
-        await syncInboundSupplierInvoicesOnce();
-        nextSyncAt = Date.now() + syncIntervalMs;
+      await flushProviderStatuses();
+      if (now() >= nextSyncAt) {
+        await syncInbound();
+        nextSyncAt = now() + syncIntervalMs;
       }
       markJobFinished("supplier_invoice_inbound", true);
     } catch (error) {
@@ -173,8 +184,5 @@ export function startSupplierInvoiceMaintenance(): () => void {
       running = false;
     }
   };
-  void cycle();
-  const timer = setInterval(() => void cycle(), Math.min(30_000, syncIntervalMs));
-  timer.unref();
-  return () => clearInterval(timer);
+  return startDrainableRecurringTask(cycle, dependencies.intervalMs ?? Math.min(30_000, syncIntervalMs)).stop;
 }

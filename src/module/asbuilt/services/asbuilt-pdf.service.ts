@@ -1,4 +1,6 @@
 import { drawCerpRawSection, renderCerpRawBody } from "../../../shared/pdf/raw-document-body"
+import { documentColors } from "../../../shared/pdf/document-appearance"
+const C = documentColors("qualite")
 
 import type { AsBuiltPreview } from "../types/asbuilt.types"
 
@@ -90,7 +92,7 @@ export async function svcRenderAsbuiltPdf(args: {
           doc.fillColor(w.level === "danger" ? "#b91c1c" : "#92400e")
           doc.text(`- [${w.level.toUpperCase()}] ${w.message}`)
         }
-        doc.fillColor("#111111")
+        doc.fillColor(C.ink)
       } else {
         section(doc, "Avertissements de couverture")
         doc.text("- Aucune lacune detectee sur le perimetre analyse.")
@@ -278,11 +280,11 @@ export async function svcRenderAsbuiltPdf(args: {
       doc.moveDown(1)
       doc
         .fontSize(8)
-        .fillColor("#6b7280")
+        .fillColor(C.steel)
         .text(
           "Document genere automatiquement par CERP. Les elements marques MANQUANTE ou SANS ... signalent une lacune de donnees reelle, non une erreur de generation."
         )
-      doc.fillColor("#111111")
+      doc.fillColor(C.ink)
     },
   })
 }

@@ -1,0 +1,1 @@
+SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='supplier_portal_accounts' AND column_name='recovery_requested_at') AS recovery_request_column_installed;

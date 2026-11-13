@@ -1,3 +1,4 @@
+import type {PoolClient} from 'pg';
 import {materialCommand,readMaterialTx,type Candidate} from './of-material.repository';
 import type {MaterialConfirmation} from '../validators/of-material.validators';
 import type {AuditContext} from './production.repository';
@@ -8,6 +9,16 @@ import {repoCreateStockReservation} from '../../stock/repository/stock-reservati
 import {createMaterialDraftsTx,type MaterialDraftLine} from '../../commande-fournisseur/repository/commande-fournisseur.repository';
 import {lockFutureMaterialSupplyTx,allocateFutureMaterialSupplyTx} from './material-future-supply.repository';
 import {savePurchasePreparationsTx} from './purchase-preparation.repository';
+
+export async function reserveMaterialSelectionTx(tx:PoolClient,ofId:number,number:string,need:Awaited<ReturnType<typeof readMaterialTx>>['needs'][number],
+  lot:Candidate,selectionQuantity:number,key:string,audit:AuditContext){
+  const step=barBlankStep(need);
+  const physical=step&&need.barInventories?physicalMaterialSelection(need,lot.batchId,selectionQuantity):undefined;
+  if(physical&&physical.quantity!==selectionQuantity)throw new HttpError(409,'MATERIAL_FRAGMENTED_SELECTION','Actualisez les longueurs proposées sur les barres physiques.');
+  return repoCreateStockReservation({article_id:need.articleId!,magasin_id:lot.magasinId,emplacement_id:lot.emplacementId,lot_id:lot.id,qty:selectionQuantity,
+    ...(physical?{barAllocations:physical.allocations.map(({barId,quantityMm,expectedVersion})=>({barId,quantityMm,expectedVersion}))}:{}),
+    source:{source_type:"OF",of_id:ofId},reason:`Matière ${number} · ${need.operationLabel}`},audit,`${key}:${need.key}:${lot.batchId}`,tx,need.id!);
+}
 
 export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,audit:AuditContext,canPurchase:boolean){
   return materialCommand(ofId,"CONFIRM",body,audit,async(tx,current)=>{
@@ -47,12 +58,7 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
       for(const selection of selections){
         const candidate=need.candidates.find(c=>c.lot.batchId===selection.batchId);
         if(!candidate||lotCompatibility(need,candidate.lot).length||selection.quantity>candidate.available)throw new HttpError(409,"MATERIAL_LOT_CHANGED","Un lot sélectionné n’est plus compatible ou disponible.");
-        const lot=candidate.lot as Candidate;
-        const physical=step&&need.barInventories?physicalMaterialSelection(need,lot.batchId,selection.quantity):undefined;
-        if(physical&&physical.quantity!==selection.quantity)throw new HttpError(409,'MATERIAL_FRAGMENTED_SELECTION','Actualisez les longueurs proposées sur les barres physiques.');
-        const result=await repoCreateStockReservation({article_id:need.articleId!,magasin_id:lot.magasinId,emplacement_id:lot.emplacementId,lot_id:lot.id,qty:selection.quantity,
-          ...(physical?{barAllocations:physical.allocations.map(({barId,quantityMm,expectedVersion})=>({barId,quantityMm,expectedVersion}))}:{}),
-          source:{source_type:"OF",of_id:ofId},reason:`Matière ${current.number} · ${need.operationLabel}`},audit,`${body.idempotencyKey}:${need.key}:${lot.batchId}`,tx,need.id!);
+        const result=await reserveMaterialSelectionTx(tx,ofId,current.number,need,candidate.lot,selection.quantity,body.idempotencyKey,audit);
         reservedIds.push(result.reservation.id);
       }
       const buy=purchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null);

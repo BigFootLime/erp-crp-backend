@@ -1,4 +1,6 @@
+import {readSupplierQualitySetting} from "../../commande-fournisseur/repository/supplier-quality-settings.repository";
 import pool from '../../../config/database';
+import { effectivePreparationVersionSql } from './effective-preparation-version.sql';
 import { HttpError } from '../../../utils/httpError';
 import { OF_PURCHASE_SCOPE_SQL } from './of-supplier-qualification.repository';
 import { readOfPurchaseClientContextsTx } from '../../commande-fournisseur/repository/purchase-client-context.repository';
@@ -10,8 +12,7 @@ import { estimateRecommendationPrice, rankSupplierSuggestions, summarizeSupplier
 import { supplierRecommendationEvidence, type SourcedSupplierSuggestion } from '../../commande-fournisseur/domain/supplier-recommendation-evidence';
 
 export const SUPPLIER_RECOMMENDATION_CONTEXT_SQL = `SELECT id AS of_id,updated_at::text AS of_updated_at,
-  COALESCE(piece_technique_version_id,NULLIF(technical_preparation->>'selected_version_id','')::uuid,
-    NULLIF(technical_preparation->>'selected_draft_version_id','')::uuid)::text AS technical_version_id
+  ${effectivePreparationVersionSql("ordres_fabrication")}::text AS technical_version_id
   FROM public.ordres_fabrication WHERE id=$1`;
 
 // Only actual sent orders of this exact article teach a preference. A receipt
@@ -89,15 +90,16 @@ export async function getOfSupplierRecommendations(ofId: number,
     const rows = (await tx.query<SupplierHistory>(SUPPLIER_RECOMMENDATION_HISTORY_SQL, [input.articleId, clock.today])).rows;
     const candidates = rows.slice(0,40), ids = candidates.map(item => item.supplier_id), domains = purchaseLineDomains(scope);
     const catalogues = (await tx.query<RecommendationCatalogue>(SUPPLIER_RECOMMENDATION_CATALOGUES_SQL, [input.articleId, ids, clock.today])).rows;
-    const reviews = (await tx.query<SupplierReview>(SUPPLIER_RECOMMENDATION_REVIEWS_SQL, [ids, domains, clock.today])).rows;
-    const decisions = (await tx.query<QualificationDecision & { supplier_id:string }>(SUPPLIER_RECOMMENDATION_QUALIFICATIONS_SQL,[ids,domains])).rows;
+    const enabled=(await readSupplierQualitySetting(tx)).value_json.enabled;
+    const reviews = enabled?(await tx.query<SupplierReview>(SUPPLIER_RECOMMENDATION_REVIEWS_SQL, [ids, domains, clock.today])).rows:[];
+    const decisions = enabled?(await tx.query<QualificationDecision & { supplier_id:string }>(SUPPLIER_RECOMMENDATION_QUALIFICATIONS_SQL,[ids,domains])).rows:[];
     if (reviews.length > 4000 || decisions.length > 4000) throw new HttpError(409,
       'SUPPLIER_RECOMMENDATION_SCOPE_TOO_LARGE', 'Les preuves fournisseur sont trop volumineuses. Consultez les dossiers avant de choisir.');
-    const policies = await readApprovalPoliciesTx(tx,[...new Set(contexts.map(context=>context.client_id))].sort(),false);
+    const policies = enabled?await readApprovalPoliciesTx(tx,[...new Set(contexts.map(context=>context.client_id))].sort(),false):[];
     const suggestions: SourcedSupplierSuggestion[] = [];
     for (const item of candidates) {
       const qualification = summarizeSupplierQualification(await readSupplierPurchaseQualificationTx(tx,
-        { supplierId: item.supplier_id, today: clock.today, checkedAt: clock.checked_at, lines:[scope], contexts,
+        { supplierId: item.supplier_id, today: clock.today, checkedAt: clock.checked_at, lines:[scope], contexts,enabled,
           prefetched:{decisions:decisions.filter(decision=>decision.supplier_id===item.supplier_id),policies} }));
       const offers = catalogues.filter(offer => offer.supplier_id === item.supplier_id &&
         purchaseLineDomains({ ...scope, categories: [], catalogue_type: offer.type }).some(domain => domains.includes(domain)));
@@ -114,9 +116,9 @@ export async function getOfSupplierRecommendations(ofId: number,
       if (item.actual_days !== null) reasons.push(`${item.received_orders} commande(s) reçue(s), délai médian ${item.actual_days} jours calendaires`);
       if (prices[0]) reasons.push('Tarif actuel avec forfait, minimum et conditionnement');
       const warnings: string[] = [];
-      if (!qualification.can_engage) warnings.push('Homologation ou exigence client bloquante');
-      if (!qualification.known) warnings.push('Des homologations ou agréments restent à renseigner');
-      if (outcome==='UNSATISFACTORY') warnings.push('Dernière évaluation non satisfaisante : avis Qualité nécessaire');
+      if (!qualification.can_engage) warnings.push('Ce fournisseur est bloqué pour cet achat.');
+      if (enabled&&!qualification.known) warnings.push('La Qualité doit compléter le dossier de ce fournisseur.');
+      if (outcome==='UNSATISFACTORY') warnings.push('La dernière évaluation du fournisseur demande un avis de la Qualité.');
       if (outcome==='RESERVATIONS') warnings.push('Dernière évaluation avec réserves');
       if (canReadPrices && !prices.length) warnings.push('Aucun tarif comparable pour cette quantité, unité et devise');
       suggestions.push({ ...item, can_engage: qualification.can_engage, qualification_known: qualification.known,

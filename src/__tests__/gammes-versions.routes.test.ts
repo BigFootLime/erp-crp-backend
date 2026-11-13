@@ -170,7 +170,7 @@ describe("Routes/contrôleurs gammes et versions", () => {
       (await request(app).patch(`/pieces-techniques/${PIECE_ID}/versions/${VERSION_ID}/status`).send({ next_statut: "EN_VALIDATION" })).status
     ).toBe(200)
     expect(
-      (await request(app).post(`/pieces-techniques/${PIECE_ID}/versions/${VERSION_ID}/create-next`).send({ indice: "B" })).status
+      (await request(app).post(`/pieces-techniques/${PIECE_ID}/versions/${VERSION_ID}/create-next`).send({ indice: "B", client_requirement_confirmed: true, raison_changement: "Nouveau plan client B" })).status
     ).toBe(201)
 
     expect(mocks.listVersions).toHaveBeenCalledWith(PIECE_ID)

@@ -1,4 +1,5 @@
 import PDFDocument from "pdfkit"
+import type { DocumentCategory } from "./document-appearance"
 import { currentPdfPresentation, PDF_MODULE_ACCENTS, type PdfModule } from "./document-theme"
 import { documentFont, registerInterDocumentFonts } from "./document-fonts"
 
@@ -244,6 +245,8 @@ export type CerpDocumentHeader = {
   /** Explicit renderer opt-in; never restyles an already-issued historical PDF. */
   appearance?: "clients-v3" | "module-v1" | "legacy-v1"
   module?: PdfModule
+  /** Earlier explicit category contracts map to the current scoped charter. */
+  category?: DocumentCategory
   /** Explicit visual contract. Legacy/pending archives keep the classic renderer by default. */
   designVersion?: CerpDocumentDesign
   /** Type de document, en capitales dans l'en-tete et le rappel d'identite. */
@@ -261,6 +264,15 @@ export type CerpDocumentHeader = {
   monogramName?: string | null
   /** Image GED PNG/JPEG exacte de l'entite. Le monogramme reste le repli sûr. */
   entityImage?: Buffer | null
+  /**
+   * Marque de l'emetteur figee avec le document commercial.
+   *
+   * Son absence conserve strictement la charte CERP historique. Lorsqu'elle est renseignee,
+   * son nom remplace toute occurrence de CRP et son logo est utilise seulement s'il a deja
+   * ete resolu par l'appelant autorise. Sans logo, le nom est imprime : un document EC ne
+   * doit jamais reprendre le logo CRP par defaut.
+   */
+  branding?: { name: string; logo?: Buffer | null } | null
   generatedAt: string
   generatedBy?: string | null
   /**
@@ -309,6 +321,19 @@ export type CerpDocumentHeader = {
   creationDate: Date
 }
 
+function documentBrandName(header: CerpDocumentHeader): string {
+  return header.branding?.name.trim() || "CROIX ROUSSE PRECISION"
+}
+
+/** Preserve historic PDF metadata casing when no explicit issuer brand is supplied. */
+function documentBrandMetadataName(header: CerpDocumentHeader): string {
+  return header.branding?.name.trim() || "Croix Rousse Precision"
+}
+
+function documentBrandLogo(header: CerpDocumentHeader): Buffer | null {
+  return header.branding ? readableRaster(header.branding.logo) : CERP_LOGO_PNG
+}
+
 export type CerpLineColumn = {
   key: string
   label: string
@@ -352,7 +377,7 @@ export class CerpDocumentContext {
     return Math.max(this.fieldOffset, this.doc.heightOfString(toPdfSafeText(label.toUpperCase()), { width, characterSpacing: 0.75 }) + 4)
   }
 
-  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP, private readonly colors: DocumentColors = CERP_DOC_COLORS) {
+  constructor(doc: PDFKit.PDFDocument, startY: number, reserve: number = MARGIN_BOTTOM, designVersion: CerpDocumentDesign = "classic-v1", private readonly pageTop = MARGIN_TOP, readonly colors: DocumentColors = CERP_DOC_COLORS) {
     this.doc = doc
     this.cursor = startY
     this.reserve = reserve
@@ -837,7 +862,10 @@ export class CerpDocumentContext {
 
 function drawMasthead(doc: PDFKit.PDFDocument, header: CerpDocumentHeader): number {
   const logoHeight = LOGO_WIDTH / CERP_LOGO_RATIO
-  doc.image(CERP_LOGO_PNG, MARGIN_X, MARGIN_TOP, { width: LOGO_WIDTH })
+  const brandLogo = documentBrandLogo(header)
+  if (brandLogo) doc.image(brandLogo, MARGIN_X, MARGIN_TOP, { width: LOGO_WIDTH })
+  else doc.font(documentFont(doc, true)).fontSize(13).fillColor(CERP_DOC_COLORS.ink)
+    .text(toPdfSafeText(documentBrandName(header)), MARGIN_X, MARGIN_TOP + 7, { width: LOGO_WIDTH })
 
   doc.font(documentFont(doc, true)).fontSize(9.5).fillColor(CERP_DOC_COLORS.brand)
   const type = toPdfSafeText(header.documentType.toUpperCase())
@@ -1050,7 +1078,7 @@ function drawFooter(
   doc.restore()
 
   doc.font(documentFont(doc)).fontSize(7).fillColor(CERP_DOC_COLORS.graphite)
-  doc.text("CROIX ROUSSE PRECISION", MARGIN_X, y, { lineBreak: false, characterSpacing: 0.7 })
+  doc.text(toPdfSafeText(documentBrandName(header)), MARGIN_X, y, { lineBreak: false, characterSpacing: 0.7 })
 
   const author = header.generatedBy && header.generatedBy.trim() ? ` par ${header.generatedBy.trim()}` : ""
   const middle = toPdfSafeText(`Généré le ${header.generatedAt}${author}`)
@@ -1077,7 +1105,7 @@ export async function renderCerpDocument(
   header: CerpDocumentHeader,
   render: (ctx: CerpDocumentContext) => void
 ): Promise<Buffer> {
-  const policy = currentPdfPresentation(header.documentType, header.module)
+  const policy = currentPdfPresentation(header.documentType, header.module ?? header.category)
   if (!policy.legacy && header.appearance !== "legacy-v1") {
     header = { ...header, designVersion: "structured-v5", appearance: "module-v1", module: policy.module }
   }
@@ -1088,9 +1116,9 @@ export async function renderCerpDocument(
     margins: { top: MARGIN_TOP, bottom: geometry.reserve, left: MARGIN_X, right: MARGIN_X },
     info: {
       Title: toPdfSafeText(header.title),
-      Author: "Croix Rousse Precision",
+      Author: documentBrandMetadataName(header),
       Subject: toPdfSafeText(header.subject),
-      Creator: "CERP - Croix Rousse Precision",
+      Creator: `CERP - ${documentBrandMetadataName(header)}`,
       Producer: "CERP",
       ...(header.appearance === "module-v1" ? { Keywords: `CERP charter=module-v1; module=${header.module}` } : {}),
       CreationDate: header.creationDate,

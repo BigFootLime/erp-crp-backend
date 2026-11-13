@@ -649,11 +649,12 @@ export function diffCanonicalSpecs(
 // que la troncature soit lisible plutôt que brutale.
 export const DESIGNATION_MAX_LENGTH = 180;
 export const COMMENT_MAX_LENGTH = 4000;
-export const GENERATION_TEMPLATE_VERSION = 1;
+export const GENERATION_TEMPLATE_VERSION = 2;
 
 export type DesignationContext = {
   code_piece: string;
   indice: string;
+  nom_diminutif?: string | null;
   finition_courte: string;
   teinte_ral: string | null;
   couleur: string | null;
@@ -672,17 +673,15 @@ function formatMicrometers(value: number | null): string | null {
 }
 
 /**
- * `ST — {code_piece} ind. {indice} — {finition_courte}` enrichi des seuls
+ * `PS/{nom diminutif}-{référence plan}-{indice} — {finition_courte}` enrichi des seuls
  * qualificatifs DISCRIMINANTS réellement disponibles (teinte, épaisseur, classe,
  * zone). Aucun `null`, aucun `undefined`, aucun UUID, aucun séparateur vide.
  */
 export function buildGeneratedDesignation(ctx: DesignationContext): string {
   const codePiece = canonicalText(ctx.code_piece);
-  const indice = canonicalText(ctx.indice);
   const finition = canonicalText(ctx.finition_courte);
   const missing: string[] = [];
   if (!codePiece) missing.push("code_piece");
-  if (!indice) missing.push("indice");
   if (!finition) missing.push("finition_courte");
   if (missing.length > 0) {
     throw new HttpError(
@@ -705,7 +704,13 @@ export function buildGeneratedDesignation(ctx: DesignationContext): string {
   }
 
   const tail = qualifiers.length > 0 ? `${finition} ${qualifiers.join(" ")}` : (finition as string);
-  const full = `ST — ${codePiece} ind. ${indice} — ${tail}`;
+  const abbreviation = canonicalText(ctx.nom_diminutif)
+    ?.normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const full = `PS/${abbreviation ? `${abbreviation}-` : ""}${codePiece} — ${tail}`;
   return truncateReadable(full, DESIGNATION_MAX_LENGTH);
 }
 

@@ -72,7 +72,7 @@ export const history = asyncHandler(async (req, res) => {
   res.json({ ...data, items: data.items.filter(item => item.operationId === s.operation_id) });
 });
 export const previewReturn = asyncHandler(async (req, res) => {
-  const s = await scoped(req), id = z.string().uuid().parse(req.params.withdrawal_id);
+  const s = await scoped(req), id = z.string().guid().parse(req.params.withdrawal_id);
   const data = await getAssemblyComponentReturn(s.of_id, id);
   if (data.operation?.id !== s.operation_id) throw new HttpError(403, 'TERMINAL_ASSEMBLY_SCOPE', 'Ce retour appartient à une autre opération.');
   res.json({ ...data, permissions: { return: await canReturnAssemblyComponents(req) } });
@@ -83,5 +83,5 @@ export const restore = asyncHandler(async (req, res) => {
     throw new HttpError(422, 'TERMINAL_ASSEMBLY_SCOPE', 'Le retour doit correspondre à la confirmation ouverte.');
   }
   await assertWrite(req, true);
-  res.json(await returnAssemblyComponents(s.of_id, z.string().uuid().parse(req.params.withdrawal_id), body, audit(req), authorize(req, true)));
+  res.json(await returnAssemblyComponents(s.of_id, z.string().guid().parse(req.params.withdrawal_id), body, audit(req), authorize(req, true)));
 });

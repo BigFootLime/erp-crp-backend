@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 
 import { stripQueryFromUrl } from "../../../utils/logPath";
 import { grantAccountModuleAccessToRequest } from "../context/account-module-access.context";
-import { isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
+import { isAuthenticatedMatiereReferentialRequest, isProtectedModuleKey, resolveModuleAccessKeysForRequest } from "../domain/module-catalog";
 import { resolveAccessProfile } from "../services/access-control.service";
 
 const KILL_SWITCH_ENV = "CERP_MODULE_ACCESS_GATE_DISABLED";
@@ -72,6 +72,13 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     return;
   }
 
+  // Authenticated material referentials are intentionally outside the Stock
+  // module decision. Keep this exact-path exception narrow.
+  if (isAuthenticatedMatiereReferentialRequest(req.originalUrl, req.method)) {
+    next();
+    return;
+  }
+
   const moduleKeys =
     resolveModuleAccessKeysForRequest(req.originalUrl, req.method) ??
     resolveModuleAccessKeysForRequest(req.path, req.method);
@@ -79,6 +86,14 @@ export function moduleAccessGate(req: Request, res: Response, next: NextFunction
     // The module gate never turns a shared dependency into an authorization.
     // Its route-specific guard remains the only authority for these paths.
     next();
+    return;
+  }
+
+  // Company policy narrows even the account owner's industrial modules. A
+  // legacy kill-switch or protected module cannot open the other company.
+  const companyContext = req.businessCompanyAccess?.context;
+  if (companyContext && !moduleKeys.some(key => companyContext.module_keys.includes(key))) {
+    res.status(403).json({ error: "Accès interdit", code: "COMPANY_MODULE_NOT_ALLOWED" });
     return;
   }
 

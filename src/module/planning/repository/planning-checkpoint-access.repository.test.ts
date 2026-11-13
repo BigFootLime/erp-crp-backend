@@ -40,7 +40,6 @@ describe("planning checkpoint deep authorization", () => {
   it.each([
     ["l'utilisateur assigné", "Employee", 7],
     ["le rôle planning", "Planification", null],
-    ["l'administrateur", "Administrateur Systeme et Reseau", null],
   ])("autorise %s", async (_label, role, assignedUserId) => {
     const tx = queryer({ status: "active", responsible_role: "planning", assigned_user_id: assignedUserId });
 
@@ -50,5 +49,16 @@ describe("planning checkpoint deep authorization", () => {
       user_id: 7,
       user_role: role,
     })).resolves.toBeUndefined();
+  });
+
+  it("refuse l'administrateur hors du rôle planning", async () => {
+    const tx = queryer({ status: "active", responsible_role: "planning", assigned_user_id: null });
+
+    await expect(repoAssertPlanningCheckpointAccess({
+      tx: tx as never,
+      commande_id: 123,
+      user_id: 7,
+      user_role: "Administrateur Systeme et Reseau",
+    })).rejects.toMatchObject({ status: 403, code: "WORKFLOW_CHECKPOINT_FORBIDDEN" });
   });
 });

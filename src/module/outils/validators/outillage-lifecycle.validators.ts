@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const positiveInteger = z.coerce.number().int().positive();
-const uuid = z.string().uuid();
+const uuid = z.string().guid();
 const reason = z.string().trim().min(3).max(500);
 const notes = z.string().trim().max(2_000).nullish().transform((value) => value || null);
 

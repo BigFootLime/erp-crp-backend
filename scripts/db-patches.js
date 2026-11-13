@@ -11,6 +11,57 @@ const DEFAULT_PATCH_DIR = path.join(ROOT_DIR, "db", "patches");
 const MIGRATION_TABLE = "public.cerp_schema_migrations";
 const LOCK_NAME = "cerp_schema_migrations";
 const IMMUTABLE_ONLY_PATCHES = Object.freeze({
+  "20261113_stock_nuance_library.sql": "9317b8db4125b567035bc6463b2a90780edec0b13ac3dd5f18f4956cc3c1bc8d",
+  '20261106_procurement_conforming_completion_1836.sql': 'eab590ad5aca08ed61fe3c1ee2de3cab5a690c5db0af61dfb855f89b64161032',
+  '20261105_programming_progress_1834.sql': '09687df858c17fd1c1ff76d2718bf3df28f767cd89a796d81e55fa984768b904',
+  '20261105_operation_profitability_1833.sql': 'fde4c45cf9af0f2ed155b7debea0f3b784ac3f7a7e03dd5d970b6f06e6ecf7c1',
+  '20261105_purchase_capacity_1833.sql': '416f5aa588bf5d7abaf32007707afc5d99c9579c31f1f25a48dc9e90c56faef4',
+  '20261105_fixed_of_dossier_1833.sql': 'da10acae9cb75275b9bd54635491ae3167902d60114afe6e201865b20a1991e0',
+  '20261105_material_operation_links_1833.sql': 'd6214f6e079e4326b699a931a2444b02a9d371da64d7e6bb7bbd1f05a673ce80',
+  '20261104_special_process_family_identity_1831.sql': '417a1bea8130ef0c8639f091b17be987906bdd2a87a08e20cc8ba6f38b7e56a0',
+  "20261102_open_orders_carco_1031.sql": "4573ad3b70173f61e1ad1acfc231ac87533f4a1e4dfcabc68029bdff5a3e1329",
+  "20261031_client_portal_delivery_receipts_1802.sql": "59cb1e123d4666eca575206032db4a076060594d9d1116adf3dc0db7d21824a8",
+  "20261031_demand_pilot_1801.sql": "62ac4a173f739086fe31fd984384016777d306a455bac8e88b65cc4614c70f1b",
+  "20261031_demand_revision_receipts_1032.sql": "2cc6474c968ad0c270550ecb2562236abf045458afdc9b363fdae696c2cadfc6",
+  "20261101_client_portal_commercial_cockpit_1804.sql": "e7c3be70d8f7547a85702a482a64ab75357301e458ff8b8dfe5c3a6a499db111",
+  "20261101_client_portal_operational_notices_1805.sql": "ab4c2677e9482d9215642dc905e851af2c226d55806e78ccad3c4f86776103b5",
+  "20261101_delivery_service_evidence_1803.sql": "8d4f82162d37688e528d7ca81e20a7b249f506fcafc23c8d2b0bcbf7b9e1a5d6",
+  "20261101_demand_acknowledgement_queue_1032.sql": "16fc803df16da61307aa100985dc7b604351b74f0a8dcb5814685e1be88f2059",
+  "20261101_demand_auto_decisions_1032.sql": "12b9bf9d0793c6910a2957c875095036ef05e7e0e8d8c2bee051752ec1c409d3",
+  "20261101_demand_counter_offers_1032.sql": "4a7ca0480aef119c3f7c8855d412fe12854ca6f3ae9baa2acfc8b309043e07c0",
+  "20261101_demand_firm_bindings_1032.sql": "1ff5ed2b4dbed4c9d156fb83251fdfdc5d93d20ae5fd058801b1255f72b74e62",
+  "20261101_demand_firm_drafts_1032.sql": "db77c008e0156ccded37980b8d20cae1cad697ad227595f15d5ede0115a3e929",
+  "20261101_demand_materialization_operations_1032.sql": "841c71c4146a8f4e2f31c11d428c36bf47517a39c4d9c5f76d82ba03c7bfd8de",
+  "20261101_demand_reference_mapping_1032.sql": "7472c5f00a0c08ca561c6bfbce7f43745a498a9d0b12df04ce3ee7e5304eb5e3",
+  "20261102_supplier_portal_pilot_1806.sql": "b976ed77318a015238964d17f6be8df650ec84494e8910ee92b7abea1f3f8cb6",
+  "20261102_supplier_treatment_estimate_commands_1807.sql": "026a3d4f47ec0ef8df76e39637f79ccc37bc8ae9a53c5a2d773e9e66d8761134",
+  "20261102_carco_review_1032.sql": "f4fe1a52970953c79d2fb9c222aa0ca5c6926b736e0dd2a33a226ec8cdcc96d2",
+  "20261031_industrial_planning_1032.sql": "39a021720a3d9bf14066f72d5b4022a162dd9f3de517d4482e9ef816ad21fb76",
+  "20261101_industrial_assumptions_1032.sql": "ddbe2021ff048c9291e22124db8df791f16b96d0d1ff8150bcf06479d73a4fc6",
+  "20261101_industrial_proposal_execution_1032.sql": "d3a2f7b6c025e9fd2e262befda8078ae77fec4f6fad5721209596ad7143a63c9",
+  "20261102_consolidation_good_output_invariants_1809.sql": "252b6507b82ad32efdc9bd04c66744a2b912ac804d86f01f3d8a2b7ade3f6868",
+  "20261102_consolidation_good_output_trigger_decimal_fix_1811.sql": "ec2fb673822486bde011a19d8d4b194d54f923596420c715bc73a0cb4873d2b2",
+  "20261102_consolidation_good_output_trigger_fix_1810.sql": "59b215e30053a5634e8f3bdc6d194847129f78d5f25d72a13672cb7fe4f3dc09",
+  "20261102_industrial_yield_qualification_1032.sql": "8b0a8737c3baa84cc029f763350020377bd6bd8e340e1e37693b80d91f227e3a",
+  "20261102_supplier_portal_recovery_request_1808.sql": "ea849e872e5dae4a3010c0215ecf562d6753080fa8c3bd4dc74744453f801451",
+  "20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql": "ddd523443ff759509e7d316ee049cd32361af858a59f43e1257cc96cfd89c7a5",
+  "20261027_zzzzz_intercompany_standard_article_locks_1454.sql": "810c4d2029f5645a33eb5986ca0c699e1ca7fe3131c1c8c15e6cb06645d52860",
+  "20261027_zzz_intercompany_dropship_commande_ligne_1454.sql": "ab1d64b4d564799d951c4697d801b01a81ab8de47ec532c2647d4de2cb58d3b8",
+  "20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql": "affb50a542f5983d76b561d8201af035f894473444503a1902d745cc9e4fb12e",
+  "20261027_zz_intercompany_delivery_destination_1454.sql": "ad19e2fc63ed177f1135a90063a35cb12de10b06ae43b0905808473e6c34c595",
+  "20261026_client_person_types_1454.sql": "22c501f2734b46acf3f5be3bad3efe305d2b240a14b38420f58ab122d52a94a8",
+  "20261026_company_policy_projections_1454.sql": "f3d449774c7985471d243f7a815dbc182c76389f6587f4087f35d6f263e523b0",
+  "20261027_00_intercompany_transport_1454.sql": "4c2bf40462097374641ca078fc1c824789a91651f22d2a7f6686bebc9f158a8b",
+  "20261027_intercompany_commercial_catalogue_1454.sql": "3fa46f424c9a58e12a4ded839e74079c087e20ba80b6018298db1302f7495b2f",
+  "20261027_intercompany_external_fulfilment_receipts_1454.sql": "9804bb818b48c1ec0c8f0a04c2ecc54c82877e352275e8563d0c5009d04936c5",
+  "20261027_intercompany_invoice_sources_1454.sql": "b9bda5ab995fd01a9b4785ec1bc0e3aff40e859f94aaeb1016eb160abe345488",
+  "20261027_intercompany_supplier_offer_revisions_1454.sql": "af127653cb6ee15c4270e00cc17cc453e9fa37241fcd2d666a129ff44db0caa8",
+  "20261027_intercompany_transport_immutability_1454.sql": "bb48dcffcb237b3b3b99cd6d79de2620beb64e91672cc93f5a99b862b05b3d44",
+  "20261027_z_intercompany_external_invoice_guard_1454.sql": "ba64015d06015167dcd1d3339d5d4595b2e90709d43bc52c98c134af814cfc3f",
+  "20261027_metrology_scan_documents_1780.sql": "2b919939dc894949c3cc048343135b5f89a66bc9b43c66842ff2168025095e47",
+  "20261027_metrology_legacy_import_1460.sql": "6a7996429ba92988314c694d044cb2424d3f1d790c6c8f5205c6f986945478b5",
+  "20261026_metrology_md15_profile_codes.sql": "814333d4521a11239a4f70745ff6ff2e4cebb506617b4645cd4c9147cfe0ef1d",
+  "20261025_outillage_catalogue_provenance.sql": "634a2197b1218936d51fbdd48b57d8940ba02706b0de0ab8d690bccb94560bf8",
   "20260921_articles_purchase_flow.sql": "82d747a678c59591404ec0d272fe96f50b400e08a14e7d1e70bac75298e0bfd0",
   "20260915_subcontract_operation_flow_968.sql": "d562dceacdf6b941baef77130520caa9c77f7272939afc3cc141b7ac89abf8f4",
   "20260915_duration_learning_965.sql": "60f1f43b40c38eb311d8d296726f8dae4bf81e85878021c970d41527253adcef",
@@ -253,9 +304,9 @@ function listPatches(patchDir) {
   }
 
   const filenames = fs.readdirSync(patchDir)
-    .filter((name) => name.endsWith(".sql"))
-    .sort((a, b) => a.localeCompare(b));
-  return require("./migrations/patch-dependencies").orderPatchDependencies(filenames).map((filename) => {
+    .filter((name) => name.endsWith(".sql"));
+  const { orderPatchDependencies, sortPatchNames } = require("./migrations/patch-dependencies");
+  return orderPatchDependencies(sortPatchNames(filenames)).map((filename) => {
       const fullPath = path.join(patchDir, filename);
       const sql = fs.readFileSync(fullPath, "utf8");
       const sha256 = sha256Sql(sql);
@@ -503,10 +554,12 @@ async function getApplied(client) {
   return new Map(result.rows.map((row) => [row.filename, row]));
 }
 
-function buildStatuses(patches, applied) {
+function buildStatuses(patches, applied, applicability = new Map()) {
   return patches.map((patch) => {
     const row = applied.get(patch.filename);
+    const decision = applicability.get(patch.filename);
     if (!row) {
+      if (decision) return { ...patch, ...decision };
       return { ...patch, status: "pending" };
     }
     if (row.sha256 !== patch.sha256) {
@@ -567,7 +620,12 @@ function printStatuses(statuses) {
   }
 
   console.log("");
-  console.log(`Summary: applied=${counts.applied || 0} pending=${counts.pending || 0} checksum-mismatch=${counts["checksum-mismatch"] || 0}`);
+  console.log(`Summary: applied=${counts.applied || 0} pending=${counts.pending || 0} not-applicable-finance-profile=${counts["not-applicable-finance-profile"] || 0} checksum-mismatch=${counts["checksum-mismatch"] || 0}`);
+}
+
+async function resolvedStatuses(client, patches, applied) {
+  const { resolveClosedSeedApplicability } = require("./migrations/metrology-ged-applicability");
+  return buildStatuses(patches, applied, await resolveClosedSeedApplicability(client, patches, applied));
 }
 
 async function withClient(fn) {
@@ -598,7 +656,7 @@ async function runStatus(client, patches, { check, only }) {
   immutableOnlyPatch(patches, only);
   const applied = await getApplied(client);
   await assertImmutableRealtimeV1Provenance(client, patches, applied);
-  const statuses = buildStatuses(patches, applied);
+  const statuses = await resolvedStatuses(client, patches, applied);
   printStatuses(statuses);
 
   const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
@@ -651,7 +709,7 @@ async function runUp(client, patches, { dryRun, only }) {
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     const selected = only ? statuses.find((item) => item.filename === only) : null;
     const pending = selected
@@ -673,7 +731,7 @@ async function runUp(client, patches, { dryRun, only }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);
@@ -686,6 +744,15 @@ async function runUp(client, patches, { dryRun, only }) {
       : statuses.filter((item) => item.status === "pending");
     if (selected) console.log(`Immutable selection: ${selected.filename} is ${selected.status}.`);
     for (const patch of pending) {
+      // A compatibility migration can make a later immutable seed explicitly
+      // non-applicable. Re-read the ledger/profile between patches so no
+      // decision is based on the pre-loop snapshot.
+      const currentStatuses = await resolvedStatuses(client, patches, await getApplied(client));
+      const current = currentStatuses.find((item) => item.filename === patch.filename);
+      if (current?.status !== "pending") {
+        console.log(`${current?.status} ${patch.filename}`);
+        continue;
+      }
       console.log(`Applying ${patch.filename}`);
       await applyPatch(client, patch);
     }
@@ -697,7 +764,7 @@ async function runBaseline(client, patches, { dryRun }) {
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     printStatuses(statuses);
     console.log("");
     console.log("Dry-run: patch metadata would be recorded without executing SQL.");
@@ -708,7 +775,7 @@ async function runBaseline(client, patches, { dryRun }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = buildStatuses(patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);

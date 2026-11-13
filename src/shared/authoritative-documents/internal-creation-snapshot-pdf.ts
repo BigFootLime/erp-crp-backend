@@ -1,3 +1,4 @@
+import { archiveDocumentCategory, creationDocumentCategory } from "../pdf/document-appearance";
 import { renderCerpDocument, type CerpLineRow } from "../pdf/cerp-document";
 import { issuerIdentityLine, issuerLegalMentions } from "../pdf/legal-mentions";
 import { readGedEntityImageVersion } from "../pdf/ged-entity-image";
@@ -85,6 +86,7 @@ export async function renderInternalCreationSnapshotPdf({ archive }: { archive: 
       })
     : null;
   return renderCerpDocument({
+    category: archiveDocumentCategory(archive.renderVersion, creationDocumentCategory(archive.entityType)),
     documentType: "Instantané interne", name: source.reference, code: source.reference,
     subtitle: `Création archivée le ${createdAt.toLocaleDateString("fr-FR")}`,
     status: "BROUILLON", monogramName: source.entity_label, entityImage, generatedAt: createdAt.toLocaleDateString("fr-FR"),

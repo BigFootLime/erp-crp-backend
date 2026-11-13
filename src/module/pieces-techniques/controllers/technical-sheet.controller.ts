@@ -8,8 +8,8 @@ import * as service from "../services/technical-sheet.service";
 import { canWritePieceTechnique } from "../pieces-techniques.permissions";
 
 const paramsSchema = z.object({
-  id: z.string().uuid(),
-  versionId: z.string().uuid(),
+  id: z.string().guid(),
+  versionId: z.string().guid(),
 });
 const issueSchema = z
   .object({
@@ -41,7 +41,7 @@ export const issueTechnicalSheet = asyncHandler(async (req, res) => {
     );
   const p = await scope(req),
     key = req.get("Idempotency-Key")?.trim() ?? "";
-  if (!z.string().uuid().safeParse(key).success)
+  if (!z.string().guid().safeParse(key).success)
     throw new HttpError(
       400,
       "IDEMPOTENCY_KEY_REQUIRED",
@@ -63,7 +63,7 @@ export const issueTechnicalSheet = asyncHandler(async (req, res) => {
 const send = (download: boolean) =>
   asyncHandler(async (req, res) => {
     const p = await scope(req),
-      documentId = z.string().uuid().parse(req.params.documentId);
+      documentId = z.string().guid().parse(req.params.documentId);
     const file = await service.readTechnicalSheet(
       p.id,
       p.versionId,
@@ -83,7 +83,7 @@ export const previewTechnicalSheet = send(false);
 export const downloadTechnicalSheet = send(true);
 export const printTechnicalSheet = asyncHandler(async (req, res) => {
   const p = await scope(req),
-    documentId = z.string().uuid().parse(req.params.documentId);
+    documentId = z.string().guid().parse(req.params.documentId);
   await service.printTechnicalSheet(
     p.id,
     p.versionId,

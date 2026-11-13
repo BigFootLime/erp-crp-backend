@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { HttpError } from "./httpError";
 
 function clean(value: string | undefined) {
   const trimmed = value?.trim();
@@ -87,6 +88,35 @@ export function resolveCerpStoragePath(storagePath: string, fallbackBase?: strin
   }
 
   return path.resolve(fallbackBase ?? getCerpRootPath(), normalized);
+}
+
+const historicalMetrologyLegacyImport = /^uploads\/docs\/legacy-import\/([a-f0-9]{64})\/([a-f0-9]{64})\.(xlsx|ods|pdf|zip)$/;
+
+/**
+ * Resolves the immutable storage references written by the legacy metrology
+ * importer. Those references predate the metrology-specific document root;
+ * only their exact, opaque digest form is remapped. Everything else keeps
+ * the normal storage resolver behaviour.
+ */
+export function resolveMetrologyDocumentStoragePath(storagePath: string, metrologyDocsBaseDir: string): string {
+  const match = historicalMetrologyLegacyImport.exec(storagePath);
+  if (match) {
+    return path.resolve(metrologyDocsBaseDir, "legacy-import", match[1], `${match[2]}.${match[3]}`);
+  }
+
+  const separatorNormalized = storagePath.replace(/\\/g, "/");
+  if (
+    separatorNormalized === "uploads/docs/legacy-import"
+    || separatorNormalized.startsWith("uploads/docs/legacy-import/")
+    || separatorNormalized === "/uploads/docs/legacy-import"
+    || separatorNormalized.startsWith("/uploads/docs/legacy-import/")
+    || separatorNormalized === "./uploads/docs/legacy-import"
+    || separatorNormalized.startsWith("./uploads/docs/legacy-import/")
+  ) {
+    throw new HttpError(400, "INVALID_STORAGE_PATH", "Le chemin de stockage du document est invalide.");
+  }
+
+  return resolveCerpStoragePath(storagePath);
 }
 
 export function isPathInsideDirectory(baseDir: string, candidatePath: string) {

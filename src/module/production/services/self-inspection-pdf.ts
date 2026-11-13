@@ -2,13 +2,15 @@ import { renderSelfInspectionWorkshop, type SelfInspectionIdentity } from "./sel
 
 export type SelfInspectionSnapshot = {
   of: { id: number; numero: string; quantite_lancee: number };
-  version: { indice: string };
+  version: { indice: string; indice_externe_original?: string | null; version_interne?: number | null };
   plan: { code: string; version: number; label: string };
   characteristics: Array<Record<string, unknown>>;
   source_hash: string;
   identity?: SelfInspectionIdentity;
   generated_at?: string;
-  layout_version?: "self-inspection/2.0";
+  layout_version?: "self-inspection/2.0" | "MD07-E";
+  header_only?: boolean;
+  variation?: string | null;
 };
 
 /** A blank inspection form, never an inspection result or a conformity certificate. */

@@ -14,9 +14,9 @@ export const getOperationDossierQuerySchema = z
 
 export type GetOperationDossierQueryDTO = z.infer<typeof getOperationDossierQuerySchema>
 
-export const dossierIdParamsSchema = z.object({ dossierId: z.string().uuid() })
+export const dossierIdParamsSchema = z.object({ dossierId: z.string().guid() })
 
-export const documentIdParamsSchema = z.object({ documentId: z.string().uuid() })
+export const documentIdParamsSchema = z.object({ documentId: z.string().guid() })
 
 export const createOperationDossierVersionBodySchema = z
   .object({

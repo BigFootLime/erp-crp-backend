@@ -8,6 +8,11 @@ const { Client } = require('pg');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const PATCH_DIR = path.join(ROOT, 'db', 'patches');
+const TEST_ONLY_PATCH_DIR = path.join(ROOT, 'db', 'test-only-patches');
+const TEST_ONLY_OUTILLAGE_PATCHES = [
+  '20261025_outillage_supplier_master_offers_test.sql',
+  '20261025_outillage_indicative_catalogue_prices_test_only.sql',
+];
 const BOOTSTRAP = path.join(ROOT, 'db', 'e2e', 'legacy-bootstrap.sql');
 const NORMALIZE = path.join(ROOT, 'db', 'e2e', 'normalize-empty-uuid-spine.sql');
 const HISTORICAL_RUNTIME_CONTRACT = path.join(ROOT, 'db', 'e2e', 'historical-runtime-contract.sql');
@@ -16,6 +21,19 @@ const DATA_ONLY_BASELINES = new Set(['20260727_repair_article_category_orphans_1
 const NORMALIZE_BEFORE = '20260219_commande_affaires_livraison_production.sql';
 const REHEARSAL_STOP_PATCH = '20260810_system_reference_data_readiness.sql';
 const USER_AVATARS_PATCH = '20261014_user_avatars_1563.sql';
+// The closed metrology seed is assessed against the exact Finance GED profile.
+// `db-patches` must therefore see its immutable prerequisite checksums even
+// though this isolated runner applies one patch at a time from a temporary
+// directory. These files have all been applied before the closed seed under
+// the canonical dependency order; copying them here exposes the inventory, it
+// does not re-order or re-run them.
+const METROLOGY_GED_APPLICABILITY_INVENTORY = Object.freeze([
+  '20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql',
+  '20261014_finance_ged_profile_1268.sql',
+  '20261027_metrology_scan_documents_1780.sql',
+  '20261027_metrology_ged_entity_type_1780_compat.sql',
+]);
+const METROLOGY_GED_CLOSED_SEED = '20261027_metrology_ged_entity_type_1780.sql';
 
 function fail(message) {
   throw new Error(`[SOL-05 migration] ${message}`);
@@ -36,19 +54,19 @@ function orderedPatches() {
   const files = fs.readdirSync(PATCH_DIR, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
     .map((entry) => entry.name);
-  return require('../migrations/patch-dependencies').orderPatchDependencies(files.sort((left, right) => {
-    const a = left.slice(0, -4);
-    const b = right.slice(0, -4);
-    if (b.startsWith(`${a}_`)) return -1;
-    if (a.startsWith(`${b}_`)) return 1;
-    return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' });
-  }));
+  const { orderPatchDependencies, sortPatchNames } = require('../migrations/patch-dependencies');
+  return orderPatchDependencies(sortPatchNames(files));
 }
 
-function runPatch(filename, command) {
+function runPatch(filename, command, patchDir = PATCH_DIR) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerp-sol05-patch-'));
   try {
-    fs.copyFileSync(path.join(PATCH_DIR, filename), path.join(tempDir, filename));
+    const inventory = filename === METROLOGY_GED_CLOSED_SEED && patchDir === PATCH_DIR
+      ? [...METROLOGY_GED_APPLICABILITY_INVENTORY, filename]
+      : [filename];
+    for (const inventoryFilename of inventory) {
+      fs.copyFileSync(path.join(patchDir, inventoryFilename), path.join(tempDir, inventoryFilename));
+    }
     const result = spawnSync(
       process.execPath,
       [path.join(ROOT, 'scripts', 'db-patches.js'), command, '--patch-dir', tempDir],
@@ -62,6 +80,29 @@ function runPatch(filename, command) {
     if (process.env.CERP_E2E_QUIET !== '1' && result.stdout) process.stdout.write(result.stdout);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function assertTestOnlyOutillageSchema() {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    const result = await client.query(`
+      SELECT coalesce(array_agg(required.name ORDER BY required.name)
+        FILTER (WHERE to_regclass('public.' || required.name) IS NULL), '{}') AS missing
+      FROM unnest(ARRAY[
+        'outillage_fabricant_fournisseur_master',
+        'outillage_tool_actual_purchase_prices',
+        'outillage_tool_fournisseur_master',
+        'outillage_tool_indicative_catalogue_price',
+        'outillage_tool_receipt_idempotence',
+        'outillage_tool_supplier_catalogue'
+      ]) AS required(name)
+    `);
+    const missing = result.rows[0]?.missing ?? [];
+    if (missing.length > 0) fail(`test-only outillage schema is incomplete: ${missing.join(', ')}`);
+  } finally {
+    await client.end();
   }
 }
 
@@ -156,6 +197,10 @@ async function main() {
     }
   } finally {
     await contract.end();
+  }
+  if (!stopBefore) {
+    for (const filename of TEST_ONLY_OUTILLAGE_PATCHES) runPatch(filename, 'up', TEST_ONLY_PATCH_DIR);
+    await assertTestOnlyOutillageSchema();
   }
   const status = spawnSync(
     process.execPath,

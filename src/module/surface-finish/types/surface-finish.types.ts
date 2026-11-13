@@ -12,6 +12,9 @@ import type {
 
 export type SurfaceFinishFamily = {
   code: string;
+  nom_diminutif?: string | null;
+  updated_at?: string;
+  legacy_code?: string | null;
   label: string;
   description: string | null;
   commentaire_template: string | null;
@@ -136,6 +139,7 @@ export type SurfaceFinishDocument = {
 
 /** Contexte lu côté serveur : jamais reconstruit depuis le corps de la requête. */
 export type OperationFinishContext = {
+  client_id?: string | null;
   piece_technique_id: string;
   code_piece: string;
   designation_piece: string;

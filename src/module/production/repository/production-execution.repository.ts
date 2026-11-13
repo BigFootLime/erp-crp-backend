@@ -1,3 +1,5 @@
+import {syncProvisionalSubcontractDraftsTx} from '../../subcontract/subcontract-draft-sync.repository';
+import { reconcileCommandeForOf } from "../../commande-client/repository/commande-production-milestone.repository";
 // Repository du suivi et pointage de production (#274).
 //
 // Règles structurantes appliquées ici et nulle part ailleurs :
@@ -108,6 +110,7 @@ export async function repoCompensateQuantity(params:{id:string;reason:string;ide
       entity_type:'production_quantity_declarations',entity_id:params.id,details:{compensation_id:inserted.rows[0].id,reason:params.reason}});
     if(original.pointage_id)await insertExecutionEvent(client,{pointage_id:original.pointage_id,event_type:'DECLARE_QUANTITY',
       user_id:params.audit.user_id,new_values:{compensates:params.id,declaration_id:inserted.rows[0].id},note:params.reason});
+    await syncProvisionalSubcontractDraftsTx(client,Number(hint.of_id),params.audit);
     await storeIdempotentResponse(client,params.idempotencyKey,inserted.rows[0]);
     await client.query('COMMIT');return inserted.rows[0];
   }catch(error){await client.query('ROLLBACK');return translateConcurrencyError(error);}finally{client.release();}
@@ -1282,6 +1285,7 @@ export async function repoStartExecution(params: {
 
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
     await params.transactionHooks?.beforeCommit(client, { id });
+    if (materialAuthorization) await reconcileCommandeForOf(client, params.body.of_id, params.audit.user_id);
     await client.query("COMMIT");
 
     const created = await repoGetExecution({ id });
@@ -2095,6 +2099,7 @@ export async function repoFinishOperation(params: {
       },
     });
 
+    await syncProvisionalSubcontractDraftsTx(client,params.body.of_id,params.audit);
     const result = { preview, declaration_id: declarationId, operation_status: operationStatus };
     await storeIdempotentResponse(client, params.idempotencyKey, result);
     await client.query("COMMIT");
@@ -2338,6 +2343,7 @@ export async function repoDeclareQuantity(params: {
       details: { of_id: params.body.of_id, operation_id: operationId, ...delta, no_stock_movement: true },
     });
 
+    await syncProvisionalSubcontractDraftsTx(client,params.body.of_id,params.audit);
     await storeIdempotentResponse(client, params.idempotencyKey, { id });
     await params.transactionHooks?.beforeCommit(client, { id });
     if (ownsTransaction) await client.query("COMMIT");

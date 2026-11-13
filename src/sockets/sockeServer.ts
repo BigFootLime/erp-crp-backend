@@ -51,6 +51,9 @@ import {
 
 import pool from '../config/database';
 import {sharedDirectoryClient,validateSiteDirectoryToken} from '../shared-directory/site-runtime';
+import { companyRuntimeService } from '../module/entreprises/runtime/company-runtime.service';
+import { companyIdSchema } from '../module/entreprises/runtime/company-runtime.config';
+import type { CompanyContext } from '../module/entreprises/domain/company-context';
 type JwtUser = {
   id: number;
   username?: string;
@@ -70,6 +73,8 @@ type JwtUser = {
   mfa_factor_version?:number;
   mfa?: boolean;
   amr?: string[];
+  /** Server-resolved company policy, replaced on every live revalidation. */
+  businessCompanyContext?: CompanyContext;
 };
 
 type RoomAck = {
@@ -780,6 +785,13 @@ export class RealtimeSocketRuntime {
         throw new RealtimeAuthorizationUnavailableError("directory_unavailable");
       }
     }
+    try {
+      user.businessCompanyContext = (await companyRuntimeService.access(user))?.context;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (status === 401 || status === 403) return null;
+      throw new RealtimeAuthorizationUnavailableError("account_authorization_unavailable");
+    }
     let account: RealtimeAccountAuthorization | null;
     try {
       account = await this.dependencies.loadAccountAuthorization(user.id);
@@ -810,6 +822,14 @@ export class RealtimeSocketRuntime {
           throw new Error("UNAUTHORIZED");
         }
         if (!validUserId(decoded.id) || typeof decoded.exp !== "number" || tokenIsExpired(decoded)) {
+          throw new Error("UNAUTHORIZED");
+        }
+        const companyConfig = companyRuntimeService.configuration();
+        const requestedCompany = socket.handshake.query.company;
+        if (companyConfig.enabled) {
+          const requested = companyIdSchema.safeParse(requestedCompany);
+          if (!requested.success || requested.data !== companyConfig.company_id || socket.handshake.query.database !== companyConfig.environment) throw new Error("UNAUTHORIZED");
+        } else if (requestedCompany !== undefined) {
           throw new Error("UNAUTHORIZED");
         }
         let account: RealtimeAccountAuthorization | null;
@@ -1022,6 +1042,7 @@ export class RealtimeSocketRuntime {
     if (subscription.scope === "capability") {
       if (subscription.capability === REALTIME_CAPABILITIES.CHAT_PRESENCE) return true;
       if (subscription.capability === REALTIME_CAPABILITIES.AUDIT_READ) {
+        if (user.businessCompanyContext && !user.businessCompanyContext.module_keys.includes("administration")) return false;
         const profile = await this.dependencies.resolveAccountAccessProfile(user.id);
         this.assertAuthorizationHealth(healthGeneration);
         if (profile?.is_superadmin === true) return true;
@@ -1034,6 +1055,7 @@ export class RealtimeSocketRuntime {
       return false;
     }
     if (subscription.scope === "station") {
+      if (user.businessCompanyContext && !user.businessCompanyContext.module_keys.includes("production")) return false;
       const allowed = await this.dependencies.authorizeStationSubscription(subscription, user);
       this.assertAuthorizationHealth(healthGeneration);
       return allowed;
@@ -1042,6 +1064,7 @@ export class RealtimeSocketRuntime {
       ? subscription.moduleKey
       : moduleForRealtimeEntity(subscription.entityType);
     if (!moduleKey) return false;
+    if (user.businessCompanyContext && !user.businessCompanyContext.module_keys.includes(moduleKey)) return false;
     const profile = await this.dependencies.resolveAccountAccessProfile(user.id);
     this.assertAuthorizationHealth(healthGeneration);
     return realtimeAccessProfileAllowsModule(profile, moduleKey);

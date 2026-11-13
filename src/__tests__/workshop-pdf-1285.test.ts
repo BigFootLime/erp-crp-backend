@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { pdfPageTexts } from "./helpers/pdf-text";
 import { describe, expect, it } from "vitest";
 import { buildOfDocumentPayload, OF_DOCUMENT_TEMPLATE_VERSION, OF_WORKSHOP_TEMPLATE_VERSION } from "../module/production/domain/of-document";
 import { renderOfDocument } from "../module/production/services/of-document-render";
@@ -6,24 +6,16 @@ import { buildFixtureInput, FIXTURE_OPERATIONS_TFT } from "../../test-support/pr
 import { renderCerpDocument } from "../shared/pdf/cerp-document";
 import { renderWorkshopTable } from "../shared/pdf/workshop-document-blocks";
 
-function content(bytes: Buffer): string {
-  let from = 0, result = "";
-  while ((from = bytes.indexOf("stream\n", from)) >= 0) {
-    from += 7;
-    const end = bytes.indexOf("endstream", from);
-    if (end < 0) break;
-    try {
-      const stream = inflateSync(bytes.subarray(from, end)).toString("latin1");
-      result += [...stream.matchAll(/<([a-f0-9\s]+)>/gi)].map(match => Buffer.from(match[1].replace(/\s/g, ""), "hex").toString("latin1")).join("");
-    } catch { /* Image streams have no document text. */ }
-    from = end + 9;
-  }
-  return result.replace(/\s/g, "");
-}
+const content = (bytes: Buffer): string => pdfPageTexts(bytes).join("").replace(/\s/g, "");
 
 describe("Workshop OF layout and source boundaries", () => {
+  it("keeps the saved 1.7 rendering byte-identical", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7" }));
+    expect((await renderOfDocument(payload)).sha256).toBe("1a216613415712dd5763a97ed02aa3d6d87f5f5cffbaba8c938ef2647cff99aa");
+  });
   it("keeps the saved 1.6 rendering unchanged", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.6" }));
+    expect(payload.documentCharter).toBeUndefined();
     expect((await renderOfDocument(payload)).sha256).toBe("cf0e5a8ad3e9199d09d4799e6f28f37c1a0a308fd9733ceb748b9ec22a95f0e3");
   });
   it("keeps the saved 1.5 rendering unchanged", async () => {
@@ -32,7 +24,7 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(result.sha256).toBe("82940ca701317f2ffb5809ca1dde34901d8c43f34fd90888448cd23afa029fef");
   });
   it("shows the original internal deadline instead of an inapplicable client AR", async () => {
-    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7",
       commercialScope: "INTERNAL", commandeNumero: null, affaires: [], internalDueDate: "2026-09-30", quantiteLancee: 20 }));
     const text = content((await renderOfDocument(payload)).buffer);
     expect(text).toContain("Délaiinterne");
@@ -41,7 +33,7 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text).not.toContain("Nonapplicable");
   });
   it("keeps the client AR first and removes redundant header fields", async () => {
-    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION,
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.7",
       internalDueDate: "2026-06-20", technicalEvidence: {
         source: { kind: "REVISION_SNAPSHOT", hash: "fixture", technicalVersionId: null },
         materialNotRequired: false, correctionCount: 0, nomenclature: [], documents: [], purchases: [], debits: [],
@@ -59,6 +51,18 @@ describe("Workshop OF layout and source boundaries", () => {
     expect(text.split("Nomenclature")[0]).not.toContain("Gammeapplicable");
     expect(text).toContain("Gammeapplicable-opérations");
   });
+  it("prints the frozen per-material cutting calculation with whole raw blanks", async () => {
+    const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION, quantiteLancee: 101,
+      technicalEvidence: { source: { kind: "REVISION_SNAPSHOT", hash: "cutting", technicalVersionId: null }, materialNotRequired: false,
+        correctionCount: 0, nomenclature: [], documents: [], purchases: [], debits: [], materials: [{
+          needId: "need", form: "BAR", reference: "MP-CUT", designation: "Barre", grade: null, condition: null,
+          dimensions: {}, requiredQuantity: 5100, debitPerBlank: 100, unit: "mm", phase: 10, confirmed: true, certificates: [], manualChecks: [],
+          cutting: { longueurCoupeMm: 100, piecesParBrut: 2, brutsParPiece: .5, nombreBruts: 51, longueurTotaleMm: 5100 },
+        }] },
+    }));
+    const text = content((await renderOfDocument(payload)).buffer);
+    for (const expected of ["Longueurdecoupe", "Pièces/brut", "Nombredebruts", "Linéairetotal", "5100mm"]) expect(text).toContain(expected);
+  });
   it("keeps a saved 1.4 PDF byte-identical to the deployed renderer", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: "of-ordre-fabrication/1.4" }));
     const result = await renderOfDocument(payload);
@@ -68,6 +72,7 @@ describe("Workshop OF layout and source boundaries", () => {
   });
   it("prints the generation timestamp only in the footer for new documents", async () => {
     const payload = buildOfDocumentPayload(buildFixtureInput({ templateVersion: OF_WORKSHOP_TEMPLATE_VERSION }));
+    expect(payload.documentCharter).toBe("module-v1");
     const text = content((await renderOfDocument(payload)).buffer);
     expect(text).not.toContain("Éditéle");
     expect(text).toContain("Généré");

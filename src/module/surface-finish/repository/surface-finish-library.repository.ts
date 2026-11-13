@@ -21,6 +21,7 @@ import {
 import type {
   AttachDocumentBodyDTO,
   CreateFinishFamilyBodyDTO,
+  UpdateFinishFamilyBodyDTO,
   CreateFinishBodyDTO,
   ListFinishesQueryDTO,
   RevisionPayloadDTO,
@@ -259,7 +260,7 @@ export async function insertFinishAudit(
 
 export async function repoListFinishFamilies(): Promise<SurfaceFinishFamily[]> {
   const res = await db.query<SurfaceFinishFamily>(
-    `SELECT code, label, description, commentaire_template, sort_order, is_active
+    `SELECT code, label, description, commentaire_template, sort_order, is_active, nom_diminutif, legacy_code, updated_at::text AS updated_at
      FROM public.surface_finish_families
      ORDER BY sort_order, label`
   );
@@ -277,15 +278,16 @@ export async function repoCreateFinishFamily(
     await client.query("BEGIN");
     const res = await client.query<SurfaceFinishFamily>(
       `INSERT INTO public.surface_finish_families
-         (code, label, description, commentaire_template, sort_order, is_active)
+         (nom_diminutif, label, description, commentaire_template, sort_order, is_active)
        VALUES ($1, $2, $3, $4, $5, true)
-       RETURNING code, label, description, commentaire_template, sort_order, is_active`,
-      [body.code, body.label, body.description, body.commentaire_template, body.sort_order]
+       RETURNING code, label, description, commentaire_template, sort_order, is_active, nom_diminutif, legacy_code, updated_at::text AS updated_at`,
+      [body.nom_diminutif, body.label, body.description, body.commentaire_template, body.sort_order]
     );
     const family = res.rows[0];
     await insertFinishAudit(client, audit, "finitions.family.create", "surface_finish_family", family.code, {
       code: family.code,
       label: family.label,
+      nom_diminutif: family.nom_diminutif,
       has_commentaire_template: Boolean(family.commentaire_template),
     });
     await client.query("COMMIT");
@@ -293,12 +295,35 @@ export async function repoCreateFinishFamily(
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     if (typeof err === "object" && err !== null && (err as { code?: string }).code === "23505") {
-      throw new HttpError(409, "SURFACE_FINISH_FAMILY_DUPLICATE", "Une famille de finition porte dÃ©jÃ  ce code.");
+      throw new HttpError(409, "SURFACE_FINISH_FAMILY_DUPLICATE", "Une famille active utilise déjà ce nom diminutif.");
     }
     throw err;
   } finally {
     client.release();
   }
+}
+
+export async function repoUpdateFinishFamily(code: string, body: UpdateFinishFamilyBodyDTO, audit: AuditContext): Promise<SurfaceFinishFamily> {
+  assertTemplateVariablesAllowed(body.commentaire_template ?? "");
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const cur = await client.query<SurfaceFinishFamily>(`SELECT *, updated_at::text AS updated_at FROM public.surface_finish_families WHERE code=$1 FOR UPDATE`, [code]);
+    const previous = cur.rows[0];
+    if (!previous) throw new HttpError(404,"NOT_FOUND","Famille introuvable.");
+    assertOptimisticVersion({ expectedUpdatedAt: body.expected_updated_at, currentUpdatedAt: previous.updated_at!, label: "Cette famille" });
+    const res = await client.query<SurfaceFinishFamily>(`UPDATE public.surface_finish_families
+      SET label=$2,nom_diminutif=$3,description=$4,commentaire_template=$5,sort_order=$6,updated_at=now()
+      WHERE code=$1 RETURNING code,label,nom_diminutif,legacy_code,description,commentaire_template,sort_order,is_active,updated_at::text AS updated_at`,
+      [code,body.label,body.nom_diminutif,body.description,body.commentaire_template,body.sort_order]);
+    await client.query(`UPDATE public.surface_finishes SET procede=$2,updated_by=$3,updated_at=now() WHERE family_code=$1 AND procede IS DISTINCT FROM $2`,[code,body.nom_diminutif,audit.user_id]);
+    await insertFinishAudit(client,audit,"finitions.family.update","surface_finish_family",code,{before:{label:previous.label,nom_diminutif:previous.nom_diminutif},after:{label:body.label,nom_diminutif:body.nom_diminutif}});
+    await client.query("COMMIT");return res.rows[0];
+  } catch(error) {
+    await client.query("ROLLBACK").catch(()=>{});
+    if ((error as {code?:string})?.code==="23505") throw new HttpError(409,"SURFACE_FINISH_FAMILY_DUPLICATE","Ce diminutif est déjà utilisé, ou cette modification rendrait deux finitions identiques.");
+    throw error;
+  } finally {client.release();}
 }
 
 /* -------------------------------------------------------------------------- */
@@ -501,42 +526,46 @@ export async function repoCreateFinishDraft(
   try {
     await client.query("BEGIN");
 
-    const family = await client.query(
-      `SELECT 1 FROM public.surface_finish_families WHERE code = $1 AND is_active`,
+    const family = await client.query<{ code: string; nom_diminutif: string | null }>(
+      `SELECT code,nom_diminutif FROM public.surface_finish_families WHERE (code = $1 OR legacy_code=$1) AND is_active FOR SHARE`,
       [body.family_code]
     );
     if (family.rowCount === 0) {
       throw new HttpError(422, "SURFACE_FINISH_FAMILY_UNKNOWN", "Famille de finition inconnue ou désactivée.");
     }
 
-    // Le code visible est alloué par le SERVEUR, jamais proposé par l'interface.
+    const familyIdentity = family.rows[0];
+    if (!familyIdentity.nom_diminutif) throw new HttpError(422,"FAMILY_ABBREVIATION_REQUIRED","Configurez le nom diminutif dans la fiche famille.");
+    if (body.procede && body.procede !== familyIdentity.nom_diminutif) throw new HttpError(422,"FAMILY_ABBREVIATION_MISMATCH","Le nom diminutif est défini par la famille sélectionnée.");
+    // The ERP issues the immutable finish code.
     const code = await generateSurfaceFinishCode(client);
 
     const inserted = await client.query<{ id: string }>(
       `INSERT INTO public.surface_finishes
          (code, family_code, procede, designation_courte, designation_longue, description, synonymes, statut, created_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'BROUILLON',$8,$8)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$9,$8,$8)
        RETURNING id::text AS id`,
       [
         code,
-        body.family_code,
-        body.procede,
+        familyIdentity.code,
+        familyIdentity.nom_diminutif,
         body.designation_courte,
         body.designation_longue,
         body.description,
         body.synonymes,
         audit.user_id,
+        body.applicable ? "ACTIVE" : "BROUILLON",
       ]
     );
     finishId = inserted.rows[0].id;
 
-    // Toute finition naît avec sa révision 1 en brouillon : une finition sans
-    // révision ne veut rien dire techniquement.
+    // A permitted applicable creation publishes the finish and its first
+    // revision atomically; legacy callers continue to create a draft.
     const revision = await client.query<{ id: string }>(
-      `INSERT INTO public.surface_finish_revisions (finish_id, revision, statut, created_by, updated_by)
-       VALUES ($1::uuid, 1, 'BROUILLON', $2, $2)
+      `INSERT INTO public.surface_finish_revisions (finish_id, revision, statut, created_by, updated_by, approbateur_user_id, approved_at)
+       VALUES ($1::uuid, 1, $3, $2, $2, CASE WHEN $3 = 'ACTIVE' THEN $2::integer ELSE NULL END, CASE WHEN $3 = 'ACTIVE' THEN now() ELSE NULL END)
        RETURNING id::text AS id`,
-      [finishId, audit.user_id]
+      [finishId, audit.user_id, body.applicable ? "ACTIVE" : "BROUILLON"]
     );
 
     await client.query(`UPDATE public.surface_finishes SET current_revision_id = $2::uuid WHERE id = $1::uuid`, [
@@ -548,6 +577,8 @@ export async function repoCreateFinishDraft(
       code,
       family_code: body.family_code,
       procede: body.procede,
+      statut: body.applicable ? "ACTIVE" : "BROUILLON",
+      revision_id: revision.rows[0].id,
     });
 
     await client.query("COMMIT");
@@ -599,15 +630,14 @@ export async function repoUpdateFinishDraft(
       throw new HttpError(409, "SURFACE_FINISH_ARCHIVED", "Une finition archivée ne se modifie plus.");
     }
 
-    if (body.family_code !== undefined) {
-      const family = await client.query(
-        `SELECT 1 FROM public.surface_finish_families WHERE code = $1 AND is_active`,
-        [body.family_code]
-      );
-      if (family.rowCount === 0) {
-        throw new HttpError(422, "SURFACE_FINISH_FAMILY_UNKNOWN", "Famille de finition inconnue ou désactivée.");
-      }
-    }
+    const identity = await client.query<{code:string;nom_diminutif:string|null}>(`SELECT fam.code,fam.nom_diminutif FROM public.surface_finish_families fam
+      JOIN public.surface_finishes f ON f.id=$1::uuid WHERE fam.is_active AND (fam.code=COALESCE($2,f.family_code) OR fam.legacy_code=$2) FOR SHARE OF fam`,[finishId,body.family_code ?? null]);
+    const familyIdentity=identity.rows[0];
+    if (!familyIdentity?.nom_diminutif) throw new HttpError(422,"FAMILY_ABBREVIATION_REQUIRED","Choisissez une famille active avec un nom diminutif configuré.");
+    if (body.procede && body.procede!==familyIdentity.nom_diminutif) throw new HttpError(422,"FAMILY_ABBREVIATION_MISMATCH","Le nom diminutif est défini par la famille.");
+    const linked = await client.query(`SELECT 1 FROM public.articles_traitement t JOIN public.surface_finish_revisions r ON r.id=t.finish_revision_id
+      JOIN public.surface_finishes f ON f.id=r.finish_id WHERE f.id=$1::uuid AND f.family_code<>$2 LIMIT 1`,[finishId,familyIdentity.code]);
+    if (linked.rowCount) throw new HttpError(409,"ARTICLE_FINISH_FAMILY_IMMUTABLE","Cette finition est déjà liée à un article PS : sa famille ne peut plus être changée.");
 
     const sets: string[] = [];
     const values: unknown[] = [];
@@ -615,8 +645,8 @@ export async function repoUpdateFinishDraft(
       values.push(value);
       sets.push(`${col} = $${values.length}`);
     };
-    if (body.family_code !== undefined) push("family_code", body.family_code);
-    if (body.procede !== undefined) push("procede", body.procede);
+    push("family_code", familyIdentity.code);
+    push("procede", familyIdentity.nom_diminutif);
     if (body.designation_courte !== undefined) push("designation_courte", body.designation_courte);
     if (body.designation_longue !== undefined) push("designation_longue", body.designation_longue);
     if (body.description !== undefined) push("description", body.description);

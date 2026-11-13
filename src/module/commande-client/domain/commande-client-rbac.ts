@@ -20,11 +20,6 @@ export function canLaunchInternalOrder(role: string | null | undefined): boolean
   return hasGrantedAccountModuleAccess() || effectiveRoleHasAny(role, INTERNAL_ORDER_LAUNCH_ROLES);
 }
 
-const WORKFLOW_OVERRIDE_ROLES = [
-  "Administrateur Systeme et Reseau",
-  "Directeur",
-] as const;
-
 const WORKFLOW_ROLES: Record<CommandeResponsibleRole, readonly string[]> = {
   secretariat: ["Secretaire", "Commercial", "Comptabilite"],
   technique: ["Method", "Responsable Programmation", "Production", "Responsable Production"],
@@ -42,8 +37,9 @@ export function canActOnCommandeWorkflowCheckpoint(params: {
   responsible_role: string;
   assigned_user_id?: number | null;
 }): boolean {
-  if (hasGrantedAccountModuleAccess()) return true;
-  if (effectiveRoleHasAny(params.user_role, WORKFLOW_OVERRIDE_ROLES)) return true;
+  // A command workflow action can alter customer promises, production and
+  // delivery. Module access and administrator status grant access to the
+  // screen, never ownership of the active business checkpoint.
   if (params.assigned_user_id !== null && params.assigned_user_id !== undefined) {
     return params.assigned_user_id === params.user_id;
   }

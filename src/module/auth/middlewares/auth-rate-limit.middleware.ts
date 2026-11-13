@@ -53,6 +53,10 @@ function subjectsFor(endpoint: AuthRateLimitEndpoint, req: Request): AuthRateLim
     case "tabletPinLogin":
     case "tabletPinPair":
       return [ip];
+    case "companySwitch": {
+      const ticket = bodyString(req, "ticket");
+      return [ip, { dimension: "token", value: ticket === null ? null : preserveOpaqueAuthToken(ticket) }];
+    }
     case "register": {
       const username = bodyString(req, "username");
       const email = bodyString(req, "email");

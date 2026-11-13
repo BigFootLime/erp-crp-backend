@@ -1,5 +1,6 @@
 import { repoProductionWorklist } from "../repository/production-worklist.repository";
 import {
+  repoOfImprovementReturns,
   repoPreparationWorkbench,
   repoReviewPreparationStock,
   repoSavePreparationDecisions,
@@ -10,12 +11,15 @@ import {
   repoGenerateSelfInspection,
 } from "../repository/self-inspection.repository";
 export const svcProductionWorklist = repoProductionWorklist;
+export const svcOfImprovementReturns = repoOfImprovementReturns;
 export const svcPreparationWorkbench = repoPreparationWorkbench;
 export const svcReviewPreparationStock = repoReviewPreparationStock;
 export const svcSavePreparationDecisions = repoSavePreparationDecisions;
 export const svcSelectPreparationVersion = repoSelectPreparationVersion;
 export const svcGenerateSelfInspection = repoGenerateSelfInspection;
 export const svcDownloadSelfInspection = repoDownloadSelfInspection;
+export { repoGenerateInspectionTemplate as svcGenerateInspectionTemplate } from '../repository/self-inspection.repository';
+export { repoPrepareOperationProgramming as svcPrepareOperationProgramming } from '../repository/preparation-actions.repository';
 export { repoSynchronizePreparationChildren as svcSynchronizePreparationChildren } from "../repository/preparation-actions.repository";
 export { repoReusePreparationStock as svcReusePreparationStock } from "../repository/preparation-stock-reuse.repository";
 export {

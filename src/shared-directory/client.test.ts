@@ -27,6 +27,17 @@ describe('private directory transport',()=>{
   });vi.stubGlobal('fetch',fetchMock);
   await expect(new DirectoryClient(endpoint,'cerp_prod',key).call('info',{})).resolves.toEqual({ready:true});expect(fetchMock).toHaveBeenCalledTimes(1);
  });
+ it('accepts the longest real business operation names and preserves their signed path',async()=>{
+  const fetchMock=vi.fn(async(url:string,options:RequestInit)=>{const operation=url.slice(LOCAL_DIRECTORY_ENDPOINT.length+1);const headers=Object.fromEntries(Object.entries(options.headers as Record<string,string>).map(([name,value])=>[name.toLowerCase(),value]));expect(verifyDirectoryCall(headers,new Map([['cerp_prod',key]]),'POST','/internal/directory/'+operation,options.body as Buffer).site).toBe('cerp_prod');return {ok:true,json:async()=>({url,body:(options.body as Buffer).toString()})}});vi.stubGlobal('fetch',fetchMock);
+  const directory=new DirectoryClient(LOCAL_DIRECTORY_ENDPOINT,'cerp_prod',key);
+  for(const operation of ['business-companies-admin-approved-access-options','business-companies-admin-approved-access-set','business-companies-admin-site-superadmin-read','business-companies-admin-site-superadmin-set'])await expect(directory.call(operation,{ok:true})).resolves.toMatchObject({url:`${LOCAL_DIRECTORY_ENDPOINT}/${operation}`});
+  expect(fetchMock).toHaveBeenCalledTimes(4);
+ });
+ it.each(['business.companies','business/companies','Business-companies','a'.repeat(65)])('rejects invalid or overlong operations before fetch',async operation=>{
+  const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  await expect(new DirectoryClient(LOCAL_DIRECTORY_ENDPOINT,'cerp_prod',key).call(operation,{})).rejects.toThrow('DIRECTORY_OPERATION_INVALID');
+  expect(fetchMock).not.toHaveBeenCalled();
+ });
  it.each(['','https://127.0.0.1:8085/internal/directory','http://localhost:8085/internal/directory','http://127.0.0.1:8086/internal/directory','http://10.90.0.2:8085/internal/directory','http://10.90.0.3:8086/internal/directory','http://example.com:8086/internal/directory','http://10.90.0.2:8086/internal/directory/','http://10.90.0.2:8086/internal/directory?target=prod','http://user:password@10.90.0.2:8086/internal/directory','http://10.90.0.2:8086/internal/directory#fragment','http://10.90.0.2:8086/other'])('rejects every unapproved endpoint %s',endpoint=>{
   expect(()=>new DirectoryClient(endpoint,'cerp_prod',key)).toThrow('DIRECTORY_ENDPOINT_INVALID');
  });

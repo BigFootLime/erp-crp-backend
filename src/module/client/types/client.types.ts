@@ -13,6 +13,9 @@ export type PrimaryContactInput = {
 
 export type ClientCreateInput = {
   company_name: string;
+  customer_type?: "PROFESSIONAL" | "INDIVIDUAL";
+  individual_first_name?: string;
+  individual_last_name?: string;
   email?: string; phone?: string; website_url?: string;
   siret?: string; siren?: string; vat_number?: string; naf_code?: string;
   electronic_address?: { scheme: string; value: string } | null;

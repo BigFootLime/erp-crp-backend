@@ -17,6 +17,8 @@ import {
   reserveTool,
   transitionAllocation,
 } from "../controllers/outillage-lifecycle.controller";
+import { getCatalogue, getCatalogueAsset } from "../controllers/outil-catalogue.controller";
+import { getMasterToolSuppliers, getPriceVariationReport, getToolIndicativePriceHistory, getToolSupplierOffers, postToolSupplierOffer, rejectLegacyToolSupplierWrite } from "../controllers/outil-supplier-catalogue.controller";
 
 const router = Router();
 
@@ -26,31 +28,35 @@ const router = Router();
  * =========================
  */
 router.get("/familles", asyncHandler(outilSupportController.getFamilles));
-router.post("/familles", authenticateToken, outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.postFamille));
-router.patch("/familles/:id", authenticateToken, outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.patchFamille));
+router.post("/familles", authenticateToken, requireOutillageCapability("configure"), outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.postFamille));
+router.patch("/familles/:id", authenticateToken, requireOutillageCapability("configure"), outillageFamilleUpload.single("image"), asyncHandler(outilSupportController.patchFamille));
 router.get("/fabricants", asyncHandler(outilSupportController.getFabricants));
 router.post(
   "/fabricants",
   authenticateToken,
+  requireOutillageCapability("configure"),
   outillageFabricantUpload.single("logo"),
   asyncHandler(outilSupportController.postFabricant)
 );
 router.patch(
   "/fabricants/:id",
   authenticateToken,
+  requireOutillageCapability("configure"),
   outillageFabricantUpload.single("logo"),
   asyncHandler(outilSupportController.patchFabricant)
 );
 
-router.get("/fournisseurs", asyncHandler(outilSupportController.getFournisseurs));
-router.post("/fournisseurs", authenticateToken, asyncHandler(outilSupportController.postFournisseur));
-router.patch("/fournisseurs/:id", authenticateToken, asyncHandler(outilSupportController.patchFournisseur));
+// Canonical supplier directory lives under /fournisseurs. This read projection
+// contains only master suppliers qualified for the outillage domain.
+router.get("/fournisseurs", authenticateToken, requireOutillageCapability("read"), asyncHandler(getMasterToolSuppliers));
+router.post("/fournisseurs", authenticateToken, requireOutillageCapability("configure"), rejectLegacyToolSupplierWrite);
+router.patch("/fournisseurs/:id", authenticateToken, requireOutillageCapability("configure"), rejectLegacyToolSupplierWrite);
 
 router.get("/geometries", asyncHandler(outilSupportController.getGeometries));
-router.post("/geometries", authenticateToken, outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.postGeometrie));
-router.patch("/geometries/:id", authenticateToken, outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.patchGeometrie));
+router.post("/geometries", authenticateToken, requireOutillageCapability("configure"), outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.postGeometrie));
+router.patch("/geometries/:id", authenticateToken, requireOutillageCapability("configure"), outillageGeometrieUpload.single("image"), asyncHandler(outilSupportController.patchGeometrie));
 router.get("/revetements", asyncHandler(outilSupportController.getRevetements));
-router.post("/revetements", authenticateToken, asyncHandler(outilSupportController.postRevetement));
+router.post("/revetements", authenticateToken, requireOutillageCapability("configure"), asyncHandler(outilSupportController.postRevetement));
 
 router.get("/aretes", asyncHandler(outilSupportController.getAretes));
 
@@ -67,6 +73,10 @@ router.get("/summary", authenticateToken, asyncHandler(outilController.getSummar
 router.get("/recent-movements", authenticateToken, asyncHandler(outilController.getRecentMovements));
 router.get("/import-batches/summary", authenticateToken, asyncHandler(outilController.getImportBatchesSummary));
 
+// Private catalogue sources must precede /:id routes and never be exposed by static hosting.
+router.get("/catalogue", authenticateToken, requireOutillageCapability("read"), getCatalogue);
+router.get("/catalogue/assets/:filename", authenticateToken, requireOutillageCapability("read"), getCatalogueAsset);
+
 // SOL-20 — cycle de vie corrélé. Déclaré avant /:id pour ne jamais être
 // interprété comme un identifiant d'outil.
 router.get("/allocations", authenticateToken, requireOutillageCapability("read"), asyncHandler(listAllocations));
@@ -81,9 +91,13 @@ router.post("/:id/parameter-versions", authenticateToken, requireOutillageCapabi
 
 // ✅ Low stock
 router.get("/low-stock", authenticateToken, asyncHandler(outilController.getLowStock));
+router.get("/rapports/variations-prix", authenticateToken, requireOutillageCapability("read"), asyncHandler(getPriceVariationReport));
 
 // ✅ Détail par id
 router.get("/:id/pricing", authenticateToken, asyncHandler(outilController.getPricing));
+router.get("/:id/offres-fournisseurs", authenticateToken, requireOutillageCapability("read"), asyncHandler(getToolSupplierOffers));
+router.post("/:id/offres-fournisseurs", authenticateToken, requireOutillageCapability("configure"), asyncHandler(postToolSupplierOffer));
+router.get("/:id/prix/history", authenticateToken, requireOutillageCapability("read"), asyncHandler(getToolIndicativePriceHistory));
 router.get("/:id", asyncHandler(outilController.getById));
 
 // ✅ Lookup par code barre (référence fabricant)
@@ -97,6 +111,7 @@ router.get("/ref_fabricant/:ref_fabricant", asyncHandler(outilController.getByRe
 router.post(
   "/",
   authenticateToken,
+  requireOutillageCapability("configure"),
   outillageToolUpload.fields([
     { name: "esquisse", maxCount: 1 },
     { name: "plan", maxCount: 1 },
@@ -108,6 +123,7 @@ router.post(
 router.patch(
   "/:id",
   authenticateToken,
+  requireOutillageCapability("configure"),
   outillageToolUpload.fields([
     { name: "esquisse", maxCount: 1 },
     { name: "plan", maxCount: 1 },
@@ -116,7 +132,7 @@ router.patch(
   asyncHandler(outilController.update)
 );
 
-router.delete("/:id", authenticateToken, asyncHandler(outilController.remove));
+router.delete("/:id", authenticateToken, requireOutillageCapability("configure"), asyncHandler(outilController.remove));
 
 /**
  * =========================
@@ -125,19 +141,19 @@ router.delete("/:id", authenticateToken, asyncHandler(outilController.remove));
  */
 
 // ➖ Sortie stock (manuel, par id_outil)
-router.post("/sortie", authenticateToken, asyncHandler(outilController.sortieStock));
-router.post("/retour", authenticateToken, asyncHandler(outilController.retourStock));
+router.post("/sortie", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.sortieStock));
+router.post("/retour", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.retourStock));
 
 // ➕ Réappro (manuel, par id_outil)
-router.post("/reapprovisionner", authenticateToken, asyncHandler(outilController.reapprovisionner));
+router.post("/reapprovisionner", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.reapprovisionner));
 
 // 📷 Scan sortie (barcode)
-router.post("/scan/sortie", authenticateToken, asyncHandler(outilController.scanSortie));
+router.post("/scan/sortie", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.scanSortie));
 
 // 📷 Scan entrée (barcode)
-router.post("/scan/entree", authenticateToken, asyncHandler(outilController.scanEntree));
+router.post("/scan/entree", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.scanEntree));
 
 // 🧾 Inventaire set (quantité absolue)
-router.post("/inventaire/set", authenticateToken, asyncHandler(outilController.inventaireSet));
+router.post("/inventaire/set", authenticateToken, requireOutillageCapability("operate"), asyncHandler(outilController.inventaireSet));
 
 export default router;

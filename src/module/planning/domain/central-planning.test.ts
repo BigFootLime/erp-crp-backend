@@ -94,6 +94,26 @@ describe("planning central — estimation explicable", () => {
   });
 });
 describe("planning central — contraintes et engagement", () => {
+  it("explique le poste absent et reprend cette cause dans le prérequis aval", () => {
+    const issue={code:"WORKSTATION_NOT_CONFIGURED",message:"Aucun poste de travail configuré pour Découpe.",actionPath:"/administration/erp-settings?setup=machines&view=postes"};
+    const cut=task("cut",{label:"DECOUPE",resourceIds:[],eligibleResourceIds:[],resourceIssues:[issue]}),mill=task("mill");
+    const result=schedule({tasks:[cut,mill],resources:[resource],from,
+      dependencies:[{predecessorId:"cut",successorId:"mill",transferQuantity:null,releasedQuantity:0,lagMinutes:0}],
+      requested:[{taskId:"cut",earliestStart:from},{taskId:"mill",earliestStart:from}]});
+    expect(result.feasible).toBe(false);
+    expect(result.conflicts.find(c=>c.taskId==='cut')).toMatchObject({code:issue.code,message:issue.message});
+    expect(result.conflicts.find(c=>c.taskId==='mill')?.message).toContain(issue.message);
+    expect(result.conflicts.some(c=>c.code==='RESOURCE_NOT_QUALIFIED')).toBe(false);
+  });
+  it("réutilise le même poste de contrôle entre OF sans chevauchement ni engagement", () => {
+    const poste={...resource,id:"poste:controle",kind:"POSTE" as const,capacityId:"poste:controle"};
+    const tasks=[1,2].map(ofId=>task(`control-${ofId}`,{ofId,resourceIds:[poste.id],eligibleResourceIds:[poste.id]}));
+    const before=JSON.stringify(tasks);
+    const result=schedule({tasks,resources:[poste],dependencies:[],from,requested:tasks.map(t=>({taskId:t.id,earliestStart:from,autoAssign:true}))});
+    expect(result.feasible).toBe(true);
+    expect(Date.parse(result.forecasts['control-2'].start)).toBeGreaterThanOrEqual(Date.parse(result.forecasts['control-1'].end));
+    expect(JSON.stringify(tasks)).toBe(before);
+  });
   it("une machine et son poste partagent la capacité physique", () => {
     const poste = { ...resource, id:"poste:1", capacityId:resource.id, kind:"POSTE" as const };
     const fixed = task("running", {commitment:"STARTED",committed:{start:from,end:"2026-09-07T10:00:00.000Z"}});
