@@ -16,6 +16,12 @@ import {
 //  piece_technique_versions_one_applicable_uq — prouvé sur cerp_test.)
 
 describe("Versions — transitions de statut", () => {
+  it("requires client confirmation and a meaningful reason on the new-plan HTTP payload", () => {
+    expect(createNextVersionSchema.safeParse({ body: { indice: "C", raison_changement: "Nouveau plan" } }).success).toBe(false)
+    expect(createNextVersionSchema.safeParse({ body: { indice: "C", client_requirement_confirmed: true, raison_changement: " " } }).success).toBe(false)
+    expect(createNextVersionSchema.safeParse({ body: { indice: "C", client_requirement_confirmed: true, raison_changement: "Nouveau plan" } }).success).toBe(true)
+  })
+
   it("autorise le parcours nominal BROUILLON → EN_VALIDATION → APPLICABLE → OBSOLETE", () => {
     expect(isValidVersionTransition("BROUILLON", "EN_VALIDATION")).toBe(true)
     expect(isValidVersionTransition("EN_VALIDATION", "APPLICABLE")).toBe(true)

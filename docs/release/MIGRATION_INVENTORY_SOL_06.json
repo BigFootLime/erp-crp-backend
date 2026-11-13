@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-13T10:03:34.557Z",
+  "generated_at": "2026-11-13T11:49:13.642Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 377,
-  "support_file_count": 810,
-  "recent_patch_count": 319,
+  "patch_count": 382,
+  "support_file_count": 825,
+  "recent_patch_count": 324,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -761,9 +761,9 @@
   "risk_totals": {
     "destructive_ddl": 3,
     "destructive_dml": 46,
-    "data_rewrite": 245,
-    "table_lock": 255,
-    "blocking_index": 237,
+    "data_rewrite": 249,
+    "table_lock": 259,
+    "blocking_index": 240,
     "enum_change": 2
   },
   "patches": [
@@ -7137,6 +7137,92 @@
     },
     {
       "order": 375,
+      "filename": "20261104_special_process_family_identity_1831.sql",
+      "sha256": "417a1bea8130ef0c8639f091b17be987906bdd2a87a08e20cc8ba6f38b7e56a0",
+      "bytes": 5026,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 376,
+      "filename": "20261105_fixed_of_dossier_1833.sql",
+      "sha256": "da10acae9cb75275b9bd54635491ae3167902d60114afe6e201865b20a1991e0",
+      "bytes": 5253,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 377,
+      "filename": "20261105_material_operation_links_1833.sql",
+      "sha256": "d6214f6e079e4326b699a931a2444b02a9d371da64d7e6bb7bbd1f05a673ce80",
+      "bytes": 4149,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite"
+      ]
+    },
+    {
+      "order": 378,
+      "filename": "20261105_purchase_capacity_1833.sql",
+      "sha256": "416f5aa588bf5d7abaf32007707afc5d99c9579c31f1f25a48dc9e90c56faef4",
+      "bytes": 2769,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock",
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 379,
+      "filename": "20261105_operation_profitability_1833.sql",
+      "sha256": "fde4c45cf9af0f2ed155b7debea0f3b784ac3f7a7e03dd5d970b6f06e6ecf7c1",
+      "bytes": 556,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
+      ]
+    },
+    {
+      "order": 380,
       "filename": "20261112_stock_sous_etats_independent.sql",
       "sha256": "f5f19ef9cbf8ca2bc25b34bbcec59feca81f060331db8734684a39259f344eef",
       "bytes": 762,
@@ -7153,7 +7239,7 @@
       ]
     },
     {
-      "order": 376,
+      "order": 381,
       "filename": "20261112_stock_sous_etats_informations.sql",
       "sha256": "be8f3c6713d848a9643349d621dc4bf155d85dd687a9753f9fbb9fc1ead4f2f3",
       "bytes": 632,
@@ -7169,7 +7255,7 @@
       ]
     },
     {
-      "order": 377,
+      "order": 382,
       "filename": "20261113_stock_nuance_library.sql",
       "sha256": "9317b8db4125b567035bc6463b2a90780edec0b13ac3dd5f18f4956cc3c1bc8d",
       "bytes": 5160,

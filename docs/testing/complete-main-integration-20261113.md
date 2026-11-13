@@ -5,12 +5,20 @@ Cette intégration réconcilie les historiques `dev`, `main`, la source associé
 committés sont conservés dans leur emplacement initial et dans un commit de
 préservation ; aucun service ni aucune base de production ne sont modifiés.
 
+La source frontend associée porte **2.0.86 — UNRELEASED**. La bibliothèque
+Nuances a été livrée séparément en 2.0.85 sur le couple `92763054` / `93c84b24`,
+manifeste `387cfc50d36854792bbaef99cce5f780250e9df21f54bc1e4cbf790379891d00`.
+Sa [provenance](../operational-provenance/2026-11-13-nuance-library-2.0.85.md)
+reste distincte de cette consolidation non déployée.
+
 ## Comportements conservés et réconciliés
 
 - La reconfiguration reste atomique et idempotente. Les versions applicables
   sont copiées en brouillons ; leurs OF existants ne suivent pas automatiquement
-  ce remplacement. Le comportement AUTO habituel des autres créations de
-  révisions reste conservé.
+  ce remplacement. La politique ultérieure #1833 conserve également le dossier
+  choisi pour les autres créations de révisions, y compris les entrées AUTO
+  historiques. Les [décisions et sources](integration-decisions-20261113.md)
+  explicitent cette évolution par rapport à l'ancien suivi compatible #1493.
 - Les transactions empruntées ne sont ni committées, ni annulées, ni libérées
   par les primitives appelées. Les tests couvrent aussi l'échec d'une copie.
 - Le contrôle des clés interdites de la reprise vérifie l'entrée brute avant
@@ -36,8 +44,9 @@ préservation ; aucun service ni aucune base de production ne sont modifiés.
   titre principal. La migration conserve les anciens IDs, codes, densités et
   liens en LEGACY. Les nouvelles créations exigent désormais une norme et un
   titre cohérents ; ce changement métier est intentionnel, et non une simple
-  opération de nettoyage. Une future activation doit utiliser les routes natives,
-  sans l'ancien adaptateur EC code-only en amont. Le contrôle PostgreSQL isolé
+  opération de nettoyage. L'adaptateur EC réconcilié utilise le même contrat que
+  les routes natives ; l'ancien comportement de création par code seul ne doit
+  pas intercepter ces écritures. Le contrôle PostgreSQL isolé
   confirme 23 cas, dont rejouabilité, conservation des liens et doublons concurrents.
 
 ## Validation

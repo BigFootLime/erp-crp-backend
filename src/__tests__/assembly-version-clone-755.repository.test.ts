@@ -56,6 +56,17 @@ describe("#1837 — ordinary editing", () => {
 })
 
 describe("#755 — clonage d'assemblage", () => {
+  it("requires a confirmed client plan and meaningful reason before owning a new revision transaction", async () => {
+    for (const body of [
+      { indice: "C", raison_changement: "Nouveau plan C" },
+      { indice: "C", client_requirement_confirmed: true as const, raison_changement: " " },
+    ]) {
+      await expect(repoCreateNextVersion("piece", "source", body, audit)).rejects.toMatchObject({ code: "CLIENT_REVISION_REQUIRED" });
+    }
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.query).not.toHaveBeenCalled();
+  })
+
   it("attribue la nomenclature à la nouvelle version et conserve son audit dans la transaction", async () => {
     const result = await repoCreateNextVersion("piece", "source", { indice: "C", client_requirement_confirmed: true, raison_changement: "Nouveau plan C" }, audit)
     expect(result.copied.version_nomenclature_lines).toBe(2)

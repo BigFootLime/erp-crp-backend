@@ -449,11 +449,12 @@ export async function loadApplicableTechnicalSnapshot(
        AND g.is_current = true
       WHERE v.piece_technique_id = $1::uuid
         AND (
-          ($2::uuid IS NOT NULL AND v.id=$2::uuid
-            AND (v.statut <> 'OBSOLETE' OR $3::boolean))
-          OR ($2::uuid IS NULL AND v.statut = 'APPLICABLE')
+          ($3::boolean AND v.id=$2::uuid AND v.statut IN ('APPLICABLE','OBSOLETE'))
+          OR (NOT $3::boolean AND (
+            ($2::uuid IS NOT NULL AND v.id=$2::uuid AND v.statut <> 'OBSOLETE')
+            OR ($2::uuid IS NULL AND v.statut = 'APPLICABLE')
+          ) AND (v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE))
         )
-        AND ($3::boolean OR v.date_effet IS NULL OR v.date_effet <= CURRENT_DATE)
       ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
       LIMIT 1
     `,

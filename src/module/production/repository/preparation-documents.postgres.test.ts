@@ -11,6 +11,46 @@ const managed = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_MA
 describe.skipIf(!managed)("PT documents in a managed disposable workbench", () => {
   afterAll(() => pool.end());
 
+  it("uses the chosen non-obsolete revision, keeps applicable fallback and requires published historical opt-in", async () => {
+    const f = await seedProductionWorkbenchFixture();
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      async function version(status: "BROUILLON" | "APPLICABLE" | "OBSOLETE", futureDays = 0) {
+        const id = randomUUID();
+        const code = `QA-BOUNDARY-${id}`;
+        await tx.query(`INSERT INTO public.piece_technique_versions
+          SELECT (jsonb_populate_record(NULL::public.piece_technique_versions,
+            to_jsonb(source) || jsonb_build_object('id',$2::text,'indice',$3::text,
+              'indice_externe_original',$3::text,'code_metier',$4::text,'code_metier_normalise',$4::text,
+              'statut',$5::text,'is_current',false,'date_effet',CURRENT_DATE+$6::int))).*
+          FROM public.piece_technique_versions source WHERE source.id=$1::uuid`,
+        [f.version, id, id.slice(0, 12), code, status, futureDays]);
+        return id;
+      }
+      const chosen = await version("BROUILLON");
+      const obsolete = await version("OBSOLETE");
+      const futureDraft = await version("BROUILLON", 1);
+      const snapshot = (id: string, historical = false) => loadApplicableTechnicalSnapshot(tx, f.piece, {
+        pinned_version_id: id, allow_historical_published: historical,
+      });
+      expect((await snapshot(chosen)).version_id).toBe(chosen);
+      expect((await loadApplicableTechnicalSnapshot(tx, f.piece)).version_id).toBe(f.version);
+      await expect(snapshot(obsolete)).rejects.toMatchObject({ code: "VERSION_NOT_APPLICABLE" });
+      expect((await snapshot(obsolete, true)).version_id).toBe(obsolete);
+      await expect(snapshot(futureDraft)).rejects.toMatchObject({ code: "VERSION_NOT_APPLICABLE" });
+      await expect(snapshot(futureDraft, true)).rejects.toMatchObject({ code: "VERSION_NOT_APPLICABLE" });
+      // The database permits only one applicable revision per piece.
+      await tx.query("UPDATE public.piece_technique_versions SET statut='OBSOLETE' WHERE id=$1::uuid", [f.version]);
+      const futurePublished = await version("APPLICABLE", 1);
+      await expect(snapshot(futurePublished)).rejects.toMatchObject({ code: "VERSION_NOT_APPLICABLE" });
+      expect((await snapshot(futurePublished, true)).version_id).toBe(futurePublished);
+    } finally {
+      await tx.query("ROLLBACK");
+      tx.release();
+    }
+  });
+
   it("reuses the clean legacy template, prefers the explicitly linked revision and repeats improvement feedback on later OFs", async () => {
     const f = await seedProductionWorkbenchFixture();
     const tx = await pool.connect();
