@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Modèle de lecture des réceptions de production (#1509)
+
+- Les lectures de contexte de réception et de traçabilité OF sont extraites derrière la façade existante, sans modifier les routes, réponses, droits, SQL, transactions, réservations, audit ou temps réel. Le cycle transactionnel Stock/Production/pistes de réception reste explicitement hors de ce lot. Voir [l'architecture](docs/architecture/production-receipt-read-model.md).
+
 ## En préparation — Lecteur jetable pour la recette temps réel (#1506)
 
 - Le seed SOL-05 protégé ajoute un compte non-superadmin limité au module Clients pour la recette à deux utilisateurs. Les comptes négatifs, dont E2E_SALES, restent fermés. Les gardes de base locale jetable sont couvertes par une régression ; aucun contrôle d'autorisation de l'application ni schéma métier n'est modifié.
