@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Noyau transactionnel des mouvements de stock (#1512)
+
+- La création et la comptabilisation des mouvements de stock sont isolées derrière la façade historique ; les répartitions de réception utilisent directement ce noyau tout en conservant le même propriétaire de transaction. Aucun contrat, droit, SQL ou effet métier n'est modifié. Voir [l'architecture](docs/architecture/stock-movement-core.md).
+
 ## En préparation — Modèle de lecture des réceptions de production (#1509)
 
 - Les lectures de contexte de réception et de traçabilité OF sont extraites derrière la façade existante, sans modifier les routes, réponses, droits, SQL, transactions, réservations, audit ou temps réel. Le cycle transactionnel Stock/Production/pistes de réception reste explicitement hors de ce lot. Voir [l'architecture](docs/architecture/production-receipt-read-model.md).
