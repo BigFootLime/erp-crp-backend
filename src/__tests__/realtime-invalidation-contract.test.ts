@@ -38,6 +38,9 @@ describe("realtime invalidation producer contract", () => {
     expect(catalog.key_patterns).toEqual(["alpha", "beta:{id}", "gamma:{id}"])
     expect(catalog.generated_from.exhaustive).toBe(true)
     expect(catalog.unresolved_dynamic_sites).toEqual([])
+    const rendered = await readFile(output, "utf8")
+    await writeFile(output, rendered.replaceAll("\n", "\r\n"), "utf8")
+    expect(run(dir, output, true).status).toBe(0)
   })
 
   it("reports unresolved dynamic producers and rejects a stale catalog in check mode", async () => {
