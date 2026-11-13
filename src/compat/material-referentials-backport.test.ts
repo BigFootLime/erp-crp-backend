@@ -47,10 +47,12 @@ describe("material referentials backport", () => {
   });
 
   it("rejects missing standards, empty selected titles and normalized conflicts in the compatibility route", async () => {
-    await request(app()).post("/stock/matiere-nuances").set("Authorization", "Bearer test").send({ code: "OLD" }).expect(400);
+    const invalid = await request(app()).post("/stock/matiere-nuances").set("Authorization", "Bearer test").send({ code: "OLD" }).expect(400);
+    expect(invalid.body).toEqual(expect.objectContaining({ error: expect.any(String), message: expect.any(String) }));
     await request(app()).post("/stock/matiere-nuances").set("Authorization", "Bearer test").send({ norme_usa: "USA-DEMO", designation_principale: "EN" }).expect(400);
     mocks.clientQuery.mockImplementation(async (sql: unknown) => { if (String(sql).includes("INSERT INTO public.stock_nuances")) throw Object.assign(new Error("duplicate"), { code: "23505" }); return { rows: [] }; });
-    await request(app()).post("/stock/matiere-nuances").set("Authorization", "Bearer test").send({ norme_usa: "USA-DEMO" }).expect(409);
+    const duplicate = await request(app()).post("/stock/matiere-nuances").set("Authorization", "Bearer test").send({ norme_usa: "USA-DEMO" }).expect(409);
+    expect(duplicate.body).toEqual(expect.objectContaining({ error: "DUPLICATE_REFERENTIAL_CODE", message: expect.any(String) }));
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
   });
 
@@ -92,7 +94,8 @@ describe("material referentials backport", () => {
 
   it("returns 404 for an authenticated patch of an unknown value", async () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => String(sql) === "BEGIN" || String(sql) === "ROLLBACK" ? { rows: [] } : { rows: [] });
-    await request(app()).patch("/stock/matiere-nuances/99").set("Authorization", "Bearer test").send({ is_active: false }).expect(404);
+    const missing = await request(app()).patch("/stock/matiere-nuances/99").set("Authorization", "Bearer test").send({ is_active: false }).expect(404);
+    expect(missing.body).toEqual({ error: "NOT_FOUND", message: "Referential entry not found" });
   });
 
   it("normalizes duplicate writes to 409", async () => {
@@ -138,6 +141,8 @@ describe("material referentials backport", () => {
     await request(app()).get("/stock/matiere-nuances?is_active=true&q=acier").set("Authorization", "Bearer test").expect(200, { items: [], total: 0 });
     expect(String(mocks.query.mock.calls[0]?.[0])).toContain("n.is_active=$2");
     expect(mocks.query.mock.calls[0]?.[1]).toEqual(["%acier%", true]);
+    const badRelation = await request(app()).get("/stock/matiere-sous-etats?etat_id=bad").set("Authorization", "Bearer test").expect(400);
+    expect(badRelation.body).toEqual(expect.objectContaining({ error: "VALIDATION_ERROR", message: expect.any(String) }));
     await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "X".repeat(41) }).expect(400);
     await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "OK", designation: "X".repeat(161) }).expect(400);
     await request(app()).post("/stock/matiere-sous-etats").set("Authorization", "Bearer test").send({ code: "OK", informations: "X".repeat(10001) }).expect(400);

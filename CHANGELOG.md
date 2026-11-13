@@ -1,5 +1,11 @@
 # Changelog
 
+## En préparation — Fidélité OpenAPI des référentiels matière et préparation OF
+
+- La couverture d’inventaire des routes et la précision des schémas sont maintenant comptées séparément : les wrappers génériques restent explicitement classés et ne produisent plus un faux « 100 % précis ».
+- Les contrats prioritaires couvrent les capacités, nuances, états et sous-états matière, ainsi que lecture, modification, soumission et validation de la préparation technique d’OF. Les formes sont dérivées des validateurs, contrôleurs et consommateurs existants ; les sections ouvertes restent signalées comme partielles.
+- Aucun endpoint, payload runtime, SQL, règle d’accès, Planning ni règle de validation Qualité OF n’est modifié. Voir [l’architecture](docs/architecture/openapi-schema-fidelity.md).
+
 ## En préparation — Noyau transactionnel des mouvements de stock (#1512)
 
 - La création et la comptabilisation des mouvements de stock sont isolées derrière la façade historique ; les répartitions de réception utilisent directement ce noyau tout en conservant le même propriétaire de transaction. Aucun contrat, droit, SQL ou effet métier n'est modifié. Voir [l'architecture](docs/architecture/stock-movement-core.md).

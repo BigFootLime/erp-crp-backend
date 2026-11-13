@@ -21,6 +21,9 @@ import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-cont
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 import { metrologyDocumentsOperation } from './metrology-documents-contract';
 import { nuanceLibraryOperation } from './nuance-library-contract';
+import { errorResponseSchemas } from "./error-response-contract";
+import { materialReferentialOperation, materialReferentialSchemas } from "./material-referential-contract";
+import { ofTechnicalPreparationOperation, ofTechnicalPreparationSchemas } from "./of-technical-preparation-contract";
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -323,7 +326,9 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       oneOf: [{ required: ["article"], not: { required: ["finish"] } }, { required: ["finish"], not: { required: ["article"] } }],
     } } } };
   }
-  if (route.path.startsWith("/stock/matiere-nuances")) return nuanceLibraryOperation(key, operation);
+  if (route.path.startsWith("/stock/matiere-nuances")) return nuanceLibraryOperation(key, materialReferentialOperation(key, operation));
+  if (route.path.startsWith("/stock/matiere-etats") || route.path.startsWith("/stock/matiere-sous-etats") || route.path === "/stock/matiere-referential-capabilities") return materialReferentialOperation(key, operation);
+  if (route.path.startsWith("/production/ofs/{id}/technical-preparation")) return ofTechnicalPreparationOperation(key, operation);
   if (route.path.startsWith("/entreprises")) return companyOperation(key, operation);
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
   return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));
@@ -484,6 +489,102 @@ function legacyPathOperation(legacy: OpenApiObject, route: GeneratedRouteContrac
     : null;
 }
 
+type SchemaFidelity = "precise" | "partial" | "generic" | "unknown" | "not_applicable";
+
+function mergeSchemaFidelity(values: readonly SchemaFidelity[]): SchemaFidelity {
+  if (values.length === 0) return "unknown";
+  if (values.includes("unknown")) return "unknown";
+  if (values.includes("generic")) return "generic";
+  if (values.includes("partial")) return "partial";
+  return "precise";
+}
+
+function schemaFidelity(value: unknown, schemas: OpenApiObject, seen = new Set<string>()): SchemaFidelity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "unknown";
+  const schema = value as OpenApiObject;
+  const hasRuntimeNormalizationLimitation = Array.isArray(schema["x-cerp-schema-fidelity-limitations"])
+    && (schema["x-cerp-schema-fidelity-limitations"] as unknown[]).includes("runtime_normalization");
+  const reference = schema.$ref;
+  if (typeof reference === "string") {
+    const prefix = "#/components/schemas/";
+    if (!reference.startsWith(prefix)) return "unknown";
+    const name = reference.slice(prefix.length);
+    if (name === "ApiRequest" || name === "ApiResponse") return "generic";
+    if (seen.has(name)) return "unknown";
+    const target = schemas[name];
+    if (!target) return "unknown";
+    const next = new Set(seen);
+    next.add(name);
+    return schemaFidelity(target, schemas, next);
+  }
+  const nested: SchemaFidelity[] = [];
+  const properties = schema.properties;
+  const propertyValues = properties && typeof properties === "object" && !Array.isArray(properties)
+    ? Object.values(properties as OpenApiObject)
+    : [];
+  if (propertyValues.length > 0) {
+    nested.push(...propertyValues.map((item) => schemaFidelity(item, schemas, seen)));
+  }
+  if (schema.items !== undefined) nested.push(schemaFidelity(schema.items, schemas, seen));
+  for (const key of ["allOf", "anyOf", "oneOf"] as const) {
+    const branches = schema[key];
+    if (Array.isArray(branches)) nested.push(...branches.map((item) => schemaFidelity(item, schemas, seen)));
+  }
+  if (schema.not !== undefined) nested.push(schemaFidelity(schema.not, schemas, seen));
+  const objectLike = schema.type === "object" || propertyValues.length > 0 || schema.additionalProperties !== undefined;
+  const additionalProperties = schema.additionalProperties;
+  if (objectLike && additionalProperties === undefined) nested.push("generic");
+  if (additionalProperties === true) nested.push("generic");
+  if (additionalProperties && typeof additionalProperties === "object" && !Array.isArray(additionalProperties)) {
+    nested.push(schemaFidelity(additionalProperties, schemas, seen));
+  }
+  const arrayLike = schema.type === "array";
+  const hasTypedSurface = propertyValues.length > 0
+    || schema.items !== undefined
+    || Object.keys(schema).some((key) => ["enum", "const", "format", "pattern"].includes(key));
+  if (nested.length === 0) {
+    if (objectLike || arrayLike) return "generic";
+    const direct = typeof schema.type === "string" || hasTypedSurface ? "precise" : "unknown";
+    return direct === "precise" && hasRuntimeNormalizationLimitation ? "partial" : direct;
+  }
+  const merged = mergeSchemaFidelity(nested);
+  const classified = merged === "generic" && hasTypedSurface ? "partial" : merged;
+  return classified === "precise" && hasRuntimeNormalizationLimitation ? "partial" : classified;
+}
+
+function operationSchemaFidelity(operation: OpenApiOperation, schemas: OpenApiObject): OpenApiObject {
+  const requestBody = operation.requestBody;
+  const request = requestBody && typeof requestBody === "object" && !Array.isArray(requestBody)
+    ? (() => {
+      const content = (requestBody as OpenApiObject).content;
+      if (!content || typeof content !== "object" || Array.isArray(content)) return "unknown" as SchemaFidelity;
+      const representations = Object.values(content as OpenApiObject).map((media) => {
+        const schema = media && typeof media === "object" && !Array.isArray(media) ? (media as OpenApiObject).schema : undefined;
+        return schemaFidelity(schema, schemas);
+      });
+      return mergeSchemaFidelity(representations);
+    })()
+    : "not_applicable" as SchemaFidelity;
+  const responses = operation.responses;
+  const response = responses && typeof responses === "object" && !Array.isArray(responses)
+    ? (() => {
+      const successes = Object.entries(responses as OpenApiObject).filter(([status]) => /^2\d\d$/.test(status));
+      if (successes.length === 0) return "unknown" as SchemaFidelity;
+      return mergeSchemaFidelity(successes.map(([, definition]) => {
+        if (!definition || typeof definition !== "object" || Array.isArray(definition)) return "unknown" as SchemaFidelity;
+        const content = (definition as OpenApiObject).content;
+        if (!content || typeof content !== "object" || Array.isArray(content)) return "unknown" as SchemaFidelity;
+        return mergeSchemaFidelity(Object.values(content as OpenApiObject).map((media) => {
+          const schema = media && typeof media === "object" && !Array.isArray(media) ? (media as OpenApiObject).schema : undefined;
+          return schemaFidelity(schema, schemas);
+        }));
+      }));
+    })()
+    : "unknown" as SchemaFidelity;
+  const overall = mergeSchemaFidelity([request, response].filter((value) => value !== "not_applicable"));
+  return { request, response, overall };
+}
+
 function componentSchemas(legacy: OpenApiObject): OpenApiObject {
   const components = legacy.components;
   const legacyComponents = components && typeof components === "object" && !Array.isArray(components)
@@ -556,6 +657,9 @@ function componentSchemas(legacy: OpenApiObject): OpenApiObject {
       ...proformaSchemas,
       ...assemblyComponentSchemas,
       ...assemblyComponentReturnSchemas,
+      ...materialReferentialSchemas,
+      ...ofTechnicalPreparationSchemas,
+      ...errorResponseSchemas,
       ...legacySchemas,
       ApiRequest: {
         type: "object",
@@ -774,12 +878,17 @@ export function assertOpenApiRouteSecurity(): void {
 
 export function buildOpenApiDocument(legacy: OpenApiObject = {}): OpenApiObject {
   assertOpenApiRouteSecurity();
+  const components = componentSchemas(legacy);
+  const schemas = ((components.schemas && typeof components.schemas === "object" && !Array.isArray(components.schemas))
+    ? components.schemas
+    : {}) as OpenApiObject;
   const paths: Record<string, OpenApiPathItem> = {};
+  const fidelity = { operations: { precise: 0, partial: 0, generic: 0, unknown: 0 }, request: { precise: 0, partial: 0, generic: 0, unknown: 0, not_applicable: 0 }, response: { precise: 0, partial: 0, generic: 0, unknown: 0 } };
   for (const route of GENERATED_ROUTE_INVENTORY) {
     const generated = generatedOperation(route);
     const detailed = legacyPathOperation(legacy, route);
     const pathItem = paths[route.path] ?? {};
-    pathItem[route.method] = detailed
+    const operation = detailed
       ? {
           ...generated,
           ...detailed,
@@ -790,6 +899,16 @@ export function buildOpenApiDocument(legacy: OpenApiObject = {}): OpenApiObject 
           "x-cerp-public-reason": generated["x-cerp-public-reason"],
         }
       : generated;
+    const classification = operationSchemaFidelity(operation, schemas) as {
+      request: SchemaFidelity;
+      response: Exclude<SchemaFidelity, "not_applicable">;
+      overall: Exclude<SchemaFidelity, "not_applicable">;
+    };
+    operation["x-cerp-schema-fidelity"] = classification;
+    fidelity.operations[classification.overall] += 1;
+    fidelity.request[classification.request] += 1;
+    fidelity.response[classification.response] += 1;
+    pathItem[route.method] = operation;
     paths[route.path] = pathItem;
   }
   const deployedVersion = process.env.CERP_RELEASE_VERSION?.trim() || "development";
@@ -804,7 +923,7 @@ export function buildOpenApiDocument(legacy: OpenApiObject = {}): OpenApiObject 
     },
     servers: [{ url: "/api/v1", description: "Même hôte, API v1" }],
     tags: [...new Set(GENERATED_ROUTE_INVENTORY.map(tagFor))].sort().map((name) => ({ name })),
-    components: componentSchemas(legacy),
+    components,
     paths,
     "x-cerp-route-coverage": {
       scope: "/api/v1",
@@ -812,6 +931,14 @@ export function buildOpenApiDocument(legacy: OpenApiObject = {}): OpenApiObject 
       documented: GENERATED_ROUTE_INVENTORY.length,
       percent: 100,
       source_sha256: GENERATED_ROUTE_SOURCE_SHA256,
+    },
+    "x-cerp-schema-fidelity": {
+      scope: "/api/v1",
+      denominator: GENERATED_ROUTE_INVENTORY.length,
+      operation: fidelity.operations,
+      request: fidelity.request,
+      response: fidelity.response,
+      criteria: "precise: every declared request/2xx response schema resolves without generic or open-ended branches; partial: typed surface contains an open-ended branch or an explicit runtime-normalization limitation; generic: ApiRequest/ApiResponse wrapper or bare open shape; unknown: no inspectable schema, unresolved reference or reference cycle (unknown wins over generic). request not_applicable means no request body.",
     },
     "x-cerp-contract-digest": crypto.createHash("sha256")
       .update(`${GENERATED_ROUTE_SOURCE_SHA256}:${deployedVersion}`)
