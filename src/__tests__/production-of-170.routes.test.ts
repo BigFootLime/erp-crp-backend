@@ -68,11 +68,12 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
 
 import app from "../config/app";
 
-describe("Technical dossier quality approval", () => {
-  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("refuses validation by %s even with production module access", async role => {
+describe("Technical dossier validation by every OF reader", () => {
+  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("allows %s with production access to reach the validation command", async role => {
+    mocks.clientQuery.mockResolvedValue({ rows: [] });
     const response = await request(app).post("/api/v1/production/ofs/5/technical-preparation/validate").set("x-test-role", role).send({});
-    expect(response.status).toBe(403);
-    expect(mocks.poolConnect).not.toHaveBeenCalled();
+    expect(response.status, JSON.stringify(response.body)).toBe(404);
+    expect(mocks.poolConnect).toHaveBeenCalled();
   });
   it("allows Quality to reach the validation command", async () => {
     mocks.clientQuery.mockResolvedValue({ rows: [] });
@@ -80,10 +81,10 @@ describe("Technical dossier quality approval", () => {
     expect(response.status, JSON.stringify(response.body)).toBe(404);
     expect(mocks.poolConnect).toHaveBeenCalled();
   });
-  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("refuses the complete endpoint for %s before parsing or opening a transaction", async role => {
+  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("allows %s to reach completion body validation without a Quality visa", async role => {
     const response = await request(app).post("/api/v1/production/ofs/5/complete").set("x-test-role", role).send({});
-    expect(response.status).toBe(403);
-    expect(response.body.code).toBe("OF_QUALITY_APPROVAL_REQUIRED");
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("VALIDATION_ERROR");
     expect(mocks.poolConnect).not.toHaveBeenCalled();
   });
   it("allows Quality to reach the complete endpoint's body validation", async () => {

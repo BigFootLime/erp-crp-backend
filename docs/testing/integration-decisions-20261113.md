@@ -36,20 +36,35 @@ retour des problèmes par opération. Les migrations manquantes et leur
 dépendance canonique #1831 sont réconciliées avec leurs empreintes d'origine.
 Elles ne sont pas appliquées à une base réelle par ce travail Git.
 
+Les dépendances #1834, #1835 et #1836 sont également reprises : ressources de
+travail et avancement programmation, prévisions d'approvisionnement, revue
+matière et commandes associées. Leurs contrats HTTP, empreintes de revue,
+verrous et droits de stock sont conservés ensemble.
+
+La parité #1830/#1832 des traitements conserve une identité PS fondée sur le
+plan et l'indice, indépendante du client. Un code déjà utilisé, même archivé,
+n'est jamais réattribué. Les liens client passent toujours par le helper
+ultérieur dédié, et les transactions empruntées restent celles de l'appelant.
+La création directement applicable exige le droit d'approbation de bibliothèque
+et crée atomiquement la finition et sa première révision active ; le défaut
+reste un brouillon.
+
 ## Transactions et instantanés
 
-Le contrôle métier de validation technique reste réservé aux rôles Qualité,
-avant toute ouverture de transaction. Un accès en lecture au module ne confère
-pas cette approbation. Le DTO `can_validate` protège aussi la sélection de
-validation en masse côté frontend. Les anciens cas 403 et l'absence de connexion
-DB restent des régressions actives ; le `Boolean(user)` importé avec #1833 ne
-constitue pas une autorisation d'élargir les droits.
+La consigne utilisateur confirmée le 13 novembre est explicite : tout lecteur
+authentifié ayant accès à l'OF peut terminer sa préparation et le valider, sans
+visa Qualité. Elle annule la restauration erronée d'une ancienne restriction
+de rôle. `can_validate` et `canValidate` suivent cette règle ; les contrôles
+d'authentification et d'accès à l'OF restent aux frontières HTTP. Les anciens
+cas de rôles sont conservés et vérifient maintenant l'accès à la commande.
 
-La même restriction s'applique à la commande de finalisation `/ofs/:id/complete`.
-Les deux chemins refusent un rôle non Qualité avant la validation du corps et
-avant toute connexion DB. Un rôle Qualité atteint la validation habituelle du
-corps ; sa finalisation complète est exercée dans le parcours navigateur avec
-le contrôle réel du stock matière.
+La revue matière de finalisation utilise une API Production limitée à la
+matière, sans attribuer le module Planning au lecteur. La lecture fournit son
+empreinte de revue et masque les prix sans droit d'achat. La modification des
+choix fournisseur exige le droit d'achat et ne crée aucune commande dans cette
+revue. La finalisation conserve séparément les droits d'achat, de réservation
+et de consommation. Le parcours navigateur utilise un lecteur OF sans ces
+droits et sans accès Planning pour vérifier cette séparation.
 
 Les clones internes de reconfiguration empruntent la transaction de leur
 appelant : aucun BEGIN, COMMIT, ROLLBACK ou release supplémentaire. Ils ne

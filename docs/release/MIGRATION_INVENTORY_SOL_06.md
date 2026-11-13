@@ -1,10 +1,10 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-11-13T11:49:13.642Z
+- Généré : 2026-11-13T12:55:49.759Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 382
-- Scripts auxiliaires : 825
-- Patches depuis 2026-07-01 : 324
+- Patches exécutables : 384
+- Scripts auxiliaires : 830
+- Patches depuis 2026-07-01 : 326
 
 ## Risques statiques à examiner
 
@@ -12,8 +12,8 @@
 |---|---:|
 | DDL destructif | 3 |
 | DML destructif | 46 |
-| Réécriture de données | 249 |
-| Verrou de table possible | 259 |
+| Réécriture de données | 250 |
+| Verrou de table possible | 260 |
 | Index non concurrent | 240 |
 | Évolution d'enum | 2 |
 
@@ -113,6 +113,7 @@ Ces détections sont volontairement conservatrices : elles servent de file de re
 - `20261027_zzzz_intercompany_dropship_standard_invariants_1454.sql`: preflight=false, verify=false, rollback=false
 - `20261027_zzzzz_intercompany_standard_article_locks_1454.sql`: preflight=false, verify=false, rollback=false
 - `20261027_zzzzzz_intercompany_refund_allocation_guard_1454.sql`: preflight=false, verify=false, rollback=false
+- `20261106_procurement_conforming_completion_1836.sql`: preflight=false, verify=true, rollback=true
 - `20261112_stock_sous_etats_independent.sql`: preflight=false, verify=false, rollback=false
 - `20261112_stock_sous_etats_informations.sql`: preflight=false, verify=false, rollback=false
 

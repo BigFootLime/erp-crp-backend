@@ -7,6 +7,7 @@ import {readComponentCoverage,readSupplierQualification,readSupplierRecommendati
 import {readMaintenanceCalendar,previewMaintenanceCalendar,publishMaintenanceCalendar} from '../controllers/maintenance-schedule.controller';
 import {readLosses,createComplement} from '../controllers/production-loss.controller';
 import {readDossier,completeDossier} from '../controllers/of-dossier.controller';
+import {readOfMaterialReview,saveOfMaterialReview} from '../controllers/of-material-review.controller';
 import { Router, type RequestHandler } from "express";
 import { getReceiptStockReference, listProductionReferenceClients, listProductionReferencePieces, listProductionReferencePieceVersions } from "../controllers/production-references.controller";
 import {synchronizePreparationChildren} from '../controllers/production-workbench.controller';
@@ -257,6 +258,8 @@ router.post('/consolidations/:id/dissolve',requireOfCapability('cancel'),dissolv
 router.get('/ofs/:id/improvement-returns',requireOfCapability('read'),ofImprovementReturns);
 router.get('/ofs/:id/workbench',requireOfCapability('read'),preparationWorkbench);
 router.get('/ofs/:id/dossier',requireOfCapability('read'),readDossier);
+router.get('/ofs/:id/material-review',requireOfCapability('read'),readOfMaterialReview);
+router.post('/ofs/:id/material-review',requireOfCapability('read'),saveOfMaterialReview);
 router.get('/ofs/:id/material',requireOfCapability('read'),readMaterial);
 router.get('/ofs/:id/consumables',requireOfCapability('read'),readConsumables);
 router.post('/ofs/:id/material/prepare-purchases',requireOfCapability('read'),prepareMaterialPurchases);

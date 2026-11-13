@@ -429,10 +429,6 @@ export const submitOfTechnicalPreparation = asyncHandler(async (req, res) => {
 });
 
 export const validateOfTechnicalPreparation = asyncHandler(async (req, res) => {
-  if (!canValidateTechnicalDossier(req.user)) {
-    res.status(403).json({ code: "OF_QUALITY_APPROVAL_REQUIRED", message: "La validation du dossier technique est réservée à la Qualité." });
-    return;
-  }
   const { id } = ofIdParamSchema.parse({ params: req.params }).params;
   const body = validateOfTechnicalPreparationSchema.parse({ body: parseBody(req) }).body;
   const rights=await consumableRights(req);
