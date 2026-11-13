@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../../../utils/httpError";
 import { formatCumpDecimal, parseCumpDecimal } from "../domain/cump-decimal";
-import { repoCreateMovement, repoPostMovement, type AuditContext } from "./stock.repository";
+import { repoCreateMovement, repoPostMovement, type AuditContext } from "./stock-movement-core.repository";
 import type { ReceiptLaneDistribution, ReceiptReservationAllocation } from "../../production/domain/receipt-lane-distribution";
 import { getActiveStockLaneDestinationsTx, type StockLaneDestination } from "./stock-lane-routing.repository";
 
