@@ -122,6 +122,46 @@ function analyzeModule(filePath) {
   function visitStatement(statement) {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) return;
     const call = statement.expression;
+    if (ts.isIdentifier(call.expression) && call.expression.text === "mountOrderedRouteGroup") {
+      const [parent, mounts] = call.arguments;
+      if (!parent || !ts.isIdentifier(parent) || !routers.has(parent.text)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(call.getStart(sf)).line + 1} mountOrderedRouteGroup requires a declared Router identifier`);
+      }
+      if (!mounts || !ts.isArrayLiteralExpression(mounts)) {
+        throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(call.getStart(sf)).line + 1} mountOrderedRouteGroup requires a literal mount array`);
+      }
+      const list = actions.get(parent.text);
+      if (!list) return;
+      for (const mount of mounts.elements) {
+        if (!ts.isObjectLiteralExpression(mount)) {
+          throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(mount.getStart(sf)).line + 1} has a non-literal ordered mount`);
+        }
+        const properties = new Map();
+        for (const property of mount.properties) {
+          if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) {
+            throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(property.getStart(sf)).line + 1} has an unsupported ordered mount property`);
+          }
+          properties.set(property.name.text, property.initializer);
+        }
+        const mountPath = properties.get("prefix");
+        const child = properties.get("router");
+        const pathValue = mountPath ? literalPath(mountPath) : null;
+        if (pathValue === null || !child || !ts.isIdentifier(child)) {
+          throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(mount.getStart(sf)).line + 1} ordered mount requires literal prefix and router identifier`);
+        }
+        if (!routers.has(child.text) && !importedRouter(imports.get(child.text))) {
+          throw new Error(`${path.relative(root, absolute)}:${sf.getLineAndCharacterOfPosition(child.getStart(sf)).line + 1} has an unresolved ordered mounted router`);
+        }
+        list.push({
+          kind: "mount",
+          path: pathValue,
+          child: child.text,
+          middleware: [],
+          line: sf.getLineAndCharacterOfPosition(mount.getStart(sf)).line + 1,
+        });
+      }
+      return;
+    }
     if (!ts.isPropertyAccessExpression(call.expression) || !ts.isIdentifier(call.expression.expression)) return;
     const routerName = call.expression.expression.text;
     if (!routers.has(routerName)) return;

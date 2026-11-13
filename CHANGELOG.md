@@ -4,6 +4,12 @@
 
 - La création et la comptabilisation des mouvements de stock sont isolées derrière la façade historique ; les répartitions de réception utilisent directement ce noyau tout en conservant le même propriétaire de transaction. Aucun contrat, droit, SQL ou effet métier n'est modifié. Voir [l'architecture](docs/architecture/stock-movement-core.md).
 
+## En préparation — Ordre de montage HTTP et compatibilité de rôles (#1515)
+
+- Les groupes de routeurs Express à préfixes concurrents déclarent désormais leur ordre effectif, sans modifier les chemins, gardes, méthodes ou rôles. Les routes publiques restent avant l'authentification et les routes métier après le gate de module.
+- Les compatibilités de rôles Production et Qualité partagent une normalisation inchangée ; les capacités OF, les règles Qualité et Planning restent hors de ce lot. L'inventaire OpenAPI refuse les montages déclaratifs non statiques au lieu de perdre des opérations.
+- Les scénarios Express vérifient les collisions, les 401/403, les autorisations historiques et les grants de module délégués. Aucune migration ni livraison de production n'est incluse. Voir [l'architecture](docs/architecture/route-mount-order.md).
+
 ## En préparation — Modèle de lecture des réceptions de production (#1509)
 
 - Les lectures de contexte de réception et de traçabilité OF sont extraites derrière la façade existante, sans modifier les routes, réponses, droits, SQL, transactions, réservations, audit ou temps réel. Le cycle transactionnel Stock/Production/pistes de réception reste explicitement hors de ce lot. Voir [l'architecture](docs/architecture/production-receipt-read-model.md).
