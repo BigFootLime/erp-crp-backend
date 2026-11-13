@@ -1,5 +1,11 @@
 # Changelog
 
+## Prepared — Nuance library (#1839, ERP baseline 2.0.84)
+
+- Four optional standard designations with a required populated title on new identities; searchable correspondences and stable historical workshop codes.
+- Atomic validation/audit and normalized database uniqueness, including inactive and concurrent writes. Additive migration preserves original IDs, article/state links and density; unclassified historical codes remain explicitly LEGACY.
+- Migration preflight/verification, non-destructive rollback guidance, OpenAPI details and isolated PostgreSQL regression harness. No production migration/deployment. See [runbook](docs/http/nuance-library-1839.md).
+
 ## 2026-11-12 — Informations des sous-états matière
 
 - Les sous-états proposent un paragraphe facultatif `informations`, conservé à la création, à la modification et dans les listes. La limite est de 10 000 caractères ; un texte vide est stocké à `NULL`.

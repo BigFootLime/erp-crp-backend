@@ -1,6 +1,7 @@
 import { subcontractDefinitionSchema } from "./subcontract-definition";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 import { z } from "zod";
+import { nuanceNormeShape } from "../domain/nuance-library";
 import { materialBarMovementCommandSchema } from './material-bar-movement.validators';
 import { materialBarInventoryCommand } from './material-bars.validators';
 
@@ -176,7 +177,8 @@ export type ListMatiereNuancesQueryDTO = z.infer<typeof listMatiereNuancesQueryS
 export const createMatiereNuanceSchema = z.object({
   body: z
     .object({
-      code: z.string().trim().min(1).max(40),
+      ...nuanceNormeShape,
+      code: z.string().trim().min(1).max(40).optional(),
       designation: z
         .union([z.string().trim().max(160), z.null()])
         .optional()
@@ -190,7 +192,15 @@ export const createMatiereNuanceSchema = z.object({
       etat_ids: z.array(positiveInt).optional().default([]),
       is_active: z.boolean().optional().default(true),
     })
-    .strict(),
+    .strict().superRefine((value, ctx) => {
+      if (![value.norme_fr, value.norme_en, value.norme_werkstoff, value.norme_usa].some(Boolean)) {
+        ctx.addIssue({ code: "custom", path: ["norme_fr"], message: "Renseignez au moins une désignation normalisée." });
+      }
+      const keys = { FR: "norme_fr", EN: "norme_en", WERKSTOFF: "norme_werkstoff", USA: "norme_usa" } as const;
+      if (value.designation_principale === "LEGACY" || (value.designation_principale && !value[keys[value.designation_principale]])) {
+        ctx.addIssue({ code: "custom", path: ["designation_principale"], message: "La désignation principale doit être renseignée." });
+      }
+    }),
 });
 export type CreateMatiereNuanceBodyDTO = z.infer<typeof createMatiereNuanceSchema>["body"];
 
@@ -201,6 +211,7 @@ const optionalReferentialDesignation = z.union([z.string().trim().max(160), z.nu
 
 export const updateMatiereNuanceSchema = z.object({
   body: z.object({
+    ...nuanceNormeShape,
     code: optionalReferentialCode,
     designation: optionalReferentialDesignation,
     densite: z.coerce.number().min(100).max(30_000).nullable().optional(),

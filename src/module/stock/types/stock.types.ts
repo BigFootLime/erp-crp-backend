@@ -86,6 +86,12 @@ export type StockArticleFamily = {
 };
 
 export type StockMatiereNuance = {
+  norme_fr?: string | null;
+  norme_en?: string | null;
+  norme_werkstoff?: string | null;
+  norme_usa?: string | null;
+  designation_principale?: "FR" | "EN" | "WERKSTOFF" | "USA" | "LEGACY";
+  libelle?: string;
   id: number;
   code: string;
   designation: string | null;

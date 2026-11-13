@@ -22,6 +22,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import db from "../../../config/database";
+import { nuanceIdentity, resolveNuanceIdentity, nuanceNormeFields } from "../domain/nuance-library";
 import {
   generateArticleBusinessCode,
   generateFabricatedArticleBusinessCode,
@@ -1115,7 +1116,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   if (filters.q) {
     const q = `%${filters.q.trim()}%`;
     const p = push(q);
-    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p})`);
+    where.push(`(n.code ILIKE ${p} OR COALESCE(n.designation, '') ILIKE ${p} OR n.norme_fr ILIKE ${p} OR n.norme_en ILIKE ${p} OR n.norme_werkstoff ILIKE ${p} OR n.norme_usa ILIKE ${p})`);
   }
   if (typeof filters.is_active === "boolean") {
     where.push(`n.is_active = ${push(filters.is_active)}`);
@@ -1134,11 +1135,13 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
     densite: string | number | null;
     is_active: boolean;
     etat_ids: number[];
+    norme_fr: string | null; norme_en: string | null; norme_werkstoff: string | null; norme_usa: string | null;
+    designation_principale: "FR" | "EN" | "WERKSTOFF" | "USA" | "LEGACY";
   }>(
     `
       SELECT
         n.id::int AS id,
-        n.code,
+        n.code, n.norme_fr, n.norme_en, n.norme_werkstoff, n.norme_usa, n.designation_principale,
         n.designation,
         COALESCE(
           NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric,
@@ -1159,6 +1162,7 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
   );
 
   return res.rows.map((row) => ({
+    ...nuanceIdentity(row),
     id: row.id,
     code: row.code,
     designation: row.designation && row.designation.trim() ? row.designation : null,
@@ -1169,7 +1173,8 @@ export async function repoListMatiereNuances(filters: ListMatiereNuancesQueryDTO
 }
 
 export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, audit: AuditContext): Promise<StockMatiereNuance> {
-  const code = normalizeStockReferentialCode(body.code, "Nuance");
+  const identity = resolveNuanceIdentity(body);
+  const code = normalizeStockReferentialCode(body.code ?? identity.libelle, "Nuance");
   // Compatibilité pré-patch : la colonne historique est NOT NULL et stocke
   // des kg/dm³. L'API, elle, est désormais exclusivement en kg/m³.
   const designation = body.designation?.trim() || "";
@@ -1182,19 +1187,20 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
   try {
     await client.query("BEGIN");
 
+    await client.query("SELECT pg_advisory_xact_lock(20261113, 84)");
     let ins;
     try {
       ins = await client.query<{ id: number }>(
         `
-          INSERT INTO public.stock_nuances (code, designation, densite, is_active)
-          VALUES ($1,$2,$3,$4)
+          INSERT INTO public.stock_nuances (code, designation, densite, is_active, norme_fr, norme_en, norme_werkstoff, norme_usa, designation_principale)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
           RETURNING id::int AS id
         `,
-        [code, designation, legacyDensiteKgDm3, is_active]
+        [code, designation, legacyDensiteKgDm3, is_active, ...nuanceNormeFields.map(key => identity[key]), identity.designation_principale]
       );
     } catch (err) {
       if (isPgUniqueViolation(err)) {
-        throw new HttpError(409, "DUPLICATE_NUANCE", `Nuance ${code} already exists`);
+        throw new HttpError(409, "DUPLICATE_NUANCE", "Une nuance possède déjà cette désignation. Recherchez-la dans la bibliothèque, y compris parmi les nuances inactives.");
       }
       throw err;
     }
@@ -1223,7 +1229,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
         entity_id: String(nuanceId),
         path: audit.path,
         client_session_id: audit.client_session_id,
-        details: { code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
+        details: { ...identity, code, designation: designation || null, densite_kg_m3: densite, is_active, etat_ids },
       },
       ip: audit.ip,
       user_agent: audit.user_agent,
@@ -1236,6 +1242,7 @@ export async function repoCreateMatiereNuance(body: CreateMatiereNuanceBodyDTO, 
     await client.query("COMMIT");
 
     return {
+      ...identity,
       id: nuanceId,
       code,
       designation: designation || null,
@@ -1521,7 +1528,7 @@ type ReferentialPatch = Record<string, string | number | boolean | null | undefi
 async function updateMatiereReferential<T>(args: {
   table: "stock_nuances" | "stock_etats" | "stock_sous_etats";
   id: number;
-  patch: ReferentialPatch;
+  patch: ReferentialPatch | ((previous: Record<string, unknown>) => ReferentialPatch);
   audit: AuditContext;
   action: string;
   read: (tx: Pick<PoolClient, "query">, id: number) => Promise<T | null>;
@@ -1529,6 +1536,7 @@ async function updateMatiereReferential<T>(args: {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
+    if (args.table === "stock_nuances") await client.query("SELECT pg_advisory_xact_lock(20261113, 84)");
     const before = await client.query<Record<string, unknown>>(
       `SELECT to_jsonb(r) AS row FROM public.${args.table} r WHERE r.id = $1 FOR UPDATE`, [args.id]
     );
@@ -1538,9 +1546,10 @@ async function updateMatiereReferential<T>(args: {
       return null;
     }
 
+    const patch = typeof args.patch === "function" ? args.patch(previous as Record<string, unknown>) : args.patch;
     const values: unknown[] = [args.id];
     const assignments: string[] = [];
-    for (const [column, value] of Object.entries(args.patch)) {
+    for (const [column, value] of Object.entries(patch)) {
       if (value === undefined) continue;
       values.push(value);
       assignments.push(`${column} = $${values.length}`);
@@ -1556,7 +1565,7 @@ async function updateMatiereReferential<T>(args: {
         event_type: "ACTION", action: args.action, page_key: args.audit.page_key,
         entity_type: args.table, entity_id: String(args.id), path: args.audit.path,
         client_session_id: args.audit.client_session_id,
-        details: { before: previous, patch: args.patch },
+        details: { before: previous, patch },
       },
       ip: args.audit.ip, user_agent: args.audit.user_agent, device_type: args.audit.device_type,
       os: args.audit.os, browser: args.audit.browser, tx: client,
@@ -1565,7 +1574,7 @@ async function updateMatiereReferential<T>(args: {
     return out;
   } catch (err) {
     await client.query("ROLLBACK");
-    if (isPgUniqueViolation(err)) throw new HttpError(409, "DUPLICATE_REFERENTIAL_CODE", "A referential with this code already exists");
+    if (isPgUniqueViolation(err)) throw new HttpError(409, "DUPLICATE_REFERENTIAL_CODE", "Une valeur possède déjà ce code ou cette désignation. Consultez aussi les entrées inactives.");
     throw err;
   } finally {
     client.release();
@@ -1573,14 +1582,14 @@ async function updateMatiereReferential<T>(args: {
 }
 
 async function readMatiereNuanceTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereNuance | null> {
-  const res = await tx.query<{ id: number; code: string; designation: string | null; densite: string | number | null; is_active: boolean; etat_ids: number[] }>(`
-    SELECT n.id::int AS id, n.code, n.designation,
+  const res = await tx.query<Omit<StockMatiereNuance, "densite"> & { densite: string | number | null }>(`
+    SELECT n.id::int AS id, n.code, n.designation, n.norme_fr, n.norme_en, n.norme_werkstoff, n.norme_usa, n.designation_principale,
       COALESCE(NULLIF(to_jsonb(n) ->> 'densite_kg_m3', '')::numeric, n.densite * 1000) AS densite,
       n.is_active, COALESCE(array_agg(ne.etat_id::int ORDER BY ne.etat_id) FILTER (WHERE ne.etat_id IS NOT NULL), ARRAY[]::int[]) AS etat_ids
     FROM public.stock_nuances n LEFT JOIN public.stock_nuance_etats ne ON ne.nuance_id=n.id
     WHERE n.id=$1 GROUP BY n.id`, [id]);
   const row = res.rows[0];
-  return row ? { ...row, designation: row.designation?.trim() || null, densite: row.densite === null ? null : Number(row.densite), etat_ids: row.etat_ids ?? [] } : null;
+  return row ? { ...row, ...nuanceIdentity(row), designation: row.designation?.trim() || null, densite: row.densite === null ? null : Number(row.densite), etat_ids: row.etat_ids ?? [] } : null;
 }
 
 async function readMatiereEtatTx(tx: Pick<PoolClient, "query">, id: number): Promise<StockMatiereEtat | null> {
@@ -1601,7 +1610,20 @@ async function readMatiereSousEtatTx(tx: Pick<PoolClient, "query">, id: number):
 export function repoUpdateMatiereNuance(id: number, body: UpdateMatiereNuanceBodyDTO, audit: AuditContext) {
   return updateMatiereReferential({
     table: "stock_nuances", id, audit, action: "stock.matiere-nuances.update", read: readMatiereNuanceTx,
-    patch: { code: body.code === undefined ? undefined : normalizeStockReferentialCode(body.code, "Nuance"), designation: body.designation === undefined ? undefined : body.designation ?? "", densite: body.densite === undefined ? undefined : body.densite === null ? null : body.densite / 1000, is_active: body.is_active },
+    patch: previous => {
+      const identity = resolveNuanceIdentity(body, previous);
+      const changesIdentity = nuanceNormeFields.some(key => body[key] !== undefined) || body.designation_principale !== undefined;
+      if (body.code !== undefined && body.code !== previous.code && identity.designation_principale !== "LEGACY") {
+        throw new HttpError(400, "NUANCE_CODE_IMMUTABLE", "Le code technique d’une nuance classée est conservé pour la traçabilité des articles.");
+      }
+      return {
+        ...(changesIdentity ? Object.fromEntries([...nuanceNormeFields, "designation_principale" as const].map(key => [key, identity[key]])) : {}),
+        code: body.code === undefined || body.code === previous.code ? undefined : normalizeStockReferentialCode(body.code, "Nuance"),
+        designation: body.designation === undefined ? undefined : body.designation ?? "",
+        densite: body.densite === undefined ? undefined : body.densite === null ? null : body.densite / 1000,
+        is_active: body.is_active,
+      };
+    },
   });
 }
 

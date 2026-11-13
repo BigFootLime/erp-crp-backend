@@ -20,6 +20,7 @@ import { productionReceiptLanesOperation } from './production-receipt-lanes-cont
 import { manufacturingCostBasisOperation } from './manufacturing-cost-basis-contract';
 import { assemblyComponentReturnOperation, assemblyComponentReturnSchemas } from './assembly-component-return-contract';
 import { metrologyDocumentsOperation } from './metrology-documents-contract';
+import { nuanceLibraryOperation } from './nuance-library-contract';
 
 import {
   GENERATED_ROUTE_INVENTORY,
@@ -243,6 +244,7 @@ function generatedOperation(route: GeneratedRouteContract): OpenApiOperation {
       },
     };
   }
+  if (route.path.startsWith("/stock/matiere-nuances")) return nuanceLibraryOperation(key, operation);
   if (route.path.startsWith("/entreprises")) return companyOperation(key, operation);
   const enriched = supplierRecommendationOperation(key,materialInvoiceReconciliationOperation(key,supplierInvoiceHeaderOperation(key,stockValueAdjustmentOperation(key, manufacturingCostBasisOperation(key, stockValuationOperation(key, terminalAssemblyOperation(key, assemblyComponentReturnOperation(key, assemblyComponentOperation(key, clientCrmOperation(key, receiptProcessingOperation(key,webhookOperation(key, operation))))))))))));
   return metrologyDocumentsOperation(key, accountRequestOperation(key, proformaOperation(key,clientContractReplenishmentOperation(key, clientContractForecastOperation(key, clientContractLegacyOperation(key, deliveryAffairsOperation(key, clientContractOperation(key, productionReceiptLanesOperation(key, stockLanesOperation(key, enriched))))))))));
