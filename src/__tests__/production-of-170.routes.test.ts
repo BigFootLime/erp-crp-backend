@@ -80,6 +80,19 @@ describe("Technical dossier quality approval", () => {
     expect(response.status, JSON.stringify(response.body)).toBe(404);
     expect(mocks.poolConnect).toHaveBeenCalled();
   });
+  it.each(["Planification", "Production", "Secretaire", "Administrateur Systeme et Reseau"])("refuses the complete endpoint for %s before parsing or opening a transaction", async role => {
+    const response = await request(app).post("/api/v1/production/ofs/5/complete").set("x-test-role", role).send({});
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe("OF_QUALITY_APPROVAL_REQUIRED");
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+  it("allows Quality to reach the complete endpoint's body validation", async () => {
+    const response = await request(app).post("/api/v1/production/ofs/5/complete").set("x-test-role", encodeURIComponent("Responsable Qualité")).send({});
+    expect(response.status, JSON.stringify(response.body)).toBe(400);
+    expect(response.body.error).toBe("VALIDATION_ERROR");
+    expect(response.body.errors.map((error: { field: string }) => error.field).sort()).toEqual(["expectedVersion", "idempotencyKey"]);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
 });
 
 describe('material debit follow-up HTTP boundaries',()=>{

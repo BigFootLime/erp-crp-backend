@@ -45,6 +45,12 @@ validation en masse côté frontend. Les anciens cas 403 et l'absence de connexi
 DB restent des régressions actives ; le `Boolean(user)` importé avec #1833 ne
 constitue pas une autorisation d'élargir les droits.
 
+La même restriction s'applique à la commande de finalisation `/ofs/:id/complete`.
+Les deux chemins refusent un rôle non Qualité avant la validation du corps et
+avant toute connexion DB. Un rôle Qualité atteint la validation habituelle du
+corps ; sa finalisation complète est exercée dans le parcours navigateur avec
+le contrôle réel du stock matière.
+
 Les clones internes de reconfiguration empruntent la transaction de leur
 appelant : aucun BEGIN, COMMIT, ROLLBACK ou release supplémentaire. Ils ne
 déplacent aucun OF. La commande publique de nouveau plan exige la confirmation
