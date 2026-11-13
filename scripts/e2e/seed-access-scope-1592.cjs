@@ -47,6 +47,13 @@ const FIXTURE_USERS = [
     email: "rh-personnel.e2e@invalid.example",
     grants: ["temps-deplacements"],
   },
+  {
+    username: "E2E_REALTIME_CLIENT_READER",
+    name: "Lecteur Realtime Client",
+    surname: "E2E",
+    email: "realtime-client-reader.e2e@invalid.example",
+    grants: ["clients"],
+  },
 ];
 
 // This is an E2E fixture matrix, deliberately keyed by account rather than by
@@ -100,7 +107,7 @@ async function requireModuleCatalog(client) {
       ORDER BY module_key`
   );
   const available = new Set(modules.rows.map((row) => row.module_key));
-  for (const moduleKey of ["planning", "devis", "commandes-clients"]) {
+  for (const moduleKey of ["planning", "devis", "commandes-clients", "clients"]) {
     if (!available.has(moduleKey)) throw new Error(`access-scope fixture requires active ${moduleKey} module`);
   }
 }
