@@ -1,5 +1,10 @@
 const standards = ["norme_fr", "norme_en", "norme_werkstoff", "norme_usa"];
-const designation = { type: "string", maxLength: 40, nullable: true };
+export const nuanceStandardInputSchema = {
+  type: "string",
+  nullable: true,
+  description: "Valeur brute acceptée puis trimée par le serveur. Une norme effectivement renseignée doit contenir une lettre ou un chiffre après normalisation; cette règle contextuelle est appliquée par le validateur backend.",
+};
+const designation = nuanceStandardInputSchema;
 const json = (schema: Record<string, unknown>) => ({ "application/json": { schema } });
 export function nuanceLibraryOperation(key: string, operation: Record<string, unknown>) {
   const create = key === "post /stock/matiere-nuances";
@@ -22,10 +27,14 @@ export function nuanceLibraryOperation(key: string, operation: Record<string, un
   return {
     ...operation,
     summary: create ? "Créer une nuance et ses correspondances" : update ? "Modifier une nuance et sa désignation principale" : "Rechercher dans la bibliothèque des nuances",
-    description: "Au moins une norme pour toute nouvelle nuance. Le titre doit désigner une norme renseignée. Les identifiants, liens articles et codes historiques sont conservés ; LEGACY signifie à classer, sans norme déduite. Les doublons normalisés dans une norme sont interdits, y compris parmi les entrées inactives. Le rapprochement d’un code historique est contrôlé avant toute création. Aucune équivalence métallurgique automatique.",
+    description: "Au moins une norme significative après normalisation pour toute nouvelle nuance. Le titre doit désigner une norme effectivement renseignée. Les identifiants, liens articles et codes historiques sont conservés ; LEGACY signifie à classer, sans norme déduite. Les doublons normalisés dans une norme sont interdits, y compris parmi les entrées inactives. Le rapprochement d’un code historique est contrôlé avant toute création. Aucune équivalence métallurgique automatique.",
     ...(create || update ? { requestBody: { required: true, content: json({ type: "object", additionalProperties: false,
       properties: { ...properties, ...(create ? { etat_ids: { type: "array", items: { type: "integer", minimum: 1 } } } : {}) },
-      ...(create ? { anyOf: standards.map(field => ({ required: [field], properties: { [field]: { type: "string", minLength: 1, maxLength: 40 } } })) } : { minProperties: 1 }),
+      ...(create ? {
+        anyOf: standards.map(field => ({ required: [field], properties: { [field]: designation } })),
+        "x-cerp-schema-fidelity-limitations": ["runtime_normalization"],
+        description: "Au moins un champ de norme doit être fourni. Après trim et validation métier, le serveur exige une norme significative et une désignation principale qui référence une norme renseignée. Cette corrélation dépend de la valeur normalisée et reste une validation runtime.",
+      } : { minProperties: 1, "x-cerp-schema-fidelity-limitations": ["runtime_normalization"], description: "Les modifications sont fusionnées avec l’identité existante ; le serveur refuse toute identité finale sans norme ou avec une désignation principale absente." }),
     }) } } : { parameters: [
       { name: "q", in: "query", schema: { type: "string" }, description: "Code, description ou l’une des quatre désignations." },
       { name: "etat_id", in: "query", schema: { type: "integer", minimum: 1 } },
@@ -34,8 +43,6 @@ export function nuanceLibraryOperation(key: string, operation: Record<string, un
     responses: {
       ...(operation.responses as Record<string, unknown>),
       [create ? "201" : "200"]: { description: create ? "Nuance créée et auditée atomiquement." : "Bibliothèque ou nuance mise à jour.", content: json(response) },
-      "400": { description: "Norme manquante, titre non renseigné, densité invalide ou modification du code technique d’une nuance classée." },
-      "409": { description: "Une désignation ou un code normalisé appartient déjà à une nuance, active ou inactive." },
     },
   };
 }
