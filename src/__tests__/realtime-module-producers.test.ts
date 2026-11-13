@@ -152,6 +152,10 @@ describe("module-owned durable realtime producers", () => {
 
   it.each([
     ["with OF and customer order", { of_id: 42, commande_id: 7 }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:42", "commandes:list", "commandes:detail:7"]],
+    ["with only OF", { of_id: 42, commande_id: null }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:42"]],
+    ["with only customer order", { of_id: null, commande_id: 7 }, ["planning:events", "planning:event:planning-1", "production:ofs", "commandes:list", "commandes:detail:7"]],
+    ["with null optional identities", { of_id: null, commande_id: null }, ["planning:events", "planning:event:planning-1", "production:ofs"]],
+    ["with numeric zero identities", { of_id: 0, commande_id: 0 }, ["planning:events", "planning:event:planning-1", "production:ofs", "production:of:0", "commandes:list", "commandes:detail:0"]],
     ["without optional identities", {}, ["planning:events", "planning:event:planning-1", "production:ofs"]],
   ])("keeps planning outbox invalidation keys %s", async (_label, optional, invalidateKeys) => {
     await enqueuePlanningRealtime(tx, {

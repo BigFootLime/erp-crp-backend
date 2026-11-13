@@ -76,6 +76,25 @@ describe("realtime invalidation producer contract", () => {
     expect(catalog.unresolved_dynamic_sites.every((site: { reason: string }) => site.reason === "invalidateKeys array binding is not proven immutable")).toBe(true)
   })
 
+  it("retains mutable, shadowed, cyclic and shorthand binding coverage", async () => {
+    const { dir, output } = await fixture(`
+      let mutable = ["mutable"]
+      enqueue({ invalidateKeys: mutable })
+      const scoped = ["outer"]
+      function nested() { let scoped = ["inner"]; enqueue({ invalidateKeys: scoped }) }
+      enqueue({ invalidateKeys: scoped })
+      const cyclic = [...cyclic]
+      enqueue({ invalidateKeys: cyclic })
+      const invalidateKeys = ["shorthand"]
+      enqueue({ invalidateKeys })
+    `)
+    expect(run(dir, output).status).toBe(0)
+    const catalog = JSON.parse(await readFile(output, "utf8"))
+    expect(catalog.key_patterns).toEqual([])
+    expect(catalog.generated_from.exhaustive).toBe(false)
+    expect(catalog.unresolved_dynamic_sites).toHaveLength(5)
+  })
+
   it("keeps inherited const spreads and conditional const arrays as conservative negative cases", async () => {
     const { dir, output } = await fixture(`
       const inherited = ["inherited"]
