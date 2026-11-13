@@ -8,7 +8,7 @@ const forbiddenKeys = ["constructor", "prototype", "__proto__"];
 // defensively, which must not turn a forbidden request into an accepted one.
 export const cutoverValuesSchema = z.unknown().superRefine((value, ctx) => {
   if (typeof value !== "object" || value === null) return;
-  for (const key of forbiddenKeys) if (Object.hasOwn(value, key))
+  for (const key of forbiddenKeys) if (Object.prototype.hasOwnProperty.call(value, key))
     ctx.addIssue({ code: "custom", path: [key], message: "Nom de champ interdit." });
 }).pipe(z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine((key) => !forbiddenKeys.includes(key)), scalar))
   .refine((values) => Object.keys(values).length <= 60, "Trop de champs dans la fiche.");
