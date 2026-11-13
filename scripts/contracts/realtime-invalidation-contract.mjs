@@ -51,8 +51,8 @@ function staticArray(node, constants, unresolved, source, resolving = new Set())
     ]
   }
   if (ts.isIdentifier(node) && constants.has(node.text)) {
-    if (resolving.has(node.text)) { unresolved.push({ ...location(source, node), reason: "invalidateKeys const array is cyclic" }); return [] }
-    return staticArray(constants.get(node.text), constants, unresolved, source, new Set(resolving).add(node.text))
+    unresolved.push({ ...location(source, node), reason: "invalidateKeys array binding is not proven immutable" })
+    return []
   }
   if (!ts.isArrayLiteralExpression(node)) { unresolved.push({ ...location(source, node), reason: "invalidateKeys is not a statically resolvable array" }); return [] }
   const values = []
@@ -97,7 +97,7 @@ async function catalog() {
     }
     visit(source)
   }
-  return { schema_version: "1.0.0", authority: "erp-crp-backend", contract: "realtime-invalidation-producer-catalog", generated_from: { source_root: relative(root, sourceRoot).split(sep).join("/") || ".", include: ["**/*.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}"], exclude: ["**/*.{test,spec}.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}", "**/*.d.ts", "**/{__tests__,__fixtures__,fixtures}/**"], extraction: "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, uniquely named const arrays and const spreads. Conditional array branches are unioned without evaluating their condition. Binding ambiguity, mutation, scope, and interprocedural values are unresolved.", exhaustive: unresolved.length === 0 }, key_patterns: [...patterns].sort(), unresolved_dynamic_sites: unresolved.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line || a.reason.localeCompare(b.reason)) }
+  return { schema_version: "1.0.0", authority: "erp-crp-backend", contract: "realtime-invalidation-producer-catalog", generated_from: { source_root: relative(root, sourceRoot).split(sep).join("/") || ".", include: ["**/*.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}"], exclude: ["**/*.{test,spec}.{ts,tsx,js,jsx,mts,mtsx,mjs,cjs}", "**/*.d.ts", "**/{__tests__,__fixtures__,fixtures}/**"], extraction: "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, inline array literals and inline spreads only. Conditional array branches are unioned without evaluating their condition. Array bindings are unresolved because mutation and aliasing are not proven absent; binding ambiguity, mutation, scope, and interprocedural values are unresolved.", exhaustive: unresolved.length === 0 }, key_patterns: [...patterns].sort(), unresolved_dynamic_sites: unresolved.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line || a.reason.localeCompare(b.reason)) }
 }
 const rendered = `${JSON.stringify(await catalog(), null, 2)}\n`
 if (check) { let existing = ""; try { existing = await readFile(outputPath, "utf8") } catch {} if (existing.replace(/\r\n/g, "\n") !== rendered) { console.error(`Realtime invalidation contract is stale: ${relative(root, outputPath)}`); process.exitCode = 1 } } else { await writeFile(outputPath, rendered, "utf8"); console.log(`Generated ${relative(root, outputPath)}`) }
