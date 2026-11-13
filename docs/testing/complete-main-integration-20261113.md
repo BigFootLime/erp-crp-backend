@@ -32,6 +32,13 @@ préservation ; aucun service ni aucune base de production ne sont modifiés.
 - L'image conserve ses vérifications antivirus et ses épinglages de sécurité.
   Le paquet zlib absent est remplacé par `1.4-r0`, vérifié dans l'index officiel
   Alpine v3.24, sans revenir à `1.3.2-r0`.
+- Le lot Nuances #1839 ajoute les correspondances FR/EN/Werkstoff/USA et un
+  titre principal. La migration conserve les anciens IDs, codes, densités et
+  liens en LEGACY. Les nouvelles créations exigent désormais une norme et un
+  titre cohérents ; ce changement métier est intentionnel, et non une simple
+  opération de nettoyage. Une future activation doit utiliser les routes natives,
+  sans l'ancien adaptateur EC code-only en amont. Le contrôle PostgreSQL isolé
+  confirme 23 cas, dont rejouabilité, conservation des liens et doublons concurrents.
 
 ## Validation
 
