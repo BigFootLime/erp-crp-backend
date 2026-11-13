@@ -618,8 +618,9 @@ export async function loadApplicableTechnicalSnapshot(
 
 /**
  * Cutover-only resolver for a version explicitly evidenced as the version
- * used before CERP.  It can retain a published obsolete version; the regular
- * OF path above continues to use current APPLICABLE versions only.
+ * used before CERP. It can retain a published obsolete version. The regular
+ * OF path accepts an explicitly chosen non-obsolete definition and otherwise
+ * falls back to an applicable version; it never gains this historical opt-in.
  */
 export async function loadHistoricalPublishedTechnicalSnapshot(
   tx: Queryable,

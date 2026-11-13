@@ -77,6 +77,7 @@ const OP_BASE = `/api/v1/gammes/${GAMME_ID}/operations/${OPERATION_ID}/finition`
 type Row = Record<string, unknown>;
 
 const contextRow = (overrides: Row = {}): Row => ({
+  client_id: null,
   piece_technique_id: PIECE_ID,
   code_piece: "CAP-100",
   designation_piece: "Capot moteur",
@@ -139,7 +140,8 @@ const revisionRow = (overrides: Row = {}): Row => ({
   finish_code: "FIN-000012",
   finish_designation: "Anodisation noire",
   finish_family: "ANODISATION",
-  finish_procede: "Anodisation sulfurique",
+  finish_procede: "ANO",
+  family_commentaire_template: null,
   finish_statut: "ACTIVE",
   ...overrides,
 });
@@ -199,6 +201,7 @@ function installQueryRouter(scenario: Scenario = {}) {
     if (/FROM public\.pieces_techniques pt/.test(sql) && /JOIN public\.piece_technique_versions ptv/.test(sql)) {
       return one({
         piece_technique_id: PIECE_ID,
+        client_id: null,
         code_piece: "CAP-100",
         designation_piece: "Capot moteur",
         piece_technique_version_id: VERSION_ID,
@@ -261,6 +264,7 @@ async function fetchStockPreview(): Promise<{ status: number; body: Record<strin
   const res = await request(app)
     .post(`${FIN_BASE}/stock-article/preview`)
     .send({
+      family_code: "ANODISATION",
       piece_technique_id: PIECE_ID,
       piece_technique_version_id: VERSION_ID,
       finish_revision_id: REVISION_ID,
@@ -405,6 +409,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
       .post(`${FIN_BASE}/stock-article/confirm`)
       .set("Idempotency-Key", "stock-finish-confirm-164-0001")
       .send({
+        family_code: "ANODISATION",
         piece_technique_id: PIECE_ID,
         piece_technique_version_id: VERSION_ID,
         finish_revision_id: REVISION_ID,
@@ -432,6 +437,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
       .post(`${FIN_BASE}/stock-article/confirm`)
       .set("Idempotency-Key", "stock-finish-confirm-164-0002")
       .send({
+        family_code: "ANODISATION",
         piece_technique_id: PIECE_ID,
         piece_technique_version_id: VERSION_ID,
         finish_revision_id: REVISION_ID,
@@ -445,6 +451,7 @@ describe("#164 création d'un article de traitement depuis Stock", () => {
   it("rejoue une double soumission identique sans recréer d'article", async () => {
     const { body: preview } = await fetchStockPreview();
     const payload = {
+      family_code: "ANODISATION",
       piece_technique_id: PIECE_ID,
       piece_technique_version_id: VERSION_ID,
       finish_revision_id: REVISION_ID,

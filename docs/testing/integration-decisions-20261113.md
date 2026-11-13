@@ -38,6 +38,13 @@ Elles ne sont pas appliquées à une base réelle par ce travail Git.
 
 ## Transactions et instantanés
 
+Le contrôle métier de validation technique reste réservé aux rôles Qualité,
+avant toute ouverture de transaction. Un accès en lecture au module ne confère
+pas cette approbation. Le DTO `can_validate` protège aussi la sélection de
+validation en masse côté frontend. Les anciens cas 403 et l'absence de connexion
+DB restent des régressions actives ; le `Boolean(user)` importé avec #1833 ne
+constitue pas une autorisation d'élargir les droits.
+
 Les clones internes de reconfiguration empruntent la transaction de leur
 appelant : aucun BEGIN, COMMIT, ROLLBACK ou release supplémentaire. Ils ne
 déplacent aucun OF. La commande publique de nouveau plan exige la confirmation

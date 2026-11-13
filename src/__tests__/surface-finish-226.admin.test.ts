@@ -195,7 +195,7 @@ describe("#226 contrôle des doublons", () => {
     // C'est l'index `surface_finishes_identity_uq` qui parle ici, pas le code.
     mocks.clientQuery.mockImplementation((sql: unknown) => {
       const text = String(sql);
-      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ ok: 1 }]));
+      if (text.includes("surface_finish_families")) return Promise.resolve(rows([{ code: "ANODISATION", nom_diminutif: "ANO" }]));
       // Le code FIN-NNNNNN est alloué par le générateur autoritaire avant
       // l'INSERT : sans cette réponse, le test échouerait AVANT le doublon.
       if (text.includes("fn_next_issued_code_value")) return Promise.resolve(rows([{ v: "1" }]));
@@ -208,7 +208,7 @@ describe("#226 contrôle des doublons", () => {
 
     const res = await request(app).post(FIN_BASE).send({
       family_code: "ANODISATION",
-      procede: "Anodisation sulfurique",
+      procede: "ANO",
       designation_courte: "Anodisation noire 20 µm",
     });
 

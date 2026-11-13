@@ -17,7 +17,7 @@ beforeEach(()=>{
     required:100,consumed:0,reserved:60,receivedBlocked:0,missing:0,purchaseMissing:0,blockers:[],reservations:[{id:'r',status:'ACTIVE',unexpired:true,qty_reserved:60,qty_consumed:0}],selections:[],futureSupplies:[],
     promises:[{id:'p1',statut:'ACCUSE_RECU',assigned:40,received:0,transferred:0,due:'2026-09-14',article_id:'a',unite:'PCE',purchase_unit:'PCE',coefficient:1}]}],customerCalls:[]});
   m.readiness.mockResolvedValue({operations:[{id:'1',blockers:[]}]});
-  m.snapshot.mockResolvedValue({revision:'2',nextCursor:null,dependencies:[],resources:[{id:'m',label:'Machine',kind:'MACHINE',timezone:'UTC',availability:[{start,end}]}],tasks:[{id:'op:1',ofId:1,operationId:'1',source:'OPERATION',commitment:'COMMITTED',committed:{start:'2026-09-08T08:00:00Z',end:'2026-09-08T09:00:00Z'},resourceIds:['m'],eligibleResourceIds:['m'],blockers:[],estimate:{remainingMinutes:60},locked:false,createdAt:'2026-09-01',priority:1}]});
+  m.snapshot.mockResolvedValue({revision:'2',nextCursor:null,dependencies:[],resources:[{id:'m',label:'Machine',kind:'MACHINE',timezone:'UTC',availability:[{start,end}]}],tasks:[{id:'op:1',ofId:1,operationId:'1',source:'OPERATION',readiness:'READY',commitment:'COMMITTED',committed:{start:'2026-09-08T08:00:00Z',end:'2026-09-08T09:00:00Z'},resourceIds:['m'],eligibleResourceIds:['m'],blockers:[],estimate:{remainingMinutes:60},locked:false,createdAt:'2026-09-01',priority:1}]});
 });
 describe('durable planning projection',()=>{
   it('discards an obsolete result without acknowledging queued work',async()=>{
@@ -67,6 +67,17 @@ describe('durable planning projection',()=>{
     expect(JSON.parse(update?.[1][0])[0]).toMatchObject({start,end:'2026-09-14T08:30:00.000Z',resources:['alternative']});
     expect(snapshot.tasks[0].resourceIds).toEqual(['m']);
     expect(snapshot.tasks[0].committed).toBeNull();
+    expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
+    vi.useRealTimers();
+  });
+  it('does not project an operation whose dossier is not ready',async()=>{
+    const snapshot=await m.snapshot();
+    snapshot.tasks[0].readiness='INCOMPLETE';
+    await runPlanningForecastOnce();
+    const update=m.query.mock.calls.find(([sql])=>sql.includes('SET forecast_start='));
+    const projection=JSON.parse(update?.[1][0])[0];
+    expect(projection).toMatchObject({id:'op:1',start:null,end:null});
+    expect(projection.issues.join(' ')).toContain('Terminez et validez la préparation');
     expect(m.query.mock.calls.some(([sql])=>/UPDATE public.planning_events|SET committed_|SET.*machine_id/.test(sql))).toBe(false);
     vi.useRealTimers();
   });

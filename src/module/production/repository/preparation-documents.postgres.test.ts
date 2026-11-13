@@ -23,6 +23,8 @@ describe.skipIf(!managed)("PT documents in a managed disposable workbench", () =
           SELECT (jsonb_populate_record(NULL::public.piece_technique_versions,
             to_jsonb(source) || jsonb_build_object('id',$2::text,'indice',$3::text,
               'indice_externe_original',$3::text,'code_metier',$4::text,'code_metier_normalise',$4::text,
+              'version_interne',(SELECT COALESCE(max(existing.version_interne),0)+1
+                FROM public.piece_technique_versions existing WHERE existing.piece_technique_id=source.piece_technique_id),
               'statut',$5::text,'is_current',false,'date_effet',CURRENT_DATE+$6::int))).*
           FROM public.piece_technique_versions source WHERE source.id=$1::uuid`,
         [f.version, id, id.slice(0, 12), code, status, futureDays]);

@@ -810,8 +810,7 @@ export async function repoConfirmStockFinishArticle(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
-          commercial_scope: context.client_id ? "CLIENTS" : "CRP",
-          client_ids: context.client_id ? [context.client_id] : [],
+          // The owning finish workflow records the PT/client link after resolving the service article.
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           stock_managed: GENERATED_ARTICLE_TAXONOMY.stock_managed,
           lot_tracking: GENERATED_ARTICLE_TAXONOMY.lot_tracking,
@@ -1268,8 +1267,7 @@ export async function repoConfirmOperationFinish(
           article_type: GENERATED_ARTICLE_TAXONOMY.article_type,
           article_category: GENERATED_ARTICLE_TAXONOMY.article_category,
           article_categories: [...GENERATED_ARTICLE_TAXONOMY.article_categories],
-          commercial_scope: context.client_id ? "CLIENTS" : "CRP",
-          client_ids: context.client_id ? [context.client_id] : [],
+          // The owning finish workflow records the PT/client link after resolving the service article.
           family_code: GENERATED_ARTICLE_TAXONOMY.default_family_code,
           // Une prestation ne se stocke pas : la pièce traitée et ses lots
           // restent tracés par les domaines OF, sous-traitance et réception.
