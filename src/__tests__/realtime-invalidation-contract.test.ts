@@ -88,4 +88,17 @@ describe("realtime invalidation producer contract", () => {
     expect(await readFile(output, "utf8")).toBe("unchanged")
     expect(run(dir, output, false, ["--source"]).status).toBe(1)
   })
+
+  it("unions both static conditional branches without evaluating the condition", async () => {
+    const { dir, output } = await fixture(`
+      const keys = condition ? (["left", \`detail:\${id}\`] as const) : (["right"] satisfies readonly string[])
+      enqueue({ invalidateKeys: keys })
+      enqueue({ invalidateKeys: condition ? ["known"] : getKeys() })
+    `)
+    expect(run(dir, output).status).toBe(0)
+    const catalog = JSON.parse(await readFile(output, "utf8"))
+    expect(catalog.key_patterns).toEqual(["detail:{id}", "known", "left", "right"])
+    expect(catalog.generated_from.exhaustive).toBe(false)
+    expect(catalog.unresolved_dynamic_sites).toEqual([expect.objectContaining({ reason: "invalidateKeys is not a statically resolvable array" })])
+  })
 })

@@ -12,8 +12,8 @@
       "**/*.d.ts",
       "**/{__tests__,__fixtures__,fixtures}/**"
     ],
-    "extraction": "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, uniquely named const arrays and const spreads only. Binding ambiguity, mutation, scope, and interprocedural values are unresolved.",
-    "exhaustive": false
+    "extraction": "TypeScript AST PropertyAssignment invalidateKeys; static strings, templates normalized to {id}, uniquely named const arrays and const spreads. Conditional array branches are unioned without evaluating their condition. Binding ambiguity, mutation, scope, and interprocedural values are unresolved.",
+    "exhaustive": true
   },
   "key_patterns": [
     "achats:detail:{id}",
@@ -61,6 +61,14 @@
     "proformas",
     "programmation:{id}",
     "programmations",
+    "qualite:action:{id}",
+    "qualite:actions",
+    "qualite:controls",
+    "qualite:dashboard",
+    "qualite:kpis",
+    "qualite:non-conformities",
+    "qualite:non-conformity:{id}",
+    "qualite:non-conformity:{id}:dispositions",
     "receipt-processing",
     "receipt-processing-line",
     "receptions:detail:{id}",
@@ -68,16 +76,5 @@
     "receptions:list",
     "stock:reservations"
   ],
-  "unresolved_dynamic_sites": [
-    {
-      "source": "src/module/qualite/repository/qualite.repository.ts",
-      "line": 206,
-      "reason": "invalidateKeys is not a statically resolvable array"
-    },
-    {
-      "source": "src/module/qualite/repository/quality-360.repository.ts",
-      "line": 229,
-      "reason": "invalidateKeys is not a statically resolvable array"
-    }
-  ]
+  "unresolved_dynamic_sites": []
 }
