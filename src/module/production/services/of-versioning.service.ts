@@ -10,12 +10,8 @@
 //   3. Une réimpression ne crée ni révision, ni document, ni version GED.
 
 import { HttpError } from "../../../utils/httpError";
-import {
-  buildInternalNotification,
-  notificationDedupeKey,
-  NOTIFICATION_TOPICS,
-  resolveNotificationRecipients,
-} from "../../../shared/notifications/routing";
+import { NOTIFICATION_TOPICS } from "../../../shared/notifications/routing";
+import { notifyVersioningTopic } from "../repository/of-versioning-notifications.repository";
 import {
   insertAuditLog,
   type AuditContext,
@@ -521,10 +517,11 @@ export async function createProposal(
       idempotencyKey,
     });
 
-    const notified = await notifyTopic(
+    const notified = await notifyVersioningTopic(
       tx,
       NOTIFICATION_TOPICS.OF_TIME_VARIANCE,
-      describeProposal(built.proposal)
+      describeProposal(built.proposal),
+      { ofId, eventId: proposalId }
     );
 
     await insertAuditLog(tx, audit, {
@@ -713,10 +710,11 @@ export async function transitionPlanning(
     let notified: number[] = [];
 
     if (next === "SOUMIS") {
-      notified = await notifyTopic(
+      notified = await notifyVersioningTopic(
         tx,
         NOTIFICATION_TOPICS.OF_PLANNING_SUBMITTED,
-        `${header.numero} — planning v${version.version_rank} soumis à validation.`
+        `${header.numero} — planning v${version.version_rank} soumis à validation.`,
+        { ofId, eventId: versionId }
       );
     }
 
@@ -796,10 +794,11 @@ export async function transitionPlanning(
             dossiers.push(id);
           }
           if (dossiers.length) {
-            notified = await notifyTopic(
+            notified = await notifyVersioningTopic(
               tx,
               NOTIFICATION_TOPICS.AR_RECALAGE,
-              `${header.numero} — ${dossiers.length} AR client à recaler après validation du planning.`
+              `${header.numero} — ${dossiers.length} AR client à recaler après validation du planning.`,
+              { ofId, eventId: versionId }
             );
           }
         }
@@ -900,10 +899,11 @@ export async function createArDossier(
       idempotencyKey,
     });
 
-    const notified = await notifyTopic(
+    const notified = await notifyVersioningTopic(
       tx,
       NOTIFICATION_TOPICS.AR_RECALAGE,
-      `${header.numero} — AR client à recaler (${input.motif}).`
+      `${header.numero} — AR client à recaler (${input.motif}).`,
+      { ofId, eventId: id }
     );
 
     await insertAuditLog(tx, audit, {
@@ -1341,56 +1341,6 @@ export async function listDocuments(ofId: number) {
 /* ========================================================================== */
 /* Utilitaires                                                                */
 /* ========================================================================== */
-
-/**
- * Résout les destinataires internes d'un sujet et prépare la notification.
- *
- * Aucune identité n'est écrite en dur : les destinataires viennent de
- * `notification_routing`, par rôle ou par identité désignée par un administrateur.
- * Aucun message client n'est envoyé — ces notifications sont internes.
- */
-async function notifyTopic(
-  tx: repo.DbQueryer,
-  topic: string,
-  message: string,
-  dedupeParts: Array<string | number | null> = []
-): Promise<number[]> {
-  const [rules, candidates] = await Promise.all([
-    repo.readNotificationRouting(topic, tx),
-    repo.readNotificationCandidates(tx),
-  ]);
-
-  const recipients = resolveNotificationRecipients({
-    topic,
-    rules,
-    candidates: candidates.map((c) => ({
-      userId: c.userId,
-      roles: [c.primaryRole, ...c.roles].filter((r): r is string => Boolean(r)),
-    })),
-  });
-
-  // La rédaction est préparée et tracée ; l'acheminement reste du ressort du
-  // canal de notification existant. Rien n'est envoyé au client.
-  buildInternalNotification({
-    topic,
-    kind: topic.toLowerCase(),
-    title: NOTIFICATION_TITLES[topic] ?? "Notification production",
-    message,
-    severity: "warning",
-    actionUrl: null,
-    actionLabel: null,
-    payload: { recipients },
-    dedupeKey: notificationDedupeKey(topic, ...dedupeParts),
-  });
-  return recipients;
-}
-
-/** Titres des sujets internes de ce chantier. Aucun n'est destiné au client. */
-const NOTIFICATION_TITLES: Record<string, string> = {
-  [NOTIFICATION_TOPICS.OF_TIME_VARIANCE]: "Dérive de temps : replanification proposée",
-  [NOTIFICATION_TOPICS.OF_PLANNING_SUBMITTED]: "Planning soumis à validation",
-  [NOTIFICATION_TOPICS.AR_RECALAGE]: "AR client à recaler",
-};
 
 function round4(value: number): number {
   return Math.round(value * 1e4) / 1e4;

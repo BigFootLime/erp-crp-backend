@@ -2,6 +2,10 @@ import type { Request, RequestHandler } from "express";
 import type { z } from "zod";
 
 import { HttpError } from "../../utils/httpError";
+import { repoMaterialInvoiceReconciliation } from './material-invoice-reconciliation.repository';
+import { repoConfirmMaterialInvoice } from './material-invoice-posting.repository';
+import { materialInvoicePostingBody } from './material-invoice-posting.validators';
+import { buildAuditContext } from '../margin-engine/controllers/margin-audit-context';
 import {
   repoApproveSupplierInvoice,
   repoDisputeSupplierInvoice,
@@ -11,6 +15,7 @@ import {
   repoMatchSupplierInvoice,
   repoRejectSupplierInvoice,
   repoRequestSupplierInvoiceApproval,
+  repoSupplierInvoiceHeaderAllocation,
   type SupplierInvoiceActor,
 } from "./supplier-invoice.repository";
 import {
@@ -20,6 +25,7 @@ import {
   supplierInvoiceParamsSchema,
   supplierInvoiceReasonBodySchema,
   supplierInvoiceVersionBodySchema,
+  supplierInvoiceApproveBodySchema,
 } from "./supplier-invoice.validators";
 
 function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.infer<T> {
@@ -69,6 +75,22 @@ export const getSupplierInvoice: RequestHandler = async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
+export const getSupplierInvoiceHeaderAllocation: RequestHandler = async (req,res,next) => {
+  try {
+    actorFrom(req);const {id}=parse(supplierInvoiceParamsSchema,req.params);
+    res.setHeader('Cache-Control','no-store, private');
+    res.json(await repoSupplierInvoiceHeaderAllocation(id));
+  } catch(error) {next(error);}
+};
+
+export const getSupplierInvoiceMaterialReconciliation: RequestHandler = async (req,res,next) => {
+  try {
+    actorFrom(req);const {id}=parse(supplierInvoiceParamsSchema,req.params);
+    res.setHeader('Cache-Control','no-store, private');
+    res.json(await repoMaterialInvoiceReconciliation(id));
+  } catch(error) {next(error);}
+};
+
 export const matchSupplierInvoice: RequestHandler = async (req, res, next) => {
   try {
     const { id } = parse(supplierInvoiceParamsSchema, req.params);
@@ -79,6 +101,14 @@ export const matchSupplierInvoice: RequestHandler = async (req, res, next) => {
       idempotencyKey: idempotencyKeyFrom(req),
     }));
   } catch (error) { next(error); }
+};
+
+export const confirmSupplierInvoiceMaterialReconciliation:RequestHandler=async(req,res,next)=>{
+  try {
+    const {id}=parse(supplierInvoiceParamsSchema,req.params),input=parse(materialInvoicePostingBody,req.body);
+    const result=await repoConfirmMaterialInvoice(id.toLowerCase(),input,buildAuditContext(req));
+    res.setHeader('Cache-Control','no-store, private');res.status(result.replayed?200:201).json(result);
+  }catch(error){next(error);}
 };
 
 export const identifySupplierInvoice: RequestHandler = async (req, res, next) => {
@@ -110,7 +140,7 @@ export const approveSupplierInvoice: RequestHandler = async (req, res, next) => 
     const { id } = parse(supplierInvoiceParamsSchema, req.params);
     res.json(await repoApproveSupplierInvoice({
       invoiceId: id,
-      body: parse(supplierInvoiceVersionBodySchema, req.body),
+      body: parse(supplierInvoiceApproveBodySchema, req.body),
       actor: actorFrom(req),
       idempotencyKey: idempotencyKeyFrom(req),
     }));

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { calculateMargin, MARGIN_COST_CATEGORIES, type MarginCalculationInput, type MarginEvidence } from './margin-engine';
 import { readManufacturingBasisCandidate, type ManufacturingBasisSource } from './manufacturing-cost-basis';

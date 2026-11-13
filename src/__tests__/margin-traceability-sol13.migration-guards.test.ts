@@ -8,6 +8,7 @@ import { SUPPLIER_RECEIPT_COSTS_SQL, SUPPLIER_APPROVED_INVOICE_COSTS_SQL } from 
 const patchName = "20260811_margin_traceability_0002";
 const patch = fs.readFileSync(path.join(repoRoot, "db", "patches", `${patchName}.sql`), "utf8");
 const repository = fs.readFileSync(path.join(repoRoot, "src", "module", "margin-engine", "repository", "margin-engine.repository.ts"), "utf8");
+const stockCostRepository = fs.readFileSync(path.join(repoRoot, "src", "module", "margin-engine", "repository", "cump-stock-cost.repository.ts"), "utf8");
 const support = path.join(repoRoot, "db", "patches", "support");
 const releaseGate = fs.readFileSync(path.join(repoRoot, "scripts", "migrations", "release-gate.js"), "utf8");
 
@@ -50,7 +51,9 @@ describe("SOL-13 margin traceability migration guards", () => {
   });
 
   it("uses canonical actual stock, supplier receipt and declaration evidence", () => {
-    expect(repository).toContain("pool.query<CostRow>(OF_MARGIN_MATERIAL_SOURCES_SQL, [scopeRef])");
+    expect(repository).toContain("readOfCumpStockCosts(scopeRef)");
+    expect(stockCostRepository).toContain("pool.query<CumpStockCostRow>(OF_MARGIN_CUMP_STOCK_SOURCES_SQL, [ofId])");
+    expect(stockCostRepository).toContain("resolveCumpStockCosts(result.rows, ofId)");
     expect(repository).toContain("}>(OF_MARGIN_MEASUREMENTS_SQL, [scopeRef])");
     expect(OF_MARGIN_MATERIAL_SOURCES_SQL).toContain("FROM public.of_material_consumptions consumption");
     expect(OF_MARGIN_MATERIAL_SOURCES_SQL).toContain("consumption.qty * line.unit_cost");

@@ -87,6 +87,11 @@ describe("internal order delivery gate", () => {
     const deliveryId = "22222222-2222-4222-8222-222222222222";
     const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
       const sql = String(rawSql);
+      if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] };
+      if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: internalClientId }] };
+      if (sql.includes("WITH delivery_lines AS")) {
+        return { rows: [{ commande_id: "12", client_id: null, order_type: "INTERNE", contract_id: null, has_unbound_lines: false }] };
+      }
       if (sql.includes("FROM public.commande_client cc")) {
         return {
           rows: [{
@@ -150,6 +155,11 @@ describe("prepareLivraisonInTransaction", () => {
   it("reuses an active production reservation without reserving stock twice", async () => {
     const query = vi.fn(withRealtimeOutboxDbMock(async (rawSql: unknown) => {
       const sql = String(rawSql);
+      if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] };
+      if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "1" }] };
+      if (sql.includes("WITH delivery_lines AS")) {
+        return { rows: [{ commande_id: "12", client_id: "1", order_type: "FERME", contract_id: null, has_unbound_lines: false }] };
+      }
       if (sql.includes("FROM public.bon_livraison delivery")) {
         return {
           rows: [{

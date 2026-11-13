@@ -8,6 +8,7 @@ import { type CumpOpeningRow, type CumpOpening } from '../domain/cump-opening';
 import type { CumpJournalSource } from '../domain/cump-posting-source';
 import { readReceiptAcquisitionFacts } from '../domain/receipt-acquisition-snapshot';
 import { resolveReceiptAcquisitionValue } from '../domain/receipt-acquisition-value';
+import { resolveReceiptOrderTransport } from '../domain/receipt-order-transport';
 import * as sql from './cump-projection.sql';
 import { readDeclaredOpeningValueTx } from './cump-opening-basis.repository';
 
@@ -97,19 +98,27 @@ export async function resolveCumpAcquisitionTx(tx: Tx, row: CumpJournalSource, c
     try { return value === null ? null : text(decimal(value)); }
     catch { basisValid = false; return value; }
   };
+  const transport = resolveReceiptOrderTransport(order);
+  const transportFees = numericBasis(order.transportFees);
+  const hasTransport = transportFees !== null && transportFees !== '0';
+  if (hasTransport && transport.issues.length) basisValid = false;
   const basis = { quantity: numericBasis(order.quantity),additionalFees: numericBasis(order.additionalFees),
+    ...(hasTransport ? { transportFees,transportBasisSha256: transport.sourceSha256,transportLineAmount: transport.amount } : {}),
     unit: canonicalizeStockUnitCode(order.unit),currency: order.currency?.trim().toUpperCase() ?? null };
   if (basis.quantity===null || basis.unit===null || !basis.currency || !/^[A-Z]{3}$/.test(basis.currency)) basisValid = false;
   const previous = cursor?.quantity ?? '0';
   let received: bigint, before: bigint;
   try { received = decimal(facts.receiptQuantity); before = decimal(previous); decimal(text(before + received)); }
   catch { return { cost: unknown(),proof: { acquisition_fee_counted: false },issues: ['ACQUISITION_FEE_QUANTITY_MISSING'] }; }
-  const changed = Boolean(cursor && Object.entries(basis).some(([key,value]) => cursor.basis_snapshot[key]!==value));
+  const basisValues: Record<string,unknown> = basis;
+  const changed = Boolean(cursor && [...new Set([...Object.keys(basis),...Object.keys(cursor.basis_snapshot)])]
+    .some(key => cursor.basis_snapshot[key]!==basisValues[key]));
   const historyGap = (await tx.query<{missing: boolean}>(sql.CUMP_FEE_HISTORY_GAP_SQL,[order.lineId,order.id,row.sequence])).rows[0]?.missing !== false;
   const poisoned = Boolean(!basisValid || cursor?.poisoned || (cursor && !cursor.source_valid) || changed || historyGap);
   await tx.query(sql.CUMP_STORE_FEE_CURSOR_SQL,[order.lineId,text(before + received),JSON.stringify(basis),poisoned]);
   const allocation = { orderLineId: order.lineId,beforeQuantity: previous,sourceRef: `stock-acquisition-cursor:${order.lineId}:${previous}` };
-  const proof = { acquisition_fee_counted: true,fee_allocation_before: allocation,fee_basis: cursor?.basis_snapshot ?? basis,fee_basis_poisoned: poisoned };
+  const proof = { acquisition_fee_counted: true,fee_allocation_before: allocation,fee_basis: cursor?.basis_snapshot ?? basis,
+    fee_basis_poisoned: poisoned,transport_allocation: transport };
   // Changes in a zero-fee line do not require an allocation. Once a forfait
   // appears (or a prior forfait changes), its entire basis must be reconciled.
   let hasFee = false;
@@ -117,7 +126,8 @@ export async function resolveCumpAcquisitionTx(tx: Tx, row: CumpJournalSource, c
   const priorFee = cursor?.basis_snapshot.additionalFees;
   let hadFee = false;
   try { hadFee = typeof priorFee==='string' && decimal(priorFee)>0n; } catch { hadFee = true; }
-  if (poisoned && (hasFee || hadFee)) return { cost: unknown(facts.sourceRef),proof,
+  const hadTransport = Boolean(cursor && Object.prototype.hasOwnProperty.call(cursor.basis_snapshot,'transportFees'));
+  if (poisoned && (hasFee || hadFee || hasTransport || hadTransport)) return { cost: unknown(facts.sourceRef),proof,
     issues: [changed ? 'ACQUISITION_FEE_BASE_CHANGED' : historyGap ? 'ACQUISITION_FEE_HISTORY_INCOMPLETE' : 'ACQUISITION_FEE_CURSOR_UNRESOLVED'] };
   const value = resolveReceiptAcquisitionValue(facts,currency,poisoned ? undefined : allocation);
   return { cost: value,proof,issues: value.issues };

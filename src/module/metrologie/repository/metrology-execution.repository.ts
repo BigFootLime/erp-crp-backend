@@ -36,7 +36,7 @@ import {
   computeNextDueDate,
   type PeriodicityUnit,
 } from "../domain/metrology-schedule";
-import { computeExecutionVerdict, type MeasurementInput } from "../domain/metrology-verdict";
+import { computeExecutionVerdict, evaluateMeasurement, type MeasurementInput } from "../domain/metrology-verdict";
 import type {
   CancelCertificateBodyDTO,
   CancelExecutionBodyDTO,
@@ -358,7 +358,20 @@ export async function repoRecordMeasurements(params: {
     });
     assertExecutionMutable(execution.status);
 
+    const plan = execution.plan_version_id
+      ? await loadPlanContext(client, execution.plan_version_id, execution.equipement_id)
+      : null;
+    const criteria = {
+      tolerance_min: plan?.tolerance_min ?? null,
+      tolerance_max: plan?.tolerance_max ?? null,
+      unite: plan?.unite ?? null,
+      min_points: plan?.min_points ?? null,
+    };
+
     for (const measurement of body.measurements) {
+      // Le verdict est enregistré avec le relevé : une seconde UPDATE serait
+      // une correction sans révision, refusée par le trigger d'historisation.
+      const computed = evaluateMeasurement(measurement, criteria);
       const existing = await client.query<{
         id: string;
         revision: number;
@@ -417,7 +430,8 @@ export async function repoRecordMeasurements(params: {
             UPDATE public.metrologie_execution_measurement
             SET label = $2, nominal = $3, tolerance_min = $4, tolerance_max = $5,
                 measured = $6, unite = $7, incertitude = $8, comment = $9,
-                revision = revision + 1, updated_at = now(), updated_by = $10
+                revision = revision + 1, updated_at = now(), updated_by = $10,
+                verdict = $11, ecart = $12
             WHERE id = $1::uuid
           `,
           [
@@ -431,6 +445,8 @@ export async function repoRecordMeasurements(params: {
             measurement.incertitude,
             measurement.comment,
             actor.user_id,
+            computed.verdict,
+            computed.ecart,
           ]
         );
         continue;
@@ -441,9 +457,9 @@ export async function repoRecordMeasurements(params: {
           INSERT INTO public.metrologie_execution_measurement (
             execution_id, point_key, sample_no, label, nominal,
             tolerance_min, tolerance_max, measured, unite, incertitude, comment,
-            created_by, updated_by
+            created_by, updated_by, verdict, ecart
           )
-          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+          VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14)
         `,
         [
           executionId,
@@ -458,13 +474,11 @@ export async function repoRecordMeasurements(params: {
           measurement.incertitude,
           measurement.comment,
           actor.user_id,
+          computed.verdict,
+          computed.ecart,
         ]
       );
     }
-
-    // Verdict recalculé et écart persistés à chaque saisie : la liste des
-    // points affichée vient du serveur, jamais d'un calcul navigateur.
-    await refreshMeasurementVerdicts(client, executionId, execution.plan_version_id, execution.equipement_id);
 
     await client.query(
       `UPDATE public.metrologie_execution SET updated_at = now(), updated_by = $2 WHERE id = $1::uuid`,
@@ -499,37 +513,6 @@ export async function repoRecordMeasurements(params: {
   const detail = await repoGetExecution(executionId);
   if (!detail) throw new HttpError(404, "NOT_FOUND", "Exécution introuvable.");
   return detail;
-}
-
-async function refreshMeasurementVerdicts(
-  client: PoolClient,
-  executionId: string,
-  planVersionId: string | null,
-  equipementId: string
-): Promise<void> {
-  const plan = planVersionId ? await loadPlanContext(client, planVersionId, equipementId) : null;
-  const measurements = await loadMeasurements(client, executionId);
-  const computation = computeExecutionVerdict({
-    operationType: "ETALONNAGE",
-    measurements,
-    criteria: {
-      tolerance_min: plan?.tolerance_min ?? null,
-      tolerance_max: plan?.tolerance_max ?? null,
-      unite: plan?.unite ?? null,
-      min_points: plan?.min_points ?? null,
-    },
-  });
-
-  for (const point of computation.points) {
-    await client.query(
-      `
-        UPDATE public.metrologie_execution_measurement
-        SET verdict = $3, ecart = $4, updated_at = now()
-        WHERE execution_id = $1::uuid AND point_key = $2 AND sample_no = $5
-      `,
-      [executionId, point.point_key, point.verdict, point.ecart, point.sample_no]
-    );
-  }
 }
 
 /* ========================================================================== */

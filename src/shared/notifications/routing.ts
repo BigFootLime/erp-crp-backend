@@ -11,6 +11,8 @@
 
 /** Sujets de notification connus du domaine OF / planning / AR. */
 export const NOTIFICATION_TOPICS = {
+  /** Nouveaux OF anticipés : le planificateur prépare leur dossier. */
+  OF_REPLENISHMENT_CREATED: "OF_REPLENISHMENT_CREATED",
   /** Dérive de temps d'usinage au-delà du seuil : le planificateur arbitre. */
   OF_TIME_VARIANCE: "OF_TIME_VARIANCE",
   /** Brouillon de planning soumis à validation. */

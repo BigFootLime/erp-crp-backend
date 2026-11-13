@@ -1,5 +1,4 @@
 export const TEST_EMAIL_RECIPIENTS = Object.freeze([
-  "clement@croix-rousse-precision.fr",
   "kesmartin2004@croix-rousse-precision.fr",
 ] as const);
 

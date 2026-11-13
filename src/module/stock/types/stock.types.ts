@@ -106,7 +106,11 @@ export type StockMatiereEtat = {
 
 export type StockMatiereSousEtat = {
   id: number;
-  etat_id: number;
+  /**
+   * Historical rows can still retain their original state link. New sub-states
+   * are standalone referential entries.
+   */
+  etat_id: number | null;
   code: string;
   designation: string;
   is_active: boolean;
@@ -277,6 +281,7 @@ export type StockAvailableLotItem = {
 };
 
 export type StockArticleDetail = StockArticleListItem & {
+  finish_definition?: { piece_technique_id: string; piece_technique_version_id: string; finish_revision_id: string } | null;
   subcontract_definition?: import("../validators/subcontract-definition").SubcontractDefinition & {piece_reference:string;piece_designation:string;indice:string} | null;
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;

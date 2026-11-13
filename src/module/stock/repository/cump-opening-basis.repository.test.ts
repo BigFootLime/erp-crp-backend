@@ -1,5 +1,5 @@
-// Prepared for the final common acceptance. Not executed during incremental deployment.
-import { test } from 'node:test';
+// Adapter fixtures; database acceptance is tracked separately.
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import type { PoolClient } from 'pg';
 import { readDeclaredOpeningValueTx } from './cump-opening-basis.repository';

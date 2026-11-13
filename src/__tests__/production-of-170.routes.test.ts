@@ -902,6 +902,9 @@ describe("#170 bounded production receipt", () => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("to_regclass('public.production_receipt_lane_intents')")) {
+        return { rows: [{ installed: true }] };
+      }
       if (q.includes("FROM public.ordres_fabrication") && q.includes("FOR UPDATE")) {
         return {
           rows: [

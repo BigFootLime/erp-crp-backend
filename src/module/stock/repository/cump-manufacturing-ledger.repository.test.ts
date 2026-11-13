@@ -1,4 +1,4 @@
-import test from 'node:test';
+import { afterEach, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import type { PoolClient } from 'pg';
 import type { CumpJournalSource } from '../domain/cump-posting-source';
@@ -8,8 +8,9 @@ import { resolveCumpManufacturingReceiptTx, resolveCumpManufacturingLinkedReturn
 import * as returns from './cump-return-ledger.repository';
 import * as sql from './cump-manufacturing-ledger.sql';
 
-// Prepared, NOT RUN. Transaction/constraint behavior still requires the final
-// combined PostgreSQL recipe; this adapter fixture does not prove DB rollback.
+// Transaction/constraint behavior requires the combined PostgreSQL recipe;
+// these adapter fixtures do not prove database rollback.
+afterEach(() => vi.restoreAllMocks());
 const ARTICLE='00000000-0000-0000-0000-000000000001',MOVEMENT='00000000-0000-0000-0000-000000000002';
 const ENTRY='00000000-0000-0000-0000-000000000003',BASIS='00000000-0000-0000-0000-000000000004';
 const PT='00000000-0000-0000-0000-000000000005',VERSION='00000000-0000-0000-0000-000000000006';
@@ -74,8 +75,8 @@ test('database errors abort the financial consumer rather than fabricating an un
   const f=fixture({queryFailure:true});
   await assert.rejects(resolveCumpManufacturingReceiptTx(f.tx,source(),physical(),scope,'1',ENTRY),/database unavailable/);
 });
-test('receipt cancellation restores the exact original allocation and retains return proof',async(t)=>{
-  t.mock.method(returns,'resolveCumpLinkedReturnTx',async()=>({kind:'RECEIPT_REVERSAL',
+test('receipt cancellation restores the exact original allocation and retains return proof',async()=>{
+  vi.spyOn(returns,'resolveCumpLinkedReturnTx').mockImplementation(async()=>({kind:'RECEIPT_REVERSAL',
     cost:{amount:'0.333333333333',reliability:'DECLARED',sourceRef:'original'},
     proof:{original_entry_id:ORIGINAL,return_allocation_event_ids:[RECEIPT]},issues:[]}));
   const f=fixture({inverse:true}),row=source();row.source_snapshot={reversal_of_id:ORIGINAL};
@@ -84,8 +85,8 @@ test('receipt cancellation restores the exact original allocation and retains re
   const event=f.calls.find(c=>c.query===sql.CUMP_MANUFACTURING_INSERT_EVENT_SQL)!;
   assert.equal(event.params[9],RECEIPT);assert.equal(event.params[10],'-1');assert.equal(event.params[11],'-0.333333333333');
 });
-test('invalid inverse bounds request rollback of both allocation paths and publish no guessed amount',async(t)=>{
-  t.mock.method(returns,'resolveCumpLinkedReturnTx',async()=>({kind:'RECEIPT_REVERSAL',
+test('invalid inverse bounds request rollback of both allocation paths and publish no guessed amount',async()=>{
+  vi.spyOn(returns,'resolveCumpLinkedReturnTx').mockImplementation(async()=>({kind:'RECEIPT_REVERSAL',
     cost:{amount:'0.333333333333',reliability:'DECLARED',sourceRef:'original'},proof:{original_entry_id:ORIGINAL},issues:[]}));
   const f=fixture({inverse:true,inverseInvalid:true}),row=source();row.source_snapshot={reversal_of_id:ORIGINAL};
   const result=await resolveCumpManufacturingLinkedReturnTx(f.tx,row,ORIGINAL,scope,'1',ENTRY);

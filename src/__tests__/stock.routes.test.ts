@@ -80,6 +80,28 @@ beforeEach(() => {
 });
 
 describe("/api/v1/stock", () => {
+  it("POST /api/v1/stock/matiere-sous-etats creates a standalone sub-state", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown) => {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("INSERT INTO public.stock_sous_etats")) {
+        return { rows: [{ id: 41, etat_id: null, code: "REC", designation: "Recuit", is_active: true }] };
+      }
+      if (query.includes("INSERT INTO public.audit_logs")) return { rows: [] };
+      return { rows: [] };
+    });
+
+    const res = await request(app)
+      .post("/api/v1/stock/matiere-sous-etats")
+      .set("Authorization", "Bearer fake")
+      .send({ code: "REC", designation: "Recuit" });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ id: 41, etat_id: null, code: "REC", designation: "Recuit" });
+    const insert = mocks.clientQuery.mock.calls.find((call) => String(call[0]).includes("INSERT INTO public.stock_sous_etats"));
+    expect(insert?.[1]).toEqual([null, "REC", "Recuit", true]);
+  });
+
   it("GET /api/v1/stock/units returns the canonical referential behind stock read access", async () => {
     mocks.poolQuery.mockResolvedValueOnce({ rows: [{ code: "PCE", label: "Pièce" }, { code: "u", label: "Unité" }, { code: "MM", label: "Millimètre" }] });
 

@@ -38,6 +38,7 @@ import {
   isCommandeArSnapshotCurrent,
   sha256Canonical,
 } from "../domain/commande-ar-fingerprint";
+import { customerCommandeComment } from "../domain/commande-public-comment";
 
 const ACKNOWLEDGEMENT_DOCUMENT_KIND = "CUSTOMER_ORDER_ACKNOWLEDGEMENT";
 
@@ -374,13 +375,14 @@ export async function svcGenerateCommandeAr(params: {
     // An acknowledgement is fixed by the generated PDF. It carries the legal version in
     // force when that artifact is created, not the possibly much older order date.
     const issuer = await readIssuerParty({ at: generatedAt.toISOString().slice(0, 10) });
+    const publicComment = customerCommandeComment(data.header.commentaire);
 
     const officialSnapshot: CommandeArOfficialSnapshot = {
       general_terms: data.general_terms ?? null,
       type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: data.header.numero, order_number: customerReference,
       generated_at: generatedAt.toISOString(), status: data.header.statut, customer_name: data.header.client_company_name,
       date_commande: data.header.date_commande, total_ht: String(data.header.total_ht), total_ttc: String(data.header.total_ttc),
-      public_comment: data.header.commentaire, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
+      public_comment: publicComment, bill_address: { name: data.header.bill_name, street: data.header.bill_street, house_number: data.header.bill_house_number, postal_code: data.header.bill_postal_code, city: data.header.bill_city, country: data.header.bill_country },
       delivery_address: { name: data.header.deliv_name, street: data.header.deliv_street, house_number: data.header.deliv_house_number, postal_code: data.header.deliv_postal_code, city: data.header.deliv_city, country: data.header.deliv_country },
       lines: data.lines.map((line) => ({ designation: line.designation, code_piece: line.code_piece, quantite: String(line.quantite), unite: line.unite, prix_unitaire_ht: String(line.prix_unitaire_ht), taux_tva: line.taux_tva == null ? null : String(line.taux_tva), total_ttc: String(line.total_ttc) })), issuer,
     };
@@ -407,7 +409,7 @@ export async function svcGenerateCommandeAr(params: {
         statut: data.header.statut,
         totalHt: data.header.total_ht,
         totalTtc: data.header.total_ttc,
-        commentaire: data.header.commentaire,
+        commentaire: publicComment,
         clientEmail: data.header.client_email,
         clientPhone: data.header.client_phone,
         billAddress: officialSnapshot.bill_address,

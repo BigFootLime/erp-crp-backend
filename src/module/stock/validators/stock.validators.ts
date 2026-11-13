@@ -225,7 +225,9 @@ export type ListMatiereSousEtatsQueryDTO = z.infer<typeof listMatiereSousEtatsQu
 export const createMatiereSousEtatSchema = z.object({
   body: z
     .object({
-      etat_id: positiveInt,
+      // Sub-states are a standalone referential. Keep the optional field only
+      // so legacy API clients can transition without a breaking request shape.
+      etat_id: nullablePositiveInt.optional(),
       code: z.string().trim().min(1).max(40),
       designation: z.string().trim().min(1).max(160),
       is_active: z.boolean().optional().default(true),

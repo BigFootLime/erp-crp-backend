@@ -1,4 +1,5 @@
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
+import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 // Repository Qualité 360 (#228).
 //
 // Toutes les décisions passent par une transaction, un verrou optimiste, un
@@ -299,7 +300,10 @@ async function saveReceipt(params: {
 
 async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await pool.connect();
-  return withRealtimeOutboxTransaction(client, fn);
+  return withRealtimeOutboxTransaction(client, async tx => {
+    await lockStockLaneTopology(tx);
+    return fn(tx);
+  });
 }
 
 function toNumber(value: unknown, fallback = 0): number {

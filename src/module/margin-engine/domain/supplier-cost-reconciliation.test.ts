@@ -55,6 +55,20 @@ describe("supplier cost attribution without invoice/receipt double counting", ()
   it("does not lose a missing price on the unbilled remainder", () => {
     expect(reconcileSupplierCostSources([receipt({ amount_ht: null })], [invoice()]).map(cost => cost.amount_ht)).toEqual(["440", null]);
   });
+  it("explains unallocated transport on the unbilled remainder without discarding the approved invoice", () => {
+    const costs = reconcileSupplierCostSources([receipt({ amount_ht: null, source_reliability: "UNKNOWN",
+      definition: "Transport de commande non réparti entre lignes : coût à confirmer." })], [invoice()]);
+    expect(costs.map(cost => cost.amount_ht)).toEqual(["440", null]);
+    expect(costs.map(cost => cost.source_reliability)).toEqual(["VERIFIED", "UNKNOWN"]);
+    expect(costs[1].definition).toContain("Transport de commande non réparti");
+  });
+  it("lets a fully approved and allocated invoice establish cost despite an unresolved order estimate", () => {
+    const costs = reconcileSupplierCostSources([receipt({ amount_ht: null, source_reliability: "UNKNOWN" })],
+      [invoice({ invoiced_quantity: "100", amount_ht: "1250" })]);
+    expect(costs).toHaveLength(1);
+    expect(costs[0].amount_ht).toBe("1250");
+    expect(costs[0].source_reliability).toBe("VERIFIED");
+  });
   it("returns a data exception for an invalid physical quantity", () => {
     expect(reconcileSupplierCostSources([receipt({ receipt_quantity: "NaN" })], [invoice()])[0].source_reliability).toBe("UNKNOWN");
   });

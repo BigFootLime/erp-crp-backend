@@ -6,9 +6,11 @@ import {
   assertDeliveryPolicyContentMutable,
   assertDeliveryPolicyTransition,
   assertOptimisticVersion,
+  deliveryPolicyTransitionEvent,
   normalizeQualityIdempotencyKey,
   qualityRequestHash,
   qualitySha256,
+  type QualityDeliveryPolicyEventType,
   type QualityDeliveryPolicyStatus,
 } from "../domain/quality-policy";
 import type { QualityActor } from "./quality-360.repository";
@@ -119,7 +121,7 @@ async function acquireCommand(params: {
 async function appendEvent(params: {
   client: PoolClient;
   policy: DeliveryPolicyRow;
-  eventType: string;
+  eventType: QualityDeliveryPolicyEventType;
   fromStatus: string | null;
   reason: string | null;
   actor: QualityActor;
@@ -318,7 +320,7 @@ export async function repoTransitionDeliveryPolicy(params: {
       }
     }
 
-    const eventType = params.body.target_status === "IN_REVIEW" ? "SUBMITTED" : params.body.target_status;
+    const eventType = deliveryPolicyTransitionEvent(params.body.target_status);
     await client.query(
       `UPDATE public.quality_delivery_release_policy
        SET status = $2,

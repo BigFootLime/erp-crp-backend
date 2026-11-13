@@ -41,6 +41,7 @@ import type { DeliveryQualityRelease } from "../domain/quality-release-gate"
 import { repoGetDeliveryQualityRelease } from "./quality-release.repository"
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service"
 import { buildShippedDeliveryArtifactInput } from "../services/delivery-authoritative-document"
+import { readDeliveryContractBoundary } from "./delivery-contract-boundary.repository"
 
 type Queryable = Pick<PoolClient, "query">
 
@@ -97,6 +98,7 @@ type ShipmentSnapshot = {
   lines: LineRow[]
   allocations: AllocationRow[]
   document_pack: ShipmentPreviewPack | null
+  contract_boundary: Awaited<ReturnType<typeof readDeliveryContractBoundary>>
 }
 
 type AllocationGroup = {
@@ -235,6 +237,7 @@ async function loadShipmentSnapshot(
     lines: lines.rows,
     allocations: allocations.rows,
     document_pack: pack.rows[0] ?? null,
+    contract_boundary: await readDeliveryContractBoundary(client, bonLivraisonId),
   }
 }
 
@@ -282,6 +285,7 @@ function buildPreview(
   enforceAcknowledgement = false
 ): BonLivraisonShipmentPreview {
   const blockers: ShipmentPreviewBlocker[] = []
+  if (snapshot.contract_boundary.blocker) blockers.push(snapshot.contract_boundary.blocker)
   const byLine = new Map<string, AllocationRow[]>()
   for (const allocation of snapshot.allocations) {
     const rows = byLine.get(allocation.bon_livraison_ligne_id) ?? []
@@ -487,6 +491,7 @@ function buildPreview(
       )?.pick_confirmed ?? false,
     })),
     blockers: blockers.map((blocker) => blocker.code).sort(),
+    contract_group_key: snapshot.contract_boundary.groupKey,
     document_pack: snapshot.document_pack,
     quality_release: qualityRelease
       ? { state: qualityRelease.state, preview_sha256: qualityRelease.preview_sha256 }
@@ -642,6 +647,10 @@ export async function prepareLivraisonInTransaction(
 ): Promise<void> {
   const snapshot = await loadShipmentSnapshot(client, bonLivraisonId, true)
   if (!snapshot) throw new HttpError(404, "BON_LIVRAISON_NOT_FOUND", "Bon de livraison not found")
+  if (snapshot.contract_boundary.blocker) {
+    const { code, message } = snapshot.contract_boundary.blocker
+    throw new HttpError(409, code, message)
+  }
   if (snapshot.header.statut === "READY") return
   if (snapshot.header.statut !== "DRAFT") {
     throw new HttpError(409, "INVALID_TRANSITION", "Only a DRAFT delivery can be prepared")

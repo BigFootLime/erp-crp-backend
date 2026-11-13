@@ -8,6 +8,7 @@ import {
   createLivraisonFromReservationsBodySchema,
   fromCommandeParamsSchema,
   listLivraisonsQuerySchema,
+  livraisonDocParamsSchema,
   livraisonIdParamsSchema,
   livraisonLineIdParamsSchema,
   livraisonLineAllocationIdParamsSchema,
@@ -60,12 +61,6 @@ function getRequiredIdempotencyKey(req: Request): string {
     )
   }
   return value.trim()
-}
-
-function routeParam(req: Request, name: string): string {
-  const value = req.params[name]
-  if (typeof value === "string" && value.length > 0) return value
-  throw new HttpError(400, "INVALID_ROUTE_PARAM", `${name} must be a string`)
 }
 
 const livraisonCreationSnapshotHandlers = createCreationSnapshotHandlers({
@@ -469,12 +464,7 @@ export const uploadLivraisonDocuments: RequestHandler = async (req, res, next) =
 export const deleteLivraisonDocument: RequestHandler = async (req, res, next) => {
   try {
     const userId = getUserId(req)
-    const { id } = livraisonIdParamsSchema.parse(req.params)
-    const docId = routeParam(req, "docId")
-    if (!docId || !/^[0-9a-fA-F-]{36}$/.test(docId)) {
-      res.status(400).json({ error: "Invalid docId" })
-      return
-    }
+    const { id, docId } = livraisonDocParamsSchema.parse(req.params)
 
     const ok = await service.svcRemoveLivraisonDocument({ bonLivraisonId: id, documentId: docId, userId })
     if (!ok) {
@@ -491,12 +481,7 @@ export const deleteLivraisonDocument: RequestHandler = async (req, res, next) =>
 export const getLivraisonDocumentFile: RequestHandler = async (req, res, next) => {
   try {
     getUserId(req)
-    const { id } = livraisonIdParamsSchema.parse(req.params)
-    const docId = routeParam(req, "docId")
-    if (!docId || !/^[0-9a-fA-F-]{36}$/.test(docId)) {
-      res.status(400).json({ error: "Invalid docId" })
-      return
-    }
+    const { id, docId } = livraisonDocParamsSchema.parse(req.params)
 
     const linked = await repoIsLivraisonDocumentLinked(id, docId)
     if (!linked) {

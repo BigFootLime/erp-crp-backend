@@ -10,6 +10,9 @@ import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { generateAffaireCode, generateCommandeCode, generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { withUploadTransaction } from "../../../shared/uploads/upload-transaction";
+import {prepareContractCall,recordContractCall,assertContractCallMutable,assertNoContractCall,ContractCallReplay} from './commande-contract-call.repository';
+import {readCommandeContractCall} from '../../client/repository/client-contract-calls.repository';
+import {readLegacyAssociation} from '../../client/repository/client-contract-legacy.repository';
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
@@ -1755,6 +1758,18 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
     });
   }
 
+  await prepareStockOnlyCustomerOrderCheckpoints(params);
+  return repoEnsureCommandeWorkflowStatus({
+    tx: params.tx,
+    commande_id: params.commande_id,
+    nouveau_statut: "AR_PRET",
+    cause: "customer_order_launch",
+    commentaire: "Commande entièrement réservée sans OF, AR prêt à envoyer avant livraison",
+    user_id: params.user_id,
+  });
+}
+
+async function prepareStockOnlyCustomerOrderCheckpoints(params: { tx: Queryable; commande_id: number; user_id: number }) {
   await params.tx.query(
     `
       UPDATE public.commande_client_workflow_checkpoint
@@ -1791,14 +1806,6 @@ async function advanceCustomerOrderWorkflowAfterLaunch(params: {
       }),
     ]
   );
-  return repoEnsureCommandeWorkflowStatus({
-    tx: params.tx,
-    commande_id: params.commande_id,
-    nouveau_statut: "AR_PRET",
-    cause: "customer_order_launch",
-    commentaire: "Commande entièrement réservée sans OF, AR prêt à envoyer avant livraison",
-    user_id: params.user_id,
-  });
 }
 
 type CommandeWorkflowHeader = {
@@ -2753,6 +2760,7 @@ export async function repoListCommandes(filters: ListCommandesQueryDTO) {
       cc.numero,
       cc.client_id,
       cc.order_type,
+      EXISTS(SELECT 1 FROM public.client_contract_calls call WHERE call.commande_id=cc.id) AS has_contract_call,
       cc.date_commande::text AS date_commande,
       cc.total_ht::float8 AS total_ht,
       cc.total_ttc::float8 AS total_ttc,
@@ -2907,6 +2915,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
 
   const commande = {
     ...commandeRow,
+    client_contract_call: await readCommandeContractCall(pool, String(commandeId)),
+    client_contract_legacy: await readLegacyAssociation(pool, String(commandeId)),
     id: toInt(commandeRow.id, "commande.id"),
     devis_id: toNullableInt(commandeRow.devis_id, "commande.devis_id"),
     source_devis_version_id: toNullableInt(commandeRow.source_devis_version_id, "commande.source_devis_version_id"),
@@ -2925,7 +2935,8 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
             cl.designation,
             COALESCE(a.code, cl.code_piece) AS code_piece,
             cl.article_id::text AS article_id,
-            COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) AS piece_technique_id,
+            CASE WHEN EXISTS(SELECT 1 FROM public.client_contract_legacy_lines legacy WHERE legacy.commande_ligne_id=cl.id)
+              THEN cl.piece_technique_id::text ELSE COALESCE(cl.piece_technique_id::text, a.piece_technique_id::text) END AS piece_technique_id,
             cl.piece_technique_version_id::text AS piece_technique_version_id,
             cl.source_devis_ligne_id::bigint::int AS source_devis_ligne_id,
             cl.source_article_devis_id::text AS source_article_devis_id,
@@ -2961,6 +2972,7 @@ export async function repoGetCommande(id: string, includes: Set<string>) {
 
   const lignesOut = lignes.map((l: any) => ({
     ...l,
+    client_contract_line_id: commande.client_contract_call?.lines.find((binding: {commande_ligne_id:string}) => binding.commande_ligne_id === String(l.id))?.contract_line_id ?? null,
     id: toInt(l.id, "lignes.id"),
     commande_id: toInt(l.commande_id, "lignes.commande_id"),
   }));
@@ -3298,20 +3310,37 @@ async function validateCommandeLineTechnicalContext(
   };
 }
 
-async function advanceCustomerOrderV2AfterLaunch(params: {
+export async function advanceCustomerOrderV2AfterLaunch(params: {
   tx: Queryable;
   commande_id: number;
   user_id: number;
   has_technical_warnings: boolean;
+  needs_production: boolean;
   of_ids: number[];
   waiting_contract_supply?: boolean;
 }) {
-  const targetStatus: CommandeWorkflowStatus = params.has_technical_warnings
+  const stockOnly = !params.needs_production && !params.has_technical_warnings && !params.waiting_contract_supply && params.of_ids.length === 0;
+  if (stockOnly) {
+    await params.tx.query(
+      `UPDATE public.commande_client_workflow_checkpoint
+          SET status = 'done', completed_at = COALESCE(completed_at, now()),
+              completed_by = COALESCE(completed_by, $2::int),
+              metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb, updated_at = now()
+        WHERE commande_id = $1
+          AND checkpoint_code IN ('order_intake', 'commercial_review', 'technical_analysis', 'stock_check')`,
+      [params.commande_id, params.user_id, JSON.stringify({ flow_version: 2, commercial_validation: true, of_ids: [] })]
+    );
+    await prepareStockOnlyCustomerOrderCheckpoints(params);
+  }
+  const targetStatus: CommandeWorkflowStatus = stockOnly
+    ? "AR_PRET"
+    : params.has_technical_warnings
     ? "ATTENTE_TECHNIQUE"
     : params.waiting_contract_supply
       ? "ATTENTE_OF"
       : "ATTENTE_PLANNING";
 
+  if (!stockOnly) {
   await params.tx.query(
     `
       UPDATE public.commande_client_workflow_checkpoint
@@ -3360,6 +3389,8 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
     ]
   );
 
+  }
+
   const last = await params.tx.query<{ nouveau_statut: string | null }>(
     `SELECT nouveau_statut
        FROM public.commande_historique
@@ -3379,7 +3410,9 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
         params.user_id,
         current,
         targetStatus,
-        params.has_technical_warnings
+        stockOnly
+          ? "Commande entièrement réservée sans OF, AR prêt à envoyer avant livraison"
+          : params.has_technical_warnings
           ? "Commande validée commercialement — préparation technique à compléter"
           : params.waiting_contract_supply
             ? "Commande validée commercialement — couverture par contrat interne en attente"
@@ -3389,6 +3422,73 @@ async function advanceCustomerOrderV2AfterLaunch(params: {
   }
 
   return targetStatus;
+}
+
+/** Repair only a fully reserved v2 launch during an explicit, locked POST replay. */
+export async function repairCustomerOrderV2StockOnlyPlanning(params: {
+  tx: PoolClient;
+  commande_id: number;
+  audit: AuditContext;
+  ar_sent_at: string | null;
+  of_ids: number[];
+}): Promise<boolean> {
+  if (params.ar_sent_at || params.of_ids.length > 0) return false;
+  const header = await loadCommandeWorkflowHeaderWithStatus(params.tx, params.commande_id);
+  if (header?.statut !== 'ATTENTE_PLANNING') return false;
+  const guard = await params.tx.query<{ eligible: boolean }>(
+    `SELECT (
+       EXISTS (SELECT 1 FROM public.commande_client_workflow_checkpoint
+                WHERE commande_id = $1 AND checkpoint_code = 'of_generation' AND status = 'done'
+                  AND metadata @> '{"flow_version":2,"commercial_validation":true}'::jsonb)
+       AND EXISTS (SELECT 1 FROM public.commande_client_workflow_checkpoint
+                    WHERE commande_id = $1 AND checkpoint_code = 'technical_analysis' AND status = 'done')
+       AND NOT EXISTS (SELECT 1 FROM public.bon_livraison delivery
+                        LEFT JOIN public.bon_livraison_ligne delivery_line ON delivery_line.bon_livraison_id = delivery.id
+                        LEFT JOIN public.commande_ligne line ON line.id = delivery_line.commande_ligne_id
+                       WHERE (delivery.commande_id = $1 OR line.commande_id = $1) AND delivery.statut <> 'CANCELLED')
+       AND NOT EXISTS (SELECT 1 FROM public.internal_contract_of_allocations allocation
+                        JOIN public.commande_ligne line ON line.id = allocation.commande_ligne_id
+                       WHERE line.commande_id = $1 AND allocation.quantity > 0)
+       AND NOT EXISTS (SELECT 1 FROM public.commande_client_event_log
+                       WHERE commande_id = $1 AND event_type = 'AFFAIRES_GENERATED'
+                         AND COALESCE(new_values->'internal_contract_command_ids', '[]'::jsonb) <> '[]'::jsonb)
+     ) AS eligible`,
+    [params.commande_id]
+  );
+  if (guard.rows[0]?.eligible !== true) return false;
+  const lines = await params.tx.query<{
+    id: number; quantity: number; allocated: number; reserved: number; to_produce: number;
+  }>(
+    `SELECT line.id::int AS id, line.quantite::float8 AS quantity,
+            COALESCE(SUM(allocation.qty_ordered), 0)::float8 AS allocated,
+            COALESCE(SUM(allocation.qty_reserved), 0)::float8 AS reserved,
+            COALESCE(SUM(allocation.qty_to_produce), 0)::float8 AS to_produce
+       FROM public.commande_ligne line
+       LEFT JOIN public.commande_ligne_affaire_allocation allocation
+         ON allocation.commande_ligne_id = line.id AND allocation.commande_id = $1
+      WHERE line.commande_id = $1
+      GROUP BY line.id ORDER BY line.id`,
+    [params.commande_id]
+  );
+  if (!lines.rows.length || lines.rows.some(line =>
+    [line.quantity, line.allocated, line.reserved, line.to_produce].some(value => !Number.isFinite(Number(value))) || Number(line.quantity) <= 0 ||
+    Math.abs(Number(line.allocated) - Number(line.quantity)) > 1e-9 ||
+    Math.abs(Number(line.reserved) - Number(line.quantity)) > 1e-9 || Number(line.to_produce) > 1e-9
+  )) return false;
+  const reservations = await reuseRecoveredCommandeStockReservations(params.tx, {
+    commande_id: params.commande_id,
+    quantities_by_line: new Map(lines.rows.map(line => [line.id, Number(line.quantity)])),
+  });
+  if (!reservations?.length) return false;
+  await advanceCustomerOrderWorkflowAfterLaunch({
+    tx: params.tx, commande_id: params.commande_id, user_id: params.audit.user_id,
+    needs_production: false, of_ids: [],
+  });
+  await insertAuditLog(params.tx, params.audit, {
+    action: 'commandes.stock_only_workflow.repair', entity_type: 'commande_client', entity_id: String(params.commande_id),
+    details: { previous_status: 'ATTENTE_PLANNING', status: 'AR_PRET', reservation_ids: reservations, reservations_unchanged: true },
+  });
+  return true;
 }
 
 async function insertCommandeLignes(
@@ -3993,6 +4093,8 @@ export async function repoCreateCommande(
       context: "commande-client.create",
       work: async () => {
 
+    const contractCall=await prepareContractCall(client,input,actorUserId,documents);
+
     await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
 
     const idRes = await client.query<{ id: string }>(
@@ -4093,6 +4195,7 @@ export async function repoCreateCommande(
       creation_flow_version: input.creation_flow_version ?? 1,
       save_intent: input.save_intent ?? "VALIDATE",
     });
+    await recordContractCall(client,contractCall,commandeId,input);
     await insertCommandeEcheances(client, commandeId, input.echeances ?? []);
     await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
     await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
@@ -4157,6 +4260,7 @@ export async function repoCreateCommande(
         : "uncertain",
     });
   } catch (e) {
+    if(e instanceof ContractCallReplay)return {id:e.commandeId};
     if (isObject(e)) {
       const code = typeof e.code === "string" ? e.code : null;
       const constraint = typeof e.constraint === "string" ? e.constraint : null;
@@ -4357,6 +4461,7 @@ export async function repoUpdateCommande(
     if (!existing) {
       return null;
     }
+    await assertContractCallMutable(client,id,input);
 
     if (existing.ar_sent_at) {
       throw new HttpError(409, "COMMANDE_LOCKED_AFTER_AR", "Commande is locked after AR has been sent");
@@ -4533,6 +4638,7 @@ export async function repoDeleteCommande(
       await client.query("ROLLBACK");
       return false;
     }
+    await assertNoContractCall(client,commandeId);
 
     // Evaluate retention only after the aggregate lock. Under READ COMMITTED this
     // statement gets a fresh snapshot and sees workflow/artifacts committed while
@@ -5088,6 +5194,10 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           of_ids: existingOfs.map((of) => of.id),
         });
         const draftOfs = existingOfs.filter((of) => of.technical_readiness !== "VALIDATED");
+        const stockOnlyRepaired = commande.creation_flow_version === 2 && await repairCustomerOrderV2StockOnlyPlanning({
+          tx: client, commande_id: commandeId, audit, ar_sent_at: commande.ar_sent_at,
+          of_ids: existingOfs.map((of) => of.id),
+        });
         const reservationIds = await listActiveCommandeReservationIds(client, commandeId);
         return {
           principal_affaire_id: principalAffaireId,
@@ -5097,7 +5207,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           livraison_affaire_ids: existingLivraisons.map((l) => l.affaire_id),
           generation_mode: "CUSTOMER_ORDER",
           idempotent_replay: true,
-          workflow_status: planningRepaired ? "ATTENTE_PLANNING" : null,
+          workflow_status: stockOnlyRepaired ? "AR_PRET" : planningRepaired ? "ATTENTE_PLANNING" : null,
           reservations_created: reservationIds,
           of_ids: existingOfs.map((of) => of.id),
           draft_of_ids: draftOfs.map((of) => of.id),
@@ -5629,6 +5739,7 @@ export async function repoGenerateAffairesFromOrder(id: string, body: GenerateAf
           commande_id: commandeId,
           user_id: audit.user_id,
           has_technical_warnings: technicalWarnings.length > 0,
+          needs_production: needsProduction,
           of_ids: ofIds,
           waiting_contract_supply: contractAllocations.length > 0 || internalContractCommandIds.length > 0,
         });
@@ -7325,6 +7436,9 @@ export async function repoDuplicateCommande(id: string) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const source=(await client.query<{order_type:string}>('SELECT order_type FROM public.commande_client WHERE id=$1::bigint FOR UPDATE',[originalCommandeId])).rows[0];
+    if(source?.order_type==='CADRE')throw new HttpError(409,'CLIENT_MASTER_CONTRACT_REQUIRED','Créez un nouvel appel depuis le contrat de la fiche client');
+    await assertNoContractCall(client,originalCommandeId);
 
     const originalRes = await client.query(
       `

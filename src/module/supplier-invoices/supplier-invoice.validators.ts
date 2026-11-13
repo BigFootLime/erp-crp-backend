@@ -36,6 +36,13 @@ export const supplierInvoiceVersionBodySchema = z.object({
   expected_version: z.number().int().positive(),
 });
 
+export const supplierInvoiceApproveBodySchema = supplierInvoiceVersionBodySchema.extend({
+  header_allocation: z.object({
+    method: z.literal('PROPORTIONAL_NET_V1'),
+    expected_source_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+}).strict();
+
 export const supplierInvoiceReasonBodySchema = supplierInvoiceVersionBodySchema.extend({
   reason: z.string().trim().min(3).max(1000),
 });
@@ -44,4 +51,5 @@ export type SupplierInvoiceListQuery = z.infer<typeof supplierInvoiceListQuerySc
 export type SupplierInvoiceMatchBody = z.infer<typeof supplierInvoiceMatchBodySchema>;
 export type SupplierInvoiceIdentifyBody = z.infer<typeof supplierInvoiceIdentifyBodySchema>;
 export type SupplierInvoiceVersionBody = z.infer<typeof supplierInvoiceVersionBodySchema>;
+export type SupplierInvoiceApproveBody = z.infer<typeof supplierInvoiceApproveBodySchema>;
 export type SupplierInvoiceReasonBody = z.infer<typeof supplierInvoiceReasonBodySchema>;

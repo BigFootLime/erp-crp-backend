@@ -1,9 +1,9 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readCumpManufacturingReceipt } from './cump-manufacturing-source';
 import type { CumpJournalSource } from './cump-posting-source';
 
-// Prepared for the final common acceptance run; not executed during deployment.
+// Pure source-proof fixtures; database acceptance is tracked separately.
 const ARTICLE = '00000000-0000-0000-0000-000000000001';
 const MOVEMENT = '00000000-0000-0000-0000-000000000002';
 const LOT = '00000000-0000-0000-0000-000000000003';

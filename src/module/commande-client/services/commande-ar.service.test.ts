@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   readArchived: vi.fn(),
   findArchive: vi.fn(),
   readGeneralTerms: vi.fn().mockResolvedValue(null),
+  connect: vi.fn(),
+  loadGeneration: vi.fn(),
+  createDraft: vi.fn(),
+  issuer: vi.fn(),
+  suggestions: vi.fn(),
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -21,7 +26,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 vi.mock("../../../config/database", () => ({
-  default: { connect: vi.fn() },
+  default: { connect: mocks.connect },
 }));
 vi.mock("../../../shared/realtime/realtime.service", () => ({
   emitAppNotificationCreated: vi.fn(),
@@ -32,7 +37,7 @@ vi.mock("../../../shared/email/resend.service", () => ({
 }));
 vi.mock("../../../shared/commercial-terms/commercial-terms.service", () => ({ readArchivedGeneralTerms: mocks.readGeneralTerms }));
 vi.mock("../../../shared/documents/issuer-identity.repository", () => ({
-  readIssuerParty: vi.fn(),
+  readIssuerParty: mocks.issuer,
 }));
 vi.mock("../../../shared/authoritative-documents/authoritative-document.service", () => ({
   getOfficialDocumentGenerationEnvelope: vi.fn(),
@@ -42,19 +47,20 @@ vi.mock("../../../shared/authoritative-documents/authoritative-document.service"
   officialDocumentGenerationEnvelope: vi.fn(),
 }));
 vi.mock("../repository/commande-ar.repository", () => ({
-  buildCommandeArRecipientSuggestions: vi.fn(),
+  buildCommandeArRecipientSuggestions: mocks.suggestions,
   repoAbortCommandeArSendClaim: mocks.abortClaim,
   repoAuthorizeCommandeArGeneration: mocks.authorizeGeneration,
   repoClaimCommandeArSend: mocks.claimSend,
-  repoCreateCommandeArDraft: vi.fn(),
+  repoCreateCommandeArDraft: mocks.createDraft,
   repoFinalizeCommandeArSend: mocks.finalizeSend,
   repoFindCommandeArOfficialArchiveId: mocks.findArchive,
   repoGetCommandeArDraft: vi.fn(),
-  repoLoadCommandeArGenerationData: vi.fn(),
+  repoLoadCommandeArGenerationData: mocks.loadGeneration,
   repoMarkCommandeArFailed: mocks.markFailed,
 }));
 
-import { buildCommandeArPdfBuffer, svcSendCommandeAr } from "./commande-ar.service";
+import { buildCommandeArPdfBuffer, renderCommandeArOfficialPdf, svcGenerateCommandeAr, svcSendCommandeAr } from "./commande-ar.service";
+import type { AuthoritativePdfArchiveRecord } from "../../../shared/authoritative-documents/authoritative-document.types";
 
 const WINANSI = new TextDecoder("windows-1252");
 
@@ -159,6 +165,58 @@ const GENERATED_DRAFT = {
   send_payload_fingerprint: null,
   preview_path: "/commandes/123/documents/22222222-2222-4222-8222-222222222222/file",
 };
+
+describe("new AR customer notes and immutable archived snapshots", () => {
+  const raw = "Note publique.\n\n[Commande operations]\nPriorite: CRITIQUE\nContraintes client: Certificat matière obligatoire.\nLivraison au quai 2.\n[/Commande operations]";
+
+  it("freezes and renders the same public projection while keeping the raw fingerprint source", async () => {
+    const client = { release: vi.fn() };
+    const data = {
+      header: { numero: "CMD-42", customer_reference: "CLIENT-42", client_company_name: "Client recette",
+        date_commande: "2026-10-10", statut: "AR_PRET", total_ht: 80, total_ttc: 96, commentaire: raw },
+      lines: [], contacts: [], general_terms: null,
+    };
+    mocks.connect.mockResolvedValue(client);
+    mocks.loadGeneration.mockResolvedValue(data);
+    mocks.suggestions.mockReturnValue([]);
+    mocks.issuer.mockResolvedValue(ISSUER);
+    mocks.createDraft.mockResolvedValue({ ...GENERATED_DRAFT, preview_path: "/commandes/42/documents/fixture/file" });
+    await svcGenerateCommandeAr({ commande_id: 42, user_id: 7, user_role: "secretariat" });
+    const input = mocks.createDraft.mock.calls.at(-1)![0];
+    expect(input.official_source_snapshot.public_comment).toBe("Note publique.\n\nExigences client :\nCertificat matière obligatoire.\nLivraison au quai 2.");
+    expect(JSON.stringify(input.content_snapshot)).toContain("Priorite: CRITIQUE");
+    expect(data.header.commentaire).toBe(raw);
+    const bytes = await input.pdf_factory({ reference: "AR-00000042-v2", version_number: 2 });
+    const text = drawnPages(bytes).join("\n");
+    expect(text).toContain("Note publique.");
+    expect(text).toContain("Exigences client");
+    expect(text).toContain("Certificat matière obligatoire.");
+    expect(text).toContain("Livraison au quai 2.");
+    expect(text).not.toContain("Commande operations");
+    expect(text).not.toContain("Priorite:");
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it("does not reinterpret public_comment in a previously frozen archive", async () => {
+    const archive: AuthoritativePdfArchiveRecord = {
+      id: "fixture-archive", entityType: "COMMANDE_CLIENT", entityId: "42",
+      documentKind: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", documentVersion: 1,
+      renderVersion: "customer-ar-pdf-v1", idempotencyKey: "fixture-archive-v1",
+      title: "AR-00000042-v1", originalName: "AR-00000042-v1.pdf", sourceRevision: "fixture-old-source",
+      actorUserId: 7, createdAt: "2026-10-09T08:00:00.000Z", snapshotSha256: "a".repeat(64),
+      exactPdfSha256: null, exactPdfSizeBytes: null, pdfSha256: null, pdfSizeBytes: null,
+      gedDocumentId: null, gedVersionId: null, archivedAt: null,
+      sourceSnapshot: { type: "CUSTOMER_ORDER_ACKNOWLEDGEMENT", acknowledgement_number: "AR-00000042-v1",
+        order_number: "CLIENT-42", issuer: ISSUER, date_commande: "2026-10-09", lines: [],
+        total_ht: "80", total_ttc: "96", public_comment: raw },
+    };
+    const bytes = await renderCommandeArOfficialPdf({ archive });
+    const text = drawnPages(bytes).join("\n");
+    expect(text).toContain("[Commande operations]");
+    expect(text).toContain("Priorite: CRITIQUE");
+    expect(archive.sourceSnapshot.public_comment).toBe(raw);
+  });
+});
 
 describe("envoi AR claimé avant effet externe", () => {
   it.each([

@@ -9,6 +9,7 @@ import {
 } from "./subcontract-flow.repository";
 import { assertReceiptLotQualityEligibility } from "../qualite/repository/quality-operational-gate.repository";
 import type { SubcontractTransferInput } from "./subcontract-flow.validators";
+import { appendSubcontractAudit } from './subcontract-audit.repository';
 
 export async function readSubcontractSuccessors(
   tx: Pick<PoolClient, "query">,
@@ -263,16 +264,8 @@ export async function transferSubcontractReturn(
           left -= take;
         }
       }
-      await tx.query(
-        `INSERT INTO public.erp_audit_logs(user_id,action,entity_type,entity_id,details)
-      VALUES($1,$2,'SUBCONTRACT_WORK_PACKAGE',$3,$4::jsonb)`,
-        [
-          audit.user_id,
-          "TRANSFER_" + input.action,
-          packageId,
-          JSON.stringify({ ...input, idempotency_key: key }),
-        ],
-      );
+      await appendSubcontractAudit(tx, audit.user_id, "TRANSFER_" + input.action,
+        packageId, { ...input, idempotency_key: key });
       return {
         package_id: packageId,
         action: input.action,

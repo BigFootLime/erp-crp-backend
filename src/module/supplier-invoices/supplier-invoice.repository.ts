@@ -7,12 +7,15 @@ import { HttpError } from "../../utils/httpError";
 import { repoInsertAuditLog } from "../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../audit-logs/validators/audit-logs.validators";
 import { supplierInvoiceRequestHash, type SupplierInvoiceStatus } from "./supplier-invoice.domain";
+import { proposeInvoiceHeaderAllocation,invoiceHeaderAllocationProof } from './supplier-invoice-header-allocation';
+import { SUPPLIER_INVOICE_HEADER_SOURCE_SQL } from './supplier-invoice-header-source.sql';
 import type {
   SupplierInvoiceListQuery,
   SupplierInvoiceIdentifyBody,
   SupplierInvoiceMatchBody,
   SupplierInvoiceReasonBody,
   SupplierInvoiceVersionBody,
+  SupplierInvoiceApproveBody,
 } from "./supplier-invoice.validators";
 
 type Queryer = Pick<PoolClient, "query">;
@@ -325,6 +328,16 @@ export async function repoGetSupplierInvoice(invoiceId: string) {
   return { ...invoice.rows[0], lines: lines.rows, artifacts: artifacts.rows, matches: matches.rows, decisions: decisions.rows };
 }
 
+async function headerAllocationCandidate(tx: Queryer,invoiceId: string) {
+  const row=(await tx.query<{id:string;row_version:number;facts:unknown}>(SUPPLIER_INVOICE_HEADER_SOURCE_SQL,[invoiceId])).rows[0];
+  if(!row)throw new HttpError(404,'SUPPLIER_INVOICE_NOT_FOUND','Facture fournisseur introuvable.');
+  return {id:row.id,row_version:Number(row.row_version),...proposeInvoiceHeaderAllocation(row.facts)};
+}
+
+export async function repoSupplierInvoiceHeaderAllocation(invoiceId: string) {
+  await ensureInstalled();return headerAllocationCandidate(pool,invoiceId);
+}
+
 async function loadInvoiceLines(tx: Queryer, invoiceId: string): Promise<InvoiceLineRow[]> {
   const result = await tx.query<InvoiceLineRow>(
     `SELECT id::text,position,provider_line_id,designation,quantity::float8,unit_price::float8,vat_rate::float8,
@@ -552,13 +565,23 @@ export async function repoMatchSupplierInvoice(params: {
 
 async function transition(params: {
   invoiceId: string;
-  body: SupplierInvoiceVersionBody | SupplierInvoiceReasonBody;
+  body: SupplierInvoiceVersionBody | SupplierInvoiceReasonBody | SupplierInvoiceApproveBody;
   actor: SupplierInvoiceActor;
   idempotencyKey: string;
   command: "REQUEST_APPROVAL" | "APPROVE" | "DISPUTE" | "REJECT";
 }) {
   return transaction(async (tx) => {
     await ensureInstalled(tx);
+    // Serialize identical actor/key intentions before reading their committed
+    // receipt. The invoice version is checked only for a genuinely new intent.
+    await tx.query("SET LOCAL lock_timeout='1s'");await tx.query("SET LOCAL statement_timeout='15s'");
+    try { await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',
+      [`supplier-invoice-command:${params.actor.userId}:${params.idempotencyKey}`]); }
+    catch(error) {
+      if(error&&typeof error==='object'&&'code' in error&&error.code==='55P03')
+        throw new HttpError(409,'SUPPLIER_INVOICE_COMMAND_BUSY','Validation en cours ; reprenez la même demande.');
+      throw error;
+    }
     const requestHash = supplierInvoiceRequestHash(params.body);
     const replay = await readReceipt<Record<string, unknown>>(tx,params.actor,params.idempotencyKey,params.command,params.invoiceId,requestHash);
     if (replay) return replay;
@@ -573,12 +596,21 @@ async function transition(params: {
     if (!(definition.allowed as readonly string[]).includes(invoice.status)) {
       throw new HttpError(409,"SUPPLIER_INVOICE_TRANSITION_INVALID","Cette décision n'est pas permise dans l'état actuel.");
     }
-    if (params.command === "REQUEST_APPROVAL") {
+    if (params.command === "REQUEST_APPROVAL" || params.command === "APPROVE") {
       const archive = await tx.query<{ ready: boolean }>(
-        `SELECT count(*)>0 AND bool_and(scan_status='CLEAN' AND ged_document_id IS NOT NULL) AS ready
-           FROM public.supplier_invoice_artifacts WHERE supplier_invoice_id=$1::uuid`, [params.invoiceId]
+        `SELECT count(*)>0 AND bool_and(scan_status='CLEAN' AND ged_document_id IS NOT NULL
+            AND ged_version_id IS NOT NULL AND archived_at IS NOT NULL) AS ready
+           FROM (SELECT scan_status,ged_document_id,ged_version_id,archived_at
+             FROM public.supplier_invoice_artifacts WHERE supplier_invoice_id=$1::uuid FOR SHARE) artifacts`, [params.invoiceId]
       );
       if (archive.rows[0]?.ready !== true) throw new HttpError(409,"SUPPLIER_INVOICE_ARCHIVE_INCOMPLETE","Toutes les pièces doivent être contrôlées et archivées avant approbation.");
+    }
+    let headerProof:ReturnType<typeof invoiceHeaderAllocationProof>|null=null;
+    if(params.command==='APPROVE'&&'header_allocation' in params.body&&params.body.header_allocation) {
+      const choice=params.body.header_allocation,candidate=await headerAllocationCandidate(tx,params.invoiceId);
+      if(!candidate.eligible||candidate.source_sha256!==choice.expected_source_sha256||candidate.method!==choice.method)
+        throw new HttpError(409,'SUPPLIER_INVOICE_HEADER_SOURCE_CHANGED','Actualisez et contrôlez la répartition proposée.',{issues:candidate.issues});
+      headerProof=invoiceHeaderAllocationProof(candidate);
     }
     const reason = "reason" in params.body ? params.body.reason : null;
     await tx.query(
@@ -592,7 +624,8 @@ async function transition(params: {
       `INSERT INTO public.supplier_invoice_decisions(
          supplier_invoice_id,decision,from_status,to_status,reason,snapshot,actor_user_id
        ) VALUES ($1::uuid,$2,$3,$4,$5,$6::jsonb,$7)`,
-      [params.invoiceId,definition.decision,invoice.status,definition.to,reason,JSON.stringify({ expected_version: params.body.expected_version }),params.actor.userId]
+      [params.invoiceId,definition.decision,invoice.status,definition.to,reason,JSON.stringify({ expected_version: params.body.expected_version,
+        ...(headerProof?{header_allocation:headerProof}:{}) }),params.actor.userId]
     );
     if (definition.statusCode) {
       await tx.query(
@@ -605,8 +638,13 @@ async function transition(params: {
     }
     const response = { id: params.invoiceId, status: definition.to, row_version: invoice.row_version + 1 };
     await saveReceipt(tx,params.actor,params.idempotencyKey,params.command,params.invoiceId,requestHash,response);
-    await audit(tx,params.actor,`supplier-invoices.${params.command.toLowerCase().replace("_","-")}`,params.invoiceId,{ before: invoice.status, after: definition.to, reason });
+    await audit(tx,params.actor,`supplier-invoices.${params.command.toLowerCase().replace("_","-")}`,params.invoiceId,{ before: invoice.status, after: definition.to, reason,
+      ...(headerProof?{header_allocation_method:headerProof.method,header_allocation_source_sha256:headerProof.source_sha256}:{}) });
     return response;
+  }).catch(error=>{
+    if(error&&typeof error==='object'&&'code' in error&&['55P03','57014','40P01','40001','23505'].includes(String(error.code)))
+      throw new HttpError(409,'SUPPLIER_INVOICE_COMMAND_BUSY','Validation en cours ; reprenez la même demande.');
+    throw error;
   });
 }
 

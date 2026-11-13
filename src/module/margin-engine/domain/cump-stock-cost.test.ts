@@ -1,9 +1,9 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { resolveCumpStockCost, resolveCumpStockCosts, type CumpStockCostRow } from './cump-stock-cost';
 import { CUMP_FORMULA_VERSION, type CumpScope } from '../../stock/domain/cump-valuation';
 
-// Prepared for the final common acceptance run; not executed during deployment.
+// Pure valuation fixtures; database acceptance is tracked separately.
 const ARTICLE = '00000000-0000-0000-0000-000000000001';
 const MOVEMENT = '00000000-0000-0000-0000-000000000002';
 const LINE = '00000000-0000-0000-0000-000000000003';

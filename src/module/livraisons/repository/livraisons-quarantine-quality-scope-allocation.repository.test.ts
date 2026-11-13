@@ -36,6 +36,11 @@ function allocationClient(
   const query = vi.fn(async (rawSql: unknown, _params?: unknown[]) => {
     const sql = String(rawSql)
     if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] }
+    if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] }
+    if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "1" }] }
+    if (sql.includes("WITH delivery_lines AS")) {
+      return { rows: [{ commande_id: "12", client_id: "1", order_type: "FERME", contract_id: null, has_unbound_lines: false }] }
+    }
     if (sql.includes("FROM public.bon_livraison_ligne line")) {
       return { rows: [{ id: ids.line, quantite: 2, commande_article_id: ids.article }] }
     }
@@ -117,6 +122,11 @@ describe("DRAFT quarantine quality-scope allocation", () => {
   it("keeps preparation fail-closed until the scoped lot is released", async () => {
     const query = vi.fn(async (rawSql: unknown) => {
       const sql = String(rawSql)
+      if (sql.includes("pg_advisory_xact_lock_shared")) return { rows: [] }
+      if (sql.includes("SELECT client_id::text FROM public.bon_livraison")) return { rows: [{ client_id: "1" }] }
+      if (sql.includes("WITH delivery_lines AS")) {
+        return { rows: [{ commande_id: "12", client_id: null, order_type: "INTERNE", contract_id: null, has_unbound_lines: false }] }
+      }
       if (sql.includes("FROM public.bon_livraison delivery") && sql.includes("FOR UPDATE OF delivery")) {
         return { rows: [{
           id: ids.delivery,

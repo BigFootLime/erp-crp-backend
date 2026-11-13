@@ -32,7 +32,7 @@ describe("Manufactured article creation from a customer technical piece", () => 
   it("supplies the canonical piece customer to the transactional stock creation service", async () => {
     const { res, next } = await createFromPiece()
     expect(next).not.toHaveBeenCalled()
-    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ commercial_scope: "CLIENTS", client_ids: ["001"], piece_technique_id: pieceId, article_category: "fabrique" }), expect.objectContaining({ user_id: 42 }), `piece-article-${pieceId}`)
+    expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ commercial_scope: "CLIENTS", client_ids: ["001"], piece_technique_id: pieceId, article_category: "fabrique", is_sold: true, unite: "u", lot_tracking: true }), expect.objectContaining({ user_id: 42 }), `piece-article-${pieceId}`)
     expect(res.status).toHaveBeenCalledWith(201)
     expect(res.json).toHaveBeenCalledWith({ created: true, article })
   })

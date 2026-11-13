@@ -8,6 +8,7 @@ import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-g
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
+import { COPY_VERSION_PURCHASES_SQL } from "./version-purchases.sql"
 import type {
   CreateNextVersionBodyDTO,
   CreateVersionBodyDTO,
@@ -537,11 +538,12 @@ export async function repoCreateNextVersion(
   pieceTechniqueId: string,
   sourceVersionId: string,
   body: CreateNextVersionBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?: PoolClient
 ): Promise<PieceTechniqueVersionCloneResult> {
-  const client = await db.connect()
+  const client = transactionClient ?? await db.connect()
   try {
-    await client.query("BEGIN")
+    if (!transactionClient) await client.query("BEGIN")
     // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
     // Même verrou que les ajouts/modifications de composants, avant toute allocation.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
@@ -551,7 +553,6 @@ export async function repoCreateNextVersion(
       [sourceVersionId, pieceTechniqueId]
     )
     if (src.rowCount === 0) {
-      await client.query("ROLLBACK").catch(() => {})
       throw new HttpError(404, "NOT_FOUND", "Version source introuvable")
     }
     const source = src.rows[0]
@@ -644,13 +645,7 @@ export async function repoCreateNextVersion(
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
     await client.query(
-      `INSERT INTO public.pieces_techniques_achats
-        (piece_technique_id,piece_technique_version_id,phase,nom,designation,article_id,
-         fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat)
-       SELECT piece_technique_id,$2::uuid,phase,nom,designation,article_id,
-              fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat
-       FROM public.pieces_techniques_achats
-       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$3::uuid`,
+      COPY_VERSION_PURCHASES_SQL,
       [pieceTechniqueId, row.id, sourceVersionId]
     )
 
@@ -661,15 +656,15 @@ export async function repoCreateNextVersion(
       type_changement: row.type_changement,
       copied,
     })
-    await client.query("COMMIT")
+    if (!transactionClient) await client.query("COMMIT")
     return { ...row, copied }
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
+    if (!transactionClient) await client.query("ROLLBACK").catch(() => {})
     if ((e as { code?: string })?.code === "23505") {
       throw new HttpError(409, "CONFLICT", "Une donnée de la nouvelle version entre en conflit avec une donnée existante. Actualisez les indices avant de réessayer.")
     }
     throw e
   } finally {
-    client.release()
+    if (!transactionClient) client.release()
   }
 }

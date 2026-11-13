@@ -67,6 +67,7 @@ export const capabilities = asyncHandler(async (req: Request, res: Response) => 
   const role = typeof req.user?.role === "string" ? req.user.role : null;
   const keys: OfCapability[] = [
     "read",
+    "generate",
     "revise",
     "visa",
     "plan_draft",

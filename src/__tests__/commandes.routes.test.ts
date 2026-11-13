@@ -184,6 +184,8 @@ describe("/api/v1/commandes", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] }) // no firm contract call
+      .mockResolvedValueOnce({ rows: [] }) // no historical contract association
       .mockResolvedValueOnce({ rows: [{ id: "1", commande_id: "123" }] }) // lignes
       .mockResolvedValueOnce({ rows: [{ id: "2", commande_id: "123" }] }) // echeances
       .mockResolvedValueOnce({
@@ -589,6 +591,9 @@ describe("/api/v1/commandes", () => {
           },
         ],
       }) // SELECT existing commande_client
+      .mockResolvedValueOnce({ rows: [] }) // no converted forecast quantity
+      .mockResolvedValueOnce({ rows: [] }) // no firm contract call
+      .mockResolvedValueOnce({ rows: [] }) // no historical contract association
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
       .mockResolvedValueOnce({ rows: [{ id: "501" }] }) // SELECT existing line ids
       .mockResolvedValueOnce({ rows: [] }) // DELETE echeances
@@ -671,6 +676,9 @@ describe("/api/v1/commandes", () => {
           creation_flow_version: 1,
         }],
       })
+      .mockResolvedValueOnce({ rows: [] }) // no converted forecast quantity
+      .mockResolvedValueOnce({ rows: [] }) // no firm contract call
+      .mockResolvedValueOnce({ rows: [] }) // no historical contract association
       .mockResolvedValueOnce({ rows: [{ id: "123" }] }) // UPDATE commande_client
       .mockResolvedValueOnce({ rows: [{ id: "501" }, { id: "502" }] }) // SELECT existing line ids
       .mockRejectedValueOnce(reservationError) // DELETE omitted reserved line
@@ -1393,6 +1401,9 @@ describe("/api/v1/commandes", () => {
     const PIECE_ID = "22222222-2222-2222-2222-222222222222";
     mocks.clientQuery
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ order_type: "FERME" }] }) // locked source purpose
+      .mockResolvedValueOnce({ rows: [] }) // no historical contract association
+      .mockResolvedValueOnce({ rows: [] }) // no firm contract call
       .mockResolvedValueOnce({
         rows: [
           {

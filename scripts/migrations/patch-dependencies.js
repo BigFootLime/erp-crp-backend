@@ -1,6 +1,20 @@
 // Deployed filenames and checksums stay immutable. Dependencies take precedence
 // over their historical filename order in every migration entry point.
 const DEPENDENCIES = Object.freeze({
+  "20261010_client_replenishment_fixed_lots_1032.sql": ["20261010_client_replenishment_roots_1032.sql"],
+  "20261010_client_replenishment_roots_1032.sql": ["20261010_client_replenishment_preparations_1032.sql", "20260905_production_preparation_consolidation_05_grants.sql"],
+  "20261010_client_replenishment_preparations_1032.sql": ["20261009_client_forecast_conversions_1032.sql"],
+  "20261009_client_forecast_conversions_1032.sql": ["20261009_client_contract_forecasts_1032.sql"],
+  "20261009_client_contract_forecasts_1032.sql": ["20261009_client_contract_calls_1031.sql"],
+  "20261009_client_contract_legacy_1031.sql": ["20261009_client_contract_calls_1031.sql", "20260218_commandes_clients_types_groupage.sql"],
+  "20261009_client_contract_calls_1031.sql": ["20261009_client_contract_catalog_1031.sql", "20260902_customer_order_reconciliation_698.sql"],
+  "20261009_client_contract_catalog_1031.sql": ["20261009_stock_lane_locations_1028.sql", "20261008_client_crm_925.sql", "20260804_article_unit_stock_contract.sql"],
+  "20261009_stock_lane_routing_1028.sql": ["20261009_stock_lane_locations_1028.sql", "20261009_production_receipt_lane_assignments_1029.sql"],
+  "20261009_stock_lane_locations_1028.sql": ["20260723_stock_traceability_225.sql", "20260826_z_lots_scope_canonicalization.sql", "20260904_customer_order_assembly_planning.sql"],
+  "20261009_production_receipt_lane_assignments_1029.sql": ["20261009_stock_lane_locations_1028.sql", "20261007_delivery_promises_821.sql", "20260904_customer_order_assembly_planning.sql"],
+  "20261008_stock_invoice_reconciliations_1022.sql": ["20261008_stock_value_adjustments_1007.sql", "20261008_stock_order_transport_1016.sql"],
+  "20261008_stock_value_adjustments_1007.sql": ["20261008_stock_opening_bases_1004.sql"],
+  "20261008_stock_order_transport_1016.sql": ["20261008_stock_acquisition_sources_980.sql"],
   "20261008_stock_opening_bases_1004.sql": ["20261008_stock_manufacturing_allocations_1001.sql"],
   "20261008_stock_manufacturing_allocations_1001.sql": ["20261008_stock_manufacturing_bases_998.sql"],
   "20261008_stock_manufacturing_bases_998.sql": ["20261008_stock_manufacturing_sources_995.sql"],

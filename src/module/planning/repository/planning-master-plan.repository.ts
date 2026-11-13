@@ -3,6 +3,7 @@ import { HttpError } from '../../../utils/httpError';
 import type { MasterPlanOrderSource, MasterPlanPeriod } from '../types/planning-master-plan.types';
 import type { MasterPlanQuery } from '../validators/planning-master-plan.validators';
 import { readCentralSnapshot } from './planning-central.repository';
+import { earliestReplenishmentTarget, readReplenishmentPlanningTargets } from './planning-replenishment-targets.repository';
 
 /** PostgreSQL civil boundaries preserve the October/March clock change. */
 export const MASTER_PLAN_PERIODS_SQL = `
@@ -23,7 +24,7 @@ SELECT o.id::int, o.numero AS number, o.piece_technique_id::text AS "pieceId", p
    CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(t.forecast_issues,'[]'::jsonb)) issue(value)
    WHERE op.of_id=o.id AND op.status::text<>'CANCELLED' AND
     (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))),'{}'::text[]) AS "forecastIssues",
- COALESCE(due.value::date,o.date_fin_prevue::date)::text AS due,
+ COALESCE(due.value::date,o.date_fin_prevue::date)::text AS due,due.value::date::text AS "commercialDue",
  COALESCE((SELECT array_agg(t.id ORDER BY t.id) FROM public.planning_tasks t
    LEFT JOIN public.of_operations op ON op.id=t.operation_id
    WHERE (op.of_id=o.id AND op.status::text<>'CANCELLED' AND
@@ -54,8 +55,13 @@ export async function readMasterPlanSource(query: MasterPlanQuery) {
     await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const periods = (await tx.query<MasterPlanPeriod>(MASTER_PLAN_PERIODS_SQL, [query.start, query.weeks])).rows
       .map(period => ({ ...period, start: new Date(period.start).toISOString(), end: new Date(period.end).toISOString() }));
-    const orders = (await tx.query<MasterPlanOrderSource>(MASTER_PLAN_ORDERS_SQL)).rows;
-    if (orders.length > 2000) throw new HttpError(422, 'MASTER_PLAN_SCOPE_TOO_LARGE', 'La synthèse dépasse 2 000 OF actifs.');
+    const rawOrders = (await tx.query<MasterPlanOrderSource & {commercialDue:string|null}>(MASTER_PLAN_ORDERS_SQL)).rows;
+    if (rawOrders.length > 2000) throw new HttpError(422, 'MASTER_PLAN_SCOPE_TOO_LARGE', 'La synthèse dépasse 2 000 OF actifs.');
+    const targets=await readReplenishmentPlanningTargets(tx,rawOrders.map(order=>order.id));
+    const orders=rawOrders.map(({commercialDue,...order})=>{
+      const target=targets.get(order.id);
+      return target ? {...order,due:earliestReplenishmentTarget(commercialDue,target)} : order;
+    });
     const snapshot = await readCentralSnapshot({ from: periods[0].start, to: periods.at(-1)!.end, limit: 10000,
       includeTaskIds: orders.flatMap(order => order.taskIds), include_coverage: false, snapshot_revision: query.revision }, tx, false);
     if (snapshot.nextCursor) throw new HttpError(422, 'MASTER_PLAN_SCOPE_TOO_LARGE', 'La synthèse dépasse 10 000 opérations. Aucune synthèse partielle n’a été produite.');
