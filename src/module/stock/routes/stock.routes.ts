@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { reconfigureStockArticle } from "../controllers/stock.controller";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware";
@@ -202,6 +203,13 @@ router.get("/articles/:id", requireStockCapability("read"), getStockArticle);
 router.get('/articles/:id/valuation',requireStockCapability('read'),getStockArticleValuation);
 router.get("/articles/:id/available-lots", requireStockCapability("read"), listAvailableStockArticleLots);
 router.patch("/articles/:id", requireArticleWrite, requireSupplierConditionsWrite, updateStockArticle);
+router.post("/articles/:id/reconfigure", requireArticleWrite, (req, res, next) => {
+  if (req.body?.action === "ARCHIVE_OLD") return requireArticleArchive(req, res, next);
+  next();
+}, (req, res, next) => {
+  if (req.body?.article?.supplier_conditions?.length) return authorizeRole(...SUPPLIER_WRITE_ROLES)(req, res, next);
+  next();
+}, reconfigureStockArticle);
 router.post("/articles/:id/validate", requireArticleApprove, validateStockArticle);
 router.post("/articles/:id/archive", requireArticleArchive, archiveStockArticle);
 router.post("/articles/:id/reactivate", requireArticleArchive, reactivateStockArticle);

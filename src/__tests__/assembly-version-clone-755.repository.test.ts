@@ -69,4 +69,29 @@ describe("#755 — clonage d'assemblage", () => {
     await repoCreateNextVersion("piece", "source", { indice: "B", change_level: "MAJOR" }, audit)
     expect(mocks.query.mock.calls.some(([sql]) => sql.includes("version_selection_mode','AUTO'"))).toBe(false)
   })
+  it("keeps existing OFs and transaction ownership when reconfiguration prepares a minor draft", async () => {
+    const normal = mocks.query.getMockImplementation()!
+    mocks.query.mockImplementation((sql: string, params?: unknown[]) => {
+      if (sql.includes("INSERT INTO public.piece_technique_versions"))
+        return Promise.resolve({ rows: [{ id: "new", indice: "B", change_level: "MINOR", impact_interchangeabilite: false }], rowCount: 1 })
+      return normal(sql, params)
+    })
+    const client = { query: mocks.query, release: mocks.release }
+    await repoCreateNextVersion("piece", "source", { indice: "B", change_level: "MINOR" }, audit, client as never, { autoFollowDraftOrders: false })
+    expect(mocks.query.mock.calls.some(([sql]) => /UPDATE public\.ordres_fabrication/.test(sql))).toBe(false)
+    expect(mocks.query.mock.calls.some(([sql]) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql))).toBe(false)
+    expect(mocks.connect).not.toHaveBeenCalled()
+    expect(mocks.release).not.toHaveBeenCalled()
+    expect(mocks.audit).toHaveBeenCalled()
+  })
+  it("leaves rollback to the reconfiguration transaction if copying a technical version fails", async () => {
+    const normal = mocks.query.getMockImplementation()!
+    mocks.query.mockImplementation((sql: string, params?: unknown[]) => sql.includes("INSERT INTO public.pieces_techniques_nomenclature")
+      ? Promise.reject(new Error("copy failed")) : normal(sql, params))
+    const client = { query: mocks.query, release: mocks.release }
+    await expect(repoCreateNextVersion("piece", "source", { indice: "C" }, audit, client as never, { autoFollowDraftOrders: false })).rejects.toThrow("copy failed")
+    expect(mocks.query.mock.calls.some(([sql]) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql))).toBe(false)
+    expect(mocks.release).not.toHaveBeenCalled()
+    expect(mocks.audit).not.toHaveBeenCalled()
+  })
 })

@@ -545,11 +545,13 @@ export async function repoCreateNextVersion(
   pieceTechniqueId: string,
   sourceVersionId: string,
   body: CreateNextVersionBodyDTO,
-  audit: AuditContext
+  audit: AuditContext,
+  transactionClient?: PoolClient,
+  options: { autoFollowDraftOrders?: boolean } = {},
 ): Promise<PieceTechniqueVersionCloneResult> {
-  const client = await db.connect()
+  const client = transactionClient ?? await db.connect()
   try {
-    await client.query("BEGIN")
+    if (!transactionClient) await client.query("BEGIN")
     // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
     // Même verrou que les ajouts/modifications de composants, avant toute allocation.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
@@ -559,7 +561,6 @@ export async function repoCreateNextVersion(
       [sourceVersionId, pieceTechniqueId]
     )
     if (src.rowCount === 0) {
-      await client.query("ROLLBACK").catch(() => {})
       throw new HttpError(404, "NOT_FOUND", "Version source introuvable")
     }
     const source = src.rows[0]
@@ -672,7 +673,9 @@ export async function repoCreateNextVersion(
       targetChangeLevel: row.change_level,
       targetInterchangeable: row.impact_interchangeabilite === true,
     })
-    if (compatibleAutoTarget) {
+    // Article reconfiguration prepares a replacement without changing any OF.
+    // Ordinary revision creation retains its existing AUTO-follow behavior.
+    if (compatibleAutoTarget && options.autoFollowDraftOrders !== false) {
       const synchronized = await client.query<{ id: number }>(
         `UPDATE public.ordres_fabrication o SET
           technical_preparation=COALESCE(o.technical_preparation,'{}'::jsonb)||jsonb_build_object('selected_version_id',$2::text,'version_selection_mode','AUTO'),
@@ -704,15 +707,15 @@ export async function repoCreateNextVersion(
       auto_followed_of_ids: autoFollowedOfIds,
       copied,
     })
-    await client.query("COMMIT")
+    if (!transactionClient) await client.query("COMMIT")
     return { ...row, copied }
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {})
+    if (!transactionClient) await client.query("ROLLBACK").catch(() => {})
     if ((e as { code?: string })?.code === "23505") {
       throw new HttpError(409, "CONFLICT", "Une donnée de la nouvelle version entre en conflit avec une donnée existante. Actualisez les indices avant de réessayer.")
     }
     throw e
   } finally {
-    client.release()
+    if (!transactionClient) client.release()
   }
 }

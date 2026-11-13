@@ -1,4 +1,6 @@
 import type { Request, RequestHandler, Response } from "express";
+import { articleReconfigurationSchema } from "../validators/article-reconfiguration.validators";
+import { reconfigureArticle } from "../services/article-reconfiguration.service";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 
 import { previewArticleCode } from "../../../shared/codes/code-generator.service";
@@ -697,6 +699,17 @@ export const createStockArticle: RequestHandler = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const reconfigureStockArticle: RequestHandler = async (req, res, next) => {
+  try {
+    const { id } = idParamSchema.parse({ params: req.params }).params;
+    const body = articleReconfigurationSchema.parse(req.body);
+    const out = await reconfigureArticle(id, body, buildAuditContext(req),
+      { role: req.user?.role ?? null }, getRequiredIdempotencyKey(req), includeArticleCosts(req));
+    if (!out) throw new HttpError(404, "NOT_FOUND", "Article introuvable.");
+    res.status(201).json(out);
+  } catch (error) { next(error); }
 };
 
 export const previewStockArticleCode: RequestHandler = async (req, res, next) => {

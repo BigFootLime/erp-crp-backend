@@ -282,6 +282,7 @@ export type StockAvailableLotItem = {
 };
 
 export type StockArticleDetail = StockArticleListItem & {
+  finish_definition?: { piece_technique_id: string; piece_technique_version_id: string; finish_revision_id: string } | null;
   subcontract_definition?: import("../validators/subcontract-definition").SubcontractDefinition & {piece_reference:string;piece_designation:string;indice:string} | null;
   notes: string | null;
   article_matiere: ArticleMatierePayload | null;

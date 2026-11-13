@@ -695,13 +695,14 @@ export async function repoConfirmStockFinishArticle(
   body: StockArticleFinishConfirmBodyDTO,
   audit: AuditContext,
   actor: { role: string | null },
-  idempotencyKey: string
+  idempotencyKey: string,
+  transactionClient?: PoolClient
 ): Promise<StockFinishArticleResult> {
   const commandType = "surface_finish.stock_article.confirm";
   const incomingHash = requestHash(commandType, body);
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
   try {
-    await client.query("BEGIN");
+    if (!transactionClient) await client.query("BEGIN");
     const receipt = await client.query<{ request_hash: string; result: StockFinishArticleResult }>(
       `SELECT request_hash, result
        FROM public.surface_finish_command_receipts
@@ -712,7 +713,7 @@ export async function repoConfirmStockFinishArticle(
     const receiptDecision = decideReceipt(existingReceipt?.request_hash, incomingHash);
     assertNoIdempotencyConflict(receiptDecision);
     if (receiptDecision === "REPLAY") {
-      await client.query("ROLLBACK");
+      if (!transactionClient) await client.query("ROLLBACK");
       return existingReceipt.result;
     }
 
@@ -881,10 +882,10 @@ export async function repoConfirmStockFinishArticle(
        VALUES ($1,$2,$3,$4::jsonb,$5)`,
       [idempotencyKey, commandType, incomingHash, JSON.stringify(payload), audit.user_id]
     );
-    await client.query("COMMIT");
+    if (!transactionClient) await client.query("COMMIT");
     return payload;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (!transactionClient) await client.query("ROLLBACK").catch(() => {});
     if ((error as { code?: string } | null)?.code === "23505") {
       throw new HttpError(
         409,
@@ -894,7 +895,7 @@ export async function repoConfirmStockFinishArticle(
     }
     throw error;
   } finally {
-    client.release();
+    if (!transactionClient) client.release();
   }
 }
 

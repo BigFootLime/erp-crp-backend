@@ -460,7 +460,7 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-async function insertAuditLog(
+export async function insertAuditLog(
   tx: Pick<PoolClient, "query">,
   audit: AuditContext,
   entry: {
@@ -3268,6 +3268,9 @@ export async function repoGetArticle(id: string, includeCosts = false): Promise<
            'assembly_supply_strategy', av.assembly_supply_strategy
          ) END AS applicable_version,
          a.notes,
+         (SELECT jsonb_build_object('piece_technique_id', t.piece_technique_id,
+           'piece_technique_version_id', t.piece_technique_version_id, 'finish_revision_id', t.finish_revision_id)
+           FROM public.articles_traitement t WHERE t.article_id = a.id) AS finish_definition,
          CASE
            WHEN ${normalizedArticleCategorySql("a.article_category")} <> 'matiere' THEN NULL
            WHEN am.article_id IS NULL THEN NULL
@@ -4090,9 +4093,10 @@ export async function repoUpdateArticle(
   id: string,
   patch: UpdateArticleBodyDTO,
   audit: AuditContext,
-  includeCosts = false
+  includeCosts = false,
+  transactionClient?: PoolClient
 ): Promise<StockArticleDetail | null> {
-  const client = await db.connect();
+  const client = transactionClient ?? await db.connect();
   const sets: string[] = [];
   const values: unknown[] = [];
   const push = (v: unknown) => {
@@ -4101,7 +4105,7 @@ export async function repoUpdateArticle(
   };
 
   try {
-    await client.query("BEGIN");
+    if (!transactionClient) await client.query("BEGIN");
 
     const currentRes = await client.query<{
       id: string;
@@ -4159,7 +4163,7 @@ export async function repoUpdateArticle(
     );
     const current = currentRes.rows[0] ?? null;
     if (!current) {
-      await client.query("ROLLBACK");
+      if (!transactionClient) await client.query("ROLLBACK");
       return null;
     }
     if (patch.expected_row_version !== current.row_version) {
@@ -4304,17 +4308,18 @@ export async function repoUpdateArticle(
       },
     });
 
-    await client.query("COMMIT");
+    if (!transactionClient) await client.query("COMMIT");
 
-    return repoGetArticle(id, includeCosts);
+    // The outer command reads the final detail after its own commit.
+    return transactionClient ? null : repoGetArticle(id, includeCosts);
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!transactionClient) await client.query("ROLLBACK");
     if (isPgUniqueViolation(err)) {
       throw new HttpError(409, "DUPLICATE", "Article code already exists");
     }
     throw err;
   } finally {
-    client.release();
+    if (!transactionClient) client.release();
   }
 }
 
