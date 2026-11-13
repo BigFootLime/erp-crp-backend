@@ -15,6 +15,7 @@ const repo = vi.hoisted(() => ({
   repoAddLink: vi.fn(),
   repoLogAccess: vi.fn(),
   repoGetQuarantineSession: vi.fn(),
+  repoIsQuarantineSessionCutoverPrivate: vi.fn(),
   repoGetQuarantineSessionForUpdate: vi.fn(),
   repoFinalizeUploadSession: vi.fn(),
   repoClearQuarantineKey: vi.fn(),
@@ -111,6 +112,7 @@ beforeEach(async () => {
   repo.repoLogAccess.mockResolvedValue(undefined);
   repo.repoFinalizeUploadSession.mockResolvedValue(undefined);
   repo.repoClearQuarantineKey.mockResolvedValue(undefined);
+  repo.repoIsQuarantineSessionCutoverPrivate.mockResolvedValue(false);
   repo.withGedTransaction.mockImplementation(async (work: (tx: object) => Promise<unknown>, hooks?: Record<string, () => Promise<void>>) => {
     const result = await work({ query: vi.fn() });
     await hooks?.beforeCommit?.();
@@ -173,6 +175,7 @@ describe("GED plan duplicate exception", () => {
     repo.repoGetQuarantineSessionForUpdate.mockResolvedValue(session);
 
     await expect(releaseQuarantine(ACTOR, SESSION_ID)).resolves.toMatchObject({ id: sourcePlan().id });
+    expect(repo.repoIsQuarantineSessionCutoverPrivate).toHaveBeenCalledWith(SESSION_ID);
     expect(repo.repoUpsertBlob).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sha256: SHA256 }));
     expect(repo.repoCreateDocumentWithVersion).toHaveBeenCalled();
   });

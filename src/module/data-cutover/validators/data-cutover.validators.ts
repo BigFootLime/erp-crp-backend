@@ -3,7 +3,15 @@ import { CUTOVER_DOMAINS } from "../types/data-cutover.types";
 import { catalogFor } from "../domain/cutover-catalog";
 
 const scalar = z.union([z.string().max(8000), z.number().finite(), z.boolean(), z.null()]);
-export const cutoverValuesSchema = z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine((key) => !["constructor", "prototype", "__proto__"].includes(key)), scalar).refine((values) => Object.keys(values).length <= 60, "Trop de champs dans la fiche.");
+const forbiddenKeys = ["constructor", "prototype", "__proto__"];
+// Validate the raw keys before record parsing: a parser may discard __proto__
+// defensively, which must not turn a forbidden request into an accepted one.
+export const cutoverValuesSchema = z.unknown().superRefine((value, ctx) => {
+  if (typeof value !== "object" || value === null) return;
+  for (const key of forbiddenKeys) if (Object.hasOwn(value, key))
+    ctx.addIssue({ code: "custom", path: [key], message: "Nom de champ interdit." });
+}).pipe(z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine((key) => !forbiddenKeys.includes(key)), scalar))
+  .refine((values) => Object.keys(values).length <= 60, "Trop de champs dans la fiche.");
 const source = z.object({
   id: z.string().regex(/^[A-Za-z0-9_.:-]{1,120}$/),
   name: z.string().trim().min(1).max(240).refine((name) => !/[\\/\u0000-\u001f]/.test(name), "Un nom de fichier simple est attendu, sans chemin."),
