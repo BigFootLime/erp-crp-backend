@@ -1,5 +1,12 @@
 # Changelog
 
+## Préparé — Consolidation complète et régressions (13 novembre 2026)
+
+- Réconciliation dev/main/2.0.84, reconfiguration articles transactionnelle et conservation des OF existants.
+- Couleurs client partagées, édition OF 1.9 et contrôle des octets historiques de l'édition 1.8.
+- API native d'acceptation des relations CRP, gardes profil/module, prévalidation des clés de reprise et image reproductible avec zlib corrigé.
+- Détails et preuves : `docs/testing/complete-main-integration-20261113.md`.
+
 ## Préparé — Baseline 2.0.84 et fiabilité des contrats (13 novembre 2026)
 
 - Les tests de création des sous-états couvrent le texte Informations multiligne et la valeur absente, avec le contrat SQL à cinq paramètres. Les cas existants sont conservés.
