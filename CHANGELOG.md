@@ -4,6 +4,11 @@
 
 - Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
 
+## En préparation — Lectures de liste des commandes (U11)
+
+- La liste des commandes, ses filtres paramétrés, sa liste blanche de tris et sa pagination partagent un propriétaire de lecture, derrière l'export historique. Le pool reste résolu à l'appel ; aucun droit, contrat API ou propriétaire de transaction ne change.
+- Les lectures de détail avec leurs inclusions et compatibilités de schéma sont suivies séparément. Voir [les propriétaires de lecture](docs/architecture/u11-customer-order-read-models.md).
+
 ## En préparation — Lectures documentaires des livraisons (U11)
 
 - Les recherches de métadonnées, de lien BL-document et de chemin de stockage des pièces jointes sont détenues par `delivery-document-reads.repository.ts`, derrière les mêmes exports de compatibilité de `livraisons.repository.ts`. L'ajout et le retrait restent dans la façade transactionnelle qui verrouille le BL, coordonne le transfert de fichier et écrit l'événement de livraison.
