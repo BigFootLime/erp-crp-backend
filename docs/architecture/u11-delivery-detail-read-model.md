@@ -11,8 +11,10 @@ Optional and absent related rows still map to `null` or empty collections exactl
 as before. Invalid frozen intercompany destinations continue to fail with the
 same domain error.
 
-`getHeader` and the frozen intercompany-address mapper are shared from the detail
-owner because writes need the identical header shape and validation. Transactional
-write paths remain in the facade: they retain lock timing, capability checks,
-cache invalidation, events, and outbox ownership. This extraction introduces no
-endpoint, schema, authorization, deployment, or production-data change.
+`delivery-header.repository.ts` owns the stable header row shape, row mappers,
+header lock query, and frozen intercompany-address validation shared by detail
+reads and transactional writes. The write facade depends only on this lower-level
+owner; it does not import the volatile aggregate reader. Transactional write
+paths retain their lock timing, capability checks, cache invalidation, events,
+and outbox ownership. This extraction introduces no endpoint, schema,
+authorization, deployment, or production-data change.

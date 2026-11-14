@@ -20,14 +20,14 @@ import { createRecursiveOrdresFabrication } from "../../production/domain/of-gen
 import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf"
 import { insertEvent } from "./delivery-events.repository"
 import { createDeliveryListReadRepository } from "./delivery-list-read.repository"
-import { getHeader, intercompanyDestinationAddress } from "./delivery-detail-read.repository"
+import { getHeader, intercompanyDestinationAddress, toFloat, toInt } from "./delivery-header.repository"
 export { repoGetLivraisonDetail } from "./delivery-detail-read.repository"
 export async function repoListLivraisons(
   filters: ListLivraisonsQueryDTO
 ): Promise<Paginated<BonLivraisonListItem> & { summary: BonLivraisonListSummary }> {
   return createDeliveryListReadRepository({ pool, toInt }).repoListLivraisons(filters)
 }
-import type { HeaderRow } from "./delivery-detail-read.repository"
+import type { HeaderRow } from "./delivery-header.repository"
 export {
   repoFindDocumentFilePath,
   repoGetDocumentName,
@@ -145,21 +145,6 @@ import type {
   UpdateLivraisonLineBodyDTO,
   VerifyPreparationLotBodyDTO,
 } from "../validators/livraisons.validators"
-
-function toInt(value: unknown, label = "id"): number {
-  if (typeof value === "number" && Number.isInteger(value)) return value
-  if (typeof value === "string" && /^\d+$/.test(value)) return Number.parseInt(value, 10)
-  throw new Error(`Invalid ${label}: ${String(value)}`)
-}
-
-function toFloat(value: unknown, label = "value"): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim() !== "") {
-    const n = Number(value)
-    if (Number.isFinite(n)) return n
-  }
-  throw new Error(`Invalid ${label}: ${String(value)}`)
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null

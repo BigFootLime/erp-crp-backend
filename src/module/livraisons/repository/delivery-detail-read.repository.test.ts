@@ -13,6 +13,7 @@ vi.mock("./livraisons-shipment.repository", () => ({
 }))
 
 import { repoGetLivraisonDetail } from "./delivery-detail-read.repository"
+import { getHeader, intercompanyDestinationAddress } from "./delivery-header.repository"
 
 const deliveryId = "00000000-0000-0000-0000-000000000001"
 
@@ -72,5 +73,26 @@ describe("repoGetLivraisonDetail", () => {
     mocks.query.mockResolvedValueOnce({ rows: [header({ intercompany_destination_snapshot: { recipient_name: "x" } })] })
     await expect(repoGetLivraisonDetail(deliveryId)).rejects.toMatchObject({ code: "INTERCOMPANY_DELIVERY_DESTINATION_INVALID" })
     expect(mocks.release).toHaveBeenCalledOnce()
+  })
+
+  it("keeps the write header lock and allocation-derived scope query in the stable shared owner", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [header()] })
+    await expect(getHeader({ query } as never, deliveryId, { forUpdate: true })).resolves.toMatchObject({ id: deliveryId })
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE OF bl"), [deliveryId])
+    expect(query.mock.calls[0]?.[0]).toContain("bon_livraison_ligne_allocations")
+  })
+
+  it("keeps frozen intercompany destinations valid for both read and write consumers", () => {
+    expect(intercompanyDestinationAddress(deliveryId, {
+      recipient_name: "Atelier partenaire",
+      address_line_1: "1 rue des Forges",
+      address_line_2: "Bâtiment A",
+      postal_code: "69001",
+      city: "Lyon",
+      country_code: "FR",
+    })).toMatchObject({
+      id: `intercompany:${deliveryId}`,
+      label: "Atelier partenaire, 1 rue des Forges, Bâtiment A, 69001 Lyon, FR",
+    })
   })
 })
