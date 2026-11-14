@@ -270,6 +270,7 @@ export { oldMaterialDefinitionFromProjection, type OldMaterialDefinitionProjecti
 
 export {
   assertCanonicalArticleUnit,
+  syncArticleSubtypeDetails,
   repoListArticles,
   repoGetArticle,
   repoListAvailableArticleLots,
