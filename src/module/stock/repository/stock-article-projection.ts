@@ -14,7 +14,7 @@ export type OldMaterialDefinitionProjection = {
   material_diametre_mm: number | null;
 };
 
-function oldMaterialDefinitionFromProjection(row: OldMaterialDefinitionProjection): string | null {
+export function oldMaterialDefinitionFromProjection(row: OldMaterialDefinitionProjection): string | null {
   const source: OldMaterialDefinitionSource = {
     article_category: row.material_article_category,
     designation: row.material_designation,

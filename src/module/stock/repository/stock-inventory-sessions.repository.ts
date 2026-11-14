@@ -1,72 +1,11 @@
 import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
-import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
-import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
-import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
-import { assemblyComponentWithdrawalOwnsMovement } from './assembly-component-movement-guard';
-import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
-import { syncArticleCommercialTx } from './article-commercial.repository';
-import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
-import { lockStockLaneTopology } from './stock-lane-routing.repository';
-import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';
 import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMaterialBarCountSessionTx,
   applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
 import type { PoolClient } from "pg";
-import { assertStockEntrySource } from "../domain/manual-entry-policy";
-import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
 
 import db from "../../../config/database";
-import { nuanceIdentity, resolveNuanceIdentity, nuanceNormeFields } from "../domain/nuance-library";
-import {
-  generateArticleBusinessCode,
-  generateFabricatedArticleBusinessCode,
-  generateTransactionalBusinessCode,
-  generatePieceTechniqueBusinessCode,
-} from "../../../shared/codes/code-generator.service";
-import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
-import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
-import {
-  assertMaterialPreviewFresh,
-  buildMaterialArticleCode,
-  computeMaterialCodePreviewHash,
-  isSpecialMaterialProfile,
-  normalizeMaterialProfile,
-  type MaterialCodeInput,
-  type MaterialCodeResult,
-  type MaterialProfileCode,
-} from "../../../shared/codes/material-article-code";
-import { canonicalizeStockUnitCode, materialManagementUnit } from "../../../shared/stock-unit";
-import { findCanonicalStockUnit } from "../../../shared/stock-unit.repository";
-import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
-import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
-import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
-import { calculateMargin } from "../../margin-engine/domain/margin-engine";
-import {
-  repoBuildCalculationInput,
-  repoLoadScopeIdentity,
-} from "../../margin-engine/repository/margin-engine.repository";
-import {
-  applyArticleSheetSalePriceTx,
-  seedArticleSheetSalePriceTx,
-} from "./article-sale-price.repository";
-import {
-  calculateStockAvailability,
-  type StockLotQualityStatus,
-} from "../domain/stock-availability";
-import { hashStockCommand, normalizeIdempotencyKey } from "../domain/stock-command";
-import {
-  commandeArticleEligibleSql,
-  commandeArticleIneligibilityCodeSql,
-} from "../domain/commande-article-eligibility";
-import {
-  buildOldMaterialDefinition,
-  type OldMaterialDefinitionSource,
-} from "../domain/old-material-definition";
 import type {
   ArticleCategory,
   ArticleBusinessCategory,
@@ -182,7 +121,6 @@ import {
   sumQty,
 } from "./stock-movement-core.repository";
 import { normalizeLikeQuery, sortDirection } from "./stock-query.repository";
-import { articleFamilyTable, defaultFamilyCodeForCategory, materialFamilyCanonicalMap, normalizeArticleCategorySelection, normalizeFamilyCode, normalizeArticleWorkflowStatus, resolveArticleCode, resolveMaterialCodeInput, toBusinessArticleCategory, inferArticleType } from "./stock-material-referentials.repository";
 import type {
   AuditContext,
   BegunStockCommand,
