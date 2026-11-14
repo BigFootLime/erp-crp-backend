@@ -19,11 +19,14 @@ new public exports. No SQL, endpoint, role policy, Quality visa, stock,
 purchase, lot-quality permission, migration, service, deployment or
 installation behavior changes in this extraction.
 
-The moved body is mechanically retained from candidate
-`fb9a0505b07ab64c970b887e1cb89c0679fd12e7`; only the owner boundary and
-typed dependency binding differ. The qualified build requires a complete local
-dependency graph. The isolated worktree's inherited dependency junction was
-already stale (its target was absent), so its broad typecheck and Vitest run
-stop at dependency resolution rather than the U11 sources; focused compiler
-analysis with a valid frozen dependency graph reports no diagnostic in either
-workflow owner or facade.
+The moved declarations retain their complete bodies and signatures from
+`fb9a0505b07ab64c970b887e1cb89c0679fd12e7`, with two spaces of factory nesting.
+This adds common indentation to multiline SQL text; the preservation proof
+normalizes only that indentation and does not claim byte-identical SQL strings.
+Qualification uses a complete frozen dependency installation and the actual
+strict project build, including its emitted CommonJS dependency graph.
+
+The empty-routing contract checks mandatory planning on the actual complete
+`repairLegacyNoOperationPlanningBypass` body in this owner, and verifies that
+the facade still invokes it. All four existing contract cases and their
+planning, archive and warning assertions remain in place.
