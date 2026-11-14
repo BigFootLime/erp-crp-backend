@@ -3,10 +3,11 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { repoRoot } from "../../../__tests__/helpers/repo-paths";
+import { readSourceFunction } from "../../../__tests__/helpers/source-contract";
 
 const reservationWriters = [
   "src/module/stock/repository/stock-reservation.repository.ts",
-  "src/module/production/repository/production-receipts.repository.ts",
+  "src/module/production/repository/production-receipt-lot-reconciliation.repository.ts",
   "src/module/commande-client/repository/commande-client.repository.ts",
   "src/module/livraisons/repository/livraisons.repository.ts",
   "src/module/livraisons/repository/livraisons-shipment.repository.ts",
@@ -15,7 +16,9 @@ const reservationWriters = [
 describe("Quality 360 stock-reservation writer contract (#616)", () => {
   it("keeps every direct reservation writer behind the canonical operational gate", () => {
     for (const relativePath of reservationWriters) {
-      const source = readFileSync(resolve(repoRoot, relativePath), "utf8");
+      const source = relativePath.endsWith("production-receipt-lot-reconciliation.repository.ts")
+        ? readSourceFunction(relativePath, "reserveProducedComponentForParentOf")
+        : readFileSync(resolve(repoRoot, relativePath), "utf8");
       expect(source, relativePath).toContain("assertOperationalLotQualityEligibility");
       const insertAt = source.indexOf("INSERT INTO public.stock_reservations");
       expect(insertAt, relativePath).toBeGreaterThanOrEqual(0);

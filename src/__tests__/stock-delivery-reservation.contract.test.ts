@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSourceFunction } from "./helpers/source-contract";
 
 import { ofReceiptBodySchema } from "../module/production/validators/production.validators";
 import { stockLotTraceReferenceValuesSql } from "../shared/provenance/stock-lot-trace.sql";
@@ -28,9 +29,11 @@ const deliveryPrintingRepository = fs.readFileSync(
   path.resolve(__dirname, "../module/livraisons/repository/delivery-printing.repository.ts"),
   "utf8"
 );
-const stockRepository = fs.readFileSync(
-  path.resolve(__dirname, "../module/stock/repository/stock.repository.ts"),
-  "utf8"
+const stockReporting = readSourceFunction(
+  "src/module/stock/repository/stock-reporting.repository.ts", "repoListConsolidatedInventory"
+);
+const stockHistoricalImport = readSourceFunction(
+  "src/module/stock/repository/stock-historical-openings.repository.ts", "repoCreateHistoricalImportTx"
 );
 const livraisonRoutes = fs.readFileSync(
   path.resolve(__dirname, "../module/livraisons/routes/livraisons.routes.ts"),
@@ -158,11 +161,11 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(deliveryRepository).toMatch(/plan_reference/);
     expect(deliveryRepository).toMatch(/plan_index/);
     expect(deliveryRepository).toMatch(/verified_qty/);
-    expect(stockRepository).toMatch(/AS of_references/);
-    expect(stockRepository).toMatch(/AS mp_references/);
-    expect(stockRepository).toMatch(/AS tr_references/);
-    expect(stockRepository).toMatch(/public\.of_output_lots/);
-    expect(stockRepository).toMatch(/lot_code: lotCode/);
+    expect(stockReporting).toMatch(/AS of_references/);
+    expect(stockReporting).toMatch(/AS mp_references/);
+    expect(stockReporting).toMatch(/AS tr_references/);
+    expect(stockReporting).toMatch(/public\.of_output_lots/);
+    expect(stockHistoricalImport).toMatch(/lot_code: lotCode/);
     expect(livraisonRoutes).toMatch(/preparation-cart\/correct/);
     expect(livraisonRoutes).toMatch(/requireStockCorrectionPermission/);
     expect(livraisonRoutes).toMatch(/:id\/print-status/);

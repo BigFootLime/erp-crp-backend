@@ -54,7 +54,6 @@ import { pieceClientCodeSql } from "./stock-article-projection";
 import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
 import { assemblyComponentWithdrawalOwnsMovement } from './assembly-component-movement-guard';
-import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
 import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';

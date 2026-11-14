@@ -20,6 +20,14 @@ The #446 migration guards inspect complete historical function declarations,
 choosing the historical owner when present and the facade while that extraction
 is pending. Their migration, preflight and rollback assertions remain intact.
 
+Source-contract guards read complete, uniquely named, non-empty declarations
+from the actual owners. The Stock trace projections are checked in reporting;
+historical return values and creation-PDF exclusions in historical openings;
+draft, close and cancel evidence in inventory sessions; upload reconciliation
+in both document writers; and the Production reservation gate in the narrow
+lot-reconciliation writer. Existing cases and matcher arguments are retained.
+An absent declaration cannot satisfy a guard through an empty source slice.
+
 Focused regression coverage exercises query bindings and pagination, material
 bar requirements, OLD/NEW display mapping and authoritative analytics defaults.
 These controlled database tests do not claim PostgreSQL or whole-application
