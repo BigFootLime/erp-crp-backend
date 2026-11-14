@@ -15,6 +15,8 @@ La version reste `contract_version: 1`. Les en-têtes sont
 insensible à la casse). Le lien de connexion est un indice de routage public :
 il ne crée aucun droit et le runtime fixe, la session et l'annuaire restent
 autoritaires.
+La description OpenAPI de ces en-têtes utilise les mêmes constantes ; les
+caractères obligatoire/facultatif de découverte et d'échange restent inchangés.
 
 Les fixtures couvrent les réponses LEGACY, COMMERCIAL et INDUSTRIAL. Les tests
 du consommateur frontend refusent une version inconnue, une entreprise active

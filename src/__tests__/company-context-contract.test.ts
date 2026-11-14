@@ -1,12 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   COMPANY_CONTEXT_COMPATIBILITY_FIXTURES,
+  COMPANY_CONTEXT_HTTP_HEADERS,
 } from "../module/entreprises/contract/company-context-contract-v1";
+import { buildOpenApiDocument } from "../swagger/openapi-contract";
 import {
   createCompanyRuntimeService,
 } from "../module/entreprises/runtime/company-runtime.service";
 
 describe("public company-context v1 contract", () => {
+  it("documents the canonical headers without changing discovery or exchange requirements", () => {
+    type Operation = { parameters: Array<{ name: string; in: string; required: boolean }> };
+    const paths = buildOpenApiDocument().paths as Record<string, { get: Operation; post: Operation }>;
+    const names = Object.values(COMPANY_CONTEXT_HTTP_HEADERS);
+    const headers = (operation: Operation) => operation.parameters
+      .filter((parameter) => parameter.in === "header" && names.includes(parameter.name as typeof names[number]))
+      .map(({ name, required }) => ({ name, required }));
+    expect(headers(paths["/entreprises/sign-in-context"].get)).toEqual(names.map((name) => ({ name, required: false })));
+    expect(headers(paths["/entreprises/context"].get)).toEqual(names.map((name) => ({ name, required: false })));
+    expect(headers(paths["/entreprises/switches/exchange"].post)).toEqual(names.map((name) => ({ name, required: true })));
+  });
   it("builds the legacy response through the production response builder", async () => {
     const service = createCompanyRuntimeService({
       env: () => ({}), directory: () => null, site: () => "cerp_prod",
