@@ -1,15 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => {
   const query = vi.fn()
   const release = vi.fn()
-  return { query, release, client: { query, release }, enqueue: vi.fn(), audit: vi.fn() }
+  return { query, release, client: { query, release }, enqueue: vi.fn(), audit: vi.fn(), appNotification: vi.fn() }
 })
 
 vi.mock("../../../config/database", () => ({
   default: { connect: vi.fn(async () => mocks.client), query: mocks.query },
 }))
-vi.mock("../../../shared/realtime/realtime-outbox.service", () => ({ enqueueEntityChanged: mocks.enqueue }))
+vi.mock("../../../shared/realtime/realtime-outbox.service", () => ({ enqueueEntityChanged: mocks.enqueue, enqueueAppNotificationCreated: mocks.appNotification }))
 vi.mock("../../audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: mocks.audit }))
 
 import { repoRetryLivraisonPrint } from "./livraisons.repository"
@@ -24,6 +24,10 @@ beforeEach(() => {
     if (sql.includes("INSERT INTO bon_livraison_event_log")) return { rows: [{ id: "event-1", created_at: "2026-11-14T00:00:01.000Z" }] }
     throw new Error(`Unexpected SQL: ${sql}`)
   })
+})
+
+afterEach(() => {
+  expect(mocks.appNotification).not.toHaveBeenCalled()
 })
 
 describe("delivery printing facade", () => {
