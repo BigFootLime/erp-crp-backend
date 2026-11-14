@@ -142,6 +142,8 @@ describe("commande creation mechanical seam proof", () => {
   it("retains all unaffected facade statements, public comments, and the actual binding names", () => {
     // The independent list-read owner characterizes these declarations against
     // the same historical facade; creation still protects every other statement.
+    // List/detail declarations and the two contract-read imports have separate
+    // actual-body/API/comment proofs; every other historical statement stays here.
     const excluded = new Set([
       "repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository",
       "repoListCommandes", "sortColumn", "sortDirection", "buildListWhere", "ListWhere",

@@ -9,6 +9,11 @@
 - La liste des commandes, ses filtres paramétrés, sa liste blanche de tris et sa pagination partagent un propriétaire de lecture, derrière l'export historique. Le pool reste résolu à l'appel ; aucun droit, contrat API ou propriétaire de transaction ne change.
 - Les lectures de détail avec leurs inclusions et compatibilités de schéma sont suivies séparément. Voir [les propriétaires de lecture](docs/architecture/u11-customer-order-read-models.md).
 
+## En préparation — Lecture détaillée des commandes (U11)
+
+- La lecture agrégée des commandes et ses six inclusions facultatives partagent un propriétaire de lecture, derrière le même export public. Les requêtes et projections historiques sont conservées ; le pool reste résolu à l'appel.
+- La couverture caractérise les 64 combinaisons d'inclusions et les frontières d'erreur, sans déplacer les droits ni les transactions de mutation. Voir [le propriétaire de détail](docs/architecture/u11-customer-order-detail-read.md).
+
 ## En préparation — Lecture détaillée des commandes client (U11)
 
 - L'agrégat de lecture `repoGetCommande` et ses six inclusions optionnelles sont détenus par `commande-detail-read.repository.ts`, derrière la signature publique historique de `commande-client.repository.ts`.
