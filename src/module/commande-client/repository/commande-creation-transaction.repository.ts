@@ -1,14 +1,29 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import type { AppNotification } from "../../notifications/types/notifications.types";
-import type { AuditContext as PurchaseAuditContext } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
 import type { CreateCommandeInput, UploadedDocument } from "../types/commande-client.types";
 import type { CommandeWorkflowStatus } from "../workflow/commande-client-workflow.definition";
 
 type EventParams = { commande_id: number; event_type: string; old_values?: unknown | null; new_values?: unknown | null; user_id?: number | null };
 type WorkflowNotificationParams = { commande: { id: number; numero: string; client_id: string | null; order_type: string | null; fulfilment_mode?: string | null; statut: CommandeWorkflowStatus; raw_statut: string | null }; role: string; kind: string; title: string; message: string; severity?: "info" | "success" | "warning" | "error"; checkpoint_code: string | null; dedupe_key: string };
 type InsertLinesOptions = { officialize_preparatory_data: boolean; commande_id_int: number; actor_user_id: number | null; creation_flow_version: 1 | 2; save_intent: "DRAFT" | "VALIDATE"; fulfilment_mode?: string; existing_line_ids?: ReadonlySet<number>; skip_sale_price_reference?: boolean };
-type DropshipPurchaseOrderParams = { buyerCompanyId: string; buyerSalesOrderId: number; mappingIds: string[]; audit: PurchaseAuditContext };
+type DropshipPurchaseOrderParams = {
+  buyerCompanyId: string;
+  buyerSalesOrderId: number;
+  mappingIds: string[];
+  audit: {
+    user_id: number;
+    role: null;
+    ip: null;
+    user_agent: null;
+    device_type: null;
+    os: null;
+    browser: null;
+    path: null;
+    page_key: "commandes";
+    client_session_id: null;
+  };
+};
 
 export type CommandeCreationRepositoryDependencies<ContractCall, DocumentMove> = {
   prepareContractCall: (client: PoolClient, input: CreateCommandeInput, actorUserId: number | null, documents: UploadedDocument[]) => Promise<ContractCall>;
