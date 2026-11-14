@@ -56,7 +56,8 @@ The commande creation/list and delivery-list extraction proofs use read-only
 snapshots in `src/__tests__/fixtures/repository-history`, loaded through
 `historical-repository-fixture.ts`. Their provenance records the published
 official source commit, path, Git blob and SHA-256; the loader checks fixture
-integrity before returning source. Tests therefore also run from a shallow
+integrity after canonical LF normalization, including Windows CRLF checkouts,
+before returning source. Tests therefore also run from a shallow
 clone or source archive without a Git object store. The commande fixture is
 the full historical facade because the creation proof checks all unaffected
 statements and their order; the delivery fixture contains only the five full

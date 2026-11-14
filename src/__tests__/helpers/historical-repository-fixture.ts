@@ -13,7 +13,9 @@ export function readHistoricalRepositoryFixture(name: HistoricalRepositoryFixtur
     { file: string; fixtureSha256: string }
   >;
   const fixture = provenance[name];
-  const source = readFileSync(path.join(directory, fixture.file), "utf8");
+  // Git may check text fixtures out with CRLF on Windows; provenance hashes
+  // use their canonical LF form, as do the existing source comparisons.
+  const source = readFileSync(path.join(directory, fixture.file), "utf8").replace(/\r\n/g, "\n");
   if (createHash("sha256").update(source).digest("hex") !== fixture.fixtureSha256) {
     throw new Error(`Historical repository fixture integrity mismatch: ${name}`);
   }
