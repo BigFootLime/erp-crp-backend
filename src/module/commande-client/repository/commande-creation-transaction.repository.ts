@@ -106,25 +106,25 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
   ): Promise<{ id: number; numero: string }> {
     let notifications: AppNotification[] = [];
       const contractCall=await prepareContractCall(client,input,actorUserId,documents);
-  
+
       await assertDevisDraftIsFresh(client, input.devis_id ?? null, input.source_devis_updated_at ?? null);
-  
+
       const idRes = await client.query<{ id: string }>(
         `SELECT nextval('public.commande_client_id_seq')::bigint::text AS id`
       );
       const rawId = idRes.rows[0]?.id;
       if (!rawId) throw new Error("Failed to allocate commande id");
       const commandeIdInt = toInt(rawId, "commande_client.id");
-  
+
       // The business number is allocated in this transaction.  A client-provided
       // value is intentionally ignored: it must never become a relational key.
       const numeroForInsert = await generateCommandeCode(client, {
         client_code: input.code_client ?? input.client_id ?? "CMD",
         date: input.date_commande ? new Date(input.date_commande) : undefined,
       });
-  
+
       const orderType = input.order_type ?? "FERME";
-  
+
       // A commercial company may submit its normal customer-order form without a
       // special dropship address field. Resolve that customer's persisted delivery
       // address while this transaction owns the creation, then persist the exact
@@ -132,7 +132,7 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
       const resolvedIntercompanyDeliveryAddress = input.fulfilment_mode === "SUPPLIER_DROPSHIP"
         ? await resolveIntercompanyDeliveryAddress(client, input)
         : input.intercompany_delivery_address ?? null;
-  
+
       const initialWorkflowStatus: CommandeWorkflowStatus = input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "ATTENTE_FOURNISSEUR" : orderType === "INTERNE" ? "ATTENTE_OF" : "ATTENTE_STOCK";
       const insertSql = `
         INSERT INTO commande_client (
@@ -212,7 +212,7 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
       const ins = await client.query<{ id: string }>(insertSql, insertParams);
       const commandeId = ins.rows[0]?.id;
       if (!commandeId) throw new Error("Failed to create commande");
-  
+
       await insertCommandeLignes(client, commandeId, input.lignes, {
         officialize_preparatory_data: input.officialize_preparatory_data ?? false,
         commande_id_int: commandeIdInt,
@@ -237,7 +237,7 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
       await insertCommandeDocuments(client, commandeId, documents, movedDocuments);
       await transitionLinkedDevisArticlesToValide(client, commandeIdInt, input.devis_id ?? null);
       if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") await repoEnsureCommandeWorkflowCheckpoints(client, commandeIdInt, initialWorkflowStatus);
-  
+
       await client.query(
         `
           INSERT INTO commande_historique (commande_id, user_id, ancien_statut, nouveau_statut, commentaire)
@@ -245,7 +245,7 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
         `,
         [commandeIdInt, null, null, initialWorkflowStatus, input.fulfilment_mode === "SUPPLIER_DROPSHIP" ? "Commande créée — attente preuve d'expédition fournisseur" : "Commande créée — contrôle stock et lancement à préparer"]
       );
-  
+
       await insertCommandeEvent(client, {
         commande_id: commandeIdInt,
         event_type: "WORKFLOW_INITIALIZED",
@@ -256,7 +256,7 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
         },
         user_id: null,
       });
-  
+
       if (input.fulfilment_mode !== "SUPPLIER_DROPSHIP") notifications = await notifyWorkflowRole(client, {
         commande: {
           id: commandeIdInt,
@@ -274,13 +274,13 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
         checkpoint_code: orderType === "INTERNE" ? "of_generation" : "stock_check",
         dedupe_key: `commande:${commandeIdInt}:checkpoint:launch-preparation:created`,
       });
-  
+
       for (const notification of notifications) {
         await enqueueAppNotificationCreated(client, notification.user_id, notification, {
           deduplicationKey: `notification:${notification.id}`,
         });
       }
-  
+
       // This is deliberately last in the business transaction: the snapshot contains
       // the persisted header and dependants, and a queue failure aborts the order
       // together with any uploaded files.  It is an internal creation record, not an
@@ -289,10 +289,9 @@ export function createCommandeCreationRepository<ContractCall, DocumentMove>(dep
         commandeId,
         actorUserId: null,
       });
-  
+
       return { id: toInt(commandeId, "commande.id"), numero: numeroForInsert };
   }
 
   return { repoCreateCommandeDraftTx, repoCreateCommandeNativeTx };
 }
-
