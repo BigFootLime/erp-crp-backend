@@ -22,11 +22,6 @@ import { insertEvent } from "./delivery-events.repository"
 import { createDeliveryListReadRepository } from "./delivery-list-read.repository"
 import { getHeader, intercompanyDestinationAddress, toFloat, toInt } from "./delivery-header.repository"
 export { repoGetLivraisonDetail } from "./delivery-detail-read.repository"
-export async function repoListLivraisons(
-  filters: ListLivraisonsQueryDTO
-): Promise<Paginated<BonLivraisonListItem> & { summary: BonLivraisonListSummary }> {
-  return createDeliveryListReadRepository({ pool, toInt }).repoListLivraisons(filters)
-}
 import type { HeaderRow } from "./delivery-header.repository"
 export {
   repoFindDocumentFilePath,
@@ -403,6 +398,12 @@ async function hasCommandeToAffaireRoleColumn(db: Queryable): Promise<boolean> {
 
   commandeToAffaireHasRoleColumnCache = res.rows.length > 0
   return commandeToAffaireHasRoleColumnCache
+}
+
+export async function repoListLivraisons(
+  filters: ListLivraisonsQueryDTO
+): Promise<Paginated<BonLivraisonListItem> & { summary: BonLivraisonListSummary }> {
+  return createDeliveryListReadRepository({ pool, toInt }).repoListLivraisons(filters)
 }
 
 type DirectAllocationSourceRow = {
