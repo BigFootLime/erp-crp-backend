@@ -6,10 +6,10 @@
   "working_tree": {
     "tracked_changes": [
       "src/__tests__/stock-delivery-repositories.pg.integration.test.ts",
-      "src/module/production/repository/production-receipts.repository.ts",
       "docs/testing/issue-1537-pg-fixture-repair.md",
       "docs/testing/evidence/issue-1537-pg-fixture-qualification.json"
     ],
+    "production_runtime_and_sql_unchanged": true,
     "production_database_or_service_modified": false,
     "installer_published": false,
     "deployment_performed": false
@@ -21,6 +21,18 @@
     "network_scope": "fresh labelled container with a random port bound to 127.0.0.1 only",
     "teardown_verified": true,
     "credentials_logged": false
+  },
+  "final_source_evidence": {
+    "commit_files": [
+      "src/__tests__/stock-delivery-repositories.pg.integration.test.ts",
+      "docs/testing/issue-1537-pg-fixture-repair.md",
+      "docs/testing/evidence/issue-1537-pg-fixture-qualification.json"
+    ],
+    "fixture_blob_sha256": "2e687fe81c3f0e67273e14695daa338fee431c9d65a697ba3c63aa71e54724f3",
+    "attempt_28_working_tree_patch_sha256": "9a9ef306d706a184d871c9713c5cbc9b38cbd84d33a415652dfa299d3ecf75e4",
+    "attempt_28_patch": "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/source.patch",
+    "runtime_and_sql_diff_command": "git diff --exit-code HEAD^ HEAD -- src/module db",
+    "runtime_and_sql_diff_exit_code": 0
   },
   "retained_history": [
     {
