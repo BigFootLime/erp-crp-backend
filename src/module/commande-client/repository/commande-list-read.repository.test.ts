@@ -13,11 +13,9 @@ describe("commande list read owner", () => {
       .mockResolvedValueOnce({ rows: [{ id: "42", numero: "CMD-42" }] });
     const owner = createCommandeListReadRepository({
       pool: { query } as unknown as Pool,
-      buildListWhere: vi.fn(() => ({ whereSql: "WHERE cc.client_id = $1", values: ["client-1"] })),
-      sortColumn: vi.fn(() => "cc.numero"), sortDirection: vi.fn((): "ASC" => "ASC"),
       normalizedCommandeStatusSql: vi.fn(() => "'ATTENTE_STOCK'"), toInt: (value) => Number(value),
     });
-    await expect(owner.repoListCommandes({ page: 2, pageSize: 5, sortBy: "numero", sortDir: "asc" })).resolves.toEqual({ items: [{ id: 42, numero: "CMD-42" }], total: 1 });
+    await expect(owner.repoListCommandes({ page: 2, pageSize: 5, sortBy: "numero", sortDir: "asc", client_id: "client-1" })).resolves.toEqual({ items: [{ id: 42, numero: "CMD-42" }], total: 1 });
     expect(query.mock.calls).toHaveLength(2);
     expect(query.mock.calls[0][1]).toEqual(["client-1"]);
     expect(query.mock.calls[1][1]).toEqual(["client-1", 5, 5]);

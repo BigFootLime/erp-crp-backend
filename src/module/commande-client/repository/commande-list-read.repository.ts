@@ -2,15 +2,92 @@ import type { Pool } from "pg";
 import type { CommandeListItem, ClientLite } from "../types/commande-client.types";
 import type { ListCommandesQueryDTO } from "../validators/commande-client.validators";
 
+function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
+  switch (sortBy) {
+    case "numero":
+      return "cc.numero";
+    case "date_commande":
+      return "cc.date_commande";
+    case "updated_at":
+      return "cc.updated_at";
+    case "total_ttc":
+      return "cc.total_ttc";
+    default:
+      return "cc.updated_at";
+  }
+}
+
+function sortDirection(sortDir: ListCommandesQueryDTO["sortDir"]) {
+  return sortDir === "asc" ? "ASC" : "DESC";
+}
+
+type ListWhere = { whereSql: string; values: unknown[] };
+
+
 export function createCommandeListReadRepository(deps: {
   pool: Pool;
-  buildListWhere: (filters: ListCommandesQueryDTO) => { whereSql: string; values: unknown[] };
-  sortColumn: (sortBy: ListCommandesQueryDTO["sortBy"]) => string;
-  sortDirection: (sortDir: ListCommandesQueryDTO["sortDir"]) => "ASC" | "DESC";
   normalizedCommandeStatusSql: (column: string) => string;
   toInt: (value: string | number, label?: string) => number;
 }) {
-  const { pool, buildListWhere, sortColumn, sortDirection, normalizedCommandeStatusSql, toInt } = deps;
+  const { pool, normalizedCommandeStatusSql, toInt } = deps;
+
+  function buildListWhere(filters: ListCommandesQueryDTO): ListWhere {
+    const where: string[] = [];
+    const values: unknown[] = [];
+    const push = (v: unknown) => {
+      values.push(v);
+      return `$${values.length}`;
+    };
+  
+    if (filters.q && filters.q.trim().length > 0) {
+      const p = push(`%${filters.q.trim()}%`);
+      where.push(`(cc.numero ILIKE ${p} OR c.company_name ILIKE ${p} OR cc.code_client ILIKE ${p})`);
+    }
+  
+    if (filters.client_id && filters.client_id.trim().length > 0) {
+      const p = push(filters.client_id.trim());
+      where.push(`cc.client_id = ${p}`);
+    }
+  
+    if (filters.statut && filters.statut.trim().length > 0) {
+      const p = push(filters.statut.trim());
+      where.push(`(${normalizedCommandeStatusSql("st.nouveau_statut")}) = ${p}`);
+    }
+  
+    if (filters.order_type) {
+      const p = push(filters.order_type);
+      where.push(`cc.order_type = ${p}`);
+    }
+  
+    if (filters.from && filters.from.trim().length > 0) {
+      const p = push(filters.from.trim());
+      where.push(`cc.date_commande >= ${p}::date`);
+    }
+  
+    if (filters.to && filters.to.trim().length > 0) {
+      const p = push(filters.to.trim());
+      where.push(`cc.date_commande <= ${p}::date`);
+    }
+  
+    if (typeof filters.min_total_ttc === "number" && Number.isFinite(filters.min_total_ttc)) {
+      const p = push(filters.min_total_ttc);
+      where.push(`cc.total_ttc >= ${p}`);
+    }
+  
+    if (typeof filters.max_total_ttc === "number" && Number.isFinite(filters.max_total_ttc)) {
+      const p = push(filters.max_total_ttc);
+      where.push(`cc.total_ttc <= ${p}`);
+    }
+  
+    if (filters.mine_recent) {
+      where.push(`cc.updated_at >= (now() - interval '30 days')`);
+    }
+  
+    return {
+      whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
+      values,
+    };
+  }
 
   async function repoListCommandes(filters: ListCommandesQueryDTO) {
     const page = filters.page ?? 1;
