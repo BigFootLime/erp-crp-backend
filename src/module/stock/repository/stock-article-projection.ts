@@ -30,3 +30,11 @@ export function oldMaterialDefinitionFromProjection(row: OldMaterialDefinitionPr
   };
   return buildOldMaterialDefinition(source);
 }
+
+
+
+// client_id is a technical key; only the linked customer's business code is displayed.
+// Preserve a historical code only when it is distinct from that technical key.
+export function pieceClientCodeSql(pieceAlias = "pt"): string {
+  return `COALESCE(NULLIF(btrim(piece_client.client_code), ''), NULLIF(NULLIF(btrim(${pieceAlias}.code_client), ''), btrim(${pieceAlias}.client_id)))`;
+}

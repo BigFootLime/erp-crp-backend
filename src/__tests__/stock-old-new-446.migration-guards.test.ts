@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import ts from "typescript";
 
 import { describe, expect, it } from "vitest";
 import { repoRoot } from "./helpers/repo-paths";
@@ -40,6 +41,26 @@ const stockRepository = readFileSync(
   resolve(repoRoot, "src/module/stock/repository/stock.repository.ts"),
   "utf8"
 );
+const historicalOpeningsOwnerPath = resolve(
+  repoRoot,
+  "src/module/stock/repository/stock-historical-openings.repository.ts"
+);
+const historicalOpeningsRepository = readFileSync(
+  existsSync(historicalOpeningsOwnerPath)
+    ? historicalOpeningsOwnerPath
+    : resolve(repoRoot, "src/module/stock/repository/stock.repository.ts"),
+  "utf8"
+);
+
+function functionSource(source: string, name: string): string {
+  const parsed = ts.createSourceFile("historical-openings.ts", source, ts.ScriptTarget.Latest, true);
+  const declaration = parsed.statements.find((statement): statement is ts.FunctionDeclaration =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === name
+  );
+  expect(declaration).toBeDefined();
+  expect(declaration?.body?.statements.length).toBeGreaterThan(0);
+  return declaration?.getText(parsed) ?? "";
+}
 
 describe("#446 stock OLD/NEW migration guards", () => {
   it("reste additive, transactionnelle et idempotente", () => {
@@ -125,20 +146,13 @@ describe("#446 stock OLD/NEW migration guards", () => {
 
 describe("#446 Base OLD corrective guards", () => {
   it("creates a historical PF with the canonical technical-piece status", () => {
-    const historicalPieceStart = stockRepository.indexOf("async function ensureHistoricalPieceTechniqueTx");
-    const historicalPieceEnd = stockRepository.indexOf("export async function repoCreateHistoricalImport");
-    const historicalPieceSource = stockRepository.slice(historicalPieceStart, historicalPieceEnd);
-
-    expect(historicalPieceStart).toBeGreaterThanOrEqual(0);
-    expect(historicalPieceEnd).toBeGreaterThan(historicalPieceStart);
+    const historicalPieceSource = functionSource(historicalOpeningsRepository, "ensureHistoricalPieceTechniqueTx");
     expect(historicalPieceSource).toContain("'DRAFT'");
     expect(historicalPieceSource).not.toContain("'EN_DEVIS'");
   });
 
   it("keeps OLD imports independent from orders, affairs and fabrication orders", () => {
-    const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
-    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
-    const historicalImportSource = stockRepository.slice(historicalImportStart, historicalImportEnd);
+    const historicalImportSource = functionSource(historicalOpeningsRepository, "repoCreateHistoricalImportTx");
 
     expect(historicalImportSource).toContain("CERP_HISTORICAL_OPENING");
     expect(historicalImportSource).toContain("stock_lot_trace_references");
@@ -146,9 +160,7 @@ describe("#446 Base OLD corrective guards", () => {
   });
 
   it("resolves an existing MP nuance through the canonical stock referential", () => {
-    const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
-    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
-    const historicalImportSource = stockRepository.slice(historicalImportStart, historicalImportEnd);
+    const historicalImportSource = functionSource(historicalOpeningsRepository, "repoCreateHistoricalImportTx");
 
     expect(historicalImportSource).toContain("public.stock_nuances");
     expect(historicalImportSource).not.toContain("public.matiere_nuances");
@@ -157,9 +169,7 @@ describe("#446 Base OLD corrective guards", () => {
   });
 
   it("creates a historical PF without depending on the obsolete central family catalog", () => {
-    const historicalImportStart = stockRepository.indexOf("export async function repoCreateHistoricalImport");
-    const historicalImportEnd = stockRepository.indexOf("export async function repoListBalances");
-    const historicalImportSource = stockRepository.slice(historicalImportStart, historicalImportEnd);
+    const historicalImportSource = functionSource(historicalOpeningsRepository, "repoCreateHistoricalImportTx");
 
     expect(historicalImportSource).toContain('defaultFamilyCodeForCategory("fabrique")');
     expect(historicalImportSource).not.toContain("public.article_families");
@@ -189,5 +199,24 @@ describe("#446 Base OLD corrective guards", () => {
     expect(navigationRollback).toContain("'stock-base-old'");
     expect(navigationRollback).toContain("'stock-base-new'");
     expect(navigationRollback).not.toMatch(/\b(DROP|TRUNCATE|DELETE)\b/i);
+  });
+});
+
+describe("historical openings public façade", () => {
+  it("keeps the established public exports available throughout the owner extraction", () => {
+    if (existsSync(historicalOpeningsOwnerPath)) {
+      expect(stockRepository).toContain('} from "./stock-historical-openings.repository";');
+    } else {
+      for (const name of ["repoResolveStockOpeningReferences", "repoCreateHistoricalImportTx", "repoCreateHistoricalImport"]) {
+        expect(functionSource(stockRepository, name)).toMatch(/^export async function /);
+      }
+    }
+    for (const name of [
+      "repoResolveStockOpeningReferences",
+      "repoCreateHistoricalImportTx",
+      "repoCreateHistoricalImport",
+      "StockOpeningReferenceInput",
+      "StockOpeningReferenceResolution",
+    ]) expect(stockRepository).toContain(name);
   });
 });

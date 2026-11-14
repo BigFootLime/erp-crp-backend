@@ -16,6 +16,7 @@
 ## Unreleased
 
 - Refactor: isolated the full delivery-detail read aggregate (header, lines, allocation provenance, documents, proofs, and events) behind the existing public export. Header reads remain shared with transactional writers; their locks, capability checks, and cache ownership are unchanged.
+- Refactor: grouped consolidated inventory, balances, analytics and movement-list reads under one Stock reporting owner, preserving SQL and public exports. Customer-code SQL projection now has one shared lower owner; historical source guards retain their cases across the extraction.
 - Refactor: isolated the delivery-list read model behind the existing delivery repository export while preserving its SQL, pagination, allocation scopes, and invocation-time pool binding.
 
 ## En préparation — Lectures de liste des commandes (U11)
