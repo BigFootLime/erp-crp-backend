@@ -256,27 +256,6 @@ export {
 } from "./stock-material-referentials.repository";
 export type { MaterialCodePreview, MaterialCodeRequest } from "./stock-material-referentials.repository";
 
-type UploadedDocument = Express.Multer.File;
-
-function safeDocExtension(originalName: string): string {
-  const extCandidate = path.extname(originalName).toLowerCase();
-  const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
-  return safeExt;
-}
-
-function toPosixPath(p: string): string {
-  return p.split(path.sep).join(path.posix.sep);
-}
-
-async function sha256File(filePath: string): Promise<string> {
-  const hash = crypto.createHash("sha256");
-  const stream = createReadStream(filePath);
-  for await (const chunk of stream) {
-    hash.update(chunk);
-  }
-  return hash.digest("hex");
-}
-
 type OldMaterialDefinitionProjection = {
   material_article_category: string | null;
   material_designation: string;
@@ -322,6 +301,27 @@ export type StockOpeningReferenceResolution = {
   emplacement_id: number | null;
   issue: { code: string; message: string } | null;
 };
+
+type UploadedDocument = Express.Multer.File;
+
+function safeDocExtension(originalName: string): string {
+  const extCandidate = path.extname(originalName).toLowerCase();
+  const safeExt = /^\.[a-z0-9]+$/.test(extCandidate) && extCandidate.length <= 10 ? extCandidate : "";
+  return safeExt;
+}
+
+function toPosixPath(p: string): string {
+  return p.split(path.sep).join(path.posix.sep);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  const hash = crypto.createHash("sha256");
+  const stream = createReadStream(filePath);
+  for await (const chunk of stream) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
 
 async function normalizeArticleState(args: {
   article_type: string | null | undefined;
