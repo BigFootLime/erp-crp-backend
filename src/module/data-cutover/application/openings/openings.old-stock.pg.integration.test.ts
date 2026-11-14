@@ -3,7 +3,10 @@ import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { repoCreateHistoricalImportTx } from "../../../stock/repository/stock.repository";
 
-const integrationUrl = process.env.CERP_CUTOVER_INTEGRATION_URL;
+// The U10 owned-fixture runner supplies this same loopback-only URL as the
+// stock/delivery acceptance suite.  Keep the guard tied to the disposable DB
+// identity instead of a developer-machine port.
+const integrationUrl = process.env.CERP_INTEGRATION_DATABASE_URL;
 const describePg = integrationUrl ? describe : describe.skip;
 const ids = {
   article: "11111111-1111-4111-8111-111111111111",
@@ -15,7 +18,7 @@ let db: Pool;
 function requireDedicatedDb() {
   if (!integrationUrl || process.env.DATABASE_URL !== integrationUrl) throw new Error("La base dédiée est requise");
   const url = new URL(integrationUrl);
-  if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.port !== "55471" || url.pathname !== "/cerp_cutover_1710") throw new Error("Base locale dédiée invalide");
+  if (!["localhost", "127.0.0.1"].includes(url.hostname) || url.pathname !== "/cerp_stock_delivery_integration") throw new Error("Base locale dédiée invalide");
 }
 
 async function installStockFixture(pool: Pool) {
@@ -90,7 +93,7 @@ async function installStockFixture(pool: Pool) {
 
 const audit={user_id:1,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:"/test",page_key:"cutover",client_session_id:null};
 describePg("native OLD opening PostgreSQL", () => {
-  beforeAll(async()=>{ requireDedicatedDb(); db=new Pool({connectionString:integrationUrl}); if ((await db.query("SELECT current_database() AS name")).rows[0]?.name !== "cerp_cutover_1710") throw new Error("Unexpected fixture identity"); await installStockFixture(db); });
+  beforeAll(async()=>{ requireDedicatedDb(); db=new Pool({connectionString:integrationUrl}); if ((await db.query("SELECT current_database() AS name")).rows[0]?.name !== "cerp_stock_delivery_integration") throw new Error("Unexpected fixture identity"); await installStockFixture(db); });
   beforeEach(async()=>{
     // Audit evidence stays append-only, including in this disposable fixture.
     await db.query(`TRUNCATE public.stock_movement_lines,public.stock_movement_event_log,public.stock_movements,public.stock_batches,public.stock_levels,public.stock_lot_trace_references,public.lots,public.stock_command_receipts,public.erp_outbox_events,public.realtime_stream_enqueue_state,public.emplacements,public.locations,public.magasins,public.warehouses,public.articles_matiere,public.articles,public.units RESTART IDENTITY CASCADE`);

@@ -1935,6 +1935,44 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
     ]));
   });
 
+  it('rolls back the inserted Quality disposition when its requested unit is unknown', async () => {
+    const db = harnessPool!;
+    await seedDeliveryScenario(db);
+    await db.query('UPDATE public.stock_levels SET qty_total=10 WHERE id=$1::uuid', [ids.stockLevel]);
+    await db.query('UPDATE public.stock_batches SET qty_total=10, qty_reserved=0, lot_id=$2::uuid WHERE id=$1::uuid', [ids.stockBatch, ids.lot]);
+    await db.query("INSERT INTO public.non_conformity(id,lot_id,status,reference,created_by,updated_by) VALUES($1::uuid,$2::uuid,'OPEN','NC-U10-UNIT-ROLLBACK',7,7)", [ids.secondLot, ids.lot]);
+
+    await expect(qualityRepository.repoCreateNonConformityDisposition({
+      id: ids.secondLot,
+      body: { disposition_type: 'SCRAP', qty: 2, unite: 'unknown-u10', comment: 'Must roll back the already inserted disposition' },
+      audit: recoveryAudit,
+    })).rejects.toMatchObject({ status: 400, code: 'UNKNOWN_UNIT' });
+
+    for (const table of ['non_conformity_dispositions', 'stock_movements', 'erp_audit_logs', 'erp_outbox_events']) {
+      expect(countValue((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
+    }
+  });
+
+  it('rolls back the public OF receipt when its article no longer has a canonical unit', async () => {
+    const db = harnessPool!;
+    const { expectedOfUpdatedAt } = await seedReceiptScenario(db);
+    await db.query('UPDATE public.articles SET unite=NULL WHERE id=$1::uuid', [ids.article]);
+    await expect(receiptRepository.repoCreateOfReceipt({
+      of_id: 101,
+      body: {
+        article_id: ids.article, qty_ok: 1, qty_scrap: 0, qty_rework: 0,
+        location_id: ids.location, lot_mode: 'NEW', expected_of_updated_at: expectedOfUpdatedAt,
+        quality_status: 'QUARANTAINE', commentaire: 'Missing-unit rollback proof',
+      },
+      audit: recoveryAudit,
+      idempotency_key: 'of-receipt-missing-unit-rollback',
+    })).rejects.toMatchObject({ status: 422, code: 'UNIT_REQUIRED' });
+
+    for (const table of ['of_receipts', 'of_output_lots', 'stock_movements', 'lots', 'erp_audit_logs', 'erp_outbox_events']) {
+      expect(countValue((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
+    }
+  });
+
   it('executes all four caller-owned missing and unknown unit policies against PostgreSQL', async () => {
     const db = harnessPool!;
     await seedCommonLocation(db);
