@@ -100,7 +100,8 @@ describe("company HTTP contract", () => {
       module_keys: ["clients"], commercial_projection_capabilities: ["stock.projection.read"], workspace: "ACCUEIL" as const,
     };
     vi.spyOn(companyRuntimeService, "configuration").mockReturnValue({ enabled: true, company_id: companyId, environment: "cerp_test" });
-    const access = vi.spyOn(companyRuntimeService, "access").mockResolvedValue({ context: { company_id: companyId }, summary: context.active_company } as never);
+    const resolvedAccess = { context: { company_id: companyId }, summary: context.active_company } as never;
+    const access = vi.spyOn(companyRuntimeService, "access").mockResolvedValue(resolvedAccess);
     const view = vi.spyOn(companyRuntimeService, "view").mockResolvedValue(context);
     const response = await request(authenticatedContextApp())
       .get("/api/v1/entreprises/context")
@@ -109,7 +110,9 @@ describe("company HTTP contract", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual(context);
     expect(access).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }));
-    expect(view).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), expect.anything());
+    expect(view).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), resolvedAccess);
+    expect(view).toHaveBeenCalledTimes(1);
+    expect(view.mock.calls[0]?.[1]).toBe(resolvedAccess);
   });
   it("permits the bare legacy login target only for the two fixed CRP sites", async () => {
     const target = loginTargetApp();
