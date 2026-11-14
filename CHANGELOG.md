@@ -4,6 +4,11 @@
 
 - Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
 
+## En préparation — Séquence transactionnelle de création de commande (#1529)
+
+- Les écritures transactionnelles de création et de brouillon de commande sont regroupées dans un propriétaire dédié, derrière les exports historiques de la façade. Les signatures publiques, le propriétaire de transaction, l’upload, la réconciliation, les erreurs et les effets différés restent inchangés.
+- Une preuve structurelle compare les corps déplacés à la base `37c6c5bfed76de85add3fc7e7ba73607750b18ba` et vérifie que le nouveau propriétaire ne rejoint pas la façade par les imports statiques. Aucun déploiement n’est inclus.
+
 ## En préparation — Contrat versionné de contexte entreprise (#1521)
 
 - Le DTO public `/entreprises/context` possède un artefact v1 propriétaire et des fixtures comparées au producteur réel, distincts du contexte serveur contenant les identités de compte et Directory ; aucun nouveau parseur n'est ajouté au retour du runtime.
