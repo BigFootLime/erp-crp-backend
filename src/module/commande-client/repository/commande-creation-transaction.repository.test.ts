@@ -142,9 +142,12 @@ describe("commande creation mechanical seam proof", () => {
   it("retains all unaffected facade statements, public comments, and the actual binding names", () => {
     // The independent list-read owner characterizes these declarations against
     // the same historical facade; creation still protects every other statement.
+    // List/detail declarations and the two contract-read imports have separate
+    // actual-body/API/comment proofs; every other historical statement stays here.
     const excluded = new Set([
       "repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository",
       "repoListCommandes", "sortColumn", "sortDirection", "buildListWhere", "ListWhere",
+      "IncludeFlags", "includeFlags", "repoGetCommande",
     ]);
     const statementTexts = (source: string) => {
       const ast = ts.createSourceFile("facade.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -152,8 +155,10 @@ describe("commande creation mechanical seam proof", () => {
         if (ts.isFunctionDeclaration(statement) && statement.name && excluded.has(statement.name.text)) return false;
         if (ts.isTypeAliasDeclaration(statement) && excluded.has(statement.name.text)) return false;
         if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => ts.isIdentifier(d.name) && excluded.has(d.name.text))) return false;
-        if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-creation-transaction.repository")) return false;
-        if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-list-read.repository")) return false;
+        if (ts.isImportDeclaration(statement) && [
+          "commande-creation-transaction.repository", "commande-list-read.repository", "commande-detail-read.repository",
+          "client-contract-calls.repository", "client-contract-legacy.repository",
+        ].some(moduleName => statement.moduleSpecifier.getText(ast).includes(moduleName))) return false;
         return true;
       }).map(statement => statement.getText(ast).replace(/\r\n/g, "\n"));
     };
