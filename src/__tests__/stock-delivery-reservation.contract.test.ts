@@ -24,6 +24,10 @@ const deliveryRepository = fs.readFileSync(
   path.resolve(__dirname, "../module/livraisons/repository/livraisons.repository.ts"),
   "utf8"
 );
+const deliveryPrintingRepository = fs.readFileSync(
+  path.resolve(__dirname, "../module/livraisons/repository/delivery-printing.repository.ts"),
+  "utf8"
+);
 const stockRepository = fs.readFileSync(
   path.resolve(__dirname, "../module/stock/repository/stock.repository.ts"),
   "utf8"
@@ -148,7 +152,9 @@ describe("Commande → stock → OF receipt → delivery contracts", () => {
     expect(stockLotTraceReferenceValuesSql("r.lot_id", "TRAITEMENT_LOT")).toContain("reference_type = 'TRAITEMENT_LOT'");
     expect(deliveryRepository).toMatch(/public\.of_output_lots/);
     expect(deliveryRepository).toMatch(/typeof snapshot\.of_number === "string"/);
-    expect(deliveryRepository).toMatch(/requested_at = now\(\)/);
+    expect(deliveryPrintingRepository).toMatch(/export async function repoRetryLivraisonPrint/);
+    expect(deliveryPrintingRepository).toMatch(/requested_at = now\(\)/);
+    expect(deliveryRepository).toMatch(/repoRetryLivraisonPrint,/);
     expect(deliveryRepository).toMatch(/plan_reference/);
     expect(deliveryRepository).toMatch(/plan_index/);
     expect(deliveryRepository).toMatch(/verified_qty/);
