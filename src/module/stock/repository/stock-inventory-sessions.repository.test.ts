@@ -22,7 +22,7 @@ vi.mock("./stock-movement-core.repository", () => ({
 }));
 
 import { beginStockCommand } from "./stock-movement-core.repository";
-import { repoStartInventorySession } from "./stock-inventory-sessions.repository";
+import { repoCloseInventorySession, repoStartInventorySession } from "./stock-inventory-sessions.repository";
 
 describe("stock inventory session owner", () => {
   beforeEach(() => {
@@ -53,5 +53,26 @@ describe("stock inventory session owner", () => {
     expect(mocks.query.mock.calls.map(([sql]) => sql)).toContain("ROLLBACK");
     expect(mocks.release).toHaveBeenCalledTimes(1);
     expect(mocks.query.mock.calls[1]?.[0]).toContain("FOR UPDATE");
+  });
+
+  it("keeps close in its transaction when the locked version is stale", async () => {
+    mocks.query
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({
+        rows: [{ status: "APPROVED", session_no: "INV-00000001", row_version: 8 }],
+      }); // SELECT ... FOR UPDATE
+
+    await expect(
+      repoCloseInventorySession(
+        "00000000-0000-0000-0000-000000000002",
+        { expected_version: 7 },
+        { user_id: "tester" } as never,
+        "inventory-close-stale"
+      )
+    ).rejects.toMatchObject({ code: "CONCURRENT_MODIFICATION" });
+
+    expect(mocks.query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(["BEGIN", "ROLLBACK"]));
+    expect(mocks.query.mock.calls[1]?.[0]).toContain("FOR UPDATE");
+    expect(mocks.release).toHaveBeenCalledTimes(1);
   });
 });
