@@ -10,6 +10,11 @@
 - Le runner de migrations sépare désormais la sélection à appliquer (`--patch-dir`) du catalogue complet utilisé par les gardes d'applicabilité (`--inventory-dir`). Par défaut, les deux répertoires restent identiques, sans changement du comportement de production.
 - La recette isolée applique toujours un seul fichier temporaire dans l'ordre de dépendance canonique, mais fournit l'inventaire complet aux contrôles GED Métrologie. Un catalogue incomplet ou dont le fichier sélectionné ne correspond pas refuse l'opération ; aucune règle GED, écriture de ledger ou SQL immuable n'est contournée.
 
+## En préparation — Frontière dépôt impression des livraisons (#1522)
+
+- La lecture du statut d'impression et la réémission transactionnelle de l'effet d'impression sont isolées derrière les exports historiques de `livraisons.repository.ts`. Les requêtes SQL, paramètres, erreurs, audit, événement temps réel et ordre `BEGIN`/`COMMIT` restent inchangés ; aucun endpoint, droit, règle métier, base ni déploiement n'est modifié. Voir [l'architecture](docs/architecture/u11-delivery-printing-repository.md).
+- L'écriture d'événement de livraison est désormais détenue une seule fois par `delivery-events.repository.ts`, partagé par la façade et le propriétaire d'impression ; les invalidations temps réel et la déduplication restent inchangées.
+
 ## En préparation — Fidélité OpenAPI des référentiels matière et préparation OF
 
 - La couverture d’inventaire des routes et la précision des schémas sont maintenant comptées séparément : les wrappers génériques restent explicitement classés et ne produisent plus un faux « 100 % précis ».
