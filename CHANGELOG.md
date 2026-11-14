@@ -1,5 +1,10 @@
 # Changelog
 
+## En préparation — Workflow transactionnel des commandes client (U11)
+
+- Les transitions de statut, checkpoints, actions, blocages/reprises, notifications et invalidations temps réel des commandes sont regroupés dans `commande-workflow.repository.ts`, derrière les exports historiques de `commande-client.repository.ts`.
+- Les verrous, transactions, idempotence, écriture d'événement/audit et outbox restent dans le même ordre. Aucun droit, contrat API, visa Qualité OF, SQL, migration ni déploiement ne change. Voir [le propriétaire workflow](docs/architecture/u11-customer-order-workflow.md).
+
 ## En préparation — Inventaire des points d’entrée de compatibilité U13 (#1526)
 
 - Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
