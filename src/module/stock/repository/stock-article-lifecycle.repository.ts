@@ -5,7 +5,6 @@ import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
 import { assemblyComponentWithdrawalOwnsMovement } from './assembly-component-movement-guard';
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
 import { syncArticleCommercialTx } from './article-commercial.repository';
-import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
 import { lockStockLaneTopology } from './stock-lane-routing.repository';
 import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
 import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';
