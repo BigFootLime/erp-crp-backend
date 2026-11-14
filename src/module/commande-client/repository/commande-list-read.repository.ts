@@ -38,51 +38,51 @@ export function createCommandeListReadRepository(deps: {
       values.push(v);
       return `$${values.length}`;
     };
-  
+
     if (filters.q && filters.q.trim().length > 0) {
       const p = push(`%${filters.q.trim()}%`);
       where.push(`(cc.numero ILIKE ${p} OR c.company_name ILIKE ${p} OR cc.code_client ILIKE ${p})`);
     }
-  
+
     if (filters.client_id && filters.client_id.trim().length > 0) {
       const p = push(filters.client_id.trim());
       where.push(`cc.client_id = ${p}`);
     }
-  
+
     if (filters.statut && filters.statut.trim().length > 0) {
       const p = push(filters.statut.trim());
       where.push(`(${normalizedCommandeStatusSql("st.nouveau_statut")}) = ${p}`);
     }
-  
+
     if (filters.order_type) {
       const p = push(filters.order_type);
       where.push(`cc.order_type = ${p}`);
     }
-  
+
     if (filters.from && filters.from.trim().length > 0) {
       const p = push(filters.from.trim());
       where.push(`cc.date_commande >= ${p}::date`);
     }
-  
+
     if (filters.to && filters.to.trim().length > 0) {
       const p = push(filters.to.trim());
       where.push(`cc.date_commande <= ${p}::date`);
     }
-  
+
     if (typeof filters.min_total_ttc === "number" && Number.isFinite(filters.min_total_ttc)) {
       const p = push(filters.min_total_ttc);
       where.push(`cc.total_ttc >= ${p}`);
     }
-  
+
     if (typeof filters.max_total_ttc === "number" && Number.isFinite(filters.max_total_ttc)) {
       const p = push(filters.max_total_ttc);
       where.push(`cc.total_ttc <= ${p}`);
     }
-  
+
     if (filters.mine_recent) {
       where.push(`cc.updated_at >= (now() - interval '30 days')`);
     }
-  
+
     return {
       whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "",
       values,
@@ -93,11 +93,11 @@ export function createCommandeListReadRepository(deps: {
     const page = filters.page ?? 1;
     const pageSize = filters.pageSize ?? 20;
     const offset = (page - 1) * pageSize;
-  
+
     const { whereSql, values } = buildListWhere(filters);
     const orderBy = sortColumn(filters.sortBy);
     const orderDir = sortDirection(filters.sortDir);
-  
+
     const countSql = `
       SELECT COUNT(*)::int AS total
       FROM commande_client cc
@@ -113,7 +113,7 @@ export function createCommandeListReadRepository(deps: {
     `;
     const countRes = await pool.query<{ total: number }>(countSql, values);
     const total = countRes.rows[0]?.total ?? 0;
-  
+
     const dataSql = `
       SELECT
         cc.id::text AS id,
@@ -153,17 +153,17 @@ export function createCommandeListReadRepository(deps: {
       id: string;
       client: ClientLite | null;
     };
-  
+
     const dataRes = await pool.query<CommandeListRow>(dataSql, dataValues);
-  
+
     const items = dataRes.rows.map((r) => ({
       ...r,
       id: toInt(r.id, "id"),
     }));
-  
+
     return { items, total };
   }
-  
+
 
   return { repoListCommandes };
 }

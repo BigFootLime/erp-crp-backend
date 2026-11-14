@@ -2817,11 +2817,10 @@ export async function repoGetCommandeStockReceipts(id: string) {
   };
 }
 
-const commandeListReadRepository = createCommandeListReadRepository({
-  pool, normalizedCommandeStatusSql, toInt,
-});
-
 export async function repoListCommandes(filters: ListCommandesQueryDTO) {
+  const commandeListReadRepository = createCommandeListReadRepository({
+    pool, normalizedCommandeStatusSql, toInt,
+  });
   return commandeListReadRepository.repoListCommandes(filters);
 }
 
