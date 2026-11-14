@@ -4,6 +4,11 @@
 printing read model and the print-retry transaction now belong to
 `delivery-printing.repository.ts`.
 
+`delivery-events.repository.ts` est le propriétaire inférieur unique de
+`insertEvent`. La façade et le propriétaire d'impression l'importent directement;
+ainsi l'événement SQL, son invalidation temps réel et sa déduplication ne sont pas
+copiés et aucun propriétaire n'importe la façade.
+
 The new owner opens and releases its own PostgreSQL client exactly as before.  The
 retry keeps the existing order: lock the BL, lock or insert the print outbox row,
 write the delivery event and its realtime invalidation, write the audit record,

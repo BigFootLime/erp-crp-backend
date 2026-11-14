@@ -13,6 +13,7 @@
 ## En préparation — Frontière dépôt impression des livraisons (#1522)
 
 - La lecture du statut d'impression et la réémission transactionnelle de l'effet d'impression sont isolées derrière les exports historiques de `livraisons.repository.ts`. Les requêtes SQL, paramètres, erreurs, audit, événement temps réel et ordre `BEGIN`/`COMMIT` restent inchangés ; aucun endpoint, droit, règle métier, base ni déploiement n'est modifié. Voir [l'architecture](docs/architecture/u11-delivery-printing-repository.md).
+- L'écriture d'événement de livraison est désormais détenue une seule fois par `delivery-events.repository.ts`, partagé par la façade et le propriétaire d'impression ; les invalidations temps réel et la déduplication restent inchangées.
 
 ## En préparation — Fidélité OpenAPI des référentiels matière et préparation OF
 
