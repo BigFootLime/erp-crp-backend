@@ -8,7 +8,7 @@ import { generateFabricatedArticleBusinessCode } from "../../../shared/codes/cod
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { ArticleCategory, ArticleBusinessCategory, StockArticleCategoryOption, StockArticleFamily, StockMatiereEtat, StockMatiereNuance, StockMatiereSousEtat } from "../types/stock.types";
 import type { CreateArticleFamilyBodyDTO, CreateMatiereEtatBodyDTO, CreateMatiereNuanceBodyDTO, CreateMatiereSousEtatBodyDTO, ListArticleFamiliesQueryDTO, ListMatiereEtatsQueryDTO, ListMatiereNuancesQueryDTO, ListMatiereSousEtatsQueryDTO, UpdateMatiereEtatBodyDTO, UpdateMatiereNuanceBodyDTO, UpdateMatiereSousEtatBodyDTO } from "../validators/stock.validators";
-import { insertAuditLog, isPgUniqueViolation, type AuditContext } from "./stock-movement-core.repository";
+import { insertAuditLog, isPgUniqueViolation, type AuditContext } from "./stock-persistence.repository";
 
 const ARTICLE_PRIMARY_CATEGORY_OPTIONS: Array<{ code: ArticleCategory }> = [
   { code: "fabrique" },

@@ -17,7 +17,7 @@ import {
   repoListMatiereSousEtats,
   repoUpdateMatiereSousEtat,
 } from "./stock-material-referentials.repository";
-import type { AuditContext } from "./stock-movement-core.repository";
+import type { AuditContext } from "./stock-persistence.repository";
 import { updateMatiereSousEtatSchema } from "../validators/stock.validators";
 
 const audit: AuditContext = {
