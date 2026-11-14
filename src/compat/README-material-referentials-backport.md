@@ -4,7 +4,9 @@ Mount `materialReferentialsBackportRouter` at `/stock` after company context and
 
 ## Lifecycle contract
 
-The adapter is **RETAINED** because the captured EC assembly contains `dist/compat/material-referentials-backport.js` and the recorded EC material acceptance parsed it while passing 31 assertions. Its archived `dist/config/app.js` has no static require edge to this file, and no composite mount was located in the archive. Retention is mandated by the audited deployment documentation and user instruction until a reviewed target-runtime manifest resolves that boundary. Native routes in another source assembly do not by themselves retire that dependency claim.
+The adapter is **RETAINED** because the captured EC assembly contains `dist/compat/material-referentials-backport.js`, its captured `dist/routes/v1.routes.js` requires the module, mounts `augmentMaterialReferentialsAccessProfile` at `/auth`, then mounts `materialReferentialsBackportRouter` at `/stock` before the module-access gate. The recorded EC material acceptance parsed the adapter while passing 31 assertions. The current native source does not import or mount this adapter, but native routes in another source assembly do not retire the captured composite entrypoint.
+
+`docs/compat/material-referentials-backport.lifecycle.json` records the complete static evidence and limits: the captured app uses `validationErrorMiddleware` and `errorHandler`; the legacy `error.middleware.ts` and `validate.ts` compiled members are present but have no static require edge in the captured EC assembly, and the current source imports neither. Presence is not activation proof. Keep all three candidates until a reviewed target-runtime manifest resolves external and operational entrypoints.
 
 Retention is recorded by `docs/compat/material-referentials-backport.lifecycle.json` and enforced by `scripts/compat/check-material-referentials-backport-lifecycle.mjs` during every build. The guard accepts only `RETAINED`; retirement needs a future reviewed change identifying the native replacement, exact source pair, target-runtime manifest and authenticated acceptance without this adapter.
 

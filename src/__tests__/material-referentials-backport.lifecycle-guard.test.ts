@@ -24,6 +24,17 @@ function fixture(status = "RETAINED") {
       compiled: "dist/compat/material-referentials-backport.js",
       required_exports: ["materialReferentialsBackportRouter", "augmentMaterialReferentialsAccessProfile"],
     },
+    entrypoint_inventory: {
+      scope: "fixture only",
+      native_source: { entrypoints_searched: ["src/index.ts"], observed: "none" },
+      captured_runtime: { observed: "none" },
+      fixtures: { observed: "fixture" },
+      candidates: [
+        { source: "src/compat/material-referentials-backport.ts", responsibility: "adapter", current_activation: "retained", future_activation_prerequisite: "review", removal_condition: "review" },
+        { source: "src/middlewares/error.middleware.ts", responsibility: "error", current_activation: "unknown", future_activation_prerequisite: "review", removal_condition: "review" },
+        { source: "src/middlewares/validate.ts", responsibility: "validation", current_activation: "unknown", future_activation_prerequisite: "review", removal_condition: "review" },
+      ],
+    },
   }));
   fs.writeFileSync(path.join(root, "src", "compat", "material-referentials-backport.ts"), "export const materialReferentialsBackportRouter = {}; export const augmentMaterialReferentialsAccessProfile = {};\n");
   fs.writeFileSync(path.join(root, "dist", "compat", "material-referentials-backport.js"), "exports.materialReferentialsBackportRouter = {}; exports.augmentMaterialReferentialsAccessProfile = {};\n");
@@ -86,5 +97,14 @@ describe("material referentials lifecycle build guard", () => {
     const emittedRoot = fixture();
     fs.writeFileSync(path.join(emittedRoot, "dist", "compat", "material-referentials-backport.js"), "exports.materialReferentialsBackportRouter = {}; // exports.augmentMaterialReferentialsAccessProfile = {};\n");
     expect(check(emittedRoot).stderr).toContain("compiled export is missing");
+  });
+
+  it("refuses a retained manifest that omits a candidate's entrypoint evidence", () => {
+    const root = fixture();
+    const manifestPath = path.join(root, "docs", "compat", "material-referentials-backport.lifecycle.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.entrypoint_inventory.candidates.pop();
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(check(root).stderr).toContain("complete entrypoint inventory");
   });
 });

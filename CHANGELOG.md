@@ -1,5 +1,9 @@
 # Changelog
 
+## En préparation — Inventaire des points d’entrée de compatibilité U13 (#1526)
+
+- Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
+
 ## En préparation — Contrat versionné de contexte entreprise (#1521)
 
 - Le DTO public `/entreprises/context` possède un artefact v1 propriétaire et des fixtures comparées au producteur réel, distincts du contexte serveur contenant les identités de compte et Directory ; aucun nouveau parseur n'est ajouté au retour du runtime.
