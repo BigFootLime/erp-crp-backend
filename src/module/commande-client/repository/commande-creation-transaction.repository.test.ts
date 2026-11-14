@@ -143,22 +143,60 @@ describe("commande creation mechanical seam proof", () => {
     // The independent list-read owner characterizes these declarations against
     // the same historical facade; creation still protects every other statement.
     // List/detail declarations and the two contract-read imports have separate
-    // actual-body/API/comment proofs; every other historical statement stays here.
+    // actual-body/API/comment proofs; creation and workflow owner bodies have
+    // their own actual-base proofs, and every other historical statement stays here.
     const excluded = new Set([
       "repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository",
       "repoListCommandes", "sortColumn", "sortDirection", "buildListWhere", "ListWhere",
       "IncludeFlags", "includeFlags", "repoGetCommande",
+      "repoEnsureCommandeWorkflowStatus", "repoApplyCommandeWorkflowMilestone",
+      "advanceInternalOrderWorkflowAfterGeneration", "repairLegacyNoOperationPlanningBypass",
+      "advanceCustomerOrderWorkflowAfterLaunch", "repoRetireCommandeTechnicalReview",
+      "repoEnsureCommandeWorkflowCheckpoints", "repoGetCommandeWorkflow",
+      "repoUpdateCommandeWorkflowCheckpoint", "repoRunCommandeWorkflowAction",
+      "commandeWorkflowRepository",
+      "loadCommandeWorkflowHeader", "prepareStockOnlyCustomerOrderCheckpoints",
+      "CommandeWorkflowHeader", "isSupplierDropship", "assertCommercialOnlyDropship",
+      "WorkflowCheckpointRow", "checkpointStatusSet", "normalizeCheckpointStatus",
+      "mapWorkflowCheckpoint", "checkpointSeedStatus", "loadCommandeWorkflowHeaderWithStatus",
+      "loadCommandeWorkflowCheckpoints", "buildWorkflowView", "listUsersForCommandeWorkflowRole",
+      "notifyWorkflowRole", "activateNextCheckpoint",
     ]);
+    const bindingNames = (name: ts.BindingName): string[] => ts.isIdentifier(name)
+      ? [name.text]
+      : name.elements.flatMap(element => ts.isBindingElement(element) ? bindingNames(element.name) : []);
+    const ownerAst = ts.createSourceFile("workflow-owner.ts", owner, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const ownerNames = new Set<string>();
+    const collectOwnerNames = (node: ts.Node) => {
+      if ((ts.isFunctionDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) && node.name) {
+        ownerNames.add(node.name.text);
+      }
+      if (ts.isVariableDeclaration(node)) for (const name of bindingNames(node.name)) ownerNames.add(name);
+      ts.forEachChild(node, collectOwnerNames);
+    };
+    collectOwnerNames(ownerAst);
+    const facadeAst = ts.createSourceFile("facade.ts", facade, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const facadeImportPaths = new Set(facadeAst.statements
+      .filter(ts.isImportDeclaration)
+      .map(statement => ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : ""));
+    const ownerImportPaths = new Set(ownerAst.statements
+      .filter(ts.isImportDeclaration)
+      .map(statement => ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : ""));
     const statementTexts = (source: string) => {
       const ast = ts.createSourceFile("facade.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
       return ast.statements.filter(statement => {
-        if (ts.isFunctionDeclaration(statement) && statement.name && excluded.has(statement.name.text)) return false;
-        if (ts.isTypeAliasDeclaration(statement) && excluded.has(statement.name.text)) return false;
-        if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => ts.isIdentifier(d.name) && excluded.has(d.name.text))) return false;
+        if (ts.isFunctionDeclaration(statement) && statement.name && (excluded.has(statement.name.text) || ownerNames.has(statement.name.text))) return false;
+        if ((ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement)) && (excluded.has(statement.name.text) || ownerNames.has(statement.name.text))) return false;
+        if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => bindingNames(d.name).some(name => excluded.has(name) || ownerNames.has(name)))) return false;
         if (ts.isImportDeclaration(statement) && [
           "commande-creation-transaction.repository", "commande-list-read.repository", "commande-detail-read.repository",
           "client-contract-calls.repository", "client-contract-legacy.repository",
+          "commande-workflow.repository",
         ].some(moduleName => statement.moduleSpecifier.getText(ast).includes(moduleName))) return false;
+        if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)
+          && !facadeImportPaths.has(statement.moduleSpecifier.text) && ownerImportPaths.has(statement.moduleSpecifier.text)) return false;
+        if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)
+          && statement.exportClause.elements.some(element => excluded.has(element.name.text))) return false;
         return true;
       }).map(statement => statement.getText(ast).replace(/\r\n/g, "\n"));
     };
