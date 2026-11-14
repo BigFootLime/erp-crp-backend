@@ -20,6 +20,8 @@ type ReceiptRepository = typeof import("../module/production/repository/producti
 type DeliveryRepository = typeof import("../module/livraisons/repository/livraisons.repository");
 type ShipmentRepository = typeof import("../module/livraisons/repository/livraisons-shipment.repository");
 type CommandeRepository = typeof import("../module/commande-client/repository/commande-client.repository");
+type QualityRepository = typeof import("../module/qualite/repository/qualite.repository");
+type StockRepository = typeof import("../module/stock/repository/stock.repository");
 
 const integrationDatabaseUrl = process.env.CERP_INTEGRATION_DATABASE_URL;
 const describePg = integrationDatabaseUrl ? describe : describe.skip;
@@ -50,6 +52,8 @@ let receiptRepository: ReceiptRepository;
 let deliveryRepository: DeliveryRepository;
 let shipmentRepository: ShipmentRepository;
 let commandeRepository: CommandeRepository;
+let qualityRepository: QualityRepository;
+let stockRepository: StockRepository;
 let recoveryRepository: typeof import("../module/livraisons/repository/delivery-stock-recovery.repository");
 
 function requireSafeIntegrationDatabase() {
@@ -83,6 +87,7 @@ async function installMinimalSchema(db: Pool) {
     );
     CREATE TYPE public.quality_nc_severity AS ENUM ('MINOR', 'MAJOR', 'CRITICAL');
     CREATE TYPE public.quality_nc_status AS ENUM ('OPEN', 'ANALYSIS', 'ACTION_PLAN', 'CLOSED');
+    CREATE TYPE public.quality_entity_type AS ENUM ('NON_CONFORMITY', 'QUALITY_CONTROL', 'QUALITY_ACTION');
 
     CREATE SEQUENCE public.stock_movement_no_seq START WITH 1;
     CREATE SEQUENCE public.bon_livraison_no_seq START WITH 1;
@@ -219,6 +224,9 @@ async function installMinimalSchema(db: Pool) {
       src_emplacement_id BIGINT NULL,
       dst_magasin_id UUID NULL,
       dst_emplacement_id BIGINT NULL,
+      unit_cost NUMERIC NULL,
+      currency TEXT NULL,
+      direction TEXT NULL,
       note TEXT NULL,
       created_by INTEGER NULL,
       updated_by INTEGER NULL,
@@ -862,14 +870,27 @@ async function installRecoverySchema(db: Pool) {
     CREATE TABLE public.non_conformity(
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), affaire_id bigint, of_id bigint,
       piece_technique_id uuid, lot_id uuid, description text, severity public.quality_nc_severity,
-      status public.quality_nc_status, detected_by integer, created_by integer, updated_by integer
+      status public.quality_nc_status, reference text NOT NULL DEFAULT 'NC-INT-001', reception_ligne_id uuid NULL, control_id uuid NULL,
+      detected_by integer, created_by integer, updated_by integer
     );
-    CREATE TABLE public.non_conformity_dispositions(non_conformity_id uuid);
+    CREATE TABLE public.non_conformity_dispositions(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), non_conformity_id uuid NOT NULL,
+      disposition_type text NULL, qty numeric NULL, unite text NULL, comment text NULL,
+      decided_by integer NULL, decided_at timestamptz NOT NULL DEFAULT now(), stock_movement_id uuid NULL,
+      created_by integer, updated_by integer, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE public.quality_event_log(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), entity_type text NOT NULL, entity_id uuid NOT NULL,
+      event_type text NOT NULL, user_id integer NOT NULL, old_values jsonb NULL, new_values jsonb NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE public.articles_matiere(article_id uuid PRIMARY KEY, barre_a_decouper boolean NOT NULL DEFAULT false);
     CREATE TABLE public.quality_release_decision(id uuid PRIMARY KEY,quality_control_id uuid,derogation_id uuid,decided_at timestamptz);
     CREATE TABLE public.quality_derogation(id uuid PRIMARY KEY,status text,valid_to timestamptz);
     CREATE TABLE public.of_material_consumptions(stock_movement_line_id uuid,reservation_id uuid);
     CREATE TABLE public.reception_stock_portions(id uuid PRIMARY KEY,source_lot_id uuid,receipt_line_id uuid,stock_quantity numeric,stock_movement_id uuid,packaging_id uuid,stock_lot_id uuid);
-    CREATE TABLE public.reception_fournisseur_lignes(id uuid PRIMARY KEY,stock_unit text,lot_id uuid,receipt_quality_required boolean);
+    CREATE TABLE public.reception_fournisseur_lignes(id uuid PRIMARY KEY,stock_unit text,lot_id uuid,receipt_quality_required boolean,
+      qty_received numeric NOT NULL DEFAULT 0,stock_conversion_coef numeric NULL,processing_reconciliation_required boolean NOT NULL DEFAULT false,processing_policy text NULL);
     CREATE TABLE public.reception_packaging(id uuid PRIMARY KEY,voided_at timestamptz);
     CREATE TABLE public.consumable_receipt_admissions(id uuid PRIMARY KEY,quantity numeric,unit text,receipt_line_id uuid,lot_id uuid);
   `);
@@ -1021,6 +1042,8 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     const databaseModule = await import("../config/database");
     applicationPool = databaseModule.default;
     receiptRepository = await import("../module/production/repository/production-receipts.repository");
+    qualityRepository = await import("../module/qualite/repository/qualite.repository");
+    stockRepository = await import("../module/stock/repository/stock.repository");
     deliveryRepository = await import("../module/livraisons/repository/livraisons.repository");
     shipmentRepository = await import("../module/livraisons/repository/livraisons-shipment.repository");
     commandeRepository = await import("../module/commande-client/repository/commande-client.repository");
@@ -1885,6 +1908,102 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
     await db.query("INSERT INTO public.commande_historique(commande_id,nouveau_statut,date_action) VALUES(42,'ANNULE','2026-10-11T01:00:01Z')");
     await expect(recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise test',idempotencyKey:'history-cancelled-recovery',audit:recoveryAudit})).rejects.toMatchObject({status:409,code:'DELIVERY_ALLOCATION_UNAVAILABLE'});
     expect((await db.query('SELECT qty_reserved::float8 AS reserved FROM public.stock_levels')).rows).toEqual([{reserved:0}]);
+  });
+
+  it('posts a Quality SCRAP through its public disposition entry point and persists its audit record', async () => {
+    const db = harnessPool!;
+    await seedDeliveryScenario(db);
+    await db.query('UPDATE public.stock_levels SET qty_total=10 WHERE id=$1::uuid', [ids.stockLevel]);
+    await db.query('UPDATE public.stock_batches SET qty_total=10, qty_reserved=0, lot_id=$2::uuid WHERE id=$1::uuid', [ids.stockBatch, ids.lot]);
+    await db.query("INSERT INTO public.non_conformity(id,lot_id,status,reference,created_by,updated_by) VALUES($1::uuid,$2::uuid,'OPEN','NC-U10-PG',7,7)", [ids.secondLot, ids.lot]);
+    const result = await qualityRepository.repoCreateNonConformityDisposition({
+      id: ids.secondLot,
+      body: { disposition_type: 'SCRAP', qty: 2, unite: 'u', comment: 'Real PostgreSQL U10 Quality proof' },
+      audit: recoveryAudit,
+    });
+    expect(result.stock_movement_id).toBeTruthy();
+    expect((await db.query('SELECT movement_type,status,qty::float8 AS qty FROM public.stock_movements')).rows)
+      .toEqual([{ movement_type: 'SCRAP', status: 'POSTED', qty: 2 }]);
+    expect((await db.query("SELECT action,entity_type FROM public.erp_audit_logs WHERE action='qualite.non-conformities.dispositions.create'")).rows)
+      .toEqual([{ action: 'qualite.non-conformities.dispositions.create', entity_type: 'non_conformity_dispositions' }]);
+    const outbox = (await db.query(`SELECT aggregate_type,event_type,payload->'input'->>'event' AS wire_event,
+      payload->'input'->'payload'->>'entityType' AS entity_type,payload->'input'->'payload'->>'entityId' AS entity_id
+      FROM public.erp_outbox_events ORDER BY realtime_stream_ordinal`)).rows;
+    expect(outbox).toEqual(expect.arrayContaining([
+      expect.objectContaining({ aggregate_type: 'REALTIME', event_type: 'REALTIME.DISPATCH', wire_event: 'entity:changed', entity_type: 'NCR', entity_id: ids.secondLot }),
+      expect.objectContaining({ aggregate_type: 'REALTIME', event_type: 'REALTIME.DISPATCH', wire_event: 'audit:new' }),
+    ]));
+  });
+
+  it('rolls back the inserted Quality disposition when its requested unit is unknown', async () => {
+    const db = harnessPool!;
+    await seedDeliveryScenario(db);
+    await db.query('UPDATE public.stock_levels SET qty_total=10 WHERE id=$1::uuid', [ids.stockLevel]);
+    await db.query('UPDATE public.stock_batches SET qty_total=10, qty_reserved=0, lot_id=$2::uuid WHERE id=$1::uuid', [ids.stockBatch, ids.lot]);
+    await db.query("INSERT INTO public.non_conformity(id,lot_id,status,reference,created_by,updated_by) VALUES($1::uuid,$2::uuid,'OPEN','NC-U10-UNIT-ROLLBACK',7,7)", [ids.secondLot, ids.lot]);
+
+    await expect(qualityRepository.repoCreateNonConformityDisposition({
+      id: ids.secondLot,
+      body: { disposition_type: 'SCRAP', qty: 2, unite: 'unknown-u10', comment: 'Must roll back the already inserted disposition' },
+      audit: recoveryAudit,
+    })).rejects.toMatchObject({ status: 400, code: 'UNKNOWN_UNIT' });
+
+    for (const table of ['non_conformity_dispositions', 'stock_movements', 'erp_audit_logs', 'erp_outbox_events']) {
+      expect(countValue((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
+    }
+  });
+
+  it('rolls back the public OF receipt when its article no longer has a canonical unit', async () => {
+    const db = harnessPool!;
+    const { expectedOfUpdatedAt } = await seedReceiptScenario(db);
+    await db.query('UPDATE public.articles SET unite=NULL WHERE id=$1::uuid', [ids.article]);
+    await expect(receiptRepository.repoCreateOfReceipt({
+      of_id: 101,
+      body: {
+        article_id: ids.article, qty_ok: 1, qty_scrap: 0, qty_rework: 0,
+        location_id: ids.location, lot_mode: 'NEW', expected_of_updated_at: expectedOfUpdatedAt,
+        quality_status: 'QUARANTAINE', commentaire: 'Missing-unit rollback proof',
+      },
+      audit: recoveryAudit,
+      idempotency_key: 'of-receipt-missing-unit-rollback',
+    })).rejects.toMatchObject({ status: 422, code: 'UNIT_REQUIRED' });
+
+    for (const table of ['of_receipts', 'of_output_lots', 'stock_movements', 'lots', 'erp_audit_logs', 'erp_outbox_events']) {
+      expect(countValue((await db.query<{ count: string }>(`SELECT count(*)::text AS count FROM public.${table}`)).rows[0])).toBe(0);
+    }
+  });
+
+  it('executes all four caller-owned missing and unknown unit policies against PostgreSQL', async () => {
+    const db = harnessPool!;
+    await seedCommonLocation(db);
+    await db.query("INSERT INTO public.articles(id,article_type,is_active,unite) VALUES($1::uuid,'PIECE_TECHNIQUE',true,'u')", [ids.article]);
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const callers = [
+        { name: 'stock', resolve: stockRepository.resolveUnitIdForArticle },
+        { name: 'delivery', resolve: deliveryRepository.resolveUnitIdForArticle },
+        { name: 'quality', resolve: qualityRepository.resolveUnitIdForArticle },
+        { name: 'production', resolve: receiptRepository.resolveUnitIdForArticle },
+      ] as const;
+      for (const caller of callers) {
+        const resolved = await caller.resolve(client, ids.article, 'u');
+        expect(typeof resolved === 'string' ? resolved : resolved.unit_id).toBe(ids.unit);
+      }
+      await client.query('UPDATE public.articles SET unite=NULL WHERE id=$1::uuid', [ids.article]);
+      for (const caller of callers.filter(caller => caller.name !== 'production')) {
+        const resolved = await caller.resolve(client, ids.article, null);
+        expect(typeof resolved === 'string' ? resolved : resolved.unit_id).toBe(ids.unit);
+        await expect(caller.resolve(client, ids.article, 'unknown-u10')).rejects.toMatchObject({ status: 400, code: 'UNKNOWN_UNIT' });
+      }
+      await expect(receiptRepository.resolveUnitIdForArticle(client, ids.article, null))
+        .rejects.toMatchObject({ status: 422, code: 'UNIT_REQUIRED' });
+      await expect(receiptRepository.resolveUnitIdForArticle(client, ids.article, 'unknown-u10'))
+        .rejects.toMatchObject({ status: 422, code: 'UNIT_NOT_FOUND' });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
 
