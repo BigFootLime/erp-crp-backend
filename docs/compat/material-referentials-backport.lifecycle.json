@@ -1,0 +1,37 @@
+{
+  "owner": "stock compatibility maintainers",
+  "status": "RETAINED",
+  "adapter": {
+    "source": "src/compat/material-referentials-backport.ts",
+    "compiled": "dist/compat/material-referentials-backport.js",
+    "required_exports": [
+      "materialReferentialsBackportRouter",
+      "augmentMaterialReferentialsAccessProfile"
+    ]
+  },
+  "unmounted_legacy_members": [
+    {
+      "source": "src/middlewares/error.middleware.ts",
+      "owner": "backend HTTP pipeline (src/config/app.ts)",
+      "status": "RETAINED_PENDING_ENTRYPOINT_PROOF",
+      "removal_condition": "Review every source, compiled and operational entrypoint; prove no remaining consumer or external module import, then remove in a separate qualified change preserving error-response coverage."
+    },
+    {
+      "source": "src/middlewares/validate.ts",
+      "owner": "backend HTTP validation pipeline (src/config/app.ts)",
+      "status": "RETAINED_PENDING_ENTRYPOINT_PROOF",
+      "removal_condition": "Review every source, compiled and operational entrypoint; prove no remaining consumer or external module import, then remove in a separate qualified change preserving validation/error-response coverage."
+    }
+  ],
+  "retirement_requirements": [
+    "target runtime native routes validated",
+    "target EC runtime manifest proves the adapter is absent",
+    "authenticated material acceptance passes without the adapter",
+    "reviewed approval identifies exact source pair and target runtime"
+  ],
+  "captured_ec_evidence": {
+    "archive": "output/cerp-untangle-2084-implementation/u01-ec-historical-code-20261113.tar.gz",
+    "acceptance": "output/cerp-untangle-2084-implementation/u01-local-runtime-assembly-20261113/phase4-authenticated-material-acceptance.json",
+    "note": "The archived dist app routes through v1.routes and has no static require edge to the adapter. The recorded EC acceptance parsed the adapter and passed 31 material assertions; a composite mount was not located in the archive. Retention is mandated by the audited deployment documentation and user instruction until a reviewed target-runtime manifest resolves that boundary."
+  }
+}

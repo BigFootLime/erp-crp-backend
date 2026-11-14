@@ -36,7 +36,7 @@ Before production, obtain separate authorization, freeze the source pair and tak
 
 Apply first to a restored isolated test database, then deploy the API and frontend together after validation. Execute `support/20261113_stock_nuance_library.verify.sql`: compare nuance/article-link counts, check the five indexes, and require zero orphan links. Validate actual runtime read/create/edit, tenant context and audit. No production backup, preflight, migration or deployment was performed in this task.
 
-The compatibility adapter `src/compat/material-referentials-backport.ts` is not mounted in this native source. It is a historical code-only backport, not an alternative implementation of this library: do not mount it ahead of these native routes for this release. EC or any composite runtime must use the same native library routes and schema before activating the new UI.
+The compatibility adapter `src/compat/material-referentials-backport.ts` is not mounted in this native source. It is an EC composite-runtime compatibility boundary rather than an alternative native implementation: do not mount it ahead of these native routes in this source assembly. The captured EC archive contains and the acceptance harness parses the built adapter, but its archived app has no static require edge and no composite mount was located. It remains retained by the lifecycle guard under the audited deployment documentation and user instruction until reviewed target-runtime evidence resolves that boundary; native route availability alone is not retirement evidence.
 
 ## Rollback
 

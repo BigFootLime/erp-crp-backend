@@ -15,6 +15,11 @@
 - La lecture du statut d'impression et la réémission transactionnelle de l'effet d'impression sont isolées derrière les exports historiques de `livraisons.repository.ts`. Les requêtes SQL, paramètres, erreurs, audit, événement temps réel et ordre `BEGIN`/`COMMIT` restent inchangés ; aucun endpoint, droit, règle métier, base ni déploiement n'est modifié. Voir [l'architecture](docs/architecture/u11-delivery-printing-repository.md).
 - L'écriture d'événement de livraison est désormais détenue une seule fois par `delivery-events.repository.ts`, partagé par la façade et le propriétaire d'impression ; les invalidations temps réel et la déduplication restent inchangées.
 
+## En préparation — Cycle de vie de la compatibilité matière (#1526)
+
+- Un manifeste et une garde réellement exécutée au build conservent l’adapter matière et ses deux exports source/compilés. Les faux exports commentés, membres manquants et retraits sans nouvelle revue sont refusés ; aucun code runtime, droit, SQL ou montage n’est changé.
+- Le retrait reste conditionné à un remplacement natif vérifié sur le runtime cible, à une recette authentifiée sans adapter et à une revue identifiant les sources exactes. L’absence d’import dans l’assemblage source courant ne suffit pas à conclure sur les autres runtimes.
+
 ## En préparation — Fidélité OpenAPI des référentiels matière et préparation OF
 
 - La couverture d’inventaire des routes et la précision des schémas sont maintenant comptées séparément : les wrappers génériques restent explicitement classés et ne produisent plus un faux « 100 % précis ».
