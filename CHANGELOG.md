@@ -4,6 +4,10 @@
 
 - Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
 
+## Unreleased
+
+- Refactor: isolated the delivery-list read model behind the existing delivery repository export while preserving its SQL, pagination, allocation scopes, and invocation-time pool binding.
+
 ## En préparation — Lectures de liste des commandes (U11)
 
 - La liste des commandes, ses filtres paramétrés, sa liste blanche de tris et sa pagination partagent un propriétaire de lecture, derrière l'export historique. Le pool reste résolu à l'appel ; aucun droit, contrat API ou propriétaire de transaction ne change.
