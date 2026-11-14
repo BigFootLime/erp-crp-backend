@@ -1,16 +1,46 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
 const source = fs.readFileSync(path.join(__dirname, "commande-client.repository.ts"), "utf8");
+const uploadTransactionSource = fs.readFileSync(path.join(__dirname, "../../../shared/uploads/upload-transaction.ts"), "utf8");
+const creationSource = fs.readFileSync(path.join(__dirname, "commande-creation-transaction.repository.ts"), "utf8");
+function functionBody(text: string, name: string): string {
+  const file = ts.createSourceFile("repository.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const found: ts.FunctionDeclaration[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  expect(found).toHaveLength(1);
+  expect(found[0]?.body).toBeDefined();
+  return found[0]!.body!.getText(file);
+}
 const productionSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production.repository.ts"), "utf8");
 const generationSource = fs.readFileSync(path.join(__dirname, "../../production/repository/production-generation.repository.ts"), "utf8");
 const ofCreationPdfSource = fs.readFileSync(path.join(__dirname, "../../production/domain/of-creation-pdf.ts"), "utf8");
 
 describe("commande creation PDF transaction contract", () => {
   it("queues the sanitized internal snapshot before the create transaction returns", () => {
-    const queue = source.indexOf("await queueCommandeCreationPdf(client");
-    const result = source.indexOf("return { id: toInt(commandeId");
+    // The moved transaction owner must queue the same snapshot before returning;
+    // the outer facade still owns commit and the original snapshot serializer.
+    const native = functionBody(creationSource, "repoCreateCommandeNativeTx");
+    const queue = native.indexOf("await queueCommandeCreationPdf(client");
+    const result = native.indexOf("return { id: toInt(commandeId");
+    const outer = functionBody(source, "repoCreateCommande");
+    const invoke = outer.indexOf("await repoCreateCommandeNativeTx(");
+    expect(invoke).toBeGreaterThan(0);
+    expect(outer.indexOf("await withUploadTransaction({")).toBeGreaterThan(0);
+    expect(outer.indexOf("return { id: created.id };", invoke)).toBeGreaterThan(invoke);
+    const transaction = functionBody(uploadTransactionSource, "withUploadTransaction");
+    const work = transaction.indexOf("result = await work(client)");
+    const commit = transaction.indexOf('await client.query("COMMIT")', work);
+    expect(work).toBeGreaterThan(0);
+    expect(commit).toBeGreaterThan(work);
+    expect(transaction.indexOf("return result;", commit)).toBeGreaterThan(commit);
+    expect(source).toContain("queueCommandeCreationPdf,");
     expect(queue).toBeGreaterThan(0);
     expect(queue).toBeLessThan(result);
     expect(source).toContain('documentKind: "CUSTOMER_ORDER_CREATION_SNAPSHOT"');
