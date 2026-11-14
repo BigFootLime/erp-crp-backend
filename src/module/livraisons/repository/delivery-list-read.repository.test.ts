@@ -78,6 +78,7 @@ function declaration(source: string, name: string, nested = false) {
 }
 
 function functionContract(source: string, name: string) {
+  source = source.replace(/\r\n/g, "\n")
   const file = ts.createSourceFile("x.ts", source, ts.ScriptTarget.Latest, true)
   const printer = ts.createPrinter({ removeComments: false })
   let found: ts.FunctionDeclaration | ts.FunctionExpression | undefined
@@ -128,7 +129,12 @@ describe("delivery list extraction proof", () => {
   it("keeps source and emitted dependency graphs one-way, with no dynamic import", () => {
     const ownerSource = readFileSync(path.join(process.cwd(), "src/module/livraisons/repository/delivery-list-read.repository.ts"), "utf8")
     const facade = readFileSync(path.join(process.cwd(), "src/module/livraisons/repository/livraisons.repository.ts"), "utf8")
-    const ownerDist = readFileSync(path.join(process.cwd(), "dist/module/livraisons/repository/delivery-list-read.repository.js"), "utf8")
+    const emitted = ts.transpileModule(ownerSource, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      reportDiagnostics: true,
+    })
+    expect(emitted.diagnostics ?? []).toHaveLength(0)
+    const ownerDist = emitted.outputText
     expect(ownerSource).not.toContain("livraisons.repository")
     expect(ownerSource).not.toMatch(/import\s*\(/)
     expect(facade).toContain('from "./delivery-list-read.repository"')
