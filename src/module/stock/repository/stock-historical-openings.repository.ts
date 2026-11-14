@@ -1,3 +1,4 @@
+import { pieceClientCodeSql } from "./stock-article-projection";
 import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 
@@ -22,11 +23,7 @@ import {
   resolveUnitIdForArticle,
 } from "./stock-movement-core.repository";
 import type { AuditContext } from "./stock-movement-core.repository";
-import {
-  normalizedArticleCategorySql,
-  pieceClientCodeSql,
-  repoCreateArticleTx,
-} from "./stock-article-lifecycle.repository";
+import { normalizedArticleCategorySql, repoCreateArticleTx } from "./stock-article-lifecycle.repository";
 import { defaultFamilyCodeForCategory } from "./stock-material-referentials.repository";
 
 export type StockOpeningReferenceInput = {

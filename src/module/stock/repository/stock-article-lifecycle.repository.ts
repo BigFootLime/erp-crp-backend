@@ -1,3 +1,5 @@
+import { pieceClientCodeSql } from "./stock-article-projection";
+import { tableColumnExists } from "./stock-schema.repository";
 import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
@@ -375,24 +377,6 @@ export async function syncArticleSubtypeDetails(
   }
 }
 
-async function tableColumnExists(
-  queryer: Pick<PoolClient, "query">,
-  tableName: string,
-  columnName: string
-): Promise<boolean> {
-  const result = await queryer.query<{ present: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1
-       FROM information_schema.columns
-       WHERE table_schema = 'public'
-         AND table_name = $1
-         AND column_name = $2
-     ) AS present`,
-    [tableName, columnName]
-  );
-  return result.rows[0]?.present === true;
-}
-
 async function syncArticleProcurementProfile(
   client: Pick<PoolClient, "query">,
   articleId: string,
@@ -468,12 +452,6 @@ async function ensureArticleCanDisableStockManagement(client: Pick<PoolClient, "
   if (Math.abs(Number(row.qty_total ?? 0)) > 0.0001 || Math.abs(Number(row.qty_reserved ?? 0)) > 0.0001) {
     throw new HttpError(409, "ARTICLE_HAS_STOCK", "This article still has stock or reservations and cannot be switched to non-stock-managed");
   }
-}
-
-// client_id is a technical key; only the linked customer's business code is displayed.
-// Preserve a historical code only when it is distinct from that technical key.
-function pieceClientCodeSql(pieceAlias = "pt"): string {
-  return `COALESCE(NULLIF(btrim(piece_client.client_code), ''), NULLIF(NULLIF(btrim(${pieceAlias}.code_client), ''), btrim(${pieceAlias}.client_id)))`;
 }
 
 function articleSortColumn(sortBy: ListArticlesQueryDTO["sortBy"]): string {

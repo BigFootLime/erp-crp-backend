@@ -18,7 +18,8 @@ La répartition d'une réception vers ses pistes importe ce noyau directement.
 Le graphe runtime compilé ne peut ainsi plus atteindre la façade Stock depuis
 `receipt-lane-transfer.repository.js`; il supprime le chemin ciblé
 réception-piste → Stock façade. La réconciliation de lots libérés, hors de ces
-commandes, reste dans la façade Stock et les effets métier ne sont pas retirés.
+commandes, possède désormais une feuille de production dédiée ; ses effets
+métier restent conservés.
 
 Cette étape est structurelle : routes, API, SQL, droits, règles OF/Qualité,
 ordre des verrous, audit, idempotence et effets stock restent inchangés. Les
@@ -39,3 +40,38 @@ Les declarations, corps SQL, parametres et frontieres transactionnelles restent
 identiques. Les tests de routes simulees et de transactions simulees ne sont
 pas presentes comme des executions PostgreSQL reelles ; celles-ci ont leurs
 recus de fixture isolee distincts.
+
+La consolidation #1562 complète cette répartition sans changer l'API publique :
+
+| Ressource | Propriétaire |
+|---|---|
+| Référentiels et familles matière | `stock-material-referentials.repository.ts` |
+| Création, sous-types, versions et cycle de vie des articles | `stock-article-lifecycle.repository.ts` |
+| Sessions et lignes d'inventaire | `stock-inventory-sessions.repository.ts` |
+| Inventaire consolidé, balances, analyses et liste des mouvements | `stock-reporting.repository.ts` |
+| Écritures et téléchargements de documents | `stock-documents.repository.ts` |
+| Lecture des documents article partagée avec les inventaires | `stock-document-reads.repository.ts` |
+| Ouvertures historiques OLD/NEW | `stock-historical-openings.repository.ts` |
+| Prévisualisation, compensation et annulation des mouvements | `stock-movement-corrections.repository.ts` |
+| Lots, généalogie et libération qualité | `stock-lots.repository.ts` |
+
+`stock-article-projection.ts` possède une seule projection matière historique et
+une seule définition de `pieceClientCodeSql`. Les lectures consolidées et les
+ouvertures historiques dépendent directement de cette feuille stable. Le cycle
+de vie des articles conserve ses liaisons de compatibilité vers ces mêmes
+fonctions ; il ne les recopie pas. `stock-schema.repository.ts` porte l'unique
+détection de colonne partagée.
+
+`production-receipt-lot-reconciliation.repository.ts` porte la réconciliation
+des réceptions libérées et ses aides, sous le client transactionnel de l'appelant.
+Les consommateurs Qualité importent cette feuille sans déplacer leurs contrôles
+d'accès, verrous, réservations, allocations, audit ou outbox. La préparation et
+la validation d'un OF restent accessibles à tout utilisateur authentifié ayant
+accès à cet OF ; aucun visa Qualité n'est réintroduit.
+
+Les anciennes façades restent des points d'entrée de compatibilité vers les
+mêmes liaisons nommées. Les contrats de lecture, les liens optionnels
+sous-état/état, les paramètres SQL et la propriété des transactions sont conservés.
+Les preuves de source, tests simulés et tests PostgreSQL détenus sont consignés
+séparément. Cette documentation décrit la source de consolidation non publiée,
+sans autoriser de déploiement, migration ou publication d'installateur.
