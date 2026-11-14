@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "4b1f2ea9157afe13b3a5bc466ed446c8aebab75f6dc667b1ac871fbe242f17af";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "bee229150c96da3b081e6dfe7b5c4a5e95c0f7801ce447ed11ebf9dcfa4e472e";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -7733,7 +7733,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/admin/companies",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:254",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:255",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7745,7 +7745,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/entreprises/admin/companies",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:270",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:271",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7757,7 +7757,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/admin/companies/{companyId}",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:264",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:265",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7769,7 +7769,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/entreprises/admin/companies/{companyId}",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:274",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:275",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7781,7 +7781,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/entreprises/admin/companies/{companyId}/instances",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:289",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:290",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7793,7 +7793,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/admin/companies/{companyId}/instances/{environment}/memberships/{profileId}/administrative-level",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:296",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:297",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7805,7 +7805,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/entreprises/admin/companies/{companyId}/instances/{environment}/memberships/{profileId}/administrative-level",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:304",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:305",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7817,7 +7817,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/entreprises/admin/companies/{companyId}/memberships/{profileId}",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:281",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:282",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7829,7 +7829,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/admin/options",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:258",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:259",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7841,7 +7841,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/context",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:207",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:208",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7853,7 +7853,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/entreprises/sign-in-context",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:104",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:105",
     "middleware": [
       "anonymous",
       "companySignInLimit",
@@ -7865,7 +7865,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/entreprises/switches",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:215",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:216",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -7877,7 +7877,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/entreprises/switches/exchange",
-    "source": "src/module/entreprises/routes/entreprises.routes.ts:146",
+    "source": "src/module/entreprises/routes/entreprises.routes.ts:147",
     "middleware": [
       "anonymous",
       "companySignInLimit",
