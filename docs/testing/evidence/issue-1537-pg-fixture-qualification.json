@@ -1,0 +1,85 @@
+{
+  "issue": "1537",
+  "qualified_at": "2026-11-14",
+  "repository": "cerp-api",
+  "base_commit": "7fc19d005f837539efbd9bc0e43ba5dd8716ad1b",
+  "working_tree": {
+    "tracked_changes": [
+      "src/__tests__/stock-delivery-repositories.pg.integration.test.ts",
+      "docs/testing/issue-1537-pg-fixture-repair.md",
+      "docs/testing/evidence/issue-1537-pg-fixture-qualification.json"
+    ],
+    "production_runtime_and_sql_unchanged": true,
+    "production_database_or_service_modified": false,
+    "installer_published": false,
+    "deployment_performed": false
+  },
+  "postgresql_fixture": {
+    "runner": "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/run-owned-fixture.cjs",
+    "attempt": "attempt-28",
+    "database": "cerp_stock_delivery_integration",
+    "network_scope": "fresh labelled container with a random port bound to 127.0.0.1 only",
+    "teardown_verified": true,
+    "credentials_logged": false
+  },
+  "final_source_evidence": {
+    "commit_files": [
+      "src/__tests__/stock-delivery-repositories.pg.integration.test.ts",
+      "docs/testing/issue-1537-pg-fixture-repair.md",
+      "docs/testing/evidence/issue-1537-pg-fixture-qualification.json"
+    ],
+    "fixture_blob_sha256": "2e687fe81c3f0e67273e14695daa338fee431c9d65a697ba3c63aa71e54724f3",
+    "attempt_28_working_tree_patch_sha256": "9a9ef306d706a184d871c9713c5cbc9b38cbd84d33a415652dfa299d3ecf75e4",
+    "attempt_28_patch": "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/source.patch",
+    "runtime_and_sql_diff_command": "git diff --exit-code HEAD^ HEAD -- src/module db",
+    "runtime_and_sql_diff_exit_code": 0
+  },
+  "retained_history": [
+    {
+      "attempt": "attempt-26",
+      "status": "rejected",
+      "reason": "The temporary runtime dual-write was rejected as a duplicate legacy projection.",
+      "runtime_draft": "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/held-runtime-draft.patch"
+    },
+    {
+      "attempt": "attempt-27",
+      "status": "failed",
+      "reason": "Fixture schema duplicate column while adding canonical read-model evidence; corrected without runtime changes.",
+      "raw_reports": [
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-27/suite-1.json",
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-27/suite-1.log"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": "node run-owned-fixture.cjs <isolated-backend-worktree> 7fc19d005f837539efbd9bc0e43ba5dd8716ad1b <attempt-28>",
+      "exit_code": 0,
+      "results": {
+        "stock_delivery_repositories_pg_integration": { "passed": 39, "failed": 0, "skipped": 0 },
+        "stock_movement_value_evidence_integration": { "passed": 7, "failed": 0, "skipped": 0 }
+      },
+      "raw_reports": [
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/suite-1.json",
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/suite-1.log",
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/suite-2.json",
+        "C:/Users/KeenanMARTIN/Documents/Github/output/cerp-backend-isolated-pg-20261114/attempt-28/suite-2.log"
+      ]
+    },
+    {
+      "command": "node npm-cli.js run build",
+      "exit_code": 0,
+      "notes": "Strict TypeScript build and generated OpenAPI/production-data-boundary checks passed."
+    },
+    {
+      "command": "node vitest.mjs run src/module/production/repository/production-receipts.repository.test.ts src/module/production/domain/receipt-delivery-allocation.test.ts --maxWorkers=1 --no-file-parallelism",
+      "exit_code": 0,
+      "results": { "passed": 9, "failed": 0, "skipped": 0 }
+    }
+  ],
+  "limits": [
+    "This is local fixture qualification only; it does not authorize deployment, installer publication, or a production database/service change.",
+    "The test fixture does not use production environment credentials.",
+    "Attempt 26 is retained as rejected draft history only: its runtime dual-write patch is archived in held-runtime-draft.patch and is not part of this qualification."
+  ]
+}

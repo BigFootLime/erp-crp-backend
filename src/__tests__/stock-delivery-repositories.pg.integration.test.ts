@@ -81,6 +81,8 @@ async function installMinimalSchema(db: Pool) {
     CREATE TYPE public.movement_type AS ENUM (
       'IN', 'OUT', 'RESERVE', 'UNRESERVE', 'DEPRECIATE', 'SCRAP', 'ADJUST', 'ADJUSTMENT', 'TRANSFER'
     );
+    CREATE TYPE public.quality_nc_severity AS ENUM ('MINOR', 'MAJOR', 'CRITICAL');
+    CREATE TYPE public.quality_nc_status AS ENUM ('OPEN', 'ANALYSIS', 'ACTION_PLAN', 'CLOSED');
 
     CREATE SEQUENCE public.stock_movement_no_seq START WITH 1;
     CREATE SEQUENCE public.bon_livraison_no_seq START WITH 1;
@@ -111,6 +113,7 @@ async function installMinimalSchema(db: Pool) {
     CREATE TABLE public.articles (
       id UUID PRIMARY KEY,
       piece_technique_id UUID NULL,
+      code TEXT NULL,
       article_type TEXT NULL,
       is_active BOOLEAN NOT NULL DEFAULT true,
       unite TEXT NULL,
@@ -273,6 +276,7 @@ async function installMinimalSchema(db: Pool) {
       client_id UUID NOT NULL,
       destinataire_id UUID NULL,
       order_type TEXT NOT NULL DEFAULT 'FERME',
+      internal_order_purpose TEXT NULL,
       ar_sent_at TIMESTAMPTZ NOT NULL DEFAULT '2026-08-01 12:00Z'
     );
     CREATE TABLE public.client_contract_calls (commande_id BIGINT, contract_id UUID);
@@ -367,9 +371,14 @@ async function installMinimalSchema(db: Pool) {
       numero TEXT NOT NULL,
       piece_technique_id UUID NOT NULL,
       article_id UUID NULL,
+      commande_id BIGINT NULL,
       commande_ligne_id BIGINT NULL,
       affaire_id BIGINT NULL,
+      piece_technique_version_id UUID NULL,
+      statut TEXT NOT NULL DEFAULT 'EN_COURS',
+      quantite_lancee NUMERIC(18,3) NOT NULL DEFAULT 0,
       quantite_bonne NUMERIC(18,3) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_by INTEGER NULL
     );
@@ -402,6 +411,11 @@ async function installMinimalSchema(db: Pool) {
       qty_scrap NUMERIC(18,3) NOT NULL DEFAULT 0,
       qty_rework NUMERIC(18,3) NOT NULL DEFAULT 0,
       quality_status TEXT NOT NULL DEFAULT 'LIBERE',
+      quality_reason TEXT NULL,
+      location_id UUID NULL,
+      stock_level_id UUID NULL,
+      stock_batch_id UUID NULL,
+      non_conformity_id UUID NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (actor_user_id, idempotency_key)
     );
@@ -417,6 +431,8 @@ async function installMinimalSchema(db: Pool) {
       date_creation DATE NOT NULL DEFAULT CURRENT_DATE,
       date_expedition DATE NULL,
       commentaire_interne TEXT NULL,
+      intercompany_request_id UUID NULL,
+      intercompany_destination_snapshot JSONB NULL,
       shipping_version INTEGER NOT NULL DEFAULT 1,
       row_version INTEGER NOT NULL DEFAULT 1,
       shipping_preview_hash TEXT NULL,
@@ -585,6 +601,7 @@ async function installMinimalSchema(db: Pool) {
 async function clearScenario(db: Pool) {
   await db.query(`
     TRUNCATE TABLE
+      public.delivery_promise_departure_events,
       public.delivery_promise_shipments,
       public.delivery_promise_parts,
       public.delivery_promise_roots,
@@ -602,6 +619,8 @@ async function clearScenario(db: Pool) {
       public.bon_livraison_ligne_allocations,
       public.bon_livraison_ligne,
       public.bon_livraison,
+      public.production_receipt_lane_assignments,
+      public.production_receipt_lane_intents,
       public.of_receipts,
       public.of_output_lots,
       public.ordres_fabrication,
@@ -611,12 +630,14 @@ async function clearScenario(db: Pool) {
       public.commande_ligne_affaire_allocation,
       public.commande_ligne,
       public.commande_client,
+      public.affaire,
       public.clients,
       public.stock_movement_event_log,
       public.stock_movement_lines,
       public.stock_movements,
       public.stock_batches,
       public.stock_levels,
+      public.stock_lot_trace_references,
       public.lots,
       public.emplacements,
       public.magasins,
@@ -646,10 +667,18 @@ async function seedCommonLocation(db: Pool) {
 
 async function seedReceiptScenario(db: Pool): Promise<{ expectedOfUpdatedAt: string }> {
   await seedCommonLocation(db);
+  await db.query(`INSERT INTO public.pieces_techniques (id, client_id, code_piece) VALUES ($1::uuid, NULL, 'PT-INT')`, [ids.pieceTechnique]);
   await db.query(
-    `INSERT INTO public.articles (id, piece_technique_id, article_type, is_active, unite)
-     VALUES ($1::uuid, $2::uuid, 'PIECE_TECHNIQUE', true, 'u')`,
+    `INSERT INTO public.articles (id, piece_technique_id, code, article_type, is_active, unite)
+     VALUES ($1::uuid, $2::uuid, 'PT-INT', 'PIECE_TECHNIQUE', true, 'u')`,
     [ids.article, ids.pieceTechnique]
+  );
+  await db.query(`INSERT INTO public.affaire (id, reference) VALUES (700, 'AFF-INT')`);
+  await db.query(`INSERT INTO public.commande_client (id, numero, client_id) VALUES (42, 'CMD-INT', $1::uuid)`, [ids.client]);
+  await db.query(
+    `INSERT INTO public.commande_ligne (id, commande_id, designation, code_piece, unite, quantite, article_id)
+     VALUES (43, 42, 'Pièce intégration', 'PT-INT', 'u', 10, $1::uuid)`,
+    [ids.article]
   );
   await db.query(
     `INSERT INTO public.commande_ligne_affaire_allocation (
@@ -660,8 +689,8 @@ async function seedReceiptScenario(db: Pool): Promise<{ expectedOfUpdatedAt: str
   );
   await db.query(
     `INSERT INTO public.ordres_fabrication (
-       id, numero, piece_technique_id, article_id, commande_ligne_id, affaire_id, quantite_bonne
-     ) VALUES (101, 'OF-INT-101', $1::uuid, $2::uuid, 43, 700, 12)`,
+       id, numero, piece_technique_id, article_id, commande_id, commande_ligne_id, affaire_id, quantite_lancee, quantite_bonne
+     ) VALUES (101, 'OF-INT-101', $1::uuid, $2::uuid, 42, 43, 700, 12, 12)`,
     [ids.pieceTechnique, ids.article]
   );
   const of = await db.query<{ updated_at: string }>(
@@ -693,6 +722,7 @@ async function seedDeliveryScenario(db: Pool) {
     `INSERT INTO public.commande_ligne (id, designation, code_piece, unite, delai_client)
      VALUES (43, 'Pièce intégration', 'PT-INT', 'u', '2026-09-01')`
   );
+  await db.query(`INSERT INTO public.affaire (id, reference) VALUES (700, 'AFF-INT')`);
   await db.query(
     `INSERT INTO public.commande_ligne_affaire_allocation (
        id, commande_id, commande_ligne_id, livraison_affaire_id, article_ref_id,
@@ -750,6 +780,8 @@ async function seedAdditionalDeliveryReservation(
     `INSERT INTO public.commande_ligne (id, designation, code_piece, unite, delai_client)
      VALUES (45, 'Seconde pièce intégration', 'PT-INT-2', 'u', '2026-09-02')`
   );
+  await db.query(`UPDATE public.commande_ligne SET commande_id = 44 WHERE id = 45`);
+  await db.query(`INSERT INTO public.affaire (id, reference) VALUES (701, 'AFF-INT-2')`);
   await db.query(
     `INSERT INTO public.commande_ligne_affaire_allocation (
        id, commande_id, commande_ligne_id, livraison_affaire_id, article_ref_id,
@@ -802,7 +834,7 @@ async function shipPartialFixture(db: Pool, id: string, key: string) {
 const recoveryAudit = {user_id:7,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:'/integration/recovery',page_key:'livraisons',client_session_id:null};
 async function installRecoverySchema(db: Pool) {
   await db.query(`
-    ALTER TABLE public.articles ADD COLUMN code text DEFAULT 'PT-INT',ADD COLUMN designation text DEFAULT 'Pièce';
+    ALTER TABLE public.articles ADD COLUMN IF NOT EXISTS code text DEFAULT 'PT-INT',ADD COLUMN IF NOT EXISTS designation text DEFAULT 'Pièce';
     ALTER TABLE public.clients ADD COLUMN client_code text DEFAULT 'CLI-INT';
     ALTER TABLE public.commande_client ADD COLUMN code_client text DEFAULT 'PO-INT';
     CREATE TABLE public.commande_historique(id bigserial PRIMARY KEY,commande_id bigint NOT NULL,nouveau_statut text NOT NULL,date_action timestamptz NOT NULL DEFAULT now());
@@ -818,7 +850,7 @@ async function installRecoverySchema(db: Pool) {
     ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS origin_stock_scope text,ADD COLUMN IF NOT EXISTS stock_scope text,ADD COLUMN piece_technique_version_id uuid,ADD COLUMN expiry_at timestamptz;
     ALTER TABLE public.emplacements ADD COLUMN location_type text DEFAULT 'STORAGE',ADD COLUMN is_scrap boolean DEFAULT false,ADD COLUMN allow_inbound boolean DEFAULT true,ADD COLUMN allow_outbound boolean DEFAULT true;
     CREATE TABLE public.warehouses(id uuid PRIMARY KEY,stock_scope text DEFAULT 'NEW');
-    CREATE TABLE public.pieces_techniques(id uuid PRIMARY KEY,client_id uuid);
+    CREATE TABLE public.pieces_techniques(id uuid PRIMARY KEY,client_id uuid,code_client text,code_piece text);
     CREATE TABLE public.piece_technique_versions(id uuid PRIMARY KEY,piece_technique_id uuid,indice text);
     CREATE VIEW public.v_technical_stock_compatibility_832 AS SELECT id AS stock_version_id,id AS target_version_id FROM public.piece_technique_versions;
     CREATE TABLE public.affaire(id bigint PRIMARY KEY,reference text,statut text DEFAULT 'OUVERTE',delivery_readiness_state text DEFAULT 'READY_FOR_BL');
@@ -827,7 +859,11 @@ async function installRecoverySchema(db: Pool) {
     CREATE TABLE public.stock_lane_destinations(lane text PRIMARY KEY,location_id uuid);
     CREATE TABLE public.stock_command_receipts(actor_user_id integer,idempotency_key text,request_hash text,command_type text,resource_type text,resource_id text,request_payload jsonb,result_payload jsonb,correlation_id uuid,UNIQUE(actor_user_id,idempotency_key));
     CREATE TABLE public.quality_control(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lot_id uuid,source_type text,source_id text,qty_released numeric DEFAULT 0,qty_held numeric DEFAULT 0,qty_consumed numeric DEFAULT 0,unite text DEFAULT 'u',validation_date timestamptz,verdict text,trigger_type text,reception_ligne_id uuid,control_date timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
-    CREATE TABLE public.non_conformity(id uuid PRIMARY KEY,lot_id uuid,status text);
+    CREATE TABLE public.non_conformity(
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), affaire_id bigint, of_id bigint,
+      piece_technique_id uuid, lot_id uuid, description text, severity public.quality_nc_severity,
+      status public.quality_nc_status, detected_by integer, created_by integer, updated_by integer
+    );
     CREATE TABLE public.non_conformity_dispositions(non_conformity_id uuid);
     CREATE TABLE public.quality_release_decision(id uuid PRIMARY KEY,quality_control_id uuid,derogation_id uuid,decided_at timestamptz);
     CREATE TABLE public.quality_derogation(id uuid PRIMARY KEY,status text,valid_to timestamptz);
@@ -838,12 +874,117 @@ async function installRecoverySchema(db: Pool) {
     CREATE TABLE public.consumable_receipt_admissions(id uuid PRIMARY KEY,quantity numeric,unit text,receipt_line_id uuid,lot_id uuid);
   `);
 }
+
+async function installCurrentBoundarySchema(db: Pool) {
+  // Keep the fixture's stock flow behind the same receipt evidence and Finance
+  // locks as the current repositories. These are local test tables only.
+  await db.query(`
+    INSERT INTO public.users(id, username) VALUES (7, 'stock-fixture');
+    ALTER TABLE public.stock_reservations ADD COLUMN of_component_requirement_id uuid;
+    ALTER TABLE public.lots ADD COLUMN IF NOT EXISTS lot_status_note text;
+    ALTER TABLE public.stock_batches ADD COLUMN IF NOT EXISTS qty_depreciated numeric(18,3) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+    ALTER TABLE public.delivery_promise_shipments ADD COLUMN IF NOT EXISTS departure_due_date_at_shipment date;
+    ALTER TABLE public.quality_control ADD COLUMN IF NOT EXISTS status text;
+    ALTER TABLE public.clients ADD COLUMN blocked boolean NOT NULL DEFAULT false;
+    ALTER TABLE public.commande_client ADD COLUMN currency text NOT NULL DEFAULT 'EUR',
+      ADD COLUMN remise_globale numeric NOT NULL DEFAULT 0,
+      ADD COLUMN delivery_prepayment_requirement text NOT NULL DEFAULT 'NOT_REQUIRED',
+      ADD COLUMN fulfilment_mode text NOT NULL DEFAULT 'STOCK';
+    ALTER TABLE public.commande_ligne ADD COLUMN prix_unitaire_ht numeric NOT NULL DEFAULT 1,
+      ADD COLUMN remise_ligne numeric NOT NULL DEFAULT 0, ADD COLUMN taux_tva numeric NOT NULL DEFAULT 20;
+    CREATE TABLE public.stock_lot_trace_references (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), lot_id uuid NOT NULL REFERENCES public.lots(id),
+      reference_type text NOT NULL, reference_value text NOT NULL, created_by integer,
+      UNIQUE(lot_id, reference_type, reference_value)
+    );
+    CREATE TABLE public.delivery_affair_prepayment_terms (
+      allocation_id bigint PRIMARY KEY, requirement text NOT NULL, row_version integer NOT NULL DEFAULT 1,
+      proforma_line_id uuid
+    );
+    CREATE TABLE public.proforma_client (id uuid PRIMARY KEY, status text, reference text);
+    CREATE TABLE public.proforma_affair_lines (id uuid PRIMARY KEY, proforma_id uuid, source_revision text);
+    CREATE TABLE public.delivery_affair_billing_shares (
+      id uuid PRIMARY KEY, allocation_id bigint, billed_client_id text, quantity numeric, active boolean
+    );
+    CREATE TABLE public.production_material_debits (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), of_id bigint NOT NULL, compensates_id uuid NULL
+    );
+    CREATE TABLE public.production_material_debit_sources (
+      debit_id uuid NOT NULL, reservation_id uuid NOT NULL, stock_movement_id uuid NULL,
+      actual_qty numeric NULL
+    );
+    CREATE TABLE public.production_consolidations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), producer_of_id bigint, state text);
+    CREATE TABLE public.production_consolidation_allocations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), consolidation_id uuid, source_of_id bigint,
+      quantity numeric, received_quantity numeric NOT NULL DEFAULT 0, due_date date, state text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE public.production_consolidation_receipt_allocations (
+      allocation_id uuid, movement_id uuid, lot_id uuid, quantity numeric,
+      PRIMARY KEY(allocation_id, movement_id)
+    );
+    CREATE TABLE public.delivery_urgency_requests (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), status text);
+    CREATE TABLE public.delivery_urgency_recoveries (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), request_id uuid, donor_allocation_id bigint,
+      recovery_of_id bigint, quantity numeric, donor_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE TABLE public.delivery_urgency_replenishments (recovery_id uuid, receipt_id uuid, reservation_id uuid, lot_id uuid, quantity numeric, created_by integer);
+    CREATE TABLE public.of_component_requirements (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), component_of_id bigint, consuming_of_id bigint,
+      component_article_id uuid, required_qty numeric, status text, created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE public.of_operations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), of_id bigint NOT NULL
+    );
+    CREATE TABLE public.facture_source_allocations (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), source_type text, source_line_id text,
+      allocation_status text, quantity_consumed numeric NOT NULL DEFAULT 0, facture_id uuid NULL
+    );
+    CREATE TABLE public.facture (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), statut text);
+    CREATE TABLE public.subcontract_operation_completions(operation_id uuid PRIMARY KEY, evidence jsonb NOT NULL DEFAULT '{}'::jsonb);
+    CREATE TABLE public.reception_subcontract_origins(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), receipt_line_id uuid, package_id uuid, quantity numeric);
+    CREATE TABLE public.subcontract_work_packages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), of_operation_id uuid, supplier_order_line_id uuid);
+    CREATE TABLE public.subcontract_purchase_origins(line_id uuid, operation_id uuid, preparation_snapshot jsonb);
+    CREATE TABLE public.cerp_intercompany_external_fulfilment_receipts (
+      message_id uuid PRIMARY KEY, buyer_sales_order_id bigint, destination_company_id uuid,
+      source_company_id uuid, receipt_id text, dispatched_at timestamptz, environment text
+    );
+    CREATE TABLE public.cerp_intercompany_external_fulfilment_receipt_lines (
+      message_id uuid NOT NULL, line_no integer NOT NULL, buyer_sales_order_line_id bigint,
+      buyer_purchase_order_line_id uuid, seller_delivery_line_id text, quantity numeric, unit text,
+      PRIMARY KEY(message_id, line_no)
+    );
+    CREATE TABLE public.cerp_intercompany_requests (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), buyer_company_id uuid, buyer_purchase_order_id text,
+      buyer_sales_order_id text, relation_id uuid, revision integer, supplier_sales_order_id bigint, state text
+    );
+    CREATE TABLE public.delivery_promise_departure_events (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), root_id uuid NOT NULL,
+      part_id uuid NOT NULL, root_version bigint NOT NULL, due_date date NOT NULL,
+      actor_id integer NOT NULL, request_key text NOT NULL, request jsonb NOT NULL,
+      reason text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE(actor_id, request_key), UNIQUE(root_id, part_id, root_version)
+    );
+  `);
+  const stockPatch = readFileSync(repoPath('db/patches/20260723_stock_traceability_225.sql'), 'utf8');
+  const immutableEvidence = stockPatch.match(/CREATE OR REPLACE FUNCTION public\.fn_protect_stock_immutable_evidence\(\)[\s\S]*?\$\$;/);
+  if (!immutableEvidence) throw new Error('Canonical immutable-evidence function missing');
+  await db.query(immutableEvidence[0]);
+  const availabilityView = stockPatch.match(/CREATE OR REPLACE VIEW public\.v_stock_availability_225 AS[\s\S]*?COMMENT ON VIEW public\.v_stock_availability_225 IS[\s\S]*?;/);
+  if (!availabilityView) throw new Error('Canonical stock availability view missing');
+  await db.query(availabilityView[0]);
+  await db.query(readFileSync(repoPath('db/patches/20261009_production_receipt_lane_assignments_1029.sql'), 'utf8'));
+  const financePatch = readFileSync(repoPath('db/patches/20261013_proforma_affair_funding_1268.sql'), 'utf8');
+  const epochStart = financePatch.indexOf('CREATE TABLE IF NOT EXISTS public.delivery_prepayment_epoch_1268');
+  const epochEnd = financePatch.indexOf('CREATE OR REPLACE FUNCTION public.fn_touch_delivery_prepayment_1268()');
+  if (epochStart < 0 || epochEnd <= epochStart) throw new Error('Canonical Finance lock boundary missing');
+  await db.query(financePatch.slice(epochStart, epochEnd));
+}
 async function seedRecovery(db:Pool) {
   await seedDeliveryScenario(db);
   await db.query('INSERT INTO public.warehouses(id) VALUES($1)',[ids.warehouse]);
   await db.query('INSERT INTO public.pieces_techniques(id,client_id) VALUES($1,$2)',[ids.pieceTechnique,ids.client]);
   await db.query("INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice) VALUES($1,$1,'A')",[ids.pieceTechnique]);
-  await db.query("INSERT INTO public.affaire(id,reference) VALUES(700,'AFF-INT')");
   await db.query('UPDATE public.commande_ligne SET quantite=3,article_id=$1,piece_technique_version_id=$2',[ids.article,ids.pieceTechnique]);
   await db.query('UPDATE public.commande_ligne_affaire_allocation SET qty_ordered=3,qty_reserved=3,qty_remaining=3');
   await db.query('UPDATE public.stock_reservations SET qty_reserved=3');
@@ -873,6 +1014,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       ON public.bon_livraison_ligne_allocations(reservation_id) WHERE reservation_id IS NOT NULL`);
     await applyPartialDeliveryScope(harnessPool);
     await installRecoverySchema(harnessPool);
+    await installCurrentBoundarySchema(harnessPool);
 
     // Import only after the safety check so the production singleton pool is
     // bound to this disposable test database, never a developer's .env URL.
@@ -903,7 +1045,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       location_id: ids.location,
       lot_mode: "NEW" as const,
       expected_of_updated_at: expectedOfUpdatedAt,
-      quality_status: "LIBERE" as const,
+      quality_status: "QUARANTAINE" as const,
       commentaire: "Réception intégration",
     };
     const audit = {
@@ -941,7 +1083,20 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     expect(new Set(results.map((result) => result.stock_movement_id))).toHaveLength(1);
     expect(new Set(results.map((result) => result.lot_id))).toHaveLength(1);
     expect(results.every((result) => result.qty_scrap === 0.5 && result.qty_rework === 1)).toBe(true);
-    expect(results.every((result) => result.auto_reserved_qty === 10 && result.available_qty === 2)).toBe(true);
+    expect(results.every((result) => result.auto_reserved_qty === 0 && result.available_qty === 0)).toBe(true);
+    const receivedLotId = first.lot_id;
+    if (!first.non_conformity_id) throw new Error("Expected a non-conformity for the scrapped/reworked receipt");
+    await harnessPool.query(
+      `INSERT INTO public.non_conformity_dispositions(non_conformity_id) VALUES($1::uuid)`,
+      [first.non_conformity_id]
+    );
+    await harnessPool.query(
+      `INSERT INTO public.quality_control (lot_id, source_type, source_id, qty_released, qty_held, qty_consumed, unite, validation_date, verdict, status)
+       VALUES ($1::uuid, 'LOT', $1::uuid::text, 12, 0, 0, 'u', now(), 'LIBERE', 'VALIDATED')`,
+      [receivedLotId]
+    );
+    await harnessPool.query(`UPDATE public.lots SET lot_status = 'LIBERE' WHERE id = $1::uuid`, [receivedLotId]);
+    await receiptRepository.reconcileReleasedConsolidationLot(harnessPool, receivedLotId, 7);
 
     const receiptCount = await harnessPool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM public.of_receipts`);
     const movementCount = await harnessPool.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM public.stock_movements`);
@@ -953,9 +1108,8 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       `SELECT qty_reserved::float8 AS qty_reserved, qty_consumed::float8 AS qty_consumed, qty_prepared::float8 AS qty_prepared
        FROM public.stock_reservations`
     );
-    const allocation = await harnessPool.query<{ qty_reserved: number; qty_from_stock: number; qty_produced: number; qty_stocked: number }>(
-      `SELECT qty_reserved::float8 AS qty_reserved, qty_from_stock::float8 AS qty_from_stock,
-              qty_produced::float8 AS qty_produced, qty_stocked::float8 AS qty_stocked
+    const allocation = await harnessPool.query<{ qty_reserved: number; qty_from_stock: number }>(
+      `SELECT qty_reserved::float8 AS qty_reserved, qty_from_stock::float8 AS qty_from_stock
        FROM public.commande_ligne_affaire_allocation WHERE id = 900`
     );
     const stock = await harnessPool.query<{ total: number; reserved: number }>(
@@ -966,8 +1120,20 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     expect(countValue(movementCount.rows[0])).toBe(1);
     expect(output.rows).toEqual([{ qty_ok: 12, qty_scrap: 0.5, qty_rework: 1 }]);
     expect(reservation.rows).toEqual([{ qty_reserved: 10, qty_consumed: 0, qty_prepared: 0 }]);
-    expect(allocation.rows).toEqual([{ qty_reserved: 10, qty_from_stock: 10, qty_produced: 12, qty_stocked: 12 }]);
+    expect(allocation.rows).toEqual([{ qty_reserved: 10, qty_from_stock: 10 }]);
     expect(stock.rows).toEqual([{ total: 12, reserved: 10 }]);
+    const commandReceipts = await commandeRepository.repoGetCommandeStockReceipts("42");
+    expect(commandReceipts.items).toEqual([
+      expect.objectContaining({
+        of_id: 101,
+        of_number: "OF-INT-101",
+        qty_good_produced: 12,
+        qty_stocked: 12,
+        qty_reserved_for_affaire: 10,
+        qty_expected: 10,
+        output_lots: [{ lot_id: receivedLotId, lot_code: first.lot_code, qty: 12 }],
+      }),
+    ]);
   });
 
   it("reserves full OLD, split OLD/NEW, partial and empty stock in deterministic FIFO order", async () => {
@@ -1028,10 +1194,17 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
           [lotId, fixture.articleId, lotCode, scope, receivedAt]
         );
         await harnessPool.query(
-          `INSERT INTO public.stock_batches (id, stock_level_id, batch_code, qty_total, qty_reserved)
-           VALUES (gen_random_uuid(),$1::uuid,$2,$3,0)`,
-          [fixture.levelId, lotCode, qty]
+          `INSERT INTO public.stock_batches (id, stock_level_id, lot_id, batch_code, qty_total, qty_reserved)
+           VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3,$4,0)`,
+          [fixture.levelId, lotId, lotCode, qty]
         );
+        if (scope === "NEW") {
+          await harnessPool.query(
+            `INSERT INTO public.quality_control (lot_id, source_type, source_id, qty_released, qty_held, qty_consumed, unite, validation_date, verdict, status)
+             VALUES ($1::uuid, 'LOT', $1::text, $2, 0, 0, 'u', now(), 'LIBERE', 'VALIDATED')`,
+            [lotId, qty]
+          );
+        }
       }
     }
 
@@ -1041,15 +1214,53 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       { allocation_id: 902, commande_ligne_id: 42, livraison_affaire_id: 700, article_id: articlePartial, requested_qty: 10 },
       { allocation_id: 903, commande_ligne_id: 43, livraison_affaire_id: 700, article_id: articleEmpty, requested_qty: 4 },
     ];
+    await harnessPool.query(`INSERT INTO public.warehouses (id) VALUES ($1::uuid)`, [ids.warehouse]);
+    await harnessPool.query(`INSERT INTO public.commande_client (id, numero, client_id) VALUES (42, 'CMD-FIFO', $1::uuid)`, [ids.client]);
+    await harnessPool.query(`INSERT INTO public.affaire (id, reference) VALUES (700, 'AFF-FIFO')`);
+    for (const target of targets) {
+      await harnessPool.query(
+        `INSERT INTO public.commande_ligne (id, commande_id, designation, code_piece, unite, article_id)
+         VALUES ($1, 42, $2, $2, 'u', $3::uuid)`,
+        [target.commande_ligne_id, `FIFO-${target.commande_ligne_id}`, target.article_id]
+      );
+      await harnessPool.query(
+        `INSERT INTO public.commande_ligne_affaire_allocation (
+           id, commande_id, commande_ligne_id, livraison_affaire_id, article_ref_id,
+           qty_ordered, qty_reserved, qty_delivered, qty_remaining
+         ) VALUES ($1, 42, $2, 700, $3::uuid, $4, 0, 0, $4)`,
+        [target.allocation_id, target.commande_ligne_id, target.article_id, target.requested_qty]
+      );
+    }
 
     const reservationClient = await harnessPool.connect();
-    let reservations: Awaited<ReturnType<typeof commandeRepository.repoReserveCommandeLots>>;
+    let reservationIds: string[] = [];
     try {
       await reservationClient.query("BEGIN");
-      reservations = await commandeRepository.repoReserveCommandeLots(reservationClient, {
-        location_id: ids.location,
-        actor_user_id: 7,
-        targets,
+      reservationIds = await commandeRepository.reserveCommandeStockForLaterDelivery(reservationClient, {
+        commande_id: 42,
+        livraison_affaire_id: 700,
+        user_id: 7,
+        analysis_lines: targets.map((target) => ({
+          commande_ligne_id: target.commande_ligne_id,
+          code_piece: null,
+          article_id: target.article_id,
+          article_code: null,
+          article_designation: null,
+          piece_technique_id: null,
+          piece_code: null,
+          piece_designation: null,
+          requested_qty: target.requested_qty,
+          old_available_qty: 0,
+          old_used_qty: 0,
+          new_available_qty: 0,
+          new_used_qty: 0,
+          available_qty: 0,
+          available_used_qty: 0,
+          shortage_qty: 0,
+          proposed_production_qty: 0,
+          status: "FULL" as const,
+        })),
+        quantities_by_line: new Map([[40, 4], [41, 7], [42, 8]]),
       });
       await reservationClient.query("COMMIT");
     } catch (error) {
@@ -1059,15 +1270,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
       reservationClient.release();
     }
 
-    expect(reservations.map((row) => [row.commande_ligne_id, row.source_scope, row.qty_reserved])).toEqual([
-      [40, "OLD", 4],
-      [41, "OLD", 3],
-      [41, "OLD", 2],
-      [41, "NEW", 2],
-      [42, "OLD", 3],
-      [42, "NEW", 5],
-    ]);
-    expect(reservations.some((row) => row.commande_ligne_id === 43)).toBe(false);
+    expect(reservationIds).toHaveLength(6);
 
     const persisted = await harnessPool.query<{
       commande_ligne_affaire_allocation_id: number;
@@ -1595,7 +1798,7 @@ describePg("stock/delivery repositories — isolated PostgreSQL invariants", () 
     const db=harnessPool!;await seedRecovery(db);
     await db.query("UPDATE public.lots SET source_scope='NEW',piece_technique_version_id=$1",[ids.pieceTechnique]);
     expect((await recoveryRepository.repoPreviewDeliveryStockRecovery(900)).reservable_qty).toBe(0);
-    await db.query("INSERT INTO public.quality_control(lot_id,qty_released,validation_date,verdict) VALUES($1,2,now(),'CONFORME')",[ids.lot]);
+    await db.query("INSERT INTO public.quality_control(lot_id,source_type,source_id,qty_released,validation_date,verdict,status) VALUES($1::uuid,'LOT',$1::uuid::text,2,now(),'CONFORME','VALIDATED')",[ids.lot]);
     const preview=await recoveryRepository.repoPreviewDeliveryStockRecovery(900);expect(preview.reservable_qty).toBe(2);expect(preview.shortage_qty).toBe(1);
     await db.query('UPDATE public.quality_control SET validation_date=NULL');
     await expect(recoveryRepository.repoReserveDeliveryStockRecovery({allocationId:900,previewHash:preview.preview_hash,reason:'Reprise',idempotencyKey:'recovery-revoked',audit:recoveryAudit})).rejects.toMatchObject({code:'DELIVERY_STOCK_PREVIEW_CHANGED'});
@@ -1713,7 +1916,7 @@ describe("#OBS070 delivery quantity projections on isolated PostgreSQL", () => {
       vi.spyOn(acknowledgements, "readDeliveryCustomerAcknowledgementSources").mockResolvedValue([]),
       vi.spyOn(acknowledgements, "hasMissingCustomerAcknowledgement").mockReturnValue(false),
       vi.spyOn(promises, "captureShipmentPromises").mockResolvedValue(undefined),
-      vi.spyOn(authoritative, "queueCreationPdfArchive").mockResolvedValue(undefined),
+      vi.spyOn(authoritative, "queueCreationPdfArchive").mockResolvedValue({ id: "pg-1369-authoritative", snapshotSha256: "pg-1369-authoritative-sha" } as never),
       vi.spyOn(artifact, "buildShippedDeliveryArtifactInput").mockResolvedValue({} as never),
       vi.spyOn(fulfilment, "syncCommandesAfterShipment").mockResolvedValue(undefined),
     ];
