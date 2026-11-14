@@ -9,6 +9,11 @@
 - La liste des commandes, ses filtres paramétrés, sa liste blanche de tris et sa pagination partagent un propriétaire de lecture, derrière l'export historique. Le pool reste résolu à l'appel ; aucun droit, contrat API ou propriétaire de transaction ne change.
 - Les lectures de détail avec leurs inclusions et compatibilités de schéma sont suivies séparément. Voir [les propriétaires de lecture](docs/architecture/u11-customer-order-read-models.md).
 
+## En préparation — Lecture détaillée des commandes client (U11)
+
+- L'agrégat de lecture `repoGetCommande` et ses six inclusions optionnelles sont détenus par `commande-detail-read.repository.ts`, derrière la signature publique historique de `commande-client.repository.ts`.
+- Les requêtes SQL, ordre des paramètres et résultats, associations contrat/legacy, repli de colonne de rôle et conversions d'identifiants restent inchangés. Aucun endpoint, droit, service, base ou déploiement n'est modifié.
+
 ## En préparation — Lectures documentaires des livraisons (U11)
 
 - Les recherches de métadonnées, de lien BL-document et de chemin de stockage des pièces jointes sont détenues par `delivery-document-reads.repository.ts`, derrière les mêmes exports de compatibilité de `livraisons.repository.ts`. L'ajout et le retrait restent dans la façade transactionnelle qui verrouille le BL, coordonne le transfert de fichier et écrit l'événement de livraison.
