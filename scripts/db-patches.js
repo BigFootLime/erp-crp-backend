@@ -195,11 +195,13 @@ function parseArgs(argv) {
   const args = [...argv];
   const command = args[0] && !args[0].startsWith("--") ? args.shift() : "status";
   let patchDirWasSpecified = false;
+  let inventoryDirWasSpecified = false;
   const options = {
     command,
     dryRun: false,
     check: false,
     patchDir: DEFAULT_PATCH_DIR,
+    inventoryDir: null,
     only: null,
   };
 
@@ -215,6 +217,12 @@ function parseArgs(argv) {
     } else if (arg.startsWith("--patch-dir=")) {
       patchDirWasSpecified = true;
       options.patchDir = path.resolve(arg.slice("--patch-dir=".length));
+    } else if (arg === "--inventory-dir") {
+      inventoryDirWasSpecified = true;
+      options.inventoryDir = path.resolve(args[++i]);
+    } else if (arg.startsWith("--inventory-dir=")) {
+      inventoryDirWasSpecified = true;
+      options.inventoryDir = path.resolve(arg.slice("--inventory-dir=".length));
     } else if (arg === "--only") {
       if (options.only !== null) throw new Error("--only may be specified only once");
       options.only = args[++i];
@@ -228,6 +236,8 @@ function parseArgs(argv) {
       throw new Error(`Unknown argument: ${arg}`);
     }
   }
+
+  if (options.inventoryDir === null) options.inventoryDir = options.patchDir;
 
   if (options.only !== null) {
     if (!options.only || options.only.includes("/") || options.only.includes("\\")) {
@@ -244,6 +254,9 @@ function parseArgs(argv) {
         "--only always validates the canonical db/patches inventory and cannot be combined with --patch-dir"
       );
     }
+    if (inventoryDirWasSpecified) {
+      throw new Error("--only always uses the canonical db/patches inventory and cannot be combined with --inventory-dir");
+    }
   }
 
   return options;
@@ -251,9 +264,9 @@ function parseArgs(argv) {
 
 function printHelp() {
   console.log(`Usage:
-  node scripts/db-patches.js status [--check] [--only FILE] [--patch-dir DIR]
-  node scripts/db-patches.js up [--dry-run] [--only FILE] [--patch-dir DIR]
-  node scripts/db-patches.js baseline [--dry-run] [--patch-dir DIR]
+  node scripts/db-patches.js status [--check] [--only FILE] [--patch-dir DIR] [--inventory-dir DIR]
+  node scripts/db-patches.js up [--dry-run] [--only FILE] [--patch-dir DIR] [--inventory-dir DIR]
+  node scripts/db-patches.js baseline [--dry-run] [--patch-dir DIR] [--inventory-dir DIR]
 
 Commands:
   status    Show applied, pending, and checksum mismatch status.
@@ -264,6 +277,7 @@ Notes:
   - Requires DATABASE_URL.
   - Stores patch metadata in ${MIGRATION_TABLE}.
   - --only accepts a registered immutable basename and validates the complete inventory first.
+  - --patch-dir selects patches to apply; --inventory-dir supplies the complete catalogue for applicability guards.
   - Does not print connection strings or secrets.
 `);
 }
@@ -312,6 +326,19 @@ function listPatches(patchDir) {
       const sha256 = sha256Sql(sql);
       return { filename, fullPath, sql, sha256 };
     });
+}
+
+function validateSelectionAgainstInventory(patches, inventory) {
+  const inventoryByFilename = new Map(inventory.map((patch) => [patch.filename, patch]));
+  for (const patch of patches) {
+    const cataloguePatch = inventoryByFilename.get(patch.filename);
+    if (!cataloguePatch) {
+      throw new Error(`Selected patch ${patch.filename} is missing from the applicability inventory.`);
+    }
+    if (cataloguePatch.sha256 !== patch.sha256) {
+      throw new Error(`Selected patch ${patch.filename} does not match the applicability inventory checksum.`);
+    }
+  }
 }
 
 function canonicalPathKey(value) {
@@ -623,9 +650,9 @@ function printStatuses(statuses) {
   console.log(`Summary: applied=${counts.applied || 0} pending=${counts.pending || 0} not-applicable-finance-profile=${counts["not-applicable-finance-profile"] || 0} checksum-mismatch=${counts["checksum-mismatch"] || 0}`);
 }
 
-async function resolvedStatuses(client, patches, applied) {
+async function resolvedStatuses(client, patches, applied, inventory = patches) {
   const { resolveClosedSeedApplicability } = require("./migrations/metrology-ged-applicability");
-  return buildStatuses(patches, applied, await resolveClosedSeedApplicability(client, patches, applied));
+  return buildStatuses(patches, applied, await resolveClosedSeedApplicability(client, inventory, applied));
 }
 
 async function withClient(fn) {
@@ -652,11 +679,11 @@ async function withMigrationLock(client, fn) {
   }
 }
 
-async function runStatus(client, patches, { check, only }) {
+async function runStatus(client, patches, { check, only, inventoryPatches = patches }) {
   immutableOnlyPatch(patches, only);
   const applied = await getApplied(client);
   await assertImmutableRealtimeV1Provenance(client, patches, applied);
-  const statuses = await resolvedStatuses(client, patches, applied);
+  const statuses = await resolvedStatuses(client, patches, applied, inventoryPatches);
   printStatuses(statuses);
 
   const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
@@ -704,12 +731,12 @@ async function applyPatch(client, patch) {
   }
 }
 
-async function runUp(client, patches, { dryRun, only }) {
+async function runUp(client, patches, { dryRun, only, inventoryPatches = patches }) {
   immutableOnlyPatch(patches, only);
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = await resolvedStatuses(client, patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied, inventoryPatches);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     const selected = only ? statuses.find((item) => item.filename === only) : null;
     const pending = selected
@@ -731,7 +758,7 @@ async function runUp(client, patches, { dryRun, only }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = await resolvedStatuses(client, patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied, inventoryPatches);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);
@@ -747,7 +774,7 @@ async function runUp(client, patches, { dryRun, only }) {
       // A compatibility migration can make a later immutable seed explicitly
       // non-applicable. Re-read the ledger/profile between patches so no
       // decision is based on the pre-loop snapshot.
-      const currentStatuses = await resolvedStatuses(client, patches, await getApplied(client));
+      const currentStatuses = await resolvedStatuses(client, patches, await getApplied(client), inventoryPatches);
       const current = currentStatuses.find((item) => item.filename === patch.filename);
       if (current?.status !== "pending") {
         console.log(`${current?.status} ${patch.filename}`);
@@ -760,11 +787,11 @@ async function runUp(client, patches, { dryRun, only }) {
   });
 }
 
-async function runBaseline(client, patches, { dryRun }) {
+async function runBaseline(client, patches, { dryRun, inventoryPatches = patches }) {
   if (dryRun) {
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = await resolvedStatuses(client, patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied, inventoryPatches);
     printStatuses(statuses);
     console.log("");
     console.log("Dry-run: patch metadata would be recorded without executing SQL.");
@@ -775,7 +802,7 @@ async function runBaseline(client, patches, { dryRun }) {
     await ensureMigrationTable(client);
     const applied = await getApplied(client);
     await assertImmutableRealtimeV1Provenance(client, patches, applied);
-    const statuses = await resolvedStatuses(client, patches, applied);
+    const statuses = await resolvedStatuses(client, patches, applied, inventoryPatches);
     const mismatches = statuses.filter((item) => item.status === "checksum-mismatch");
     if (mismatches.length > 0) {
       printStatuses(statuses);
@@ -794,15 +821,17 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   validateImmutableInventoryPath(options.patchDir, options.only);
   const patches = listPatches(options.patchDir);
+  const inventoryPatches = options.inventoryDir === options.patchDir ? patches : listPatches(options.inventoryDir);
+  validateSelectionAgainstInventory(patches, inventoryPatches);
   immutableOnlyPatch(patches, options.only);
 
   await withClient(async (client) => {
     if (options.command === "status") {
-      await runStatus(client, patches, options);
+      await runStatus(client, patches, { ...options, inventoryPatches });
     } else if (options.command === "up") {
-      await runUp(client, patches, options);
+      await runUp(client, patches, { ...options, inventoryPatches });
     } else if (options.command === "baseline") {
-      await runBaseline(client, patches, options);
+      await runBaseline(client, patches, { ...options, inventoryPatches });
     } else {
       throw new Error(`Unknown command: ${options.command}`);
     }
@@ -817,8 +846,10 @@ module.exports = {
   canonicalizeSqlForHash,
   immutableOnlyPatch,
   listPatches,
+  validateSelectionAgainstInventory,
   parseArgs,
   recordMigration,
+  resolvedStatuses,
   runUp,
   sha256Sql,
   sqlWithoutOuterTransaction,
