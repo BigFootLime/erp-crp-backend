@@ -33,6 +33,7 @@ vi.mock("../../../shared-directory/site-runtime", () => ({
 }));
 import router, { companyLoginTargetMiddleware } from "./entreprises.routes";
 import { companyRuntimeService } from "../runtime/company-runtime.service";
+import { enforceAuthenticatedCompany } from "../runtime/company-runtime.middleware";
 
 const companyId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const otherCompany = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -52,6 +53,19 @@ function app() {
       res
         .status(error.name === "ZodError" ? 400 : (error.status ?? 500))
         .json({ code: error.code }),
+  );
+  return server;
+}
+function authenticatedContextApp() {
+  const server = express();
+  server.use((req, _res, next) => {
+    req.user = { id: 42, directory_session: "dir_fixture", directory_profile_id: companyId } as never;
+    next();
+  });
+  server.use(enforceAuthenticatedCompany);
+  server.use("/api/v1/entreprises", router);
+  server.use((error: { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) =>
+    res.status(error.status ?? 500).json({ code: error.code }),
   );
   return server;
 }
@@ -76,6 +90,30 @@ beforeEach(() => {
   mocks.site = null;
 });
 describe("company HTTP contract", () => {
+  it("passes the authenticated context route through the real tenant middleware and route", async () => {
+    const context = {
+      contract_version: 1 as const,
+      mode: "COMPANY" as const,
+      active_company: { id: companyId, code: "EC", name: "Esprit Carabine", profile: "COMMERCIAL" as const },
+      environment: "cerp_test" as const,
+      available_companies: [{ id: companyId, code: "EC", name: "Esprit Carabine", profile: "COMMERCIAL" as const }],
+      module_keys: ["clients"], commercial_projection_capabilities: ["stock.projection.read"], workspace: "ACCUEIL" as const,
+    };
+    vi.spyOn(companyRuntimeService, "configuration").mockReturnValue({ enabled: true, company_id: companyId, environment: "cerp_test" });
+    const resolvedAccess = { context: { company_id: companyId }, summary: context.active_company } as never;
+    const access = vi.spyOn(companyRuntimeService, "access").mockResolvedValue(resolvedAccess);
+    const view = vi.spyOn(companyRuntimeService, "view").mockResolvedValue(context);
+    const response = await request(authenticatedContextApp())
+      .get("/api/v1/entreprises/context")
+      .set("X-CERP-Company", companyId)
+      .set("X-CERP-Database", "cerp_test");
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(context);
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }));
+    expect(view).toHaveBeenCalledWith(expect.objectContaining({ id: 42 }), resolvedAccess);
+    expect(view).toHaveBeenCalledTimes(1);
+    expect(view.mock.calls[0]?.[1]).toBe(resolvedAccess);
+  });
   it("permits the bare legacy login target only for the two fixed CRP sites", async () => {
     const target = loginTargetApp();
     const configuration = vi.spyOn(companyRuntimeService, "configuration");

@@ -5,7 +5,7 @@ import {
   companyRuntimeService,
   type RuntimeCompanyAccess,
 } from "./company-runtime.service";
-import { COMPANY_HEADER, companyIdSchema } from "./company-runtime.config";
+import { COMPANY_ENVIRONMENT_HEADER, COMPANY_HEADER, companyIdSchema } from "./company-runtime.config";
 
 declare global {
   namespace Express {
@@ -42,7 +42,7 @@ export const enforceAuthenticatedCompany: RequestHandler = (
         "COMPANY_CONTEXT_REQUIRED",
         "Sélectionnez votre entreprise.",
       );
-    if (req.get("X-CERP-Database") !== config.environment)
+    if (req.get(COMPANY_ENVIRONMENT_HEADER) !== config.environment)
       throw new HttpError(
         403,
         "COMPANY_ENVIRONMENT_MISMATCH",

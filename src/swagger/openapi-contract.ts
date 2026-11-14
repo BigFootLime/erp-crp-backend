@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { COMPANY_CONTEXT_HTTP_HEADERS } from "../module/entreprises/contract/company-context-contract-v1";
 import { ASSIGNABLE_USER_ROLES, PRIMARY_USER_ROLES } from "../module/auth/domain/roles";
 import { deliveryAffairsOperation, deliveryAffairsSchemas } from "./delivery-affairs-contract";
 import { proformaOperation, proformaSchemas } from "./proforma-contract";
@@ -343,8 +344,8 @@ function companyOperation(key: string, operation: OpenApiOperation): OpenApiOper
     ...operation,
     tags: ["entreprises"],
     parameters: [...parameters,
-      { name: "X-CERP-Company", in: "header", required: exchange, schema: { type: "string", format: "uuid" }, description: "Entreprise active, recoupée avec le runtime fixe et l'adhésion Directory. Requise sur les requêtes protégées en mode multi-entreprises, facultative pour la découverte initiale." },
-      { name: "X-CERP-Database", in: "header", required: exchange, schema: { type: "string", enum: ["cerp_prod", "cerp_test"] }, description: "Environnement indépendant de l'entreprise ; jamais une URL ou une connexion SQL." },
+      { name: COMPANY_CONTEXT_HTTP_HEADERS.company, in: "header", required: exchange, schema: { type: "string", format: "uuid" }, description: "Entreprise active, recoupée avec le runtime fixe et l'adhésion Directory. Requise sur les requêtes protégées en mode multi-entreprises, facultative pour la découverte initiale." },
+      { name: COMPANY_CONTEXT_HTTP_HEADERS.environment, in: "header", required: exchange, schema: { type: "string", enum: ["cerp_prod", "cerp_test"] }, description: "Environnement indépendant de l'entreprise ; jamais une URL ou une connexion SQL." },
     ],
     "x-cerp-rbac": signInContext ? ["fixedCompanyRuntime", "activeCompanyInstance"] : exchange ? ["shortLivedCompanySwitchTicket", "fixedCompanyRuntime", "liveSourceAndTargetMembership"] : key.includes("/admin/") ? ["liveDirectoryOwner", "recentMfa", "fixedCompanyRuntime"] : ["liveDirectorySession", "activeCompanyMembership", "fixedCompanyRuntime"],
     responses: { ...operation.responses as OpenApiObject, ...(signInContext ? {} : { "401": { $ref: "#/components/responses/Unauthenticated" } }), "403": { $ref: "#/components/responses/Forbidden" }, "503": { description: "Annuaire, contexte entreprise ou instance non disponible ; aucun repli vers une autre entreprise." } },

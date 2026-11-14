@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { HttpError } from "../../../utils/httpError";
+import { COMPANY_CONTEXT_HTTP_HEADERS } from "../contract/company-context-contract-v1";
 
-export const COMPANY_HEADER = "X-CERP-Company";
+export const COMPANY_HEADER: typeof COMPANY_CONTEXT_HTTP_HEADERS.company =
+  COMPANY_CONTEXT_HTTP_HEADERS.company;
+export const COMPANY_ENVIRONMENT_HEADER: typeof COMPANY_CONTEXT_HTTP_HEADERS.environment =
+  COMPANY_CONTEXT_HTTP_HEADERS.environment;
 export const COMPANY_SOCKET_QUERY = "company";
 export const companyIdSchema = z
   .string()
