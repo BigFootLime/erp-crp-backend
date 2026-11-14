@@ -19,6 +19,11 @@ import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/
 import { createRecursiveOrdresFabrication } from "../../production/domain/of-generation"
 import { queueRootOfCreationPdf } from "../../production/domain/of-creation-pdf"
 import { insertEvent } from "./delivery-events.repository"
+export {
+  repoFindDocumentFilePath,
+  repoGetDocumentName,
+  repoIsLivraisonDocumentLinked,
+} from "./delivery-document-reads.repository"
 
 import { captureShipmentPromises } from "../../affaire/repository/delivery-promises.repository"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
@@ -3688,42 +3693,6 @@ export async function repoRemoveLivraisonDocument(params: {
 
     return ok
   })
-}
-
-export async function repoGetDocumentName(documentId: string): Promise<string | null> {
-  const res = await pool.query<{ document_name: string }>(`SELECT document_name FROM documents_clients WHERE id = $1`, [documentId])
-  const name = res.rows[0]?.document_name
-  return typeof name === "string" && name.trim() ? name.trim() : null
-}
-
-export async function repoFindDocumentFilePath(documentId: string): Promise<string | null> {
-  const baseDir = await ensureDocsDir()
-  const pdfCandidate = path.join(baseDir, `${documentId}.pdf`)
-  try {
-    await fs.stat(pdfCandidate)
-    return pdfCandidate
-  } catch {
-    // continue
-  }
-
-  const entries = await fs.readdir(baseDir).catch(() => [])
-  const match = entries.find((e) => e.startsWith(documentId))
-  if (!match) return null
-  const candidate = path.join(baseDir, match)
-  try {
-    await fs.stat(candidate)
-    return candidate
-  } catch {
-    return null
-  }
-}
-
-export async function repoIsLivraisonDocumentLinked(bonLivraisonId: string, documentId: string): Promise<boolean> {
-  const res = await pool.query(
-    `SELECT 1 FROM bon_livraison_documents WHERE bon_livraison_id = $1::uuid AND document_id = $2::uuid LIMIT 1`,
-    [bonLivraisonId, documentId]
-  )
-  return (res.rowCount ?? 0) > 0
 }
 
 /* -------------------------------------------------------------------------- */
