@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
+import { readHistoricalRepositoryFixture } from "../../../__tests__/helpers/historical-repository-fixture";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import path from "node:path";
@@ -127,7 +127,7 @@ function creationBinding(source: string) {
 describe("commande creation mechanical seam proof", () => {
   const repositoryPath = path.join(process.cwd(), "src/module/commande-client/repository/commande-client.repository.ts");
   const ownerPath = path.join(process.cwd(), "src/module/commande-client/repository/commande-creation-transaction.repository.ts");
-  const base = execFileSync("git", ["show", "37c6c5bfed76de85add3fc7e7ba73607750b18ba:src/module/commande-client/repository/commande-client.repository.ts"], { encoding: "utf8" });
+  const base = readHistoricalRepositoryFixture("commandeClientBeforeCreation");
   const facade = readFileSync(repositoryPath, "utf8");
   const owner = readFileSync(ownerPath, "utf8");
 

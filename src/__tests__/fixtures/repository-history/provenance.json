@@ -1,0 +1,22 @@
+{
+  "commandeClientBeforeCreation": {
+    "file": "commande-client-before-creation.ts.txt",
+    "repository": "BigFootLime/erp-crp-backend",
+    "sourceCommit": "37c6c5bfed76de85add3fc7e7ba73607750b18ba",
+    "sourcePath": "src/module/commande-client/repository/commande-client.repository.ts",
+    "sourceGitBlob": "618cf2e341116ed5beb3ec5b06c1485684f4b3df",
+    "sourceSha256": "607817d59ef8f92bf5a3d9f4bfc0374d890b4336cad0f3c08201ec6efc50ed82",
+    "fixtureSha256": "607817d59ef8f92bf5a3d9f4bfc0374d890b4336cad0f3c08201ec6efc50ed82",
+    "scope": "Full historical facade required by the existing unaffected-statement/order proof; also supplies the four byte-identical list declarations."
+  },
+  "deliveryListBeforeExtraction": {
+    "file": "delivery-list-before-extraction.ts.txt",
+    "repository": "BigFootLime/erp-crp-backend",
+    "sourceCommit": "b10771cb45eb04f7a87f8e4bf6cff7d3759dcdc2",
+    "sourcePath": "src/module/livraisons/repository/livraisons.repository.ts",
+    "sourceGitBlob": "8cea7b9c3ef8d1cc8a4a6188eb774a0ee09d4b4f",
+    "sourceSha256": "b02b8225c228ff97018dd0d9a4de626cb5b9292fcf82b46d8848df0df04407fb",
+    "fixtureSha256": "1f7a067b1f6469d228fded149d07aaf9b1e64826665cfaaad86b17531c399b05",
+    "scope": "Only the five complete original declarations inspected by the existing delivery-list proof; bodies, SQL, types, signatures and comments inside declarations are unmodified."
+  }
+}

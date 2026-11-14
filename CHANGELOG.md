@@ -1,5 +1,7 @@
 # Changelog
 
+- Tests: les preuves de création/liste des commandes et de liste des livraisons utilisent des instantanés historiques vérifiés issus de commits officiels publiés. Tous les cas et assertions restent conservés et ne dépendent plus d'objets Git locaux absents d'un clone ou d'une archive source.
+
 - UNRELEASED (#1562): les dix operations Magasins/Emplacements sont regroupees dans leur proprietaire Stock ; le noyau des mouvements partage un seul proprietaire de persistance et les filtres/tri partagent un seul proprietaire de requete. Les contrats, corps SQL, transactions et exports historiques restent conserves. Aucune migration ni livraison.
 
 ## En préparation — Workflow transactionnel des commandes client (U11)

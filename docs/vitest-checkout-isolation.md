@@ -52,6 +52,20 @@ not bypass this policy with a blanket build-script approval.
 
 ## Filesystem and fixture isolation
 
+The commande creation/list and delivery-list extraction proofs use read-only
+snapshots in `src/__tests__/fixtures/repository-history`, loaded through
+`historical-repository-fixture.ts`. Their provenance records the published
+official source commit, path, Git blob and SHA-256; the loader checks fixture
+integrity before returning source. Tests therefore also run from a shallow
+clone or source archive without a Git object store. The commande fixture is
+the full historical facade because the creation proof checks all unaffected
+statements and their order; the delivery fixture contains only the five full
+declarations inspected by that proof. All original cases and assertions remain.
+The four commande-list declarations and the entire delivery source were checked
+byte for byte against the former local-only baselines before capture. Do not
+regenerate these fixtures from current owner code: they preserve the original
+implementation against which extractions are compared.
+
 Before each test file is imported, `src/__tests__/vitest.setup.ts` overrides all
 writable CERP roots. The layout is unique for both the Vitest run and worker:
 
