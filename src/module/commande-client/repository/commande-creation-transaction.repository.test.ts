@@ -145,6 +145,7 @@ describe("commande creation mechanical seam proof", () => {
     const excluded = new Set([
       "repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository",
       "repoListCommandes", "sortColumn", "sortDirection", "buildListWhere", "ListWhere",
+      "IncludeFlags", "includeFlags", "repoGetCommande",
     ]);
     const statementTexts = (source: string) => {
       const ast = ts.createSourceFile("facade.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -152,8 +153,10 @@ describe("commande creation mechanical seam proof", () => {
         if (ts.isFunctionDeclaration(statement) && statement.name && excluded.has(statement.name.text)) return false;
         if (ts.isTypeAliasDeclaration(statement) && excluded.has(statement.name.text)) return false;
         if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => ts.isIdentifier(d.name) && excluded.has(d.name.text))) return false;
-        if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-creation-transaction.repository")) return false;
-        if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-list-read.repository")) return false;
+        if (ts.isImportDeclaration(statement) && [
+          "commande-creation-transaction.repository", "commande-list-read.repository", "commande-detail-read.repository",
+          "client-contract-calls.repository", "client-contract-legacy.repository",
+        ].some(moduleName => statement.moduleSpecifier.getText(ast).includes(moduleName))) return false;
         return true;
       }).map(statement => statement.getText(ast).replace(/\r\n/g, "\n"));
     };
