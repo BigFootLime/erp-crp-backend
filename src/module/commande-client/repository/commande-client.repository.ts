@@ -4271,13 +4271,15 @@ async function transitionLinkedDevisArticlesToValide(
  * notification or creation PDF. The caller owns BEGIN/COMMIT together with
  * its durable cutover crosswalk.
  */
+// Imported creation helpers are looked up only when called, as in the original
+// transaction functions. Importing an unrelated repository path must not bind them.
 const commandeCreationRepository = createCommandeCreationRepository({
   prepareContractCall,
   assertDevisDraftIsFresh,
   toInt,
-  generateCommandeCode,
+  generateCommandeCode: (...args: Parameters<typeof generateCommandeCode>) => generateCommandeCode(...args),
   resolveIntercompanyDeliveryAddress,
-  repoCreateDropshipPurchaseOrderTx,
+  repoCreateDropshipPurchaseOrderTx: (...args: Parameters<typeof repoCreateDropshipPurchaseOrderTx>) => repoCreateDropshipPurchaseOrderTx(...args),
   insertCommandeLignes,
   recordContractCall,
   insertCommandeEcheances,
@@ -4286,7 +4288,7 @@ const commandeCreationRepository = createCommandeCreationRepository({
   repoEnsureCommandeWorkflowCheckpoints,
   insertCommandeEvent,
   notifyWorkflowRole,
-  enqueueAppNotificationCreated,
+  enqueueAppNotificationCreated: (...args: Parameters<typeof enqueueAppNotificationCreated>) => enqueueAppNotificationCreated(...args),
   queueCommandeCreationPdf,
 });
 

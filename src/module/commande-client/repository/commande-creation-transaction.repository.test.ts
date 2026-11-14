@@ -2,6 +2,7 @@ import type { PoolClient } from "pg";
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import path from "node:path";
 import ts from "typescript";
 import type { CreateCommandeInput } from "../types/commande-client.types";
@@ -111,6 +112,18 @@ function normalizeNestedBody(body: string) {
   return body.replace(/\r\n/g, "\n").split("\n").map((line, index) => index === 0 ? line : line.startsWith("  ") ? line.slice(2) : line).join("\n");
 }
 
+function creationBinding(source: string) {
+  const ast = ts.createSourceFile("facade.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declaration = ast.statements.flatMap(statement => ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : [])
+    .find(value => ts.isIdentifier(value.name) && value.name.text === "commandeCreationRepository");
+  const initializer = declaration?.initializer;
+  if (!initializer || !ts.isCallExpression(initializer) || !ts.isIdentifier(initializer.expression)
+    || initializer.expression.text !== "createCommandeCreationRepository") throw new Error("Missing real creation owner binding");
+  const binding = initializer.arguments[0];
+  if (!binding || !ts.isObjectLiteralExpression(binding)) throw new Error("Missing actual creation dependency object");
+  return { ast, binding };
+}
+
 describe("commande creation mechanical seam proof", () => {
   const repositoryPath = path.join(process.cwd(), "src/module/commande-client/repository/commande-client.repository.ts");
   const ownerPath = path.join(process.cwd(), "src/module/commande-client/repository/commande-creation-transaction.repository.ts");
@@ -139,11 +152,37 @@ describe("commande creation mechanical seam proof", () => {
     };
     expect(statementTexts(facade)).toEqual(statementTexts(base));
     for (const comment of ["Cutover-only transaction primitive.", "The ordinary customer-order creation writes, joined to the caller's transaction.", "@deprecated compatibility name for data-cutover callers."]) expect(facade).toContain(comment);
-    const binding = facade.match(/const commandeCreationRepository = createCommandeCreationRepository\(\{([\s\S]*?)\}\);/);
-    expect(binding?.[1]).toBeDefined();
-    const names = [...binding![1].matchAll(/^\s{2}(\w+),$/gm)].map(match => match[1]);
+    const { binding } = creationBinding(facade);
+    const names = binding.properties.map(property => {
+      if (!ts.isShorthandPropertyAssignment(property) && !ts.isPropertyAssignment(property)) throw new Error("Unexpected creation dependency spread");
+      if (!ts.isIdentifier(property.name)) throw new Error("Creation dependency must retain its original name");
+      return property.name.text;
+    });
     expect(names).toEqual(["prepareContractCall", "assertDevisDraftIsFresh", "toInt", "generateCommandeCode", "resolveIntercompanyDeliveryAddress", "repoCreateDropshipPurchaseOrderTx", "insertCommandeLignes", "recordContractCall", "insertCommandeEcheances", "insertCommandeDocuments", "transitionLinkedDevisArticlesToValide", "repoEnsureCommandeWorkflowCheckpoints", "insertCommandeEvent", "notifyWorkflowRole", "enqueueAppNotificationCreated", "queueCommandeCreationPdf"]);
     expect(facade).toMatch(/return commandeCreationRepository\.repoCreateCommandeNativeTx\(client, input, actorUserId, documents, movedDocuments\);/);
     expect(owner).not.toContain("commande-client.repository");
+  });
+
+  it("looks up imported helpers only on invocation when initializing the actual facade binding", async () => {
+    const original = fixture();
+    const initialized: { repository?: typeof original.owner } = {};
+    const reads: string[] = [];
+    const sandbox = { ...original.dependencies, createCommandeCreationRepository, initialized };
+    for (const name of ["generateCommandeCode", "repoCreateDropshipPurchaseOrderTx", "enqueueAppNotificationCreated"] as const) {
+      Object.defineProperty(sandbox, name, {
+        get: () => { reads.push(name); return original.dependencies[name]; },
+      });
+    }
+    const { ast, binding } = creationBinding(facade);
+    const code = ts.transpileModule(`initialized.repository = createCommandeCreationRepository(${binding.getText(ast)});`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+    }).outputText;
+    runInNewContext(code, sandbox);
+    expect(initialized.repository).toBeDefined();
+    expect(reads).toEqual([]);
+    expect(original.dependencies.generateCommandeCode).not.toHaveBeenCalled();
+    await initialized.repository!.repoCreateCommandeDraftTx(original.client, input, 7);
+    expect(reads).toEqual(["generateCommandeCode"]);
+    expect(original.dependencies.generateCommandeCode).toHaveBeenCalledOnce();
   });
 });

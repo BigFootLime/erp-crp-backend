@@ -8,6 +8,7 @@
 
 - Les écritures transactionnelles de création et de brouillon de commande sont regroupées dans un propriétaire dédié, derrière les exports historiques de la façade. Les signatures publiques, le propriétaire de transaction, l’upload, la réconciliation, les erreurs et les effets différés restent inchangés.
 - Une preuve structurelle compare les corps déplacés à la base `37c6c5bfed76de85add3fc7e7ba73607750b18ba` et vérifie que le nouveau propriétaire ne rejoint pas la façade par les imports statiques. Aucun déploiement n’est inclus.
+- Les fonctions importées de création restent résolues au moment de leur appel : l'import d'un autre parcours ne capture pas leurs exports prématurément. Une régression exécute la liaison réelle et vérifie cette chronologie.
 
 ## En préparation — Contrat versionné de contexte entreprise (#1521)
 
