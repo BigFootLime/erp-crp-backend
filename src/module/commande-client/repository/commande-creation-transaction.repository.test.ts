@@ -140,13 +140,20 @@ describe("commande creation mechanical seam proof", () => {
   });
 
   it("retains all unaffected facade statements, public comments, and the actual binding names", () => {
-    const excluded = new Set(["repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository"]);
+    // The independent list-read owner characterizes these declarations against
+    // the same historical facade; creation still protects every other statement.
+    const excluded = new Set([
+      "repoCreateCommandeDraftTx", "repoCreateCommandeNativeTx", "commandeCreationRepository",
+      "repoListCommandes", "sortColumn", "sortDirection", "buildListWhere", "ListWhere",
+    ]);
     const statementTexts = (source: string) => {
       const ast = ts.createSourceFile("facade.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
       return ast.statements.filter(statement => {
         if (ts.isFunctionDeclaration(statement) && statement.name && excluded.has(statement.name.text)) return false;
+        if (ts.isTypeAliasDeclaration(statement) && excluded.has(statement.name.text)) return false;
         if (ts.isVariableStatement(statement) && statement.declarationList.declarations.some(d => ts.isIdentifier(d.name) && excluded.has(d.name.text))) return false;
         if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-creation-transaction.repository")) return false;
+        if (ts.isImportDeclaration(statement) && statement.moduleSpecifier.getText(ast).includes("commande-list-read.repository")) return false;
         return true;
       }).map(statement => statement.getText(ast).replace(/\r\n/g, "\n"));
     };
