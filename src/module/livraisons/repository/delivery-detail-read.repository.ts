@@ -526,4 +526,3 @@ export async function repoGetLivraisonDetail(id: string): Promise<BonLivraisonDe
     db.release()
   }
 }
-
