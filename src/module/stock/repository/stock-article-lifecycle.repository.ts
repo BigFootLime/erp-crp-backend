@@ -1,49 +1,22 @@
-import { stockLotTraceReferenceValuesSql } from "../../../shared/provenance/stock-lot-trace.sql";
 import { syncSubcontractDefinitionTx } from "./article-subcontract-definition.repository";
 import { syncArticleSupplierConditionsTx } from "./article-supplier-conditions.repository";
-import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
-import { assemblyComponentWithdrawalOwnsMovement } from './assembly-component-movement-guard';
 import { syncConsumablePolicyTx, consumablePolicyPatch } from "./consumable-article.repository";
 import { syncArticleCommercialTx } from './article-commercial.repository';
-import { lockStockLaneTopology } from './stock-lane-routing.repository';
-import { previewMaterialBarCompensationTx } from './material-bar-compensation.repository';
-import { readMaterialBarCountRequirementsTx } from './material-bar-count-read-model.repository';
-import { prepareMaterialBarCountEntryTx, recordMaterialBarCountTx, prepareMaterialBarCountSessionTx,
-  applyMaterialBarCountTx, loadMaterialBarCountLinesTx, readMaterialBarCountsTx } from './material-bar-count.repository';
 import type { PoolClient } from "pg";
-import { assertStockEntrySource } from "../domain/manual-entry-policy";
 import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
-import fs from "node:fs/promises";
-import path from "node:path";
 
 import db from "../../../config/database";
-import { nuanceIdentity, resolveNuanceIdentity, nuanceNormeFields } from "../domain/nuance-library";
-import {
-  generateArticleBusinessCode,
-  generateFabricatedArticleBusinessCode,
-  generateTransactionalBusinessCode,
-  generatePieceTechniqueBusinessCode,
-} from "../../../shared/codes/code-generator.service";
+import { generateArticleBusinessCode } from "../../../shared/codes/code-generator.service";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildStockArticleCreationSnapshotInput } from "../../../shared/authoritative-documents/stock-article-creation-snapshot";
 import {
   assertMaterialPreviewFresh,
   buildMaterialArticleCode,
   computeMaterialCodePreviewHash,
-  isSpecialMaterialProfile,
-  normalizeMaterialProfile,
-  type MaterialCodeInput,
-  type MaterialCodeResult,
-  type MaterialProfileCode,
 } from "../../../shared/codes/material-article-code";
 import { canonicalizeStockUnitCode, materialManagementUnit } from "../../../shared/stock-unit";
 import { findCanonicalStockUnit } from "../../../shared/stock-unit.repository";
-import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
-import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
-import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
-import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { calculateMargin } from "../../margin-engine/domain/margin-engine";
 import {
   repoBuildCalculationInput,
@@ -53,11 +26,6 @@ import {
   applyArticleSheetSalePriceTx,
   seedArticleSheetSalePriceTx,
 } from "./article-sale-price.repository";
-import {
-  calculateStockAvailability,
-  type StockLotQualityStatus,
-} from "../domain/stock-availability";
-import { hashStockCommand, normalizeIdempotencyKey } from "../domain/stock-command";
 import {
   commandeArticleEligibleSql,
   commandeArticleIneligibilityCodeSql,
@@ -69,124 +37,29 @@ import type {
   ArticleWorkflowStatus,
   ArticleWhereUsedItem,
   Paginated,
-  StockAnalytics,
-  StockArticleCategoryOption,
   StockArticleDetail,
-  StockArticleFamily,
   StockArticleKpis,
   StockArticleListItem,
   StockAvailableLotItem,
-  StockMatiereEtat,
-  StockMatiereNuance,
-  StockMatiereSousEtat,
-  StockBalanceRow,
-  StockDocument,
-  StockEmplacementListItem,
-  StockInventorySessionDetail,
-  StockInventorySessionLine,
-  StockInventorySessionListItem,
-  StockLotDetail,
-  StockLotGenealogy,
-  StockLotGenealogyEdge,
-  StockLotListItem,
-  StockMagasinDetail,
-  StockMagasinKpis,
-  StockMagasinListItem,
-  StockMovementDetail,
-  StockMovementCompensationPreview,
-  StockMovementImpactPreview,
-  StockMovementEvent,
-  StockMovementLineDetail,
-  StockMovementListItem,
-  HistoricalStockImport,
-  ConsolidatedInventoryRow,
 } from "../types/stock.types";
 import type {
-  ArticleCategoryDTO,
-  CreateMatiereEtatBodyDTO,
-  CreateMatiereNuanceBodyDTO,
-  CreateMatiereSousEtatBodyDTO,
-  UpdateMatiereNuanceBodyDTO,
-  UpdateMatiereEtatBodyDTO,
-  UpdateMatiereSousEtatBodyDTO,
   CreateArticleBodyDTO,
-  CreateArticleFamilyBodyDTO,
-  CreateEmplacementBodyDTO,
-  CreateInventorySessionBodyDTO,
-  CreateLotBodyDTO,
-  CreateMagasinBodyDTO,
-  CreateMovementBodyDTO,
-  CompensateMovementBodyDTO,
-  PostMovementBodyDTO,
-  CreateMovementLineDTO,
   ListAnalyticsQueryDTO,
   ListArticlesQueryDTO,
-  ListArticleFamiliesQueryDTO,
-  ListMatiereEtatsQueryDTO,
-  ListMatiereNuancesQueryDTO,
-  ListMatiereSousEtatsQueryDTO,
-  ListBalancesQueryDTO,
-  ListEmplacementsQueryDTO,
-  ListInventorySessionsQueryDTO,
-  ListLotsQueryDTO,
-  ListMagasinsQueryDTO,
-  ListMovementsQueryDTO,
-  StockMovementTypeDTO,
-  UpsertInventoryLineBodyDTO,
-  InventorySessionActionBodyDTO,
-  CancelInventorySessionBodyDTO,
   UpdateArticleBodyDTO,
   ArchiveArticleBodyDTO,
   ReactivateArticleBodyDTO,
   ListArticleVersionsQueryDTO,
   ListArticleWhereUsedQueryDTO,
-  ArticleDocumentMetadataDTO,
-  UpdateEmplacementBodyDTO,
-  UpdateLotBodyDTO,
-  UpdateLotQualityBodyDTO,
-  CreateLotGenealogyBodyDTO,
-  UpdateMagasinBodyDTO,
-  HistoricalImportBodyDTO,
-  ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
 
 import {
-  assertDirectOutMovementQualityEligibility,
-  assertStockConsumptionAllowed,
-  beginStockCommand,
-  completeStockCommand,
-  ensureStockBatchId,
-  ensureStockLevel,
-  getEmplacementMapping,
   insertAuditLog,
-  isMaterialRemnantReversalTx,
-  lockStockStates,
-  repoCreateMovement,
-  repoGetMovement,
-  repoPostMovement,
-  resolveUnitIdForArticle,
-  stockTargetKey,
-  assertConsistentLocations,
-  assertSameArticle,
-  assertSameLotIfSet,
-  ensureArticleStockManaged,
-  ensureLotTrackingRespected,
-  insertMovementEvent,
   isPgUniqueViolation,
-  reserveMovementNo,
-  sumQty,
 } from "./stock-movement-core.repository";
 import { normalizeLikeQuery, sortDirection } from "./stock-query.repository";
 import { articleFamilyTable, defaultFamilyCodeForCategory, materialFamilyCanonicalMap, normalizeArticleCategorySelection, normalizeFamilyCode, normalizeArticleWorkflowStatus, resolveArticleCode, resolveMaterialCodeInput, toBusinessArticleCategory, inferArticleType } from "./stock-material-referentials.repository";
-import type {
-  AuditContext,
-  BegunStockCommand,
-  EmplacementMapping,
-  LockedStockState,
-  StockCommandReceipt,
-  StockCommandType,
-  StockLockTarget,
-} from "./stock-movement-core.repository";
+import type { AuditContext } from "./stock-movement-core.repository";
 import { oldMaterialDefinitionFromProjection, type OldMaterialDefinitionProjection } from "./stock-article-projection";
 import { repoListArticleDocuments } from "./stock-document-reads.repository";
 
