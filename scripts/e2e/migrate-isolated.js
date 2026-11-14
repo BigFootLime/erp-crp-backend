@@ -21,19 +21,6 @@ const DATA_ONLY_BASELINES = new Set(['20260727_repair_article_category_orphans_1
 const NORMALIZE_BEFORE = '20260219_commande_affaires_livraison_production.sql';
 const REHEARSAL_STOP_PATCH = '20260810_system_reference_data_readiness.sql';
 const USER_AVATARS_PATCH = '20261014_user_avatars_1563.sql';
-// The closed metrology seed is assessed against the exact Finance GED profile.
-// `db-patches` must therefore see its immutable prerequisite checksums even
-// though this isolated runner applies one patch at a time from a temporary
-// directory. These files have all been applied before the closed seed under
-// the canonical dependency order; copying them here exposes the inventory, it
-// does not re-order or re-run them.
-const METROLOGY_GED_APPLICABILITY_INVENTORY = Object.freeze([
-  '20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql',
-  '20261014_finance_ged_profile_1268.sql',
-  '20261027_metrology_scan_documents_1780.sql',
-  '20261027_metrology_ged_entity_type_1780_compat.sql',
-]);
-const METROLOGY_GED_CLOSED_SEED = '20261027_metrology_ged_entity_type_1780.sql';
 
 function fail(message) {
   throw new Error(`[SOL-05 migration] ${message}`);
@@ -61,15 +48,13 @@ function orderedPatches() {
 function runPatch(filename, command, patchDir = PATCH_DIR) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cerp-sol05-patch-'));
   try {
-    const inventory = filename === METROLOGY_GED_CLOSED_SEED && patchDir === PATCH_DIR
-      ? [...METROLOGY_GED_APPLICABILITY_INVENTORY, filename]
-      : [filename];
-    for (const inventoryFilename of inventory) {
-      fs.copyFileSync(path.join(patchDir, inventoryFilename), path.join(tempDir, inventoryFilename));
-    }
+    // Execute only this selection, while applicability guards see its owning
+    // catalogue. The test-only catalogue stays separate from canonical patches.
+    // The former metrology workaround is retained in docs/migration-catalogue-selection.md.
+    fs.copyFileSync(path.join(patchDir, filename), path.join(tempDir, filename));
     const result = spawnSync(
       process.execPath,
-      [path.join(ROOT, 'scripts', 'db-patches.js'), command, '--patch-dir', tempDir],
+      [path.join(ROOT, 'scripts', 'db-patches.js'), command, '--patch-dir', tempDir, '--inventory-dir', patchDir],
       { cwd: ROOT, env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
     if (result.status !== 0) {

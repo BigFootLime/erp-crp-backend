@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
+import * as path from "node:path";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -25,6 +27,7 @@ type RunnerModule = {
     dryRun: boolean;
     check: boolean;
     patchDir: string;
+    inventoryDir: string;
     only: string | null;
   };
   runUp: (
@@ -32,9 +35,16 @@ type RunnerModule = {
     patches: Patch[],
     options: { dryRun: boolean; only: string | null }
   ) => Promise<void>;
+  resolvedStatuses: (
+    client: { query: (...args: unknown[]) => Promise<unknown> },
+    patches: Patch[],
+    applied: Map<string, { sha256: string }>,
+    inventory?: Patch[]
+  ) => Promise<Array<Patch & { status: string }>>;
   sha256Sql: (sql: string) => string;
   sqlWithoutOuterTransaction: (sql: string, filename?: string) => string;
   validateImmutableInventoryPath: (patchDir: string, onlyFilename: string | null) => void;
+  validateSelectionAgainstInventory: (patches: Patch[], inventory: Patch[]) => void;
 };
 
 const require = createRequire(import.meta.url);
@@ -53,6 +63,98 @@ it("freezes the conforming subcontract completion patch for a single-patch previ
   const client=inventoryClient();
   await runner.runUp({query:client.query},[selected],{dryRun:true,only:filename});
   expect(client.query.mock.calls.some(([sql])=>String(sql).includes('CREATE OR REPLACE FUNCTION public.guard_subcontract_completion_1273'))).toBe(false);
+});
+
+it("keeps a one-patch execution selection separate from its full applicability catalogue", () => {
+  const selected = runner.listPatches(resolve(repoRoot, "db/patches"))
+    .filter((patch) => patch.filename === "20261027_metrology_ged_entity_type_1780.sql");
+  const inventory = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const defaulted = runner.parseArgs(["up"]);
+  const parsed = runner.parseArgs(["up", "--patch-dir", "temporary-selection", "--inventory-dir", "db/patches"]);
+  expect(defaulted.inventoryDir).toBe(defaulted.patchDir);
+  expect(parsed.patchDir).toMatch(/temporary-selection$/);
+  expect(parsed.inventoryDir).toMatch(/db[\\/]patches$/);
+  expect(() => runner.validateSelectionAgainstInventory(selected, inventory)).not.toThrow();
+  expect(() => runner.validateSelectionAgainstInventory(selected, selected))
+    .not.toThrow();
+  expect(() => runner.validateSelectionAgainstInventory(selected, inventory.filter((patch) => patch.filename !== selected[0].filename)))
+    .toThrow(/missing from the applicability inventory/);
+  expect(() => runner.validateSelectionAgainstInventory(selected, [{ ...selected[0], sha256: "0".repeat(64) }]))
+    .toThrow(/does not match the applicability inventory checksum/);
+  expect(() => runner.listPatches(resolve(repoRoot, "missing-applicability-catalogue")))
+    .toThrow(/Patch directory not found/);
+  expect(() => runner.parseArgs(["up", "--only", md15PatchFilename, "--inventory-dir", "db/patches"]))
+    .toThrow(/cannot be combined with --inventory-dir/);
+});
+
+it("keeps test-only selections in their own full catalogue", () => {
+  const isolatedRunner = readFileSync(resolve(repoRoot, "scripts/e2e/migrate-isolated.js"), "utf8");
+  expect(isolatedRunner).toContain("'--inventory-dir', patchDir");
+  expect(isolatedRunner).not.toContain("'--inventory-dir', PATCH_DIR");
+});
+
+it.each(["canonical", "test-only"])("executes one %s patch against its owning catalogue and cleans its selection", (kind) => {
+  const source = readFileSync(resolve(repoRoot, "scripts/e2e/migrate-isolated.js"), "utf8");
+  const entryCall = source.lastIndexOf("\nmain().catch(");
+  expect(entryCall).toBeGreaterThan(0);
+  const temporarySelection = resolve(repoRoot, "fixture-selection");
+  const filename = kind === "canonical"
+    ? "20261027_metrology_ged_entity_type_1780.sql"
+    : "20261025_outillage_supplier_master_offers_test.sql";
+  const catalogue = resolve(repoRoot, "db", kind === "canonical" ? "patches" : "test-only-patches");
+  const fakeFs = { mkdtempSync: vi.fn(() => temporarySelection), copyFileSync: vi.fn(), rmSync: vi.fn() };
+  const spawnSync = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+  const runPatch = runInNewContext(`${source.slice(0, entryCall)}\nrunPatch;`, {
+    __dirname: resolve(repoRoot, "scripts/e2e"),
+    require: (name: string) => {
+      if (name === "fs") return fakeFs;
+      if (name === "os") return { tmpdir: () => resolve(repoRoot, "fixture-tmp") };
+      if (name === "path") return path;
+      if (name === "child_process") return { spawnSync };
+      if (name === "pg") return { Client: class { constructor() { throw new Error("No database in this unit test"); } } };
+      throw new Error(`Unexpected import ${name}`);
+    },
+    process: { execPath: process.execPath, env: {}, stdout: { write: vi.fn() }, stderr: { write: vi.fn() } },
+  }) as (filename: string, command: string, patchDir?: string) => void;
+
+  if (kind === "canonical") runPatch(filename, "up");
+  else runPatch(filename, "up", catalogue);
+  expect(fakeFs.copyFileSync.mock.calls).toEqual([[path.join(catalogue, filename), path.join(temporarySelection, filename)]]);
+  expect(spawnSync).toHaveBeenCalledWith(process.execPath, [
+    resolve(repoRoot, "scripts/db-patches.js"), "up", "--patch-dir", temporarySelection, "--inventory-dir", catalogue,
+  ], expect.objectContaining({ cwd: repoRoot }));
+  expect(fakeFs.rmSync).toHaveBeenCalledWith(temporarySelection, { recursive: true, force: true });
+
+  spawnSync.mockReturnValueOnce({ status: 1, stdout: "", stderr: "" });
+  expect(() => runPatch(filename, "up", catalogue)).toThrow(`up failed for ${filename}`);
+  expect(fakeFs.rmSync).toHaveBeenCalledTimes(2);
+});
+
+it("uses the full catalogue for the closed metrology seed and refuses an incomplete catalogue", async () => {
+  const inventory = runner.listPatches(resolve(repoRoot, "db/patches"));
+  const closedFilename = "20261027_metrology_ged_entity_type_1780.sql";
+  const selected = inventory.filter((patch) => patch.filename === closedFilename);
+  const required = [
+    "20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql",
+    "20261014_finance_ged_profile_1268.sql",
+    "20261027_metrology_scan_documents_1780.sql",
+    "20261027_metrology_ged_entity_type_1780_compat.sql",
+  ];
+  const applied = new Map<string, { sha256: string }>(required.map((filename) => {
+    const patch = inventory.find((item) => item.filename === filename)!;
+    return [filename, { sha256: patch.sha256 }];
+  }));
+  const exactProfile = {
+    closed_guard_present: false, entity_catalog_present: true, class_catalog_present: true,
+    equipment_catalog_present: true, entity_value_exact: true, class_value_exact: true,
+  };
+  const client = { query: vi.fn().mockResolvedValue({ rows: [exactProfile] }) };
+
+  await expect(runner.resolvedStatuses(client, selected, applied, inventory)).resolves.toMatchObject([
+    { filename: closedFilename, status: "not-applicable-finance-profile" },
+  ]);
+  await expect(runner.resolvedStatuses(client, selected, applied, selected))
+    .rejects.toThrow(/inventory is missing 20260823_authoritative_pdf_ged_legacy_profile_cleanup.sql/);
 });
 
 it("accepts only the frozen business-company cohort and rejects content substitutions", () => {
