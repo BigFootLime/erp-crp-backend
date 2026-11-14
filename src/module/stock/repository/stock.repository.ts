@@ -266,7 +266,6 @@ export {
 } from "./stock-inventory-sessions.repository";
 
 export { repoListArticleDocuments } from "./stock-document-reads.repository";
-export { oldMaterialDefinitionFromProjection, type OldMaterialDefinitionProjection } from "./stock-article-projection";
 
 export {
   assertCanonicalArticleUnit,
