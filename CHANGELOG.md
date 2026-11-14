@@ -1,5 +1,7 @@
 # Changelog
 
+- UNRELEASED (#1562): les dix operations Magasins/Emplacements sont regroupees dans leur proprietaire Stock ; le noyau des mouvements partage un seul proprietaire de persistance et les filtres/tri partagent un seul proprietaire de requete. Les contrats, corps SQL, transactions et exports historiques restent conserves. Aucune migration ni livraison.
+
 ## En préparation — Workflow transactionnel des commandes client (U11)
 
 - Les transitions de statut, checkpoints, actions, blocages/reprises, notifications et invalidations temps réel des commandes sont regroupés dans `commande-workflow.repository.ts`, derrière les exports historiques de `commande-client.repository.ts`.

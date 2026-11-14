@@ -24,3 +24,18 @@ Cette étape est structurelle : routes, API, SQL, droits, règles OF/Qualité,
 ordre des verrous, audit, idempotence et effets stock restent inchangés. Les
 autres travaux U11 sur le cycle de commandes, ainsi que les grands dépôts
 Commandes et Livraisons, restent ouverts.
+
+Le lot #1562 donne aux dix operations Magasins/Emplacements un proprietaire
+`stock-locations.repository.ts`, importe directement par le service Stock et
+les traitements de reception concernes. La facade garde ses exports publics.
+Le proprietaire locations ne depend ni de la facade ni du noyau des mouvements.
+
+`stock-persistence.repository.ts` porte une seule definition d'AuditContext,
+du predicat d'unicite PostgreSQL et de l'insertion d'audit. Le noyau importe et
+reexporte directement ces memes liaisons pour ses consommateurs historiques.
+`stock-query.repository.ts` porte les deux fonctions partagees de tri et de
+filtre, utilisees par la facade et le proprietaire locations, sans copies.
+Les declarations, corps SQL, parametres et frontieres transactionnelles restent
+identiques. Les tests de routes simulees et de transactions simulees ne sont
+pas presentes comme des executions PostgreSQL reelles ; celles-ci ont leurs
+recus de fixture isolee distincts.
