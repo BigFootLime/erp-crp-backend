@@ -9,6 +9,53 @@
       "augmentMaterialReferentialsAccessProfile"
     ]
   },
+  "entrypoint_inventory": {
+    "scope": "Static source, compiled-captured-runtime and fixture searches are evidence about the listed assemblies only; they do not prove what a later or external deployment loads.",
+    "native_source": {
+      "assembly": "current source pair",
+      "entrypoints_searched": [
+        "src/index.ts",
+        "src/config/app.ts",
+        "src/routes/v1.routes.ts",
+        "src/**",
+        "scripts/**",
+        "Dockerfile",
+        "package.json"
+      ],
+      "observed": "The current native v1 router mounts the native Stock router and imports none of the three retained candidates. The current app finalizes with validationErrorMiddleware then errorHandler, not errorMiddleware. No current source or checked fixture imports validateBody."
+    },
+    "captured_runtime": {
+      "assembly": "output/cerp-untangle-2084-implementation/u01-restored-ec-code",
+      "router": "dist/routes/v1.routes.js",
+      "observed": "The captured EC v1 router requires ../compat/material-referentials-backport, mounts augmentMaterialReferentialsAccessProfile at /auth and materialReferentialsBackportRouter at /stock before moduleAccessGate. It contains all three legacy compiled members. The captured app imports validationErrorMiddleware and errorHandler; no static require edge to error.middleware or validate was found in this captured assembly."
+    },
+    "fixtures": {
+      "observed": "The material adapter has a direct unit test. Checked fixture apps use their own inline error handlers or current errorHandler/validationErrorMiddleware; this is not operational-deployment proof."
+    },
+    "candidates": [
+      {
+        "source": "src/compat/material-referentials-backport.ts",
+        "responsibility": "Compatibility material-referentials router and temporary auth access-profile augmentation for the EC composite assembly.",
+        "current_activation": "Not imported or mounted by the current native source; directly required and mounted in the captured EC compiled router.",
+        "future_activation_prerequisite": "A reviewed target-runtime manifest and exact source pair must authorize its two mounts and preserve their order.",
+        "removal_condition": "A reviewed target-runtime manifest proves no composite mount, authenticated material acceptance passes without it, native replacement is validated, and approval identifies the exact source pair."
+      },
+      {
+        "source": "src/middlewares/error.middleware.ts",
+        "responsibility": "Legacy ApiError-only Express terminal error formatter with a different response shape from the current errorHandler.",
+        "current_activation": "Not imported by the current native source and no static require edge was found in the captured EC assembly; compiled member presence alone does not prove activation.",
+        "future_activation_prerequisite": "A reviewed external or target-runtime entrypoint must explicitly mount it as the final Express error handler and characterize response compatibility.",
+        "removal_condition": "Review every source, compiled and operational entrypoint; prove no remaining consumer or external module import, then remove in a separate qualified change preserving error-response coverage."
+      },
+      {
+        "source": "src/middlewares/validate.ts",
+        "responsibility": "Legacy Zod body validator that forwards HttpError; current modules generally use local validators or controller parsing.",
+        "current_activation": "Not imported by the current native source and no static require edge was found in the captured EC assembly; compiled member presence alone does not prove activation.",
+        "future_activation_prerequisite": "A reviewed external or target-runtime route must explicitly use validateBody and characterize its HttpError-to-terminal-handler response path.",
+        "removal_condition": "Review every source, compiled and operational entrypoint; prove no remaining consumer or external module import, then remove in a separate qualified change preserving validation/error-response coverage."
+      }
+    ]
+  },
   "unmounted_legacy_members": [
     {
       "source": "src/middlewares/error.middleware.ts",
@@ -32,6 +79,6 @@
   "captured_ec_evidence": {
     "archive": "output/cerp-untangle-2084-implementation/u01-ec-historical-code-20261113.tar.gz",
     "acceptance": "output/cerp-untangle-2084-implementation/u01-local-runtime-assembly-20261113/phase4-authenticated-material-acceptance.json",
-    "note": "The archived dist app routes through v1.routes and has no static require edge to the adapter. The recorded EC acceptance parsed the adapter and passed 31 material assertions; a composite mount was not located in the archive. Retention is mandated by the audited deployment documentation and user instruction until a reviewed target-runtime manifest resolves that boundary."
+    "note": "The captured app delegates through dist/routes/v1.routes.js. That router requires the adapter, mounts auth-profile augmentation at /auth and material referentials at /stock before moduleAccessGate. The recorded EC acceptance parsed the adapter and passed 31 material assertions. These observations describe the captured assembly only, not current production or external entrypoints; retention remains required pending reviewed target-runtime evidence."
   }
 }
