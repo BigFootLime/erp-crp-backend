@@ -1,6 +1,6 @@
 import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
 import { reconcileOrdersForQualityEvidence } from "../../commande-client/repository/commande-quality-milestone.repository";
-import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
+import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipt-lot-reconciliation.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 // Repository Qualité 360 (#228).
 //
