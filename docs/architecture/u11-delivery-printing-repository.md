@@ -26,3 +26,26 @@ Acceptance criteria:
 
 This source-only change does not change routes, authorization, business rules,
 database schema, external printing, or deployment.
+
+## Delivery document reads (next U11 batch)
+
+`delivery-document-reads.repository.ts` now owns the read-only attachment
+lookup: the display name, the BL/document linkage check and the durable storage
+path. `livraisons.repository.ts` keeps the same three public exports for route
+and PDF callers.
+
+The owner depends only on the database pool and CERP document storage utility;
+it never imports the delivery facade. Upload and removal remain in the facade:
+they acquire the delivery lock, apply state rules, coordinate the upload
+transaction or deletion, touch the BL and record the delivery event. Moving
+those writes separately would change a transaction boundary, so this batch does
+not do so.
+
+Acceptance criteria for this seam:
+
+- the three original signatures and bodies are preserved under the compatibility
+  exports;
+- the owner has no source or compiled path back to the facade;
+- the PDF-first lookup, extension fallback, blank-name handling and scoped link
+  query have focused regressions;
+- no route, authorization, file deletion, schema or deployment behavior changes.

@@ -4,6 +4,11 @@
 
 - Le registre de cycle de vie distingue maintenant le routeur natif courant du runtime EC capturé : ce dernier importe et monte réellement l’adaptateur de référentiels matière, tandis que les deux middlewares historiques restent présents sans preuve d’activation. La suppression demeure interdite tant qu’un runtime cible et ses points d’entrée opérationnels n’ont pas été revus.
 
+## En préparation — Lectures documentaires des livraisons (U11)
+
+- Les recherches de métadonnées, de lien BL-document et de chemin de stockage des pièces jointes sont détenues par `delivery-document-reads.repository.ts`, derrière les mêmes exports de compatibilité de `livraisons.repository.ts`. L'ajout et le retrait restent dans la façade transactionnelle qui verrouille le BL, coordonne le transfert de fichier et écrit l'événement de livraison.
+- Les requêtes, signatures, comportements d'absence et contrôles de lien restent inchangés. Aucun endpoint, droit, SQL métier, base, fichier utilisateur ou déploiement n'est modifié.
+
 ## En préparation — Séquence transactionnelle de création de commande (#1529)
 
 - Les écritures transactionnelles de création et de brouillon de commande sont regroupées dans un propriétaire dédié, derrière les exports historiques de la façade. Les signatures publiques, le propriétaire de transaction, l’upload, la réconciliation, les erreurs et les effets différés restent inchangés.
