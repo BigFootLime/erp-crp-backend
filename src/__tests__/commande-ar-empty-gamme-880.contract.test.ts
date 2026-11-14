@@ -1,9 +1,23 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import ts from "typescript";
 
 const root = process.cwd();
 const read = (file: string) => readFileSync(resolve(root, file), "utf8");
+
+function actualFunctionBody(source: string, name: string): string {
+  const file = ts.createSourceFile("workflow.ts", source, ts.ScriptTarget.Latest, true);
+  const found: ts.FunctionDeclaration[] = [];
+  function visit(node: ts.Node) {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  expect(found).toHaveLength(1);
+  expect(found[0]!.body).toBeDefined();
+  return found[0]!.body!.getText(file);
+}
 
 describe("#880 — archive AR exacte", () => {
   it("file dans la GED les octets exacts du PDF préparé", () => {
@@ -42,7 +56,10 @@ describe("#880 — gamme vide non bloquante", () => {
   });
 
   it("conserve le planning obligatoire même quand la gamme ne contient aucune opération", () => {
-    const source = read("src/module/commande-client/repository/commande-client.repository.ts");
+    const facade = read("src/module/commande-client/repository/commande-client.repository.ts");
+    const owner = read("src/module/commande-client/repository/commande-workflow.repository.ts");
+    const source = actualFunctionBody(owner, "repairLegacyNoOperationPlanningBypass");
+    expect(facade).toContain("await repairLegacyNoOperationPlanningBypass({");
     expect(source).toContain('nouveau_statut: "ATTENTE_PLANNING"');
     expect(source).toContain('cause: "planning_repair"');
     expect(source).not.toContain('skip_reason: "no_plannable_operations"');
