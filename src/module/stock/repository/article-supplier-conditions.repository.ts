@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
 import { repoCreateFournisseurCatalogueItem, repoUpdateFournisseurCatalogueItem } from "../../fournisseurs/repository/fournisseurs.repository";
-import type { AuditContext } from "./stock.repository";
+import type { AuditContext } from "./stock-movement-core.repository";
 import type { ArticleSupplierCondition } from "../validators/stock.validators";
 import { createCatalogueSchema } from "../../fournisseurs/validators/fournisseurs.validators";
 
