@@ -8,9 +8,19 @@ const source = (relativePath: string) => readFileSync(resolve(repoRoot, relative
 
 describe("Quality 360 direct OUT writer contract (#616)", () => {
   it("keeps generic and both delivery OUT posting paths behind the operational lot gate", () => {
-    const stock = source("src/module/stock/repository/stock.repository.ts");
-    expect(stock).toContain("assertDirectOutMovementQualityEligibility");
-    expect(stock).toContain('m.movement_type === "OUT"');
+    // The public stock façade deliberately delegates posting to the movement
+    // core. Keep the contract on that owner: an OUT that is not the server
+    // reservation-consumption path must pass the lot eligibility gate before
+    // the movement branches into its posting workflow.
+    const stockCore = source("src/module/stock/repository/stock-movement-core.repository.ts");
+    const directOutGate = stockCore.slice(
+      stockCore.indexOf("const directOutQualityDecisions"),
+      stockCore.indexOf('if (m.movement_type === "TRANSFER")')
+    );
+    expect(directOutGate).toContain('m.movement_type === "OUT"');
+    expect(directOutGate).toContain("!reservedConsumption");
+    expect(directOutGate).toContain("await assertDirectOutMovementQualityEligibility");
+    expect(directOutGate).toContain("lines: draftLines.rows");
 
     const legacyDelivery = source("src/module/livraisons/repository/livraisons.repository.ts");
     expect(legacyDelivery).toContain("assertOperationalLotQualityEligibility");

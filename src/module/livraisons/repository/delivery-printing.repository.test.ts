@@ -44,6 +44,23 @@ describe("delivery printing facade", () => {
     expect(mocks.release).toHaveBeenCalledOnce()
   })
 
+  it("resets an existing outbox retry timestamp through the public facade", async () => {
+    mocks.query.mockImplementation(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] }
+      if (sql.includes("SELECT statut")) return { rows: [{ statut: "SHIPPED" }] }
+      if (sql.includes("FROM public.delivery_outbox")) return { rows: [{ id: "outbox-old" }] }
+      if (sql.includes("UPDATE public.delivery_outbox")) return { rows: [{ id: "outbox-old", requested_at: "2026-11-14T00:00:00.000Z" }] }
+      if (sql.includes("INSERT INTO bon_livraison_event_log")) return { rows: [{ id: "event-1" }] }
+      throw new Error(`Unexpected SQL: ${sql}`)
+    })
+    await repoRetryLivraisonPrint({ bon_livraison_id: "bl-1", user_id: 7 })
+    const update = mocks.query.mock.calls.find(([sql]) => sql.includes("UPDATE public.delivery_outbox"))!
+    expect(update[0]).toContain("requested_at = now()")
+    expect(update[0]).toContain("published_at = NULL")
+    expect(update[1]).toEqual(["outbox-old", expect.any(String)])
+    expect(mocks.query.mock.calls.map(([sql]) => sql)).toContain("COMMIT")
+  })
+
   it.each([
     ["realtime enqueue", () => mocks.enqueue.mockRejectedValueOnce(new Error("enqueue unavailable")), "enqueue unavailable"],
     ["audit", () => mocks.audit.mockRejectedValueOnce(new Error("audit unavailable")), "audit unavailable"],

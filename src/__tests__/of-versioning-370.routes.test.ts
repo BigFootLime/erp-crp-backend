@@ -32,8 +32,13 @@ vi.mock("../module/auth/middlewares/auth.middleware", () => ({
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
+// Partager le vrai import du routeur entre les applications de fixture. Cette
+// surface importe ses contrôleurs de production : elle est plus coûteuse à
+// initialiser que les assertions HTTP qu'elle protège.
+const ofVersioningRoutes = import("../module/production/routes/of-versioning.routes");
+
 async function buildApp() {
-  const routes = (await import("../module/production/routes/of-versioning.routes")).default;
+  const routes = (await ofVersioningRoutes).default;
   const app = express();
   app.use(express.json());
   app.use("/api/v1/production/of-versioning", routes);
@@ -58,7 +63,7 @@ describe("#370 — la surface HTTP est réellement montée", () => {
     const res = await request(app).get(`${BASE}/capabilities`).set(ROLE_HEADER, ATELIER);
     expect(res.status).toBe(200);
     expect(res.body.capabilities).toMatchObject({ read: true, visa: true });
-  });
+  }, 15_000);
 
   it("refuse tout accès sans authentification (401, jamais 404)", async () => {
     const app = await buildApp();
@@ -194,18 +199,23 @@ describe("#370 — la clé d'idempotence est exigée sur les commandes à effet"
 });
 
 describe("#370 — la surface est bien greffée sur le routeur v1", () => {
-  it("est montée sous /production/of-versioning dans v1.routes", async () => {
+  it("est montée sous /production/of-versioning avant le routeur historique", async () => {
     // Lecture du fichier de montage : c'est le seul point où une surface peut
     // exister en tant que routeur sans être atteignable par l'API.
     const fs = await import("node:fs/promises");
     const source = await fs.readFile("src/routes/v1.routes.ts", "utf8");
     expect(source).toContain('from "../module/production/routes/of-versioning.routes"');
-    expect(source).toContain('router.use("/production/of-versioning", ofVersioningRoutes)');
-
-    // …et AVANT le routeur historique, sinon `/production/:id` l'absorberait.
-    const specific = source.indexOf('router.use("/production/of-versioning"');
-    const legacy = source.indexOf('router.use("/production", productionRoutes)');
-    expect(specific).toBeGreaterThan(-1);
+    // Le montage est déclaratif afin que l'inventaire OpenAPI et Express
+    // consomment le même ordre. Vérifier le groupe entier, plutôt qu'une
+    // ancienne forme `router.use`, conserve la garantie qu'un OF versionné
+    // est atteignable avant le routeur historique `/production/:id`.
+    const productionGroup = source.match(
+      /mountOrderedRouteGroup\(router, \[([\s\S]*?)\]\)/g
+    )?.find((group) => group.includes("ofVersioningRoutes"));
+    expect(productionGroup).toBeDefined();
+    const specific = productionGroup!.indexOf('{ prefix: "/production/of-versioning", router: ofVersioningRoutes }');
+    const legacy = productionGroup!.indexOf('{ prefix: "/production", router: productionRoutes }');
+    expect(specific).toBeGreaterThanOrEqual(0);
     expect(legacy).toBeGreaterThan(specific);
   });
 });
