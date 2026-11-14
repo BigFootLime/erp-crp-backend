@@ -1,5 +1,10 @@
 # Changelog
 
+## En préparation — Contrat versionné de contexte entreprise (#1521)
+
+- Le DTO public `/entreprises/context` possède un artefact v1 propriétaire et des fixtures comparées au producteur réel, distincts du contexte serveur contenant les identités de compte et Directory ; aucun nouveau parseur n'est ajouté au retour du runtime.
+- Les réponses LEGACY, COMMERCIAL et INDUSTRIAL, les refus de contexte/environnement et la protection contre les références inter-entreprises sont couverts sans modifier l'authentification, les droits ou les en-têtes existants.
+
 ## En préparation — Fidélité OpenAPI des référentiels matière et préparation OF
 
 - La couverture d’inventaire des routes et la précision des schémas sont maintenant comptées séparément : les wrappers génériques restent explicitement classés et ne produisent plus un faux « 100 % précis ».

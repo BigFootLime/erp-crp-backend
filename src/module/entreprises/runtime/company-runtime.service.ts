@@ -18,6 +18,7 @@ import {
   companyIdSchema,
   companyRuntimeConfiguration,
 } from "./company-runtime.config";
+import { COMPANY_CONTEXT_CONTRACT_VERSION } from "../contract/company-context-contract-v1";
 
 export type CompanyActor = {
   id: number;
@@ -72,7 +73,7 @@ export type RuntimeCompanyAccess = {
   summary: z.infer<typeof companySummarySchema>;
 };
 export type CompanyView = {
-  contract_version: 1;
+  contract_version: typeof COMPANY_CONTEXT_CONTRACT_VERSION;
   mode: "LEGACY" | "COMPANY";
   active_company: z.infer<typeof companySummarySchema> | null;
   environment: "cerp_prod" | "cerp_test";
@@ -241,7 +242,7 @@ export function createCompanyRuntimeService(deps: Dependencies) {
           ? "cerp_test"
           : "cerp_prod";
       return {
-        contract_version: 1,
+        contract_version: COMPANY_CONTEXT_CONTRACT_VERSION,
         mode: "LEGACY",
         active_company: null,
         environment,
@@ -272,7 +273,7 @@ export function createCompanyRuntimeService(deps: Dependencies) {
           "Accès à cette entreprise refusé.",
         );
       return {
-        contract_version: 1,
+        contract_version: COMPANY_CONTEXT_CONTRACT_VERSION,
         mode: "COMPANY",
         active_company: resolved.summary,
         environment: config.environment,

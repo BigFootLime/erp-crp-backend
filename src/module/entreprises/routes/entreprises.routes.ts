@@ -12,6 +12,7 @@ import {
 } from "../../../shared-directory/site-runtime";
 import {
   COMPANY_HEADER,
+  COMPANY_ENVIRONMENT_HEADER,
   companyEnvironmentSchema,
   companyIdSchema,
 } from "../runtime/company-runtime.config";
@@ -50,13 +51,13 @@ export function assertCompanyLoginTarget(
   }
   const company = companyIdSchema.safeParse(req.get(COMPANY_HEADER));
   const environment = companyEnvironmentSchema.safeParse(
-    req.get("X-CERP-Database"),
+    req.get(COMPANY_ENVIRONMENT_HEADER),
   );
   // Before credentials exist, a normal /login visit has no company UUID. The
   // instance is itself the authority for its one fixed active company.
   if (allowRuntimeDefault && req.get(COMPANY_HEADER) === undefined) {
     if (
-      req.get("X-CERP-Database") !== undefined &&
+      req.get(COMPANY_ENVIRONMENT_HEADER) !== undefined &&
       (!environment.success || environment.data !== config.environment)
     ) {
       throw new HttpError(
@@ -164,7 +165,7 @@ router.post(
     if (
       !header.success ||
       header.data !== config.company_id ||
-      req.get("X-CERP-Database") !== config.environment
+      req.get(COMPANY_ENVIRONMENT_HEADER) !== config.environment
     )
       throw new HttpError(
         403,
