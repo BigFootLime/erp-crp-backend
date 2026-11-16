@@ -75,7 +75,7 @@ suite('delivery promise shipment #1109 — disposable PostgreSQL',()=>{
         UNIQUE(actor_id,request_key),
         UNIQUE(root_id,part_id,root_version)
       );
-      CREATE INDEX public.delivery_promise_departure_events_part_idx ON public.delivery_promise_departure_events(part_id,created_at DESC);
+      CREATE INDEX delivery_promise_departure_events_part_idx ON public.delivery_promise_departure_events(part_id,created_at DESC);
       CREATE FUNCTION public.guard_delivery_promise_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Delivery promise evidence is immutable'; END $$;
       CREATE TRIGGER guard_delivery_promise_departure_events_1803 BEFORE UPDATE OR DELETE ON public.delivery_promise_departure_events FOR EACH ROW EXECUTE FUNCTION public.guard_delivery_promise_history();`);
     await db.query(`INSERT INTO public.articles VALUES($1,'u')`,[article]);
