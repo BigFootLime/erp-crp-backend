@@ -18,6 +18,8 @@ describe("automatic creation PDFs: alternate transaction paths", () => {
   const supplier = read("src/module/commande-fournisseur/repository/commande-fournisseur.repository.ts");
   const replenishment = read("src/module/commande-fournisseur/repository/replenishment-proposal.repository.ts");
   const stock = read("src/module/stock/repository/stock.repository.ts");
+  const articleLifecycle = read("src/module/stock/repository/stock-article-lifecycle.repository.ts");
+  const historicalOpenings = read("src/module/stock/repository/stock-historical-openings.repository.ts");
   const quotes = read("src/module/devis/repository/devis.repository.ts");
 
   it("queues supplier PO snapshots after lines/totals/transitions and before the owning transaction commits", () => {
@@ -66,10 +68,9 @@ describe("automatic creation PDFs: alternate transaction paths", () => {
   });
 
   it("keeps stock creation snapshots on explicit article creation only, excluding OLD historical import", () => {
-    const createStart = stock.indexOf("export async function repoCreateArticle");
-    const create = stock.slice(createStart, stock.indexOf("export async function repoCreateHistoricalImport", createStart));
+    const create = body(articleLifecycle, "export async function repoCreateArticle(");
     beforeCommit(create, "queueStockArticleCreationSnapshotTx");
-    const historical = body(stock, "export async function repoCreateHistoricalImport");
+    const historical = body(historicalOpenings, "export async function repoCreateHistoricalImport");
     expect(historical).not.toContain("queueStockArticleCreationSnapshotTx");
     const finish = read("src/module/surface-finish/repository/surface-finish-resolution.repository.ts");
     for (const marker of ["export async function repoConfirmStockFinishArticle", "export async function repoConfirmOperationFinish"]) {

@@ -1,5 +1,5 @@
 import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
-import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipts.repository';
+import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipt-lot-reconciliation.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from '../../stock/repository/material-bar-posting.repository';
 import type { MaterialBarMovementCommand } from '../../stock/domain/material-bar-movement';

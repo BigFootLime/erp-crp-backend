@@ -26,16 +26,24 @@ describe("Dockerfile storage permissions", () => {
     );
     const securityScriptsIndex = dockerfile.indexOf("COPY scripts/security ./scripts/security");
     const buildScriptsIndex = dockerfile.indexOf("COPY scripts/build ./scripts/build");
+    const compatibilityScriptsIndex = dockerfile.indexOf("COPY scripts/compat ./scripts/compat");
+    const compatibilityManifestIndex = dockerfile.indexOf(
+      "COPY docs/compat/material-referentials-backport.lifecycle.json ./docs/compat/material-referentials-backport.lifecycle.json",
+    );
     const buildIndex = dockerfile.indexOf("RUN npm run build");
 
     expect(openApiScriptsIndex).toBeGreaterThanOrEqual(0);
     expect(openApiCoverageIndex).toBeGreaterThan(openApiScriptsIndex);
     expect(securityScriptsIndex).toBeGreaterThanOrEqual(0);
     expect(buildScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(compatibilityScriptsIndex).toBeGreaterThanOrEqual(0);
+    expect(compatibilityManifestIndex).toBeGreaterThanOrEqual(0);
     expect(buildIndex).toBeGreaterThan(openApiScriptsIndex);
     expect(buildIndex).toBeGreaterThan(openApiCoverageIndex);
     expect(buildIndex).toBeGreaterThan(securityScriptsIndex);
     expect(buildIndex).toBeGreaterThan(buildScriptsIndex);
+    expect(buildIndex).toBeGreaterThan(compatibilityScriptsIndex);
+    expect(buildIndex).toBeGreaterThan(compatibilityManifestIndex);
   });
 
   it("keeps the npm lock used by Docker aligned with every direct dependency", () => {

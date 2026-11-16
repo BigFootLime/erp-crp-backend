@@ -132,7 +132,7 @@ export async function seedProductionWorkbenchFixture(
       [quality, user],
     );
     const ids: number[] = [];
-    for (const qty of [10, 20, 8, 12]) {
+    for (const qty of [10, 20, 8, 12, 16]) {
       const id = Number(
         (
           await tx.query(

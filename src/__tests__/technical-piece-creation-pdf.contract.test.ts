@@ -1,13 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSourceFunction } from "./helpers/source-contract";
 
 import { buildTechnicalPieceCreationSnapshotInput } from "../shared/authoritative-documents/technical-piece-creation-snapshot";
 import { buildStockArticleCreationSnapshotInput } from "../shared/authoritative-documents/stock-article-creation-snapshot";
 
 const piecesSource = fs.readFileSync(path.join(__dirname, "../module/pieces-techniques/repository/pieces-techniques.repository.ts"), "utf8");
 const commandesSource = fs.readFileSync(path.join(__dirname, "../module/commande-client/repository/commande-client.repository.ts"), "utf8");
-const stockSource = fs.readFileSync(path.join(__dirname, "../module/stock/repository/stock.repository.ts"), "utf8");
+const historicalPieceSource = readSourceFunction(
+  "src/module/stock/repository/stock-historical-openings.repository.ts", "ensureHistoricalPieceTechniqueTx"
+);
 
 describe("technical root creation PDF contracts", () => {
   it("uses stable, safe, server-only creation inputs", () => {
@@ -47,6 +50,6 @@ describe("technical root creation PDF contracts", () => {
     expect(article).toContain("buildStockArticleCreationSnapshotInput");
     expect(article).toContain("preparatory-article-promotion");
     expect(article).toContain("if (createdArticle)");
-    expect(stockSource).toContain("OLD recovery/import scaffolding is intentionally excluded from creation-PDF");
+    expect(historicalPieceSource).toContain("OLD recovery/import scaffolding is intentionally excluded from creation-PDF");
   });
 });

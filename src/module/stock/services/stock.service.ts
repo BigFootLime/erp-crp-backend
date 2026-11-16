@@ -73,7 +73,7 @@ import type {
   HistoricalImportBodyDTO,
   ListConsolidatedInventoryQueryDTO,
 } from "../validators/stock.validators";
-import type { AuditContext } from "../repository/stock.repository";
+import type { AuditContext } from "../repository/stock-movement-core.repository";
 import type {
   StockOpeningReferenceInput,
   StockOpeningReferenceResolution,
@@ -95,9 +95,7 @@ import {
   repoAttachMovementDocuments,
   repoCancelMovement,
   repoCreateArticle,
-  repoCreateEmplacement,
   repoCreateLot,
-  repoCreateMagasin,
   repoCreateMovement,
   repoPreviewMovement,
   repoCompensateMovement,
@@ -114,8 +112,6 @@ import {
   repoListMatiereSousEtats,
   repoGetArticlesKpis,
   repoGetLot,
-  repoGetMagasin,
-  repoGetMagasinsKpis,
   repoGetMovement,
   repoGetArticleDocumentForDownload,
   repoGetMovementDocumentForDownload,
@@ -123,9 +119,7 @@ import {
   repoListArticles,
   repoListAvailableArticleLots,
   repoListBalances,
-  repoListEmplacements,
   repoListLots,
-  repoListMagasins,
   repoListInventorySessions,
   repoListInventorySessionLines,
   repoListMovementDocuments,
@@ -141,17 +135,25 @@ import {
   repoResolveStockOpeningReferences,
   repoListArticleVersions,
   repoListArticleWhereUsed,
-  repoUpdateEmplacement,
   repoUpdateLot,
   repoUpdateLotQuality,
   repoGetLotGenealogy,
   repoCreateLotGenealogy,
-  repoUpdateMagasin,
-  repoDeactivateMagasin,
-  repoActivateMagasin,
   repoCreateHistoricalImport,
   repoListConsolidatedInventory,
 } from "../repository/stock.repository";
+import {
+  repoActivateMagasin,
+  repoCreateEmplacement,
+  repoCreateMagasin,
+  repoDeactivateMagasin,
+  repoGetMagasin,
+  repoGetMagasinsKpis,
+  repoListEmplacements,
+  repoListMagasins,
+  repoUpdateEmplacement,
+  repoUpdateMagasin,
+} from "../repository/stock-locations.repository";
 import {
   repoFindSimilarArticles,
   type SimilarArticleMatch,
