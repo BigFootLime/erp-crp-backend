@@ -60,7 +60,20 @@ suite('delivery promise shipment #1109 — disposable PostgreSQL',()=>{
       CREATE TABLE public.users(id integer PRIMARY KEY);
       CREATE TABLE public.delivery_promise_roots(id uuid PRIMARY KEY,allocation_id bigint,initial_quantity numeric,created_at timestamptz);
       CREATE TABLE public.delivery_promise_parts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),root_id uuid,quantity numeric,due_date date,revision_event_id uuid,retired_at timestamptz,created_at timestamptz);
-      CREATE TABLE public.delivery_promise_shipments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),part_id uuid,bl_allocation_id uuid,quantity numeric,due_date_at_shipment date,created_at timestamptz DEFAULT now(),UNIQUE(part_id,bl_allocation_id));
+      -- Keep this disposable contract aligned with 20261007_delivery_promises_821
+      -- plus the 20261101 departure-evidence extension: shipment history is
+      -- append-only, quantity is positive, and the recorded departure date is
+      -- optional because it requires separate explicit evidence.
+      CREATE TABLE public.delivery_promise_shipments(
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        part_id uuid NOT NULL REFERENCES public.delivery_promise_parts(id),
+        bl_allocation_id uuid NOT NULL REFERENCES public.bon_livraison_ligne_allocations(id),
+        quantity numeric NOT NULL CHECK(quantity>0),
+        due_date_at_shipment date NOT NULL,
+        departure_due_date_at_shipment date NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE(part_id,bl_allocation_id)
+      );
       CREATE TABLE public.delivery_promise_departure_events(
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         root_id uuid NOT NULL REFERENCES public.delivery_promise_roots(id) ON DELETE RESTRICT,
