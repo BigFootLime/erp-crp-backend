@@ -152,7 +152,7 @@ describe.skipIf(!isolated)(
       await pool.end();
     });
     it("selects a draft revision without partially attaching an immutable OF snapshot", async () => {
-      const f = await seedProductionWorkbenchFixture({ draft: true });
+      const f = await seedProductionWorkbenchFixture();
       const id = f.ids[0];
       const revision = await repoCreateNextVersion(f.piece, f.version, {
         indice: "A",
@@ -161,8 +161,10 @@ describe.skipIf(!isolated)(
         client_requirement_confirmed: true,
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
-      // A legacy physical reference must not hide the revision explicitly
-      // selected during an editable preparation; this draft fixture stays unattached.
+      // A draft selection must not partially attach a physical reference: only
+      // a complete technical snapshot may be attached by preparation.
+      await expect(pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]))
+        .rejects.toMatchObject({ code: "55000" });
       const selected = await repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,
         version_id: revision.id,
@@ -173,7 +175,7 @@ describe.skipIf(!isolated)(
         technical_snapshot_sha256,technical_snapshot_at,technical_preparation->>'selected_version_id' AS selected,
         technical_preparation->>'version_selection_mode' AS mode
         FROM public.ordres_fabrication WHERE id=$1`, [id])).rows[0];
-      expect(row).toMatchObject({ piece_technique_version_id: f.version, technical_snapshot: null,
+      expect(row).toMatchObject({ piece_technique_version_id: null, technical_snapshot: null,
         technical_snapshot_sha256: null, technical_snapshot_at: null, selected: revision.id, mode: "MANUAL" });
       expect((await pool.query("SELECT is_current FROM public.piece_technique_versions WHERE id=$1", [f.version])).rows[0].is_current).toBe(true);
       await expect(repoSelectPreparationVersion(id, {
