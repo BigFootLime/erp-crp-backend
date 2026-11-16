@@ -1,5 +1,7 @@
 # Changelog
 
+- UNRELEASED (U17) : la dissolution d'un regroupement conserve les réservations historiques libérées et restitue les affectations par des réservations actives de remplacement, liées par une provenance immuable. Les preuves de transfert des barres conservent leurs identifiants historiques ; seules les nouvelles affectations ciblent les remplacements. Migration additive préparée dans les sources uniquement.
+
 - Build: le builder Docker inclut le contrôle de cycle de vie des référentiels matière et son manifeste, déjà requis par `npm run build`. La vérification reste active dans l'image ; aucun changement de contrat, de migration ou de déploiement.
 
 - UNRELEASED (#1562, U11) : les ressources Stock partagent des propriétaires dédiés pour les référentiels matière, les articles, les inventaires, les lectures consolidées, les documents, les ouvertures historiques, les corrections et les lots/qualité. Projection article, détection de colonne et réconciliation de production ont chacune une seule définition. Les exports publics, contrats et transactions restent conservés ; cette consolidation 2.0.86 reste non publiée.

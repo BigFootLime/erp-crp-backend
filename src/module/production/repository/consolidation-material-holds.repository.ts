@@ -244,10 +244,6 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
     SET qty_reserved=qty_reserved-$2 WHERE id=$1::uuid`, [batchId, delta.qty]);
     await tx.query(`UPDATE public.stock_reservations SET status='RELEASED',released_at=now(),released_by=$2,
     reason='Dissolution du regroupement',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [holds.map(h => h.producer_reservation_id), audit.user_id, consolidationId]);
-    /* The former reactivation is intentionally retained only as source history:
-    await tx.query(`UPDATE public.stock_reservations SET status='ACTIVE',released_at=NULL,released_by=NULL,
-    reason='Réservation source restituée après dissolution',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [sourceTransfers.map(t => t.reservation_id), audit.user_id, consolidationId]);
-    */
     await applyMaterialBarRestorationTx(tx, barPlans, { contextId: consolidationId, commandKey: consolidationId,
         actor: audit.user_id, reason: 'Affectations d’origine restituées après dissolution' });
 }
