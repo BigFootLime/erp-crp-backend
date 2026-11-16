@@ -808,7 +808,7 @@ describe.skipIf(!isolated)(
         SET restored_at=restored_at WHERE consolidation_id=$1::uuid`, [group.id])).rejects.toMatchObject({ code: '23514' });
       await expect(pool.query(`DELETE FROM public.production_consolidation_reservation_restorations
         WHERE consolidation_id=$1::uuid`, [group.id])).rejects.toMatchObject({ code: '23514' });
-      await expect(dissolve()).rejects.toMatchObject({ status: 409 });
+      await expect(dissolve()).resolves.toEqual({ id: group.id, state: 'DISSOLVED', idempotent_replay: true });
       expect((await pool.query(`SELECT count(*)::int AS count
         FROM public.production_consolidation_reservation_restorations WHERE consolidation_id=$1::uuid`, [group.id])).rows[0].count).toBe(2);
       expect(await counters()).toEqual({ batch: 30, level: 30 });
@@ -1172,12 +1172,18 @@ describe.skipIf(!isolated)(
         fixture.audit,
       );
       expect((await repoGetConsolidation(group.id)).state).toBe("DISSOLVED");
-      const restored = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,r.material_need_id::text,r.status,r.qty_reserved::text
-        FROM public.stock_reservations r WHERE r.id=ANY($1::uuid[]) ORDER BY r.of_id`,
-        [transferred.map(r => r.id)])).rows;
+      const restored = (await pool.query(`SELECT r.id::text,lineage.original_reservation_id::text AS original_id,
+        old.status AS original_status,r.of_id::int,r.source_id,r.material_need_id::text,r.status,r.qty_reserved::text
+        FROM public.production_consolidation_reservation_restorations lineage
+        JOIN public.stock_reservations old ON old.id=lineage.original_reservation_id
+        JOIN public.stock_reservations r ON r.id=lineage.replacement_reservation_id
+        WHERE lineage.original_reservation_id=ANY($1::uuid[]) AND lineage.consolidation_id=$2::uuid ORDER BY r.of_id`,
+        [transferred.map(r => r.id), group.id])).rows;
       expect(restored).toHaveLength(2);
       for (const reservation of restored) {
-        const source = transferred.find(r => r.id === reservation.id)!;
+        const source = transferred.find(r => r.id === reservation.original_id)!;
+        expect(reservation.id).not.toBe(reservation.original_id);
+        expect(reservation.original_status).toBe('RELEASED');
         expect(reservation.of_id).toBe(source.source_of_id);
         expect(reservation.source_id).toBe(String(source.source_of_id));
         expect(reservation.material_need_id).toBe(source.source_need_id);
