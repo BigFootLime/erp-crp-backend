@@ -152,7 +152,7 @@ describe.skipIf(!isolated)(
       await pool.end();
     });
     it("selects a draft revision without partially attaching an immutable OF snapshot", async () => {
-      const f = await seedProductionWorkbenchFixture();
+      const f = await seedProductionWorkbenchFixture({ draft: true });
       const id = f.ids[0];
       const revision = await repoCreateNextVersion(f.piece, f.version, {
         indice: "A",
@@ -162,8 +162,7 @@ describe.skipIf(!isolated)(
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
       // A legacy physical reference must not hide the revision explicitly
-      // selected during an editable preparation.
-      await pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]);
+      // selected during an editable preparation; this draft fixture stays unattached.
       const selected = await repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,
         version_id: revision.id,
