@@ -1,5 +1,7 @@
 # Changelog
 
+- Build: le builder Docker inclut le contrôle de cycle de vie des référentiels matière et son manifeste, déjà requis par `npm run build`. La vérification reste active dans l'image ; aucun changement de contrat, de migration ou de déploiement.
+
 - UNRELEASED (#1562, U11) : les ressources Stock partagent des propriétaires dédiés pour les référentiels matière, les articles, les inventaires, les lectures consolidées, les documents, les ouvertures historiques, les corrections et les lots/qualité. Projection article, détection de colonne et réconciliation de production ont chacune une seule définition. Les exports publics, contrats et transactions restent conservés ; cette consolidation 2.0.86 reste non publiée.
 
 - Tests: les preuves de création/liste des commandes et de liste des livraisons utilisent des instantanés historiques vérifiés issus de commits officiels publiés. Tous les cas et assertions restent conservés et ne dépendent plus d'objets Git locaux absents d'un clone ou d'une archive source.
