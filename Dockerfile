@@ -14,6 +14,8 @@ COPY scripts/openapi ./scripts/openapi
 COPY docs/http/openapi-route-coverage.json ./docs/http/openapi-route-coverage.json
 COPY scripts/security ./scripts/security
 COPY scripts/build ./scripts/build
+COPY scripts/compat ./scripts/compat
+COPY docs/compat/material-referentials-backport.lifecycle.json ./docs/compat/material-referentials-backport.lifecycle.json
 COPY resources/outillage-catalogue ./resources/outillage-catalogue
 RUN npm run build
 

@@ -1,5 +1,15 @@
 # Changelog
 
+- UNRELEASED (U17) : la dissolution d'un regroupement conserve les réservations historiques libérées et restitue les affectations par des réservations actives de remplacement, liées par une provenance immuable. Les preuves de transfert des barres conservent leurs identifiants historiques ; seules les nouvelles affectations ciblent les remplacements. Migration additive préparée dans les sources uniquement.
+
+- Build: le builder Docker inclut le contrôle de cycle de vie des référentiels matière et son manifeste, déjà requis par `npm run build`. La vérification reste active dans l'image ; aucun changement de contrat, de migration ou de déploiement.
+
+- UNRELEASED (#1562, U11) : les ressources Stock partagent des propriétaires dédiés pour les référentiels matière, les articles, les inventaires, les lectures consolidées, les documents, les ouvertures historiques, les corrections et les lots/qualité. Projection article, détection de colonne et réconciliation de production ont chacune une seule définition. Les exports publics, contrats et transactions restent conservés ; cette consolidation 2.0.86 reste non publiée.
+
+- Tests: les preuves de création/liste des commandes et de liste des livraisons utilisent des instantanés historiques vérifiés issus de commits officiels publiés. Tous les cas et assertions restent conservés et ne dépendent plus d'objets Git locaux absents d'un clone ou d'une archive source.
+
+- UNRELEASED (#1562): les dix operations Magasins/Emplacements sont regroupees dans leur proprietaire Stock ; le noyau des mouvements partage un seul proprietaire de persistance et les filtres/tri partagent un seul proprietaire de requete. Les contrats, corps SQL, transactions et exports historiques restent conserves. Aucune migration ni livraison.
+
 ## En préparation — Workflow transactionnel des commandes client (U11)
 
 - Les transitions de statut, checkpoints, actions, blocages/reprises, notifications et invalidations temps réel des commandes sont regroupés dans `commande-workflow.repository.ts`, derrière les exports historiques de `commande-client.repository.ts`.
@@ -11,7 +21,9 @@
 
 ## Unreleased
 
+- Test: retained the six affected source-contract cases while checking the actual Stock and Production owners through complete AST declarations; removed a leftover unused Stock facade import.
 - Refactor: isolated the full delivery-detail read aggregate (header, lines, allocation provenance, documents, proofs, and events) behind the existing public export. Header reads remain shared with transactional writers; their locks, capability checks, and cache ownership are unchanged.
+- Refactor: grouped consolidated inventory, balances, analytics and movement-list reads under one Stock reporting owner, preserving SQL and public exports. Customer-code SQL projection now has one shared lower owner; historical source guards retain their cases across the extraction.
 - Refactor: isolated the delivery-list read model behind the existing delivery repository export while preserving its SQL, pagination, allocation scopes, and invocation-time pool binding.
 
 ## En préparation — Lectures de liste des commandes (U11)

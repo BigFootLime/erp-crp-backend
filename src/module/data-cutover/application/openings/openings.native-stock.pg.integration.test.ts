@@ -66,8 +66,16 @@ async function seedNativePrerequisites(client: PoolClient): Promise<string> {
   await client.query("INSERT INTO public.magasins(id,code,code_magasin,name,libelle,warehouse_id,stock_scope,is_active,actif) VALUES($1::uuid,'OLD-MP','OLD-MP','Base old - Matières premières','Base old - Matières premières',$2::uuid,'OLD',true,true) ON CONFLICT(code) DO NOTHING", [ids.magasin, ids.warehouse]);
   await client.query("INSERT INTO public.warehouses(id,code,name,stock_scope) VALUES($1::uuid,'OLD-PF','Base old - Pièces finies','OLD') ON CONFLICT(code) DO NOTHING", [ids.pfWarehouse]);
   await client.query("INSERT INTO public.magasins(id,code,code_magasin,name,libelle,warehouse_id,stock_scope,is_active,actif) VALUES($1::uuid,'OLD-PF','OLD-PF','Base old - Pièces finies','Base old - Pièces finies',$2::uuid,'OLD',true,true) ON CONFLICT(code) DO NOTHING", [ids.pfMagasin, ids.pfWarehouse]);
-  const location = await client.query<{ id: string }>("INSERT INTO public.locations(warehouse_id,code,description) VALUES($1::uuid,'CUT-READY','Emplacement synthétique de préparation') ON CONFLICT(warehouse_id,code) DO UPDATE SET description=EXCLUDED.description RETURNING id::text AS id", [ids.warehouse]);
-  await client.query("INSERT INTO public.emplacements(magasin_id,location_id,code,name,is_scrap,is_active,location_type,allow_inbound,allow_outbound,restrictions,created_by,updated_by) VALUES($1::uuid,$2::uuid,'CUT-READY','Emplacement synthétique de préparation',false,true,'STORAGE',true,true,'{}'::jsonb,1,1) ON CONFLICT(magasin_id,code) DO UPDATE SET location_id=EXCLUDED.location_id,is_active=true", [ids.magasin, location.rows[0]!.id]);
+  // Canonical stock patches seed stores by code with their own UUIDs.
+  const warehouse = await client.query<{ id: string }>("SELECT id::text AS id FROM public.warehouses WHERE code='OLD-MP'");
+  const warehouseId = warehouse.rows[0]?.id;
+  if (!warehouseId) throw new Error("Canonical OLD-MP warehouse is required");
+  const magasin = await client.query<{ id: string; warehouse_id: string | null }>("SELECT id::text AS id,warehouse_id::text AS warehouse_id FROM public.magasins WHERE code='OLD-MP'");
+  const magasinId = magasin.rows[0]?.id;
+  if (!magasinId || magasin.rows[0]?.warehouse_id !== warehouseId)
+    throw new Error("Canonical OLD-MP magasin must bridge its warehouse");
+  const location = await client.query<{ id: string }>("INSERT INTO public.locations(warehouse_id,code,description) VALUES($1::uuid,'CUT-READY','Emplacement synthétique de préparation') ON CONFLICT(warehouse_id,code) DO UPDATE SET description=EXCLUDED.description RETURNING id::text AS id", [warehouseId]);
+  await client.query("INSERT INTO public.emplacements(magasin_id,location_id,code,name,is_scrap,is_active,location_type,allow_inbound,allow_outbound,restrictions,created_by,updated_by) VALUES($1::uuid,$2::uuid,'CUT-READY','Emplacement synthétique de préparation',false,true,'STORAGE',true,true,'{}'::jsonb,1,1) ON CONFLICT(magasin_id,code) DO UPDATE SET location_id=EXCLUDED.location_id,is_active=true", [magasinId, location.rows[0]!.id]);
   await client.query(
     `INSERT INTO public.articles(
        id,root_article_id,code,designation,family_code,version_number,plan_index,status,

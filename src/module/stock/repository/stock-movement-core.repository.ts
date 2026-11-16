@@ -3,8 +3,6 @@ import crypto from "node:crypto";
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
-import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
-import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import { assertOperationalLotQualityEligibility, recordDirectLotQualityConsumption } from "../../qualite/repository/quality-operational-gate.repository";
 import { assertPieceReceiptMovement } from "../../receptions/repository/receipt-processing-guard";
 import { recordMaterialConsumptionOnPost } from "../../traceability/services/material-consumption.automation";
@@ -18,22 +16,16 @@ import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
 import { assemblyComponentWithdrawalOwnsMovement } from "./assembly-component-movement-guard";
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from "./material-bar-posting.repository";
 import type { MaterialBarPostingOwner } from "./material-bar-posting-owner";
+import {
+  insertAuditLog,
+  isPgUniqueViolation,
+  type AuditContext,
+} from "./stock-persistence.repository";
+export { insertAuditLog, isPgUniqueViolation, type AuditContext } from "./stock-persistence.repository";
 
 type MovementRow = StockMovementDetail["movement"];
 
 
-
-export type AuditContext = {
-  user_id: number;
-  ip: string | null;
-  user_agent: string | null;
-  device_type: string | null;
-  os: string | null;
-  browser: string | null;
-  path: string | null;
-  page_key: string | null;
-  client_session_id: string | null;
-};
 
 
 
@@ -167,47 +159,6 @@ export async function completeStockCommand(
       args.command.correlation_id,
     ]
   );
-}
-
-
-
-export function isPgUniqueViolation(err: unknown): boolean {
-  return (err as { code?: unknown } | null)?.code === "23505";
-}
-
-
-
-export async function insertAuditLog(
-  tx: Pick<PoolClient, "query">,
-  audit: AuditContext,
-  entry: {
-    action: string;
-    entity_type: string | null;
-    entity_id: string | null;
-    details?: Record<string, unknown> | null;
-  }
-) {
-  const body: CreateAuditLogBodyDTO = {
-    event_type: "ACTION",
-    action: entry.action,
-    page_key: audit.page_key,
-    entity_type: entry.entity_type,
-    entity_id: entry.entity_id,
-    path: audit.path,
-    client_session_id: audit.client_session_id,
-    details: entry.details ?? null,
-  };
-
-  await repoInsertAuditLog({
-    user_id: audit.user_id,
-    body,
-    ip: audit.ip,
-    user_agent: audit.user_agent,
-    device_type: audit.device_type,
-    os: audit.os,
-    browser: audit.browser,
-    tx,
-  });
 }
 
 

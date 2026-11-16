@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { getDocumentStoragePath } from "../../../utils/cerpStorage";
 import {
-  repoCreateEmplacement,
   repoCreateMovement,
   repoPostMovement,
   ensureStockLevel,
   ensureStockBatchId,
 } from "../../stock/repository/stock.repository";
+import { repoCreateEmplacement } from "../../stock/repository/stock-locations.repository";
 import { issueLabel, resolveIdentification, printLabel } from '../../identification/identification.service';
 import { readMaterialBarInventoryTx } from '../../stock/repository/material-bar-inventory.repository';
 import { prepareGroupedReceipt,confirmGroupedReceipt } from './grouped-receipts.repository';

@@ -158,11 +158,18 @@ describe.skipIf(!isolated)(
         indice: "A",
         type_changement: "EVOLUTION",
         raison_changement: "Compléter le dossier de recette sans modifier les OF figés",
+        client_requirement_confirmed: true,
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
-      // A legacy physical reference must not hide the revision explicitly
-      // selected during an editable preparation.
-      await pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]);
+      const foreign = await seedProductionWorkbenchFixture();
+      await expect(repoSelectPreparationVersion(id, {
+        expected_updated_at: before.of.updated_at,
+        version_id: foreign.version,
+      }, f.audit)).rejects.toMatchObject({ status: 422, code: "OF_VERSION_CONFLICT" });
+      // A draft selection must not partially attach a physical reference: only
+      // a complete technical snapshot may be attached by preparation.
+      await expect(pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]))
+        .rejects.toMatchObject({ code: "55000" });
       const selected = await repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,
         version_id: revision.id,
@@ -173,28 +180,27 @@ describe.skipIf(!isolated)(
         technical_snapshot_sha256,technical_snapshot_at,technical_preparation->>'selected_version_id' AS selected,
         technical_preparation->>'version_selection_mode' AS mode
         FROM public.ordres_fabrication WHERE id=$1`, [id])).rows[0];
-      expect(row).toMatchObject({ piece_technique_version_id: f.version, technical_snapshot: null,
+      expect(row).toMatchObject({ piece_technique_version_id: null, technical_snapshot: null,
         technical_snapshot_sha256: null, technical_snapshot_at: null, selected: revision.id, mode: "MANUAL" });
       expect((await pool.query("SELECT is_current FROM public.piece_technique_versions WHERE id=$1", [f.version])).rows[0].is_current).toBe(true);
       await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: before.of.updated_at,
         version_id: f.version,
       }, f.audit)).rejects.toMatchObject({ status: 409, code: "CONCURRENT_MODIFICATION" });
-      const foreign = await seedProductionWorkbenchFixture();
       await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: selected.of.updated_at,
         version_id: foreign.version,
-      }, f.audit)).rejects.toMatchObject({ status: 422, code: "OF_VERSION_CONFLICT" });
-      await repoSelectPreparationVersion(id, {
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "OF_DOSSIER_PINNED" });
+      await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: selected.of.updated_at,
         version_id: f.version,
-      }, f.audit);
-      await prepareFixture(f);
-      const frozen = await evaluateOfPreparation(pool, id);
-      await expect(repoSelectPreparationVersion(id, {
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "OF_DOSSIER_PINNED" });
+      await prepareFixture(foreign);
+      const frozen = await evaluateOfPreparation(pool, foreign.ids[0]);
+      await expect(repoSelectPreparationVersion(foreign.ids[0], {
         expected_updated_at: frozen.of.updated_at,
-        version_id: revision.id,
-      }, f.audit)).rejects.toMatchObject({ status: 409, code: "TECHNICAL_SNAPSHOT_FROZEN" });
+        version_id: foreign.version,
+      }, foreign.audit)).rejects.toMatchObject({ status: 409, code: "TECHNICAL_SNAPSHOT_FROZEN" });
     });
     it("applies the initial migration with populated OF rows and deferred constraints", async () => {
       await pool.query("UPDATE public.ordres_fabrication SET planning_wait_started_at=NULL WHERE id=$1", [fixture.ids[0]]);
@@ -315,22 +321,35 @@ describe.skipIf(!isolated)(
       expect(Array.isArray(result.items)).toBe(true);
     });
     it("evaluates real draft definitions and stock without invented evidence", async () => {
-      const ids = (
-        await pool.query<{ id: number }>(
-          "SELECT id::bigint::int FROM public.ordres_fabrication ORDER BY id LIMIT 5",
-        )
-      ).rows;
-      expect(ids.length).toBeGreaterThan(0);
-      for (const { id } of ids) {
+      expect(fixture.ids).toHaveLength(5);
+      for (const id of fixture.ids) {
         const result = await evaluateOfPreparation(pool, id);
-        expect(result.items.length).toBe(13);
-        expect(result.source_hash).toHaveLength(64);
-        expect(result.stock_hash).toHaveLength(64);
-        expect(
-          (await evaluateOfPreparation(pool, fixture.ids[0])).shared_impact
-            .mutable_of_ids,
-        ).toEqual(expect.arrayContaining(fixture.ids));
+        expect(result.items.map(item => item.key)).toEqual([
+          "index", "plan", "manufacturing_plan", "documents", "material", "treatment", "subcontract", "structure",
+          "routing", "quality", "programming", "stock_compatibility", "self_inspection", "procurement", "resources",
+        ]);
+        expect(result.items).toEqual(expect.arrayContaining([
+          expect.objectContaining({ key: "index", status: "READY" }),
+          expect.objectContaining({ key: "plan", required: true, status: "READY" }),
+          expect.objectContaining({ key: "manufacturing_plan", status: "NOT_REQUIRED" }),
+          expect.objectContaining({ key: "documents", status: "READY" }),
+          expect.objectContaining({ key: "material", required: true, status: "READY" }),
+          expect.objectContaining({ key: "routing", required: true, status: "READY" }),
+          expect.objectContaining({ key: "quality", status: "READY" }),
+          expect.objectContaining({ key: "programming" }),
+          expect.objectContaining({ key: "stock_compatibility" }),
+          expect.objectContaining({ key: "self_inspection" }),
+        ]));
+        expect(result.items).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ key: "consumables" }),
+        ]));
+        expect(result.source_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(result.stock_hash).toMatch(/^[a-f0-9]{64}$/);
       }
+      expect(
+        (await evaluateOfPreparation(pool, fixture.ids[0])).shared_impact
+          .mutable_of_ids,
+      ).toEqual(expect.arrayContaining(fixture.ids));
     });
     it("preserves a manually created draft's priority, dates and notes", async () => {
       const f = await seedProductionWorkbenchFixture({ draft: true });
@@ -769,12 +788,35 @@ describe.skipIf(!isolated)(
       await pool.query('UPDATE public.stock_reservations SET qty_prepared=0 WHERE id=$1::uuid', [hold[0].producer_reservation_id]);
       await dissolve();
       expect(await counters()).toEqual({ batch: 30, level: 30 });
-      const restored = (await pool.query(`SELECT s.of_id::int,s.qty_reserved::float8,s.status,t.source_reserved_qty::float8 AS original
-        FROM public.production_consolidation_material_transfers t JOIN public.stock_reservations s ON s.id=t.reservation_id
-        WHERE t.consolidation_id=$1::uuid ORDER BY s.of_id`, [group.id])).rows;
-      expect(restored.map(r => ({ qty: r.qty_reserved, original: r.original, status: r.status }))).toEqual([
-        { qty: 10, original: 10, status: 'ACTIVE' }, { qty: 20, original: 20, status: 'ACTIVE' },
+      const restored = (await pool.query(`SELECT old.id::text AS original_id,old.status AS original_status,
+        replacement.id::text AS replacement_id,replacement.of_id::int,replacement.status,replacement.qty_reserved::float8,
+        t.source_reserved_qty::float8 AS original,
+        jsonb_build_object('article',old.article_id,'location',old.location_id,'lot',old.lot_id,
+          'batch',old.stock_batch_id,'of',old.of_id,'need',old.material_need_id,
+          'sourceType',old.source_type,'sourceId',old.source_id,'expiresAt',old.expires_at) AS original_identity,
+        jsonb_build_object('article',replacement.article_id,'location',replacement.location_id,'lot',replacement.lot_id,
+          'batch',replacement.stock_batch_id,'of',replacement.of_id,'need',replacement.material_need_id,
+          'sourceType',replacement.source_type,'sourceId',replacement.source_id,'expiresAt',replacement.expires_at) AS replacement_identity
+        FROM public.production_consolidation_material_transfers t
+        JOIN public.stock_reservations old ON old.id=t.reservation_id
+        JOIN public.production_consolidation_reservation_restorations lineage ON lineage.consolidation_id=t.consolidation_id AND lineage.original_reservation_id=t.reservation_id
+        JOIN public.stock_reservations replacement ON replacement.id=lineage.replacement_reservation_id
+        WHERE t.consolidation_id=$1::uuid ORDER BY replacement.of_id`, [group.id])).rows;
+      expect(restored.map(r => ({ qty: r.qty_reserved, original: r.original, original_status: r.original_status, active: r.status }))).toEqual([
+        { qty: 10, original: 10, original_status: 'RELEASED', active: 'ACTIVE' }, { qty: 20, original: 20, original_status: 'RELEASED', active: 'ACTIVE' },
       ]);
+      expect(restored.every(r => r.original_id !== r.replacement_id)).toBe(true);
+      expect(new Set(restored.map(r => r.replacement_id)).size).toBe(2);
+      expect(restored.map(r => r.of_id)).toEqual(f.ids.slice(0, 2));
+      for (const row of restored) expect(row.replacement_identity).toEqual(row.original_identity);
+      await expect(pool.query(`UPDATE public.production_consolidation_reservation_restorations
+        SET restored_at=restored_at WHERE consolidation_id=$1::uuid`, [group.id])).rejects.toMatchObject({ code: '23514' });
+      await expect(pool.query(`DELETE FROM public.production_consolidation_reservation_restorations
+        WHERE consolidation_id=$1::uuid`, [group.id])).rejects.toMatchObject({ code: '23514' });
+      await expect(dissolve()).resolves.toEqual({ id: group.id, state: 'DISSOLVED', idempotent_replay: true });
+      expect((await pool.query(`SELECT count(*)::int AS count
+        FROM public.production_consolidation_reservation_restorations WHERE consolidation_id=$1::uuid`, [group.id])).rows[0].count).toBe(2);
+      expect(await counters()).toEqual({ batch: 30, level: 30 });
       expect((await pool.query('SELECT status FROM public.stock_reservations WHERE id=$1::uuid', [hold[0].producer_reservation_id])).rows[0].status).toBe('RELEASED');
     });
     it("allocates quarantined receipts only after release and never duplicates the physical stock entry", async () => {
@@ -1111,7 +1153,7 @@ describe.skipIf(!isolated)(
       );
       const unplanned = await repoProductionWorklist({
         q: producer.of.numero,
-        queue: "OVERDUE",
+        queue: "READY",
         kind: "ALL",
         page: 1,
         pageSize: 25,
@@ -1121,7 +1163,7 @@ describe.skipIf(!isolated)(
           expect.objectContaining({
             id: group.producer_of_id,
             queue: "READY",
-            overdue: true,
+            overdue: false,
           }),
         ]),
       );
@@ -1135,12 +1177,18 @@ describe.skipIf(!isolated)(
         fixture.audit,
       );
       expect((await repoGetConsolidation(group.id)).state).toBe("DISSOLVED");
-      const restored = (await pool.query(`SELECT r.id::text,r.of_id::int,r.source_id,r.material_need_id::text,r.status,r.qty_reserved::text
-        FROM public.stock_reservations r WHERE r.id=ANY($1::uuid[]) ORDER BY r.of_id`,
-        [transferred.map(r => r.id)])).rows;
+      const restored = (await pool.query(`SELECT r.id::text,lineage.original_reservation_id::text AS original_id,
+        old.status AS original_status,r.of_id::int,r.source_id,r.material_need_id::text,r.status,r.qty_reserved::text
+        FROM public.production_consolidation_reservation_restorations lineage
+        JOIN public.stock_reservations old ON old.id=lineage.original_reservation_id
+        JOIN public.stock_reservations r ON r.id=lineage.replacement_reservation_id
+        WHERE lineage.original_reservation_id=ANY($1::uuid[]) AND lineage.consolidation_id=$2::uuid ORDER BY r.of_id`,
+        [transferred.map(r => r.id), group.id])).rows;
       expect(restored).toHaveLength(2);
       for (const reservation of restored) {
-        const source = transferred.find(r => r.id === reservation.id)!;
+        const source = transferred.find(r => r.id === reservation.original_id)!;
+        expect(reservation.id).not.toBe(reservation.original_id);
+        expect(reservation.original_status).toBe('RELEASED');
         expect(reservation.of_id).toBe(source.source_of_id);
         expect(reservation.source_id).toBe(String(source.source_of_id));
         expect(reservation.material_need_id).toBe(source.source_need_id);

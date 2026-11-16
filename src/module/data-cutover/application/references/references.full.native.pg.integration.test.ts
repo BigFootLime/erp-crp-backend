@@ -88,7 +88,7 @@ suite("full native cutover application PostgreSQL", () => {
          JOIN public.commande_ligne cl ON cl.commande_id=co.id AND cl.article_id=a.id
         WHERE c.client_id=$1 AND a.id=$3::uuid AND p.id=$4::uuid AND co.id=$5::bigint`, [targetId("CUSTOMER"), poNumber, targetId("ARTICLE"), targetId("TECHNICAL_PIECE"), targetId("SALES_ORDER")]);
     expect(created.rows).toHaveLength(1);
-    expect(created.rows[0]?.qty).toBe("30.000");
+    expect(Number(created.rows[0]?.qty)).toBe(30);
     expect(created.rows[0]?.client_id).toBe(targetId("CUSTOMER"));
     expect(created.rows[0]?.article_id).not.toMatch(/^00000000-0000-4000-8000-000000000000$/);
     expect(created.rows[0]?.piece_id).not.toMatch(/^00000000-0000-4000-8000-000000000000$/);

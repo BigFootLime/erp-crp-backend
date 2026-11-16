@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { execFileSync } from "node:child_process"
+import { readHistoricalRepositoryFixture } from "../../../__tests__/helpers/historical-repository-fixture"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 import path from "node:path"
@@ -97,7 +97,7 @@ function functionContract(source: string, name: string) {
 
 describe("delivery list extraction proof", () => {
   it("moves the exact original helpers, type and list body behind an unchanged public signature", () => {
-    const base = execFileSync("git", ["show", "5a2f9323f1187d9f9f676b3ff583eed89e3b4d8e:src/module/livraisons/repository/livraisons.repository.ts"], { encoding: "utf8" })
+    const base = readHistoricalRepositoryFixture("deliveryListBeforeExtraction")
     const ownerSource = readFileSync(path.join(process.cwd(), "src/module/livraisons/repository/delivery-list-read.repository.ts"), "utf8")
     const facade = readFileSync(path.join(process.cwd(), "src/module/livraisons/repository/livraisons.repository.ts"), "utf8")
     for (const name of ["sortColumn", "sortDirection", "ListWhere", "buildListWhere"]) {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
+import { readHistoricalRepositoryFixture } from "../../../__tests__/helpers/historical-repository-fixture";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import path from "node:path";
@@ -105,7 +105,7 @@ function body(source: string, name: string, nested = false) {
 
 describe("commande list extraction proof", () => {
   it("preserves the base list SQL body and public wrapper signature", () => {
-    const base = execFileSync("git", ["show", "21c49ce345c647830bc6b535ad0eaba81779091b:src/module/commande-client/repository/commande-client.repository.ts"], { encoding: "utf8" });
+    const base = readHistoricalRepositoryFixture("commandeClientBeforeCreation");
     const owner = readFileSync(path.join(process.cwd(), "src/module/commande-client/repository/commande-list-read.repository.ts"), "utf8");
     const facade = readFileSync(path.join(process.cwd(), "src/module/commande-client/repository/commande-client.repository.ts"), "utf8");
     expect(body(owner, "repoListCommandes", true)).toBe(body(base, "repoListCommandes"));

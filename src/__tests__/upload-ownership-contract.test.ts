@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { readSourceFunction } from "./helpers/source-contract";
 
 const sourceRoot = path.resolve(__dirname, "..");
 
@@ -24,10 +25,22 @@ const helperOwnedRepositories = [
 describe("durable upload ownership coverage", () => {
   for (const relativePath of helperOwnedRepositories) {
     it(`${relativePath} delegates every durable transfer to the shared transaction owner`, () => {
-      const contents = fs.readFileSync(path.join(sourceRoot, relativePath), "utf8");
+      const stockFacade = relativePath === "module/stock/repository/stock.repository.ts";
+      const owner = stockFacade ? "module/stock/repository/stock-documents.repository.ts" : relativePath;
+      const contents = fs.readFileSync(path.join(sourceRoot, owner), "utf8");
       expect(contents).toContain("transferSecureUploadToDestination");
       expect(contents).toContain("withUploadTransaction");
       expect(contents).toContain("reconcile:");
+      if (stockFacade) {
+        const sourcePath = "src/" + owner;
+        expect(readSourceFunction(sourcePath, "insertStockDocuments")).toContain("transferSecureUploadToDestination");
+        for (const name of ["repoAttachArticleDocuments", "repoAttachMovementDocuments"]) {
+          const writer = readSourceFunction(sourcePath, name);
+          expect(writer).toContain("insertStockDocuments");
+          expect(writer).toContain("withUploadTransaction");
+          expect(writer).toContain("reconcile:");
+        }
+      }
     });
   }
 
