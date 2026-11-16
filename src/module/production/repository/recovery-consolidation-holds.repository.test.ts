@@ -103,14 +103,27 @@ describe('dissolution after a recovery addition',()=>{
       if(sql.includes('AS transferred_qty'))return {rows:[{producer_reservation_id:'target',producer_need_id:'need10',transferred_qty:'112',surplus_qty:'3'}]};
       if(sql.startsWith('SELECT reservation_id::text'))return {rows:[{reservation_id:'initial',producer_reservation_id:'target',source_reserved_qty:'100',source_of_id:1,source_need_id:'need1'},
         {reservation_id:'source',producer_reservation_id:'target',source_reserved_qty:'12',source_of_id:20,source_need_id:'need20'}]};
-      if(sql.startsWith('SELECT r.id::text'))return {rows};
+      if(sql.startsWith('SELECT r.id::text'))return {rows:rows.filter(r=>p[0].includes(r.id))};
+      if(sql.startsWith('INSERT INTO public.stock_reservations')){
+        const original=rows.find(r=>r.id===p[0])!;
+        const replacement={...original,id:`restored-${original.id}`,status:'ACTIVE'};
+        rows.push(replacement);return {rows:[{id:replacement.id}]};
+      }
+      if(sql.startsWith("UPDATE public.stock_reservations SET status='RELEASED'")){
+        for(const id of p[0])rows.find(r=>r.id===id)!.status='RELEASED';
+      }
       return {rows:[]};
     });
     await restoreConsolidationHoldsTx(tx,'group',10,audit);
     const deltas=query.mock.calls.filter(([sql])=>/UPDATE public.stock_(levels|batches)/.test(sql));
     expect(deltas).toHaveLength(2);expect(deltas.map(([,p])=>p[1])).toEqual([3,3]);
-    expect(query.mock.calls.find(([sql])=>sql.includes("SET status='ACTIVE'"))?.[1][0]).toEqual(['initial','source']);
-    rows[0].qty_consumed=1;query.mockClear();
+    expect(query.mock.calls.filter(([sql])=>sql.startsWith('INSERT INTO public.production_consolidation_reservation_restorations')).map(([,p])=>p))
+      .toEqual([['group','initial','restored-initial',1],['group','source','restored-source',1]]);
+    expect(rows.filter(r=>['initial','source'].includes(r.id)).map(r=>r.status)).toEqual(['RELEASED','RELEASED']);
+    expect(rows.filter(r=>r.status==='ACTIVE').map(r=>({id:r.id,qty:r.qty_reserved,of:r.of_id,need:r.material_need_id})))
+      .toEqual([{id:'restored-initial',qty:100,of:1,need:'need1'},{id:'restored-source',qty:12,of:20,need:'need20'}]);
+    expect(query.mock.calls.some(([sql])=>sql.includes("SET status='ACTIVE'"))).toBe(false);
+    rows[0].status='ACTIVE';rows[0].qty_consumed=1;query.mockClear();
     await expect(restoreConsolidationHoldsTx(tx,'group',10,audit)).rejects.toMatchObject({code:'CONSOLIDATION_MATERIAL_CHANGED'});
     expect(writes()).toHaveLength(0);
   });
