@@ -57,10 +57,27 @@ suite('delivery promise shipment #1109 — disposable PostgreSQL',()=>{
       CREATE TABLE public.bon_livraison_ship_receipts(id uuid DEFAULT gen_random_uuid(),bon_livraison_id uuid,result_payload jsonb);
       CREATE TABLE public.stock_movements(id uuid PRIMARY KEY,status text,movement_type text,source_document_type text,source_document_id text);
       CREATE TABLE public.stock_movement_lines(id uuid PRIMARY KEY,movement_id uuid,qty numeric);
+      CREATE TABLE public.users(id integer PRIMARY KEY);
       CREATE TABLE public.delivery_promise_roots(id uuid PRIMARY KEY,allocation_id bigint,initial_quantity numeric,created_at timestamptz);
       CREATE TABLE public.delivery_promise_parts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),root_id uuid,quantity numeric,due_date date,revision_event_id uuid,retired_at timestamptz,created_at timestamptz);
       CREATE TABLE public.delivery_promise_shipments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),part_id uuid,bl_allocation_id uuid,quantity numeric,due_date_at_shipment date,created_at timestamptz DEFAULT now(),UNIQUE(part_id,bl_allocation_id));
-      CREATE FUNCTION public.guard_delivery_promise_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Delivery promise evidence is immutable'; END $$;`);
+      CREATE TABLE public.delivery_promise_departure_events(
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        root_id uuid NOT NULL REFERENCES public.delivery_promise_roots(id) ON DELETE RESTRICT,
+        part_id uuid NOT NULL REFERENCES public.delivery_promise_parts(id) ON DELETE RESTRICT,
+        root_version bigint NOT NULL,
+        due_date date NOT NULL,
+        actor_id integer NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+        request_key text NOT NULL,
+        request jsonb NOT NULL,
+        reason text NOT NULL CHECK(char_length(btrim(reason)) >= 5),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE(actor_id,request_key),
+        UNIQUE(root_id,part_id,root_version)
+      );
+      CREATE INDEX public.delivery_promise_departure_events_part_idx ON public.delivery_promise_departure_events(part_id,created_at DESC);
+      CREATE FUNCTION public.guard_delivery_promise_history() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Delivery promise evidence is immutable'; END $$;
+      CREATE TRIGGER guard_delivery_promise_departure_events_1803 BEFORE UPDATE OR DELETE ON public.delivery_promise_departure_events FOR EACH ROW EXECUTE FUNCTION public.guard_delivery_promise_history();`);
     await db.query(`INSERT INTO public.articles VALUES($1,'u')`,[article]);
     await db.query(`INSERT INTO public.commande_client VALUES(42,'FERME'); INSERT INTO public.commande_ligne_affaire_allocation VALUES(95,209,2,2)`);
     await db.query(`INSERT INTO public.commande_ligne VALUES(209,42,$1,'u',2,'2026-10-16')`,[article]);
@@ -122,6 +139,11 @@ suite('delivery promise shipment #1109 — disposable PostgreSQL',()=>{
     await db.query(repair);
     await expect(db.query("UPDATE public.delivery_promise_shipment_reconciliations SET status='REVIEW_REQUIRED'")).rejects.toThrow('immutable');
     await expect(db.query('DELETE FROM public.delivery_promise_shipment_reconciliations')).rejects.toThrow('immutable');
+    await db.query('INSERT INTO public.users VALUES(1)');
+    await db.query(`INSERT INTO public.delivery_promise_departure_events(root_id,part_id,root_version,due_date,actor_id,request_key,request,reason)
+      VALUES($1,$2,1,'2026-10-16',1,'departure-evidence-immutable','{}'::jsonb,'Départ confirmé')`,[root,part]);
+    await expect(db.query("UPDATE public.delivery_promise_departure_events SET due_date='2026-10-17'")).rejects.toThrow('immutable');
+    await expect(db.query('DELETE FROM public.delivery_promise_departure_events')).rejects.toThrow('immutable');
   });
 });
 afterAll(async()=>{await appPool?.end();await db?.end();});
