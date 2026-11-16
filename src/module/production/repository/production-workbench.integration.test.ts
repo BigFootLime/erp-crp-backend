@@ -161,6 +161,11 @@ describe.skipIf(!isolated)(
         client_requirement_confirmed: true,
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
+      const foreign = await seedProductionWorkbenchFixture();
+      await expect(repoSelectPreparationVersion(id, {
+        expected_updated_at: before.of.updated_at,
+        version_id: foreign.version,
+      }, f.audit)).rejects.toMatchObject({ status: 422, code: "OF_VERSION_CONFLICT" });
       // A draft selection must not partially attach a physical reference: only
       // a complete technical snapshot may be attached by preparation.
       await expect(pool.query("UPDATE public.ordres_fabrication SET piece_technique_version_id=$2::uuid WHERE id=$1", [id, f.version]))
@@ -182,21 +187,20 @@ describe.skipIf(!isolated)(
         expected_updated_at: before.of.updated_at,
         version_id: f.version,
       }, f.audit)).rejects.toMatchObject({ status: 409, code: "CONCURRENT_MODIFICATION" });
-      const foreign = await seedProductionWorkbenchFixture();
       await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: selected.of.updated_at,
         version_id: foreign.version,
-      }, f.audit)).rejects.toMatchObject({ status: 422, code: "OF_VERSION_CONFLICT" });
-      await repoSelectPreparationVersion(id, {
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "OF_DOSSIER_PINNED" });
+      await expect(repoSelectPreparationVersion(id, {
         expected_updated_at: selected.of.updated_at,
         version_id: f.version,
-      }, f.audit);
-      await prepareFixture(f);
-      const frozen = await evaluateOfPreparation(pool, id);
-      await expect(repoSelectPreparationVersion(id, {
+      }, f.audit)).rejects.toMatchObject({ status: 409, code: "OF_DOSSIER_PINNED" });
+      await prepareFixture(foreign);
+      const frozen = await evaluateOfPreparation(pool, foreign.ids[0]);
+      await expect(repoSelectPreparationVersion(foreign.ids[0], {
         expected_updated_at: frozen.of.updated_at,
-        version_id: revision.id,
-      }, f.audit)).rejects.toMatchObject({ status: 409, code: "TECHNICAL_SNAPSHOT_FROZEN" });
+        version_id: foreign.version,
+      }, foreign.audit)).rejects.toMatchObject({ status: 409, code: "TECHNICAL_SNAPSHOT_FROZEN" });
     });
     it("applies the initial migration with populated OF rows and deferred constraints", async () => {
       await pool.query("UPDATE public.ordres_fabrication SET planning_wait_started_at=NULL WHERE id=$1", [fixture.ids[0]]);
