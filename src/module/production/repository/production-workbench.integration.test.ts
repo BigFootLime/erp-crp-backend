@@ -319,9 +319,14 @@ describe.skipIf(!isolated)(
       expect(fixture.ids).toHaveLength(5);
       for (const id of fixture.ids) {
         const result = await evaluateOfPreparation(pool, id);
+        expect(result.items.map(item => item.key)).toEqual([
+          "index", "plan", "manufacturing_plan", "documents", "material", "treatment", "subcontract", "structure",
+          "routing", "quality", "programming", "stock_compatibility", "self_inspection", "procurement", "resources",
+        ]);
         expect(result.items).toEqual(expect.arrayContaining([
           expect.objectContaining({ key: "index", status: "READY" }),
           expect.objectContaining({ key: "plan", required: true, status: "READY" }),
+          expect.objectContaining({ key: "manufacturing_plan", status: "NOT_REQUIRED" }),
           expect.objectContaining({ key: "documents", status: "READY" }),
           expect.objectContaining({ key: "material", required: true, status: "READY" }),
           expect.objectContaining({ key: "routing", required: true, status: "READY" }),

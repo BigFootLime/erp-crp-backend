@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS public.production_consolidation_reservation_restorati
   CHECK (original_reservation_id <> replacement_reservation_id)
 );
 
+DROP TRIGGER IF EXISTS production_consolidation_reservation_restorations_immutable
+  ON public.production_consolidation_reservation_restorations;
 CREATE TRIGGER production_consolidation_reservation_restorations_immutable
   BEFORE UPDATE OR DELETE ON public.production_consolidation_reservation_restorations
   FOR EACH ROW EXECUTE FUNCTION public.prevent_material_debit_rewrite();
