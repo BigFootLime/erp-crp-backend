@@ -73,7 +73,7 @@ const proof = z.object({ barId: z.string().guid(), version: z.number().int().pos
 
 /** Capture exact provenance before canonical restoration or surplus release. */
 export async function prepareMaterialBarRestorationTx(tx: Db, contextId: string,
-  groups: Array<BarRestorationGroup & { batchId: string }>) {
+  groups: Array<BarRestorationGroup & { batchId: string }>, replacementIds = new Map<string, string>()) {
   const inventories = [];
   for (const batchId of [...new Set(groups.map(g => g.batchId))].sort()) {
     const current = await readTrackedMaterialBarInventoryTx(tx, batchId);
@@ -87,7 +87,11 @@ export async function prepareMaterialBarRestorationTx(tx: Db, contextId: string,
     changes: planBarOwnershipRestoration({ ...current,
       groups: groups.filter(g => g.batchId === current.batch.id),
       proofs: proofs.filter(p => current.bars.some(b => b.id === p.barId)),
-    }),
+    }).map(change => ({ ...change, assignments: change.assignments.map(assignment =>
+      assignment.beforeMm === 0 && replacementIds.has(assignment.reservationId)
+        ? { ...assignment, reservationId: replacementIds.get(assignment.reservationId)! }
+        : assignment,
+    ) })),
   }));
 }
 

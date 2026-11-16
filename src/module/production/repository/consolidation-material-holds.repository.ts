@@ -213,11 +213,27 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
         if (qty > 0)
             assertStockConsumptionAllowed(state, { movement_type: 'UNRESERVE', qty });
     }
+    // A released reservation is immutable evidence. Restoration appends a new
+    // active hold and records the lineage instead of reopening historical rows.
+    const replacementByOriginal = new Map<string, string>();
+    for (const original of sourceTransfers) {
+        const replacementId = (await tx.query<{ id: string }>(`INSERT INTO public.stock_reservations
+      (article_id,location_id,lot_id,stock_batch_id,qty_reserved,source_type,source_id,of_id,material_need_id,status,
+       expires_at,reason,correlation_id,created_by,updated_by)
+      SELECT article_id,location_id,lot_id,stock_batch_id,qty_reserved,source_type,source_id,of_id,material_need_id,'ACTIVE',
+        expires_at,'Source reservation restored after consolidation dissolution',$3::uuid,$2,$2
+      FROM public.stock_reservations WHERE id=$1::uuid RETURNING id::text`, [original.reservation_id, audit.user_id, consolidationId])).rows[0]?.id;
+        if (!replacementId) changed();
+        await tx.query(`INSERT INTO public.production_consolidation_reservation_restorations
+      (consolidation_id,original_reservation_id,replacement_reservation_id,restored_by)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4)`, [consolidationId, original.reservation_id, replacementId, audit.user_id]);
+        replacementByOriginal.set(original.reservation_id, replacementId);
+    }
     const barPlans = await prepareMaterialBarRestorationTx(tx, consolidationId, holds.map(hold => ({
         targetReservationId: hold.producer_reservation_id, batchId: byId.get(hold.producer_reservation_id)!.stock_batch_id,
         sources: sourceTransfers.filter(t => t.producer_reservation_id === hold.producer_reservation_id)
             .map(t => ({ reservationId: t.reservation_id, quantityMm: Number(t.source_reserved_qty) })),
-    })));
+    })), replacementByOriginal);
     for (const [levelId, qty] of surplusByLevel)
         if (qty > 0)
             await tx.query(`UPDATE public.stock_levels
@@ -228,8 +244,10 @@ export async function restoreConsolidationHoldsTx(tx: PoolClient, consolidationI
     SET qty_reserved=qty_reserved-$2 WHERE id=$1::uuid`, [batchId, delta.qty]);
     await tx.query(`UPDATE public.stock_reservations SET status='RELEASED',released_at=now(),released_by=$2,
     reason='Dissolution du regroupement',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [holds.map(h => h.producer_reservation_id), audit.user_id, consolidationId]);
+    /* The former reactivation is intentionally retained only as source history:
     await tx.query(`UPDATE public.stock_reservations SET status='ACTIVE',released_at=NULL,released_by=NULL,
     reason='Réservation source restituée après dissolution',correlation_id=$3::uuid,updated_at=now(),updated_by=$2 WHERE id=ANY($1::uuid[])`, [sourceTransfers.map(t => t.reservation_id), audit.user_id, consolidationId]);
+    */
     await applyMaterialBarRestorationTx(tx, barPlans, { contextId: consolidationId, commandKey: consolidationId,
         actor: audit.user_id, reason: 'Affectations d’origine restituées après dissolution' });
 }
