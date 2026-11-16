@@ -778,12 +778,20 @@ describe.skipIf(!isolated)(
       await pool.query('UPDATE public.stock_reservations SET qty_prepared=0 WHERE id=$1::uuid', [hold[0].producer_reservation_id]);
       await dissolve();
       expect(await counters()).toEqual({ batch: 30, level: 30 });
-      const restored = (await pool.query(`SELECT s.of_id::int,s.qty_reserved::float8,s.status,t.source_reserved_qty::float8 AS original
-        FROM public.production_consolidation_material_transfers t JOIN public.stock_reservations s ON s.id=t.reservation_id
-        WHERE t.consolidation_id=$1::uuid ORDER BY s.of_id`, [group.id])).rows;
-      expect(restored.map(r => ({ qty: r.qty_reserved, original: r.original, status: r.status }))).toEqual([
-        { qty: 10, original: 10, status: 'ACTIVE' }, { qty: 20, original: 20, status: 'ACTIVE' },
+      const restored = (await pool.query(`SELECT old.id::text AS original_id,old.status AS original_status,
+        replacement.id::text AS replacement_id,replacement.of_id::int,replacement.status,replacement.qty_reserved::float8,
+        t.source_reserved_qty::float8 AS original
+        FROM public.production_consolidation_material_transfers t
+        JOIN public.stock_reservations old ON old.id=t.reservation_id
+        JOIN public.production_consolidation_reservation_restorations lineage ON lineage.consolidation_id=t.consolidation_id AND lineage.original_reservation_id=t.reservation_id
+        JOIN public.stock_reservations replacement ON replacement.id=lineage.replacement_reservation_id
+        WHERE t.consolidation_id=$1::uuid ORDER BY replacement.of_id`, [group.id])).rows;
+      expect(restored.map(r => ({ qty: r.qty_reserved, original: r.original, original_status: r.original_status, active: r.status }))).toEqual([
+        { qty: 10, original: 10, original_status: 'RELEASED', active: 'ACTIVE' }, { qty: 20, original: 20, original_status: 'RELEASED', active: 'ACTIVE' },
       ]);
+      expect(restored.every(r => r.original_id !== r.replacement_id)).toBe(true);
+      expect(new Set(restored.map(r => r.replacement_id)).size).toBe(2);
+      await expect(dissolve()).rejects.toMatchObject({ status: 409 });
       expect((await pool.query('SELECT status FROM public.stock_reservations WHERE id=$1::uuid', [hold[0].producer_reservation_id])).rows[0].status).toBe('RELEASED');
     });
     it("allocates quarantined receipts only after release and never duplicates the physical stock entry", async () => {
