@@ -28,6 +28,12 @@ in both document writers; and the Production reservation gate in the narrow
 lot-reconciliation writer. Existing cases and matcher arguments are retained.
 An absent declaration cannot satisfy a guard through an empty source slice.
 
+The compatibility facade retains only the `StockMovementDetail` type needed
+by its local declaration. Its 110 unused import bindings are removed after
+checking every public name and target binding, the complete CommonJS emission,
+and the ordered module requests and runtime exports of the ESM transformation.
+Public exports and comments retain their original order and content.
+
 Focused regression coverage exercises query bindings and pagination, material
 bar requirements, OLD/NEW display mapping and authoritative analytics defaults.
 These controlled database tests do not claim PostgreSQL or whole-application
