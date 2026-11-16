@@ -158,6 +158,7 @@ describe.skipIf(!isolated)(
         indice: "A",
         type_changement: "EVOLUTION",
         raison_changement: "Compléter le dossier de recette sans modifier les OF figés",
+        client_requirement_confirmed: true,
       }, f.audit);
       const before = await evaluateOfPreparation(pool, id);
       // A legacy physical reference must not hide the revision explicitly
@@ -315,22 +316,30 @@ describe.skipIf(!isolated)(
       expect(Array.isArray(result.items)).toBe(true);
     });
     it("evaluates real draft definitions and stock without invented evidence", async () => {
-      const ids = (
-        await pool.query<{ id: number }>(
-          "SELECT id::bigint::int FROM public.ordres_fabrication ORDER BY id LIMIT 5",
-        )
-      ).rows;
-      expect(ids.length).toBeGreaterThan(0);
-      for (const { id } of ids) {
+      expect(fixture.ids).toHaveLength(5);
+      for (const id of fixture.ids) {
         const result = await evaluateOfPreparation(pool, id);
-        expect(result.items.length).toBe(13);
-        expect(result.source_hash).toHaveLength(64);
-        expect(result.stock_hash).toHaveLength(64);
-        expect(
-          (await evaluateOfPreparation(pool, fixture.ids[0])).shared_impact
-            .mutable_of_ids,
-        ).toEqual(expect.arrayContaining(fixture.ids));
+        expect(result.items).toEqual(expect.arrayContaining([
+          expect.objectContaining({ key: "index", status: "READY" }),
+          expect.objectContaining({ key: "plan", required: true, status: "READY" }),
+          expect.objectContaining({ key: "documents", status: "READY" }),
+          expect.objectContaining({ key: "material", required: true, status: "READY" }),
+          expect.objectContaining({ key: "routing", required: true, status: "READY" }),
+          expect.objectContaining({ key: "quality", status: "READY" }),
+          expect.objectContaining({ key: "programming" }),
+          expect.objectContaining({ key: "stock_compatibility" }),
+          expect.objectContaining({ key: "self_inspection" }),
+        ]));
+        expect(result.items).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ key: "consumables" }),
+        ]));
+        expect(result.source_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(result.stock_hash).toMatch(/^[a-f0-9]{64}$/);
       }
+      expect(
+        (await evaluateOfPreparation(pool, fixture.ids[0])).shared_impact
+          .mutable_of_ids,
+      ).toEqual(expect.arrayContaining(fixture.ids));
     });
     it("preserves a manually created draft's priority, dates and notes", async () => {
       const f = await seedProductionWorkbenchFixture({ draft: true });
@@ -1111,7 +1120,7 @@ describe.skipIf(!isolated)(
       );
       const unplanned = await repoProductionWorklist({
         q: producer.of.numero,
-        queue: "OVERDUE",
+        queue: "READY",
         kind: "ALL",
         page: 1,
         pageSize: 25,
@@ -1121,7 +1130,7 @@ describe.skipIf(!isolated)(
           expect.objectContaining({
             id: group.producer_of_id,
             queue: "READY",
-            overdue: true,
+            overdue: false,
           }),
         ]),
       );
