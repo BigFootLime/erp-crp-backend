@@ -160,9 +160,9 @@ export type MaterialCodeInput = {
   profile: MaterialProfileCode;
   /** Code du référentiel `stock_nuances`, résolu en base. */
   nuance_code?: string | null;
-  /** Code du référentiel `stock_etats`, résolu en base. */
+  /** Code du référentiel `stock_etats`, résolu en base ; null = pas d’état. */
   etat_code?: string | null;
-  /** Code du référentiel `stock_sous_etats`, résolu en base. */
+  /** Procédé : code de `stock_sous_etats`, résolu en base ; null = pas de procédé. */
   sous_etat_code?: string | null;
   /** Code client propriétaire (`clients.client_code`) pour un brut client. */
   client_code?: string | null;
@@ -286,13 +286,7 @@ export function buildMaterialArticleCode(input: MaterialCodeInput): MaterialCode
     );
   }
   const etat = normalizeSegment(input.etat_code);
-  if (!etat) {
-    throw new HttpError(
-      400,
-      "MATERIAL_ETAT_REQUIRED",
-      "L'état est obligatoire pour construire la référence matière."
-    );
-  }
+  // An explicitly absent state/process contributes no segment to the identity.
   const sousEtat = normalizeSegment(input.sous_etat_code);
   // The physical shape and ownership are independent. Customer material must
   // not collide with the same geometry purchased for CRP or another customer.
@@ -304,7 +298,7 @@ export function buildMaterialArticleCode(input: MaterialCodeInput): MaterialCode
     profile,
     ...(clientSegment ? [clientSegment] : []),
     nuance,
-    etat,
+    ...(etat ? [etat] : []),
     ...(sousEtat ? [sousEtat] : []),
     ...(dimensionsSegment ? [dimensionsSegment] : []),
   ];
