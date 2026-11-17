@@ -327,7 +327,7 @@ export async function resolveMaterialCodeInput(
   const nuanceCode = !special && nuanceId ? await referentialCode(client, { table: "stock_nuances", id: nuanceId, label: "Nuance" }) : null;
   const etatCode = !special && etatId ? await referentialCode(client, { table: "stock_etats", id: etatId, label: "État" }) : null;
   const sousEtatCode = !special && sousEtatId
-    ? await referentialCode(client, { table: "stock_sous_etats", id: sousEtatId, label: "Sous-état" })
+    ? await referentialCode(client, { table: "stock_sous_etats", id: sousEtatId, label: "Procédé" })
     : null;
 
   let clientCode: string | null = null;
