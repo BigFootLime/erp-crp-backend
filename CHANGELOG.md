@@ -1,5 +1,7 @@
 # Changelog
 
+- 2.0.88, lot état/procédé préparé le 17 novembre 2026 : le générateur commun d’aperçu/création omet les segments état et procédé absents. Aucun placeholder ni séparateur vide ; nuance obligatoire. Livraison du seul module compilé commun aux variantes CRP/EC, sans migration ni recodification d’articles. Nettoyage global exclu.
+
 ## Prepared — Nuance library (#1839, ERP baseline 2.0.84)
 
 - Four optional standard designations with a required populated title on new identities; searchable correspondences and stable historical workshop codes.

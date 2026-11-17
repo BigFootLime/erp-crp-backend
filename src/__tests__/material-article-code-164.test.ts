@@ -129,9 +129,27 @@ describe("Référence matière — code et désignation canonique", () => {
     expect(out.code).toBe("MP-PL-S-235-JR-BRUT-LAMINE-100x10");
   });
 
-  it("exige nuance et état pour un profil géométrique", () => {
+  it("exige une nuance pour un profil géométrique même sans état", () => {
     expect(() => buildMaterialArticleCode({ profile: "PL", etat_code: "BRUT" })).toThrowError(/nuance/i);
-    expect(() => buildMaterialArticleCode({ profile: "PL", nuance_code: "S235" })).toThrowError(/état/i);
+    expect(() => buildMaterialArticleCode({ profile: "PL", etat_code: null, sous_etat_code: null })).toThrowError(/nuance/i);
+  });
+
+  it.each([
+    { etat_code: null, sous_etat_code: null, code: "MP-RO-316L-20x3000", designation: "ROND 316L 20x3000 mm" },
+    { etat_code: "H9", sous_etat_code: null, code: "MP-RO-316L-H9-20x3000", designation: "ROND 316L H9 20x3000 mm" },
+    { etat_code: null, sous_etat_code: "LAMINE", code: "MP-RO-316L-LAMINE-20x3000", designation: "ROND 316L LAMINE 20x3000 mm" },
+    { etat_code: "H9", sous_etat_code: "LAMINE", code: "MP-RO-316L-H9-LAMINE-20x3000", designation: "ROND 316L H9 LAMINE 20x3000 mm" },
+  ])("omet uniquement les segments absents : $code", ({ etat_code, sous_etat_code, code, designation }) => {
+    const result = buildMaterialArticleCode({ profile: "RO", nuance_code: "316L", etat_code, sous_etat_code,
+      dimensions: { diametre_mm: 20, longueur_brut_mm: 3000 } });
+    expect(result.code).toBe(code);
+    expect(result.designation).toBe(designation);
+    expect(result.segments).not.toContain("");
+    expect(result.code).not.toMatch(/--|PAS|NONE|NULL/);
+  });
+
+  it("omet les segments absents même sans dimensions", () => {
+    expect(buildMaterialArticleCode({ profile: "PL", nuance_code: "S235", etat_code: null, sous_etat_code: null }).code).toBe("MP-PL-S235");
   });
 
   it("exige une référence métier pour FOND et PROFIL", () => {
@@ -196,6 +214,14 @@ describe("Référence matière — empreinte d'aperçu", () => {
 });
 
 describe("Contrat HTTP", () => {
+  it("accepte les absences explicites dans l’aperçu et la création", () => {
+    const article_matiere = { nuance_id: 1, etat_id: null, sous_etat_id: null, diametre_mm: 20 };
+    const preview = previewMaterialArticleCodeSchema.parse({ body: { family_code: "RO", ...article_matiere } });
+    const creation = createArticleSchema.parse({ body: { article_category: "matiere", family_code: "RO", article_matiere } });
+    expect(preview.body.etat_id).toBeNull();
+    expect(preview.body.sous_etat_id).toBeNull();
+    expect(creation.body.article_matiere).toMatchObject(article_matiere);
+  });
   it("accepte une matière SANS désignation : le serveur produit la forme canonique", () => {
     const parsed = createArticleSchema.safeParse({
       body: {
