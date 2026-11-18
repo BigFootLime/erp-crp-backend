@@ -11,6 +11,12 @@ vi.mock("../module/admin/services/admin.service", () => ({
   upsertDefaultShippingLocation: vi.fn(),
 }));
 
+vi.mock("../shared/email/commercial-email-settings.repository", () => ({
+  COMMERCIAL_EMAIL_SETTING: "commerce.outbound_email",
+  readCommercialEmailSetting: vi.fn(),
+  saveCommercialEmailSetting: vi.fn(),
+}));
+
 const securityMocks = vi.hoisted(() => ({
   activeAccount: vi.fn(),
   isSuperadmin: vi.fn(),
@@ -28,6 +34,7 @@ vi.mock("../module/access-control/services/access-control.service", () => ({
 
 import adminRoutes from "../module/admin/routes/admin.routes";
 import * as adminService from "../module/admin/services/admin.service";
+import { readCommercialEmailSetting, saveCommercialEmailSetting } from "../shared/email/commercial-email-settings.repository";
 import { validationErrorMiddleware } from "../module/auth/middlewares/validationError.middleware";
 import { errorHandler } from "../middlewares/errorHandler";
 
@@ -72,6 +79,8 @@ beforeEach(() => {
   createInvitation.mockReset();
   getErpSetting.mockReset();
   upsertDefaultShippingLocation.mockReset();
+  vi.mocked(readCommercialEmailSetting).mockReset();
+  vi.mocked(saveCommercialEmailSetting).mockReset();
   securityMocks.activeAccount.mockResolvedValue({ status: "Active", session_epoch: 0 });
   securityMocks.isSuperadmin.mockResolvedValue(false);
   securityMocks.profile.mockImplementation(async () => ({ is_superadmin: await securityMocks.isSuperadmin(), modules: [] }));
@@ -79,6 +88,32 @@ beforeEach(() => {
 
 describe("ERP settings routes", () => {
   const path = "/api/v1/admin/erp-settings/stock.default_shipping_location";
+
+  it("loads and saves the commercial email setting for ERP administrators only", async () => {
+    const settingPath = "/api/v1/admin/erp-settings/commerce.outbound_email";
+    const authorization = `Bearer ${token("Directeur")}`;
+    const setting = {
+      key: "commerce.outbound_email",
+      mode: "test",
+      value_json: { enabled: false },
+      value_text: null,
+      updated_at: "2026-11-18 12:00:00+00",
+    } as const;
+    const body = { value_json: { enabled: false }, value_text: null };
+
+    await request(app).get(settingPath).expect(401);
+    await request(app).put(settingPath).set("Authorization", authorization).send(body).expect(403);
+    expect(saveCommercialEmailSetting).not.toHaveBeenCalled();
+    securityMocks.isSuperadmin.mockResolvedValue(true);
+    vi.mocked(readCommercialEmailSetting).mockResolvedValue(setting);
+    vi.mocked(saveCommercialEmailSetting).mockResolvedValue(setting);
+
+    await request(app).get(settingPath).set("Authorization", authorization).expect(200, setting);
+    await request(app).put(settingPath).set("Authorization", authorization)
+      .send({ value_json: { enabled: "false" } }).expect(400);
+    await request(app).put(settingPath).set("Authorization", authorization).send(body).expect(200, setting);
+    expect(saveCommercialEmailSetting).toHaveBeenCalledExactlyOnceWith(false, 7);
+  });
 
   it("requires authentication and a live configuration permission", async () => {
     expect((await request(app).get(path)).status).toBe(401);

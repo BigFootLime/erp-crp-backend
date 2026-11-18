@@ -324,63 +324,93 @@ suite("AR HTTP full path — isolated PostgreSQL", () => {
         email_body: "AR E2E contrôlé",
         idempotency_key: `ar-e2e-${randomUUID()}`,
       };
-      const first = await request(app)
-        .post(`/api/v1/commandes/${orderId}/ar/send`)
-        .set("Authorization", `Bearer ${authToken()}`)
-        .send(body)
-        .expect(200);
-      expect(first.body).toMatchObject({
-        status: "AR_ENVOYE",
-        ar_id: generated.body.ar_id,
-        email_provider_id: "local-1",
-      });
-      expect(receivedEmails).toHaveLength(1);
-      expect(receivedEmails[0]!.body.to).toEqual([secretary.email]);
-      expect(receivedEmails[0]!.headers["idempotency-key"]).toBe(
-        body.idempotency_key,
+      const settingKey = "commerce.outbound_email";
+      const previousSetting = await db.query<{ value_json: string | null }>(
+        "SELECT value_json::text FROM public.erp_settings WHERE key=$1",
+        [settingKey],
       );
-      expect(
-        (receivedEmails[0]!.body.attachments as unknown[]).length,
-      ).toBeGreaterThanOrEqual(1);
-
-      const replay = await request(app)
-        .post(`/api/v1/commandes/${orderId}/ar/send`)
-        .set("Authorization", `Bearer ${authToken()}`)
-        .send(body)
-        .expect(200);
-      expect(replay.body).toMatchObject({
-        status: "AR_ENVOYE",
-        ar_id: generated.body.ar_id,
-      });
-      expect(receivedEmails).toHaveLength(1);
-      const versions = await request(app)
-        .get(`/api/v1/commandes/${orderId}/ar`)
-        .set("Authorization", `Bearer ${authToken()}`)
-        .expect(200);
-      expect(versions.body.versions).toEqual([
-        expect.objectContaining({
+      try {
+        await db.query(
+          `INSERT INTO public.erp_settings(key,value_json) VALUES($1,'{"enabled":false}'::jsonb)
+           ON CONFLICT(key) DO UPDATE SET value_json=EXCLUDED.value_json`,
+          [settingKey],
+        );
+        const disabled = await request(app)
+          .post(`/api/v1/commandes/${orderId}/ar/send`)
+          .set("Authorization", `Bearer ${authToken()}`)
+          .send(body)
+          .expect(409);
+        expect(disabled.body.code).toBe("COMMERCIAL_EMAIL_DISABLED");
+        expect(receivedEmails).toHaveLength(0);
+        await db.query(
+          `UPDATE public.erp_settings SET value_json='{"enabled":true}'::jsonb WHERE key=$1`,
+          [settingKey],
+        );
+        const first = await request(app)
+          .post(`/api/v1/commandes/${orderId}/ar/send`)
+          .set("Authorization", `Bearer ${authToken()}`)
+          .send(body)
+          .expect(200);
+        expect(first.body).toMatchObject({
+          status: "AR_ENVOYE",
           ar_id: generated.body.ar_id,
+          email_provider_id: "local-1",
+        });
+        expect(receivedEmails).toHaveLength(1);
+        expect(receivedEmails[0]!.body.to).toEqual([secretary.email]);
+        expect(receivedEmails[0]!.headers["idempotency-key"]).toBe(
+          body.idempotency_key,
+        );
+        expect(
+          (receivedEmails[0]!.body.attachments as unknown[]).length,
+        ).toBeGreaterThanOrEqual(1);
+
+        const replay = await request(app)
+          .post(`/api/v1/commandes/${orderId}/ar/send`)
+          .set("Authorization", `Bearer ${authToken()}`)
+          .send(body)
+          .expect(200);
+        expect(replay.body).toMatchObject({
+          status: "AR_ENVOYE",
+          ar_id: generated.body.ar_id,
+        });
+        expect(receivedEmails).toHaveLength(1);
+        const versions = await request(app)
+          .get(`/api/v1/commandes/${orderId}/ar`)
+          .set("Authorization", `Bearer ${authToken()}`)
+          .expect(200);
+        expect(versions.body.versions).toEqual([
+          expect.objectContaining({
+            ar_id: generated.body.ar_id,
+            status: "SENT",
+          }),
+        ]);
+        const history = await db.query<{
+          status: string;
+          sent_at: string | null;
+          archive_state: string;
+          access_count: string;
+        }>(
+          `SELECT ar.status::text,ar.sent_at::text,o.status::text AS archive_state,
+          (SELECT count(*)::text FROM public.ged_access_events e WHERE e.event_type IN ('AUTHORITATIVE_PDF_PREVIEWED','AUTHORITATIVE_PDF_SENT')) AS access_count
+          FROM public.commande_ar_log ar JOIN public.authoritative_pdf_archives a ON a.source_snapshot->>'acknowledgement_id'=ar.id::text
+          JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id=a.id WHERE ar.commande_id=$1`,
+          [orderId],
+        );
+        expect(history.rows[0]).toMatchObject({
           status: "SENT",
-        }),
-      ]);
-      const history = await db.query<{
-        status: string;
-        sent_at: string | null;
-        archive_state: string;
-        access_count: string;
-      }>(
-        `SELECT ar.status::text,ar.sent_at::text,o.status::text AS archive_state,
-        (SELECT count(*)::text FROM public.ged_access_events e WHERE e.event_type IN ('AUTHORITATIVE_PDF_PREVIEWED','AUTHORITATIVE_PDF_SENT')) AS access_count
-        FROM public.commande_ar_log ar JOIN public.authoritative_pdf_archives a ON a.source_snapshot->>'acknowledgement_id'=ar.id::text
-        JOIN public.authoritative_pdf_archive_outbox o ON o.archive_id=a.id WHERE ar.commande_id=$1`,
-        [orderId],
-      );
-      expect(history.rows[0]).toMatchObject({
-        status: "SENT",
-        archive_state: "ARCHIVED",
-      });
-      expect(history.rows[0]!.sent_at).not.toBeNull();
-      expect(Number(history.rows[0]!.access_count)).toBeGreaterThanOrEqual(2);
+          archive_state: "ARCHIVED",
+        });
+        expect(history.rows[0]!.sent_at).not.toBeNull();
+        expect(Number(history.rows[0]!.access_count)).toBeGreaterThanOrEqual(2);
+      } finally {
+        const previous = previousSetting.rows[0];
+        if (previous) {
+          await db.query("UPDATE public.erp_settings SET value_json=$2::jsonb WHERE key=$1", [settingKey, previous.value_json]);
+        } else {
+          await db.query("DELETE FROM public.erp_settings WHERE key=$1", [settingKey]);
+        }
+      }
     } finally {
       await assertRetainedImmutableEvidence(orderId);
     }

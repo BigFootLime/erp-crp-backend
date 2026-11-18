@@ -4,6 +4,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 
 import pool from "../../../config/database";
+import { readCommercialEmailSetting } from "../../../shared/email/commercial-email-settings.repository";
 import {
   enqueueAppNotificationCreated,
   enqueueEntityChanged,
@@ -1164,6 +1165,10 @@ export async function repoClaimCommandeArSend(params: {
       user_id: params.user_id,
       user_role: params.user_role,
     });
+    const emailSetting = await readCommercialEmailSetting(client);
+    if (!emailSetting.value_json.enabled) {
+      throw new HttpError(409, "COMMERCIAL_EMAIL_DISABLED", "L’envoi des mails commerciaux est désactivé dans les paramètres ERP.");
+    }
 
     if (draft.status === "SENDING") {
       const stale = await client.query<{ id: string }>(

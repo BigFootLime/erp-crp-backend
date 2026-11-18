@@ -45,7 +45,6 @@ type StockContext = {
   reorder_qty: number | null
   order_lot_size: number | null
   preferred_catalogue_id: string | null
-  preferred_supplier_id: string | null
 }
 
 const n = (value: unknown): number => Number(value ?? 0)
@@ -116,7 +115,7 @@ async function readStockContexts(
          COALESCE(av.qty_available, GREATEST(sl.qty_total - sl.qty_reserved, 0), 0)::numeric AS qty_available,
          sl.min_qty, app.min_stock AS profile_min_qty, sl.safety_stock_qty,
          sl.target_stock_qty, app.max_stock AS profile_target_qty,
-         sl.reorder_qty, sl.order_lot_size, app.preferred_catalogue_id, sl.supplier_id
+         sl.reorder_qty, sl.order_lot_size, app.preferred_catalogue_id
        FROM public.stock_levels sl
        JOIN public.articles a ON a.id = sl.article_id
        LEFT JOIN public.units u ON u.id = sl.unit_id
@@ -157,8 +156,7 @@ async function readStockContexts(
          CASE WHEN COUNT(target_stock_qty) > 0 THEN SUM(COALESCE(target_stock_qty, 0)) ELSE MAX(profile_target_qty) END::float8 AS target_stock_qty,
          CASE WHEN COUNT(reorder_qty) > 0 THEN SUM(COALESCE(reorder_qty, 0)) ELSE NULL END::float8 AS reorder_qty,
          MAX(order_lot_size)::float8 AS order_lot_size,
-         MAX(preferred_catalogue_id::text) AS preferred_catalogue_id,
-         CASE WHEN COUNT(DISTINCT supplier_id) = 1 THEN MIN(supplier_id::text) ELSE NULL END AS preferred_supplier_id
+         MAX(preferred_catalogue_id::text) AS preferred_catalogue_id
        FROM stock_rows
        GROUP BY article_id, magasin_id
      )
@@ -230,7 +228,7 @@ async function loadCandidates(queryer: Queryer, context: StockContext): Promise<
             fc.delai_jours::int AS lead_time_days, fc.prix_unitaire::float8 AS catalogue_price,
             COALESCE(fc.devise, 'EUR')::text AS currency,
             history.unit_price::float8 AS last_order_unit_price, history.order_date::text AS last_order_date,
-            (fc.id = $4::uuid OR f.id = $5::uuid) AS preferred,
+            COALESCE(fc.id = $4::uuid, false) AS preferred,
             f.actif, f.status
        FROM public.fournisseur_catalogue fc
        JOIN public.fournisseurs f ON f.id = fc.fournisseur_id
@@ -245,7 +243,7 @@ async function loadCandidates(queryer: Queryer, context: StockContext): Promise<
       WHERE fc.article_id = $1::uuid AND fc.actif IS TRUE
         AND COALESCE(f.actif, true) IS TRUE AND COALESCE(f.status, 'actif') NOT IN ('inactif','archive')
       ORDER BY preferred DESC, fc.prix_unitaire ASC NULLS LAST, supplier_name`,
-    [context.article_id, context.stock_unit, context.order_lot_size, context.preferred_catalogue_id, context.preferred_supplier_id]
+    [context.article_id, context.stock_unit, context.order_lot_size, context.preferred_catalogue_id]
   )
   return result.rows.map((row) => {
     const stockUnit = normalizeUnit(row.stock_unit)
