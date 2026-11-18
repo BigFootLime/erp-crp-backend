@@ -3,11 +3,12 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { repoRoot } from "../../../__tests__/helpers/repo-paths";
+import { readSourceFunction } from "../../../__tests__/helpers/source-contract";
 
 const source = (relativePath: string) => readFileSync(resolve(repoRoot, relativePath), "utf8");
 
 describe("Quality 360 direct OUT writer contract (#616)", () => {
-  it("keeps generic and both delivery OUT posting paths behind the operational lot gate", () => {
+  it("keeps generic and both active delivery OUT posting paths behind their lot guards", () => {
     // The public stock façade deliberately delegates posting to the movement
     // core. Keep the contract on that owner: an OUT that is not the server
     // reservation-consumption path must pass the lot eligibility gate before
@@ -22,11 +23,20 @@ describe("Quality 360 direct OUT writer contract (#616)", () => {
     expect(directOutGate).toContain("await assertDirectOutMovementQualityEligibility");
     expect(directOutGate).toContain("lines: draftLines.rows");
 
-    const legacyDelivery = source("src/module/livraisons/repository/livraisons.repository.ts");
-    expect(legacyDelivery).toContain("assertOperationalLotQualityEligibility");
-    expect(legacyDelivery).toContain("recordDirectLotQualityConsumption");
-    const legacyInsertAt = legacyDelivery.indexOf("VALUES ($1,'OUT'::public.movement_type,'DRAFT'");
-    expect(legacyDelivery.lastIndexOf("await assertOperationalLotQualityEligibility", legacyInsertAt)).toBeGreaterThanOrEqual(0);
+    expect(stockCore).toContain("await recordDirectLotQualityConsumption");
+
+    // Shipping an already prepared cart spends a locked, verified reservation.
+    // It must reject an unreleased lot before inserting any stock movement.
+    const reservationShipment = readSourceFunction(
+      "src/module/livraisons/repository/livraisons.repository.ts", "repoShipLivraison"
+    );
+    const cartInsertAt = reservationShipment.indexOf("INSERT INTO public.stock_movements");
+    expect(cartInsertAt).toBeGreaterThan(0);
+    const cartBeforePosting = reservationShipment.slice(0, cartInsertAt);
+    expect(cartBeforePosting).toContain("FOR UPDATE OF bla, r, sb, sl, l");
+    expect(cartBeforePosting).toContain('allocation.reservation_status !== "ACTIVE"');
+    expect(cartBeforePosting).toContain("verifiedQty + 1e-9 < qty");
+    expect(cartBeforePosting).toMatch(/allocation\.lot_status[\s\S]*?"LOT_NOT_CONSUMABLE"/);
 
     const shipment = source("src/module/livraisons/repository/livraisons-shipment.repository.ts");
     const gateCalls = shipment.match(/await assertOperationalLotQualityEligibility/g) ?? [];
