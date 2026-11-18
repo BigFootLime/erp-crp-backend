@@ -16,7 +16,7 @@ function isolatedFixtureEnvironment(overrides: FixtureEnvironment = {}): Fixture
     CERP_E2E_ACCESS_SCOPE_FIXTURE: "1",
     E2E_PASSWORD: "fixture-password-only",
     CERP_E2E_DB_PORT: "55432",
-    DATABASE_URL: "postgres://fixture:fixture@127.0.0.1:55432/cerp_test",
+    DATABASE_URL: "postgres://fixture:example@127.0.0.1:55432/cerp_test",
     ...overrides,
   };
 }
@@ -41,10 +41,10 @@ describe("#1506 isolated access-scope fixture environment guard", () => {
   });
 
   it.each([
-    ["a remote host", { DATABASE_URL: "postgres://fixture:fixture@db.invalid:55432/cerp_test" }],
-    ["another database", { DATABASE_URL: "postgres://fixture:fixture@127.0.0.1:55432/cerp_prod" }],
-    ["an implicit database port", { DATABASE_URL: "postgres://fixture:fixture@127.0.0.1/cerp_test" }],
-    ["a port that differs from CERP_E2E_DB_PORT", { DATABASE_URL: "postgres://fixture:fixture@127.0.0.1:55433/cerp_test" }],
+    ["a remote host", { DATABASE_URL: "postgres://fixture:example@db.invalid:55432/cerp_test" }],
+    ["another database", { DATABASE_URL: "postgres://fixture:example@127.0.0.1:55432/cerp_prod" }],
+    ["an implicit database port", { DATABASE_URL: "postgres://fixture:example@127.0.0.1/cerp_test" }],
+    ["a port that differs from CERP_E2E_DB_PORT", { DATABASE_URL: "postgres://fixture:example@127.0.0.1:55433/cerp_test" }],
     ["shared Directory mode", { CERP_SHARED_DIRECTORY_ENABLED: "true" }],
   ] as const)("rejects %s", (_name, overrides) => {
     expect(() => assertFixtureEnvironment(isolatedFixtureEnvironment(overrides))).toThrow();
