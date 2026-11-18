@@ -365,6 +365,13 @@ export const transitionSchema = z.object({
 });
 export type TransitionBodyDTO = z.infer<typeof transitionSchema>["body"];
 
+export const supplierOrderEmailBodySchema = z.object({
+  archive_id: z.string().uuid(),
+  expected_recipient: z.string().trim().max(254).email().transform((value) => value.toLowerCase()),
+  expected_updated_at: revisionToken,
+}).strict();
+export type SupplierOrderEmailBodyDTO = z.infer<typeof supplierOrderEmailBodySchema>;
+
 export const acknowledgementLineSchema = z
   .object({
     ligne_id: uuid,
