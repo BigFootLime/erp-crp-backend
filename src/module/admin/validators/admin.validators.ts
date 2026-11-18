@@ -212,6 +212,6 @@ export const adminUpsertErpSettingSchema = adminErpSettingKeySchema.extend({
 });
 export type AdminUpsertErpSettingDTO = z.infer<typeof adminUpsertErpSettingSchema>;
 
-export const adminSupplierQualitySettingSchema=z.object({
+export const adminBooleanErpSettingSchema=z.object({
   body:z.object({value_json:z.object({enabled:z.boolean()}).strict(),value_text:z.null().optional()}).strict(),
 });
