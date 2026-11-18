@@ -212,7 +212,9 @@ function patchSupportSql(filename, name) {
 }
 
 async function runSqlFile(client, sql) {
-  const executable = sql.replace(/^\\set[^\n]*\n/gm, "");
+  // These psql directives configure the client or label its output. PostgreSQL
+  // receives the SQL statements only when this rehearsal uses a pg client.
+  const executable = sql.replace(/^\\(?:set|echo)(?:[ \t][^\r\n]*)?\r?$/gm, "");
   return client.query(executable);
 }
 
