@@ -121,6 +121,31 @@ describe("commande AR durable send claim", () => {
     expect(mocks.clientQuery.mock.calls.map(([sql]) => String(sql))).toContain("ROLLBACK");
   });
 
+  it("does not claim an acknowledgement when commercial email is disabled", async () => {
+    mocks.clientQuery.mockImplementation(async (sql: unknown, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("WITH lines AS")) return { rows: [{ has_of: false, complete: true }] };
+      if (q.includes("SELECT client_id FROM public.commande_client")) return { rows: [{ client_id: null }] };
+      if (q.includes("FROM public.commande_ar_log ar")) return { rows: [draftRow] };
+      if (q.includes("checkpoint_status")) {
+        return { rows: [{ raw_statut: "AR_PRET", checkpoint_status: "active", responsible_role: "secretariat", assigned_user_id: null }] };
+      }
+      if (q.includes("FROM public.commande_client cc")) return { rows: [{ commande_id: 123, client_id: null }] };
+      if (q.includes("FROM public.erp_settings") && params?.[0] === "commerce.outbound_email") {
+        return { rows: [{ value_json: { enabled: false }, updated_at: "2026-11-18T12:00:00Z" }] };
+      }
+      return { rows: [] };
+    });
+
+    await expect(repoClaimCommandeArSend(claimParams)).rejects.toMatchObject({
+      status: 409,
+      code: "COMMERCIAL_EMAIL_DISABLED",
+    });
+    const queries = mocks.clientQuery.mock.calls.map(([sql]) => String(sql));
+    expect(queries).not.toContainEqual(expect.stringContaining("SET status = 'SENDING'"));
+    expect(queries).toContain("ROLLBACK");
+  });
+
   it("rejects a draft whose customer-facing content changed", async () => {
     mocks.snapshotCurrent.mockReturnValueOnce(false);
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
