@@ -18,4 +18,17 @@ CREATE TABLE IF NOT EXISTS public.tarification_client (
 CREATE INDEX IF NOT EXISTS tarification_client_client_id_idx
   ON public.tarification_client(client_id);
 
+DO $grant$
+DECLARE
+  id_sequence regclass := pg_get_serial_sequence('public.tarification_client', 'id')::regclass;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.tarification_client TO cerp_app;
+    IF id_sequence IS NOT NULL THEN
+      EXECUTE format('GRANT USAGE ON SEQUENCE %s TO cerp_app', id_sequence);
+    END IF;
+  END IF;
+END;
+$grant$;
+
 COMMIT;

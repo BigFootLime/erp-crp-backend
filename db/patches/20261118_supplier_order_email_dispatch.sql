@@ -10,4 +10,12 @@ CREATE TABLE IF NOT EXISTS public.supplier_order_email_dispatch (
   CHECK ((provider_id IS NULL) = (delivered_at IS NULL))
 );
 
+DO $grant$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cerp_app') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.supplier_order_email_dispatch TO cerp_app;
+  END IF;
+END;
+$grant$;
+
 COMMIT;
