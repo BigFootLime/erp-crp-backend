@@ -9,10 +9,22 @@ import {
 import {
   loadSuperPdpConfiguration,
   SuperPdpClient,
+  SuperPdpProviderError,
 } from "./providers/super-pdp/super-pdp.client";
 
 function client(): SuperPdpClient {
   return new SuperPdpClient(loadSuperPdpConfiguration());
+}
+
+async function lookupDirectory<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    if (error instanceof SuperPdpProviderError) {
+      throw new HttpError(503, "EINVOICE_DIRECTORY_UNAVAILABLE", "L’annuaire de facturation électronique est temporairement indisponible.");
+    }
+    throw error;
+  }
 }
 
 export function searchElectronicInvoiceDirectoryCompanies(params: {
@@ -21,11 +33,11 @@ export function searchElectronicInvoiceDirectoryCompanies(params: {
   postCodeStartsWith?: string;
   limit?: number;
 }) {
-  return client().searchFrenchDirectoryCompanies(params);
+  return lookupDirectory(() => client().searchFrenchDirectoryCompanies(params));
 }
 
 export function listElectronicInvoiceDirectoryEntries(number: string) {
-  return client().listFrenchDirectoryEntries(number);
+  return lookupDirectory(() => client().listFrenchDirectoryEntries(number));
 }
 
 export async function verifyElectronicInvoiceDirectoryAddress(params: {

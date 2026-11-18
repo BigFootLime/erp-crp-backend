@@ -1343,9 +1343,13 @@ export async function repoTransitionCommandeFournisseur(
   id: string,
   body: TransitionBodyDTO,
   audit: AuditContext,
-  options?: { system?: boolean }
+  options?: {
+    system?: boolean;
+    client?: PoolClient;
+    beforeSend?: (tx: PoolClient) => Promise<{ archive_id: string; provider_id: string }>;
+  }
 ): Promise<{ statut: CommandeFournisseurStatut; idempotent_replay?: boolean }> {
-  const client = await db.connect();
+  const client = options?.client ?? await db.connect();
   try {
     await client.query("BEGIN");
     await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
@@ -1464,6 +1468,8 @@ export async function repoTransitionCommandeFournisseur(
       throw new HttpError(422, "MOTIF_REQUIS", "La clôture avec reliquat exige un motif explicite.");
     }
 
+    const mailDelivery = kind === "send" ? await options?.beforeSend?.(client) : undefined;
+
     // Effets par transition.
     let releasedNeedLinks = 0;
     const sets: string[] = [`statut = $2`, `updated_by = $3`];
@@ -1540,7 +1546,7 @@ export async function repoTransitionCommandeFournisseur(
       action: `commandes_fournisseurs.transition.${kind}`,
       entity_type: "commande_fournisseur",
       entity_id: id,
-      details: { from, to, motif, system: Boolean(options?.system), released_need_links: releasedNeedLinks, supplier_qualification: qualification },
+      details: { from, to, motif, system: Boolean(options?.system), released_need_links: releasedNeedLinks, supplier_qualification: qualification, ...(mailDelivery ? { email: mailDelivery } : {}) },
     });
 
     const resultat = { statut: to };
@@ -1553,7 +1559,7 @@ export async function repoTransitionCommandeFournisseur(
     await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (!options?.client) client.release();
   }
 }
 

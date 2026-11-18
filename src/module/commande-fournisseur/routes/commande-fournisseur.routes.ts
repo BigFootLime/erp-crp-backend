@@ -33,6 +33,7 @@ import {
   listCommandesFournisseurs,
   listOfficialDocuments,
   previewPropositions,
+  previewSupplierEmail,
   reorderLignes,
   queueOfficialDocument,
   previewOfficialDocument,
@@ -40,6 +41,7 @@ import {
   printOfficialDocument,
   resyncReceptions,
   simulateTotaux,
+  sendSupplierEmail,
   transitionCommandeFournisseur,
   updateCommandeFournisseur,
   updateLigne,
@@ -151,6 +153,8 @@ router.post(
 );
 
 router.get("/:id", requireCapability("read"), getCommandeFournisseur);
+router.get("/:id/email", requireCapability("send"), previewSupplierEmail);
+router.post("/:id/email", requireCapability("send"), sendSupplierEmail);
 router.get(
   "/:id/qualification",
   requireCapability("read"),

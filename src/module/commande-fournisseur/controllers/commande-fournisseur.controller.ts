@@ -14,6 +14,7 @@ import { requestHasGrantedAccountModuleAccess } from "../../access-control/conte
 import { HttpError } from "../../../utils/httpError";
 import { roleHasCommandeFournisseurCapability } from "../domain/commande-fournisseur-rbac";
 import type { AuditContext } from "../repository/commande-fournisseur.repository";
+import { previewSupplierOrderEmail, sendSupplierOrderEmail } from "../services/supplier-order-email.service";
 import {
   accuseSchema,
   addLigneSchema,
@@ -35,6 +36,7 @@ import {
   updateCommandeSchema,
   updateLigneSchema,
   supplierPromiseExceptionsQuerySchema,
+  supplierOrderEmailBodySchema,
   treatmentEstimateSchema,
 } from "../validators/commande-fournisseur.validators";
 import { getSupplierPromiseExceptions } from "../services/supplier-promise-monitor.service";
@@ -107,6 +109,21 @@ function buildAuditContext(req: Request): AuditContext {
     client_session_id: clientSessionId,
   };
 }
+
+export const previewSupplierEmail: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    res.json(await previewSupplierOrderEmail(params.id, buildAuditContext(req)));
+  } catch (error) { next(error); }
+};
+
+export const sendSupplierEmail: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    const input = supplierOrderEmailBodySchema.parse(req.body);
+    res.json(await sendSupplierOrderEmail(params.id, input, buildAuditContext(req)));
+  } catch (error) { next(error); }
+};
 
 export const readSupplierOpenContracts: RequestHandler = async (
   req,
