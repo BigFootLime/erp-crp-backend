@@ -13,11 +13,19 @@ const reservationWriters = [
   "src/module/livraisons/repository/livraisons-shipment.repository.ts",
 ] as const;
 
+const ownedReservationWriters: Partial<Record<(typeof reservationWriters)[number], string>> = {
+  "src/module/production/repository/production-receipt-lot-reconciliation.repository.ts": "reserveProducedComponentForParentOf",
+  // The earlier insert in the same file splits an existing ACTIVE reservation.
+  // Reallocation to a new lot is where this writer acquires a new entitlement.
+  "src/module/livraisons/repository/livraisons.repository.ts": "reallocateCorrectedBatchReservations",
+};
+
 describe("Quality 360 stock-reservation writer contract (#616)", () => {
   it("keeps every direct reservation writer behind the canonical operational gate", () => {
     for (const relativePath of reservationWriters) {
-      const source = relativePath.endsWith("production-receipt-lot-reconciliation.repository.ts")
-        ? readSourceFunction(relativePath, "reserveProducedComponentForParentOf")
+      const owner = ownedReservationWriters[relativePath];
+      const source = owner
+        ? readSourceFunction(relativePath, owner)
         : readFileSync(resolve(repoRoot, relativePath), "utf8");
       expect(source, relativePath).toContain("assertOperationalLotQualityEligibility");
       const insertAt = source.indexOf("INSERT INTO public.stock_reservations");
