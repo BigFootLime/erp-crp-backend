@@ -102,6 +102,7 @@ export async function sendTransactionalEmail(params: {
   html: string;
   idempotencyKey?: string | null;
   attachments?: EmailAttachment[];
+  timeoutMs?: number;
   /** Server-derived authenticated sender only; never populated from request recipients. */
   testSenderEmail?: string | null;
 }): Promise<ResendSendResult> {
@@ -110,7 +111,7 @@ export async function sendTransactionalEmail(params: {
   const delivery = resolveOutboundEmailRecipients(params.to, process.env, params.testSenderEmail);
 
   return postResendEmail({
-    cfg,
+    cfg: params.timeoutMs === undefined ? cfg : { ...cfg, timeoutMs: Math.min(cfg.timeoutMs, params.timeoutMs) },
     idempotencyKey: params.idempotencyKey ?? null,
     payload: {
       from: cfg.from,
