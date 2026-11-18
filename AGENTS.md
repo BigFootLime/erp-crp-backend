@@ -10,6 +10,7 @@ This repository is the backend implementation backup for Croix Rousse Precision 
 3. `docs/frontend_repo_map.md`
 4. `db/patches/`
 5. impacted route, service, repository, and validator files
+6. for PostgreSQL patch preparation or review, use `.agents/skills/cerp-db-safe-migration/SKILL.md`
 
 ## Core rules
 
