@@ -1,5 +1,10 @@
 import type { RequestHandler } from "express";
 import {SUPPLIER_QUALITY_SETTING,readSupplierQualitySetting,saveSupplierQualitySetting} from '../../commande-fournisseur/repository/supplier-quality-settings.repository';
+import {
+  COMMERCIAL_EMAIL_SETTING,
+  readCommercialEmailSetting,
+  saveCommercialEmailSetting,
+} from "../../../shared/email/commercial-email-settings.repository";
 
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
@@ -22,7 +27,7 @@ import {
   adminUserIdParamSchema,
   adminErpSettingKeySchema,
   adminUpsertErpSettingSchema,
-  adminSupplierQualitySettingSchema,
+  adminBooleanErpSettingSchema,
   resetPasswordByAdminSchema,
 } from "../validators/admin.validators";
 
@@ -201,6 +206,10 @@ export const recoverUserAccountAdmin: RequestHandler = asyncHandler(async (req, 
 
 export const getErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) => {
   if(req.params.key===SUPPLIER_QUALITY_SETTING){res.json(await readSupplierQualitySetting());return;}
+  if (req.params.key === COMMERCIAL_EMAIL_SETTING) {
+    res.json(await readCommercialEmailSetting());
+    return;
+  }
   const dto = adminErpSettingKeySchema.parse({ params: req.params });
   res.json(await adminService.getErpSetting(dto.params.key));
 });
@@ -208,8 +217,13 @@ export const getErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) 
 export const upsertErpSettingAdmin: RequestHandler = asyncHandler(async (req, res) => {
   if (!req.user) throw new HttpError(401, "AUTH_REQUIRED", "Authentification requise");
   if(req.params.key===SUPPLIER_QUALITY_SETTING){
-    const {body}=adminSupplierQualitySettingSchema.parse({body:req.body});
+    const {body}=adminBooleanErpSettingSchema.parse({body:req.body});
     res.json(await saveSupplierQualitySetting(body.value_json.enabled,req.user.id));
+    return;
+  }
+  if (req.params.key === COMMERCIAL_EMAIL_SETTING) {
+    const { body } = adminBooleanErpSettingSchema.parse({ body: req.body });
+    res.json(await saveCommercialEmailSetting(body.value_json.enabled, req.user.id));
     return;
   }
   const dto = adminUpsertErpSettingSchema.parse({ params: req.params, body: req.body });
