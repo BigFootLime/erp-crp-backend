@@ -345,6 +345,8 @@ export async function repoCreateCostCenter(input: CreateCostCenterInput, audit: 
   if (input.designation_modele) assertDesignationTemplateAllowed(input.designation_modele);
 
   const client = await db.connect();
+  const codeTaken = () =>
+    new HttpError(409, "COST_CENTER_CODE_TAKEN", `Le code de centre de frais ${input.code} est déjà utilisé.`);
   let createdId: string;
   try {
     await client.query("BEGIN");
@@ -352,7 +354,7 @@ export async function repoCreateCostCenter(input: CreateCostCenterInput, audit: 
       input.code,
     ]);
     if ((duplicate.rowCount ?? 0) > 0) {
-      throw new HttpError(409, "COST_CENTER_CODE_TAKEN", `Le code de centre de frais ${input.code} est déjà utilisé.`);
+      throw codeTaken();
     }
     const res = await client.query<{ id: string }>(
       `INSERT INTO public.centres_frais
@@ -382,6 +384,13 @@ export async function repoCreateCostCenter(input: CreateCostCenterInput, audit: 
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
+    if (
+      error instanceof Error &&
+      "code" in error && error.code === "23505" &&
+      "constraint" in error && error.constraint === "centres_frais_code_key"
+    ) {
+      throw codeTaken();
+    }
     throw error;
   } finally {
     client.release();

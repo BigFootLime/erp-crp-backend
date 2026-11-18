@@ -759,7 +759,7 @@ export async function repoCreateReception(body: CreateReceptionBodyDTO, audit: A
           created_by,
           updated_by
         )
-        VALUES ($1,$2::uuid,'OPEN',$3::date,$4,$5,$6::uuid,$7,$7)
+       VALUES ($1,$2::uuid,'OPEN',COALESCE($3::date,CURRENT_DATE),$4,$5,$6::uuid,$7,$7)
         RETURNING
           id::text AS id,
           reception_no,

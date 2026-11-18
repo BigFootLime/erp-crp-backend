@@ -50,7 +50,7 @@ export async function qualityOfPopulationCeiling(q: Db, identity: QualityOfIdent
   }
   // Compatibility for a frozen historical OF without the material workbench.
   const row = (await q.query<{ population: number }>(`WITH previous AS (SELECT id FROM public.of_operations
-      WHERE of_id=$1 AND phase<$2 AND status<>'CANCELLED'
+      WHERE of_id=$1 AND phase<$2 AND status::text<>'CANCELLED'
         AND (revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=revision_id AND r.statut='ACTIVE'))
       ORDER BY phase DESC,id DESC LIMIT 1)
     SELECT CASE WHEN EXISTS(SELECT 1 FROM previous) THEN (SELECT COALESCE(sum(d.qty_good),0)
