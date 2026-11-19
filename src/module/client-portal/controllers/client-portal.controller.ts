@@ -17,6 +17,7 @@ import {
   portalForgotPasswordSchema,
   portalLoginSchema,
   portalPaginationSchema,
+  portalPieceTrackingQuerySchema,
   portalResetPasswordSchema,
   portalUuidParamSchema,
   portalDeliveryReceiptSchema,
@@ -108,6 +109,15 @@ function pagination(req: Request) {
 export async function listOrders(req: Request, res: Response, next: NextFunction) {
   try { res.json(await service.listPortalOrders(portalIdentity(req), pagination(req))); }
   catch (error) { next(error); }
+}
+
+export async function trackPieces(req: Request, res: Response, next: NextFunction) {
+  try {
+    const identity = portalIdentity(req);
+    const query = parseBody(portalPieceTrackingQuerySchema, req.query);
+    const { repoTrackPortalPieces } = await import("../repository/client-portal-piece-tracking.repository");
+    res.set("Cache-Control", "no-store").json(await repoTrackPortalPieces(identity, query));
+  } catch (error) { next(error); }
 }
 
 export async function commercialOverview(req: Request, res: Response, next: NextFunction) {

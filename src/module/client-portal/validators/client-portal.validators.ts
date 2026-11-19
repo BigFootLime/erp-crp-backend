@@ -38,6 +38,12 @@ export const portalPaginationSchema = z
 
 export const portalUuidParamSchema = uuid;
 
+export const portalPieceTrackingQuerySchema = portalPaginationSchema.extend({
+  q: z.string().trim().max(96).default(""),
+});
+
+export type PortalPieceTrackingQuery = z.infer<typeof portalPieceTrackingQuerySchema>;
+
 export const adminCreatePortalAccountSchema = z
   .object({
     client_id: z.string().trim().min(1).max(3),

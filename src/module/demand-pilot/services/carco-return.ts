@@ -20,6 +20,24 @@ export async function exportCarco(
       "CARCO_STALE",
       "Exportez le dernier relevé du site.",
     );
+  const decisions = await industrialTx(async (tx) => (
+    await tx.query<{
+      external_order_key: string;
+      external_line_key: string;
+      external_schedule_key: string;
+      status: string;
+    }>(
+      `SELECT revision.external_order_key,revision.external_line_key,revision.external_schedule_key,revision.status
+         FROM public.demand_pilot_revisions revision
+         JOIN public.demand_pilot_imports batch ON batch.id=revision.import_id
+        WHERE batch.carco_review_id=$1::uuid AND revision.client_id=$2 AND revision.external_site=$3
+        ORDER BY revision.revision_no`,
+      [id, scope.clientId, scope.site],
+    )
+  ).rows);
+  const decisionByLine = new Map(decisions.map((row) => [
+    JSON.stringify([row.external_order_key, row.external_line_key, row.external_schedule_key]), row.status,
+  ]));
   const promises = await industrialTx(
     async (tx) =>
       (
@@ -97,6 +115,7 @@ export async function exportCarco(
       "DATE_CONF",
       "STATUT_CRP",
       "MOTIFS_CRP",
+      "DEMANDE_CRP",
     ],
   ];
   for (const { candidate: c, diagnostics, resolved, source } of review.lines) {
@@ -136,6 +155,8 @@ export async function exportCarco(
         ? "A_QUALIFIER"
         : promised?.agreed_date ? "AR_ENGAGE" : promised ? "PROMESSE_FRACTIONNEE" : "ENGAGEMENT_NON_DISPONIBLE",
       Array.from(new Set(errors.map((error) => error.code))).join(" / "),
+      decisionByLine.get(JSON.stringify([c.external_order_key, c.external_line_key, c.external_schedule_key]))
+        ?? (errors.length ? "A_QUALIFIER" : "RECUE"),
     ]);
   }
   return "\ufeff" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
