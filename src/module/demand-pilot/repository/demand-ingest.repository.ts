@@ -22,6 +22,7 @@ type Batch = {
   actor: Actor;
   idempotencyKey: string;
   carcoReviewId?: string;
+  firmReviewReason?: string;
   expectedMappings?: Map<string,NonNullable<DemandImportPreviewRow["resolved"]>>;
 };
 type Prior = {
@@ -92,7 +93,7 @@ async function appendRevision(
     kind = absent ? "REMOVED" : prior ? "CHANGED" : "NEW";
   const reason = absent
     ? "Échéance absente du relevé complet. Vérifier le reliquat et contacter le client."
-    : null;
+    : source.kind === "FIRM" ? p.firmReviewReason ?? null : null;
   await tx.query(
     `INSERT INTO public.demand_pilot_revisions(id,import_id,client_id,external_site,external_order_key,external_line_key,external_schedule_key,
  source_version,source_as_of,kind,quantity,unit,quantity_basis,need_date,article_code,article_id,contract_id,contract_line_id,customer_reference,comment,
@@ -121,7 +122,7 @@ async function appendRevision(
       after.comment,
       (prior?.revision_no ?? 0) + 1,
       kind,
-      absent ? "REVIEW" : "PENDING",
+      reason ? "REVIEW" : "PENDING",
       reason,
       prior ? JSON.stringify(prior.after_snapshot) : null,
       JSON.stringify(after),

@@ -462,6 +462,12 @@ export async function decideDemand(p: {
           ],
         )
       ).rows[0];
+      if (p.automatic && bound)
+        throw new HttpError(
+          409,
+          "PROMISE_CHANGE_REVIEW",
+          "Une modification de ferme déjà reçu nécessite un contrôle des engagements.",
+        );
       const remaining =
         Number(row.quantity) -
         (bound && row.quantity_basis === "TOTAL" ? Number(bound.shipped) : 0);

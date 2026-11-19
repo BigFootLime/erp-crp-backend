@@ -98,7 +98,7 @@ describe("OpenAPI ordered-route parser", () => {
       encoding: "utf8",
     });
 
-    expect(output).toContain("1757 operations");
+    expect(output).toContain("1759 operations");
   });
 
   it("accepts literal ordered mounts", () => {

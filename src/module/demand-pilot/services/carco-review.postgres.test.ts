@@ -7,6 +7,7 @@ import {
 } from "../../../__tests__/fixtures/demand-pilot.fixture";
 import { industrialTx } from "../../planning/services/industrial-runs.service";
 import { saveArticleMapping } from "../repository/demand-mapping.repository";
+import { exportCarco } from "./carco-return";
 import {
   recordCarco,
   getCarco,
@@ -46,6 +47,7 @@ describe.skipIf(!isolated)(
   "CLAYENS weekly review on isolated PostgreSQL",
   () => {
     let actor: number;
+    const article = randomUUID();
     beforeAll(async () => {
       actor = (
         await pool.query(
@@ -58,7 +60,6 @@ describe.skipIf(!isolated)(
           "K",
           "Client de recette",
         );
-        const article = randomUUID();
         await createPilotFixtureArticle(
           tx,
           scope.clientId,
@@ -81,6 +82,64 @@ describe.skipIf(!isolated)(
     });
     afterAll(async () => {
       await pool.end();
+    });
+    it("queues a Clayens advancement for ADV and preserves the acknowledged date", async () => {
+      const arScope = { ...scope, site: scope.site + "-AR" };
+      const { rows: [promise] } = await pool.query<{ id: string }>(
+        `WITH c AS (
+          INSERT INTO public.commande_client(numero,client_id) VALUES($1,$2) RETURNING id
+        ), l AS (
+          INSERT INTO public.commande_ligne(commande_id,article_id,quantite)
+          SELECT id,$3,7 FROM c RETURNING id,commande_id
+        ), f AS (
+          INSERT INTO public.affaire(commande_id,nom)
+          SELECT id,'Livraison fixture AR' FROM c RETURNING id,commande_id
+        ), a AS (
+          INSERT INTO public.commande_ligne_affaire_allocation(commande_id,commande_ligne_id,livraison_affaire_id,qty_ordered,qty_remaining)
+          SELECT l.commande_id,l.id,f.id,7,7 FROM l JOIN f USING(commande_id) RETURNING *
+        ), d AS (
+          INSERT INTO public.documents_clients(document_name) VALUES('AR fixture') RETURNING id
+        ), ar AS (
+          INSERT INTO public.commande_ar_log(commande_id,document_id,status,sent_at,ar_series_number,version_number,ar_reference)
+          SELECT c.id,d.id,'SENT',now(),c.id,1,$1 FROM c,d RETURNING id,commande_id
+        ), r AS (
+          INSERT INTO public.delivery_promise_roots(allocation_id,commande_id,line_id,affaire_id,ar_id,initial_quantity,initial_due_date,initial_snapshot)
+          SELECT a.id,a.commande_id,a.commande_ligne_id,a.livraison_affaire_id,ar.id,7,'2030-05-17','{}'
+          FROM a JOIN ar USING(commande_id) RETURNING id
+        ), p AS (
+          INSERT INTO public.delivery_promise_parts(root_id,quantity,due_date)
+          SELECT id,7,'2030-05-17' FROM r
+        ), b AS (
+          INSERT INTO public.demand_pilot_firm_binding_scopes(client_id,external_site,external_order_key,external_line_key,external_schedule_key,promise_root_id,article_id,created_by_user_id)
+          SELECT $2,$4,$1,'L10','E1',id,$3,$5 FROM r
+        ) SELECT id FROM r`,
+        ["CMD-AR-" + prefix, scope.clientId, article, arScope.site, actor],
+      );
+      const csv = Buffer.from([
+        "LIEU_EXP_FO;ARTICLE;NUM_CDE;TYPE_CDE;DATE_CDE;DATE_DEMANDEE;DATE_CONF;QTE_CDE;QTE_LIV;QTE_SOLDE;DATE_BESOIN",
+        `SITE;${a};CMD-AR-${prefix};Cde Fermée;02/01/2030;18/05/2030;19/05/2030;10;3;7;03/05/2030`,
+        `SITE;${a};CMD-SANS-AR;Cde Fermee;02/01/2030;18/05/2030;;7;0;7;31/12/9000`,
+      ].join("\n"));
+      const id = await recordCarco(arScope, "AR-1", dates[0], true, {
+        ...file([]), buffer: csv, size: csv.length,
+      }, actor);
+      const review = (await getCarco(arScope, id))!;
+      expect(review).toMatchObject({ format: "CLAYENS_AR", complete: false, summary: { total: 2, valid: 1, invalid: 1 } });
+      expect(review.ready[0]).toMatchObject({
+        external_line_key: "L10", external_schedule_key: "E1", quantity: 7,
+        source_requested_date: "2030-05-18", source_confirmed_date: "2030-05-19", need_date: "2030-05-03",
+      });
+      expect(review.lines[1].diagnostics.map(({ code }) => code)).toEqual(
+        expect.arrayContaining(["CLAYENS_AR_NO_BINDING", "SENTINEL_DATE_REQUIRES_REVIEW"]),
+      );
+      expect(await submitCarco(arScope, id, actor, randomUUID(), review.qualification_hash)).toMatchObject({ created: 1, missing: 0 });
+      expect((await pool.query(
+        `SELECT status,need_date::text FROM public.demand_pilot_revisions WHERE client_id=$1 AND external_site=$2`,
+        [scope.clientId, arScope.site],
+      )).rows).toEqual([{ status: "REVIEW", need_date: "2030-05-03" }]);
+      expect((await pool.query("SELECT due_date::text FROM public.delivery_promise_parts WHERE root_id=$1", [promise.id])).rows)
+        .toEqual([{ due_date: "2030-05-17" }]);
+      expect(await exportCarco(arScope, id)).toContain('"2030-05-18";"2030-05-17";"AR_ENGAGE"');
     });
     it("keeps ambiguous lines, compares successive versions, submits only the RAL and replays without duplicates", async () => {
       const lines = [
@@ -123,8 +182,8 @@ describe.skipIf(!isolated)(
       expect(
         (
           await pool.query(
-            "SELECT count(*)::int n FROM public.demand_pilot_revisions WHERE client_id=$1",
-            [scope.clientId],
+            "SELECT count(*)::int n FROM public.demand_pilot_revisions WHERE client_id=$1 AND external_site=$2",
+            [scope.clientId, scope.site],
           )
         ).rows[0].n,
       ).toBe(2);

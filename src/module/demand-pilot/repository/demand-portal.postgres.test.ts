@@ -178,5 +178,45 @@ describe.skipIf(!isolated)(
         accepted_need_date: "2027-02-15",
       });
     });
+    it("limits the return file to the account that deposited the scoped report", async () => {
+      const other = randomUUID();
+      await industrialTx(async (tx) => {
+        await tx.query(
+          `INSERT INTO public.client_portal_accounts(id,client_id,email,email_normalized,display_name,password_hash,status,activated_at,created_by,updated_by)
+           VALUES($1,$2,$3,$3,'Second compte fixture',$4,'ACTIVE',now(),$5,$5)`,
+          [other, client, other + "@invalid.test", "x".repeat(60), actor],
+        );
+        await tx.query(
+          "INSERT INTO public.client_portal_demand_sites(portal_account_id,external_site,created_by_user_id) VALUES($1,$2,$3)",
+          [other, site, actor],
+        );
+      });
+      const otherToken = signPortalSession({ accountId: other, clientId: client, sessionEpoch: 0 });
+      const file = Buffer.from([
+        "LIEU_EXP_FO;ARTICLE;NUM_CDE;TYPE_CDE;QTE_CDE;QTE_SOLDE;DATE_DEMANDEE;DATE_CONF;DATE_BESOIN",
+        "FOURNISSEUR;LOCAL;CMD-1;Cde Fermee;5;5;2030-03-15;;2030-03-01",
+      ].join("\n"));
+      const deposit = (session: string) => request(app)
+        .post(base + "/carco")
+        .set("Authorization", "Bearer " + session)
+        .field("external_site", site)
+        .field("source_version", "fixture-ar")
+        .field("source_as_of", "2030-02-01T09:00:00Z")
+        .attach("file", file, { filename: "demande.csv", contentType: "text/csv" });
+      const { body: { id } } = await deposit(token).expect(200);
+      expect((await deposit(token).expect(200)).body.id).toBe(id);
+      await deposit(otherToken).expect(409);
+      const route = base + "/carco/" + id + "/return";
+      await request(app).get(route).expect(401);
+      await request(app).get(route).set("Authorization", "Bearer " + otherToken).expect(404);
+      const result = await request(app).get(route).set("Authorization", "Bearer " + token).expect(200);
+      expect(result.headers["content-type"]).toMatch(/^text\/csv/);
+      expect(result.text).toContain("CLAYENS_AR_NO_BINDING");
+      const { body: { items } } = await request(app).get(base + "/carco")
+        .set("Authorization", "Bearer " + token).expect(200);
+      expect(items).toContainEqual(expect.objectContaining({ id, processed: false, latest: true }));
+      await pool.query("DELETE FROM public.client_portal_demand_sites WHERE portal_account_id=$1 AND external_site=$2", [account, site]);
+      await request(app).get(route).set("Authorization", "Bearer " + token).expect(404);
+    });
   },
 );

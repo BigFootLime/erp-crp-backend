@@ -5,12 +5,14 @@ import { HttpError } from "../../../utils/httpError";
 import {
   recordCarco,
   listPortalCarcoDeposits,
+  portalCarcoDepositSite,
   portalCarcoSites,
 } from "../services/carco-review.service";
 import { requireClientTransactions } from "../../client-portal/domain/transactional-rollout";
 import { authenticateClientPortal } from "../../client-portal/middlewares/client-portal-auth.middleware";
 import { createSecureUpload } from "../../../shared/uploads/secure-upload";
 import * as controller from "../controllers/demand-pilot.controller";
+import { exportCarco } from "../services/carco-return";
 const router = Router(),
   upload = createSecureUpload("import-tabular", { storage: "memory" });
 router.use(authenticateClientPortal);
@@ -59,6 +61,17 @@ router.post(
       source_version: input.source_version,
       external_site: input.external_site,
     });
+  }),
+);
+router.get(
+  "/carco/:id/return",
+  asyncHandler(async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const { clientId, accountId } = req.portalIdentity!;
+    const site = await portalCarcoDepositSite(clientId, accountId, id);
+    const csv = await exportCarco({ clientId, site }, id, accountId);
+    res.set("Cache-Control", "private, no-store");
+    res.attachment("CERP-retour-echeances.csv").type("text/csv").send(csv);
   }),
 );
 router.get("/", controller.listPortal);

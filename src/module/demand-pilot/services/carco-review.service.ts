@@ -26,6 +26,7 @@ type Review = {
   source_file_name: string;
   complete_snapshot: boolean;
   content_sha256: string;
+  received_portal_account_id: string | null;
   preview: DemandImportResult;
 };
 type Scope = { clientId: string; site: string };
@@ -37,7 +38,10 @@ export async function listPortalCarcoDeposits(
     async (tx) =>
       (
         await tx.query(
-          `SELECT r.id,r.external_site,r.source_version,r.received_at
+          `SELECT r.id,r.external_site,r.source_version,r.received_at,r.source_as_of,
+      EXISTS (SELECT 1 FROM public.demand_pilot_imports i WHERE i.carco_review_id=r.id) AS processed,
+      NOT EXISTS (SELECT 1 FROM public.carco_reviews n WHERE n.client_id=r.client_id
+        AND n.external_site=r.external_site AND n.source_as_of>r.source_as_of) AS latest
     FROM public.carco_reviews r
     JOIN public.client_portal_accounts a ON a.id=r.received_portal_account_id AND a.client_id=r.client_id
     JOIN public.client_portal_demand_sites s ON s.portal_account_id=a.id AND s.external_site=r.external_site
@@ -47,6 +51,21 @@ export async function listPortalCarcoDeposits(
         )
       ).rows,
   );
+}
+
+export async function portalCarcoDepositSite(clientId: string, accountId: string, id: string) {
+  return industrialTx(async (tx) => {
+    const { rows } = await tx.query<{ external_site: string }>(
+      `SELECT r.external_site
+       FROM public.carco_reviews r
+       JOIN public.client_portal_accounts a ON a.id=r.received_portal_account_id AND a.client_id=r.client_id
+       JOIN public.client_portal_demand_sites s ON s.portal_account_id=a.id AND s.external_site=r.external_site
+       WHERE r.id=$1::uuid AND r.client_id=$2 AND a.id=$3::uuid AND a.status='ACTIVE'`,
+      [id, clientId, accountId],
+    );
+    if (!rows[0]) throw new HttpError(404, "CARCO_NOT_FOUND", "Relevé introuvable.");
+    return rows[0].external_site;
+  });
 }
 export async function portalCarcoSites(clientId: string, accountId: string) {
   return industrialTx(async (tx) =>
@@ -110,6 +129,7 @@ export async function recordCarco(
 ) {
   const parsed = parseDemandImportFile({
     source: "VISION_SYSTEMS",
+    preferSharedWorkbook: true,
     file,
     defaults: {
       external_site: scope.site,
@@ -117,6 +137,8 @@ export async function recordCarco(
       source_as_of: asOf,
     },
   });
+  // These formats carry selected requests. Missing rows have no meaning.
+  const fullSnapshot = !parsed.format && complete;
   if (!parsed.summary.total || parsed.summary.total > 5000)
     throw new HttpError(
       422,
@@ -156,8 +178,9 @@ export async function recordCarco(
     ).rows[0];
     if (previousVersion) {
       if (
+        (typeof actor !== "number" && previousVersion.received_portal_account_id !== actor.portalAccountId) ||
         previousVersion.content_sha256 !== hash ||
-        previousVersion.complete_snapshot !== complete ||
+        previousVersion.complete_snapshot !== fullSnapshot ||
         +previousVersion.source_as_of !== Date.parse(asOf)
       )
         throw new HttpError(
@@ -201,7 +224,7 @@ export async function recordCarco(
         asOf,
         hash,
         file.originalname,
-        complete,
+        fullSnapshot,
         JSON.stringify(parsed),
         typeof actor === "number" ? actor : null,
         typeof actor === "number" ? null : actor.portalAccountId,
@@ -421,6 +444,7 @@ export async function getCarco(scope: Scope, id?: string) {
     complete: review.complete_snapshot,
     latest: isLatest,
     file: review.source_file_name,
+    format: preview.format ?? null,
     summary: qualified.summary,
     lines: qualified.preview_rows,
     differences,
@@ -541,5 +565,8 @@ export async function submitCarco(
     completeSnapshot: review.complete && review.summary.invalid === 0,
     idempotencyKey: key,
     carcoReviewId: id,
+    firmReviewReason: review.format
+      ? "Le client demande un examen de l’échéance ferme. Validez la faisabilité et la date avant tout nouvel engagement."
+      : undefined,
   });
 }
