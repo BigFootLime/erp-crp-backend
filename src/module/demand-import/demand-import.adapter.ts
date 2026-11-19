@@ -88,7 +88,7 @@ function kindFromVision(
 ): "FIRM" | "FORECAST" | undefined {
   const normalized = raw?.trim().toLocaleLowerCase("fr-FR");
   if (
-    ["ferme", "firm", "en commande ferme", "cde fermee"].includes(
+    ["ferme", "firm", "en commande ferme", "cde fermee", "cde fermée"].includes(
       normalized ?? "",
     )
   )
@@ -495,7 +495,7 @@ export function parseDemandImport(
   const validKeys = new Map<string, DemandImportPreviewRow>();
 
   input.rows.forEach((raw, index) => {
-    const row_number = first + index;
+    const row_number = input.row_numbers?.[index] ?? first + index;
     // Metadata selected for an import is a default only: an explicit value in
     // the file remains visible and is subsequently rejected by the one-scope
     // persistence gate if it disagrees with the rest of the batch.
@@ -519,7 +519,7 @@ export function parseDemandImport(
     const preview: DemandImportPreviewRow = {
       row_number,
       ...(input.source==="VISION_SYSTEMS" ? {source:{order_type:value(raw,"TYPE_CDE")?.slice(0,80),
-        designation:value(raw,"LIBELLE_ARTICLE")?.slice(0,500),unit_price:value(raw,"PRUHA_US_EUR")?.slice(0,40)}} : {}),
+        designation:value(raw,"LIBELLE_ARTICLE")?.slice(0,500),unit_price:value(raw,"PRUHA_US_EUR","PRUHA_UA_EUR")?.slice(0,40)}} : {}),
       candidate,
       diagnostics: rowDiagnostics,
     };
@@ -599,19 +599,47 @@ export function parseDemandImportFile(
     );
   }
   const parsed = parseTabularFile(input.file);
+  const shared = input.preferSharedWorkbook && !input.sheet_name && /\.xlsx$/i.test(input.file.originalname)
+    ? parsed.sheets.find((candidate) => candidate.name === "Demandes")
+    : undefined;
   const sheet = input.sheet_name
     ? parsed.sheets.find((candidate) => candidate.name === input.sheet_name)
-    : parsed.sheets.find((candidate) => candidate.rows.length > 0);
+    : shared ?? parsed.sheets.find((candidate) => candidate.rows.length > 0);
   if (!sheet)
     throw new HttpError(
       400,
       "DEMAND_IMPORT_SHEET_NOT_FOUND",
       "La feuille demandée est introuvable ou vide.",
     );
-  return parseDemandImport({
+  let rows = sheet.rows;
+  let rowNumbers: number[] | undefined;
+  if (shared) {
+    const required = ["NUM_CDE", "NUM_LIGNE_CDE", "ID_ECHEANCE", "ARTICLE", "TYPE_CDE", "DATE_BESOIN", "QTE_SOLDE"];
+    if (!required.every((name) => sheet.headers.includes(name)))
+      throw new HttpError(422, "DEMAND_WORKBOOK_HEADERS", "Les colonnes d’identification, de besoin et de quantité de la feuille Demandes sont requises.");
+    if (sheet.headers.includes("TRANSMETTRE")) {
+      const selected = rows.flatMap((row, index) =>
+        String(row.TRANSMETTRE ?? "").trim().toUpperCase() === "OUI"
+          ? [{ row, number: index + 2 }]
+          : [],
+      );
+      if (!selected.length)
+        throw new HttpError(422, "DEMAND_WORKBOOK_NO_SELECTION", "Indiquez OUI dans la colonne TRANSMETTRE de chaque demande à déposer.");
+      rows = selected.map((item) => item.row);
+      rowNumbers = selected.map((item) => item.number);
+    }
+  }
+  const result = parseDemandImport({
     source: input.source,
-    rows: sheet.rows,
+    rows,
     defaults: input.defaults,
+    row_numbers: rowNumbers,
     first_data_row_number: 2,
   });
+  if (input.source !== "VISION_SYSTEMS") return result;
+  if (shared) return { ...result, format: "SHARED_WORKBOOK" };
+  const arHeaders = ["LIEU_EXP_FO", "QTE_CDE", "QTE_SOLDE", "DATE_DEMANDEE", "DATE_CONF", "DATE_BESOIN"];
+  return arHeaders.every((header) => sheet.headers.includes(header))
+    ? { ...result, format: "CLAYENS_AR" }
+    : result;
 }

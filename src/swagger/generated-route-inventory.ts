@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "740b72c4494f6738e001d1416c2518b9078aa87f73dca15b98c19fb3263cfa4d";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "954850eb333e911551746433d39876dee399eafcecf6c34f04abf9aee2c45a55";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -3602,7 +3602,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/client-portal/demand",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:64",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:77",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3617,7 +3617,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/client-portal/demand/{id}",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:68",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:81",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3632,7 +3632,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/client-portal/demand/{id}/response",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:69",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:82",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3647,7 +3647,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/client-portal/demand/carco",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:18",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3662,7 +3662,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/client-portal/demand/carco",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:29",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:31",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3676,9 +3676,24 @@ export const GENERATED_ROUTE_INVENTORY = [
     ]
   },
   {
+    "method": "get",
+    "path": "/client-portal/demand/carco/{id}/return",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:66",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "requireClientTransactions",
+      "asyncHandler(async (req, res) => { const id = z.string().uuid().parse(req.params.id); const {)"
+    ],
+    "authenticated": false,
+    "rbac": [
+      "requireClientTransactions"
+    ]
+  },
+  {
     "method": "post",
     "path": "/client-portal/demand/imports",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:66",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:79",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3693,7 +3708,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/client-portal/demand/manual",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:67",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:80",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -3708,7 +3723,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/client-portal/demand/preview",
-    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:65",
+    "source": "src/module/demand-pilot/routes/demand-pilot-portal.routes.ts:78",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16816,7 +16831,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/deliveries",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16828,7 +16843,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/portal/deliveries/{deliveryId}/receipt",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:22",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16843,7 +16858,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/deliveries/dashboard",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:20",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:21",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16855,7 +16870,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/documents",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:23",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:24",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16867,7 +16882,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/portal/documents/{publicationId}/acknowledgements",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:25",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:26",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16879,7 +16894,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/documents/{publicationId}/download",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:24",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:25",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16891,7 +16906,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/portal/invoices",
-    "source": "src/module/client-portal/routes/client-portal.routes.ts:22",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:23",
     "middleware": [
       "anonymous",
       "authenticateClientPortal",
@@ -16920,6 +16935,18 @@ export const GENERATED_ROUTE_INVENTORY = [
       "anonymous",
       "authenticateClientPortal",
       "controller.listOrders"
+    ],
+    "authenticated": false,
+    "rbac": []
+  },
+  {
+    "method": "get",
+    "path": "/portal/pieces",
+    "source": "src/module/client-portal/routes/client-portal.routes.ts:19",
+    "middleware": [
+      "anonymous",
+      "authenticateClientPortal",
+      "controller.trackPieces"
     ],
     "authenticated": false,
     "rbac": []
