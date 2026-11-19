@@ -52,8 +52,15 @@ export const OP_COLS = `
   o.ordre, o.phase, o.designation, o.designation_2, o.designation_auto, o.type_operation,
   o.machine_id::text AS machine_id, o.poste_id::text AS poste_id, o.cf_id::text AS cf_id,
   o.machine_family_code, o.numero_programme,
+  o.machine_ids, o.programmation_minutes::float8 AS programmation_minutes, o.amelioration_continue,
+  ARRAY(SELECT m.name FROM public.machines m
+    WHERE m.id = ANY(COALESCE(o.machine_ids, ARRAY[o.machine_id])) ORDER BY m.name,m.id) AS machine_names,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',a.designation,'quantite',p.quantite,'unite',p.unite_prix,'longueur_mm',p.longueur_mm,'quantite_pieces',p.quantite_pieces,'coefficient_chute',p.coefficient_chute) ORDER BY a.code,p.id)
-    FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id WHERE p.gamme_operation_id=o.id AND p.type_achat='MATIERE'),'[]'::jsonb) AS matieres,
+    FROM public.pieces_techniques_achats p JOIN public.articles a ON a.id=p.article_id
+    JOIN public.pieces_techniques_operations linked ON linked.id=p.gamme_operation_id
+    WHERE p.type_achat='MATIERE'
+      AND COALESCE(linked.gamme_source_operation_id,linked.id)=COALESCE(o.gamme_source_operation_id,o.id)
+      AND p.piece_technique_version_id=(SELECT gamme.piece_technique_version_id FROM public.gammes gamme WHERE gamme.id=o.gamme_id)),'[]'::jsonb) AS matieres,
   COALESCE((SELECT jsonb_agg(jsonb_build_object('achat_id',p.id,'article_id',a.id,'code',a.code,'designation',f.designation_courte,'fournisseur_nom',p.fournisseur_nom,'fournisseur_id',p.fournisseur_id) ORDER BY r.slot)
     FROM public.gamme_operation_finitions r JOIN public.surface_finish_revisions v ON v.id=r.finish_revision_id JOIN public.surface_finishes f ON f.id=v.finish_id JOIN public.articles a ON a.id=r.article_id LEFT JOIN public.pieces_techniques_achats p ON p.id=r.achat_ligne_id WHERE r.gamme_operation_id=o.id),'[]'::jsonb) AS procedes_speciaux,
   o.tp::float8 AS tp, o.tf_unit::float8 AS tf_unit, o.qte::float8 AS qte, o.coef::float8 AS coef,
@@ -79,6 +86,10 @@ const OP_JOIN_COLS = `
 `;
 
 export type GammeOperationDTO = {
+  machine_ids: string[] | null;
+  machine_names: string[];
+  programmation_minutes: number | null;
+  amelioration_continue: string | null;
   preparation_issues?: string[];
   prix_vente_horaire: number|null;
   procedes_speciaux?: Array<{achat_id:string|null;article_id:string;code:string;designation:string;fournisseur_nom:string|null;fournisseur_id:string|null}>;
@@ -188,6 +199,10 @@ function mapOperation(row: Record<string, unknown>, at: string): GammeOperationD
     cf_id: (row.cf_id as string | null) ?? null,
     cf_code: (row.cf_code as string | null) ?? null,
     cf_designation: (row.cf_designation as string | null) ?? null,
+    machine_ids: (row.machine_ids as string[] | null) ?? null,
+    machine_names: (row.machine_names as string[] | null) ?? [],
+    programmation_minutes: row.programmation_minutes == null ? null : toNum(row.programmation_minutes),
+    amelioration_continue: (row.amelioration_continue as string | null) ?? null,
     machine_family_code: (row.machine_family_code as string | null) ?? null,
     machine_family_libelle: (row.machine_family_libelle as string | null) ?? null,
     famille_programme_requis: Boolean(row.famille_programme_requis),
@@ -227,6 +242,7 @@ type GammeContext = {
   gamme_id: string;
   piece_technique_id: string;
   piece_technique_version_id: string;
+  source_gamme_id: string | null;
   statut: string;
   updated_at: string;
 };
@@ -235,7 +251,7 @@ async function loadGammeContext(tx: Pick<PoolClient, "query">, gammeId: string, 
   const res = await tx.query<GammeContext>(
     `SELECT g.id::text AS gamme_id, ptv.piece_technique_id::text AS piece_technique_id,
             g.piece_technique_version_id::text AS piece_technique_version_id,
-            g.statut, g.updated_at::text AS updated_at
+            g.statut, g.source_gamme_id::text, g.updated_at::text AS updated_at
        FROM public.gammes g
        JOIN public.piece_technique_versions ptv ON ptv.id = g.piece_technique_version_id
       WHERE g.id = $1
@@ -429,6 +445,9 @@ export async function repoNextPhase(gammeId: string, afterOperationId: string | 
 /* -------------------------------------------------------------------------- */
 
 export type OperationWriteInput = {
+  machine_ids?: string[];
+  programmation_minutes?: number | null;
+  amelioration_continue?: string | null;
   numero_operation?: number | null;
   /** Insertion contrôlée : la phase est calculée APRÈS cette opération. */
   insert_after_operation_id?: string | null;
@@ -541,13 +560,17 @@ async function resolveOperation(
   const at = toIsoDate(new Date());
 
   // --- Machine, famille et centre de frais ---------------------------------
-  const machineId =
-    input.machine_id !== undefined ? input.machine_id : (existing?.machine_id ?? null);
+  const machineIds = input.machine_ids;
+  const machineId = machineIds !== undefined ? machineIds.length === 1 ? machineIds[0] : null
+    : input.machine_id !== undefined ? input.machine_id : (existing?.machine_id ?? null);
   const cfId = input.cf_id !== undefined ? input.cf_id : (existing?.cf_id ?? null);
   const machine = await loadMachine(tx, machineId);
   const costCenter = await loadCostCenter(tx, cfId);
 
   assertCostCenterSelectable(costCenter, cfId);
+  if (costCenter?.code.toUpperCase() === "CF-PROGRAMMATION" && input.cf_id !== undefined) {
+    throw new HttpError(422, "PROGRAMMING_COST_CENTER", "Le centre Programmation est réservé aux temps de programmation.");
+  }
   // Une machine déjà posée n'est revalidée que si l'appel la (re)désigne :
   // l'historique d'une opération existante n'est pas invalidé rétroactivement.
   if (input.machine_id !== undefined && input.machine_id !== null) {
@@ -558,17 +581,30 @@ async function resolveOperation(
   // sinon de celui du centre de frais. Jamais d'un libellé ni d'un code.
   const explicitFamily =
     input.machine_family_code !== undefined ? input.machine_family_code : (existing?.machine_family_code ?? null);
-  const familyCode = explicitFamily ?? machine?.machine_family_code ?? costCenter?.machine_family_code ?? null;
+  const canonicalCncFamily = costCenter?.code.trim().toUpperCase() === "CF-FRAISAGE" ? "F"
+    : costCenter?.code.trim().toUpperCase() === "CF-TOURNAGE" ? "T" : null;
+  const familyCode = machineIds !== undefined ? canonicalCncFamily ?? costCenter?.machine_family_code ?? null
+    : explicitFamily ?? machine?.machine_family_code ?? costCenter?.machine_family_code ?? null;
   const family = await loadFamily(tx, familyCode);
   assertFamilySelectable(family, familyCode);
   assertMachineFamilyConsistent(machine, familyCode);
+  if (machineIds?.length) {
+    for (const id of machineIds) {
+      const candidate = id === machineId ? machine : await loadMachine(tx, id);
+      assertMachineSelectable(candidate, id, at);
+      assertMachineFamilyConsistent(candidate, familyCode);
+    }
+  }
 
   // --- Numéro de programme -------------------------------------------------
   const programme =
     input.numero_programme !== undefined
       ? normalizeProgramNumber(input.numero_programme)
       : (existing?.numero_programme ?? null);
-  assertProgramNumberRequirement({ family, numero_programme: programme });
+  if (!existing || input.numero_programme !== undefined || input.cf_id !== undefined
+    || input.machine_id !== undefined || input.machine_ids !== undefined || input.machine_family_code !== undefined) {
+    assertProgramNumberRequirement({ family, numero_programme: programme });
+  }
 
   // --- Temps ---------------------------------------------------------------
   const tp = resolveHours(input.temps_preparation_minutes, input.temps_preparation, existing?.tp ?? 0, "temps de préparation");
@@ -696,8 +732,10 @@ export async function repoCreateGammeOperation(
         (piece_technique_id, gamme_id, ordre, phase, designation, designation_2, designation_auto,
          type_operation, machine_id, poste_id, cf_id, machine_family_code, numero_programme,
          tp, tf_unit, qte, coef, taux_horaire, taux_horaire_source, taux_horaire_effective_at,
-         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by, prix_vente_horaire)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27,$28)
+         cf_rate_id, prix, temps_fabrication, temps_total, cout_mo, consignes, created_by, updated_by, prix_vente_horaire,
+         machine_ids, programmation_minutes, amelioration_continue, amelioration_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27,$28,$29,$30,$31,
+         CASE WHEN $31::text IS NOT NULL THEN gen_random_uuid() END)
        RETURNING id::text AS id`,
       [
         gamme.piece_technique_id,
@@ -728,6 +766,9 @@ export async function repoCreateGammeOperation(
         input.consignes ?? null,
         audit.user_id,
         input.prix_vente_horaire ?? null,
+        input.machine_ids ?? null,
+        input.programmation_minutes ?? null,
+        input.amelioration_continue ?? null,
       ]
     );
     createdId = res.rows[0].id;
@@ -737,6 +778,9 @@ export async function repoCreateGammeOperation(
       machine_family_code: resolved.machine_family_code,
       numero_programme: resolved.numero_programme,
       taux_horaire_source: resolved.taux_horaire_source,
+      machine_ids: input.machine_ids,
+      programmation_minutes: input.programmation_minutes,
+      amelioration_continue: input.amelioration_continue,
     });
     await client.query("COMMIT");
   } catch (error) {
@@ -764,7 +808,8 @@ export async function repoUpdateGammeOperation(
       `SELECT id::text AS id, gamme_id::text AS gamme_id, phase, designation, designation_auto,
               machine_family_code, machine_id::text AS machine_id, cf_id::text AS cf_id, numero_programme,
               tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
-              taux_horaire::float8 AS taux_horaire,taux_horaire_source,prix_vente_horaire,type_operation, updated_at::text AS updated_at
+              taux_horaire::float8 AS taux_horaire,taux_horaire_source,prix_vente_horaire,type_operation,
+              machine_ids, programmation_minutes, amelioration_continue, updated_at::text AS updated_at
          FROM public.pieces_techniques_operations WHERE id = $1 FOR UPDATE`,
       [operationId]
     );
@@ -778,6 +823,25 @@ export async function repoUpdateGammeOperation(
       currentUpdatedAt: String(current.updated_at),
       label: "l'opération",
     });
+
+    if (input.programmation_minutes !== undefined &&
+      Object.keys(input).every(key => key === "programmation_minutes" || key === "expected_updated_at")) {
+      await client.query(`UPDATE public.pieces_techniques_operations
+        SET programmation_minutes=$2,updated_at=now(),updated_by=$3 WHERE id=$1`,
+        [operationId, input.programmation_minutes, audit.user_id]);
+      await insertAudit(client, audit, "gammes.operations.update", "gamme_operation", operationId, {
+        gamme_id: gammeId,
+        programmation_minutes_avant: current.programmation_minutes,
+        programmation_minutes_apres: input.programmation_minutes,
+      });
+      const updated = await client.query(
+        `SELECT ${OP_COLS}, ${OP_JOIN_COLS} FROM public.pieces_techniques_operations o ${OP_JOINS} WHERE o.id=$1`,
+        [operationId],
+      );
+      const operation = mapOperation(updated.rows[0], toIsoDate(new Date()));
+      await client.query("COMMIT");
+      return operation;
+    }
 
     const existing: ExistingOperation = {
       taux_horaire:current.taux_horaire,taux_horaire_source:current.taux_horaire_source,
@@ -806,7 +870,11 @@ export async function repoUpdateGammeOperation(
          tp = $12, tf_unit = $13, qte = $14, coef = $15,
          taux_horaire = $16, taux_horaire_source = $17, taux_horaire_effective_at = $18, cf_rate_id = $19,
          prix = COALESCE($20, prix), temps_fabrication = $21, temps_total = $22, cout_mo = $23,
-         consignes = COALESCE($24, consignes), updated_by = $25, prix_vente_horaire=$26, updated_at = now()
+         consignes = COALESCE($24, consignes), updated_by = $25, prix_vente_horaire=$26,
+         machine_ids=$27, programmation_minutes=$28, amelioration_continue=$29,
+         amelioration_id=CASE WHEN $29::text IS NULL THEN NULL
+           WHEN amelioration_continue IS DISTINCT FROM $29::text THEN gen_random_uuid() ELSE amelioration_id END,
+         updated_at = now()
        WHERE id = $1`,
       [
         operationId,
@@ -835,12 +903,18 @@ export async function repoUpdateGammeOperation(
         input.consignes ?? null,
         audit.user_id,
         input.prix_vente_horaire !== undefined ? input.prix_vente_horaire : current.prix_vente_horaire,
+        input.machine_ids ?? (input.machine_id === undefined ? current.machine_ids : null),
+        input.programmation_minutes !== undefined ? input.programmation_minutes : current.programmation_minutes,
+        input.amelioration_continue !== undefined ? input.amelioration_continue : current.amelioration_continue,
       ]
     );
     await insertAudit(client, audit, "gammes.operations.update", "gamme_operation", operationId, {
       gamme_id: gammeId,
       phase_avant: existing.phase,
       phase_apres: resolved.phase,
+      machine_ids: input.machine_ids,
+      programmation_minutes: input.programmation_minutes,
+      amelioration_continue: input.amelioration_continue,
       taux_horaire_avant:current.taux_horaire,taux_horaire_apres:resolved.taux_horaire,prix_vente_horaire_avant:current.prix_vente_horaire,prix_vente_horaire_apres:input.prix_vente_horaire!==undefined?input.prix_vente_horaire:current.prix_vente_horaire,
     });
     await client.query("COMMIT");
@@ -1034,8 +1108,13 @@ export async function readGammePublicationBlockersTx(tx: Pick<PoolClient, "query
 }
 
 export async function publishGammeTx(
-  client: PoolClient, gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
+  client: PoolClient, gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext,
+  applyToExistingOf?: boolean,
 ): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
+    if (applyToExistingOf !== undefined) {
+      await client.query(`SELECT v.id FROM public.piece_technique_versions v
+        JOIN public.gammes g ON g.piece_technique_version_id=v.id WHERE g.id=$1 FOR UPDATE OF v`, [gammeId]);
+    }
     const gamme = await loadGammeContext(client, gammeId, true);
     assertGammeEditable(gamme.statut);
     assertOptimisticVersion({
@@ -1043,6 +1122,15 @@ export async function publishGammeTx(
       currentUpdatedAt: gamme.updated_at,
       label: "la gamme",
     });
+    if (applyToExistingOf !== undefined && gamme.source_gamme_id) {
+      const current = await client.query<{ id: string }>(
+        "SELECT id::text FROM public.gammes WHERE piece_technique_version_id=$1 AND is_current",
+        [gamme.piece_technique_version_id],
+      );
+      if (current.rows[0]?.id !== gamme.source_gamme_id) {
+        throw new HttpError(409, "GAMME_CHANGED", "La gamme courante a changé. Reprenez vos modifications à partir de la gamme courante.");
+      }
+    }
 
     const operations = await client.query(
       `SELECT id::text AS id, phase, designation, machine_family_code, numero_programme
@@ -1061,10 +1149,38 @@ export async function publishGammeTx(
       families
     );
 
+    let affectedOfs = 0;
+    if (applyToExistingOf !== undefined) {
+      const result = await client.query(`
+        WITH previous AS (
+          SELECT id FROM public.gammes
+          WHERE piece_technique_version_id=$1::uuid AND is_current AND id<>$2::uuid
+        )
+        UPDATE public.ordres_fabrication o
+        SET technical_preparation=CASE WHEN $3::boolean THEN o.technical_preparation - 'selected_gamme_id'
+          ELSE COALESCE(o.technical_preparation,'{}'::jsonb)
+            || jsonb_build_object('selected_gamme_id',(SELECT id::text FROM previous)) END,
+          updated_at=clock_timestamp(),updated_by=$4
+        FROM public.piece_technique_versions v
+        WHERE v.id=$1::uuid AND v.piece_technique_id=o.piece_technique_id
+          AND o.statut='BROUILLON' AND o.technical_snapshot_sha256 IS NULL
+          AND COALESCE(o.technical_readiness,'')<>'VALIDATED'
+          AND COALESCE(NULLIF(o.technical_preparation->>'selected_version_id','')::uuid,
+            NULLIF(o.technical_preparation->>'selected_draft_version_id','')::uuid,
+            o.piece_technique_version_id,
+            (SELECT fallback.id FROM public.piece_technique_versions fallback
+             WHERE fallback.piece_technique_id=o.piece_technique_id AND fallback.statut<>'OBSOLETE'
+             ORDER BY fallback.is_current DESC,fallback.created_at DESC,fallback.id LIMIT 1))=$1::uuid
+          AND EXISTS(SELECT 1 FROM previous)
+          AND ($3::boolean OR o.technical_preparation->>'selected_gamme_id' IS NULL)
+      `, [gamme.piece_technique_version_id, gammeId, applyToExistingOf, audit.user_id]);
+      affectedOfs = result.rowCount ?? 0;
+    }
+
     await client.query(
-      `UPDATE public.gammes SET is_current = false, updated_at = now(), updated_by = $2
-        WHERE piece_technique_version_id = $1 AND is_current = true AND id <> $3`,
-      [gamme.piece_technique_version_id, audit.user_id, gammeId]
+      `UPDATE public.gammes SET is_current = false
+        WHERE piece_technique_version_id = $1 AND is_current = true AND id <> $2`,
+      [gamme.piece_technique_version_id, gammeId]
     );
     const res = await client.query<{ id: string; statut: string; is_current: boolean; updated_at: string }>(
       `UPDATE public.gammes
@@ -1075,19 +1191,27 @@ export async function publishGammeTx(
     );
     await insertAudit(client, audit, "gammes.publish", "gamme", gammeId, {
       operations: operations.rowCount ?? 0,
+      apply_to_existing_of: applyToExistingOf,
+      affected_ofs: affectedOfs,
     });
     return res.rows[0];
 }
 
 export async function repoPublishGamme(
-  gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext
+  gammeId: string, expectedUpdatedAt: string | null | undefined, audit: AuditContext, applyToExistingOf?: boolean
 ): Promise<{ id: string; statut: string; is_current: boolean; updated_at: string }> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const result = await publishGammeTx(client, gammeId, expectedUpdatedAt, audit);
+    const result = await publishGammeTx(client, gammeId, expectedUpdatedAt, audit, applyToExistingOf);
     await client.query("COMMIT");
     return result;
-  } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    if ((error as { code?: string })?.code === "40P01") {
+      throw new HttpError(409, "OF_PREPARATION_CONCURRENT", "Un OF est en cours de modification. Réessayez d’enregistrer la gamme.");
+    }
+    throw error;
+  }
   finally { client.release(); }
 }

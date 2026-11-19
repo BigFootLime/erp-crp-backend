@@ -246,6 +246,7 @@ export async function svcAutoPlanPlanning(params: {
             "PLANNING_OPERATION_FAMILY_REQUIRED",
             "PLANNING_MACHINE_QUALIFICATION_REQUIRED",
             "PLANNING_MACHINE_FAMILY_INCOMPATIBLE",
+            "PLANNING_MACHINE_NOT_SELECTED",
           ].includes(errorCode)) {
             skipped_operations.push({
               of_id: op.of_id,

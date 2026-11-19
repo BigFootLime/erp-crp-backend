@@ -77,6 +77,7 @@ export type PreparationOrder = {
   preparation_rules_version: number | null;
   version_selection_mode?: "AUTO" | "MANUAL";
   technical_preparation?: {
+    selected_gamme_id?: string;
     operation_programming?: Record<string, ProgrammingPreparation>;
     version_selection_mode?: "AUTO" | "MANUAL";
     execution_programming?: NonNullable<PreparationDecisions['programming']>;
@@ -115,6 +116,8 @@ type TechnicalSources = {
     id: string;
     phase?: number | null;
     machine_id?: string | null;
+    machine_ids?: string[] | null;
+    programmation_minutes?: number | null;
     poste_id?: string | null;
     designation: string;
     type_operation?: string | null;
@@ -270,7 +273,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   const { rows } = await tx.query<{ sources: TechnicalSources }>(
     `
     WITH v AS (SELECT * FROM public.piece_technique_versions WHERE id=$1::uuid AND piece_technique_id=$2::uuid),
-    g AS (SELECT * FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current ORDER BY created_at DESC,id LIMIT 1),
+    g AS (SELECT * FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND (id=$5::uuid OR is_current)
+      ORDER BY (id=$5::uuid) DESC NULLS LAST,created_at DESC,id LIMIT 1),
     inspection_links AS (
       SELECT l.document_id FROM public.ged_document_links l
       JOIN public.ged_documents d ON d.id=l.document_id AND d.archived_at IS NULL
@@ -292,14 +296,26 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     qp AS (SELECT q.* FROM public.quality_control_plan q WHERE q.piece_version_id=$1::uuid AND q.status='PUBLISHED'
       AND q.archived_at IS NULL AND (q.effective_from IS NULL OR q.effective_from<=now()) AND (q.effective_to IS NULL OR q.effective_to>now())
       AND q.trigger_type IN ('IN_PROCESS','FINAL','FIRST_ARTICLE') ORDER BY q.published_at DESC,q.id LIMIT 1)
-    SELECT jsonb_build_object('version',(SELECT to_jsonb(v)||jsonb_build_object('effective',v.date_effet IS NULL OR v.date_effet<=CURRENT_DATE) FROM v),'gamme',(SELECT to_jsonb(g) FROM g),
-      'purchases',COALESCE((SELECT jsonb_agg(to_jsonb(p) || CASE WHEN p.type_achat='CONSOMMABLE' THEN
+    SELECT jsonb_build_object('version',(SELECT to_jsonb(v)||jsonb_build_object('effective',v.date_effet IS NULL OR v.date_effet<=CURRENT_DATE) FROM v),
+      'gamme',(SELECT to_jsonb(g)||jsonb_build_object('is_current',true) FROM g),
+      'purchases',COALESCE((SELECT jsonb_agg(to_jsonb(p)
+        || CASE WHEN op.id IS NOT NULL AND op.id IS DISTINCT FROM p.gamme_operation_id
+             THEN jsonb_build_object('gamme_operation_id',op.id,'phase',op.phase,'gamme_id',op.gamme_id)
+             ELSE '{}'::jsonb END
+        || CASE WHEN p.type_achat='CONSOMMABLE' THEN
         jsonb_build_object('article_policy',(SELECT jsonb_build_object('stock_managed',a.stock_managed,'consumption_mode',a.consumption_mode,
           'receipt_quality_required',a.receipt_quality_required,'unit',a.unite,'consumable',
           EXISTS(SELECT 1 FROM public.article_category_link acl WHERE acl.article_id=a.id AND acl.category_code='consommable')) FROM public.articles a WHERE a.id=p.article_id))
-        ELSE '{}'::jsonb END ORDER BY p.phase,p.id) FROM public.pieces_techniques_achats p WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
+        ELSE '{}'::jsonb END ORDER BY p.phase,p.id) FROM public.pieces_techniques_achats p
+        LEFT JOIN public.pieces_techniques_operations linked ON linked.id=p.gamme_operation_id
+        LEFT JOIN public.pieces_techniques_operations op ON op.gamme_id=(SELECT id FROM g)
+          AND COALESCE(op.gamme_source_operation_id,op.id)=COALESCE(linked.gamme_source_operation_id,linked.id)
+        WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
       'documents',COALESCE((SELECT jsonb_agg(to_jsonb(docs) ORDER BY docs.id,docs.role) FROM docs),'[]'),
-      'operations',COALESCE((SELECT jsonb_agg(to_jsonb(op) ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
+      'operations',COALESCE((SELECT jsonb_agg(
+        to_jsonb(op) - ARRAY['amelioration_id','amelioration_continue','machine_ids','programmation_minutes','gamme_source_operation_id']
+        || jsonb_strip_nulls(jsonb_build_object('machine_ids',op.machine_ids,'programmation_minutes',op.programmation_minutes))
+        ORDER BY op.phase,op.id) FROM public.pieces_techniques_operations op WHERE op.gamme_id=(SELECT id FROM g)),'[]'),
       'components',COALESCE((SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('child_code',COALESCE(cp.code_piece,ca.code),'child_designation',COALESCE(cp.designation,ca.designation)) ORDER BY b.rang,b.id) FROM public.pieces_techniques_nomenclature b LEFT JOIN public.pieces_techniques cp ON cp.id=b.child_piece_technique_id LEFT JOIN public.articles ca ON ca.id=b.child_article_id WHERE ${applicableBomScopeSql('b', '$2::uuid', '$1::uuid')}),'[]'),
       'quality_plan',(SELECT to_jsonb(qp) FROM qp),
       -- Keep the historical empty feedback counter in PostgreSQL's JSONB order.
@@ -314,6 +330,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
       of.piece_technique_id,
       decisions.programming?.task_id ?? null,
       id,
+      of.technical_preparation?.selected_gamme_id ?? null,
     ],
   );
   const improvementReturns = await readImprovementReturns(tx, id);
@@ -480,11 +497,16 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     `SELECT id::text, concat_ws(' ',code,designation,type_cf) AS label FROM public.centres_frais WHERE id::text=ANY($1::text[])`,
     [sources.operations.map(op => op.cf_id).filter(Boolean)])).rows;
   const centres = new Map(centreRows.map(row => [row.id, row.label]));
-  const programmingOperations = sources.operations.filter(op => needsProgramming(op, centres)).map(op => {
+  const programmingOperations = sources.operations.filter(op =>
+    op.programmation_minutes != null || needsProgramming(op, centres)).map(op => {
     const saved = of.technical_preparation?.operation_programming?.[op.id];
     const current = programmingPreparationCurrent(op, of.version_id, saved);
+    const plannedHours = op.programmation_minutes == null ? null : Number(op.programmation_minutes) / 60;
+    const estimatedHours = current ? saved!.estimated_hours : plannedHours;
+    const notRequired = current ? saved?.mode === 'NOT_REQUIRED' : plannedHours === 0;
     return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
-      estimated_hours: current ? saved!.estimated_hours : null, status: current ? saved?.mode === 'NOT_REQUIRED' ? 'NOT_REQUIRED' as const : 'PREPARED' as const : 'TODO' as const};
+      estimated_hours: estimatedHours,
+      status: notRequired ? 'NOT_REQUIRED' as const : estimatedHours != null ? 'PREPARED' as const : 'TODO' as const};
   });
   const programmingItem = items.find(item => item.key === 'programming');
   if (programmingItem && programmingOperations.length) {
@@ -506,10 +528,19 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     items.push({key:'procurement',label:'Dates prévues et achats fournisseur',scope:'OF',required:false,status:messages.length?'MISSING':'READY',detail:[...new Set(messages)].join(' · ')||'Prévisions et brouillons préparés. Les réceptions réelles restent à confirmer avant fabrication.'});}
   const resourcePreparation=await prepareOperationResources(tx,sources.operations,id);
   const resourceIssues=resourcePreparation.filter(operation=>operation.issue);
+  const improvementFlags = of.statut === 'BROUILLON' && !of.technical_snapshot_sha256 && sources.gamme
+    ? (await tx.query<{id: string; phase: number | null; designation: string; note: string}>(`
+      SELECT op.amelioration_id::text AS id,op.phase,op.designation,op.amelioration_continue AS note
+      FROM public.pieces_techniques_operations op
+      WHERE op.gamme_id=$1 AND op.amelioration_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM public.gamme_improvement_receipts receipt WHERE receipt.flag_id=op.amelioration_id)
+      ORDER BY op.phase,op.id`, [sources.gamme.id])).rows : [];
   items.push({key:'resources',label:'Ressources de fabrication',scope:'OF',required:!of.technical_snapshot_sha256,
     status:resourceIssues.length?'MISSING':'READY',detail:resourceIssues.length?resourceIssues.map(operation=>`${operation.label} : ${operation.issue}`).join(' · '):'Postes habituels et familles de machines disponibles. Le choix des créneaux reste à faire dans le planning.'});
   return {
     resource_preparation:resourcePreparation,
+    gamme_id: sources.gamme?.id ?? null,
+    improvement_flags: improvementFlags,
     programming_operations: programmingOperations,
     of: {
       ...of,

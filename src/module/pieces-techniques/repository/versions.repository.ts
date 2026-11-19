@@ -670,9 +670,16 @@ async function cloneTechnicalVersionTx(
     )
     copied.version_nomenclature_lines = copiedBom.rowCount ?? 0
 
-    const linkedPurchases = await client.query<{ gamme_operation_id: string }>(
-      `SELECT DISTINCT gamme_operation_id::text FROM public.pieces_techniques_achats
-       WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$2::uuid AND gamme_operation_id IS NOT NULL`, [pieceTechniqueId, sourceVersionId])
+    const linkedPurchases = await client.query<{ gamme_operation_id: string; copied_operation_id: string | null }>(
+      `SELECT DISTINCT p.gamme_operation_id::text,target.id::text AS copied_operation_id FROM public.pieces_techniques_achats p
+       LEFT JOIN public.pieces_techniques_operations linked ON linked.id=p.gamme_operation_id
+       LEFT JOIN public.pieces_techniques_operations target ON target.gamme_id=$3::uuid
+         AND target.gamme_source_operation_id=COALESCE(linked.gamme_source_operation_id,linked.id)
+       WHERE p.piece_technique_id=$1::uuid AND p.piece_technique_version_id=$2::uuid AND p.gamme_operation_id IS NOT NULL`,
+      [pieceTechniqueId, sourceVersionId, copiedGammeId])
+    for (const purchase of linkedPurchases.rows) {
+      if (purchase.copied_operation_id) operationIds.set(purchase.gamme_operation_id, purchase.copied_operation_id)
+    }
     if (linkedPurchases.rows.some(purchase => !operationIds.has(purchase.gamme_operation_id)))
       throw new HttpError(409, "PURCHASE_OPERATION_NOT_COPIED", "Un achat vise une opération hors de la gamme courante. Vérifiez son rattachement avant de modifier le dossier.")
     const purchases = await client.query<{ old_id: string; new_id: string }>(

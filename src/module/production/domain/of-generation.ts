@@ -432,7 +432,7 @@ async function loadVersionNotApplicableDetails(
 export async function loadApplicableTechnicalSnapshot(
   tx: Queryable,
   pieceTechniqueId: string,
-  opts?: { pinned_version_id?: string | null; preparation_evidence?: unknown; allow_historical_published?: boolean }
+  opts?: { pinned_version_id?: string | null; pinned_gamme_id?: string | null; preparation_evidence?: unknown; allow_historical_published?: boolean }
 ): Promise<ApplicableTechnicalSnapshot> {
   const pinned = opts?.pinned_version_id ?? null;
   const allowHistoricalPublished = opts?.allow_historical_published === true;
@@ -448,7 +448,7 @@ export async function loadApplicableTechnicalSnapshot(
       FROM public.piece_technique_versions v
       LEFT JOIN public.gammes g
         ON g.piece_technique_version_id = v.id
-       AND g.is_current = true
+       AND CASE WHEN $4::uuid IS NULL THEN g.is_current ELSE g.id=$4::uuid END
       WHERE v.piece_technique_id = $1::uuid
         AND (
           ($3::boolean AND v.id=$2::uuid AND v.statut IN ('APPLICABLE','OBSOLETE'))
@@ -460,7 +460,7 @@ export async function loadApplicableTechnicalSnapshot(
       ORDER BY v.date_effet DESC NULLS LAST, v.version_interne DESC NULLS LAST, v.created_at DESC
       LIMIT 1
     `,
-    [pieceTechniqueId, pinned, allowHistoricalPublished]
+    [pieceTechniqueId, pinned, allowHistoricalPublished, opts?.pinned_gamme_id ?? null]
   );
   const version = versionRes.rows[0] ?? null;
   if (!version) {
@@ -527,7 +527,8 @@ export async function loadApplicableTechnicalSnapshot(
             'temps_fabrication', op.temps_fabrication, 'temps_total', op.temps_total,
             'cout_mo', op.cout_mo,
             'consignes', op.consignes
-          ) ORDER BY op.phase, op.id)
+          ) || jsonb_strip_nulls(jsonb_build_object('machine_ids',op.machine_ids,'programmation_minutes',op.programmation_minutes))
+            ORDER BY op.phase, op.id)
           FROM public.pieces_techniques_operations op
           LEFT JOIN public.production_machine_families fam ON fam.code = op.machine_family_code
           LEFT JOIN public.machines mac ON mac.id = op.machine_id
@@ -895,6 +896,7 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
   existing_root_of_id?: number | null;
   force_preparation?: boolean;
   root_preparation_evidence?: unknown;
+  root_pinned_gamme_id?: string | null;
 }): Promise<RecursiveOfGenerationResult> {
   const preparationEnabled = params.force_preparation === true || await usesPreparationRules(tx);
   await assertNoWipResumptionForCommercialLine(tx, params);
@@ -931,7 +933,11 @@ export async function createRecursiveOrdresFabrication(tx: Queryable, params: {
     const cacheKey = `${node.piece_technique_id}:${pinned ?? ""}`;
     let technical = technicalByPiece.get(cacheKey);
     if (!technical) {
-      technical = await loadApplicableTechnicalSnapshot(tx, node.piece_technique_id, { pinned_version_id: pinned,preparation_evidence:node.level===0?params.root_preparation_evidence:undefined });
+      technical = await loadApplicableTechnicalSnapshot(tx, node.piece_technique_id, {
+        pinned_version_id: pinned,
+        pinned_gamme_id: node.level === 0 ? params.root_pinned_gamme_id : undefined,
+        preparation_evidence: node.level === 0 ? params.root_preparation_evidence : undefined,
+      });
       technicalByPiece.set(cacheKey, technical);
     }
     technicalByKey.set(node.key, technical);

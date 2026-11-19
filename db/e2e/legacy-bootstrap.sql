@@ -265,6 +265,9 @@ CREATE TABLE public.centres_frais (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code text UNIQUE,
   name text NOT NULL DEFAULT '',
+  designation text,
+  type_cf text,
+  section text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

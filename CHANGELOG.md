@@ -1,5 +1,7 @@
 # Changelog
 
+- UNRELEASED : une gamme peut porter des machines autorisées, un temps de programmation et un drapeau d’amélioration par opération. Lors de l’enregistrement de la gamme, les OF existants encore en préparation conservent leur définition ou prennent la nouvelle selon le choix utilisateur. Le patch `20261119_gamme_atelier.sql` prépare les nouveaux centres et la trace du premier OF ayant validé la préparation après signalement.
+
 - UNRELEASED : le skill de préparation des patches PostgreSQL accompagne désormais le dépôt backend. Les anciennes implémentations privées inutilisées de l’expédition et des accusés de réception ont été retirées. Les parcours actifs, exports et contrats HTTP restent identiques.
 
 - UNRELEASED (#1566, port source CERP 2.0.89 du 17 novembre 2026) : le générateur commun d’aperçu/création matière omet les segments état et procédé absents (`etat_id: null`, `sous_etat_id: null`), sans libellé de remplacement ni séparateur vide. La nuance reste obligatoire et le résolveur refactoré conserve le rejet des référentiels inconnus avec le libellé Procédé. La version du composant backend reste indépendante. Aucune migration, recodification des articles existants ou activation de production.

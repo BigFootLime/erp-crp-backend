@@ -3,13 +3,77 @@ import { afterAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
 import { seedProductionWorkbenchFixture } from "../../../__tests__/fixtures/production-workbench.fixture";
 import { loadApplicableTechnicalSnapshot } from "../domain/of-generation";
-import { evaluateOfPreparation } from "./production-preparation.repository";
+import { evaluateOfPreparation, repoSavePreparationDecisions } from "./production-preparation.repository";
+import { repoSubmitOfTechnicalPreparation, repoValidateOfTechnicalPreparation } from "./production.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
+import { repoCreateGammeRevision } from "../../gammes/repository/gammes.repository";
+import { repoCreateGammeOperation, repoPublishGamme } from "../../gammes/repository/gamme-operations.repository";
 
 const managed = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_MANAGED_STACK === "1";
 
 describe.skipIf(!managed)("PT documents in a managed disposable workbench", () => {
   afterAll(() => pool.end());
+
+  it("keeps the old routing by choice and inherits machine choices, programming and the improvement flag on the next OF", async () => {
+    const f = await seedProductionWorkbenchFixture();
+    await pool.query(`UPDATE public.pieces_techniques_operations SET numero_programme='QA-CNC' WHERE gamme_id=$1`, [f.gamme]);
+    await pool.query(`UPDATE public.ordres_fabrication SET technical_readiness='VALIDATED' WHERE id=$1`, [f.ids[1]]);
+    const machines = [randomUUID(), randomUUID()];
+    for (const id of machines) {
+      await pool.query(`INSERT INTO public.machines(id,code,name,type,status,is_available,machine_family_code,created_by,updated_by)
+        VALUES($1,$2,$3,'MILLING','ACTIVE',true,'F',$4,$4)`, [id,`QA-${id}`,`Fraiseuse ${id.slice(0,4)}`,f.audit.user_id]);
+    }
+    const first = await repoCreateGammeRevision(f.gamme, {}, f.audit, randomUUID());
+    const operation = await repoCreateGammeOperation(first.gamme.id, {
+      numero_operation: 20, designation: "Ébauche QA", type_operation: "FRAISAGE",
+      cf_id: f.cf, machine_ids: machines, numero_programme: "QA-20",
+      temps_preparation_minutes: 5, temps_unitaire_minutes: 2,
+      programmation_minutes: 90, amelioration_continue: "Revoir le bridage",
+    }, f.audit);
+    expect(operation.machine_ids).toEqual(machines);
+    expect(operation.machine_names).toHaveLength(2);
+    const timestamp = async (id: string) => (await pool.query<{updated_at:string}>(
+      "SELECT updated_at::text FROM public.gammes WHERE id=$1", [id],
+    )).rows[0].updated_at;
+    await repoPublishGamme(first.gamme.id, await timestamp(first.gamme.id), f.audit, false);
+    const existing = await evaluateOfPreparation(pool, f.ids[0]);
+    expect(existing.gamme_id).toBe(f.gamme);
+    expect(existing.improvement_flags).toEqual([]);
+    expect((await loadApplicableTechnicalSnapshot(pool, f.piece)).gamme_id).toBe(first.gamme.id);
+
+    const second = await repoCreateGammeRevision(first.gamme.id, {}, f.audit, randomUUID());
+    await repoPublishGamme(second.gamme.id, await timestamp(second.gamme.id), f.audit, true);
+    const refreshed = await evaluateOfPreparation(pool, f.ids[0]);
+    expect(refreshed.gamme_id).toBe(second.gamme.id);
+    expect(refreshed.programming_operations).toContainEqual(expect.objectContaining({ designation: "Ébauche QA", estimated_hours: 1.5, status: "PREPARED" }));
+    expect(refreshed.improvement_flags).toEqual([expect.objectContaining({ phase: 20, note: "Revoir le bridage" })]);
+    expect(refreshed.resource_preparation).toContainEqual(expect.objectContaining({ phase: 20, issue: null }));
+    const retained = await pool.query<{pin: string | null}>(
+      "SELECT technical_preparation->>'selected_gamme_id' AS pin FROM public.ordres_fabrication WHERE id=$1", [f.ids[1]],
+    );
+    expect(retained.rows[0].pin).toBeNull();
+    const flagId = refreshed.improvement_flags[0].id;
+    const reviewed = await repoSavePreparationDecisions(f.ids[0], {
+      expected_updated_at: refreshed.of.updated_at,
+      version_id: f.version,
+      expected_version: refreshed.profile_version,
+      decisions: {
+        material: { mode: "REQUIRED" },
+        treatment: { mode: "NOT_REQUIRED", reason: "Aucun traitement prévu" },
+        subcontract: { mode: "NOT_REQUIRED", reason: "Fabrication interne" },
+      },
+    }, f.audit);
+    await repoSubmitOfTechnicalPreparation({
+      id: f.ids[0], body: { expected_updated_at: reviewed.of.updated_at }, audit: f.audit,
+    });
+    const submitted = await evaluateOfPreparation(pool, f.ids[0]);
+    await repoValidateOfTechnicalPreparation({
+      id: f.ids[0], body: { expected_updated_at: submitted.of.updated_at }, audit: f.audit,
+    });
+    const receipt = await pool.query("SELECT of_id::int FROM public.gamme_improvement_receipts WHERE flag_id=$1", [flagId]);
+    expect(receipt.rows).toEqual([{ of_id: f.ids[0] }]);
+    expect((await evaluateOfPreparation(pool, f.ids[2])).improvement_flags).toEqual([]);
+  });
 
   it("uses the chosen non-obsolete revision, keeps applicable fallback and requires published historical opt-in", async () => {
     const f = await seedProductionWorkbenchFixture();
