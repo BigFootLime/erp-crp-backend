@@ -8,14 +8,15 @@ import { isWorkstationType, resolveDefaultPoste, workstationDefaultsSchema, WORK
 
 type Query = Pick<PoolClient, "query">;
 type ResourceOperation = {id:string;designation:string;phase?:number|null;type_operation?:string|null;machine_id?:string|null;machine_ids?:string[]|null;poste_id?:string|null;machine_family_code:string|null};
-export async function prepareOperationResources(tx:Query, operations:readonly ResourceOperation[], ofId:number) {
+export async function prepareOperationResources(tx:Query, operations:readonly ResourceOperation[], ofId:number, allowHistoricalPhaseMatch = true) {
   const setup=await readWorkstationDefaults(tx);
   const {rows:machines}=await tx.query<{id:string;name:string;family:string|null}>(`SELECT m.id::text,m.name,upper(btrim(m.machine_family_code)) AS family FROM public.machines m
     WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)`);
   const {rows:assignments}=await tx.query<{source_id:string;phase:number;poste_id:string|null;machine_id:string|null}>(
     "SELECT source_piece_operation_id::text AS source_id,phase,poste_id::text,machine_id::text FROM public.of_operations WHERE of_id=$1 AND status::text<>'CANCELLED'",[ofId]);
   return operations.map(operation=>{
-    const assigned=assignments.find(row=>row.source_id===operation.id || (operation.phase!=null&&row.phase===operation.phase));
+    const assigned=assignments.find(row=>row.source_id===operation.id)
+      ?? (allowHistoricalPhaseMatch ? assignments.find(row=>operation.phase!=null&&row.phase===operation.phase) : undefined);
     const posteId=assigned?.poste_id??operation.poste_id;
     const machineId=assigned?.machine_id??operation.machine_id;
     if(operation.type_operation==='SOUS_TRAITANCE')return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:'Fournisseur de la prestation',source:'EXTERNAL',issue:null};

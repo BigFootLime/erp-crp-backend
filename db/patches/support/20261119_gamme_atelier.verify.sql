@@ -14,6 +14,15 @@ BEGIN
   IF to_regclass('public.gamme_improvement_receipts') IS NULL THEN
     RAISE EXCEPTION 'Missing improvement receipts table';
   END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM (VALUES ('CF-FRAISAGE','F'),('CF-FRAISAGE-TRAD','FTRAD'),('CF-TOURNAGE','T'),
+      ('CF-TOURNAGE-TRAD','TTRAD'),('CF-DECOUPE','DECOUPE')) AS expected(code,family)
+    JOIN public.centres_frais cf ON upper(btrim(cf.code))=expected.code
+    WHERE cf.machine_family_code IS DISTINCT FROM expected.family OR cf.statut IS DISTINCT FROM 'ACTIF'
+  ) THEN
+    RAISE EXCEPTION 'A machining cost centre has an unexpected machine family or status';
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cerp_app') THEN
     IF NOT has_table_privilege('cerp_app','public.gamme_improvement_receipts','SELECT')
       OR NOT has_table_privilege('cerp_app','public.gamme_improvement_receipts','INSERT') THEN

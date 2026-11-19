@@ -1,6 +1,6 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-11-19T12:24:36.940Z
+- Généré : 2026-11-19T15:05:08.824Z
 - Source : filesystem scan of db/patches and db/patches/support
 - Patches exécutables : 388
 - Scripts auxiliaires : 833

@@ -526,7 +526,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
   const purchasing=sources.purchases.some(p=>['MATIERE','SOUS_TRAITANCE','TRAITEMENT'].includes(p.type_achat));
   if(purchasing){const messages=[...(await readProcurementWarningsTx(tx,id,of.version_id,of.quantite_lancee,sources.purchases)).values()].flat();
     items.push({key:'procurement',label:'Dates prévues et achats fournisseur',scope:'OF',required:false,status:messages.length?'MISSING':'READY',detail:[...new Set(messages)].join(' · ')||'Prévisions et brouillons préparés. Les réceptions réelles restent à confirmer avant fabrication.'});}
-  const resourcePreparation=await prepareOperationResources(tx,sources.operations,id);
+  const resourcePreparation=await prepareOperationResources(tx,sources.operations,id, Boolean(of.technical_snapshot_sha256));
   const resourceIssues=resourcePreparation.filter(operation=>operation.issue);
   const improvementFlags = of.statut === 'BROUILLON' && !of.technical_snapshot_sha256 && sources.gamme
     ? (await tx.query<{id: string; phase: number | null; designation: string; note: string}>(`

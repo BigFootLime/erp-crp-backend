@@ -14,6 +14,7 @@ import { preparationOperationIssues } from "../../production/domain/preparation-
 
 import db from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
+import { isWorkstationType } from "../../production/domain/workstation-defaults";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import {
   assertGammeEditable,
@@ -515,6 +516,8 @@ type ResolvedOperation = {
   designation_auto: boolean;
   machine_family_code: string | null;
   machine_id: string | null;
+  machine_ids: string[] | null;
+  poste_id: string | null;
   cf_id: string | null;
   numero_programme: string | null;
   tp: number;
@@ -538,6 +541,8 @@ type ExistingOperation = {
   designation_auto: boolean;
   machine_family_code: string | null;
   machine_id: string | null;
+  machine_ids: string[] | null;
+  poste_id: string | null;
   cf_id: string | null;
   numero_programme: string | null;
   tp: number;
@@ -560,12 +565,15 @@ async function resolveOperation(
   const at = toIsoDate(new Date());
 
   // --- Machine, famille et centre de frais ---------------------------------
-  const machineIds = input.machine_ids;
-  const machineId = machineIds !== undefined ? machineIds.length === 1 ? machineIds[0] : null
+  const machineIds = input.machine_ids ?? (input.machine_id === undefined ? existing?.machine_ids ?? null : null);
+  const machineId = machineIds !== null ? machineIds.length === 1 ? machineIds[0] : null
     : input.machine_id !== undefined ? input.machine_id : (existing?.machine_id ?? null);
   const cfId = input.cf_id !== undefined ? input.cf_id : (existing?.cf_id ?? null);
   const machine = await loadMachine(tx, machineId);
   const costCenter = await loadCostCenter(tx, cfId);
+  const typeOperation = input.type_operation !== undefined ? input.type_operation : existing?.type_operation ?? null;
+  const retargeting = !existing || input.machine_ids !== undefined || input.machine_id !== undefined
+    || cfId !== existing.cf_id || typeOperation !== existing.type_operation || input.machine_family_code !== undefined;
 
   assertCostCenterSelectable(costCenter, cfId);
   if (costCenter?.code.toUpperCase() === "CF-PROGRAMMATION" && input.cf_id !== undefined) {
@@ -579,20 +587,44 @@ async function resolveOperation(
 
   // La famille vient du choix explicite, sinon du RÉFÉRENTIEL de la machine,
   // sinon de celui du centre de frais. Jamais d'un libellé ni d'un code.
-  const explicitFamily =
-    input.machine_family_code !== undefined ? input.machine_family_code : (existing?.machine_family_code ?? null);
-  const canonicalCncFamily = costCenter?.code.trim().toUpperCase() === "CF-FRAISAGE" ? "F"
-    : costCenter?.code.trim().toUpperCase() === "CF-TOURNAGE" ? "T" : null;
-  const familyCode = machineIds !== undefined ? canonicalCncFamily ?? costCenter?.machine_family_code ?? null
-    : explicitFamily ?? machine?.machine_family_code ?? costCenter?.machine_family_code ?? null;
+  const familyCode = input.machine_family_code !== undefined
+    ? input.machine_family_code ?? machine?.machine_family_code ?? costCenter?.machine_family_code ?? null
+    : input.machine_ids !== undefined || cfId !== existing?.cf_id
+      ? costCenter?.machine_family_code ?? machine?.machine_family_code ?? null
+      : existing?.machine_family_code ?? machine?.machine_family_code ?? costCenter?.machine_family_code ?? null;
   const family = await loadFamily(tx, familyCode);
   assertFamilySelectable(family, familyCode);
   assertMachineFamilyConsistent(machine, familyCode);
-  if (machineIds?.length) {
+  if (retargeting && machineIds?.length) {
     for (const id of machineIds) {
       const candidate = id === machineId ? machine : await loadMachine(tx, id);
       assertMachineSelectable(candidate, id, at);
       assertMachineFamilyConsistent(candidate, familyCode);
+    }
+  }
+  const machiningFamilies = typeOperation === "FRAISAGE" ? ["F", "FTRAD"] : typeOperation === "TOURNAGE" ? ["T", "TTRAD"] : null;
+  if (retargeting && machineIds !== null && machiningFamilies
+      && (!familyCode || !machiningFamilies.includes(familyCode) || costCenter?.machine_family_code !== familyCode)) {
+    throw new HttpError(422, "MACHINE_COST_CENTER_REQUIRED", "Choisissez un centre de frais qualifié pour ce type d’opération.", { field: "cf_id" });
+  }
+  let posteId = input.poste_id ?? existing?.poste_id ?? null;
+  if (posteId && (retargeting || input.poste_id != null)) {
+    const result = await tx.query<{ machine_id: string | null; active: boolean }>(`
+      SELECT machine_id::text, is_active AND archived_at IS NULL AS active
+      FROM public.postes WHERE id=$1`, [posteId]);
+    const poste = result.rows[0];
+    const posteMachine = await loadMachine(tx, poste?.machine_id ?? null);
+    const manual = isWorkstationType(typeOperation);
+    const compatible = poste?.active && (posteMachine
+      ? (!machineId || machineId === posteMachine.id)
+        && (!machineIds?.length || machineIds.includes(posteMachine.id))
+        && (!familyCode || familyCode === posteMachine.machine_family_code)
+      : manual && !machineId && !machineIds?.length);
+    if (!compatible) {
+      if (input.poste_id != null) {
+        throw new HttpError(422, "GAMME_POSTE_INCOMPATIBLE", "Ce poste n’est pas compatible avec les machines de l’opération.", { field: "poste_id" });
+      }
+      posteId = null;
     }
   }
 
@@ -656,8 +688,6 @@ async function resolveOperation(
   assertPhaseAvailable(otherPhases, phase);
 
   // --- Désignation ---------------------------------------------------------
-  const typeOperation =
-    input.type_operation !== undefined ? input.type_operation : (existing?.type_operation ?? null);
   const saisie = input.designation !== undefined ? input.designation : (existing?.designation_auto ? null : existing?.designation ?? null);
   const designation = resolveOperationDesignation({
     saisie,
@@ -682,6 +712,8 @@ async function resolveOperation(
     designation_auto: designation.designation_auto,
     machine_family_code: familyCode,
     machine_id: machineId,
+    machine_ids: machineIds,
+    poste_id: posteId,
     cf_id: cfId,
     numero_programme: programme,
     tp,
@@ -747,7 +779,7 @@ export async function repoCreateGammeOperation(
         resolved.designation_auto,
         input.type_operation ?? null,
         resolved.machine_id,
-        input.poste_id ?? null,
+        resolved.poste_id,
         resolved.cf_id,
         resolved.machine_family_code,
         resolved.numero_programme,
@@ -766,7 +798,7 @@ export async function repoCreateGammeOperation(
         input.consignes ?? null,
         audit.user_id,
         input.prix_vente_horaire ?? null,
-        input.machine_ids ?? null,
+        resolved.machine_ids,
         input.programmation_minutes ?? null,
         input.amelioration_continue ?? null,
       ]
@@ -806,7 +838,7 @@ export async function repoUpdateGammeOperation(
 
     const currentRes = await client.query(
       `SELECT id::text AS id, gamme_id::text AS gamme_id, phase, designation, designation_auto,
-              machine_family_code, machine_id::text AS machine_id, cf_id::text AS cf_id, numero_programme,
+              machine_family_code, machine_id::text AS machine_id, poste_id::text AS poste_id, cf_id::text AS cf_id, numero_programme,
               tp::float8 AS tp, tf_unit::float8 AS tf_unit, qte::float8 AS qte, coef::float8 AS coef,
               taux_horaire::float8 AS taux_horaire,taux_horaire_source,prix_vente_horaire,type_operation,
               machine_ids, programmation_minutes, amelioration_continue, updated_at::text AS updated_at
@@ -851,6 +883,8 @@ export async function repoUpdateGammeOperation(
       designation_auto: Boolean(current.designation_auto),
       machine_family_code: (current.machine_family_code as string | null) ?? null,
       machine_id: (current.machine_id as string | null) ?? null,
+      machine_ids: (current.machine_ids as string[] | null) ?? null,
+      poste_id: (current.poste_id as string | null) ?? null,
       cf_id: (current.cf_id as string | null) ?? null,
       numero_programme: (current.numero_programme as string | null) ?? null,
       tp: toNum(current.tp, 0),
@@ -865,7 +899,7 @@ export async function repoUpdateGammeOperation(
     await client.query(
       `UPDATE public.pieces_techniques_operations SET
          phase = $2, designation = $3, designation_2 = COALESCE($4, designation_2), designation_auto = $5,
-         type_operation = $6, machine_id = $7, poste_id = COALESCE($8, poste_id), cf_id = $9,
+         type_operation = $6, machine_id = $7, poste_id = $8, cf_id = $9,
          machine_family_code = $10, numero_programme = $11,
          tp = $12, tf_unit = $13, qte = $14, coef = $15,
          taux_horaire = $16, taux_horaire_source = $17, taux_horaire_effective_at = $18, cf_rate_id = $19,
@@ -884,7 +918,7 @@ export async function repoUpdateGammeOperation(
         resolved.designation_auto,
         input.type_operation !== undefined ? input.type_operation : existing.type_operation,
         resolved.machine_id,
-        input.poste_id ?? null,
+        resolved.poste_id,
         resolved.cf_id,
         resolved.machine_family_code,
         resolved.numero_programme,
@@ -903,7 +937,7 @@ export async function repoUpdateGammeOperation(
         input.consignes ?? null,
         audit.user_id,
         input.prix_vente_horaire !== undefined ? input.prix_vente_horaire : current.prix_vente_horaire,
-        input.machine_ids ?? (input.machine_id === undefined ? current.machine_ids : null),
+        resolved.machine_ids,
         input.programmation_minutes !== undefined ? input.programmation_minutes : current.programmation_minutes,
         input.amelioration_continue !== undefined ? input.amelioration_continue : current.amelioration_continue,
       ]
