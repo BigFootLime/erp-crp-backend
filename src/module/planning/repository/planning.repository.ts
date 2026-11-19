@@ -643,6 +643,7 @@ export async function assertOperationResourceCompatible(params: {
     selected_poste_id?: string | null;
     poste_active?: boolean;
     operation_machine_id?: string | null;
+    allowed_machine_ids?: string[] | null;
   }>(
     `
       SELECT
@@ -654,6 +655,8 @@ export async function assertOperationResourceCompatible(params: {
         NULLIF(btrim(m.machine_family_code), '') AS machine_family_code,
         (SELECT value->>'type_operation' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
           WHERE value->>'phase'=op.phase::text LIMIT 1) AS operation_type,
+        (SELECT value->'machine_ids' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
+          WHERE value->>'phase'=op.phase::text LIMIT 1) AS allowed_machine_ids,
         op.poste_id::text AS assigned_poste_id,p.id::text AS selected_poste_id,op.machine_id::text AS operation_machine_id,
         p.is_active AND p.archived_at IS NULL AS poste_active
       FROM public.of_operations op
@@ -680,7 +683,7 @@ export async function assertOperationResourceCompatible(params: {
       "Aucun poste de travail utilisable : sélectionnez le poste habituel du configurateur ERP ou le poste affecté à cet OF.",
       { operation_id: row.operation_id });
   }
-  if (!row.required_machine_family_code) {
+  if (!row.required_machine_family_code && !row.allowed_machine_ids?.length) {
     throw new HttpError(
       422,
       "PLANNING_OPERATION_FAMILY_REQUIRED",
@@ -701,6 +704,11 @@ export async function assertOperationResourceCompatible(params: {
       action: "Renseignez une ressource machine qualifiée pour la famille requise.",
     });
   }
+  if (row.allowed_machine_ids?.length && !row.allowed_machine_ids.includes(row.machine_id)) {
+    throw new HttpError(422, "PLANNING_MACHINE_NOT_SELECTED", "Choisissez une des machines sélectionnées dans la gamme.",
+      { operation_id: row.operation_id, machine_id: row.machine_id });
+  }
+  if (!row.required_machine_family_code) return;
   if (!row.machine_family_code) {
     throw new HttpError(422, "PLANNING_MACHINE_QUALIFICATION_REQUIRED", "La machine sélectionnée n'a pas de famille qualifiée. Qualifiez-la avant de planifier cette opération.", {
       operation_id: row.operation_id,

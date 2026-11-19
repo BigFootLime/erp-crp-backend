@@ -106,6 +106,9 @@ const operationCore = z
     designation_2: z.string().max(200).optional().nullable(),
     type_operation: operationTypeSchema.optional().nullable(),
     machine_family_code: machineFamilyCode.optional().nullable(),
+    machine_ids: z.array(uuid).max(100).refine(ids => new Set(ids).size === ids.length, "Machines en double").optional(),
+    programmation_minutes: z.number().finite().min(0).max(600000).optional().nullable(),
+    amelioration_continue: z.string().trim().min(1).max(2000).optional().nullable(),
     machine_id: uuid.optional().nullable(),
     poste_id: uuid.optional().nullable(),
     cf_id: uuid.optional().nullable(),
@@ -126,7 +129,13 @@ const operationCore = z
   })
   .merge(rejectedInputs)
 
-export const addGammeOperationSchema = z.object({ body: operationCore })
+export const addGammeOperationSchema = z.object({
+  body: operationCore.superRefine((body, ctx) => {
+    if (body.machine_ids !== undefined && body.temps_unitaire_minutes == null && body.temps_cycle == null) {
+      ctx.addIssue({ code: "custom", path: ["temps_unitaire_minutes"], message: "Le temps par pièce est obligatoire." })
+    }
+  }),
+})
 export type AddGammeOperationBodyDTO = z.infer<typeof addGammeOperationSchema>["body"]
 
 export const updateGammeOperationSchema = z.object({
@@ -149,7 +158,10 @@ export const nextPhaseQuerySchema = z.object({
 })
 
 export const publishGammeSchema = z.object({
-  body: z.object({ expected_updated_at: z.string().trim().min(1, "expected_updated_at est obligatoire") }),
+  body: z.object({
+    expected_updated_at: z.string().trim().min(1, "expected_updated_at est obligatoire"),
+    apply_to_existing_of: z.boolean().optional(),
+  }),
 })
 
 export const reorderOperationsSchema = z.object({ body: z.object({ order: z.array(uuid).min(1) }) })

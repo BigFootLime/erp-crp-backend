@@ -1,10 +1,10 @@
 # Inventaire des migrations — SOL-06
 
-- Généré : 2026-11-13T12:55:49.759Z
+- Généré : 2026-11-19T15:05:08.824Z
 - Source : filesystem scan of db/patches and db/patches/support
-- Patches exécutables : 384
-- Scripts auxiliaires : 830
-- Patches depuis 2026-07-01 : 326
+- Patches exécutables : 388
+- Scripts auxiliaires : 833
+- Patches depuis 2026-07-01 : 330
 
 ## Risques statiques à examiner
 
@@ -12,9 +12,9 @@
 |---|---:|
 | DDL destructif | 3 |
 | DML destructif | 46 |
-| Réécriture de données | 250 |
-| Verrou de table possible | 260 |
-| Index non concurrent | 240 |
+| Réécriture de données | 251 |
+| Verrou de table possible | 262 |
+| Index non concurrent | 241 |
 | Évolution d'enum | 2 |
 
 Ces détections sont volontairement conservatrices : elles servent de file de revue, pas de preuve de danger. Les durées réelles sont capturées par la répétition isolée.
@@ -116,5 +116,8 @@ Ces détections sont volontairement conservatrices : elles servent de file de re
 - `20261106_procurement_conforming_completion_1836.sql`: preflight=false, verify=true, rollback=true
 - `20261112_stock_sous_etats_independent.sql`: preflight=false, verify=false, rollback=false
 - `20261112_stock_sous_etats_informations.sql`: preflight=false, verify=false, rollback=false
+- `20261116_consolidation_reservation_restorations_1861.sql`: preflight=false, verify=false, rollback=false
+- `20261118_supplier_order_email_dispatch.sql`: preflight=false, verify=false, rollback=false
+- `20261118_tarification_client_schema.sql`: preflight=false, verify=false, rollback=false
 
 Le détail machine, l'ordre, les SHA-256, la transaction, la rejouabilité et les risques par fichier sont dans `MIGRATION_INVENTORY_SOL_06.json`.

@@ -4705,10 +4705,13 @@ export async function repoValidateOfTechnicalPreparation(params: {
       ? row.technical_preparation.selected_version_id
       : null;
     let preparationEvidence: Awaited<ReturnType<typeof assertOfPreparationReady>> | undefined;
+    let preparedGammeId: string | null = null;
     if (await usesPreparationRules(tx, params.id)) {
       let evaluation = await assertOfPreparationReady(tx, params.id);
       if (!evaluation.of.version_id) throw new HttpError(422,'VERSION_REQUIRED','Sélectionnez l’indice de cet OF.');
-      await publishPreparationDefinitionTx(tx,row.piece_technique_id,evaluation.of.version_id,params.audit);
+      preparedGammeId = (await publishPreparationDefinitionTx(
+        tx, row.piece_technique_id, evaluation.of.version_id, params.audit, evaluation.gamme_id,
+      )).gammeId;
       evaluation = preparationEvidence = await assertOfPreparationReady(tx, params.id);
       await tx.query(`INSERT INTO public.piece_version_preparation(piece_technique_version_id,decisions,approved_source_hash,approved_at,approved_by,updated_by)
         VALUES($1::uuid,$2::jsonb,$3,now(),$4,$4) ON CONFLICT(piece_technique_version_id) DO UPDATE
@@ -4722,10 +4725,19 @@ export async function repoValidateOfTechnicalPreparation(params: {
       if (missing.length) throw new HttpError(422,'OF_TECHNICAL_PREPARATION_INCOMPLETE','Le dossier technique est incomplet.',{missing_sections:missing});
       const legacy = await loadPreparationOrder(tx,params.id);
       if (!legacy.version_id) throw new HttpError(422,'VERSION_REQUIRED','Sélectionnez l’indice de cet OF.');
-      await publishPreparationDefinitionTx(tx,row.piece_technique_id,legacy.version_id,params.audit);
+      preparedGammeId = (await publishPreparationDefinitionTx(
+        tx, row.piece_technique_id, legacy.version_id, params.audit, legacy.technical_preparation?.selected_gamme_id,
+      )).gammeId;
     }
     const technical = await loadApplicableTechnicalSnapshot(tx, row.piece_technique_id, {
-      pinned_version_id: preparationEvidence?.of.version_id ?? selected, preparation_evidence:preparationEvidence?.sources });
+      pinned_version_id: preparationEvidence?.of.version_id ?? selected,
+      pinned_gamme_id: preparedGammeId,
+      preparation_evidence: preparationEvidence?.sources,
+    });
+    await tx.query(`INSERT INTO public.gamme_improvement_receipts(flag_id,of_id)
+      SELECT amelioration_id,$2 FROM public.pieces_techniques_operations
+      WHERE gamme_id=$1 AND amelioration_id IS NOT NULL ON CONFLICT(flag_id) DO NOTHING`,
+      [preparedGammeId, params.id]);
     if(preparationEvidence){
       const affected=await synchronizeDraftChildrenTx(tx,params.id,params.audit.user_id);
       for(const childId of affected)await preparationAudit(tx,params.audit,childId,'production.preparation.structure.synchronize',{parent_of_id:params.id});
@@ -4841,6 +4853,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
         user_id: params.audit.user_id,
         existing_root_of_id: params.id,
         root_preparation_evidence:preparationEvidence?.sources,
+        root_pinned_gamme_id: preparedGammeId,
         force_preparation: Boolean(preparationEvidence),
         planned_quantities_by_path:
           assemblyPlan.manufacturing_mode === "ASSEMBLY"
