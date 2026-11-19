@@ -59,6 +59,7 @@ export type DemandImportSummary = {
 };
 
 export type DemandImportResult = {
+  format?: "CLAYENS_AR" | "SHARED_WORKBOOK";
   rows: CanonicalDemandImportRow[];
   preview_rows: DemandImportPreviewRow[];
   diagnostics: DemandImportDiagnostic[];
@@ -83,6 +84,7 @@ export type DemandImportInput = {
   >;
   /** Source row numbers are 1-based file row numbers, including the header row. */
   first_data_row_number?: number;
+  row_numbers?: readonly number[];
 };
 
 export type DemandImportFileInput = {
@@ -90,4 +92,5 @@ export type DemandImportFileInput = {
   file: Express.Multer.File;
   sheet_name?: string;
   defaults?: DemandImportInput["defaults"];
+  preferSharedWorkbook?: boolean;
 };

@@ -73,7 +73,7 @@ export async function qualifyCarcoReferences(
     set.add(alias.external_unit);
     units.set(alias.external_code, set);
   }
-  const exactCodes = new Set(known.map((a) => a.code));
+  const exactCodes = new Map(known.map((a) => [a.code, a.unite]));
   const bound = new Map(
     bindings.map((b) => [lineKey(b.order_key, b.line_key), b]),
   );
@@ -139,6 +139,8 @@ export async function qualifyCarcoReferences(
       );
     const permitted = units.get(c.article_code ?? "");
     if (!c.unit && permitted?.size === 1) c.unit = Array.from(permitted)[0];
+    if (!c.unit && !permitted && parsed.format === "CLAYENS_AR")
+      c.unit = exactCodes.get(c.article_code ?? "");
     if (!permitted && !exactCodes.has(c.article_code ?? ""))
       error(
         row,

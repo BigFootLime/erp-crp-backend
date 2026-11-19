@@ -8,6 +8,7 @@ import {
 import { demandRowSchema } from "../validators/demand-pilot.validators";
 import { demandImportCompositeKey } from "../../demand-import/demand-import.adapter";
 import { qualifyCarcoReferences } from "./carco-qualification";
+import { assertClayensArMatch, qualifyClayensAr } from "./clayens-ar-qualification";
 
 export async function qualifyDemandPreview(
   clientId: string,
@@ -25,6 +26,9 @@ export async function qualifyDemandPreview(
   return industrialTx(async (tx) => {
     if (portalAccountId)
       await assertDemandSiteAccess(tx, clientId, portalAccountId, site);
+    const clayensMatches = carco && parsed.format === "CLAYENS_AR"
+      ? await qualifyClayensAr(tx, clientId, site, parsed)
+      : null;
     if (carco) await qualifyCarcoReferences(tx, clientId, site, parsed);
     const byKey = new Map(
       parsed.rows.map((row) => [demandImportCompositeKey(row), row]),
@@ -52,6 +56,8 @@ export async function qualifyDemandPreview(
         if (carco && !portalAccountId && resolved.article_id && resolved.article_code) {
           preview.resolved={article_id:resolved.article_id,article_code:resolved.article_code,quantity:resolved.quantity,
             unit:resolved.unit,contract_line_id:resolved.contract_line_id??null};
+          if (clayensMatches && !assertClayensArMatch(preview, clayensMatches.get(preview), preview.resolved))
+            continue;
         }
         const original = carco ? parsedRow.data : byKey.get(demandImportCompositeKey(parsedRow.data));
         if (original) valid.push({...preview.candidate, ...original, article_code: original.article_code ?? undefined,
