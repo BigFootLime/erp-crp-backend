@@ -309,7 +309,7 @@ export async function readCentralSnapshot(query: Omit<CentralWindow,'include_cov
           // Resolve the reusable default without writing an assignment or a slot.
           task.resourceIds=[task.eligibleResourceIds[0]];
         }
-      } else if (!qualification?.family || !task.eligibleResourceIds.length) {
+      } else if (!task.eligibleResourceIds.length) {
         const message=!qualification?.family ? "Famille machine à définir dans la gamme." : `Aucune machine active qualifiée pour la famille ${qualification.family}.`;
         task.resourceIssues=[{code:"MACHINE_QUALIFICATION_MISSING",message,actionPath:"/production/machines"}];task.blockers.push(message);
       }

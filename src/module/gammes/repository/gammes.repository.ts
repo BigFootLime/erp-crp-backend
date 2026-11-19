@@ -24,6 +24,7 @@ export type GammeRow = {
   commentaire: string | null
   statut: GammeStatutDTO
   is_current: boolean
+  source_gamme_id: string | null
   created_at: string
   updated_at: string
   created_by: number | null
@@ -32,7 +33,8 @@ export type GammeRow = {
 
 const GAMME_COLS = `
   id::text AS id, piece_technique_version_id::text AS piece_technique_version_id, nom, code, designation,
-  commentaire, statut, is_current, created_at::text AS created_at, updated_at::text AS updated_at, created_by, updated_by
+  commentaire, statut, is_current, source_gamme_id::text AS source_gamme_id,
+  created_at::text AS created_at, updated_at::text AS updated_at, created_by, updated_by
 `
 async function insertAudit(
   tx: Pick<PoolClient, "query">,
@@ -215,11 +217,13 @@ const opColumns = await copyableColumns(tx, "pieces_techniques_operations", [
   "updated_by",
 ])
 const opColumnList = opColumns.map((c) => `"${c}"`).join(", ")
+const opValues = opColumns.map(c => c === "gamme_source_operation_id"
+  ? "COALESCE(o.gamme_source_operation_id,o.id)" : `o."${c}"`).join(", ")
 const copiedOps = await tx.query<{ new_id: string; old_id: string }>(
   `WITH copied AS (
      INSERT INTO public.pieces_techniques_operations
        (gamme_id, ${opColumnList}, created_by, updated_by)
-     SELECT $2::uuid, ${opColumns.map((c) => `o."${c}"`).join(", ")}, $3, $3
+     SELECT $2::uuid, ${opValues}, $3, $3
        FROM public.pieces_techniques_operations o
       WHERE o.gamme_id = $1
       ORDER BY o.ordre ASC, o.phase ASC, o.created_at ASC
@@ -242,7 +246,7 @@ const finitionsTable = await tx.query<{ present: boolean }>(
 )
 if (finitionsTable.rows[0]?.present) {
   const finitionColumns = await copyableColumns(tx, "gamme_operation_finitions", [
-    "achat_ligne_id",
+    ...(operationIds ? ["achat_ligne_id"] : []),
     "id",
     "gamme_id",
     "gamme_operation_id",

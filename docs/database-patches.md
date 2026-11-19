@@ -3,6 +3,22 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Gammes atelier
+
+`20261119_gamme_atelier.sql` adds nullable operation metadata and the improvement
+receipt table. Existing operation, machine and cost-centre identifiers are
+preserved. The seed reserves canonical centre codes and leaves an existing
+centre and its rates untouched. New centres have no rate until Méthodes records
+one. The Programmation centre is reserved for programming and stays out of the
+operation selector.
+
+Routing saves apply the new current routing to future orders. For existing
+orders the explicit choice is executed in the same transaction against drafts
+on the same technical version. Existing frozen definitions remain readable.
+Apply the schema before activating the backend and frontend candidate. A runtime
+rollback may keep the additive schema and receipts. Restoring the prior data
+state after business writes requires the verified pre-upgrade backup.
+
 Do not make schema changes directly on the VPS. The VPS must not become a
 second writable database.
 

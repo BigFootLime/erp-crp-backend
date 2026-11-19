@@ -6,7 +6,9 @@ import { activatePreparedPieceTx } from '../../pieces-techniques/repository/piec
 import type { AuditContext } from './production.repository';
 
 /** Publish only the selected technical definition, in the same transaction as the OF freeze. */
-export async function publishPreparationDefinitionTx(tx: PoolClient, pieceId: string, versionId: string, audit: AuditContext) {
+export async function publishPreparationDefinitionTx(
+  tx: PoolClient, pieceId: string, versionId: string, audit: AuditContext, gammeId?: string | null,
+) {
   await activatePreparedPieceTx(tx,pieceId,audit);
   const version = (await tx.query<{statut:string;effective:boolean}>(`SELECT statut,
     date_effet IS NULL OR date_effet<=CURRENT_DATE AS effective FROM public.piece_technique_versions
@@ -14,8 +16,8 @@ export async function publishPreparationDefinitionTx(tx: PoolClient, pieceId: st
   if (!version || version.statut === 'OBSOLETE' || !version.effective)
     throw new HttpError(422,'VERSION_NOT_PUBLISHABLE','L’indice sélectionné est obsolète ou sa date d’effet est future.');
   const gamme = (await tx.query<{id:string;statut:string;updated_at:string}>(`SELECT id::text,statut,updated_at::text
-    FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current
-    ORDER BY created_at DESC,id LIMIT 1 FOR UPDATE`, [versionId])).rows[0];
+    FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND (id=$2::uuid OR is_current)
+    ORDER BY (id=$2::uuid) DESC NULLS LAST,created_at DESC,id LIMIT 1 FOR UPDATE`, [versionId,gammeId ?? null])).rows[0];
   if (!gamme) throw new HttpError(422,'GAMME_REQUIRED','Complétez la gamme avant de valider le dossier.');
   if (gamme.statut !== 'APPLICABLE') await publishGammeTx(tx,gamme.id,gamme.updated_at,audit);
   const published = await publishVersionTx(tx,pieceId,versionId,{date_application:null,

@@ -87,6 +87,14 @@ describe("planning machine qualification invariant", () => {
     }, "PLANNING_MACHINE_FAMILY_INCOMPATIBLE");
   });
 
+  it("blocks an otherwise qualified machine outside the routing selection", async () => {
+    await expectCode({
+      operation_id: operationId, piece_technique_id: pieceId,
+      required_machine_family_code: "F", machine_family_code: "F", machine_id: machineId,
+      allowed_machine_ids: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+    }, "PLANNING_MACHINE_NOT_SELECTED");
+  });
+
   it("accepts an explicitly matching family", async () => {
     const tx = queryer({
       operation_id: operationId,
@@ -109,6 +117,7 @@ describe("planning machine qualification invariant", () => {
         .mockResolvedValueOnce({
           rows: [{ of_operation_id: operationId, machine_id: machineId, poste_id: null }],
         })
+
         .mockResolvedValueOnce({
           rows: [{
             operation_id: operationId,

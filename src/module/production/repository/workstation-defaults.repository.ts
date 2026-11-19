@@ -7,30 +7,36 @@ import { PROGRAMMING_ASSIGNEE_PREDICATE_SQL } from "./programming-assignee.sql";
 import { isWorkstationType, resolveDefaultPoste, workstationDefaultsSchema, WORKSTATION_SETTING, WORKSTATION_TYPES, WORKSTATION_LABELS, type Workstation, type WorkstationDefaults } from "../domain/workstation-defaults";
 
 type Query = Pick<PoolClient, "query">;
-type ResourceOperation = {id:string;designation:string;phase?:number|null;type_operation?:string|null;machine_id?:string|null;poste_id?:string|null;machine_family_code:string|null};
-export async function prepareOperationResources(tx:Query, operations:readonly ResourceOperation[], ofId:number) {
+type ResourceOperation = {id:string;designation:string;phase?:number|null;type_operation?:string|null;machine_id?:string|null;machine_ids?:string[]|null;poste_id?:string|null;machine_family_code:string|null};
+export async function prepareOperationResources(tx:Query, operations:readonly ResourceOperation[], ofId:number, allowHistoricalPhaseMatch = true) {
   const setup=await readWorkstationDefaults(tx);
   const {rows:machines}=await tx.query<{id:string;name:string;family:string|null}>(`SELECT m.id::text,m.name,upper(btrim(m.machine_family_code)) AS family FROM public.machines m
     WHERE m.archived_at IS NULL AND m.status::text='ACTIVE' AND COALESCE((to_jsonb(m)->>'scheduling_enabled')::boolean,true)`);
   const {rows:assignments}=await tx.query<{source_id:string;phase:number;poste_id:string|null;machine_id:string|null}>(
     "SELECT source_piece_operation_id::text AS source_id,phase,poste_id::text,machine_id::text FROM public.of_operations WHERE of_id=$1 AND status::text<>'CANCELLED'",[ofId]);
   return operations.map(operation=>{
-    const assigned=assignments.find(row=>row.source_id===operation.id || (operation.phase!=null&&row.phase===operation.phase));
+    const assigned=assignments.find(row=>row.source_id===operation.id)
+      ?? (allowHistoricalPhaseMatch ? assignments.find(row=>operation.phase!=null&&row.phase===operation.phase) : undefined);
     const posteId=assigned?.poste_id??operation.poste_id;
     const machineId=assigned?.machine_id??operation.machine_id;
     if(operation.type_operation==='SOUS_TRAITANCE')return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:'Fournisseur de la prestation',source:'EXTERNAL',issue:null};
     const manual=isWorkstationType(operation.type_operation);
     const poste=posteId?setup.postes.find(row=>row.id===posteId&&row.is_active&&!row.archived_at):null;
-    if(poste && ((manual&&!poste.machine_id) || machines.some(machine=>machine.id===poste.machine_id&&!!operation.machine_family_code&&machine.family===operation.machine_family_code.trim().toUpperCase())))return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:poste.label,source:'ASSIGNED',issue:null};
+    const isEligible = (machine: (typeof machines)[number]) =>
+      (!operation.machine_ids?.length || operation.machine_ids.includes(machine.id))
+      && (!operation.machine_family_code || machine.family === operation.machine_family_code.trim().toUpperCase());
+    if(poste && ((manual&&!poste.machine_id) || machines.some(machine=>machine.id===poste.machine_id
+      && (!!operation.machine_ids?.length || !!operation.machine_family_code) && isEligible(machine))))return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:poste.label,source:'ASSIGNED',issue:null};
     if(machineId){
       const machine=machines.find(row=>row.id===machineId);
-      const qualified=machine&&(!operation.machine_family_code||machine.family===operation.machine_family_code.trim().toUpperCase());
+      const qualified=machine&&isEligible(machine);
       return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:machine?.name??null,source:'ASSIGNED',
         issue:!machine?'La machine affectée est inactive, archivée ou retirée du planning.':!qualified?'La machine affectée ne correspond pas à la famille de cette opération.':null};
     }
     if(manual&&!posteId){const usual=resolveDefaultPoste(operation.type_operation as keyof typeof WORKSTATION_LABELS,setup.defaults,setup.postes);if(usual)return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:usual.label,source:'DEFAULT',issue:null};}
-    const eligible=machines.filter(machine=>!!operation.machine_family_code&&machine.family===operation.machine_family_code.trim().toUpperCase());
-    return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,resource:eligible.length?`Famille ${operation.machine_family_code} · ${eligible.length} machine(s)`:null,source:'FAMILY',
+    const eligible=machines.filter(machine => (!!operation.machine_ids?.length || !!operation.machine_family_code) && isEligible(machine));
+    return {operation_id:operation.id,phase:operation.phase??null,label:operation.designation,
+      resource:eligible.length ? operation.machine_ids?.length ? eligible.map(machine=>machine.name).join(', ') : `${eligible.length} machine(s) compatible(s)` : null,source:'FAMILY',
       issue:posteId?'Le poste affecté est inactif, archivé ou incompatible avec cette opération.':eligible.length?null:manual?`Aucun poste de travail configuré pour ${WORKSTATION_LABELS[operation.type_operation as keyof typeof WORKSTATION_LABELS]}.`:'Aucune machine active qualifiée pour la famille de cette opération.'};
   });
 }

@@ -59,7 +59,7 @@ export const reorderGammeOperationsSVC = (gammeId: string, order: string[], audi
   repoReorderGammeOperations(gammeId, order, audit)
 
 export const gammePublicationReadinessSVC = (gammeId: string) => repoGammePublicationReadiness(gammeId)
-export const publishGammeSVC = (gammeId: string, expectedUpdatedAt: string, audit: AuditContext) =>
-  repoPublishGamme(gammeId, expectedUpdatedAt, audit)
+export const publishGammeSVC = (gammeId: string, expectedUpdatedAt: string, audit: AuditContext, applyToExistingOf?: boolean) =>
+  repoPublishGamme(gammeId, expectedUpdatedAt, audit, applyToExistingOf)
 
 export const gammeProfitabilitySVC=(gammeId:string,quantity:number)=>repoGammeProfitability(gammeId,quantity);

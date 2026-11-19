@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-11-13T12:55:49.759Z",
+  "generated_at": "2026-11-19T15:05:08.824Z",
   "source": "filesystem scan of db/patches and db/patches/support",
-  "patch_count": 384,
-  "support_file_count": 830,
-  "recent_patch_count": 326,
+  "patch_count": 388,
+  "support_file_count": 833,
+  "recent_patch_count": 330,
   "recent_support_gaps": [
     {
       "filename": "20260706_affaire_allow_projet.sql",
@@ -764,14 +764,38 @@
         "verify": false,
         "rollback": false
       }
+    },
+    {
+      "filename": "20261116_consolidation_reservation_restorations_1861.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20261118_supplier_order_email_dispatch.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
+    },
+    {
+      "filename": "20261118_tarification_client_schema.sql",
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      }
     }
   ],
   "risk_totals": {
     "destructive_ddl": 3,
     "destructive_dml": 46,
-    "data_rewrite": 250,
-    "table_lock": 260,
-    "blocking_index": 240,
+    "data_rewrite": 251,
+    "table_lock": 262,
+    "blocking_index": 241,
     "enum_change": 2
   },
   "patches": [
@@ -7309,6 +7333,69 @@
         "data-rewrite",
         "table-lock",
         "blocking-index"
+      ]
+    },
+    {
+      "order": 385,
+      "filename": "20261116_consolidation_reservation_restorations_1861.sql",
+      "sha256": "c25b39b23e78a047edeb925e276f01f3bdbe2cbfe0d06efb2c0351022bcfd4ae",
+      "bytes": 1265,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "data-rewrite",
+        "table-lock"
+      ]
+    },
+    {
+      "order": 386,
+      "filename": "20261118_supplier_order_email_dispatch.sql",
+      "sha256": "2ae16f6893492802c92a71f4369d5475e81573365cd46266f1d674bf4ac99e35",
+      "bytes": 674,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": []
+    },
+    {
+      "order": 387,
+      "filename": "20261118_tarification_client_schema.sql",
+      "sha256": "5f6502bf0086f545780213822852cfeb11a60521ced37711531be753275a4b59",
+      "bytes": 1378,
+      "transaction_wrapped": true,
+      "replay_markers": true,
+      "support": {
+        "preflight": false,
+        "verify": false,
+        "rollback": false
+      },
+      "risks": [
+        "blocking-index"
+      ]
+    },
+    {
+      "order": 388,
+      "filename": "20261119_gamme_atelier.sql",
+      "sha256": "97d5f2daf35f23f00ce15e78240e8bcf2f32567ecc59aa1bb666055da235b103",
+      "bytes": 1626,
+      "transaction_wrapped": false,
+      "replay_markers": true,
+      "support": {
+        "preflight": true,
+        "verify": true,
+        "rollback": true
+      },
+      "risks": [
+        "table-lock"
       ]
     }
   ]

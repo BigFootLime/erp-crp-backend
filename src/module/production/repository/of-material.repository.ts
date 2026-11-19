@@ -96,8 +96,9 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
   const draftOperations=previewConfiguration&&!of.hash&&of.revision?(await tx.query<{id:string;phase:number;label:string;sourceId:string}>(
     `SELECT p.id::text,p.phase,p.designation AS label,p.id::text AS "sourceId"
      FROM public.pieces_techniques_operations p WHERE p.gamme_id=(
-       SELECT id FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND is_current ORDER BY created_at DESC,id LIMIT 1
-     ) ORDER BY p.phase,p.id`,[of.revision])).rows:[];
+       SELECT id FROM public.gammes WHERE piece_technique_version_id=$1::uuid AND (id=$2::uuid OR is_current)
+       ORDER BY (id=$2::uuid) DESC NULLS LAST,created_at DESC,id LIMIT 1
+     ) ORDER BY p.phase,p.id`,[of.revision,of.technical_preparation?.selected_gamme_id ?? null])).rows:[];
   const articles=defaults.articles;
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",

@@ -205,7 +205,7 @@ export const publishGamme: RequestHandler = async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
     const body = publishGammeSchema.parse({ body: req.body }).body
-    res.json(await publishGammeSVC(parseUuidRouteParam(req.params, "gammeId"), body.expected_updated_at, audit))
+    res.json(await publishGammeSVC(parseUuidRouteParam(req.params, "gammeId"), body.expected_updated_at, audit, body.apply_to_existing_of))
   } catch (err) {
     next(err)
   }
