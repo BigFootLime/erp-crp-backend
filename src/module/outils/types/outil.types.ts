@@ -45,6 +45,23 @@ export type OutilRelationOption = {
   label: string
 }
 
+export type OutillageWorkshopPageSize = 10 | 20 | 30 | 40
+
+export type OutillageWorkshopFacet = OutilRelationOption & { count: number }
+
+export type OutillageWorkshopPage = {
+  items: OutilListItem[]
+  total: number
+  page: number
+  pageSize: OutillageWorkshopPageSize
+  criticalCount: number
+  facets: {
+    families: OutillageWorkshopFacet[]
+    geometries: OutillageWorkshopFacet[]
+    manufacturers: OutillageWorkshopFacet[]
+  }
+}
+
 export type OutilValeurArete = {
   id_valeur_arete: number
   id_arete_coupe: number | null

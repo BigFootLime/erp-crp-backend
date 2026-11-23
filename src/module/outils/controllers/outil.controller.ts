@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from "express"
 import { HttpError } from "../../../utils/httpError"
 import { parseId } from "../../../utils/parseId"
 import { parseString } from "../../../utils/parseString"
+import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context"
+import { hasOutillageCapability } from "../domain/outillage-lifecycle"
 import { outilService, outilSupportService } from "../services/outil.service"
 import {
   adjustStockSchema,
@@ -12,6 +14,7 @@ import {
   createRevetementSchema,
   outilUpdateSchema,
   outilUpsertSchema,
+  outillageWorkshopPageQuerySchema,
   reapprovisionnementSchema,
   retourStockSchema,
   scanMovementSchema,
@@ -126,6 +129,18 @@ export const outilController = {
     try {
       const summary = await outilService.getControlCenterSummary()
       return res.status(200).json(summary)
+    } catch (error) {
+      next(error)
+    }
+  },
+
+  async getWorkshopPage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const query = outillageWorkshopPageQuerySchema.parse(req.query)
+      const page = await outilService.getWorkshopPage(query)
+      const canOperate = hasOutillageCapability(requestHasGrantedAccountModuleAccess(req), req.user?.role, "operate")
+      res.setHeader("Cache-Control", "private, no-store")
+      return res.json({ ...page, permissions: { canOperate } })
     } catch (error) {
       next(error)
     }

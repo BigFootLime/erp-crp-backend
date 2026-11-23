@@ -69,6 +69,7 @@ router.get("/aretes", asyncHandler(outilSupportController.getAretes));
 // ✅ Nouveau listing filtré/paginé (cards UI)
 // GET /outils? id_famille=1&id_geometrie=2&q=abc&only_in_stock=true&limit=50&offset=0
 router.get("", asyncHandler(outilController.getFiltered));
+router.get("/workshop-page", authenticateToken, requireOutillageCapability("read"), asyncHandler(outilController.getWorkshopPage));
 router.get("/summary", authenticateToken, asyncHandler(outilController.getSummary));
 router.get("/recent-movements", authenticateToken, asyncHandler(outilController.getRecentMovements));
 router.get("/import-batches/summary", authenticateToken, asyncHandler(outilController.getImportBatchesSummary));

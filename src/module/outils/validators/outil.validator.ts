@@ -1,5 +1,30 @@
 import { z } from "zod"
 
+const workshopPositiveId = z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(2147483647))
+const workshopIds = z.string().max(8000).transform((value) => value === "" ? [] : value.split(","))
+  .pipe(z.array(workshopPositiveId)).transform((ids) => [...new Set(ids)])
+const workshopStockStatus = z.enum(["available", "low", "under-minimum", "rupture", "to-count"])
+const workshopStockStatuses = z.string().max(100).transform((value) => value === "" ? [] : value.split(","))
+  .pipe(z.array(workshopStockStatus)).transform((statuses) => [...new Set(statuses)])
+
+export const outillageWorkshopPageQuerySchema = z.object({
+  page: workshopPositiveId.default(1),
+  pageSize: z.enum(["10", "20", "30", "40"]).default("20").transform((value) => Number(value) as 10 | 20 | 30 | 40),
+  q: z.string().trim().max(400).default(""),
+  qMode: z.enum(["literal", "terms"]).default("literal"),
+  onlyInStock: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  diameter: z.string().trim().max(40).transform((value) => value.replace(",", ".")).default(""),
+  familyIds: workshopIds.default([]),
+  geometryIds: workshopIds.default([]),
+  manufacturerIds: workshopIds.default([]),
+  stockStatuses: workshopStockStatuses.default([]),
+  segment: z.enum(["all", "critical", "under-minimum", "rupture", "to-replenish", "imported"]).default("all"),
+  sortBy: z.enum(["outil", "famille", "geometrie", "fabricant", "stock"]).default("stock"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
+})
+
+export type OutillageWorkshopPageQuery = z.infer<typeof outillageWorkshopPageQuerySchema>
+
 const profondeurUtileValues = [
   "3xd",
   "4xd",

@@ -17,8 +17,9 @@ import type {
   OutillageImportBatchSummary,
   OutillageImportBatchSummaryItem,
   OutillageRecentMovement,
+  OutillageWorkshopPage,
 } from "../types/outil.types";
-import type { CreateOutilInput, UpdateOutilInput } from "../validators/outil.validator";
+import type { CreateOutilInput, OutillageWorkshopPageQuery, UpdateOutilInput } from "../validators/outil.validator";
 import type { CatalogueSourceProvenance } from "../services/outil-catalogue.service";
 
 type OutilFilters = {
@@ -29,6 +30,16 @@ type OutilFilters = {
   limit?: number;
   offset?: number;
 };
+
+const workshopSortColumns = {
+  outil: "lower(public.unaccent(tool_label))",
+  famille: "lower(public.unaccent(COALESCE(nom_famille, '')))",
+  geometrie: "lower(public.unaccent(COALESCE(nom_geometrie, '')))",
+  fabricant: "lower(public.unaccent(COALESCE(nom_fabricant, '')))",
+  stock: "array_position(ARRAY['to-count','available','low','under-minimum','rupture'], stock_status)",
+} as const;
+
+type WorkshopPageRow = Omit<OutillageWorkshopPage, "items" | "pageSize"> & { items: Record<string, unknown>[] };
 
 type LogMouvementPayload = {
   id_outil: number;
@@ -666,6 +677,150 @@ export const outilRepository = {
 
     const media = await resolveOutilMediaMaps(result.rows);
     return result.rows.map((row) => mapOutilListItem(row, media.images, media.documents));
+  },
+
+  async getWorkshopPage(query: OutillageWorkshopPageQuery): Promise<OutillageWorkshopPage> {
+    const sortDirection = query.sortDir === "asc" ? "ASC" : "DESC";
+    const orderBy = `${workshopSortColumns[query.sortBy]} ${sortDirection}, id_outil DESC`;
+    const matchAllTerms = query.qMode === "terms";
+    const searchTerms = !query.q ? [] : matchAllTerms ? query.q.split(/\s+/) : [query.q];
+    const requestedDiameter = Number(query.diameter);
+    const diameterValue = query.diameter && Number.isFinite(requestedDiameter) ? requestedDiameter : null;
+
+    const result = await db.query<WorkshopPageRow>(
+      `
+      WITH search_terms AS (
+        SELECT lower(public.unaccent(term)) AS term FROM unnest($5::text[]) AS input(term)
+      ),
+      catalogue_values AS (
+        SELECT o.id_outil, o.id_famille, o.id_geometrie, o.id_fabricant,
+          fam.nom_famille, g.nom_geometrie, f.name AS nom_fabricant,
+          COALESCE(s.quantite, 0) AS quantite_stock,
+          COALESCE(s.quantite_minimale, 0) AS quantite_minimale,
+          (cp.id_outil IS NOT NULL AND s.last_inventory_at IS NULL) AS inventory_required,
+          technical.diameter,
+          concat_ws(' ',
+            COALESCE(NULLIF(o.designation_outil_cnc, ''), NULLIF(o.reference_fabricant, ''), NULLIF(o.codification, ''), 'OUTIL SANS DESIGNATION'),
+            COALESCE(NULLIF(o.reference_fabricant, ''), NULLIF(o.codification, ''), 'OUTIL-' || o.id_outil::text),
+            COALESCE(o.codification, '')
+          ) AS tool_label,
+          CASE WHEN cardinality($5::text[]) > 0 THEN lower(public.unaccent(
+            array_to_string(ARRAY[o.designation_outil_cnc, o.reference_fabricant, o.codification,
+              fam.nom_famille, g.nom_geometrie, f.name,
+              CASE WHEN NOT $12::boolean THEN trim_scale(technical.diameter)::text END,
+              extra.fields->>'matiere_usiner', extra.fields->>'utilisation',
+              CASE WHEN NOT $12::boolean THEN extra.fields->>'type_arrosage' END,
+              CASE WHEN NOT $12::boolean THEN extra.fields->>'type_entree' END], ' ', '')
+          )) END AS search_text
+        FROM gestion_outils_outil o
+        LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
+        LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
+        LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
+        LEFT JOIN gestion_outils_stock s ON o.id_outil = s.id_outil
+        LEFT JOIN gestion_outils_catalogue_provenance cp ON cp.id_outil = o.id_outil
+        -- Older catalogues may omit optional technical fields used by search.
+        LEFT JOIN LATERAL (
+          SELECT to_jsonb(o) AS fields
+          WHERE cardinality($5::text[]) > 0 OR $10::text <> ''
+          OFFSET 0
+        ) extra ON true
+        LEFT JOIN LATERAL (
+          SELECT CASE WHEN char_length(extra.fields->>'diametre_nominal') <= 64
+            AND extra.fields->>'diametre_nominal' ~ '^[+-]?[0-9]+([.][0-9]+)?$'
+            THEN (extra.fields->>'diametre_nominal')::numeric END AS diameter
+        ) technical ON true
+      ),
+      catalogue AS MATERIALIZED (
+        SELECT catalogue_values.*, CASE
+          WHEN inventory_required THEN 'to-count'
+          WHEN TRUNC(quantite_stock) <= 0 THEN 'rupture'
+          WHEN TRUNC(quantite_minimale) > 0 AND TRUNC(quantite_stock) <= TRUNC(quantite_minimale) THEN 'under-minimum'
+          WHEN TRUNC(quantite_minimale) > 0 AND TRUNC(quantite_stock) <= TRUNC(quantite_minimale) + 1 THEN 'low'
+          ELSE 'available'
+        END AS stock_status
+        FROM catalogue_values
+      ),
+      filtered AS MATERIALIZED (
+        SELECT * FROM catalogue
+        WHERE (cardinality($1::int[]) = 0 OR id_famille = ANY($1::int[]))
+          AND (cardinality($2::int[]) = 0 OR id_geometrie = ANY($2::int[]))
+          AND (cardinality($3::int[]) = 0 OR id_fabricant = ANY($3::int[]))
+          AND (cardinality($4::text[]) = 0 OR stock_status = ANY($4::text[]))
+          AND NOT EXISTS (SELECT 1 FROM search_terms WHERE strpos(search_text, term) = 0)
+          AND (NOT $9::boolean OR (TRUNC(quantite_stock) > 0 AND NOT inventory_required))
+          AND ($10::text = '' OR ($11::numeric IS NOT NULL AND (
+            ABS(diameter - $11::numeric) < 0.0001
+            OR starts_with(trim_scale(ROUND(diameter, 3))::text, $10::text)
+          )))
+          AND CASE $6::text
+            WHEN 'all' THEN true
+            WHEN 'critical' THEN stock_status IN ('under-minimum', 'rupture')
+            WHEN 'to-replenish' THEN stock_status IN ('under-minimum', 'rupture')
+            WHEN 'under-minimum' THEN stock_status = 'under-minimum'
+            WHEN 'rupture' THEN stock_status = 'rupture'
+            ELSE false
+          END
+      ),
+      pagination AS (
+        SELECT COUNT(*)::int AS total,
+          LEAST($7::int, GREATEST(1, CEIL(COUNT(*)::numeric / $8::int)::int)) AS page
+        FROM filtered
+      ),
+      selected AS (
+        SELECT id_outil, ROW_NUMBER() OVER (ORDER BY ${orderBy}) AS position
+        FROM filtered
+        ORDER BY ${orderBy}
+        LIMIT $8::int OFFSET ((SELECT page FROM pagination) - 1) * $8::int
+      ),
+      items AS (
+        SELECT o.*, c.nom_famille, c.nom_geometrie, c.nom_fabricant,
+          f.logo AS fabricant_logo, fam.image_path AS famille_image_path, g.image_path,
+          c.quantite_stock, c.quantite_minimale, c.inventory_required, selected.position
+        FROM selected
+        JOIN catalogue c USING (id_outil)
+        JOIN gestion_outils_outil o USING (id_outil)
+        LEFT JOIN gestion_outils_fabricant f ON o.id_fabricant = f.id_fabricant
+        LEFT JOIN gestion_outils_famille fam ON o.id_famille = fam.id_famille
+        LEFT JOIN gestion_outils_geometrie g ON o.id_geometrie = g.id_geometrie
+      ),
+      facet_counts AS (
+        SELECT 'families' AS kind, id_famille AS id,
+          COALESCE(NULLIF(nom_famille, ''), 'FAMILLE ' || id_famille::text) AS label, COUNT(*)::int AS count
+        FROM catalogue WHERE id_famille IS NOT NULL
+        GROUP BY id_famille, nom_famille
+        UNION ALL
+        SELECT 'geometries', id_geometrie,
+          COALESCE(NULLIF(nom_geometrie, ''), 'GEOMETRIE ' || id_geometrie::text), COUNT(*)::int
+        FROM catalogue WHERE id_geometrie IS NOT NULL
+          AND (cardinality($1::int[]) = 0 OR id_famille = ANY($1::int[]))
+        GROUP BY id_geometrie, nom_geometrie
+        UNION ALL
+        SELECT 'manufacturers', id_fabricant,
+          COALESCE(NULLIF(nom_fabricant, ''), 'FABRICANT ' || id_fabricant::text), COUNT(*)::int
+        FROM catalogue WHERE id_fabricant IS NOT NULL
+        GROUP BY id_fabricant, nom_fabricant
+      ),
+      facets AS (
+        SELECT kind, jsonb_agg(to_jsonb(facet_counts) - 'kind' ORDER BY lower(public.unaccent(label)), id) AS options
+        FROM facet_counts GROUP BY kind
+      )
+      SELECT pagination.total, pagination.page,
+        (SELECT COUNT(*)::int FROM catalogue
+          WHERE quantite_stock <= quantite_minimale AND NOT inventory_required) AS "criticalCount",
+        COALESCE((SELECT jsonb_agg(to_jsonb(items) - 'position' ORDER BY position) FROM items), '[]'::jsonb) AS items,
+        jsonb_build_object(
+          'families', COALESCE((SELECT options FROM facets WHERE kind = 'families'), '[]'::jsonb),
+          'geometries', COALESCE((SELECT options FROM facets WHERE kind = 'geometries'), '[]'::jsonb),
+          'manufacturers', COALESCE((SELECT options FROM facets WHERE kind = 'manufacturers'), '[]'::jsonb)
+        ) AS facets
+      FROM pagination
+      `,
+      [query.familyIds, query.geometryIds, query.manufacturerIds, query.stockStatuses,
+        searchTerms, query.segment, query.page, query.pageSize, query.onlyInStock, query.diameter, diameterValue, matchAllTerms]
+    );
+    const { items, ...page } = result.rows[0];
+    const media = await resolveOutilMediaMaps(items);
+    return { ...page, pageSize: query.pageSize, items: items.map((row) => mapOutilListItem(row, media.images, media.documents)) };
   },
 
   // 🚨 Outils sous le stock minimum
