@@ -197,17 +197,20 @@ function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: stri
   }
 }
 
+const subPieceLinkSchema = z.object({
+  parent_piece_id: uuid,
+  parent_version_id: uuid.optional(),
+  rang: bomRank,
+  quantite: z.coerce.number().positive(),
+})
+
 const pieceCreationPayloadSchema = z.object({
   body: z.object({
     commercial_scope: z.enum(["CLIENTS", "CRP"]).optional(),
-    sub_piece: z.object({
-      parent_piece_id: uuid,
-      parent_version_id: uuid.optional(),
-      same_reference: z.boolean(),
-      rang: bomRank,
-      repere: bomRank,
-      quantite: z.coerce.number().positive(),
-    }).optional(),
+    sub_piece: z.discriminatedUnion("same_reference", [
+      subPieceLinkSchema.extend({ same_reference: z.literal(false), repere: bomRank.nullish() }),
+      subPieceLinkSchema.extend({ same_reference: z.literal(true), repere: bomRank }),
+    ]).optional(),
     article_id: uuid.optional().nullable(),
     root_piece_technique_id: uuid.optional().nullable(),
     parent_piece_technique_id: uuid.optional().nullable(),

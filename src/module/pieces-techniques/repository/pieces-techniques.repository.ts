@@ -1804,7 +1804,7 @@ export async function repoCreatePieceTechnique(
     if (inherited && (!inherited.plan_reference || !inherited.code_piece)) {
       throw new HttpError(422, "PARENT_REFERENCE_REQUIRED", "Renseignez la référence plan de la pièce mère.");
     }
-    const suffix = subPiece ? " REP " + String(subPiece.repere).padStart(2, "0") : "";
+    const suffix = subPiece?.same_reference ? " REP " + String(subPiece.repere).padStart(2, "0") : "";
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
     const updatedBy = actorUserId;
@@ -1943,7 +1943,7 @@ export async function repoCreatePieceTechnique(
       await insertRankedBomLine(client, subPiece.parent_piece_id, parent.bom_version_id, {
         child_piece_id: pieceId,
         rang: subPiece.rang,
-        repere: String(subPiece.repere),
+        repere: subPiece.repere == null ? null : String(subPiece.repere),
         quantite: subPiece.quantite,
       });
     }
