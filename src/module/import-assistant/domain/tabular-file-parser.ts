@@ -105,7 +105,7 @@ function columnIndex(cellRef: string): number {
 
 function uniqueHeaders(values: unknown[]): string[] {
   const seen = new Map<string, number>();
-  return values.map((value, index) => {
+  return Array.from(values, (value, index) => {
     const raw = String(value ?? "").trim() || `COLONNE_${index + 1}`;
     const count = (seen.get(raw) ?? 0) + 1;
     seen.set(raw, count);

@@ -64,7 +64,7 @@ function storedZip(entries: Array<{ name: string; body: string }>): Buffer {
   return Buffer.concat([...localParts, centralDirectory, eocd]);
 }
 
-function namespacedXlsxFile(worksheetTarget = "/xl/worksheets/sheet1.xml"): Express.Multer.File {
+function namespacedXlsxFile(worksheetTarget = "/xl/worksheets/sheet1.xml", sparseHeader = false): Express.Multer.File {
   const serial = Math.round(
     (Date.UTC(2026, 6, 27) - Date.UTC(1899, 11, 30)) / 86_400_000
   );
@@ -83,7 +83,7 @@ function namespacedXlsxFile(worksheetTarget = "/xl/worksheets/sheet1.xml"): Expr
     },
     {
       name: "xl/worksheets/sheet1.xml",
-      body: `<?xml version="1.0"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"><x:c r="A1" t="str"><x:v>legacy_code</x:v></x:c><x:c r="B1" t="str"><x:v>email</x:v></x:c><x:c r="C1" t="str"><x:v>siret</x:v></x:c><x:c r="D1" t="str"><x:v>creation_date</x:v></x:c></x:row><x:row r="2"><x:c r="A2" t="str"><x:v>001</x:v></x:c><x:c r="B2"/><x:c r="C2" t="str"><x:v>10539713700016</x:v></x:c><x:c r="D2" s="1"><x:v>${serial}</x:v></x:c></x:row></x:sheetData></x:worksheet>`,
+      body: `<?xml version="1.0"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><x:sheetData><x:row r="1"><x:c r="A1" t="str"><x:v>legacy_code</x:v></x:c>${sparseHeader ? "" : '<x:c r="B1" t="str"><x:v>email</x:v></x:c>'}<x:c r="C1" t="str"><x:v>siret</x:v></x:c><x:c r="D1" t="str"><x:v>creation_date</x:v></x:c></x:row><x:row r="2"><x:c r="A2" t="str"><x:v>001</x:v></x:c><x:c r="B2"/><x:c r="C2" t="str"><x:v>10539713700016</x:v></x:c><x:c r="D2" s="1"><x:v>${serial}</x:v></x:c></x:row></x:sheetData></x:worksheet>`,
     },
   ]);
   return {
@@ -137,6 +137,14 @@ describe("Assistant d’import CLIPPER", () => {
     expect(() => parseTabularFile(namespacedXlsxFile("/../outside.xml"))).toThrow(
       "Chemin de feuille XLSX interdit"
     );
+  });
+
+  it("conserve l’alignement lorsqu’un export XLSX contient un en-tête vide", () => {
+    const { sheets: [sheet] } = parseTabularFile(namespacedXlsxFile(undefined, true));
+    expect(sheet.headers).toEqual(["legacy_code", "COLONNE_2", "siret", "creation_date"]);
+    expect(sheet.rows).toEqual([
+      { legacy_code: "001", COLONNE_2: null, siret: "10539713700016", creation_date: "2026-07-27" },
+    ]);
   });
 
   it("exige la référence CLIPPER et tous les champs obligatoires", () => {
