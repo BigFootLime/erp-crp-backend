@@ -197,6 +197,7 @@ function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: stri
 
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
+    commercial_scope: z.enum(["CLIENTS", "CRP"]).optional(),
     article_id: uuid.optional().nullable(),
     root_piece_technique_id: uuid.optional().nullable(),
     parent_piece_technique_id: uuid.optional().nullable(),
@@ -229,13 +230,23 @@ export const createPieceTechniqueSchema = z.object({
     operations: z.array(operationInputSchema).optional().default([]),
     achats: z.array(achatInputSchema).optional().default([]),
   }).superRefine((body, ctx) => {
-    if (!body.plan_reference) {
+    if (body.commercial_scope === "CRP") {
+      if (body.plan_reference) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["plan_reference"], message: "La référence plan CRP est attribuée par le serveur" })
+      }
+      if (body.client_id || body.code_client || body.client_name) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["client_id"], message: "Une pièce CRP ne peut pas être associée à un client" })
+      }
+      if (body.article_id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "Créez l’article fabriqué après la pièce CRP" })
+      }
+    } else if (!body.plan_reference) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["plan_reference"], message: "Référence plan requise pour générer le code pièce" })
     }
-    if (!body.client_id && !body.code_client) {
+    if (body.commercial_scope !== "CRP" && !body.client_id && !body.code_client) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["client_id"], message: "Client requis pour générer le code pièce" })
     }
-    if (body.plan_reference && !body.sans_indice && !body.indice_externe) {
+    if ((body.plan_reference || body.commercial_scope === "CRP") && !body.sans_indice && !body.indice_externe) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["indice_externe"], message: "Indice externe requis ou cochez Sans indice" })
     }
     body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
@@ -256,6 +267,7 @@ export const pieceTechniqueCodePreviewSchema = z.object({
 
 export const updatePieceTechniqueSchema = z.object({
   body: z.object({
+    commercial_scope: z.never({ message: "La portée commerciale est fixée à la création." }).optional(),
     expected_updated_at: z.string().min(1).optional(),
     article_id: uuid.optional().nullable(),
     root_piece_technique_id: uuid.optional().nullable(),

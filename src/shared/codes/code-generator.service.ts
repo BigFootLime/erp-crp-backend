@@ -219,6 +219,28 @@ export async function generatePieceTechniqueBusinessCode(
   });
 }
 
+/** Allocated within the same transaction as the technical piece and its first revision. */
+export async function allocateCrpPlanReference(tx: DbQueryer, date?: Date): Promise<string> {
+  const year = businessYearInParis(date);
+  const result = await tx.query<{ last_value: number }>(
+    `INSERT INTO public.crp_piece_plan_counters AS counter (year_prefix, last_value)
+     VALUES ($1, 1)
+     ON CONFLICT (year_prefix) DO UPDATE SET last_value = counter.last_value + 1
+     WHERE counter.last_value < 9999
+     RETURNING last_value`,
+    [year],
+  );
+  const number = result.rows[0]?.last_value;
+  if (number === undefined) {
+    throw new HttpError(409, "CRP_PLAN_COUNTER_EXHAUSTED", "La numérotation annuelle des plans CRP est épuisée.");
+  }
+  return year + pad(number, 4);
+}
+
+export function crpPieceBusinessCode(planReference: string, index: string): string {
+  return `${planReference}-CRP-${normalizeSegment(index, "Index")}`;
+}
+
 export function previewArticleCode(familyCode: string): string {
   return `ART-${normalizeSegment(familyCode, "Article family")}-000000`;
 }
@@ -252,8 +274,9 @@ export async function generateFabricatedArticleBusinessCode(
     `
       SELECT
         true AS piece_exists,
-        COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(pt.code_client), '')) AS client_code,
-        v.plan_reference,
+        CASE WHEN pt.commercial_scope = 'CRP' THEN 'CRP'
+             ELSE COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(pt.code_client), '')) END AS client_code,
+        COALESCE(pt.crp_plan_reference, v.plan_reference) AS plan_reference,
         COALESCE(NULLIF(btrim(v.indice_externe_original), ''), NULLIF(btrim(v.indice), '')) AS indice,
         v.version_interne
       FROM public.pieces_techniques pt

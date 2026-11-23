@@ -47,6 +47,19 @@ describe("Manufactured article creation from a customer technical piece", () => 
     expect(res.json).toHaveBeenCalledWith({ created: false, article })
   })
 
+  it("uses the same stock service to create the manufactured article linked to a CRP piece", async () => {
+    mocks.query.mockResolvedValue({ rowCount: 1, rows: [{ designation: "Pièce interne", client_id: null, commercial_scope: "CRP" }] })
+    const { res, next } = await createFromPiece({ family_code: "FAB-GEN", designation: "Autre" })
+    expect(next).not.toHaveBeenCalled()
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ article_category: "fabrique", piece_technique_id: pieceId, family_code: "FAB-GEN" }),
+      expect.objectContaining({ user_id: 42 }),
+      `piece-article-${pieceId}`,
+    )
+    expect(mocks.create.mock.calls[0][0].designation).toBeUndefined()
+    expect(res.status).toHaveBeenCalledWith(201)
+  })
+
   it("refuses to invent a customer or CRP reference for an unlinked piece without a customer", async () => {
     mocks.query.mockResolvedValue({ rowCount: 1, rows: [{ code_piece: "PLAN-A", designation: "Test piece", client_id: null }] })
     const { next } = await createFromPiece()

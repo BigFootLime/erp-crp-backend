@@ -72,8 +72,8 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
     const id = uuidSchema.parse(req.params.id)
     const input = createOrLinkSchema.parse(req.body)
 
-    const p = await db.query<{ code_piece: string; designation: string; client_id: string | null }>(
-      "SELECT code_piece, designation, client_id FROM public.pieces_techniques WHERE id = $1::uuid",
+    const p = await db.query<{ designation: string; client_id: string | null; commercial_scope: "CRP" | "CLIENTS" | null }>(
+      "SELECT designation, client_id, commercial_scope FROM public.pieces_techniques WHERE id = $1::uuid AND deleted_at IS NULL",
       [id]
     )
     if (p.rowCount === 0) {
@@ -89,21 +89,20 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
     }
 
     const pieceClientId = p.rows[0].client_id
-    if (!pieceClientId) {
+    if (!pieceClientId && p.rows[0].commercial_scope !== "CRP") {
       throw new HttpError(422, "ARTICLE_CLIENT_REQUIRED", "Associez un client à la pièce technique avant de créer son article client. Pour un article CRP, utilisez la création d'article avec sa référence interne.")
     }
 
     const parsed = createArticleSchema.parse({
       body: {
-        designation: input.designation ?? p.rows[0].designation,
+        designation: pieceClientId ? input.designation ?? p.rows[0].designation : undefined,
         family_code: input.family_code,
         article_category: "fabrique",
         piece_technique_id: id,
         // La portée commerciale vient du client canonique de la PT, pas d'un
         // identifiant fourni par le navigateur. Le service stock conserve ses
         // validations et sa transaction article / lien / audit.
-        commercial_scope: "CLIENTS",
-        client_ids: [pieceClientId],
+        ...(pieceClientId ? { commercial_scope: "CLIENTS", client_ids: [pieceClientId] } : {}),
         is_sold: true,
         unite: "u",
         lot_tracking: true,
