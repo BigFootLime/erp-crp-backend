@@ -9,7 +9,7 @@ import path from "node:path";
 import db from "../../../config/database";
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage";
 import { HttpError } from "../../../utils/httpError";
-import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
+import { allocateCrpPlanReference, crpPieceBusinessCode, generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/authoritative-documents/technical-piece-creation-snapshot";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
@@ -122,6 +122,8 @@ function mapCoreRow(row: PieceTechniqueCoreRow): PieceTechnique {
     created_at: row.created_at,
     updated_at: row.updated_at,
     client_id: row.client_id,
+    commercial_scope: row.commercial_scope ?? (row.client_id ? "CLIENTS" : null),
+    plan_reference: row.plan_reference ?? null,
     created_by: row.created_by,
     updated_by: row.updated_by,
     famille_id: row.famille_id,
@@ -154,6 +156,8 @@ type PieceTechniqueCoreRow = {
   created_at: string;
   updated_at: string;
   client_id: string | null;
+  commercial_scope?: "CLIENTS" | "CRP" | null;
+  plan_reference?: string | null;
   created_by: number | null;
   updated_by: number | null;
   famille_id: string | null;
@@ -382,6 +386,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       p.designation,
       p.designation_2,
       p.client_id,
+      COALESCE(p.commercial_scope, CASE WHEN p.client_id IS NOT NULL THEN 'CLIENTS' END) AS commercial_scope,
       COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS code_client,
       p.client_name,
       p.famille_id::text AS famille_id,
@@ -404,7 +409,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       current_version.indice AS applicable_indice,
       current_version.plan_reference AS applicable_plan_reference,
       current_version.indice AS indice,
-      current_version.plan_reference AS plan_reference,
+      COALESCE(p.crp_plan_reference, current_version.plan_reference) AS plan_reference,
       COALESCE(NULLIF(btrim(c.client_code), ''), NULLIF(btrim(p.code_client), '')) AS client_code,
       current_version.date_effet::text AS applicable_date_effet,
       current_version.version_interne::int AS applicable_version_interne,
@@ -562,6 +567,15 @@ export async function repoGetPieceTechnique(id: string, includes: Set<string>): 
       p.created_at::text AS created_at,
       p.updated_at::text AS updated_at,
       p.client_id,
+      p.commercial_scope,
+      COALESCE(p.crp_plan_reference, (
+        SELECT v.plan_reference
+        FROM public.piece_technique_versions v
+        WHERE v.piece_technique_id = p.id AND v.statut <> 'OBSOLETE'
+        ORDER BY CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
+                 v.version_interne DESC NULLS LAST, v.created_at DESC, v.id DESC
+        LIMIT 1
+      )) AS plan_reference,
       p.created_by,
       p.updated_by,
       p.famille_id::text AS famille_id,
@@ -1770,19 +1784,21 @@ export async function repoCreatePieceTechnique(
     const clientIdForInsert = body.client_id ?? null;
     const clientNameForInsert =
       body.client_name ?? (clientIdForInsert ? await lookupClientCompanyName(client, clientIdForInsert) : null);
+    const scope = body.commercial_scope ?? "CLIENTS";
+    const crpReference = scope === "CRP" ? await allocateCrpPlanReference(client) : null;
+    const planReference = crpReference ?? body.plan_reference;
     const indiceExterne = body.sans_indice ? "NA" : body.indice_externe?.trim() ?? null;
-    const generatedCode = body.plan_reference
-      ? await generatePieceTechniqueBusinessCode(client, {
-          clientId: clientIdForInsert,
-          clientCode: body.code_client,
-          planReference: body.plan_reference,
-          indiceExterne: indiceExterne ?? "NA",
-        })
-      : null;
-
-    if (!generatedCode) {
+    if (!planReference) {
       throw new HttpError(400, "TECHNICAL_CODE_INPUT_REQUIRED", "Client, plan reference and external index are required to generate the technical piece code.");
     }
+    const generatedCode = crpReference
+      ? crpPieceBusinessCode(crpReference, indiceExterne ?? "NA")
+      : await generatePieceTechniqueBusinessCode(client, {
+          clientId: clientIdForInsert,
+          clientCode: body.code_client,
+          planReference,
+          indiceExterne: indiceExterne ?? "NA",
+        });
 
     const insertMainSQL = `
       INSERT INTO pieces_techniques (
@@ -1794,14 +1810,15 @@ export async function repoCreatePieceTechnique(
         client_id, created_by, updated_by,
         famille_id, name_piece, code_piece, designation, designation_2,
         prix_unitaire, statut, en_fabrication, cycle, cycle_fabrication,
-        code_client, client_name, ensemble, quality_levels, piece_critique
+        code_client, client_name, ensemble, quality_levels, piece_critique,
+        commercial_scope, crp_plan_reference
       )
       VALUES (
         $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5,
         $6, $7, $8, $9,
         $10, $11, $12, $13,
         $14, $15, $16, $17, $18,
-        $19, $20, $21, $22::text[], $23
+        $19, $20, $21, $22::text[], $23, $24, $25
       )
       RETURNING
         id::text AS id,
@@ -1812,6 +1829,7 @@ export async function repoCreatePieceTechnique(
         created_at::text AS created_at,
         updated_at::text AS updated_at,
         client_id,
+        commercial_scope,
         created_by,
         updated_by,
         famille_id::text AS famille_id,
@@ -1854,6 +1872,8 @@ export async function repoCreatePieceTechnique(
       body.ensemble,
       body.quality_levels ?? [],
       body.piece_critique ?? false,
+      scope,
+      crpReference,
     ];
 
     const mainRes = await client.query<PieceTechniqueCoreRow>(insertMainSQL, mainParams);
@@ -1861,9 +1881,10 @@ export async function repoCreatePieceTechnique(
     if (!core) throw new Error("Failed to create piece technique");
 
     const piece = mapCoreRow(core);
+    piece.plan_reference = planReference;
     const pieceId = core.id;
 
-    if (body.plan_reference) {
+    if (planReference) {
       await client.query(
         `INSERT INTO public.piece_technique_versions (
            piece_technique_id, indice, plan_reference, indice_externe_original, indice_externe_normalise,
@@ -1874,7 +1895,7 @@ export async function repoCreatePieceTechnique(
         [
           pieceId,
           indiceExterne ?? "NA",
-          body.plan_reference,
+          planReference,
           body.sans_indice ? null : body.indice_externe ?? null,
           indiceExterne,
           generatedCode,
@@ -1919,6 +1940,8 @@ export async function repoCreatePieceTechnique(
       entity_id: pieceId,
       details: {
         code_piece: generatedCode,
+        commercial_scope: scope,
+        plan_reference: planReference,
         designation: body.designation,
         statut: body.statut,
         bom_count: piece.bom.length,
@@ -1950,9 +1973,9 @@ export async function repoCreatePieceTechnique(
       articleId: core.article_id,
       familyId: core.famille_id,
       pieceVersion: core.version_number,
-      planReference: body.plan_reference ?? null,
+      planReference,
       externalIndex: indiceExterne,
-      internalVersion: body.plan_reference ? 1 : null,
+      internalVersion: 1,
     }));
 
     if (ownsTransaction) await client.query("COMMIT");
@@ -2323,6 +2346,9 @@ export async function repoUpdatePieceTechnique(
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
+    if ((err as { constraint?: string } | null)?.constraint === "pieces_techniques_commercial_scope_ck") {
+      throw new HttpError(422, "CRP_CLIENT_FORBIDDEN", "Une pièce CRP ne peut pas être associée à un client.");
+    }
     throw err;
   } finally {
     client.release();
@@ -2506,6 +2532,7 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
           p.created_at::text AS created_at,
           p.updated_at::text AS updated_at,
           p.client_id,
+          p.commercial_scope,
           p.created_by,
           p.updated_by,
           p.famille_id::text AS famille_id,
@@ -2532,6 +2559,9 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
     if (!o) {
       await client.query("ROLLBACK");
       return null;
+    }
+    if (o.commercial_scope === "CRP") {
+      throw new HttpError(409, "VERSION_WORKFLOW_REQUIRED", "Créez une nouvelle version de la pièce CRP ou créez une nouvelle pièce.");
     }
 
     const bom = await client.query<BomRow>(

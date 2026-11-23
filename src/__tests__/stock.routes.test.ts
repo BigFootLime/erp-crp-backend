@@ -361,18 +361,24 @@ describe("/api/v1/stock", () => {
     });
   });
 
-  it("POST /api/v1/stock/articles creates fabricated article without projet_id and syncs reverse piece technique link", async () => {
+  it.each([
+    { scope: "CLIENTS", plan: "PT-001", reference: null, clientId: "001", code: "ART-FAB-001-PT-001-A", clients: ["001"] },
+    { scope: "CRP", plan: "260042", reference: "260042", clientId: null, code: "ART-FAB-CRP-260042-A", clients: [] },
+  ])("POST /api/v1/stock/articles inherits a $scope piece and syncs the reverse link", async ({ scope, plan, reference, clientId, code, clients }) => {
     mocks.clientQuery.mockImplementation(async (sql: unknown) => {
       const q = String(sql);
-      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:null,article_category:"fabrique",client_ids:[],categories:["piece_finie_fabriquee"],tool_id:null,consumption_mode:"UNIT"}]};
-      if(q.includes("SELECT client_id FROM public.clients"))return {rows:[{client_id:"001"}]};
+      if (q.includes("SELECT client_id, crp_plan_reference, designation")) {
+        return { rows: [{ client_id: clientId, crp_plan_reference: reference, designation: "Pièce stockée" }] };
+      }
+      if(q.includes("SELECT a.commercial_scope"))return {rows:[{commercial_scope:null,internal_reference:reference,article_category:"fabrique",client_ids:[],categories:["piece_finie_fabriquee"],tool_id:null,consumption_mode:"UNIT"}]};
+      if(q.includes("SELECT client_id FROM public.clients"))return {rows:clients.map(client_id => ({client_id}))};
       if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("FROM public.pieces_techniques pt") && q.includes("LEFT JOIN LATERAL")) {
         return {
           rows: [{
             piece_exists: true,
-            client_code: "CLI-001",
-            plan_reference: "PT-001",
+            client_code: clientId ? "CLI-001" : "CRP",
+            plan_reference: plan,
             indice: "A",
             version_interne: 1,
           }],
@@ -414,7 +420,7 @@ describe("/api/v1/stock", () => {
           plan_index: 1,
           status: "VALIDE",
           projet_id: null,
-          code: "ART-FAB-001-PT-001-A",
+          code,
           designation: "Pièce stockée",
           article_type: "PIECE_TECHNIQUE",
           article_category: "fabrique",
@@ -444,9 +450,8 @@ describe("/api/v1/stock", () => {
       .set("Idempotency-Key", "test-fabricated-article-001")
       .send({
         projet_id: null,
-        designation: "Pièce stockée",
-        commercial_scope: "CLIENTS",
-        client_ids: ["001"],
+        // A linked CRP piece wins even if an older UI submits customer metadata.
+        ...(scope === "CRP" ? { designation: "Désignation soumise", commercial_scope: "CLIENTS", client_ids: ["001"] } : {}),
         article_category: "fabrique",
         article_categories: ["fabrique"],
         family_code: "PT",
@@ -458,12 +463,16 @@ describe("/api/v1/stock", () => {
 
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ article_category: "fabrique", family_code: "PT", stock_managed: true });
-    expect(mocks.clientQuery.mock.calls.some(([sql, values]) => String(sql).includes("INSERT INTO public.article_client_links") && JSON.stringify(values).includes("001"))).toBe(true);
-    expect(
-      mocks.clientQuery.mock.calls.some((call) =>
-        Array.isArray(call[1]) && call[1].includes("ART-FAB-001-PT-001-A")
-      )
-    ).toBe(true);
+    const commercial = mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("UPDATE public.articles SET commercial_scope"));
+    expect(commercial?.[1][1]).toBe(scope);
+    const clientLink = mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.article_client_links"));
+    expect(clientLink?.[1][1]).toEqual(clients);
+    const creation = mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO public.articles ("));
+    expect(creation?.[1].slice(1, 3)).toEqual([code, "Pièce stockée"]);
+    if (reference) {
+      const policy = mocks.clientQuery.mock.calls.find(([sql]) => String(sql).includes("internal_reference=CASE"));
+      expect(policy?.[1].slice(1, 3)).toEqual([true, reference]);
+    }
     expect(
       mocks.clientQuery.mock.calls.some((call) =>
         String(call[0]).includes("UPDATE public.pieces_techniques SET article_id = $2::uuid WHERE id = $1::uuid")

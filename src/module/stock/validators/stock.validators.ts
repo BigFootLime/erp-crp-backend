@@ -438,7 +438,7 @@ export const createArticleSchema = z.object({
     })
     .strict()
     .superRefine((body, ctx) => {
-      if (body.article_category !== "matiere" && !body.designation) {
+      if (body.article_category !== "matiere" && body.article_category !== "fabrique" && !body.designation) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "La désignation de l'article est obligatoire.",

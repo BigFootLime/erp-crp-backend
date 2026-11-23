@@ -2,28 +2,38 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), release: vi.fn(), connect: vi.fn(), audit: vi.fn(), archive: vi.fn() }))
 vi.mock("../config/database", () => ({ default: { connect: mocks.connect } }))
-vi.mock("../shared/codes/code-generator.service", () => ({ generatePieceTechniqueBusinessCode: vi.fn().mockResolvedValue("001-PLAN-A") }))
+vi.mock("../shared/codes/code-generator.service", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../shared/codes/code-generator.service")>(),
+  generatePieceTechniqueBusinessCode: vi.fn().mockResolvedValue("001-PLAN-A"),
+}))
 vi.mock("../shared/authoritative-documents/authoritative-document.service", () => ({ queueCreationPdfArchive: mocks.archive }))
 vi.mock("../module/audit-logs/repository/audit-logs.repository", () => ({ repoInsertAuditLog: mocks.audit }))
-import { repoCreatePieceTechnique } from "../module/pieces-techniques/repository/pieces-techniques.repository"
+import { repoCreatePieceTechnique, repoDuplicatePieceTechnique } from "../module/pieces-techniques/repository/pieces-techniques.repository"
 import { repoCreateVersion, repoUpdateVersion } from "../module/pieces-techniques/repository/versions.repository"
+import { createPieceTechniqueSchema, updatePieceTechniqueSchema } from "../module/pieces-techniques/validators/pieces-techniques.validators"
 
 const audit = { user_id: 42, ip: null, user_agent: null, device_type: null, os: null, browser: null, path: "/test", page_key: "pieces", client_session_id: null }
 let ensemble = false
+let registeredCrpPlan: string | null = null
 let current = { id: "version-a", indice: "A", statut: "BROUILLON", manufacturing_mode: "SIMPLE", assembly_supply_strategy: "MAKE_TO_ORDER", updated_at: "2026-10-11 03:30:00+00", change_level: "MAJOR" }
 beforeEach(() => {
   vi.clearAllMocks()
   ensemble = false
+  registeredCrpPlan = null
   current = { id: "version-a", indice: "A", statut: "BROUILLON", manufacturing_mode: "SIMPLE", assembly_supply_strategy: "MAKE_TO_ORDER", updated_at: "2026-10-11 03:30:00+00", change_level: "MAJOR" }
   mocks.connect.mockResolvedValue({ query: mocks.query, release: mocks.release })
   mocks.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
     if (sql.includes("INSERT INTO pieces_techniques (")) return { rows: [{
-      id: params[0], client_id: "001", root_piece_technique_id: params[0], version_number: 1,
-      code_piece: "001-PLAN-A", name_piece: "Montage", designation: "Montage", statut: "DRAFT",
+      id: params[0], client_id: params[5], root_piece_technique_id: params[0], version_number: 1,
+      code_piece: params[10], commercial_scope: params[23], name_piece: "Montage", designation: "Montage", statut: "DRAFT",
       prix_unitaire: 0, en_fabrication: 0, ensemble, created_at: current.updated_at, updated_at: current.updated_at,
     }], rowCount: 1 }
     if (sql.includes("SELECT ensemble")) return { rows: [{ ensemble }], rowCount: 1 }
-    if (sql.includes("SELECT client_id")) return { rows: [{ client_id: "001", code_client: "001" }], rowCount: 1 }
+    if (sql.includes("FROM pieces_techniques p") && sql.includes("FOR UPDATE")) {
+      return { rows: [{ commercial_scope: registeredCrpPlan ? "CRP" : null }], rowCount: 1 }
+    }
+    if (sql.includes("INSERT INTO public.crp_piece_plan_counters")) return { rows: [{ last_value: 42 }], rowCount: 1 }
+    if (sql.includes("SELECT client_id")) return { rows: [{ client_id: registeredCrpPlan ? null : "001", code_client: "001", crp_plan_reference: registeredCrpPlan }], rowCount: 1 }
     if (sql.includes("FROM public.piece_technique_versions") && sql.includes("FOR UPDATE")) return { rows: [current], rowCount: 1 }
     if (sql.includes("INSERT INTO public.piece_technique_versions")) return { rows: [{ ...current, manufacturing_mode: params[12] ?? params[9] }], rowCount: 1 }
     if (sql.includes("UPDATE public.piece_technique_versions")) return { rows: [{ ...current, manufacturing_mode: params[0], assembly_supply_strategy: params[1] }], rowCount: 1 }
@@ -32,6 +42,37 @@ beforeEach(() => {
 })
 
 describe("#1149 — mode initial et correction du brouillon", () => {
+  it("allocates an internal plan in the creation transaction and uses it for the first revision", async () => {
+    const payload = { name_piece: "Montage", designation: "Montage", commercial_scope: "CRP", indice_externe: "A" }
+    expect(createPieceTechniqueSchema.safeParse({ body: { ...payload, client_id: "001" } }).success).toBe(false)
+    expect(createPieceTechniqueSchema.safeParse({ body: { ...payload, plan_reference: "260999" } }).success).toBe(false)
+    const body = createPieceTechniqueSchema.parse({ body: payload }).body
+    const result = await repoCreatePieceTechnique({ ...body, en_fabrication: false, operations: [], achats: [] }, audit)
+    const counter = mocks.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.crp_piece_plan_counters"))!
+    const plan = `${counter[1][0]}0042`
+    expect(result.piece).toMatchObject({ client_id: null, commercial_scope: "CRP", plan_reference: plan, code_piece: `${plan}-CRP-A` })
+    const version = mocks.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.piece_technique_versions"))!
+    expect(version[1].slice(1, 6)).toEqual(["A", plan, "A", "A", `${plan}-CRP-A`])
+    expect(mocks.query).toHaveBeenLastCalledWith("COMMIT")
+  })
+
+  it("keeps a CRP plan through a later revision and rejects a different plan", async () => {
+    registeredCrpPlan = "260042"
+    await repoCreateVersion("piece", { indice: "B" }, audit)
+    const version = mocks.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO public.piece_technique_versions"))!
+    expect(version[1].slice(1, 5)).toEqual(["B", registeredCrpPlan, null, "260042-CRP-B"])
+    await expect(repoUpdateVersion("piece", "version-a", { plan_reference: "260999" }, audit))
+      .rejects.toMatchObject({ status: 422, code: "CRP_PLAN_REFERENCE_IMMUTABLE" })
+  })
+
+  it("does not accept changing scope or cloning a CRP piece with the historical duplicate repository", async () => {
+    registeredCrpPlan = "260042"
+    expect(updatePieceTechniqueSchema.safeParse({ body: { commercial_scope: "CLIENTS" } }).success).toBe(false)
+    await expect(repoDuplicatePieceTechnique("piece", 42)).rejects.toMatchObject({ status: 409, code: "VERSION_WORKFLOW_REQUIRED" })
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes("INSERT INTO pieces_techniques"))).toBe(false)
+    expect(mocks.query).toHaveBeenLastCalledWith("ROLLBACK")
+  })
+
   it.each([false, true])("crée le premier indice avec le type choisi (ensemble=%s)", async (isAssembly) => {
     ensemble = isAssembly
     await repoCreatePieceTechnique({ name_piece: "Montage", designation: "Montage", plan_reference: "PLAN", indice_externe: "A", client_name: "Recette", prix_unitaire: 0, statut: "DRAFT", en_fabrication: false, ensemble, bom: [], operations: [], achats: [] }, audit)

@@ -4,7 +4,7 @@ import { copyGammeOperationsTx } from "../../gammes/repository/gammes.repository
 import type { PoolClient } from "pg"
 import db from "../../../config/database"
 import { HttpError } from "../../../utils/httpError"
-import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
+import { crpPieceBusinessCode, generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import { freezePieceVersionRequirements } from "../services/document-policy.service"
 import type { AuditContext } from "./pieces-techniques.repository"
@@ -127,17 +127,14 @@ export type PieceTechniqueVersionCloneResult = PieceTechniqueVersionRow & {
   }
 }
 
-async function generateVersionBusinessCode(
+async function resolveVersionIdentity(
   tx: Pick<PoolClient, "query">,
   pieceTechniqueId: string,
   planReference: string | null | undefined,
   indiceExterne: string
-): Promise<string> {
-  if (!planReference?.trim()) {
-    throw new HttpError(400, "PLAN_REFERENCE_REQUIRED", "La référence plan est requise pour générer le code métier de version.")
-  }
-  const piece = await tx.query<{ client_id: string | null; code_client: string | null }>(
-    `SELECT client_id::text AS client_id, code_client
+) {
+  const piece = await tx.query<{ client_id: string | null; code_client: string | null; crp_plan_reference: string | null }>(
+    `SELECT client_id::text AS client_id, code_client, crp_plan_reference
        FROM public.pieces_techniques
       WHERE id = $1 AND deleted_at IS NULL
       LIMIT 1`,
@@ -145,12 +142,26 @@ async function generateVersionBusinessCode(
   )
   const source = piece.rows[0]
   if (!source) throw new HttpError(404, "NOT_FOUND", "Pièce technique introuvable")
-  return generatePieceTechniqueBusinessCode(tx, {
+  if (source.crp_plan_reference) {
+    if (planReference !== undefined && planReference?.trim() !== source.crp_plan_reference) {
+      throw new HttpError(422, "CRP_PLAN_REFERENCE_IMMUTABLE", "Les révisions conservent la référence de plan CRP.")
+    }
+    return {
+      planReference: source.crp_plan_reference,
+      code: crpPieceBusinessCode(source.crp_plan_reference, indiceExterne),
+      isCrp: true,
+    }
+  }
+  if (!planReference?.trim()) {
+    throw new HttpError(400, "PLAN_REFERENCE_REQUIRED", "La référence plan est requise pour générer le code métier de version.")
+  }
+  const code = await generatePieceTechniqueBusinessCode(tx, {
     clientId: source.client_id,
     clientCode: source.code_client,
     planReference,
     indiceExterne,
   })
+  return { planReference, code, isCrp: false }
 }
 
 export async function repoListVersions(pieceTechniqueId: string): Promise<PieceTechniqueVersionRow[]> {
@@ -183,8 +194,10 @@ export async function repoCreateVersion(
     const isAssembly = await assertPieceExists(client, pieceTechniqueId)
     await client.query('SELECT id FROM public.pieces_techniques WHERE id=$1::uuid FOR UPDATE',[pieceTechniqueId]);
     const priorVersion=await client.query(`SELECT 1 FROM public.piece_technique_versions WHERE piece_technique_id=$1::uuid LIMIT 1`,[pieceTechniqueId]);
-    if(priorVersion.rowCount && (body.client_requirement_confirmed!==true || (body.raison_changement?.trim().length??0)<3)) throw new HttpError(422,"CLIENT_REVISION_REQUIRED","Utilisez Nouveau plan / exigence client pour créer une révision supplémentaire.");
-    const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, body.plan_reference, body.indice)
+    const identity = await resolveVersionIdentity(client, pieceTechniqueId, body.plan_reference, body.indice)
+    if (priorVersion.rowCount && !identity.isCrp && (body.client_requirement_confirmed !== true || (body.raison_changement?.trim().length ?? 0) < 3)) {
+      throw new HttpError(422, "CLIENT_REVISION_REQUIRED", "Utilisez Nouveau plan / exigence client pour créer une révision supplémentaire.")
+    }
 
     const res = await client.query<PieceTechniqueVersionRow>(
       `INSERT INTO public.piece_technique_versions
@@ -196,9 +209,9 @@ export async function repoCreateVersion(
       [
         pieceTechniqueId,
         body.indice,
-        body.plan_reference ?? null,
+        identity.planReference,
         body.matiere_prevue ?? null,
-        codeMetier,
+        identity.code,
         body.commentaire_revision ?? null,
         body.type_changement ?? null,
         body.raison_changement ?? null,
@@ -262,8 +275,8 @@ export async function repoUpdateVersion(
 
     const nextIndice = body.indice ?? current.indice
     const nextPlanReference = body.plan_reference === undefined ? current.plan_reference : body.plan_reference
-    const codeMetier = body.indice !== undefined || body.plan_reference !== undefined
-      ? await generateVersionBusinessCode(client, pieceTechniqueId, nextPlanReference, nextIndice)
+    const identity = body.indice !== undefined || body.plan_reference !== undefined
+      ? await resolveVersionIdentity(client, pieceTechniqueId, nextPlanReference, nextIndice)
       : null
 
     const sets: string[] = []
@@ -276,8 +289,10 @@ export async function repoUpdateVersion(
       push("indice", body.indice)
       push("indice_externe_original", body.indice)
     }
-    if (body.plan_reference !== undefined) push("plan_reference", body.plan_reference)
-    if (codeMetier) push("code_metier", codeMetier)
+    if (identity) {
+      if (body.plan_reference !== undefined) push("plan_reference", identity.planReference)
+      push("code_metier", identity.code)
+    }
     if (body.matiere_prevue !== undefined) push("matiere_prevue", body.matiere_prevue)
     if (body.commentaire_revision !== undefined) push("commentaire_revision", body.commentaire_revision)
     if (body.type_changement !== undefined) push("type_changement", body.type_changement)
@@ -576,8 +591,9 @@ async function cloneTechnicalVersionTx(
     const sameIndex=body.indice.trim().toUpperCase()===source.indice.trim().toUpperCase()
     const changeLevel=body.change_level??(sameIndex?"MINOR":"MAJOR")
     if(changeLevel==="MINOR"&&!sameIndex)throw new HttpError(422,"MINOR_INDEX_CHANGED","Une évolution mineure conserve l’indice client. Choisissez une modification majeure pour un nouvel indice.")
-    const planReference = body.plan_reference ?? source.plan_reference
-    const codeMetier = await generateVersionBusinessCode(client, pieceTechniqueId, planReference, body.indice)
+    const { planReference, code: codeMetier } = await resolveVersionIdentity(
+      client, pieceTechniqueId, body.plan_reference ?? source.plan_reference, body.indice,
+    )
 
     const res = await client.query<PieceTechniqueVersionRow>(
       `INSERT INTO public.piece_technique_versions

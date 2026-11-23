@@ -22,6 +22,21 @@ state after business writes requires the verified pre-upgrade backup.
 Do not make schema changes directly on the VPS. The VPS must not become a
 second writable database.
 
+## Pièces techniques CRP
+
+`20261123_crp_technical_pieces.sql` adds two nullable columns to technical pieces
+and a counter per Paris business year. Existing pieces retain their data and
+codes. A CRP creation and its first version use the same transaction as the
+number allocation. Commercial scope and plan are exposed by the piece API, and
+the fabricated article inherits the reference of the linked CRP piece.
+
+Apply the patch before activating the corresponding backend. Adding the
+constraint and index takes a lock on the technical pieces table. Run
+`db/patches/support/20261123_crp_technical_pieces.verify.sql` after application.
+An application rollback can retain the additive schema, but the old runtime
+does not expose the CRP feature. Restoring the prior data state after a CRP
+creation requires a verified backup.
+
 ## Gate de release SOL-06
 
 Toute mise à niveau suit désormais `docs/runbooks/database-upgrade-sol06.md`.
