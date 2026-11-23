@@ -19,6 +19,7 @@ export const NOTIFICATION_TOPICS = {
   OF_PLANNING_SUBMITTED: "OF_PLANNING_SUBMITTED",
   /** Dossier d'AR client à recaler : l'administration des ventes reprend contact. */
   AR_RECALAGE: "AR_RECALAGE",
+  CLIENT_DEMAND_RECEIVED: "CLIENT_DEMAND_RECEIVED",
 } as const;
 
 export type NotificationTopic = (typeof NOTIFICATION_TOPICS)[keyof typeof NOTIFICATION_TOPICS];

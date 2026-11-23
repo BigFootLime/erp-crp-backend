@@ -18,6 +18,11 @@ const MAX_ROWS = 100_000;
 export const MAX_DEMAND_IMPORT_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 500;
 const MAX_COMMENT_LENGTH = 2_000;
+export const CLAYENS_SHARED_WORKBOOK_HEADERS = [
+  "NUM_CDE", "NUM_LIGNE_CDE", "ID_ECHEANCE", "ARTICLE", "TYPE_CDE",
+  "DATE_DEMANDEE", "DATE_BESOIN", "DATE_CONF", "QTE_SOLDE", "QTE_LIV",
+  "UNITE", "TRANSMETTRE", "CONTRAT", "STOCK_CLIENT",
+] as const;
 const VISION_NEED_DATE_SENTINELS = new Set(["31/12/9000", "9000-12-31"]);
 const visionRequired: Record<string,string> = {
   external_line_key:"Numéro de ligne de commande absent.",
@@ -171,6 +176,7 @@ function visionCandidate(row: DemandImportRawRow): Candidate {
     kind: kindFromVision(value(row, "FERMETE", "kind", "TYPE_CDE")),
     quantity: remaining !== undefined ? normalizeQuantity(remaining) : base.quantity,
     source_delivered_quantity: normalizeQuantity(value(row, "QTE_LIV")),
+    source_customer_stock_quantity: normalizeQuantity(value(row, "STOCK_CLIENT")),
     quantity_basis: remaining !== undefined ? "REMAINING" : base.quantity_basis,
     unit: base.unit ?? value(row, "UA")?.toUpperCase(),
     need_date: VISION_NEED_DATE_SENTINELS.has(rawNeedDate ?? "")
@@ -281,6 +287,14 @@ function validateCandidate(
   if (source === "VISION_SYSTEMS" && value(raw, "QTE_LIV") !== undefined &&
       (candidate.source_delivered_quantity === undefined || candidate.source_delivered_quantity > 1e9))
     diagnostics.push(issue("DELIVERED_QUANTITY_INVALID", "Quantité déjà livrée invalide.", "source_delivered_quantity", rowNumber));
+  if (source === "VISION_SYSTEMS" && value(raw, "STOCK_CLIENT") !== undefined &&
+      (candidate.source_customer_stock_quantity === undefined || candidate.source_customer_stock_quantity > 1e9))
+    diagnostics.push(issue(
+      "CUSTOMER_STOCK_INVALID",
+      "Saisissez un stock client positif ou nul, avec trois décimales au maximum.",
+      "source_customer_stock_quantity",
+      rowNumber,
+    ));
   const review = value(raw, "REVIEW_REQUIRED", "REVUE_REQUISE");
   if (review && !["FALSE", "NON", "0"].includes(review.toUpperCase()))
     diagnostics.push(
@@ -550,6 +564,31 @@ export function parseDemandImport(
     rows.push(candidate);
   });
 
+  const stockObservations = new Map<string, DemandImportPreviewRow[]>();
+  for (const preview of preview_rows) {
+    const c = preview.candidate;
+    if (!c.article_code || !c.external_site || !c.source_as_of || c.source_customer_stock_quantity === undefined)
+      continue;
+    const key = JSON.stringify([c.article_code.toUpperCase(), c.external_site, c.source_as_of]);
+    const prior = stockObservations.get(key);
+    if (prior) prior.push(preview);
+    else stockObservations.set(key, [preview]);
+  }
+  for (const reports of stockObservations.values()) {
+    const stockValues = new Set(reports.map(({ candidate }) =>
+      JSON.stringify([candidate.unit, candidate.source_customer_stock_quantity])));
+    if (stockValues.size < 2) continue;
+    for (const preview of reports) {
+      const conflict = issue(
+        "CUSTOMER_STOCK_CONFLICT",
+        "Le stock client et son unité doivent coïncider pour cette référence dans le relevé.",
+        "source_customer_stock_quantity",
+        preview.row_number,
+      );
+      preview.diagnostics.push(conflict);
+      diagnostics.push(conflict);
+    }
+  }
   const invalid = preview_rows.filter((row) =>
     row.diagnostics.some((diagnostic) => diagnostic.level === "ERROR"),
   ).length;
@@ -614,6 +653,14 @@ export function parseDemandImportFile(
   let rows = sheet.rows;
   let rowNumbers: number[] | undefined;
   if (shared) {
+    if (sheet.headers.includes("STOCK_CLIENT") &&
+        (sheet.headers.length !== CLAYENS_SHARED_WORKBOOK_HEADERS.length ||
+          CLAYENS_SHARED_WORKBOOK_HEADERS.some((name, index) => sheet.headers[index] !== name)))
+      throw new HttpError(
+        422,
+        "DEMAND_WORKBOOK_HEADERS",
+        "Les colonnes de la feuille Demandes doivent suivre l’ordre du modèle Clayens VS.",
+      );
     const required = ["NUM_CDE", "NUM_LIGNE_CDE", "ID_ECHEANCE", "ARTICLE", "TYPE_CDE", "DATE_BESOIN", "QTE_SOLDE"];
     if (!required.every((name) => sheet.headers.includes(name)))
       throw new HttpError(422, "DEMAND_WORKBOOK_HEADERS", "Les colonnes d’identification, de besoin et de quantité de la feuille Demandes sont requises.");

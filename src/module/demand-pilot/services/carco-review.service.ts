@@ -12,6 +12,7 @@ import {
   importDemand,
 } from "../repository/demand-ingest.repository";
 import { qualifyDemandPreview } from "./demand-preview.service";
+import { notifyDemandReceived } from "./demand-received-notification";
 import { compareCarco } from "./carco-comparison";
 import { observedCarcoSplit } from "./carco-qualification";
 import { demandRowSchema } from "../validators/demand-pilot.validators";
@@ -230,6 +231,12 @@ export async function recordCarco(
         typeof actor === "number" ? null : actor.portalAccountId,
       ],
     );
+    if (typeof actor !== "number") {
+      await notifyDemandReceived(tx, {
+        id, clientId: scope.clientId, site: scope.site,
+        lineCount: parsed.summary.total, source: "carco",
+      });
+    }
     return id;
   });
 }

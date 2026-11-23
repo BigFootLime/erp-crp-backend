@@ -77,6 +77,7 @@ export async function createPortalAccountByAdmin(input: {
     client_id: input.body.client_id,
     email_normalized: emailNormalized,
     display_name: input.body.display_name,
+    ...(input.body.login_alias ? { login_alias: input.body.login_alias } : {}),
   });
   return repo.repoCreatePortalAccount({
     actorId: input.actorId,
@@ -85,6 +86,7 @@ export async function createPortalAccountByAdmin(input: {
     clientId: input.body.client_id,
     email: input.body.email.trim(),
     emailNormalized,
+    loginAlias: input.body.login_alias,
     displayName: input.body.display_name.trim(),
     passwordHash,
     meta: input.meta,
@@ -169,13 +171,16 @@ export async function activatePortalAccount(body: PortalActivateInput, meta: Cli
 }
 
 export async function loginPortal(body: PortalLoginInput, meta: ClientPortalRequestMeta) {
-  const emailNormalized = normalizePortalEmail(body.email);
-  const attemptId = await consumeAttempt("LOGIN", emailNormalized, meta, {
+  const identifier = "email" in body ? normalizePortalEmail(body.email) : body.login_alias;
+  const account = await repo.repoFindPortalAccount(
+    "email" in body ? { email: identifier } : { alias: identifier },
+  );
+  // Email and alias share the same limit for this account.
+  const attemptId = await consumeAttempt("LOGIN", account?.email_normalized ?? identifier, meta, {
     identifier: 5,
     ip: 30,
     windowSeconds: 15 * 60,
   });
-  const account = await repo.repoFindPortalAccountByEmail(emailNormalized);
   const hash = account?.password_hash ?? await bcrypt.hash("client-portal-nonexistent-account", 12);
   const validPassword = await bcrypt.compare(body.password, hash);
   if (!account || !validPassword || account.status !== "ACTIVE") {
