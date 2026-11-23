@@ -1,3 +1,4 @@
+import { pieceAssemblyUsage } from "../controllers/assembly-usage.controller";
 import { requireMethodesCapability } from "../../methodes/middlewares/methodes-authorization.middleware"
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
@@ -254,6 +255,7 @@ router.get(
   listToolRequirements
 )
 
+router.get("/:id/assemblages", validate(idParamSchema), pieceAssemblyUsage)
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)
 router.patch("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), validate(updateBomLineSchema), updateBomLine)
 router.delete("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), deleteBomLine)

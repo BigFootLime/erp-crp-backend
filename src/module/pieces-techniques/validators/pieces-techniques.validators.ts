@@ -128,6 +128,8 @@ export const getPieceTechniqueQuerySchema = z.object({
 
 export type GetPieceTechniqueQueryDTO = z.infer<typeof getPieceTechniqueQuerySchema>
 
+const bomRank = z.coerce.number().int().min(1).max(99)
+
 const bomLineInputSchema = z.object({
   child_piece_id: uuid,
   // GPAO B2.3 — liens de version (arborescence de fabrication versionnée). Optionnels/additifs.
@@ -198,6 +200,14 @@ function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: stri
 export const createPieceTechniqueSchema = z.object({
   body: z.object({
     commercial_scope: z.enum(["CLIENTS", "CRP"]).optional(),
+    sub_piece: z.object({
+      parent_piece_id: uuid,
+      parent_version_id: uuid.optional(),
+      same_reference: z.boolean(),
+      rang: bomRank,
+      repere: bomRank,
+      quantite: z.coerce.number().positive(),
+    }).optional(),
     article_id: uuid.optional().nullable(),
     root_piece_technique_id: uuid.optional().nullable(),
     parent_piece_technique_id: uuid.optional().nullable(),
@@ -230,6 +240,13 @@ export const createPieceTechniqueSchema = z.object({
     operations: z.array(operationInputSchema).optional().default([]),
     achats: z.array(achatInputSchema).optional().default([]),
   }).superRefine((body, ctx) => {
+    body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
+    if (body.sub_piece?.same_reference) {
+      if (body.article_id) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "Créez l’article fabriqué après la sous-pièce." })
+      }
+      return
+    }
     if (body.commercial_scope === "CRP") {
       if (body.plan_reference) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["plan_reference"], message: "La référence plan CRP est attribuée par le serveur" })
@@ -249,7 +266,6 @@ export const createPieceTechniqueSchema = z.object({
     if ((body.plan_reference || body.commercial_scope === "CRP") && !body.sans_indice && !body.indice_externe) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["indice_externe"], message: "Indice externe requis ou cochez Sans indice" })
     }
-    body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
   }),
 })
 
@@ -308,7 +324,7 @@ export const pieceTechniqueStatusSchema = z.object({
 export type PieceTechniqueStatusBodyDTO = z.infer<typeof pieceTechniqueStatusSchema>["body"]
 
 export const addBomLineSchema = z.object({
-  body: bomLineInputSchema,
+  body: bomLineInputSchema.extend({ rang: bomRank }),
 })
 
 export type AddBomLineBodyDTO = z.infer<typeof addBomLineSchema>["body"]

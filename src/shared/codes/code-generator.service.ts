@@ -197,11 +197,13 @@ export function previewPieceTechniqueCode(input: {
   planReference: string;
   indiceExterne: string;
 }): string {
+  const suffix = input.planReference.match(/( REP (?:0[1-9]|[1-9][0-9]))+$/)?.[0] ?? "";
+  const planReference = suffix ? input.planReference.slice(0, -suffix.length) : input.planReference;
   return [
     normalizeClientSegment(input.clientCode),
-    normalizePlanReference(input.planReference),
+    normalizePlanReference(planReference),
     normalizeSegment(input.indiceExterne, "External index"),
-  ].join("-");
+  ].join("-") + suffix;
 }
 
 export async function generatePieceTechniqueBusinessCode(
@@ -238,7 +240,9 @@ export async function allocateCrpPlanReference(tx: DbQueryer, date?: Date): Prom
 }
 
 export function crpPieceBusinessCode(planReference: string, index: string): string {
-  return `${planReference}-CRP-${normalizeSegment(index, "Index")}`;
+  const root = planReference.slice(0, 6);
+  const suffix = planReference.slice(6);
+  return root + "-CRP-" + normalizeSegment(index, "Index") + suffix;
 }
 
 export function previewArticleCode(familyCode: string): string {

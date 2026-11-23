@@ -1295,15 +1295,23 @@ type BomRow = {
 async function repoListBomLines(pieceTechniqueId: string): Promise<BomLine[]> {
   const sql = `
     SELECT
-      id::text AS id,
-      child_piece_technique_id::text AS child_piece_id,
-      rang::int AS rang,
-      quantite::float8 AS quantite,
-      repere,
-      designation
-    FROM pieces_techniques_nomenclature
-    WHERE parent_piece_technique_id = $1::uuid
-    ORDER BY rang ASC, id ASC
+      n.id::text AS id,
+      n.child_piece_technique_id::text AS child_piece_id,
+      n.rang::int AS rang,
+      n.quantite::float8 AS quantite,
+      n.repere,
+      n.designation
+    FROM public.pieces_techniques p
+    LEFT JOIN LATERAL (
+      SELECT v.id FROM public.piece_technique_versions v
+      WHERE v.piece_technique_id = p.id AND v.statut <> 'OBSOLETE'
+      ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END, v.version_interne DESC, v.created_at DESC
+      LIMIT 1
+    ) version ON true
+    JOIN public.pieces_techniques_nomenclature n
+      ON ${applicableBomScopeSql("n", "p.id", "version.id")}
+    WHERE p.id = $1::uuid AND n.child_piece_technique_id IS NOT NULL
+    ORDER BY n.rang ASC, n.id ASC
   `;
   const res = await db.query<BomRow>(sql, [pieceTechniqueId]);
   return res.rows.map((r) => ({
@@ -1333,6 +1341,10 @@ type FabricationTreeRow = {
   level: number;
   path_text: string;
   ordre_affichage: number;
+  technical_version_id: string | null;
+  version_code: string | null;
+  plan_reference: string | null;
+  indice: string | null;
   quantite_par_parent: number;
   quantite_cumulee: number;
   repere: string | null;
@@ -1352,7 +1364,7 @@ function mapFabricationTreeRow(row: FabricationTreeRow): FabricationTreeNode {
     parent_piece_technique_id: row.parent_piece_technique_id,
     piece_technique_id: row.piece_technique_id,
     article_id: row.article_id,
-    code_piece: row.code_piece,
+    code_piece: row.version_code ?? row.code_piece,
     designation: row.designation,
     designation_2: row.designation_2,
     statut: row.statut,
@@ -1362,6 +1374,9 @@ function mapFabricationTreeRow(row: FabricationTreeRow): FabricationTreeNode {
     level: Number(row.level),
     path: row.path_text.split("/").filter((part) => part.length > 0),
     ordre_affichage: Number(row.ordre_affichage),
+    technical_version_id: row.technical_version_id,
+    plan_reference: row.plan_reference,
+    indice: row.indice,
     quantite_par_parent: Number(row.quantite_par_parent),
     quantite_cumulee: Number(row.quantite_cumulee),
     repere: row.repere,
@@ -1396,6 +1411,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           COALESCE($3::uuid,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=p.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)) AS technical_version_id,
           0::int AS level,
           ARRAY[p.id]::uuid[] AS path_ids,
+          ARRAY[p.id]::uuid[] AS occurrence_path,
           ARRAY[0]::int[] AS order_path,
           0::int AS ordre_affichage,
           1::numeric AS quantite_par_parent,
@@ -1424,6 +1440,7 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
           COALESCE(n.child_piece_technique_version_id,(SELECT v.id FROM public.piece_technique_versions v WHERE v.piece_technique_id=child.id AND v.statut<>'OBSOLETE' ORDER BY CASE v.statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END,v.version_interne DESC,v.created_at DESC LIMIT 1)),
           tree.level + 1 AS level,
           tree.path_ids || child.id AS path_ids,
+          tree.occurrence_path || n.id AS occurrence_path,
           tree.order_path || n.rang AS order_path,
           n.rang::int AS ordre_affichage,
           n.quantite AS quantite_par_parent,
@@ -1441,10 +1458,10 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       ),
       enriched AS (
         SELECT
-          array_to_string(path_ids::text[], '/') AS key,
+          array_to_string(occurrence_path::text[], '/') AS key,
           CASE
             WHEN array_length(path_ids, 1) > 1
-              THEN array_to_string(path_ids[1:(array_length(path_ids, 1) - 1)]::text[], '/')
+              THEN array_to_string(occurrence_path[1:(array_length(occurrence_path, 1) - 1)]::text[], '/')
             ELSE NULL
           END AS parent_key,
           bom_line_id::text AS bom_line_id,
@@ -1471,6 +1488,9 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
       )
       SELECT
         e.*,
+        current_version.plan_reference,
+        current_version.indice,
+        current_version.code_metier AS version_code,
         COALESCE(no.operations_count, 0)::int AS operations_count,
         COALESCE(no.operations_temps_total, 0)::float8 AS operations_temps_total,
         COALESCE(no.cout_mo_total, 0)::float8 AS operations_cout_mo,
@@ -1479,14 +1499,14 @@ export async function repoGetFabricationTree(pieceTechniqueId: string, maxDepth 
         COALESCE(na.achats_total_ttc, 0)::float8 AS achats_total_ttc
       FROM enriched e
       LEFT JOIN LATERAL (
-        SELECT v.id FROM public.piece_technique_versions v
+        SELECT v.id, v.plan_reference, v.indice, v.code_metier FROM public.piece_technique_versions v
         WHERE v.id=e.technical_version_id
         ORDER BY CASE WHEN v.statut = 'APPLICABLE' THEN 0 ELSE 1 END,
           v.version_interne DESC NULLS LAST, v.created_at DESC, v.id DESC
         LIMIT 1
       ) current_version ON true
       ${currentDossierTotalsSql("e.piece_technique_id::uuid", "current_version.id")}
-      ORDER BY e.order_path ASC, e.piece_technique_id ASC
+      ORDER BY e.order_path ASC, e.key ASC
     `,
     [pieceTechniqueId, depth,versionId]
   );
@@ -1775,23 +1795,35 @@ export async function repoCreatePieceTechnique(
       }
     }
 
+    const subPiece = body.sub_piece;
+    const parent = subPiece
+      ? await lockBomParent(client, subPiece.parent_piece_id, subPiece.parent_version_id)
+      : null;
+    if (subPiece && !parent) throw new HttpError(404, "PIECE_NOT_FOUND", "Pièce mère introuvable.");
+    const inherited = subPiece?.same_reference ? parent : null;
+    if (inherited && (!inherited.plan_reference || !inherited.code_piece)) {
+      throw new HttpError(422, "PARENT_REFERENCE_REQUIRED", "Renseignez la référence plan de la pièce mère.");
+    }
+    const suffix = subPiece ? " REP " + String(subPiece.repere).padStart(2, "0") : "";
     const actorUserId = audit.user_id;
     const createdBy = actorUserId;
     const updatedBy = actorUserId;
     const pieceTechniqueId = crypto.randomUUID();
 
-    // If the client is selected but the frontend did not send a name, derive it from the clients table.
-    const clientIdForInsert = body.client_id ?? null;
-    const clientNameForInsert =
-      body.client_name ?? (clientIdForInsert ? await lookupClientCompanyName(client, clientIdForInsert) : null);
-    const scope = body.commercial_scope ?? "CLIENTS";
-    const crpReference = scope === "CRP" ? await allocateCrpPlanReference(client) : null;
-    const planReference = crpReference ?? body.plan_reference;
-    const indiceExterne = body.sans_indice ? "NA" : body.indice_externe?.trim() ?? null;
+    const clientIdForInsert = inherited ? inherited.client_id : body.client_id ?? null;
+    const clientCodeForInsert = inherited ? inherited.code_client : body.code_client ?? null;
+    const clientNameForInsert = (inherited ? inherited.client_name : body.client_name)
+      ?? (clientIdForInsert ? await lookupClientCompanyName(client, clientIdForInsert) : null);
+    const scope = (inherited ? inherited.commercial_scope : body.commercial_scope) ?? "CLIENTS";
+    const crpReference = scope !== "CRP" ? null
+      : inherited ? inherited.plan_reference + suffix : await allocateCrpPlanReference(client);
+    const planReference = inherited ? inherited.plan_reference + suffix : crpReference ?? body.plan_reference;
+    const originalIndex = inherited ? inherited.indice_externe_original : body.sans_indice ? null : body.indice_externe ?? null;
+    const indiceExterne = inherited ? inherited.indice : body.sans_indice ? "NA" : body.indice_externe?.trim() ?? null;
     if (!planReference) {
       throw new HttpError(400, "TECHNICAL_CODE_INPUT_REQUIRED", "Client, plan reference and external index are required to generate the technical piece code.");
     }
-    const generatedCode = crpReference
+    const generatedCode = inherited ? inherited.code_piece + suffix : crpReference
       ? crpPieceBusinessCode(crpReference, indiceExterne ?? "NA")
       : await generatePieceTechniqueBusinessCode(client, {
           clientId: clientIdForInsert,
@@ -1867,7 +1899,7 @@ export async function repoCreatePieceTechnique(
       body.en_fabrication ? 1 : 0,
       body.cycle ?? null,
       body.cycle_fabrication ?? null,
-      body.code_client ?? null,
+      clientCodeForInsert,
       clientNameForInsert,
       body.ensemble,
       body.quality_levels ?? [],
@@ -1896,7 +1928,7 @@ export async function repoCreatePieceTechnique(
           pieceId,
           indiceExterne ?? "NA",
           planReference,
-          body.sans_indice ? null : body.indice_externe ?? null,
+          originalIndex,
           indiceExterne,
           generatedCode,
           body.motif_modification ?? "Création initiale",
@@ -1907,6 +1939,14 @@ export async function repoCreatePieceTechnique(
       );
     }
 
+    if (subPiece && parent) {
+      await insertRankedBomLine(client, subPiece.parent_piece_id, parent.bom_version_id, {
+        child_piece_id: pieceId,
+        rang: subPiece.rang,
+        repere: String(subPiece.repere),
+        quantite: subPiece.quantite,
+      });
+    }
     piece.bom = await insertBomLines(client, pieceId, body.bom ?? []);
     piece.operations = await insertOperations(client, pieceId, body.operations ?? []);
     piece.achats = await insertAchats(client, pieceId, body.achats ?? []);
@@ -2016,16 +2056,21 @@ export const repoCreatePieceTechniqueCutoverTx = (
   validatedRequestHash?: string
 ) => repoCreatePieceTechnique(body, audit, idempotencyKey, validatedRequestHash, [], { client, sideEffects: "none" });
 
-async function insertBomLines(client: PoolClient, pieceTechniqueId: string, bom: AddBomLineBodyDTO[]): Promise<BomLine[]> {
+async function insertBomLines(client: PoolClient, pieceTechniqueId: string, bom: (Omit<AddBomLineBodyDTO, "rang"> & { rang?: number })[]): Promise<BomLine[]> {
   if (!bom.length) return [];
 
-  let nextRang = 10;
   const out: BomLine[] = [];
-  for (let i = 0; i < bom.length; i++) {
-    const l = bom[i];
-    await ensureBomLinkAllowed(client, pieceTechniqueId, l.child_piece_id);
-    const rang = typeof l.rang === "number" ? l.rang : nextRang;
-    nextRang = rang + 10;
+  const usedRanks = new Set<number>();
+  for (const line of bom) {
+    const rang = line.rang;
+    if (rang === undefined || !Number.isInteger(rang) || rang < 1 || rang > 99) {
+      throw new HttpError(422, "BOM_RANK_INVALID", "Chaque sous-pièce doit avoir un rang de 1 à 99.");
+    }
+    if (usedRanks.has(rang)) {
+      throw new HttpError(409, "BOM_RANK_TAKEN", "Ce rang est déjà utilisé dans cet assemblage.");
+    }
+    usedRanks.add(rang);
+    await ensureBomLinkAllowed(client, pieceTechniqueId, line.child_piece_id);
 
     const res = await client.query<{
       id: string;
@@ -2053,7 +2098,7 @@ async function insertBomLines(client: PoolClient, pieceTechniqueId: string, bom:
           repere,
           designation
       `,
-      [pieceTechniqueId, l.child_piece_id, rang, l.quantite, l.repere ?? null, l.designation ?? null]
+      [pieceTechniqueId, line.child_piece_id, rang, line.quantite, line.repere ?? null, line.designation ?? null]
     );
     const r = res.rows[0];
     out.push({
@@ -2912,71 +2957,122 @@ async function ensureBomLinkAllowed(client: PoolClient, parentId: string, childI
   if (cycle) throw new HttpError(409, "BOM_CYCLE", "This line would create a fabrication tree cycle");
 }
 
+type BomParent = {
+  bom_version_id: string | null;
+  resolved_version_id: string | null;
+  plan_reference: string | null;
+  indice: string | null;
+  indice_externe_original: string | null;
+  code_piece: string;
+  client_id: string | null;
+  code_client: string | null;
+  client_name: string | null;
+  commercial_scope: "CLIENTS" | "CRP" | null;
+};
+
+async function lockBomParent(client: PoolClient, pieceId: string, versionId?: string | null): Promise<BomParent | null> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceId]);
+  const result = await client.query<BomParent>(
+    `SELECT v.id AS resolved_version_id,
+      CASE WHEN EXISTS (
+        SELECT 1 FROM public.pieces_techniques_nomenclature n
+        WHERE n.parent_piece_technique_id = p.id AND n.parent_piece_technique_version_id IS NULL
+      ) AND NOT EXISTS (
+        SELECT 1 FROM public.pieces_techniques_nomenclature n
+        WHERE n.parent_piece_technique_id = p.id AND n.parent_piece_technique_version_id IS NOT NULL
+      ) THEN NULL ELSE v.id END AS bom_version_id,
+      v.plan_reference, v.indice, v.indice_externe_original,
+      COALESCE(v.code_metier, p.code_piece) AS code_piece,
+      p.client_id, p.code_client, p.client_name, p.commercial_scope
+    FROM public.pieces_techniques p
+    LEFT JOIN LATERAL (
+      SELECT id, plan_reference, indice, indice_externe_original, code_metier
+      FROM public.piece_technique_versions
+      WHERE piece_technique_id = p.id AND
+        (id = $2::uuid OR ($2::uuid IS NULL AND statut <> 'OBSOLETE'))
+      ORDER BY CASE statut WHEN 'APPLICABLE' THEN 0 ELSE 1 END, version_interne DESC, created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    ) v ON true
+    WHERE p.id = $1::uuid`,
+    [pieceId, versionId ?? null]
+  );
+  const parent = result.rows[0] ?? null;
+  if (parent && versionId && !parent.resolved_version_id) {
+    throw new HttpError(422, "BOM_PARENT_VERSION_MISMATCH", "Cet indice n’appartient pas à la pièce mère.");
+  }
+  return parent;
+}
+
+async function insertRankedBomLine(
+  client: PoolClient, pieceTechniqueId: string, versionId: string | null, body: AddBomLineBodyDTO
+): Promise<BomLine> {
+  const existing = await client.query(
+    `SELECT 1 FROM public.pieces_techniques_nomenclature
+     WHERE parent_piece_technique_id = $1::uuid AND parent_piece_technique_version_id IS NOT DISTINCT FROM $2::uuid
+       AND rang = $3 LIMIT 1`,
+    [pieceTechniqueId, versionId, body.rang]
+  );
+  if (existing.rows.length) {
+    throw new HttpError(409, "BOM_RANK_TAKEN", "Ce rang est déjà utilisé dans cet assemblage.");
+  }
+  await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
+
+  const ins = await client.query<BomRow>(
+    `
+      INSERT INTO pieces_techniques_nomenclature (
+        parent_piece_technique_id,
+        child_piece_technique_id,
+        parent_piece_technique_version_id,
+        child_piece_technique_version_id,
+        rang,
+        quantite,
+        repere,
+        designation
+      )
+      VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8)
+      RETURNING
+        id::text AS id,
+        child_piece_technique_id::text AS child_piece_id,
+        rang::int AS rang,
+        quantite::float8 AS quantite,
+        repere,
+        designation
+    `,
+    [
+      pieceTechniqueId,
+      body.child_piece_id,
+      versionId,
+      body.child_piece_technique_version_id ?? null,
+      body.rang,
+      body.quantite,
+      body.repere ?? null,
+      body.designation ?? null,
+    ]
+  );
+  const r = ins.rows[0];
+  return {
+    id: r.id,
+    child_piece_id: r.child_piece_id,
+    rang: r.rang,
+    quantite: Number(r.quantite),
+    repere: r.repere,
+    designation: r.designation,
+  };
+}
+
 export async function repoAddBomLine(pieceTechniqueId: string, body: AddBomLineBodyDTO): Promise<BomLine | null> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId]);
-    const exists = await ensurePieceTechniqueExists(client, pieceTechniqueId);
-    if (!exists) {
+    const parent = await lockBomParent(client, pieceTechniqueId, body.parent_piece_technique_version_id);
+    if (!parent) {
       await client.query("ROLLBACK");
       return null;
     }
-
-    await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
-
-    let rang = body.rang;
-    if (rang === undefined) {
-      const maxRes = await client.query<{ max_rang: number | null }>(
-        `SELECT MAX(rang)::int AS max_rang FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid`,
-        [pieceTechniqueId]
-      );
-      const max = maxRes.rows[0]?.max_rang ?? 0;
-      rang = max + 10;
-    }
-
-    const ins = await client.query<BomRow>(
-      `
-        INSERT INTO pieces_techniques_nomenclature (
-          parent_piece_technique_id,
-          child_piece_technique_id,
-          parent_piece_technique_version_id,
-          child_piece_technique_version_id,
-          rang,
-          quantite,
-          repere,
-          designation
-        )
-        VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, $6, $7, $8)
-        RETURNING
-          id::text AS id,
-          child_piece_technique_id::text AS child_piece_id,
-          rang::int AS rang,
-          quantite::float8 AS quantite,
-          repere,
-          designation
-      `,
-      [
-        pieceTechniqueId,
-        body.child_piece_id,
-        body.parent_piece_technique_version_id ?? null,
-        body.child_piece_technique_version_id ?? null,
-        rang,
-        body.quantite,
-        body.repere ?? null,
-        body.designation ?? null,
-      ]
-    );
+    const line = await insertRankedBomLine(client, pieceTechniqueId, parent.bom_version_id, body);
     await client.query("COMMIT");
-    const r = ins.rows[0];
-    return {
-      id: r.id,
-      child_piece_id: r.child_piece_id,
-      rang: r.rang,
-      quantite: Number(r.quantite),
-      repere: r.repere,
-      designation: r.designation,
-    };
+    return line;
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -2994,6 +3090,19 @@ export async function repoUpdateBomLine(
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId]);
+
+    if (body.rang !== undefined || body.parent_piece_technique_version_id !== undefined) {
+      const current = await client.query<{ rang: number; version_id: string | null }>(
+        `SELECT rang, parent_piece_technique_version_id AS version_id
+         FROM public.pieces_techniques_nomenclature WHERE id = $1::uuid AND parent_piece_technique_id = $2::uuid`,
+        [lineId, pieceTechniqueId]
+      );
+      const row = current.rows[0];
+      if (row && ((body.rang !== undefined && body.rang !== row.rang)
+        || (body.parent_piece_technique_version_id !== undefined && body.parent_piece_technique_version_id !== row.version_id))) {
+        throw new HttpError(409, "BOM_REORDER_DISABLED", "Le rang est fixé à l’ajout de la sous-pièce.");
+      }
+    }
 
     if (body.child_piece_id !== undefined) {
       await ensureBomLinkAllowed(client, pieceTechniqueId, body.child_piece_id);
@@ -3085,66 +3194,26 @@ async function repoGetBomLine(pieceTechniqueId: string, lineId: string): Promise
 }
 
 export async function repoDeleteBomLine(pieceTechniqueId: string, lineId: string): Promise<boolean> {
-  const { rowCount } = await db.query(
-    `DELETE FROM pieces_techniques_nomenclature WHERE id = $1::uuid AND parent_piece_technique_id = $2::uuid`,
-    [lineId, pieceTechniqueId]
-  );
-  return (rowCount ?? 0) > 0;
-}
-
-export async function repoReorderBom(pieceTechniqueId: string, order: string[]): Promise<BomLine[] | null> {
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))",[pieceTechniqueId]);
-
-    const current = await client.query<{ id: string;rang:number }>(
-      `SELECT id::text AS id,rang::int FROM pieces_techniques_nomenclature WHERE parent_piece_technique_id = $1::uuid FOR UPDATE`,
-      [pieceTechniqueId]
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId]);
+    const { rowCount } = await client.query(
+      `DELETE FROM pieces_techniques_nomenclature WHERE id = $1::uuid AND parent_piece_technique_id = $2::uuid`,
+      [lineId, pieceTechniqueId]
     );
-    const currentIds = new Set(current.rows.map((r) => r.id));
-    if(!order.length||new Set(order).size!==order.length)throw new HttpError(422,'INVALID_ORDER','Chaque ligne doit apparaître une seule fois.');
-    for (const id of order) {
-      if (!currentIds.has(id)) throw new HttpError(422, "INVALID_ORDER", "Order contains invalid line id");
-    }
-
-    // Ranks are unique across all client plans. Keep historical lines intact,
-    // and stage swaps above the full range before assigning the working order.
-    const selected=new Set(order);
-    const outsideMax=Math.max(0,...current.rows.filter(r=>!selected.has(r.id)).map(r=>Number(r.rang)||0));
-    const allMax=Math.max(outsideMax,...current.rows.map(r=>Number(r.rang)||0));
-    if(allMax+order.length*20+10>2147483647)throw new HttpError(422,'INVALID_ORDER','La numérotation des lignes doit être revue.');
-    const params: unknown[] = [pieceTechniqueId];
-    const stageParams:unknown[]=[pieceTechniqueId];
-    const cases: string[] = [];
-    for (let i = 0; i < order.length; i++) {
-      params.push(order[i]);
-      params.push(outsideMax+(i + 1) * 10);
-      stageParams.push(order[i],allMax+order.length*10+(i+1)*10);
-      const idParam = `$${params.length - 1}`;
-      const rankParam = `$${params.length}`;
-      cases.push(`WHEN id = ${idParam}::uuid THEN ${rankParam}`);
-    }
-    const inList = order.map((_, i) => `$${2 + i * 2}`).join(", ");
-    const reorderSql=`UPDATE pieces_techniques_nomenclature SET rang=CASE ${cases.join(' ')} ELSE rang END WHERE parent_piece_technique_id=$1::uuid AND id IN (${inList})`;
-    await client.query(reorderSql,stageParams);
-    await client.query(
-      `
-        UPDATE pieces_techniques_nomenclature
-        SET rang = CASE ${cases.join(" ")} ELSE rang END
-        WHERE parent_piece_technique_id = $1::uuid AND id IN (${inList})
-      `,
-      params
-    );
-
     await client.query("COMMIT");
-    return repoListBomLines(pieceTechniqueId);
-  } catch (err) {
+    return (rowCount ?? 0) > 0;
+  } catch (error) {
     await client.query("ROLLBACK");
-    throw err;
+    throw error;
   } finally {
     client.release();
   }
+}
+
+export async function repoReorderBom(_pieceTechniqueId: string, _order: string[]): Promise<BomLine[] | null> {
+  throw new HttpError(409, "BOM_REORDER_DISABLED", "Le rang est fixé à l’ajout de la sous-pièce.");
 }
 
 export async function repoAddOperation(pieceTechniqueId: string, body: AddOperationBodyDTO & { temps_total: number; cout_mo: number }) {

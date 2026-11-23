@@ -573,8 +573,7 @@ async function cloneTechnicalVersionTx(
   body: CreateNextVersionBodyDTO, audit: AuditContext, routineEdit: boolean,
   options: { autoFollowDraftOrders?: boolean } = {},
 ): Promise<PieceTechniqueVersionCloneResult> {
-    // Les rangs de nomenclature sont uniques par pièce, toutes versions confondues.
-    // Même verrou que les ajouts/modifications de composants, avant toute allocation.
+    // Sérialise la copie avec les modifications de la nomenclature source.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('piece-bom:' || $1::text, 0))", [pieceTechniqueId])
     const piece = (await client.query<{ statut: string }>("SELECT statut::text FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE", [pieceTechniqueId])).rows[0]
     if (!piece) throw new HttpError(404, "PIECE_NOT_FOUND", "Pièce technique introuvable.")
@@ -672,14 +671,9 @@ async function cloneTechnicalVersionTx(
          child_piece_technique_version_id, child_article_id, rang, quantite, repere, designation)
        SELECT n.parent_piece_technique_id, $2::uuid, n.child_piece_technique_id,
               n.child_piece_technique_version_id, n.child_article_id,
-              (r.max_rang + 10 * row_number() OVER (ORDER BY n.rang, n.id))::integer,
+              n.rang,
               n.quantite, n.repere, n.designation
          FROM public.pieces_techniques_nomenclature n
-         CROSS JOIN (
-           SELECT COALESCE(MAX(rang), 0)::bigint AS max_rang
-             FROM public.pieces_techniques_nomenclature
-            WHERE parent_piece_technique_id = $1::uuid
-         ) r
         WHERE n.parent_piece_technique_id = $1::uuid
           AND n.parent_piece_technique_version_id = $3::uuid`,
       [pieceTechniqueId, row.id, sourceVersionId]

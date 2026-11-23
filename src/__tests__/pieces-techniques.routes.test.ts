@@ -366,13 +366,14 @@ describe("/api/v1/pieces-techniques", () => {
       const q = String(sql);
       if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("SELECT 1::int AS ok FROM pieces_techniques")) return { rows: [{ ok: 1 }] };
+      if (q.includes("SELECT v.id AS resolved_version_id")) return { rows: [{ bom_version_id: null, resolved_version_id: null }] };
       if (q.includes("WITH RECURSIVE descendants")) return { rows: [{ found: 1 }] };
       return { rows: [] };
     });
 
     const res = await request(app)
       .post(`/api/v1/pieces-techniques/${parentId}/nomenclature`)
-      .send({ child_piece_id: childId, quantite: 1 });
+      .send({ child_piece_id: childId, quantite: 1, rang: 17 });
 
     expect(res.status).toBe(409);
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
