@@ -358,6 +358,17 @@ describe("/api/v1/pieces-techniques", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("SET statut = 'OBSOLETE'"))).toBe(false);
   });
 
+  it("refuse la création autonome depuis la route de sous-pièce ou le rattachement depuis la route autonome", async () => {
+    const normalPiece = { commercial_scope: "CRP", indice_externe: "A", name_piece: "Essai", designation: "Essai" };
+    await request(app).post("/api/v1/pieces-techniques/sous-pieces").send(normalPiece).expect(400);
+    const attachedPiece = { ...normalPiece, sub_piece: {
+      parent_piece_id: "11111111-1111-4111-8111-111111111111", same_reference: false,
+      rang: 3, repere: 10, quantite: 1,
+    } };
+    await request(app).post("/api/v1/pieces-techniques").send(attachedPiece).expect(400);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
   it("rejects a manufactured child relation that would create a fabrication cycle", async () => {
     const parentId = "11111111-1111-4111-8111-111111111111";
     const childId = "22222222-2222-4222-8222-222222222222";

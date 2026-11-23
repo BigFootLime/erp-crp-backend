@@ -197,7 +197,7 @@ function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: stri
   }
 }
 
-export const createPieceTechniqueSchema = z.object({
+const pieceCreationPayloadSchema = z.object({
   body: z.object({
     commercial_scope: z.enum(["CLIENTS", "CRP"]).optional(),
     sub_piece: z.object({
@@ -269,7 +269,17 @@ export const createPieceTechniqueSchema = z.object({
   }),
 })
 
-export type CreatePieceTechniqueBodyDTO = z.infer<typeof createPieceTechniqueSchema>["body"]
+export const createPieceTechniqueSchema = pieceCreationPayloadSchema.refine(
+  ({ body }) => body.sub_piece === undefined,
+  { path: ["body", "sub_piece"], message: "Utilisez la création de sous-pièce pour rattacher la pièce mère." },
+);
+
+export const createSubPieceTechniqueSchema = pieceCreationPayloadSchema.refine(
+  ({ body }) => body.sub_piece !== undefined,
+  { path: ["body", "sub_piece"], message: "Le rattachement à la pièce mère est obligatoire." },
+);
+
+export type CreatePieceTechniqueBodyDTO = z.infer<typeof pieceCreationPayloadSchema>["body"]
 
 export const pieceTechniqueCodePreviewSchema = z.object({
   query: z.object({

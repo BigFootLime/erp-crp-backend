@@ -10,7 +10,7 @@ import {
 } from "../module/pieces-techniques/repository/pieces-techniques.repository";
 import { repoPreparePieceEdit } from "../module/pieces-techniques/repository/versions.repository";
 import { createPieceTechniqueWithReplaySVC } from "../module/pieces-techniques/services/pieces-techniques.service";
-import { addBomLineSchema, createPieceTechniqueSchema } from "../module/pieces-techniques/validators/pieces-techniques.validators";
+import { addBomLineSchema, createPieceTechniqueSchema, createSubPieceTechniqueSchema } from "../module/pieces-techniques/validators/pieces-techniques.validators";
 import { getAssemblyPlanning, saveAssemblyPlanning } from "../module/planning/controllers/assembly-planning.controller";
 import { ofAssemblyUsage } from "../module/production/controllers/of-assembly-usage.controller";
 
@@ -29,7 +29,7 @@ describe.skipIf(!enabled)("Sous-rangs et assemblage — PostgreSQL jetable", () 
   let audit: AuditContext;
   const design = "Assemblage synthétique " + randomUUID().slice(0, 8);
   const create = (values: Record<string, unknown>, key = randomUUID()) =>
-    createPieceTechniqueWithReplaySVC(createPieceTechniqueSchema.parse({
+    createPieceTechniqueWithReplaySVC((values.sub_piece ? createSubPieceTechniqueSchema : createPieceTechniqueSchema).parse({
       body: { name_piece: design, designation: design, ...values },
     }).body, audit, key);
 

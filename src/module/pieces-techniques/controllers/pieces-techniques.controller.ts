@@ -17,6 +17,7 @@ import {
   affaireOnlyParamSchema,
   bomLineIdParamSchema,
   createPieceTechniqueSchema,
+  createSubPieceTechniqueSchema,
   documentIdParamSchema,
   getPieceTechniqueQuerySchema,
   idParamSchema,
@@ -139,10 +140,10 @@ const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/
  * Le client génère la clé une fois par parcours ; le serveur renvoie la même pièce.
  * Sans en-tête, le comportement reste celui d'avant : la création se fait, sans filet.
  */
-export const createPieceTechnique: RequestHandler = async (req, res, next) => {
+const createTechnicalPiece = (schema: typeof createPieceTechniqueSchema): RequestHandler => async (req, res, next) => {
   try {
     const audit = buildAuditContext(req)
-    const body: CreatePieceTechniqueBodyDTO = createPieceTechniqueSchema.parse({ body: req.body }).body
+    const body: CreatePieceTechniqueBodyDTO = schema.parse({ body: req.body }).body
 
     const rawKey = req.headers["idempotency-key"]
     const idempotencyKey = typeof rawKey === "string" ? rawKey.trim() : ""
@@ -187,6 +188,8 @@ export const createPieceTechnique: RequestHandler = async (req, res, next) => {
     next(err)
   }
 }
+export const createPieceTechnique = createTechnicalPiece(createPieceTechniqueSchema)
+export const createSubPieceTechnique = createTechnicalPiece(createSubPieceTechniqueSchema)
 
 export const previewPieceTechniqueCode: RequestHandler = async (req, res, next) => {
   try {

@@ -51,6 +51,7 @@ import {
   addBomLine,
   addOperation,
   createPieceTechnique,
+  createSubPieceTechnique,
   previewPieceTechniqueCode,
   deletePieceTechnique,
   archivePieceTechnique,
@@ -93,6 +94,7 @@ import {
   affaireOnlyParamSchema,
   bomLineIdParamSchema,
   createPieceTechniqueSchema,
+  createSubPieceTechniqueSchema,
   documentIdParamSchema,
   idParamSchema,
   linkAffaireSchema,
@@ -164,6 +166,7 @@ router.use(authenticateToken)
 
 router.get("/code-preview", previewPieceTechniqueCode)
 router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
+router.post("/sous-pieces", validate(createSubPieceTechniqueSchema), createSubPieceTechnique)
 // #146 — Déclarée AVANT `/:id`, sinon Express interpréterait « summary » comme un
 // identifiant de pièce et renverrait un 400 de validation UUID.
 router.get("/summary", getPieceTechniquesSummary)
