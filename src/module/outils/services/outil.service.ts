@@ -18,6 +18,7 @@ import {
 import { outilRepository } from "../repository/outil.repository"
 import { getToolCatalogueSourceProvenance, type CatalogueSourceProvenance } from "./outil-catalogue.service"
 import type { OutillageImportBatchSummary, OutillageRecentMovement, OutilPricingResponse } from "../types/outil.types"
+import type { OutillageWorkshopPageQuery } from "../validators/outil.validator"
 import {
   type OutillageToolUploadFiles,
   type PromotedOutillageFile,
@@ -265,6 +266,10 @@ export const outilService = {
 
   async getLowStock() {
     return outilRepository.getLowStock()
+  },
+
+  async getWorkshopPage(query: OutillageWorkshopPageQuery) {
+    return outilRepository.getWorkshopPage(query)
   },
 
   async getOutil(id: number) {
