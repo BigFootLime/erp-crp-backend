@@ -1428,6 +1428,40 @@ export async function queueStockArticleCreationSnapshotTx(
   }));
 }
 
+async function inheritTechnicalPieceIdentity(client: PoolClient, body: CreateArticleBodyDTO): Promise<CreateArticleBodyDTO> {
+  if (body.article_category !== "fabrique" || !body.piece_technique_id) return body;
+
+  const piece = (await client.query<{
+    client_id: string | null;
+    crp_plan_reference: string | null;
+    designation: string;
+  }>(
+    `SELECT client_id, crp_plan_reference, designation
+       FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR UPDATE`,
+    [body.piece_technique_id],
+  )).rows[0];
+  if (!piece) {
+    throw new HttpError(400, "INVALID_PIECE_TECHNIQUE", "Pièce technique introuvable pour l'article fabriqué.");
+  }
+  if (piece.crp_plan_reference) {
+    return {
+      ...body,
+      commercial_scope: "CRP",
+      internal_reference: piece.crp_plan_reference,
+      designation: piece.designation,
+      client_ids: [],
+    };
+  }
+  const designation = body.designation ?? piece.designation;
+  if (!piece.client_id) return { ...body, designation };
+  return {
+    ...body,
+    designation,
+    commercial_scope: "CLIENTS",
+    client_ids: [...new Set([piece.client_id, ...(body.client_ids ?? [])])],
+  };
+}
+
 /**
  * Création d'article DANS une transaction déjà ouverte par l'appelant.
  *
@@ -1440,10 +1474,11 @@ export async function queueStockArticleCreationSnapshotTx(
  */
 export async function repoCreateArticleTx(
   client: PoolClient,
-  body: CreateArticleBodyDTO,
+  input: CreateArticleBodyDTO,
   audit: AuditContext,
   identity?: { specialProcessCode: string }
 ): Promise<CreatedArticleSummary> {
+  const body = await inheritTechnicalPieceIdentity(client, input);
   if (
     identity
     && (body.article_category !== "traitement"
