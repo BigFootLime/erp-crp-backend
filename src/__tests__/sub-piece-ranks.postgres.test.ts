@@ -67,6 +67,20 @@ describe.skipIf(!enabled)("Sous-rangs et assemblage — PostgreSQL jetable", () 
     }
   });
 
+  it("enregistre un repère NULL pour une création indépendante ou une association sans repère", async () => {
+    const mother = (await create({ commercial_scope: "CRP", indice_externe: "A", ensemble: true })).piece;
+    const link = { parent_piece_id: mother.id, rang: 14, quantite: 2 };
+    const { piece: child } = await create({
+      commercial_scope: "CRP", indice_externe: "B", sub_piece: { ...link, same_reference: false },
+    });
+    await repoAddBomLine(mother.id, { child_piece_id: child.id, rang: 30, quantite: 1 });
+    const tree = await repoGetFabricationTree(mother.id);
+    expect(tree?.root.children.map(({ ordre_affichage, repere }) => [ordre_affichage, repere])).toEqual([[14, null], [30, null]]);
+    expect(createSubPieceTechniqueSchema.safeParse({
+      body: { name_piece: design, designation: design, sub_piece: { ...link, same_reference: true } },
+    }).success).toBe(false);
+  });
+
   it("refuse le rang concurrent sans créer une pièce orpheline et interdit les déplacements", async () => {
     const mother = (await create({ commercial_scope: "CRP", indice_externe: "A", ensemble: true })).piece;
     const attempts = await Promise.allSettled([14, 77].map((repere) => create({
