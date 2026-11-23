@@ -3,6 +3,23 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Sub-piece references and assembly planning
+
+`20261123_sub_piece_reference.sql` depends on
+`20261123_crp_technical_pieces.sql`. It replaces the CRP reference check with
+one that also accepts inherited `REP 01` through `REP 99` suffixes. It does
+not update historical pieces or add another table. Apply only this patch
+through the existing migration order after its isolated rehearsal and the
+applicable delivery authorization.
+
+Replacing and validating the constraint locks `pieces_techniques`; check
+the deployment window and the application role's existing `erp_settings`
+read/write rights during preflight. Assembly team and weekly presence use
+settings keys, not a separate migration. An application rollback may retain
+the wider constraint. Restoring the previous constraint requires a decision
+about any suffixed references created after activation; do not silently
+remove those references.
+
 ## Gammes atelier
 
 `20261119_gamme_atelier.sql` adds nullable operation metadata and the improvement

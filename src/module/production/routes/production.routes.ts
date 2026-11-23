@@ -1,3 +1,4 @@
+import { ofAssemblyUsage } from "../controllers/of-assembly-usage.controller";
 import {productionWorkbenchConfig} from '../controllers/production-workbench.controller';
 import {prepareOperationProgramming} from '../controllers/production-workbench.controller';
 import {generateInspectionTemplate} from '../controllers/production-workbench.controller';
@@ -197,6 +198,7 @@ router.post('/clients/:clientId/contracts/:contractId/replenishment/commands',re
 router.get('/maintenance-calendar',requireMachineCapability('read'),readMaintenanceCalendar);
 router.post('/maintenance-calendar/preview',requireMachineCapability('availability'),previewMaintenanceCalendar);
 router.post('/maintenance-calendar/publish',requireMachineCapability('availability'),publishMaintenanceCalendar);
+router.get('/ofs/:id/assemblages', requireOfCapability('read'), ofAssemblyUsage);
 router.get('/ofs/:id/loss-complements',requireOfCapability('read'),readLosses);
 router.post('/ofs/:id/loss-complements',requireOfCapability('create'),createComplement);
 

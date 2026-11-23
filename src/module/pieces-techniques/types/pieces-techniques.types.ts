@@ -12,6 +12,9 @@ export type BomLine = {
 export type PieceTechniqueStatut = "DRAFT" | "ACTIVE" | "IN_FABRICATION" | "OBSOLETE"
 
 export type FabricationTreeNode = {
+  technical_version_id?: string | null;
+  plan_reference?: string | null;
+  indice?: string | null;
   key: string
   bom_line_id: string | null
   parent_piece_technique_id: string | null

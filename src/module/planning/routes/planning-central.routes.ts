@@ -1,3 +1,4 @@
+import { getAssemblyPlanning, saveAssemblyPlanning } from "../controllers/assembly-planning.controller";
 import { Router } from "express";
 import industrialRouter from "./industrial-plan.routes";
 import { centralApply, centralGetSimulation, centralSimulate, centralSnapshot, centralStatus, centralUnplan, centralObservations, centralPreview, centralWorkshopCalendar,centralSetWorkshopCalendar,centralOfProcurement,centralSaveOfProcurement,centralAutoOf } from "../controllers/planning-central.controller";
@@ -9,6 +10,8 @@ import { previewRecoveryGrouping,applyRecoveryGrouping,listRecoveryGroupingCandi
 const router=Router();
 router.use('/industrial',industrialRouter);
 // Authentication and module scope are enforced by the parent planning router.
+router.get("/assembly", requirePlanningCapability("read"), getAssemblyPlanning);
+router.put("/assembly", requirePlanningCapability("manage_schedule"), saveAssemblyPlanning);
 router.get("/status",requirePlanningCapability("read"),centralStatus);
 router.get('/master-plan',requirePlanningCapability('read_capacity'),masterPlan);
 router.get("/workshop-calendar",requirePlanningCapability("read"),centralWorkshopCalendar);
