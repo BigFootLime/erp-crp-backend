@@ -5,11 +5,13 @@ import express from "express";
 import pool from "../../../config/database";
 import router from "../routes/demand-pilot-portal.routes";
 import { signPortalSession } from "../../client-portal/domain/client-portal-security";
-import { createPilotFixtureArticle } from "../../../__tests__/fixtures/demand-pilot.fixture";
+import { createPilotFixtureArticle, createPilotFixtureClient } from "../../../__tests__/fixtures/demand-pilot.fixture";
+import { seedWorkbenchStock } from "../../../__tests__/fixtures/production-workbench.fixture";
 import { decideDemand } from "./demand-pilot.repository";
 import { processAgreedCounterOffer } from "../services/demand-counter.worker";
 import { industrialTx } from "../../planning/services/industrial-runs.service";
 import { saveArticleMapping } from "./demand-mapping.repository";
+import { configureStockLane } from "../../stock/repository/stock-lanes.repository";
 const url = new URL(process.env.DATABASE_URL ?? "postgres://localhost/off");
 const isolated =
   process.env.CERP_E2E_ISOLATED === "1" &&
@@ -36,6 +38,7 @@ const base = "/api/v1/client-portal/demand",
 let token: string,
   actor: number,
   contract: string,
+  technical: Awaited<ReturnType<typeof createPilotFixtureArticle>>,
   oldSecret: string | undefined;
 describe.skipIf(!isolated)(
   "Demand via authenticated customer routes on isolated PostgreSQL",
@@ -53,7 +56,7 @@ describe.skipIf(!isolated)(
           "INSERT INTO clients(client_id,client_code,company_name) VALUES($1::text,$1::text,'Test portail isolé') ON CONFLICT(client_id) DO NOTHING",
           [client],
         );
-        const { version } = await createPilotFixtureArticle(
+        technical = await createPilotFixtureArticle(
           tx,
           client,
           actor,
@@ -68,7 +71,7 @@ describe.skipIf(!isolated)(
         await tx.query(
           `INSERT INTO client_contract_lines(contract_id,article_id,root_article_id,unit_id,replenishment_qty,configured_code,configured_designation,configured_indice,configured_piece_technique_version_id)
     SELECT $1,$2,$2,id,1,$3,'Article de test','A',$4 FROM public.units WHERE code='u'`,
-          [contract, article, code, version],
+          [contract, article, code, technical.version],
         );
         await tx.query(
           `INSERT INTO client_portal_accounts(id,client_id,email,email_normalized,display_name,password_hash,status,activated_at,created_by,updated_by)
@@ -114,6 +117,7 @@ describe.skipIf(!isolated)(
         unit: "PCE",
         kind: "FORECAST",
         quantity: 7,
+        source_customer_stock_quantity: 0,
         quantity_basis: "REMAINING",
         need_date: "2027-02-05",
         contract_reference: code,
@@ -128,7 +132,31 @@ describe.skipIf(!isolated)(
       await post("/manual", {
         rows: [{ ...row, external_site: site + "-B" }],
       }).expect(403);
-      const created = await post("/manual", { rows: [row] }).expect(201);
+      await pool.query(
+        "INSERT INTO public.notification_routing(topic,user_id) VALUES('CLIENT_DEMAND_RECEIVED',$1) ON CONFLICT DO NOTHING",
+        [actor],
+      );
+      const importKey = randomUUID();
+      const created = await post("/manual", { rows: [row] }, importKey).expect(201);
+      await post("/manual", { rows: [row] }, importKey).expect(200);
+      const notifications = await pool.query(
+        "SELECT action_url,module_key FROM public.app_notifications WHERE dedupe_key=$1",
+        ["CLIENT_DEMAND_RECEIVED:demand:" + created.body.import_id],
+      );
+      expect(notifications.rows).toEqual([{
+        action_url: "/commandes?view=adv&demand_client=" + client,
+        module_key: "commandes-clients",
+      }]);
+      const forecastList = await request(app).get(base + "?kind=FORECAST&page_size=1")
+        .set("Authorization", "Bearer " + token).expect(200);
+      expect(forecastList.body.pagination.total).toBe(1);
+      expect(forecastList.body.data[0].customer_stock).toEqual({
+        quantity: 0, unit: "PCE", as_of: "2027-01-04T09:00:00.000Z",
+      });
+      expect(forecastList.body.data[0].crp_stock).toEqual({ quantity: "0", unit: "U" });
+      const firmList = await request(app).get(base + "?kind=FIRM")
+        .set("Authorization", "Bearer " + token).expect(200);
+      expect(firmList.body.pagination.total).toBe(0);
       const id = (
         await pool.query(
           "SELECT id FROM demand_pilot_revisions WHERE import_id=$1",
@@ -177,6 +205,26 @@ describe.skipIf(!isolated)(
         need_date: "2027-02-05",
         accepted_need_date: "2027-02-15",
       });
+    });
+    it("publishes only released, unreserved CRP stock of an exclusive customer article", async () => {
+      const otherClient = await createPilotFixtureClient(pool, "G", "Autre client de recette");
+      const seed = async (suffix: string, quantity: number) => {
+        const stock = await seedWorkbenchStock({
+          article, ...technical, audit: { user_id: actor }, code: "PORTAIL-" + suffix + "-" + code.slice(3, 13),
+        }, quantity);
+        await configureStockLane(stock.location, {
+          lane: "FREE", expected_version: 0, default_destination: false,
+          request_id: randomUUID(), reason: "Stock libre de recette portail",
+        }, actor);
+        return stock;
+      };
+      await seed("CRP", 8);
+      const customerLot = await seed("TIERS", 11);
+      await pool.query("UPDATE public.lots SET client_proprietaire_id=$1 WHERE id=$2", [otherClient, customerLot.lot]);
+      const get = () => request(app).get(base + "?kind=FORECAST").set("Authorization", "Bearer " + token).expect(200);
+      expect((await get()).body.data[0].crp_stock).toEqual({ quantity: "8", unit: "U" });
+      await pool.query("INSERT INTO public.article_client_links(article_id,client_id,created_by) VALUES($1,$2,$3)", [article, otherClient, actor]);
+      expect((await get()).body.data[0].crp_stock).toBeUndefined();
     });
     it("limits the return file to the account that deposited the scoped report", async () => {
       const other = randomUUID();

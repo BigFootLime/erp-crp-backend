@@ -184,6 +184,7 @@ export async function resolveDemandRow(
 export async function listDemand(p: {
   clientId: string;
   status?: string;
+  kind?: DemandRow["kind"];
   page: number;
   pageSize: number;
   portalAccountId?: string;
@@ -199,6 +200,10 @@ export async function listDemand(p: {
   if (p.status) {
     values.push(p.status);
     where.push(`r.status=$${values.length}`);
+  }
+  if (p.kind) {
+    values.push(p.kind);
+    where.push(`r.kind=$${values.length}`);
   }
   const countValues = [...values];
   values.push(p.pageSize, (p.page - 1) * p.pageSize);

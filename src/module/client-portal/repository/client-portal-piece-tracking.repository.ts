@@ -4,27 +4,33 @@ import type { PortalPieceTrackingQuery } from "../validators/client-portal.valid
 
 export async function repoTrackPortalPieces(identity: ClientPortalIdentity, query: PortalPieceTrackingQuery) {
   const { page, pageSize, q } = query;
+  // Some databases have no order-line position or update timestamp. Number the
+  // authorized lines before applying search and pagination so their labels hold.
   const result = await pool.query(
     `WITH scoped AS MATERIALIZED (
        SELECT line.id, cc.id AS order_id, cc.numero AS order_number,
               NULLIF(btrim(cc.code_client), '') AS customer_order,
-              line.ordre AS line_number, line.code_piece AS part_number,
+              COALESCE((to_jsonb(line)->>'ordre')::int,
+                       row_number() OVER (PARTITION BY cc.id ORDER BY line.id)::int) AS line_number,
+              line.code_piece AS part_number,
               line.designation, line.unite AS unit, line.quantite AS ordered,
               line.delai_client::text AS requested_date, cc.destinataire_id,
               published.statut AS order_status,
-              GREATEST(cc.updated_at, line.updated_at) AS updated_at
+              GREATEST(cc.updated_at, (to_jsonb(line)->>'updated_at')::timestamptz) AS updated_at
          FROM public.client_portal_orders_v published
          JOIN public.commande_client cc ON cc.id=published.id::bigint AND cc.client_id=published.client_id
          JOIN public.client_portal_delivery_site_bindings binding
            ON binding.account_id=$1::uuid AND binding.delivery_address_id=cc.destinataire_id
          JOIN public.commande_ligne line ON line.commande_id=cc.id
         WHERE published.client_id=$2 AND cc.order_type='FERME'
-          AND ($3='' OR strpos(lower(line.code_piece),lower($3))>0
-                OR strpos(lower(line.designation),lower($3))>0
-                OR strpos(lower(cc.numero),lower($3))>0
-                OR strpos(lower(cc.code_client),lower($3))>0)
+     ), filtered AS (
+       SELECT * FROM scoped
+        WHERE $3='' OR strpos(lower(part_number),lower($3))>0
+           OR strpos(lower(designation),lower($3))>0
+           OR strpos(lower(order_number),lower($3))>0
+           OR strpos(lower(customer_order),lower($3))>0
      ), current_page AS (
-       SELECT * FROM scoped ORDER BY updated_at DESC, id DESC LIMIT $4 OFFSET $5
+       SELECT * FROM filtered ORDER BY updated_at DESC, id DESC LIMIT $4 OFFSET $5
      ), tracking AS (
        SELECT line.id::text, line.updated_at, line.order_number, line.customer_order, line.line_number,
               line.part_number, line.designation, line.unit,
@@ -99,7 +105,7 @@ export async function repoTrackPortalPieces(identity: ClientPortalIdentity, quer
          ) ar
      )
      SELECT COALESCE((SELECT jsonb_agg(to_jsonb(tracking)-'updated_at' ORDER BY updated_at DESC,id::bigint DESC) FROM tracking),'[]'::jsonb) AS items,
-            (SELECT count(*)::int FROM scoped) AS total, now()::text AS read_at`,
+            (SELECT count(*)::int FROM filtered) AS total, now()::text AS read_at`,
     [identity.accountId, identity.clientId, q, pageSize, (page-1)*pageSize],
   );
   const { items, total, read_at } = result.rows[0];

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const uuid = z.string().uuid();
 const email = z.string().trim().email().max(254);
+const loginAlias = z.string().trim().regex(/^[A-Za-z][A-Za-z0-9_-]{2,31}$/).transform(value => value.toUpperCase());
 const password = z
   .string()
   .min(12)
@@ -11,12 +12,11 @@ const password = z
   .regex(/[0-9]/, "Un chiffre est requis.")
   .regex(/[^A-Za-z0-9]/, "Un symbole est requis.");
 
-export const portalLoginSchema = z
-  .object({
-    email,
-    password: z.string().min(1).max(128),
-  })
-  .strict();
+const loginPassword = z.string().min(1).max(128);
+export const portalLoginSchema = z.union([
+  z.object({ email, password: loginPassword }).strict(),
+  z.object({ login_alias: loginAlias, password: loginPassword }).strict(),
+]);
 
 export const portalForgotPasswordSchema = z.object({ email }).strict();
 
@@ -49,6 +49,7 @@ export const adminCreatePortalAccountSchema = z
     client_id: z.string().trim().min(1).max(3),
     email,
     display_name: z.string().trim().min(2).max(120),
+    login_alias: loginAlias.optional(),
   })
   .strict();
 

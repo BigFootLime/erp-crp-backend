@@ -32,6 +32,8 @@ export const demandRowSchema = z
     kind: z.enum(["FIRM", "FORECAST"]),
     quantity: demandQuantity,
     source_delivered_quantity: z.number().finite().min(0).max(1e9).optional(),
+    source_customer_stock_quantity: z.number().finite().min(0).max(1e9)
+      .refine((quantity) => Math.round(quantity * 1000) / 1000 === quantity).optional(),
     unit: key.max(32),
     quantity_basis: z.enum(["TOTAL", "REMAINING"]).default("TOTAL"),
     need_date: date,
@@ -77,6 +79,7 @@ export const previewSchema = z
   })
   .strict();
 export const listSchema = z.object({
+  kind: z.enum(["FIRM", "FORECAST"]).optional(),
   client_id: z.string().trim().min(1).max(80).optional(),
   status: z
     .enum([

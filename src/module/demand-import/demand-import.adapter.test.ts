@@ -103,6 +103,25 @@ describe("demand import adapter", () => {
     ).toBe(true);
   });
 
+  it("keeps zero distinct from missing stock and rejects conflicting observations", () => {
+    const defaults = { external_site: "VS-DEMO", source_version: "S1", source_as_of: "2026-11-23T09:00:00Z" };
+    const row = {
+      ARTICLE: "DEMO", NUM_CDE: "PO", NUM_LIGNE_CDE: "010", TYPE_CDE: "Ferme",
+      DATE_BESOIN: "2027-02-12", QTE_SOLDE: "5", UNITE: "PCE",
+    };
+    const parse = (...stocks: unknown[]) => parseDemandImport({
+      source: "VISION_SYSTEMS", defaults,
+      rows: stocks.map((stock, index) => ({ ...row, ID_ECHEANCE: String(index), STOCK_CLIENT: stock })),
+    });
+    expect(parse("0", null, "0,000").rows.map(item => item.source_customer_stock_quantity))
+      .toEqual([0, undefined, 0]);
+    expect(parse("-1", "1000000001", "1,2345").preview_rows.map(item => item.diagnostics[0]?.code))
+      .toEqual(["CUSTOMER_STOCK_INVALID", "CUSTOMER_STOCK_INVALID", "CUSTOMER_STOCK_INVALID"]);
+    const conflict = parse(0, 10, 10);
+    expect(conflict.rows).toHaveLength(0);
+    expect(conflict.preview_rows.every(item => item.diagnostics[0]?.code === "CUSTOMER_STOCK_CONFLICT")).toBe(true);
+  });
+
   it("uses timestamp then opaque version as a stable epoch comparator", () => {
     expect(
       compareDemandImportEpoch(
