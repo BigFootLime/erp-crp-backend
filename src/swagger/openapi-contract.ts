@@ -60,7 +60,7 @@ const PUBLIC_ROUTE_POLICIES: Readonly<Record<string, string>> = {
   "get /realtime/readiness": "Signal public booléen de disponibilité temps réel, sans détail d’infrastructure.",
   "post /portal/auth/activate": "Activation par jeton portail à usage unique avec limitation de débit persistée.",
   "post /portal/auth/forgot-password": "Demande de récupération portail non révélatrice avec limitation de débit persistée.",
-  "post /portal/auth/login": "Échange d’identifiants portail contre une session courte avec limitation de débit persistée.",
+  "post /portal/auth/login": "Connexion portail par e-mail ou identifiant dédié, avec une session courte et une limite de débit commune au compte.",
   "post /portal/auth/reset-password": "Réinitialisation portail par jeton à usage unique avec limitation de débit persistée.",
   "post /supplier-sandbox/auth/login": "Connexion au bac à sable fournisseur, disponible uniquement en recette locale isolée.",
   "post /supplier-portal/auth/login": "Pilote fournisseur désactivé par défaut. Son ouverture hors recette locale exige les preuves et habilitations configurées chez CRP.",

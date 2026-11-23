@@ -1,3 +1,5 @@
+import { customerStockFromSnapshot } from "../services/customer-stock-snapshot";
+import { readPortalCrpStock, type PortalCrpStock } from "../services/portal-crp-stock.service";
 import { qualifyDemandPreview } from "../services/demand-preview.service";
 import type { RequestHandler } from "express";
 import { HttpError } from "../../../utils/httpError";
@@ -43,7 +45,7 @@ const portal = (req: Parameters<RequestHandler>[0]) => {
   return req.portalIdentity;
 };
 /** Keep private scenario notes, ERP bindings and other customers' planning information inside CRP. */
-function portalSafe<T extends Record<string, unknown>>(record: T) {
+function portalSafe<T extends Record<string, unknown>>(record: T, crpStock?: PortalCrpStock) {
   const keys = [
     "id",
     "external_site",
@@ -70,9 +72,11 @@ function portalSafe<T extends Record<string, unknown>>(record: T) {
     "customer_proposed_date",
     "customer_message",
   ];
-  return Object.fromEntries(
+  const fields = Object.fromEntries(
     keys.filter((key) => key in record).map((key) => [key, record[key]]),
   );
+  const stock = customerStockFromSnapshot(record.after_snapshot, record.unit);
+  return { ...fields, ...(stock ? { customer_stock: stock } : {}), ...(crpStock ? { crp_stock: crpStock } : {}) };
 }
 export const list: RequestHandler = async (req, res, next) => {
   try {
@@ -87,6 +91,7 @@ export const list: RequestHandler = async (req, res, next) => {
       await service.listDemand({
         clientId: q.client_id,
         status: q.status,
+        kind: q.kind,
         page: q.page,
         pageSize: q.page_size,
       }),
@@ -152,6 +157,7 @@ async function preview(
     source: body.source,
     file: req.file,
     sheet_name: body.sheet_name,
+    preferSharedWorkbook: body.source === "VISION_SYSTEMS",
     defaults: {
       external_site: body.external_site,
       source_version: body.source_version,
@@ -275,11 +281,13 @@ export const listPortal: RequestHandler = async (req, res, next) => {
       result = await service.listDemand({
         clientId: identity.clientId,
         status: q.status,
+        kind: q.kind,
         page: q.page,
         pageSize: q.page_size,
         portalAccountId: identity.accountId,
       });
-    res.json({ ...result, data: result.data.map(portalSafe) });
+    const stock = await readPortalCrpStock(identity.clientId, result.data);
+    res.json({ ...result, data: result.data.map(row => portalSafe(row, stock.get(row.article_id ?? ""))) });
   } catch (e) {
     next(e);
   }
@@ -325,15 +333,9 @@ export const previewPortal: RequestHandler = async (req, res, next) => {
 export const getPortal: RequestHandler = async (req, res, next) => {
   try {
     const identity = portal(req);
-    res.json({
-      data: portalSafe(
-        await service.getDemand(
-          identity.clientId,
-          String(req.params.id),
-          identity.accountId,
-        ),
-      ),
-    });
+    const row = await service.getDemand(identity.clientId, String(req.params.id), identity.accountId);
+    const stock = await readPortalCrpStock(identity.clientId, [row]);
+    res.json({ data: portalSafe(row, stock.get(row.article_id ?? "")) });
   } catch (e) {
     next(e);
   }

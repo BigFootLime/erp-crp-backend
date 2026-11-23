@@ -6,6 +6,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { centralCanonicalJson } from "../../planning/domain/central-canonical-json";
 import { demandImportCompositeKey } from "../../demand-import/demand-import.adapter";
+import { notifyDemandReceived } from "../services/demand-received-notification";
 import type { demandRowSchema } from "../validators/demand-pilot.validators";
 import {
   assertDemandSiteAccess,
@@ -349,6 +350,9 @@ export async function importDemand(p: Batch) {
       [importId, JSON.stringify(outcome),!!p.completeSnapshot,ordered.length],
     );
     await recordKey(importId);
+    const affected = outcome.created + outcome.missing;
+    if (p.actor.portalAccountId && affected > 0)
+      await notifyDemandReceived(tx, { id: importId, clientId: p.clientId, site, lineCount: affected, source: "demand" });
     await tx.query("COMMIT");
     return { replayed: false, import_id: importId, ...outcome };
   } catch (error) {

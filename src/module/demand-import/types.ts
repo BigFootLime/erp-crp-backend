@@ -19,6 +19,8 @@ export type CanonicalDemandImportRow = DemandImportCompositeKey & {
   quantity: number;
   /** Source-unit quantity already delivered. Never added to demand. */
   source_delivered_quantity?: number;
+  /** Customer-reported stock in the source unit at source_as_of. */
+  source_customer_stock_quantity?: number;
   /** Source unit, resolved against the CERP article before persistence. */
   unit: string;
   /** Clayens RAL programmes are a remaining quantity; ordinary exports are totals. */

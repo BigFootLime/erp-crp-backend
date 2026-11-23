@@ -161,7 +161,7 @@ export async function repoListPortalAccounts(clientId?: string) {
   const where = clientId ? `WHERE account.client_id=$${values.push(clientId)}` : "";
   const result = await pool.query(
     `SELECT account.id::text AS id, account.client_id, client.company_name,
-            account.email, account.display_name, account.status,
+            account.email, account.login_alias, account.display_name, account.status,
             account.activated_at::text AS activated_at,
             account.last_login_at::text AS last_login_at,
             account.created_at::text AS created_at,
@@ -183,6 +183,7 @@ export async function repoCreatePortalAccount(input: {
   clientId: string;
   email: string;
   emailNormalized: string;
+  loginAlias?: string;
   displayName: string;
   passwordHash: string;
   meta: ClientPortalRequestMeta;
@@ -193,7 +194,7 @@ export async function repoCreatePortalAccount(input: {
       if (replay) {
         const replayedAccount = await tx.query<JsonObject>(
           `SELECT account.id::text AS id, account.client_id, client.company_name,
-                  account.email, account.display_name, account.status,
+                  account.email, account.login_alias, account.display_name, account.status,
                   account.created_at::text AS created_at
              FROM public.client_portal_accounts account
              JOIN public.clients client ON client.client_id=account.client_id
@@ -218,16 +219,17 @@ export async function repoCreatePortalAccount(input: {
         id: string;
         client_id: string;
         email: string;
+        login_alias: string | null;
         display_name: string;
         status: string;
         created_at: string;
       }>(
         `INSERT INTO public.client_portal_accounts (
-           client_id, email, email_normalized, display_name, password_hash,
+           client_id, email, email_normalized, display_name, password_hash, login_alias,
            status, created_by, updated_by
-         ) VALUES ($1,$2,$3,$4,$5,'INVITED',$6,$6)
-         RETURNING id::text AS id, client_id, email, display_name, status, created_at::text AS created_at`,
-        [input.clientId, input.email, input.emailNormalized, input.displayName, input.passwordHash, input.actorId]
+         ) VALUES ($1,$2,$3,$4,$5,$6,'INVITED',$7,$7)
+         RETURNING id::text AS id, client_id, email, login_alias, display_name, status, created_at::text AS created_at`,
+        [input.clientId, input.email, input.emailNormalized, input.displayName, input.passwordHash, input.loginAlias ?? null, input.actorId]
       );
       const createdAccount = created.rows[0];
       if (!createdAccount) throw new Error("Portal account insert returned no row");
@@ -251,6 +253,9 @@ export async function repoCreatePortalAccount(input: {
     });
   } catch (error) {
     if (pgCode(error) === "23505") {
+      if ((error as { constraint?: string }).constraint === "client_portal_accounts_login_alias_uq") {
+        throw new HttpError(409, "CLIENT_PORTAL_ALIAS_EXISTS", "Cet identifiant portail est déjà utilisé.");
+      }
       throw new HttpError(409, "CLIENT_PORTAL_ACCOUNT_EXISTS", "Un compte portail actif existe déjà pour cet email.");
     }
     throw error;
@@ -394,6 +399,12 @@ export async function repoActivatePortalAccount(input: {
 }
 
 export async function repoFindPortalAccountByEmail(emailNormalized: string): Promise<PortalAccountRow | null> {
+  return repoFindPortalAccount({ email: emailNormalized });
+}
+
+export async function repoFindPortalAccount(identifier: { email: string } | { alias: string }): Promise<PortalAccountRow | null> {
+  const byEmail = "email" in identifier;
+  const column = byEmail ? "email_normalized" : "login_alias";
   const result = await pool.query<PortalAccountRow>(
     `SELECT account.id::text AS id, account.client_id, client.company_name,
             account.email, account.email_normalized, account.display_name,
@@ -403,9 +414,9 @@ export async function repoFindPortalAccountByEmail(emailNormalized: string): Pro
             account.created_at::text AS created_at
        FROM public.client_portal_accounts account
        JOIN public.clients client ON client.client_id=account.client_id
-      WHERE account.email_normalized=$1 AND account.status <> 'REVOKED'
+      WHERE account.${column}=$1 AND account.status <> 'REVOKED'
       LIMIT 1`,
-    [emailNormalized]
+    [byEmail ? identifier.email : identifier.alias]
   );
   return result.rows[0] ?? null;
 }

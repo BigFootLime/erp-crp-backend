@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { customerStockCanCoverRequestedQuantity, customerStockFromSnapshot } from "./customer-stock-snapshot";
 import { HttpError } from "../../../utils/httpError";
 import { scenarioInput } from "./demand-scenario-input";
 import { centralCanonicalJson } from "../../planning/domain/central-canonical-json";
@@ -99,6 +100,7 @@ export async function simulateDemand(clientId: string, revisionId: string) {
     const matchingPlacements = placements.filter((p) =>
       p.source_ids.includes(id),
     );
+    const reviewCustomerDeferral = customerStockCanCoverRequestedQuantity(row.after_snapshot);
     const options: {
       code: string;
       label: string;
@@ -124,16 +126,18 @@ export async function simulateDemand(clientId: string, revisionId: string) {
           "Accord sur le fractionnement et vérification de la date du solde.",
         ],
       });
-    for (const p of matchingPlacements.filter(
-      (p) => p.article_id === row.article_id && p.projected_finish,
-    )) {
+    for (const p of matchingPlacements) {
+      if (p.article_id !== row.article_id || !p.projected_finish) continue;
+      const afterRequestedDate = p.projected_finish.slice(0, 10) > row.need_date;
+      const proposeDeferral = reviewCustomerDeferral && afterRequestedDate && p.status === "CAPACITY_SIMULATED";
       options.push({
-        code: "CAPACITY",
-        label: "Fabriquer sur un créneau simulé",
+        code: proposeDeferral ? "DEFER" : "CAPACITY",
+        label: proposeDeferral ? "Examiner un report avec le stock client" : "Fabriquer sur un créneau simulé",
         quantity: p.quantity,
         date: p.projected_finish,
         conditions: [
           ...p.blockers,
+          ...(proposeDeferral ? ["Confirmer avec le client que son stock couvre ses besoins jusqu’à la nouvelle livraison."] : []),
           "Vérifier contrôle final et transport avant communication.",
         ],
       });
@@ -172,6 +176,7 @@ export async function simulateDemand(clientId: string, revisionId: string) {
         : [];
     });
     return {
+      customer_stock: customerStockFromSnapshot(row.after_snapshot, row.unit),
       revision_id: row.id,
       revision_no: row.revision_no,
       scope: scenario.bound || scenario.forecastKey ? "BOUND_SCHEDULE_REVISED" : "EXISTING_BOOK_PLUS_REQUEST",

@@ -5,6 +5,7 @@ import { decideDemand } from "../repository/demand-pilot.repository";
 import { recoverDemandMaterializations } from "./demand-pilot-materialization.service";
 import { processDemandAcknowledgement } from "./demand-ar.worker";
 import { processAgreedCounterOffer } from "./demand-counter.worker";
+import { processDemandReceivedEmail } from "./demand-received-email.worker";
 
 /** The original enabling user is recorded by the policy, never inferred from an external login. */
 export async function processAutomaticDemand() {
@@ -81,7 +82,7 @@ export function startDemandAutomation() {
     stopped = false;
   const tick = () => {
     if (stopped || active) return;
-    active = recoverDemandMaterializations(10)
+    const decisions = recoverDemandMaterializations(10)
       .then(() => processAgreedCounterOffer())
       .then(() => processAutomaticDemand())
       .then(() => processDemandAcknowledgement())
@@ -90,8 +91,13 @@ export function startDemandAutomation() {
           logger.error("demand_automation_failed", {
             failure_code: "DECISION_QUEUE",
           });
-      })
-      .finally(() => {
+      });
+    const email = processDemandReceivedEmail().catch(() => {
+      logger.error("client_demand_notification_email_failed", {
+        failure_code: "CLIENT_DEMAND_EMAIL_QUEUE",
+      });
+    });
+    active = Promise.all([decisions, email]).finally(() => {
         active = null;
       });
   };
