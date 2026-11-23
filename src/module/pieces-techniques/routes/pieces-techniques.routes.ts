@@ -1,3 +1,4 @@
+import { pieceAssemblyUsage } from "../controllers/assembly-usage.controller";
 import { requireMethodesCapability } from "../../methodes/middlewares/methodes-authorization.middleware"
 // src/module/pieces-techniques/routes/pieces-techniques.routes.ts
 import { Router, type RequestHandler } from "express"
@@ -50,6 +51,7 @@ import {
   addBomLine,
   addOperation,
   createPieceTechnique,
+  createSubPieceTechnique,
   previewPieceTechniqueCode,
   deletePieceTechnique,
   archivePieceTechnique,
@@ -92,6 +94,7 @@ import {
   affaireOnlyParamSchema,
   bomLineIdParamSchema,
   createPieceTechniqueSchema,
+  createSubPieceTechniqueSchema,
   documentIdParamSchema,
   idParamSchema,
   linkAffaireSchema,
@@ -163,6 +166,7 @@ router.use(authenticateToken)
 
 router.get("/code-preview", previewPieceTechniqueCode)
 router.post("/", validate(createPieceTechniqueSchema), createPieceTechnique)
+router.post("/sous-pieces", validate(createSubPieceTechniqueSchema), createSubPieceTechnique)
 // #146 — Déclarée AVANT `/:id`, sinon Express interpréterait « summary » comme un
 // identifiant de pièce et renverrait un 400 de validation UUID.
 router.get("/summary", getPieceTechniquesSummary)
@@ -254,6 +258,7 @@ router.get(
   listToolRequirements
 )
 
+router.get("/:id/assemblages", validate(idParamSchema), pieceAssemblyUsage)
 router.post("/:id/nomenclature", validate(idParamSchema), validate(addBomLineSchema), addBomLine)
 router.patch("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), validate(updateBomLineSchema), updateBomLine)
 router.delete("/:id/nomenclature/:lineId", validate(bomLineIdParamSchema), deleteBomLine)

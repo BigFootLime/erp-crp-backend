@@ -358,6 +358,17 @@ describe("/api/v1/pieces-techniques", () => {
     expect(mocks.clientQuery.mock.calls.some((call) => String(call[0]).includes("SET statut = 'OBSOLETE'"))).toBe(false);
   });
 
+  it("refuse la création autonome depuis la route de sous-pièce ou le rattachement depuis la route autonome", async () => {
+    const normalPiece = { commercial_scope: "CRP", indice_externe: "A", name_piece: "Essai", designation: "Essai" };
+    await request(app).post("/api/v1/pieces-techniques/sous-pieces").send(normalPiece).expect(400);
+    const attachedPiece = { ...normalPiece, sub_piece: {
+      parent_piece_id: "11111111-1111-4111-8111-111111111111", same_reference: false,
+      rang: 3, repere: 10, quantite: 1,
+    } };
+    await request(app).post("/api/v1/pieces-techniques").send(attachedPiece).expect(400);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
   it("rejects a manufactured child relation that would create a fabrication cycle", async () => {
     const parentId = "11111111-1111-4111-8111-111111111111";
     const childId = "22222222-2222-4222-8222-222222222222";
@@ -366,13 +377,14 @@ describe("/api/v1/pieces-techniques", () => {
       const q = String(sql);
       if (q === "BEGIN" || q === "ROLLBACK") return { rows: [] };
       if (q.includes("SELECT 1::int AS ok FROM pieces_techniques")) return { rows: [{ ok: 1 }] };
+      if (q.includes("SELECT v.id AS resolved_version_id")) return { rows: [{ bom_version_id: null, resolved_version_id: null }] };
       if (q.includes("WITH RECURSIVE descendants")) return { rows: [{ found: 1 }] };
       return { rows: [] };
     });
 
     const res = await request(app)
       .post(`/api/v1/pieces-techniques/${parentId}/nomenclature`)
-      .send({ child_piece_id: childId, quantite: 1 });
+      .send({ child_piece_id: childId, quantite: 1, rang: 17 });
 
     expect(res.status).toBe(409);
     expect(mocks.clientQuery).toHaveBeenCalledWith("ROLLBACK");
