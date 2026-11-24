@@ -45,7 +45,7 @@ export type OutilRelationOption = {
   label: string
 }
 
-export type OutillageWorkshopPageSize = 10 | 20 | 30 | 40
+export type OutillageWorkshopPageSize = 10 | 20 | 25 | 30 | 40 | 50 | 75 | 100
 
 export type OutillageWorkshopFacet = OutilRelationOption & { count: number }
 
