@@ -60,12 +60,17 @@ function sameSafeInteger(value:number|string|null,expected:number|null){
  if(typeof value!=='string'||!/^\d+$/.test(value))return false;
  const parsed=Number(value);return Number.isSafeInteger(parsed)&&parsed===expected;
 }
+function sameRoleAssignments(stored:readonly string[],requested:ReadonlySet<string>){
+ // The database key makes stored assignments unique. Its collation need not
+ // match JavaScript ordering, and order-only changes must not revoke a session.
+ return stored.length===requested.size&&stored.every(role=>requested.has(role));
+}
 function sameDirectoryProjection(row:ExistingDirectoryProjection|undefined,identity:DirectoryProfile,assurance?:DirectorySession){
  if(!row)return false;
  const metadata={job_title:identity.job_title,employment_type:identity.employment_type,weekly_hours_target:identity.weekly_hours_target,work_profile_incomplete:identity.work_profile_incomplete};
  const actualMetadata=row.directory_profile_metadata;
  const sameMetadata=typeof actualMetadata==='object'&&actualMetadata!==null&&Object.keys(actualMetadata).length===4&&Object.entries(metadata).every(([key,value])=>(actualMetadata as Record<string,unknown>)[key]===value);
- if(row.directory_username!==identity.username||row.name!==identity.name||row.surname!==identity.surname||row.directory_email!==identity.email||row.role!==identity.role||row.status!==identity.status||row.is_superadmin!==identity.is_superadmin||row.avatar_key!==identity.avatar_key||row.directory_avatar_asset_id!==identity.avatar_asset_id||row.tel_no!==identity.tel_no||row.mfa_reenrollment_required!==identity.mfa_reenrollment_required||!sameMetadata||JSON.stringify(row.roles)!==JSON.stringify([...identity.roles].sort()))return false;
+ if(row.directory_username!==identity.username||row.name!==identity.name||row.surname!==identity.surname||row.directory_email!==identity.email||row.role!==identity.role||row.status!==identity.status||row.is_superadmin!==identity.is_superadmin||row.avatar_key!==identity.avatar_key||row.directory_avatar_asset_id!==identity.avatar_asset_id||row.tel_no!==identity.tel_no||row.mfa_reenrollment_required!==identity.mfa_reenrollment_required||!sameMetadata||!sameRoleAssignments(row.roles,new Set(identity.roles)))return false;
  if(identity.work_profile&&!row.work_profile_bound)return false;
  return !assurance||(row.source_user_id===identity.source_user_id&&sameSafeInteger(row.global_session_epoch,assurance.global_session_epoch)&&sameSafeInteger(row.membership_version,assurance.membership_version)&&row.mfa_factor_id===assurance.mfa_factor_id&&sameSafeInteger(row.mfa_factor_version,assurance.mfa_factor_version));
 }
@@ -111,9 +116,10 @@ export async function projectDirectoryProfile(db:Pool,raw:DirectoryProfile,assur
    await tx.query('INSERT INTO public.cerp_directory_work_profile_bindings(profile_id,user_id) VALUES($1::uuid,$2)',[identity.profile_id,row.id]);
   }
   const roles=(await tx.query<{role_key:string}>('SELECT role_key FROM public.user_role_assignments WHERE user_id=$1 ORDER BY role_key',[row.id])).rows.map(r=>r.role_key);
-  if(JSON.stringify(roles)!==JSON.stringify([...identity.roles].sort())){
+  const requestedRoles=new Set(identity.roles);
+  if(!sameRoleAssignments(roles,requestedRoles)){
    await tx.query('DELETE FROM public.user_role_assignments WHERE user_id=$1',[row.id]);
-   for(const role of identity.roles)await tx.query('INSERT INTO public.user_role_assignments(user_id,role_key) VALUES($1,$2) ON CONFLICT DO NOTHING',[row.id,role]);
+   for(const role of requestedRoles)await tx.query('INSERT INTO public.user_role_assignments(user_id,role_key) VALUES($1,$2) ON CONFLICT DO NOTHING',[row.id,role]);
   }
   if(assurance)await tx.query(`INSERT INTO public.cerp_directory_projection_state(profile_id,user_id,source_user_id,global_session_epoch,membership_version,mfa_factor_id,mfa_factor_version)
    VALUES($1::uuid,$2,$3,$4,$5,$6::uuid,$7) ON CONFLICT(profile_id) DO UPDATE SET global_session_epoch=excluded.global_session_epoch,membership_version=excluded.membership_version,mfa_factor_id=excluded.mfa_factor_id,mfa_factor_version=excluded.mfa_factor_version,updated_at=now()`,[identity.profile_id,row.id,identity.source_user_id,assurance.global_session_epoch,assurance.membership_version,assurance.mfa_factor_id,assurance.mfa_factor_version]);
