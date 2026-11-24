@@ -28,7 +28,11 @@ export const workstationHours = asyncHandler(async (req, res) => {
 });
 export const saveWorkstationHours = asyncHandler(async (req, res) => {
  if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
- res.json(await savePosteHours(updatePosteHoursSchema.parse(req.body), req.user!.id));
+ const input = updatePosteHoursSchema.safeParse(req.body);
+ if (!input.success) {
+   throw new HttpError(400, 'WORKSTATION_HOURS_INVALID', 'Vérifiez la plage horaire et rechargez les horaires avant de réessayer.');
+ }
+ res.json(await savePosteHours(input.data, req.user!.id));
 });
 export const status=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control","no-store");const directory=sharedDirectoryClient(),counts=directory?await directory.call<{login_count:number}>('login-count',{directory_session:req.user!.directory_session}):null;res.json(await getSetupStatus(req.user!.id,counts?.login_count,req.businessCompanyAccess?.context.profile));});
 export const progress=asyncHandler(async(req,res)=>{const input=progressSchema.parse(req.body);if(req.businessCompanyAccess?.context.profile==='COMMERCIAL'&&!['company','finance','review'].includes(input.current_step))throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Cette étape ne concerne pas une entreprise commerciale.');await saveSetupStep(req.user!.id,input.current_step);res.status(204).end();});
