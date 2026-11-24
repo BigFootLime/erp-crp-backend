@@ -16,7 +16,7 @@ import { transferSecureUploadToDestination } from "../../../shared/uploads/secur
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import { applicableBomScopeSql } from './bom-version-scope.sql';
-import { linkPurchaseOperationTx } from "./purchase-operation-link.repository";
+import { linkPurchaseOperationTx, lockPurchasePreparationOfTx } from "./purchase-operation-link.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import type {
   Achat,
@@ -40,6 +40,7 @@ import type {
   AddOperationBodyDTO,
   CreatePieceTechniqueBodyDTO,
   ListPiecesTechniquesQueryDTO,
+  PurchasePreparationOf,
   UpdateAchatBodyDTO,
   UpdateBomLineBodyDTO,
   UpdateOperationBodyDTO,
@@ -3421,6 +3422,9 @@ export async function repoAddAchat(
   await client.query("BEGIN");
   const exists = await client.query<{ ok: number }>("SELECT 1::int AS ok FROM pieces_techniques WHERE id = $1::uuid", [pieceTechniqueId]);
   if (!exists.rows[0]?.ok) {await client.query("ROLLBACK");return null;}
+  const preparationOf = body.preparation_of && body.gamme_operation_id
+    ? await lockPurchasePreparationOfTx(client, pieceTechniqueId, body.preparation_of)
+    : undefined;
 
   if(body.type_achat==='MATIERE'){
     if(body.piece_technique_version_id)await client.query('SELECT 1 FROM public.piece_technique_versions WHERE id=$1::uuid FOR UPDATE',[body.piece_technique_version_id]);
@@ -3564,7 +3568,7 @@ export async function repoAddAchat(
     designation_3: r.designation_3,
   };
   if(linked&&saved?.id&&audit){
-    const binding=await linkPurchaseOperationTx(client,{pieceId:pieceTechniqueId,lineId:saved.id,operationId:linked.id,actorId:audit.user_id});
+    const binding=await linkPurchaseOperationTx(client,{pieceId:pieceTechniqueId,lineId:saved.id,operationId:linked.id,actorId:audit.user_id,preparationOf});
     await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:saved.id,details:binding},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
     saved.gamme_operation_id=linked.id;
   }
@@ -3572,9 +3576,12 @@ export async function repoAddAchat(
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:string,operationId:string|null,audit:AuditContext):Promise<Achat|null>{
+export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:string,operationId:string|null,audit:AuditContext,preparation?:PurchasePreparationOf):Promise<Achat|null>{
  const client=await db.connect();
- try{await client.query('BEGIN');const binding=await linkPurchaseOperationTx(client,{pieceId,lineId,operationId,actorId:audit.user_id});
+ try{
+  await client.query('BEGIN');
+  const preparationOf = preparation && operationId ? await lockPurchasePreparationOfTx(client, pieceId, preparation) : undefined;
+  const binding=await linkPurchaseOperationTx(client,{pieceId,lineId,operationId,actorId:audit.user_id,preparationOf});
   await repoInsertAuditLog({user_id:audit.user_id,body:{event_type:'ACTION',action:'pieces-techniques.purchase.operation.link',page_key:audit.page_key,entity_type:'pieces_techniques_achats',entity_id:lineId,details:binding},ip:audit.ip,user_agent:audit.user_agent,device_type:audit.device_type,os:audit.os,browser:audit.browser,tx:client});
   const result=(await repoListAchats(pieceId,client)).find(line=>line.id===lineId)??null;await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}

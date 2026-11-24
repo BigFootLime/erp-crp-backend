@@ -7,6 +7,8 @@ import {
   previewTechnicalSheet, downloadTechnicalSheet, printTechnicalSheet,
 } from "../controllers/technical-sheet.controller"
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
+import { resolveAccessProfile } from "../../access-control/services/access-control.service";
+import { requireOfCapability } from "../../production/middlewares/of-versioning-authorization.middleware";
 
 import { authenticateToken, authorizeRole } from "../../auth/middlewares/auth.middleware"
 import { requireGedCapability } from "../../ged/middlewares/require-ged-capability"
@@ -143,6 +145,23 @@ const router = Router()
 // et sont comparées aux rôles réellement assignés.
 const requireDeleteRole = authorizeRole(...PIECE_TECHNIQUE_DELETE_ROLES)
 const requireDocumentPolicyRole = authorizeRole(...PIECE_DOCUMENT_POLICY_ROLES)
+const requirePreparationPurchaseAccess: RequestHandler = (req, res, next) => {
+  if (!req.body?.preparation_of) return next()
+  const company = req.businessCompanyAccess?.context
+  if (company && !company.module_keys.includes("production")) {
+    return next(new HttpError(403, "COMPANY_MODULE_NOT_ALLOWED", "Accès à la production interdit pour cette société."))
+  }
+  if (!requestHasGrantedAccountModuleAccess(req)) return requireOfCapability("edit_prelaunch")(req, res, next)
+  const user = req.user
+  if (!user) return next(new HttpError(401, "UNAUTHORIZED", "Authentification requise."))
+  void resolveAccessProfile(user.id).then(profile => {
+    if (!profile) return next(new HttpError(503, "ACCESS_PROFILE_UNAVAILABLE", "Contrôle d’accès indisponible."))
+    if (!profile.is_superadmin && !profile.modules.some(module => module.module_key === "production" && module.allowed)) {
+      return next(new HttpError(403, "OF_CAPABILITY_REQUIRED", "L’accès à la préparation des OF est requis."))
+    }
+    next()
+  }).catch(next)
+}
 const requireVersionApproval: RequestHandler = (req, _res, next) => {
   if (
     !requestHasGrantedAccountModuleAccess(req) &&
@@ -269,8 +288,8 @@ router.patch("/:id/operations/:opId", validate(operationIdParamSchema), validate
 router.delete("/:id/operations/:opId", validate(operationIdParamSchema), deleteOperation)
 router.post("/:id/operations/reorder", validate(idParamSchema), validate(reorderSchema), reorderOperations)
 
-router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), addAchat)
-router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), (req,res,next)=>req.body?.gamme_operation_id !== undefined ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), updateAchat)
+router.post("/:id/achats", validate(idParamSchema), validate(addAchatSchema), (req,res,next)=>req.body?.gamme_operation_id ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), requirePreparationPurchaseAccess, addAchat)
+router.patch("/:id/achats/:achatId", validate(achatIdParamSchema), validate(updateAchatSchema), (req,res,next)=>req.body?.gamme_operation_id !== undefined ? requireMethodesCapability("gamme_operation_write")(req,res,next) : next(), requirePreparationPurchaseAccess, updateAchat)
 router.delete("/:id/achats/:achatId", validate(achatIdParamSchema), deleteAchat)
 router.post("/:id/achats/reorder", validate(idParamSchema), validate(reorderSchema), reorderAchats)
 
