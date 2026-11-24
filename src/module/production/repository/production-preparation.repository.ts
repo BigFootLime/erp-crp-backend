@@ -310,7 +310,8 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
         LEFT JOIN public.pieces_techniques_operations linked ON linked.id=p.gamme_operation_id
         LEFT JOIN public.pieces_techniques_operations op ON op.gamme_id=(SELECT id FROM g)
           AND COALESCE(op.gamme_source_operation_id,op.id)=COALESCE(linked.gamme_source_operation_id,linked.id)
-        WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid),'[]'),
+        WHERE p.piece_technique_id=$2::uuid AND p.piece_technique_version_id=$1::uuid
+          AND (p.gamme_operation_id IS NULL OR op.id IS NOT NULL)),'[]'),
       'documents',COALESCE((SELECT jsonb_agg(to_jsonb(docs) ORDER BY docs.id,docs.role) FROM docs),'[]'),
       'operations',COALESCE((SELECT jsonb_agg(
         to_jsonb(op) - ARRAY['amelioration_id','amelioration_continue','machine_ids','programmation_minutes','gamme_source_operation_id']

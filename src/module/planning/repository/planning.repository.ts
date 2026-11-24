@@ -8,6 +8,7 @@ import pool from "../../../config/database";
 import { readWorkstationDefaults } from '../../production/repository/workstation-defaults.repository';
 import { isWorkstationType, resolveDefaultPoste } from '../../production/domain/workstation-defaults';
 import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
+import { ROUTING_ALLOWED_MACHINES_SQL } from "./planning-operation-resources.repository";
 import {assertMaintenanceMachineUnblockedTx} from "../../production/repository/operator-maintenance-read.repository";
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
@@ -655,7 +656,7 @@ export async function assertOperationResourceCompatible(params: {
         NULLIF(btrim(m.machine_family_code), '') AS machine_family_code,
         (SELECT value->>'type_operation' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
           WHERE value->>'phase'=op.phase::text LIMIT 1) AS operation_type,
-        (SELECT value->'machine_ids' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
+        (SELECT ${ROUTING_ALLOWED_MACHINES_SQL} FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
           WHERE value->>'phase'=op.phase::text LIMIT 1) AS allowed_machine_ids,
         op.poste_id::text AS assigned_poste_id,p.id::text AS selected_poste_id,op.machine_id::text AS operation_machine_id,
         p.is_active AND p.archived_at IS NULL AS poste_active

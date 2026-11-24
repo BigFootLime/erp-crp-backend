@@ -1,6 +1,7 @@
 import pool from "../../../config/database";
 import type { WorklistQuery } from "../validators/production-workbench.validators";
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
+import { committedOperationSql } from "../../planning/repository/committed-operation.sql";
 
 /** One SQL statement gives counters, page and clock the same MVCC snapshot. */
 export async function repoProductionWorklist(input: WorklistQuery) {
@@ -45,11 +46,8 @@ export async function repoProductionWorklist(input: WorklistQuery) {
           JOIN public.ordres_fabrication source ON source.id=a.source_of_id WHERE a.consolidation_id=own_group.id
           AND a.state='ACTIVE' AND source.commande_id=d.id)) deadline ON true
       LEFT JOIN LATERAL (
-        SELECT count(*) AS total, count(*) FILTER(WHERE EXISTS (
-          SELECT 1 FROM public.planning_events e WHERE e.of_operation_id=p.id
-          AND e.archived_at IS NULL AND e.status<>'CANCELLED' AND e.end_ts>e.start_ts
-          AND (e.machine_id IS NOT NULL OR e.poste_id IS NOT NULL)
-        )) AS planned FROM public.of_operations p WHERE p.of_id=o.id AND (
+        SELECT count(*) AS total, count(*) FILTER(WHERE ${committedOperationSql("p", "o")}) AS planned
+        FROM public.of_operations p WHERE p.of_id=o.id AND p.status::text<>'CANCELLED' AND (
           p.revision_id IS NULL OR p.revision_id IN(SELECT r.id FROM public.of_revisions r WHERE r.of_id=o.id AND r.statut='ACTIVE'))
       ) op ON true CROSS JOIN clock
       WHERE ($1='' OR concat_ws(' ',o.numero,pt.code_piece,pt.designation,c.company_name,parent.numero) ILIKE '%'||$1||'%')

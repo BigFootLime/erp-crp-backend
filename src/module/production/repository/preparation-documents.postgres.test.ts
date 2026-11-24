@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
 import { seedProductionWorkbenchFixture } from "../../../__tests__/fixtures/production-workbench.fixture";
@@ -10,11 +10,125 @@ import { repoCreateGammeRevision } from "../../gammes/repository/gammes.reposito
 import { repoCreateGammeOperation, repoListGammeOperations, repoPublishGamme, repoUpdateGammeOperation } from "../../gammes/repository/gamme-operations.repository";
 import { readOperationQualifications } from "../../planning/repository/planning-operation-resources.repository";
 import { assertOperationResourceCompatible } from "../../planning/repository/planning.repository";
+import { readPlanningProcurementTx } from "../../planning/repository/planning-procurement.repository";
+import { readCentralSnapshot } from "../../planning/repository/planning-central.repository";
+import { addAchatSVC, updateAchatSVC } from "../../pieces-techniques/services/pieces-techniques.service";
+import { addAchatSchema } from "../../pieces-techniques/validators/pieces-techniques.validators";
+import { confirmStockFinishArticleSVC, previewStockFinishArticleSVC } from "../../surface-finish/services/surface-finish.service";
+import { stockArticleFinishConfirmBodySchema, stockArticleFinishPreviewBodySchema } from "../../surface-finish/validators/surface-finish.validators";
+import { repoValidateArticle } from "../../stock/repository/stock-article-lifecycle.repository";
 
 const managed = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_MANAGED_STACK === "1";
 
 describe.skipIf(!managed)("PT documents in a managed disposable workbench", () => {
   afterAll(() => pool.end());
+
+  it("uses a new treatment phase linked from purchases in the current OF and its planning only after validation", async () => {
+    const f = await seedProductionWorkbenchFixture();
+    const [id, other, locked, otherVersionOrder] = f.ids;
+    await pool.query("UPDATE public.pieces_techniques_operations SET numero_programme='QA-CNC' WHERE gamme_id=$1", [f.gamme]);
+    const finish = randomUUID(), revision = randomUUID();
+    const finishTitle = `Anodisation de recette ${finish.slice(0, 8)}`;
+    const family = (await pool.query("SELECT code FROM public.surface_finish_families WHERE label='Anodisation'")).rows[0].code;
+    await pool.query(`INSERT INTO public.surface_finishes(id,code,family_code,procede,designation_courte,statut)
+      VALUES($1,$2,$3,'Anodisation',$4,'ACTIVE')`, [finish, `FIN-${randomInt(100_000, 999_999)}`, family, finishTitle]);
+    await pool.query(`INSERT INTO public.surface_finish_revisions(id,finish_id,revision,statut,norme,unite_achat)
+      VALUES($1,$2,1,'ACTIVE','ISO 7599','PCE')`, [revision, finish]);
+    await pool.query("UPDATE public.surface_finishes SET current_revision_id=$2 WHERE id=$1", [finish, revision]);
+    const actor = { user_id: f.audit.user_id, role: f.audit.user_role ?? null };
+    const spec = stockArticleFinishPreviewBodySchema.parse({
+      piece_technique_id: f.piece, piece_technique_version_id: f.version, finish_revision_id: revision,
+    });
+    const preview = await previewStockFinishArticleSVC(spec, actor);
+    const issued = await confirmStockFinishArticleSVC(stockArticleFinishConfirmBodySchema.parse({
+      ...spec, decision: "CREATE", preview_hash: preview.preview_hash, spec_fingerprint: preview.spec_fingerprint,
+    }), f.audit, actor, randomUUID());
+    const articleId = issued.article.id;
+    const article = (await pool.query("SELECT row_version::int FROM public.articles WHERE id=$1", [articleId])).rows[0];
+    await repoValidateArticle(articleId, { expected_row_version: article.row_version }, f.audit);
+    const before = await evaluateOfPreparation(pool, id);
+    const draft = await repoCreateGammeRevision(f.gamme, {}, f.audit, randomUUID());
+    const op = await repoCreateGammeOperation(draft.gamme.id, {
+      numero_operation: 20, designation: "Procédé à rattacher", type_operation: "SOUS_TRAITANCE", temps_unitaire_minutes: 0,
+    }, f.audit);
+    const body = addAchatSchema.parse({ body: {
+      type_achat: "TRAITEMENT", article_id: articleId, designation: issued.article.designation,
+      nom: issued.article.designation, quantite: 1, unite_prix: "PCE",
+      fournisseur_id: "50000000-0000-4000-8000-000000000001",
+      piece_technique_version_id: f.version, gamme_operation_id: op.id,
+      preparation_of: { id, expected_updated_at: before.of.updated_at },
+    } }).body;
+    const foreign = await seedProductionWorkbenchFixture();
+    const foreignOrder = await evaluateOfPreparation(pool, foreign.ids[0]);
+    await expect(addAchatSVC(f.piece, {
+      ...body, preparation_of: { id: foreign.ids[0], expected_updated_at: foreignOrder.of.updated_at },
+    }, f.audit)).rejects.toMatchObject({ code: "PURCHASE_OF_MISMATCH" });
+    const otherVersionId = randomUUID();
+    const otherVersionCode = `${f.code}-B`;
+    await pool.query(`INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice,plan_reference,statut,is_current,
+      date_revision,version_interne,code_metier,code_metier_normalise)
+      VALUES($1,$2,'B',$3,'BROUILLON',false,now(),2,$3,$3)`, [otherVersionId, f.piece, otherVersionCode]);
+    await pool.query(`UPDATE public.ordres_fabrication
+      SET technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text) WHERE id=$1`,
+    [otherVersionOrder, otherVersionId]);
+    const otherVersion = await evaluateOfPreparation(pool, otherVersionOrder);
+    await expect(addAchatSVC(f.piece, {
+      ...body, preparation_of: { id: otherVersionOrder, expected_updated_at: otherVersion.of.updated_at },
+    }, f.audit)).rejects.toMatchObject({ code: "PURCHASE_OF_VERSION_CHANGED" });
+    await pool.query("UPDATE public.ordres_fabrication SET technical_readiness='VALIDATED' WHERE id=$1", [locked]);
+    const lockedOrder = await evaluateOfPreparation(pool, locked);
+    await expect(addAchatSVC(f.piece, {
+      ...body, preparation_of: { id: locked, expected_updated_at: lockedOrder.of.updated_at },
+    }, f.audit)).rejects.toMatchObject({ code: "OF_PREPARATION_LOCKED" });
+    const purchase = await addAchatSVC(f.piece, body, f.audit);
+    expect(purchase?.gamme_operation_id).toBe(op.id);
+    const updated = await evaluateOfPreparation(pool, id);
+    expect(updated.gamme_id).toBe(draft.gamme.id);
+    expect(updated.sources.operations).toContainEqual(expect.objectContaining({ id: op.id, phase: 20, designation: finishTitle }));
+    expect(updated.sources.purchases).toContainEqual(expect.objectContaining({ id: purchase?.id, gamme_operation_id: op.id }));
+    const otherOrder = await evaluateOfPreparation(pool, other);
+    expect(otherOrder.gamme_id).toBe(f.gamme);
+    expect(otherOrder.sources.purchases).not.toContainEqual(expect.objectContaining({ id: purchase?.id }));
+    expect((await loadApplicableTechnicalSnapshot(pool, f.piece)).gamme_id).toBe(f.gamme);
+    await expect(addAchatSVC(f.piece, body, f.audit)).rejects.toMatchObject({ code: "CONCURRENT_MODIFICATION" });
+    expect((await repoListGammeOperations(draft.gamme.id)).filter(operation => operation.phase === 20)).toHaveLength(1);
+    await updateAchatSVC(f.piece, purchase!.id!, {
+      gamme_operation_id: op.id, preparation_of: { id, expected_updated_at: updated.of.updated_at },
+    }, f.audit);
+    expect((await pool.query("SELECT count(*)::int AS total FROM public.pieces_techniques_achats WHERE gamme_operation_id=$1", [op.id])).rows[0].total).toBe(1);
+
+    const reviewed = await repoSavePreparationDecisions(id, {
+      expected_updated_at: updated.of.updated_at, version_id: f.version, expected_version: updated.profile_version,
+      decisions: {
+        material: { mode: "REQUIRED" }, treatment: { mode: "REQUIRED" },
+        subcontract: { mode: "NOT_REQUIRED", reason: "Usinage interne" },
+        programming: { mode: "NONE", reason: "Programme déjà disponible" },
+      },
+    }, f.audit);
+    const withSheet = await repoGenerateSelfInspection(id, reviewed.of.updated_at, f.audit);
+    await repoSubmitOfTechnicalPreparation({ id, body: { expected_updated_at: withSheet.of.updated_at }, audit: f.audit });
+    const submitted = await evaluateOfPreparation(pool, id);
+    await repoValidateOfTechnicalPreparation({ id, body: { expected_updated_at: submitted.of.updated_at }, audit: f.audit });
+    const frozen = await evaluateOfPreparation(pool, id);
+    expect(frozen.of.technical_snapshot_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(frozen.gamme_id).toBe(draft.gamme.id);
+    await expect(addAchatSVC(f.piece, {
+      ...body, preparation_of: { id, expected_updated_at: frozen.of.updated_at },
+    }, f.audit)).rejects.toMatchObject({ code: "OF_PREPARATION_LOCKED" });
+    expect((await evaluateOfPreparation(pool, id)).of.technical_snapshot_sha256).toBe(frozen.of.technical_snapshot_sha256);
+    const executed = (await pool.query("SELECT id::text FROM public.of_operations WHERE of_id=$1 AND phase=20", [id])).rows[0];
+    expect(executed?.id).toBeTruthy();
+    expect((await readPlanningProcurementTx(pool, id)).entries).toContainEqual(expect.objectContaining({
+      kind: "PRESTATION", articleId, operationId: executed.id,
+    }));
+    const planning = await readCentralSnapshot({
+      from: new Date().toISOString(), to: new Date(Date.now() + 7 * 86400000).toISOString(),
+      of_id: id, placement: "backlog", limit: 25,
+    }, undefined, false);
+    expect(planning.tasks).toContainEqual(expect.objectContaining({
+      operationId: executed.id, view: "external", readiness: "READY",
+    }));
+  });
 
   it("keeps the old routing by choice and inherits machine choices, programming and the improvement flag on the next OF", async () => {
     const f = await seedProductionWorkbenchFixture();

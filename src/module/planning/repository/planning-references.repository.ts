@@ -2,6 +2,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import type { PlanningReferenceOfListQuery, PlanningReferenceClientQuery } from "../validators/planning-references.validators";
 import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
+import { committedOperationSql } from "./committed-operation.sql";
 
 /** Minimal planning lookup, without customer contacts, prices or editing rights. */
 export async function repoListPlanningReferenceClients(query: PlanningReferenceClientQuery) {
@@ -17,7 +18,7 @@ export type PlanningOfListItem = {
   piece_technique_id: string; piece_code: string; piece_designation: string;
   quantite_lancee: number; quantite_bonne: number; quantite_rebut: number;
   statut: string; priority: string; date_lancement_prevue: string | null; date_fin_prevue: string | null;
-  updated_at: string; total_ops: number; done_ops: number;
+  updated_at: string; total_ops: number; done_ops: number; planned_ops?: number;
 };
 export type PlanningOfOperation = {
   id: string; phase: number; designation: string; poste_id: string | null; poste_code: string | null;
@@ -60,10 +61,17 @@ export async function repoListPlanningReferenceOfs(query: PlanningReferenceOfLis
       o.quantite_lancee::float8 AS quantite_lancee,o.quantite_bonne::float8 AS quantite_bonne,o.quantite_rebut::float8 AS quantite_rebut,
       o.statut::text AS statut,o.priority::text AS priority,o.date_lancement_prevue::text AS date_lancement_prevue,
       o.date_fin_prevue::text AS date_fin_prevue,o.updated_at::text AS updated_at,
-      COALESCE(ops.total_ops,0)::int AS total_ops,COALESCE(ops.done_ops,0)::int AS done_ops
+      COALESCE(ops.total_ops,0)::int AS total_ops,COALESCE(ops.done_ops,0)::int AS done_ops,
+      COALESCE(ops.planned_ops,0)::int AS planned_ops
       FROM public.ordres_fabrication o JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
       LEFT JOIN public.clients c ON c.client_id=o.client_id
-      LEFT JOIN LATERAL (SELECT count(*) AS total_ops,count(*) FILTER (WHERE status='DONE') AS done_ops FROM public.of_operations op WHERE op.of_id=o.id) ops ON true
+      LEFT JOIN LATERAL (
+        SELECT count(*) AS total_ops,count(*) FILTER (WHERE op.status='DONE') AS done_ops,
+          count(*) FILTER (WHERE ${committedOperationSql("op", "o")}) AS planned_ops
+        FROM public.of_operations op
+        WHERE op.of_id=o.id AND op.status::text<>'CANCELLED'
+          AND (op.revision_id IS NULL OR EXISTS (SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'))
+      ) ops ON true
       ${whereSql} ORDER BY o.date_fin_prevue ASC NULLS LAST,o.id DESC LIMIT ${limit} OFFSET ${offset}`,
     values,
   );
