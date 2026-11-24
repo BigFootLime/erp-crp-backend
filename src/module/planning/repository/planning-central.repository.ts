@@ -3,7 +3,7 @@ import { readOperationQualifications } from "./planning-operation-resources.repo
 import { hydratePlanningSupply } from './planning-supply-state';
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
-import { z } from "zod";
+import { RESOURCE_WORKING_HOURS_KEY, resourceWorkingHoursSchema } from "../domain/resource-working-hours";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { estimateDuration, type DurationObservation } from "../domain/central-estimation";
@@ -170,17 +170,6 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     version:createHash("sha256").update(JSON.stringify(versionFields)).digest("hex"),estimate };
 }
 
-const workingTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
-const workingWindow = z.object({ start: workingTime, end: workingTime })
-  .strict().refine(({ start, end }) => start < end);
-const workingHoursSetting = z.object({
-  machines: workingWindow.optional(),
-  postes: z.object({
-    categories: z.array(z.enum(WORKSTATION_TYPES)).min(1),
-    hours: workingWindow,
-  }).strict().optional(),
-}).strict();
-
 export async function readCentralResources(tx: CentralQuery, from: string, to: string, includeAvailability = true): Promise<Resource[]> {
   const {rows} = await tx.query<Row>(`
     WITH resources AS (
@@ -197,7 +186,7 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
             AND s.value_json->'programmer_user_ids' @> jsonb_build_array(u.id))
     )
     SELECT r.*,c.timezone,c.working_days,c.day_start::text,c.day_end::text,c.id IS NOT NULL AS calendar_configured,
-      (SELECT s.value_json FROM public.erp_settings s WHERE s.key='planning.resource_working_hours') AS working_hours,
+      (SELECT s.value_json FROM public.erp_settings s WHERE s.key=$3) AS working_hours,
       COALESCE(rc.version,mc.version,0)::text||':'||c.updated_at::text AS version,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('start',start_ts,'end',end_ts))
         FROM public.planning_resource_absences a JOIN resources ar ON ar.id=a.resource_id
@@ -221,8 +210,8 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
     LEFT JOIN public.programmation_calendars c ON c.id=COALESCE(rc.calendar_id,mc.calendar_id,
       (SELECT workshop_calendar_id FROM public.planning_central_settings WHERE singleton),
       (SELECT id FROM public.programmation_calendars WHERE active AND (SELECT count(*) FROM public.programmation_calendars WHERE active)=1)) AND c.active
-    ORDER BY r.kind,r.label,r.id`,[from,to]);
-  const overrides = workingHoursSetting.safeParse(rows[0]?.working_hours ?? {});
+    ORDER BY r.kind,r.label,r.id`,[from,to,RESOURCE_WORKING_HOURS_KEY]);
+  const overrides = resourceWorkingHoursSchema.safeParse(rows[0]?.working_hours ?? {});
   if (!overrides.success) throw new HttpError(409, "PLANNING_RESOURCE_HOURS_INVALID", "Les horaires des ressources du planning sont invalides.");
   const posteIds = new Set<string>();
   if (overrides.data.postes) {

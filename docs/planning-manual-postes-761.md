@@ -7,3 +7,9 @@ An operation with frozen type DECOUPE, CONTROLE, LAVAGE, EMBALLAGE or AUTRE, and
 The central snapshot and the shared resource invariant used by classic and central commits apply this same rule. No schema or business-data mutation is part of this fix. Existing calendars, conflicts, snapshots, revision and audit checks remain authoritative.
 
 Validation: targeted qualification tests cover the five manual types, wrong/inactive/unassigned/machine-backed postes and preserved CNC/external refusals. Manual acceptance requires creating a poste through the UI, assigning an OF operation and validating a simulation.
+
+## Working hours in ERP setup
+
+The ERP configuration permission gates `GET /api/v1/admin/onboarding/workstations/hours` and the matching `PUT`. Changes follow the existing MFA step-up and apply to industrial companies. The command takes `hours.start`, `hours.end` (local HH:MM, with end after start) and the latest `expected_updated_at` token from the read. A concurrent change returns 409 and requires reloading.
+
+The setting keeps the existing working-hours JSON shape. It preserves the machine hours and any existing workstation categories. When configuring workstation hours for the first time, the application uses DECOUPE, CONTROLE and ASSEMBLAGE. The hours apply to their usual autonomous stations on the dates open in each station’s calendar. The write and forecast job share one transaction and revision. Saving the existing interval does not add a job.
