@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "292f801b9666f6bfbcdb0f5b6184c131ee4e6579d5a2f82cfcd85a69bfaab935";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "979a1196a135bf401afe08e7449df18c003c285e59f79dff7f559f48f54ff805";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -996,6 +996,42 @@ export const GENERATED_ROUTE_INVENTORY = [
       "authenticateToken",
       "requireErpConfiguration",
       "saveWorkstations"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireErpConfiguration"
+    ]
+  },
+  {
+    "method": "get",
+    "path": "/admin/onboarding/workstations/hours",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:13",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireErpConfiguration",
+      "workstationHours"
+    ],
+    "authenticated": true,
+    "rbac": [
+      "moduleAccessGate",
+      "requireErpConfiguration"
+    ]
+  },
+  {
+    "method": "put",
+    "path": "/admin/onboarding/workstations/hours",
+    "source": "src/module/onboarding/routes/onboarding.routes.ts:14",
+    "middleware": [
+      "anonymous",
+      "authenticateToken",
+      "moduleAccessGate",
+      "authenticateToken",
+      "requireErpConfiguration",
+      "saveWorkstationHours"
     ],
     "authenticated": true,
     "rbac": [

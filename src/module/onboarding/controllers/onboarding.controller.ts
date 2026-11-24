@@ -10,6 +10,8 @@ import { companyRuntimeConfiguration } from '../../entreprises/runtime/company-r
 import { HttpError } from '../../../utils/httpError';
 import { readWorkstationSetup, saveWorkstationSetup } from '../../production/repository/workstation-defaults.repository';
 import { workstationDefaultsSchema } from '../../production/domain/workstation-defaults';
+import { updatePosteHoursSchema } from '../../planning/domain/resource-working-hours';
+import { readPosteHours, savePosteHours } from '../../planning/repository/resource-working-hours.repository';
 export const workstations = asyncHandler(async (req,res) => {
  if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
  res.setHeader('Cache-Control','no-store');res.json(await readWorkstationSetup());
@@ -18,6 +20,19 @@ export const saveWorkstations = asyncHandler(async (req,res) => {
  if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
  const input=workstationDefaultsSchema.extend({expected_updated_at:z.string().nullable()}).parse(req.body);
  res.json(await saveWorkstationSetup(input,req.user!.id));
+});
+export const workstationHours = asyncHandler(async (req, res) => {
+ if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
+ res.setHeader('Cache-Control','no-store');
+ res.json(await readPosteHours());
+});
+export const saveWorkstationHours = asyncHandler(async (req, res) => {
+ if(req.businessCompanyAccess?.context.profile==='COMMERCIAL')throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Les postes de fabrication ne concernent pas une entreprise commerciale.');
+ const input = updatePosteHoursSchema.safeParse(req.body);
+ if (!input.success) {
+   throw new HttpError(400, 'WORKSTATION_HOURS_INVALID', 'Vérifiez la plage horaire et rechargez les horaires avant de réessayer.');
+ }
+ res.json(await savePosteHours(input.data, req.user!.id));
 });
 export const status=asyncHandler(async(req,res)=>{res.setHeader("Cache-Control","no-store");const directory=sharedDirectoryClient(),counts=directory?await directory.call<{login_count:number}>('login-count',{directory_session:req.user!.directory_session}):null;res.json(await getSetupStatus(req.user!.id,counts?.login_count,req.businessCompanyAccess?.context.profile));});
 export const progress=asyncHandler(async(req,res)=>{const input=progressSchema.parse(req.body);if(req.businessCompanyAccess?.context.profile==='COMMERCIAL'&&!['company','finance','review'].includes(input.current_step))throw new HttpError(400,'COMMERCIAL_SETUP_STEP_NOT_APPLICABLE','Cette étape ne concerne pas une entreprise commerciale.');await saveSetupStep(req.user!.id,input.current_step);res.status(204).end();});
