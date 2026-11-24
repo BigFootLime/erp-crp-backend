@@ -38,6 +38,26 @@ describe("Opération de gamme — contrat d'entrée", () => {
     expect(parsed.success).toBe(true)
   })
 
+  it("accepte une sous-traitance sans temps par pièce dans le contrat du formulaire", () => {
+    const body = { type_operation: "SOUS_TRAITANCE", designation: "Traitement externe", machine_ids: [] }
+    expect(addGammeOperationSchema.parse({ body }).body).toEqual(body)
+    expect(addGammeOperationSchema.safeParse({ body: { ...body, temps_unitaire_minutes: null } }).success).toBe(true)
+    expect(updateGammeOperationSchema.safeParse({
+      body: { ...body, expected_updated_at: "2026-10-11T03:00:00Z" },
+    }).success).toBe(true)
+  })
+
+  it("conserve le temps par pièce obligatoire à la création interne avec machine_ids", () => {
+    const body = { type_operation: "ASSEMBLAGE", designation: "Montage manuel", machine_ids: [] }
+    const result = addGammeOperationSchema.safeParse({ body })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ["body", "temps_unitaire_minutes"] }))
+    }
+    expect(addGammeOperationSchema.safeParse({ body: { ...body, temps_unitaire_minutes: 0 } }).success).toBe(true)
+    expect(addGammeOperationSchema.safeParse({ body: { ...body, temps_cycle: 0.25 } }).success).toBe(true)
+  })
+
   it("refuse un taux horaire saisi sur l'opération", () => {
     const parsed = addGammeOperationSchema.safeParse({ body: { designation: "Tournage", taux_horaire: 50 } })
     expect(parsed.success).toBe(false)

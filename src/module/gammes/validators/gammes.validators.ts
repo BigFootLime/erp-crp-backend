@@ -131,7 +131,12 @@ const operationCore = z
 
 export const addGammeOperationSchema = z.object({
   body: operationCore.superRefine((body, ctx) => {
-    if (body.machine_ids !== undefined && body.temps_unitaire_minutes == null && body.temps_cycle == null) {
+    if (
+      body.type_operation !== "SOUS_TRAITANCE"
+      && body.machine_ids !== undefined
+      && body.temps_unitaire_minutes == null
+      && body.temps_cycle == null
+    ) {
       ctx.addIssue({ code: "custom", path: ["temps_unitaire_minutes"], message: "Le temps par pièce est obligatoire." })
     }
   }),
