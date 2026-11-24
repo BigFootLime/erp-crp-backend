@@ -91,6 +91,16 @@ it("normalizes the exact server-side query without changing the legacy listing c
   expect(service.getAllFiltered).toHaveBeenCalledWith(expect.objectContaining({ limit: 1000, offset: 500, only_in_stock: true }));
 });
 
+it.each(["asc", "desc"])("accepts the numeric diameter sort (%s) with taxonomy filters", async (sortDir) => {
+  await request(app).get("/outils/workshop-page")
+    .query({ sortBy: "diametre", sortDir, familyIds: "1", geometryIds: "3" })
+    .set("x-fixture-role", "Atelier").set("x-fixture-module-access", "granted").expect(200);
+
+  expect(service.getWorkshopPage).toHaveBeenCalledWith({
+    ...filterDefaults, sortBy: "diametre", sortDir, familyIds: [1], geometryIds: [3],
+  });
+});
+
 it.each([
   "page=0", "page=1.5", "pageSize=50", "pageSize=10&pageSize=40", "familyIds=1%2C0", "geometryIds=1%2C",
   "manufacturerIds=2147483648", "stockStatuses=missing", "segment=unknown", "sortBy=quantity", "sortDir=sideways",

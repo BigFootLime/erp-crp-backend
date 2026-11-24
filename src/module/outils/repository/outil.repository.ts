@@ -33,6 +33,7 @@ type OutilFilters = {
 
 const workshopSortColumns = {
   outil: "lower(public.unaccent(tool_label))",
+  diametre: "diameter",
   famille: "lower(public.unaccent(COALESCE(nom_famille, '')))",
   geometrie: "lower(public.unaccent(COALESCE(nom_geometrie, '')))",
   fabricant: "lower(public.unaccent(COALESCE(nom_fabricant, '')))",
@@ -681,7 +682,9 @@ export const outilRepository = {
 
   async getWorkshopPage(query: OutillageWorkshopPageQuery): Promise<OutillageWorkshopPage> {
     const sortDirection = query.sortDir === "asc" ? "ASC" : "DESC";
-    const orderBy = `${workshopSortColumns[query.sortBy]} ${sortDirection}, id_outil DESC`;
+    const sortByDiameter = query.sortBy === "diametre";
+    const nulls = sortByDiameter ? " NULLS LAST" : "";
+    const orderBy = `${workshopSortColumns[query.sortBy]} ${sortDirection}${nulls}, id_outil DESC`;
     const matchAllTerms = query.qMode === "terms";
     const searchTerms = !query.q ? [] : matchAllTerms ? query.q.split(/\s+/) : [query.q];
     const requestedDiameter = Number(query.diameter);
@@ -721,7 +724,7 @@ export const outilRepository = {
         -- Older catalogues may omit optional technical fields used by search.
         LEFT JOIN LATERAL (
           SELECT to_jsonb(o) AS fields
-          WHERE cardinality($5::text[]) > 0 OR $10::text <> ''
+          WHERE cardinality($5::text[]) > 0 OR $10::text <> '' OR $13::boolean
           OFFSET 0
         ) extra ON true
         LEFT JOIN LATERAL (
@@ -816,7 +819,8 @@ export const outilRepository = {
       FROM pagination
       `,
       [query.familyIds, query.geometryIds, query.manufacturerIds, query.stockStatuses,
-        searchTerms, query.segment, query.page, query.pageSize, query.onlyInStock, query.diameter, diameterValue, matchAllTerms]
+        searchTerms, query.segment, query.page, query.pageSize, query.onlyInStock, query.diameter, diameterValue,
+        matchAllTerms, sortByDiameter]
     );
     const { items, ...page } = result.rows[0];
     const media = await resolveOutilMediaMaps(items);
