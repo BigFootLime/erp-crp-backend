@@ -19,7 +19,7 @@ export const outillageWorkshopPageQuerySchema = z.object({
   manufacturerIds: workshopIds.default([]),
   stockStatuses: workshopStockStatuses.default([]),
   segment: z.enum(["all", "critical", "under-minimum", "rupture", "to-replenish", "imported"]).default("all"),
-  sortBy: z.enum(["outil", "famille", "geometrie", "fabricant", "stock"]).default("stock"),
+  sortBy: z.enum(["outil", "diametre", "famille", "geometrie", "fabricant", "stock"]).default("stock"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
 })
 
