@@ -3,6 +3,7 @@ import { readOperationQualifications } from "./planning-operation-resources.repo
 import { hydratePlanningSupply } from './planning-supply-state';
 import type { PoolClient } from "pg";
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { estimateDuration, type DurationObservation } from "../domain/central-estimation";
@@ -169,6 +170,17 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     version:createHash("sha256").update(JSON.stringify(versionFields)).digest("hex"),estimate };
 }
 
+const workingTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const workingWindow = z.object({ start: workingTime, end: workingTime })
+  .strict().refine(({ start, end }) => start < end);
+const workingHoursSetting = z.object({
+  machines: workingWindow.optional(),
+  postes: z.object({
+    categories: z.array(z.enum(WORKSTATION_TYPES)).min(1),
+    hours: workingWindow,
+  }).strict().optional(),
+}).strict();
+
 export async function readCentralResources(tx: CentralQuery, from: string, to: string, includeAvailability = true): Promise<Resource[]> {
   const {rows} = await tx.query<Row>(`
     WITH resources AS (
@@ -185,6 +197,7 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
             AND s.value_json->'programmer_user_ids' @> jsonb_build_array(u.id))
     )
     SELECT r.*,c.timezone,c.working_days,c.day_start::text,c.day_end::text,c.id IS NOT NULL AS calendar_configured,
+      (SELECT s.value_json FROM public.erp_settings s WHERE s.key='planning.resource_working_hours') AS working_hours,
       COALESCE(rc.version,mc.version,0)::text||':'||c.updated_at::text AS version,
       COALESCE((SELECT jsonb_agg(jsonb_build_object('start',start_ts,'end',end_ts))
         FROM public.planning_resource_absences a JOIN resources ar ON ar.id=a.resource_id
@@ -209,9 +222,23 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
       (SELECT workshop_calendar_id FROM public.planning_central_settings WHERE singleton),
       (SELECT id FROM public.programmation_calendars WHERE active AND (SELECT count(*) FROM public.programmation_calendars WHERE active)=1)) AND c.active
     ORDER BY r.kind,r.label,r.id`,[from,to]);
+  const overrides = workingHoursSetting.safeParse(rows[0]?.working_hours ?? {});
+  if (!overrides.success) throw new HttpError(409, "PLANNING_RESOURCE_HOURS_INVALID", "Les horaires des ressources du planning sont invalides.");
+  const posteIds = new Set<string>();
+  if (overrides.data.postes) {
+    const { defaults, postes } = await readWorkstationDefaults(tx);
+    for (const type of overrides.data.postes.categories) {
+      const poste = resolveDefaultPoste(type, defaults, postes);
+      if (poste) posteIds.add(`poste:${poste.id}`);
+    }
+  }
   const cache = new Map<string, Resource["availability"]>();
   return rows.map(row => {
     const hours = (s: unknown) => { const parts = String(s).split(":").map(Number); return parts[0]*60+parts[1]; };
+    // A workstation linked to a machine shares its operating hours but retains its own calendar.
+    const override = String(row.capacity_id).startsWith("machine:")
+      ? overrides.data.machines
+      : posteIds.has(String(row.id)) ? overrides.data.postes?.hours : undefined;
     const closures = Array.isArray(row.closures) ? row.closures as Array<{start:string;end:string}> : [];
     const closedDates: string[] = [];
     for (const closure of closures) for (let t=Date.parse(closure.start);t<=Date.parse(closure.end);t+=86400000)
@@ -219,12 +246,13 @@ export async function readCentralResources(tx: CentralQuery, from: string, to: s
     const calendar: CalendarDefinition = {
       timezone:str(row.timezone) ?? "Europe/Paris",
       shifts:Array.isArray(row.working_days) ? row.working_days.map(day => ({
-        weekday:Number(day)%7,startMinute:hours(row.day_start),endMinute:hours(row.day_end) })) : [],
+        weekday:Number(day)%7,startMinute:hours(override?.start ?? row.day_start),endMinute:hours(override?.end ?? row.day_end) })) : [],
       closures:Array.isArray(row.absences) ? row.absences as CalendarDefinition["closures"] : [],closedDates };
     const key = JSON.stringify(calendar);
     if (!cache.has(key)) cache.set(key,includeAvailability && calendar.shifts.length ? expandCalendar(calendar,from,to) : []);
     return {id:String(row.id),kind:row.kind as Resource["kind"],label:String(row.label),timezone:calendar.timezone,
-       capacityId:String(row.capacity_id),calendarConfigured:row.calendar_configured===true,capacityEnabled:row.capacity_enabled===true,availability:cache.get(key)!,version:String(row.version ?? "unconfigured"),
+       capacityId:String(row.capacity_id),calendarConfigured:row.calendar_configured===true,capacityEnabled:row.capacity_enabled===true,availability:cache.get(key)!,
+       version:String(row.version ?? "unconfigured") + (override ? `:${override.start}-${override.end}` : ""),
        unavailability:Array.isArray(row.unavailability)?row.unavailability as NonNullable<Resource['unavailability']>:[]};
   });
 }

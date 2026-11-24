@@ -73,7 +73,9 @@ async function prepare(tx: Queryer, id: string, actor: number): Promise<{ previe
     tx, entityType: scope, entityId: id, documentKind,
     baseUrl: `/commandes-fournisseurs/${id}/official-documents`,
   });
-  preview.status = documents.state === "FAILED" ? "document_failed" : "preparing_document";
+  preview.status = documents.state === "PENDING" || documents.state === "PROCESSING"
+    ? "preparing_document"
+    : "document_failed";
   if (documents.state !== "READY" || !documents.latest_document || !order.frozen_document_id) return result;
   const archive = await repoGetAuthoritativePdf(tx, scope, id, documents.latest_document.id, documentKind);
   const freeze = archive?.sourceSnapshot.frozen_document as { id?: string } | undefined;

@@ -381,8 +381,19 @@ export const updateOperationSchema = z.object({
 
 export type UpdateOperationBodyDTO = z.infer<typeof updateOperationSchema>["body"]
 
+const purchasePreparationOf = z.object({
+  id: z.number().int().positive(),
+  expected_updated_at: z.string().min(1).max(80),
+}).strict()
+
+export type PurchasePreparationOf = z.infer<typeof purchasePreparationOf>
+
 export const addAchatSchema = z.object({
-  body: achatInputSchema.superRefine((achat, ctx) => validateMaterialCutting(achat, ctx)),
+  body: achatInputSchema.extend({ preparation_of: purchasePreparationOf.optional() }).superRefine((achat, ctx) => {
+    validateMaterialCutting(achat, ctx)
+    if (achat.preparation_of && !achat.gamme_operation_id)
+      ctx.addIssue({ code: "custom", path: ["gamme_operation_id"], message: "Choisissez l’opération à rattacher à cet OF." })
+  }),
 })
 
 export type AddAchatBodyDTO = z.infer<typeof addAchatSchema>["body"]
@@ -392,6 +403,10 @@ export const updateAchatSchema = z.object({
     type_achat: z.enum(["MATIERE", "CONSOMMABLE", "VISSERIE", "COMPOSANT_CATALOGUE", "TRAITEMENT", "SOUS_TRAITANCE", "CERTIFICAT", "DIVERS"]).optional(),
     quantite: z.coerce.number().min(0).optional(),
     tva_achat: z.coerce.number().min(0).max(100).optional(),
+    preparation_of: purchasePreparationOf.optional(),
+  }).superRefine((achat, ctx) => {
+    if (achat.preparation_of && !achat.gamme_operation_id)
+      ctx.addIssue({ code: "custom", path: ["gamme_operation_id"], message: "Choisissez l’opération à rattacher à cet OF." })
   }),
 })
 
