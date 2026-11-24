@@ -62,6 +62,24 @@ describe.skipIf(!enabled)('ressources de travail — PostgreSQL isolé, aucun en
   expect(rows[0].eligible).toEqual(['machine:'+id(4)]);
   await expect(assertOperationResourceCompatible({tx:db,of_operation_id:id(13),resource:{poste_id:id(2),machine_id:null}})).rejects.toMatchObject({code:'PLANNING_MACHINE_QUALIFICATION_REQUIRED'});
  });
+ it.each([
+  {machineIds:undefined,available:[4],rejected:5},
+  {machineIds:null,available:[4],rejected:5},
+  {machineIds:[],available:[4,5],rejected:null},
+  {machineIds:[id(5)],available:[5],rejected:4},
+ ])('respecte dans la liste et à la validation les machines de la gamme figée ($machineIds)',async({machineIds,available,rejected})=>{
+  await db.query('INSERT INTO public.machines VALUES($1,\'F2\',\'Fraiseuse 2\',\'F\',\'ACTIVE\',true,true,NULL)',[id(5)]);
+  const ops=[{phase:30,type_operation:'FRAISAGE',machine_id:id(4),machine_ids:machineIds}];
+  await db.query("UPDATE public.ordres_fabrication SET technical_snapshot=jsonb_build_object('operations',$1::jsonb) WHERE id=1",[JSON.stringify(ops)]);
+  // The last assigned machine of the OF is mutable and cannot qualify itself.
+  await db.query('UPDATE public.of_operations SET machine_id=$1 WHERE id=$2',[id(5),id(13)]);
+  const rows=await readOperationQualifications(db,[id(13)],{});
+  expect(rows[0].eligible).toEqual(available.map(machine=>'machine:'+id(machine)));
+  for(const machine of available) await expect(assertOperationResourceCompatible({tx:db,of_operation_id:id(13),
+   resource:{machine_id:id(machine),poste_id:null}})).resolves.toBeUndefined();
+  if(rejected) await expect(assertOperationResourceCompatible({tx:db,of_operation_id:id(13),
+   resource:{machine_id:id(rejected),poste_id:null}})).rejects.toMatchObject({code:'PLANNING_MACHINE_NOT_SELECTED'});
+ });
  it('montre le poste habituel dès la préparation et signale une mauvaise famille de machine',async()=>{
   const operations=[{id:id(12),phase:20,designation:'CONTROLE',type_operation:'CONTROLE',machine_family_code:null},
     {id:id(13),phase:30,designation:'TOURNAGE',type_operation:'TOURNAGE',machine_family_code:'T',machine_id:id(4)}];

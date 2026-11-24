@@ -1,5 +1,12 @@
 import type { PoolClient } from "pg";
 
+// A frozen selection before multi-machine routing has only `machine_id`.
+// An explicit empty modern list means every machine of the qualified family.
+export const ROUTING_ALLOWED_MACHINES_SQL = `COALESCE(
+  NULLIF(value->'machine_ids','null'::jsonb),
+  CASE WHEN NULLIF(value->>'machine_id','') IS NOT NULL THEN jsonb_build_array(value->>'machine_id') END
+)`;
+
 export async function readOperationQualifications(tx:Pick<PoolClient,"query">,operationIds:string[],defaultPostes:Record<string,string|null>) {
   const { rows: qualifications } = await tx.query<{id:string;family:string|null;operation_type:string|null;eligible:string[]}>(`
       WITH qualified_resources AS (
@@ -20,7 +27,7 @@ export async function readOperationQualifications(tx:Pick<PoolClient,"query">,op
           ELSE COALESCE(array_agg(r.id ORDER BY r.id) FILTER(WHERE r.id IS NOT NULL),'{}'::text[]) END AS eligible
       FROM public.of_operations op
       JOIN public.ordres_fabrication o ON o.id=op.of_id
-      LEFT JOIN LATERAL (SELECT value->>'type_operation' AS operation_type,value->'machine_ids' AS machine_ids
+      LEFT JOIN LATERAL (SELECT value->>'type_operation' AS operation_type,${ROUTING_ALLOWED_MACHINES_SQL} AS machine_ids
         FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
         WHERE value->>'phase'=op.phase::text LIMIT 1) frozen ON true
       LEFT JOIN public.postes p ON p.id=COALESCE(op.poste_id,($2::jsonb->>frozen.operation_type)::uuid)
