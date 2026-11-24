@@ -164,9 +164,16 @@ describe("filtres de complétude", () => {
     expect(where).not.toContain("NOT (p.article_id IS NOT NULL)");
   });
 
-  it("has_gamme=false s'appuie sur l'absence d'opération", async () => {
-    await repoListPieceTechniques(parse({ has_gamme: "false" }));
-    expect(captured()[0].text).toContain("pieces_techniques_operations");
+  it.each(["false", "true"] as const)("has_gamme=%s cible la gamme applicable et courante de la version applicable", async (has_gamme) => {
+    await repoListPieceTechniques(parse({ has_gamme }));
+    const where = whereOf(captured()[0].text);
+    expect(where).toContain(has_gamme === "false" ? "AND NOT EXISTS (" : "AND EXISTS (");
+    expect(where).toContain("JOIN public.gammes g ON g.piece_technique_version_id = v.id");
+    expect(where).toContain("v.piece_technique_id = p.id");
+    expect(where).toContain("v.statut = 'APPLICABLE'");
+    expect(where).toContain("g.statut = 'APPLICABLE'");
+    expect(where).toContain("g.is_current");
+    expect(where).not.toContain("pieces_techniques_operations");
   });
 
   it("has_nomenclature accepte nomenclature OU achats", async () => {
@@ -218,7 +225,8 @@ describe("segments serveur", () => {
     await repoListPieceTechniques(parse({ segment: "to_complete" }));
     const sql = captured()[0].text;
     expect(sql).toContain("v.statut = 'APPLICABLE'");
-    expect(sql).toContain("pieces_techniques_operations");
+    expect(sql).toContain("g.statut = 'APPLICABLE'");
+    expect(sql).toContain("g.is_current");
     expect(sql).toContain("pieces_techniques_nomenclature");
     expect(sql).toContain("p.article_id IS NOT NULL");
   });
@@ -253,7 +261,21 @@ describe("segments serveur", () => {
     await repoListPieceTechniques(parse({ segment: "no_gamme", client_id: "ACM" }));
     const where = whereOf(captured()[0].text);
     expect(where).toContain("p.client_id = $");
-    expect(where).toContain("pieces_techniques_operations");
+    expect(where).toContain("g.statut = 'APPLICABLE'");
+    expect(where).toContain("g.is_current");
+  });
+
+  it("le segment sans gamme et le filtre has_gamme=false partagent le même périmètre", async () => {
+    await repoListPieceTechniques(parse({ has_gamme: "false" }));
+    const presenceWhere = whereOf(captured()[0].text);
+    query.mockClear();
+
+    await repoListPieceTechniques(parse({ segment: "no_gamme" }));
+    expect(whereOf(captured()[0].text)).toBe(presenceWhere);
+    query.mockClear();
+
+    await repoPieceTechniquesSummary(parse({ segment: "no_gamme" }));
+    expect(whereOf(captured()[0].text)).toBe(presenceWhere);
   });
 });
 

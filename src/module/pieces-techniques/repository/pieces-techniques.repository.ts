@@ -185,7 +185,7 @@ function includesSetForCreate(): Set<string> {
 /* #146 — Prédicats de complétude, partagés par la liste, les filtres et la synthèse.       */
 /*                                                                                          */
 /* Ces expressions SQL sont la SOURCE UNIQUE de « ce qui manque au dossier ». Elles sont     */
-/* volontairement de niveau LISTE : présence d'une version applicable, d'une gamme, d'une    */
+/* de niveau LISTE : présence d'une version applicable, d'une gamme applicable, d'une         */
 /* nomenclature, d'un article, de documents. Ce n'est PAS le verdict de préparation de       */
 /* `dossier-readiness`, qui exige l'arborescence complète et les lignes d'achat — on ne le    */
 /* duplique pas, on ne prétend pas le remplacer.                                             */
@@ -197,7 +197,13 @@ const HAS_APPLICABLE_VERSION_SQL = `EXISTS (
 )`;
 
 const HAS_GAMME_SQL = `EXISTS (
-  SELECT 1 FROM public.pieces_techniques_operations o WHERE o.piece_technique_id = p.id
+  SELECT 1
+  FROM public.piece_technique_versions v
+  JOIN public.gammes g ON g.piece_technique_version_id = v.id
+  WHERE v.piece_technique_id = p.id
+    AND v.statut = 'APPLICABLE'
+    AND g.statut = 'APPLICABLE'
+    AND g.is_current
 )`;
 
 const HAS_NOMENCLATURE_SQL = `EXISTS (
@@ -217,7 +223,7 @@ const HAS_DOCUMENTS_SQL = `EXISTS (
 
 /**
  * Un dossier est « à compléter » dès qu'il lui manque l'un des quatre éléments dont
- * l'absence empêche concrètement de lancer la fabrication : version applicable, gamme,
+ * l'absence empêche concrètement de lancer la fabrication : version et gamme applicables,
  * structure (nomenclature ou achats) et article lié.
  */
 const TO_COMPLETE_SQL = `(
