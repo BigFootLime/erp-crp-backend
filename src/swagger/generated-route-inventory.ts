@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "19004191b19ae7ced779297a90d4a9baf057f521f4bbad3d3b040e1854d751e3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "292f801b9666f6bfbcdb0f5b6184c131ee4e6579d5a2f82cfcd85a69bfaab935";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -14424,7 +14424,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:200",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:219",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14440,7 +14440,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:168",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:187",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14457,7 +14457,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:220",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:239",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14476,7 +14476,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:218",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:237",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14493,7 +14493,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:219",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:238",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14511,7 +14511,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/achats",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:272",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:291",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14520,17 +14520,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "validate(idParamSchema)",
       "validate(addAchatSchema)",
       "anonymous",
+      "requirePreparationPurchaseAccess",
       "addAchat"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requirePreparationPurchaseAccess"
     ]
   },
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}/achats/{achatId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:274",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:293",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14547,7 +14549,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}/achats/{achatId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:273",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:292",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14556,17 +14558,19 @@ export const GENERATED_ROUTE_INVENTORY = [
       "validate(achatIdParamSchema)",
       "validate(updateAchatSchema)",
       "anonymous",
+      "requirePreparationPurchaseAccess",
       "updateAchat"
     ],
     "authenticated": true,
     "rbac": [
-      "moduleAccessGate"
+      "moduleAccessGate",
+      "requirePreparationPurchaseAccess"
     ]
   },
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/achats/reorder",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:275",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:294",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14584,7 +14588,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/affaires",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:277",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:296",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14601,7 +14605,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/affaires",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:278",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:297",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14619,7 +14623,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}/affaires/{affaireId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:279",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:298",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14636,7 +14640,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/arborescence",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:202",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:221",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14653,7 +14657,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/archive",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:221",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:240",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14672,7 +14676,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/article-principal",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:227",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:246",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14689,7 +14693,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/assemblages",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:261",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:280",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14706,7 +14710,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/create-or-link-article-fabrique",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:228",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:247",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14723,7 +14727,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/creation-snapshot",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:214",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:233",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14740,7 +14744,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/creation-snapshot/{documentId}/download",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:216",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:235",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14757,7 +14761,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/creation-snapshot/{documentId}/preview",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:215",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:234",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14774,7 +14778,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/creation-snapshot/{documentId}/print-intents",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:217",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:236",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14791,7 +14795,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/document-dossier",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:203",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:222",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14808,7 +14812,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/document-dossier/pdf",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:204",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:223",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14825,7 +14829,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/documents",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:281",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:300",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14842,7 +14846,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/documents",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:282",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:301",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14860,7 +14864,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}/documents/{docId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:283",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:302",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14877,7 +14881,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/documents/{docId}/file",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:284",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:303",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14894,7 +14898,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/duplicate",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:223",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:242",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14911,7 +14915,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/models-3d",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:210",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:229",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14930,7 +14934,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/nomenclature",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:262",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:281",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14948,7 +14952,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}/nomenclature/{lineId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:264",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:283",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14965,7 +14969,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}/nomenclature/{lineId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:263",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:282",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -14983,7 +14987,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/nomenclature/reorder",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:265",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:284",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15001,7 +15005,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/operations",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:267",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:286",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15019,7 +15023,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/{id}/operations/{opId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:269",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:288",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15036,7 +15040,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}/operations/{opId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:268",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:287",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15054,7 +15058,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/operations/reorder",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:270",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:289",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15072,7 +15076,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/piece-critique",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:211",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:230",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15090,7 +15094,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/prepare-edit",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:232",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:251",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15108,7 +15112,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/status",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:224",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:243",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15126,7 +15130,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:231",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:250",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15143,7 +15147,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/versions",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:240",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:259",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15161,7 +15165,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}/versions/{versionId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:241",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:260",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15179,7 +15183,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/completeness",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:245",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:264",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15197,7 +15201,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/versions/{versionId}/create-next",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:244",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:263",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15215,7 +15219,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/versions/{versionId}/publish",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:243",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:262",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15235,7 +15239,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/{id}/versions/{versionId}/status",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:242",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:261",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15255,7 +15259,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:235",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:254",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15271,7 +15275,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:236",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:255",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15287,7 +15291,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet/{documentId}/download",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:238",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:257",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15303,7 +15307,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet/{documentId}/preview",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:237",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:256",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15319,7 +15323,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet/{documentId}/print-intents",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:239",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:258",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15335,7 +15339,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/technical-sheet/source",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:234",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:253",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15351,7 +15355,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/{id}/versions/{versionId}/tool-requirements",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:255",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:274",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15369,7 +15373,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/pieces-techniques/{id}/versions/{versionId}/tool-requirements",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:250",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:269",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15387,7 +15391,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/by-affaire/{affaireId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:201",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:220",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15404,7 +15408,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/code-preview",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:167",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:186",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15420,7 +15424,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/document-policy/{clientId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:185",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:204",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15437,7 +15441,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/pieces-techniques/document-policy/{clientId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:186",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:205",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15457,7 +15461,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/document-types",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:176",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:195",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15473,7 +15477,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/document-types",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:177",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:196",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15492,7 +15496,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "patch",
     "path": "/pieces-techniques/document-types/{code}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:178",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:197",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15512,7 +15516,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/drafts",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:193",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:212",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15528,7 +15532,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/drafts",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:194",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:213",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15545,7 +15549,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "delete",
     "path": "/pieces-techniques/drafts/{draftId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:197",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:216",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15562,7 +15566,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/drafts/{draftId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:195",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:214",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15579,7 +15583,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "put",
     "path": "/pieces-techniques/drafts/{draftId}",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:196",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:215",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15597,7 +15601,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/permissions",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:175",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:194",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15613,7 +15617,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/pieces-techniques/sous-pieces",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:169",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:188",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15630,7 +15634,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/summary",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:172",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:191",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -15646,7 +15650,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
     "path": "/pieces-techniques/versions/{versionId}/document-requirements",
-    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:198",
+    "source": "src/module/pieces-techniques/routes/pieces-techniques.routes.ts:217",
     "middleware": [
       "anonymous",
       "authenticateToken",
