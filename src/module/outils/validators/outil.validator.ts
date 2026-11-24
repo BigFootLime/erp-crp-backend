@@ -1,4 +1,5 @@
 import { z } from "zod"
+import type { OutillageWorkshopPageSize } from "../types/outil.types"
 
 const workshopPositiveId = z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(1).max(2147483647))
 const workshopIds = z.string().max(8000).transform((value) => value === "" ? [] : value.split(","))
@@ -9,7 +10,7 @@ const workshopStockStatuses = z.string().max(100).transform((value) => value ===
 
 export const outillageWorkshopPageQuerySchema = z.object({
   page: workshopPositiveId.default(1),
-  pageSize: z.enum(["10", "20", "30", "40"]).default("20").transform((value) => Number(value) as 10 | 20 | 30 | 40),
+  pageSize: z.enum(["10", "20", "25", "30", "40", "50", "75", "100"]).default("20").transform((value) => Number(value) as OutillageWorkshopPageSize),
   q: z.string().trim().max(400).default(""),
   qMode: z.enum(["literal", "terms"]).default("literal"),
   onlyInStock: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),

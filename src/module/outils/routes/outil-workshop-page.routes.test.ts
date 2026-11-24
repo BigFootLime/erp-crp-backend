@@ -101,8 +101,15 @@ it.each(["asc", "desc"])("accepts the numeric diameter sort (%s) with taxonomy f
   });
 });
 
+it.each([25, 50, 75, 100])("accepts %d tools per catalogue page", async (pageSize) => {
+  await request(app).get("/outils/workshop-page")
+    .query({ page: 2, pageSize })
+    .set("x-fixture-role", "Atelier").set("x-fixture-module-access", "granted").expect(200);
+  expect(service.getWorkshopPage).toHaveBeenCalledWith({ ...filterDefaults, page: 2, pageSize });
+});
+
 it.each([
-  "page=0", "page=1.5", "pageSize=50", "pageSize=10&pageSize=40", "familyIds=1%2C0", "geometryIds=1%2C",
+  "page=0", "page=1.5", "pageSize=101", "pageSize=10&pageSize=40", "familyIds=1%2C0", "geometryIds=1%2C",
   "manufacturerIds=2147483648", "stockStatuses=missing", "segment=unknown", "sortBy=quantity", "sortDir=sideways",
   "onlyInStock=1", "qMode=or",
 ])("rejects %s before reaching the repository", async (query) => {
