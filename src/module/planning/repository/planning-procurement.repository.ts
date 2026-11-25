@@ -11,7 +11,7 @@ import pool from '../../../config/database';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { HttpError } from '../../../utils/httpError';
-import { coverageFingerprint,purchaseQuantity,quantity as materialQuantity } from '../../production/domain/of-material';
+import { coverageFingerprint,materialPurchaseQuantity,quantity as materialQuantity } from '../../production/domain/of-material';
 import { consumableCommand } from '../../production/repository/consumable-command.repository';
 import { readMaterialTx,saveMaterialConfigurationTx,linkUnassignedMaterialPurchasesTx } from '../../production/repository/of-material.repository';
 import { readSubcontractProcurementTx } from '../../subcontract/subcontract-procurement.repository';
@@ -150,7 +150,7 @@ export async function savePlanningProcurementTx(tx:PoolClient,ofId:number,body:z
      const pack=offer?.pack??(need&&offer?.unit!==entry.unit&&offer&&isPurchasePieceUnit(offer.unit)?1:null)
        ??(catalogue&&'lot_achat' in catalogue?catalogue.lot_achat:null);
      const minimum=offer?.moq??(catalogue&&'moq' in catalogue?catalogue.moq:null);
-     const quantity=need?purchaseQuantity(Math.ceil(entry.missing/coefficient*1000-1e-8)/1000,minimum,pack).ordered:entry.missing;
+     const quantity=need?materialPurchaseQuantity(Math.ceil(entry.missing/coefficient*1000-1e-8)/1000,minimum,pack,unit,need.sourceBarLengthMm).ordered:entry.missing;
      const created=await createMaterialDraftsTx(tx,[{ofId,sourceRef:entry.sourceRef,needId:entry.needId,articleId:entry.articleId!,designation:entry.label,
       supplierId:input.supplierId,...(need&&entry.unit?{stockUnit:entry.unit,coefficient}:{}),currency:lastPrice?.currency??offer?.currency??(input.supplierId===entry.supplierId?entry.currency:'EUR'),destinationId:entry.destinationId,unit:unit!,quantity,assigned:entry.kind==='MATIERE'?entry.missing:0,price:lastPrice?.price??offer?.price??(input.supplierId===entry.supplierId?entry.price:null),due:input.due,
       catalogueId:offer?.id,type:entry.kind==='PRESTATION'?'SOUS_TRAITANCE':'MATIERE',operation:entry.operationId?current.material.operations.find(o=>o.id===entry.operationId)?.label??entry.label:entry.label,requirements:need?[need.requirements.grade,need.requirements.condition,...need.requirements.certificates,...need.requirements.manualChecks,...Object.entries(need.requirements.dimensions).map(([key,value])=>`${key}: ${value} mm minimum`)].filter((v):v is string=>!!v):[],

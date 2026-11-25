@@ -137,6 +137,28 @@ export function purchaseQuantity(shortage:number,minimum:number|null,pack:number
   const ordered=Math.ceil(base/step)*step/1000;
   return {ordered,assigned:quantity(shortage),surplus:quantity(ordered-shortage)};
 }
+
+export function materialPurchaseQuantity(
+  shortage: number, minimum: number | null, pack: number | null, unit: string | null,
+  sourceBarLengthMm?: number | null,
+) {
+  const lengthUnit = unit?.trim().toLowerCase();
+  if (!sourceBarLengthMm || (lengthUnit !== 'mm' && lengthUnit !== 'm')) {
+    return purchaseQuantity(shortage, minimum, pack);
+  }
+  const bar = milli(sourceBarLengthMm / (lengthUnit === 'm' ? 1000 : 1));
+  const supplierPack = pack === null ? 1 : milli(pack);
+  if (bar <= 0 || supplierPack <= 0 || !Number.isFinite(supplierPack)) {
+    throw new Error('Invalid source bar or supplier packaging');
+  }
+  let divisor = bar;
+  let remainder = supplierPack;
+  while (remainder > 0) {
+    [divisor, remainder] = [remainder, divisor % remainder];
+  }
+  // A length-based order must cover whole bars and preserve the supplier's pack.
+  return purchaseQuantity(shortage, minimum, (bar / divisor * supplierPack) / 1000);
+}
 export function coverageFingerprint(value:unknown){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
 /** JSONB may reorder object keys; evidence must survive that round trip. */
 export function materialPropertiesFingerprint(value:unknown):string{

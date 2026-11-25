@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,debitQuantity,materialRequirementForPieces,type MaterialNeed,type MaterialLot} from "./of-material";
+import {materialPropertiesFingerprint,materialBalance,proposeMaterialCoverage,lotCompatibility,purchaseQuantity,materialPurchaseQuantity,debitQuantity,materialRequirementForPieces,type MaterialNeed,type MaterialLot} from "./of-material";
 const need:MaterialNeed={key:"n",articleId:"a",unit:"u",required:100,reserved:0,consumed:0,expected:0,receivedBlocked:0,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]}};
 const lot:MaterialLot={id:"l",batchId:"b",articleId:"a",code:"LOT-1",unit:"u",quality:"LIBERE",available:60,receivedAt:"2026-09-01",grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualVerified:false};
 describe("Material coverage",()=>{
@@ -23,6 +23,13 @@ describe("Material coverage",()=>{
   it("uses compatible FIFO and a shared pool across distinct needs",()=>{const result=proposeMaterialCoverage([{...need,required:40},{...need,key:"n2",required:40}],[{...lot,id:"old",batchId:"old",ownerClientId:"another",receivedAt:"2026-08-01"},lot]);expect(result[0].selections).toEqual([{lotId:"l",batchId:"b",quantity:40}]);expect(result[1].purchaseMissing).toBe(20);});
   it("blocks missing certificates, unknown constraints and mismatched units",()=>{expect(lotCompatibility({...need,requirements:{...need.requirements,certificates:["3.1"],manualChecks:["Origine UE"]}},lot)).toHaveLength(2);expect(lotCompatibility({...need,unit:null},lot)).toHaveLength(1);expect(lotCompatibility({...need,requirements:{...need.requirements,dimensions:{diameter:25}}},lot)).toHaveLength(1);});
   it("shows procurement surplus without assigning it",()=>{expect(purchaseQuantity(15,20,12)).toEqual({ordered:24,assigned:15,surplus:9});expect(purchaseQuantity(0,20,12)).toEqual({ordered:0,assigned:0,surplus:0});});
+  it("purchases whole source bars in millimetres or metres without increasing the assigned need", () => {
+    expect(materialPurchaseQuantity(4000, null, null, "mm", 3020)).toEqual({ ordered: 6040, assigned: 4000, surplus: 2040 });
+    expect(materialPurchaseQuantity(4, null, null, "m", 3020)).toEqual({ ordered: 6.04, assigned: 4, surplus: 2.04 });
+    expect(materialPurchaseQuantity(4000, null, null, "mm", null).ordered).toBe(4000);
+    expect(materialPurchaseQuantity(4000, 6100, 6040, "mm", 3020).ordered).toBe(12080);
+    expect(materialPurchaseQuantity(0, 6100, 6040, "mm", 3020).ordered).toBe(0);
+  });
   it("keeps decimal balances exact",()=>{expect(materialBalance({...need,required:.3,reserved:.1,consumed:.1,expected:.1}).missing).toBe(0);});
   it("requires a methods decision for sheets and an explicit debit conversion",()=>{expect(()=>debitQuantity({form:"SHEET",stockUnit:"mm²",unitsPerBlank:100,kerfPerBlank:2,yieldValidated:false},3)).toThrow(/méthodes/);expect(debitQuantity({form:"BAR",stockUnit:"mm",unitsPerBlank:35,kerfPerBlank:2,yieldValidated:true},20)).toBe(740);});
   it("rounds raw blanks before calculating a cutting requirement",()=>{

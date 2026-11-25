@@ -2,7 +2,7 @@ import type {PoolClient} from 'pg';
 import {materialCommand,readMaterialTx,type Candidate} from './of-material.repository';
 import type {MaterialConfirmation} from '../validators/of-material.validators';
 import type {AuditContext} from './production.repository';
-import {quantity,materialBalance,materialSelectionCoverage,barBlankStep,lotCompatibility,purchaseQuantity} from '../domain/of-material';
+import {quantity,materialBalance,materialSelectionCoverage,barBlankStep,lotCompatibility,materialPurchaseQuantity} from '../domain/of-material';
 import {physicalMaterialSelection} from '../domain/of-material-bars';
 import {HttpError} from '../../../utils/httpError';
 import {repoCreateStockReservation} from '../../stock/repository/stock-reservation.repository';
@@ -61,7 +61,7 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
         const result=await reserveMaterialSelectionTx(tx,ofId,current.number,need,candidate.lot,selection.quantity,body.idempotencyKey,audit);
         reservedIds.push(result.reservation.id);
       }
-      const buy=purchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null);
+      const buy=materialPurchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
       if(!buy.assigned)continue;
       if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
       if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}
