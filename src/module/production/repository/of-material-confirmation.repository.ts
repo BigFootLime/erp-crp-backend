@@ -62,6 +62,7 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
         reservedIds.push(result.reservation.id);
       }
       const buy=materialPurchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
+      if(buy.problem)throw new HttpError(422,'MATERIAL_PURCHASE_CONSTRAINT',buy.problem);
       if(!buy.assigned)continue;
       if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
       if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}

@@ -30,6 +30,20 @@ describe("Material coverage",()=>{
     expect(materialPurchaseQuantity(4000, 6100, 6040, "mm", 3020).ordered).toBe(12080);
     expect(materialPurchaseQuantity(0, 6100, 6040, "mm", 3020).ordered).toBe(0);
   });
+  it("converts whole bars into the supplier purchase unit", () => {
+    expect(materialPurchaseQuantity(8, null, null, "kg", 3020, { stockUnit: "mm", coefficient: 500 }))
+      .toEqual({ ordered: 12.08, assigned: 8, surplus: 4.08 });
+    expect(materialPurchaseQuantity(4, 6.1, 6.04, "m", 3020, { stockUnit: "mm", coefficient: 1000 }).ordered)
+      .toBe(12.08);
+  });
+  it("explains when conversion precision or supplier packaging prevents a whole-bar order", () => {
+    expect(materialPurchaseQuantity(1333.334, null, null, "kg", 3020, { stockUnit: "mm", coefficient: 3 }).problem)
+      .toMatch(/trois décimales/);
+    expect(materialPurchaseQuantity(8, null, 2, "kg", 3020, { stockUnit: "mm", coefficient: 500 }).problem)
+      .toMatch(/conditionnement/);
+    expect(materialPurchaseQuantity(4, null, null, "m", 3020, { stockUnit: "mm", coefficient: 1010 }).problem)
+      .toMatch(/conversion fournisseur/);
+  });
   it("keeps decimal balances exact",()=>{expect(materialBalance({...need,required:.3,reserved:.1,consumed:.1,expected:.1}).missing).toBe(0);});
   it("requires a methods decision for sheets and an explicit debit conversion",()=>{expect(()=>debitQuantity({form:"SHEET",stockUnit:"mm²",unitsPerBlank:100,kerfPerBlank:2,yieldValidated:false},3)).toThrow(/méthodes/);expect(debitQuantity({form:"BAR",stockUnit:"mm",unitsPerBlank:35,kerfPerBlank:2,yieldValidated:true},20)).toBe(740);});
   it("rounds raw blanks before calculating a cutting requirement",()=>{

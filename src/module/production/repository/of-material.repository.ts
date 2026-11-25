@@ -205,7 +205,9 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     const blockers=[...need.blockers,...physicalMaterialInventoryBlockers(need),
       ...(proposal.purchaseRequiresBarReview?['Vérifiez les barres du stock existant avant de préparer un achat.']:[])];
-    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:materialPurchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm)};
+    const { problem, ...purchase } = materialPurchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
+    if(problem)blockers.push(problem);
+    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase};
   });
   const historicalNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)).map(n=>{
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);

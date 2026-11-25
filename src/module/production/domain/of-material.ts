@@ -138,26 +138,37 @@ export function purchaseQuantity(shortage:number,minimum:number|null,pack:number
   return {ordered,assigned:quantity(shortage),surplus:quantity(ordered-shortage)};
 }
 
+type MaterialPurchaseQuantity = ReturnType<typeof purchaseQuantity> & { problem?: string };
+const millimetresPerUnit = new Map([["mm", 1], ["m", 1000]]);
+
 export function materialPurchaseQuantity(
   shortage: number, minimum: number | null, pack: number | null, unit: string | null,
   sourceBarLengthMm?: number | null,
-) {
-  const lengthUnit = unit?.trim().toLowerCase();
-  if (!sourceBarLengthMm || (lengthUnit !== 'mm' && lengthUnit !== 'm')) {
-    return purchaseQuantity(shortage, minimum, pack);
+  conversion?: { stockUnit: string | null; coefficient: number },
+): MaterialPurchaseQuantity {
+  if (!sourceBarLengthMm || shortage === 0) return purchaseQuantity(shortage, minimum, pack);
+
+  const purchaseLengthFactor = millimetresPerUnit.get(unit?.trim().toLowerCase() ?? '');
+  const stockLengthFactor = millimetresPerUnit.get(conversion?.stockUnit?.trim().toLowerCase() ?? '');
+  const physicalLength = purchaseLengthFactor ? sourceBarLengthMm / purchaseLengthFactor : null;
+  // The catalogue coefficient is units of stock per unit purchased.
+  const barInOrderUnit = conversion && stockLengthFactor
+    ? sourceBarLengthMm / stockLengthFactor / conversion.coefficient
+    : physicalLength;
+  if (barInOrderUnit === null) return purchaseQuantity(shortage, minimum, pack);
+
+  const bar = milli(barInOrderUnit);
+  const supplierPack = pack === null ? bar : milli(pack);
+  const problem = (message: string) => ({ ordered: 0, assigned: quantity(shortage), surplus: 0, problem: message });
+  if (!Number.isSafeInteger(bar) || bar <= 0 || Math.abs(barInOrderUnit - bar / 1000) > 1e-9 ||
+      physicalLength !== null && Math.abs(barInOrderUnit - physicalLength) > 1e-9) {
+    return problem('Vérifiez la conversion fournisseur : une barre entière doit être représentable dans l’unité d’achat à trois décimales.');
   }
-  const bar = milli(sourceBarLengthMm / (lengthUnit === 'm' ? 1000 : 1));
-  const supplierPack = pack === null ? 1 : milli(pack);
-  if (bar <= 0 || supplierPack <= 0 || !Number.isFinite(supplierPack)) {
-    throw new Error('Invalid source bar or supplier packaging');
+  if (!Number.isSafeInteger(supplierPack) || supplierPack <= 0 ||
+      bar % supplierPack !== 0 && supplierPack % bar !== 0) {
+    return problem('Le conditionnement fournisseur ne correspond pas à la longueur d’une barre entière. Vérifiez le lot d’achat.');
   }
-  let divisor = bar;
-  let remainder = supplierPack;
-  while (remainder > 0) {
-    [divisor, remainder] = [remainder, divisor % remainder];
-  }
-  // A length-based order must cover whole bars and preserve the supplier's pack.
-  return purchaseQuantity(shortage, minimum, (bar / divisor * supplierPack) / 1000);
+  return purchaseQuantity(shortage, minimum, Math.max(bar, supplierPack) / 1000);
 }
 export function coverageFingerprint(value:unknown){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
 /** JSONB may reorder object keys; evidence must survive that round trip. */
