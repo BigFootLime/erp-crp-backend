@@ -72,4 +72,13 @@ describe('stock et achats lors de la validation OF',()=>{
       quantity:2,assigned:3550,price:40,catalogueId:offer})],audit);
     expect(result?.orders).toEqual([{id:'draft',code:'BCF-TEST'}]);
   });
+
+  it('commande 6 040 mm pour un manque de 4 000 mm débité sur des barres source de 3 020 mm', async () => {
+    const value = { ...need(), unit: 'mm', required: 4000, missing: 4000, purchaseMissing: 4000,
+      sourceBarLengthMm: 3020, selections: [], debitRule: { form: 'BAR', unitsPerBlank: 100, kerfPerBlank: 0 } };
+    material(value);
+    const tx = transaction();
+    await prepareAutomaticPlanningPurchasesTx(tx as unknown as PoolClient, ofId, audit, true);
+    expect(m.drafts).toHaveBeenCalledWith(tx, [expect.objectContaining({ unit: 'mm', quantity: 6040, assigned: 4000 })], audit);
+  });
 });

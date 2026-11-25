@@ -2,7 +2,8 @@ import type { DossierDb } from './of-dossier.repository';
 import type { MaterialArticleDefaults } from '../domain/material-configuration-proposal';
 export const MATERIAL_ARTICLE_DEFAULTS_SQL = `SELECT a.id::text,a.code,a.unite,m.client_proprietaire_id::text,
   n.code AS grade,e.code AS condition,se.code AS sub_condition,
-  m.longueur_mm::float8,m.longueur_brut_mm::float8,m.diametre_mm::float8,m.largeur_mm::float8,m.epaisseur_mm::float8
+  m.longueur_mm::float8,m.longueur_brut_mm::float8,m.diametre_mm::float8,m.largeur_mm::float8,m.epaisseur_mm::float8,
+  CASE WHEN m.barre_a_decouper THEN COALESCE(m.longueur_barre_source_mm,m.longueur_unitaire_mm)::float8 END AS source_bar_length_mm
   FROM public.articles a LEFT JOIN public.articles_matiere m ON m.article_id=a.id
   LEFT JOIN public.stock_nuances n ON n.id=m.nuance_id LEFT JOIN public.stock_etats e ON e.id=m.etat_id
   LEFT JOIN public.stock_sous_etats se ON se.id=m.sous_etat_id WHERE a.id=ANY($1::uuid[])`;

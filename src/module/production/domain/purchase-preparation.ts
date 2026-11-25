@@ -1,4 +1,4 @@
-import { materialPropertiesFingerprint, purchaseQuantity, quantity, type MaterialRequirements } from './of-material';
+import { materialPropertiesFingerprint, materialPurchaseQuantity, quantity, type MaterialRequirements } from './of-material';
 
 export type PurchasePreparation = {
   scopeKey: string; kind: 'MATIERE' | 'CONSOMMABLE' | 'PRESTATION'; mode: 'OF' | 'GLOBAL_PACK';
@@ -25,6 +25,7 @@ type MaterialPreparationNeed = {
   supplierId: string | null; destinationId: string | null; price: number | null;
   operationId: string | null; operationLabel: string | null; requirements: MaterialRequirements;
   catalog?: { moq: number | null; lot_achat: number | null } | null;
+  sourceBarLengthMm?: number | null;
   futureSupplies: Array<{ id: string; code: string; available: number; reasons: string[] }>;
 };
 export function materialPurchasePreparations(input: Identity & {
@@ -46,7 +47,7 @@ export function materialPurchasePreparations(input: Identity & {
       scopeKey: purchaseScopeKey(input, 'MATIERE', need.key), kind: 'MATIERE', mode: 'OF', ofId: input.ofId,
       sourceRef: need.key, needId: need.id, technicalVersion: input.technicalVersion, technicalHash: input.technicalHash,
       ofRevisionId: input.ofRevisionId ?? null, articleId: need.articleId, designation: need.designation, unit: need.unit,
-      required: need.required, missing, ordered: missing === null ? null : purchaseQuantity(missing, need.catalog?.moq ?? null, need.catalog?.lot_achat ?? null).ordered,
+      required: need.required, missing, ordered: missing === null ? null : materialPurchaseQuantity(missing, need.catalog?.moq ?? null, need.catalog?.lot_achat ?? null, need.unit, need.sourceBarLengthMm).ordered,
       purchaseUnit: need.unit,
       supplierId: need.supplierId, destinationId: need.destinationId,
       status: missing === 0 ? 'COUVERTE' : actions.length ? 'A_COMPLETER' : 'A_COMMANDER', actions,
