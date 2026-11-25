@@ -8,7 +8,7 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
-import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,purchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,materialPurchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {physicalMaterialInventoryBlockers} from '../domain/of-material-bars';
 import {readMaterialBarCoverageTx} from './material-bar-coverage.repository';
 import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
@@ -181,6 +181,7 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??proposed?.supplyMode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:currentChoice?currentChoice.destinationId??null:row?.destination_id??null,
       catalog,price,currency:catalog?.devise??"EUR",blockers,reservations:attached,promises:expected,
+      sourceBarLengthMm:article?.source_bar_length_mm??null,
       configurationProposal,
       cutting:cuttingForPurchase(p,dossier.quantity),
       rowVersion:row?.row_version??null,consumptionAdjustment,openingConsumed,
@@ -204,7 +205,9 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     const blockers=[...need.blockers,...physicalMaterialInventoryBlockers(need),
       ...(proposal.purchaseRequiresBarReview?['Vérifiez les barres du stock existant avant de préparer un achat.']:[])];
-    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase:purchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null)};
+    const { problem, ...purchase } = materialPurchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
+    if(problem)blockers.push(problem);
+    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase};
   });
   const historicalNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)).map(n=>{
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);

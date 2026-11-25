@@ -12,6 +12,7 @@ export type MaterialArticleDefaults = {
     diametre_mm: number | null;
     largeur_mm: number | null;
     epaisseur_mm: number | null;
+    source_bar_length_mm?: number | null;
 };
 export type MaterialPurchaseDefaults = {
     gamme_operation_id?: string | null;
