@@ -3,6 +3,21 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Estimation d’achat des procédés spéciaux
+
+`20261126_special_process_purchase_pricing.sql` ajoute le forfait et le minimum
+de facturation au besoin d’achat de la pièce technique. Les deux champs sont
+facultatifs, réservés aux traitements et distincts du tarif du fournisseur.
+Le forfait exclut un prix unitaire. Un minimum accompagne un prix unitaire.
+Le patch conserve tous les montants historiques et valide la contrainte sans
+réécriture des lignes. Appliquer avant la nouvelle API après restauration
+vérifiée des sauvegardes et suspension des écrivains du périmètre.
+
+Le nouveau lecteur applique le forfait ou le seuil une seule fois au lot
+chiffré. Le bon fournisseur conserve son catalogue choisi et son prix figé.
+Après création de lignes avec de nouveaux tarifs, garder le lecteur .221 pour
+le chiffrage lors d’un retour. Laisser le schéma additif et le registre en place.
+
 ## Contrôle opérateur des matières à réception
 
 `20261126_receipt_operator_control.sql` ajoute un marqueur à `quality_control`.

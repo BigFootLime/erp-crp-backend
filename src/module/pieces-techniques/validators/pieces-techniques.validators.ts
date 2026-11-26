@@ -180,11 +180,29 @@ const achatInputSchema = z.object({
   prix: z.coerce.number().min(0).optional().nullable(),
   unite_prix: z.string().optional().nullable(),
   pu_achat: z.coerce.number().min(0).optional().nullable(),
+  forfait_ht: z.number().finite().min(0).max(9999999.99).nullable().optional(),
+  minimum_facturation_ht: z.number().finite().min(0).max(9999999.99).nullable().optional(),
   tva_achat: z.coerce.number().min(0).max(100).optional().default(20),
   designation: z.string().optional().nullable(),
   designation_2: z.string().optional().nullable(),
   designation_3: z.string().optional().nullable(),
 })
+
+function validateTreatmentPricing(achat: {
+  type_achat?: string; forfait_ht?: number | null; minimum_facturation_ht?: number | null
+  prix?: number | null; pu_achat?: number | null
+}, ctx: z.RefinementCtx, partial = false, path: Array<string | number> = []) {
+  const { type_achat, forfait_ht, minimum_facturation_ht, prix, pu_achat } = achat
+  if (forfait_ht == null && minimum_facturation_ht == null) return
+  const field = forfait_ht != null ? "forfait_ht" : "minimum_facturation_ht"
+  if (type_achat !== undefined && type_achat !== "TRAITEMENT") {
+    ctx.addIssue({ code: "custom", path: [...path, field], message: "Ce mode de facturation est réservé aux procédés spéciaux." })
+  } else if (forfait_ht != null && (minimum_facturation_ht != null || prix != null || pu_achat != null)) {
+    ctx.addIssue({ code: "custom", path: [...path, field], message: "Le forfait est un prix fixe, sans prix unitaire ni minimum." })
+  } else if (!partial && minimum_facturation_ht != null && prix == null && pu_achat == null) {
+    ctx.addIssue({ code: "custom", path: [...path, field], message: "Renseignez le prix unitaire auquel s’applique ce minimum." })
+  }
+}
 
 function validateMaterialCutting(achat: { type_achat?: string; unite_prix?: string | null; quantite_pieces?: number | null; longueur_mm?: number | null }, ctx: z.RefinementCtx, path: Array<string | number> = []) {
   if (achat.type_achat !== "MATIERE" || achat.quantite_pieces == null) return
@@ -243,7 +261,10 @@ const pieceCreationPayloadSchema = z.object({
     operations: z.array(operationInputSchema).optional().default([]),
     achats: z.array(achatInputSchema).optional().default([]),
   }).superRefine((body, ctx) => {
-    body.achats.forEach((achat, index) => validateMaterialCutting(achat, ctx, ["achats", index]))
+    body.achats.forEach((achat, index) => {
+      validateMaterialCutting(achat, ctx, ["achats", index])
+      validateTreatmentPricing(achat, ctx, false, ["achats", index])
+    })
     if (body.sub_piece?.same_reference) {
       if (body.article_id) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["article_id"], message: "Créez l’article fabriqué après la sous-pièce." })
@@ -391,6 +412,7 @@ export type PurchasePreparationOf = z.infer<typeof purchasePreparationOf>
 export const addAchatSchema = z.object({
   body: achatInputSchema.extend({ preparation_of: purchasePreparationOf.optional() }).superRefine((achat, ctx) => {
     validateMaterialCutting(achat, ctx)
+    validateTreatmentPricing(achat, ctx)
     if (achat.preparation_of && !achat.gamme_operation_id)
       ctx.addIssue({ code: "custom", path: ["gamme_operation_id"], message: "Choisissez l’opération à rattacher à cet OF." })
   }),
@@ -405,6 +427,7 @@ export const updateAchatSchema = z.object({
     tva_achat: z.coerce.number().min(0).max(100).optional(),
     preparation_of: purchasePreparationOf.optional(),
   }).superRefine((achat, ctx) => {
+    validateTreatmentPricing(achat, ctx, true)
     if (achat.preparation_of && !achat.gamme_operation_id)
       ctx.addIssue({ code: "custom", path: ["gamme_operation_id"], message: "Choisissez l’opération à rattacher à cet OF." })
   }),

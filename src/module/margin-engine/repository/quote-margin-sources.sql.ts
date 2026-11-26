@@ -23,7 +23,13 @@ export const QUOTE_MARGIN_SOURCES_SQL = `
   SELECT concat('quote-line:',dl.id,':purchase:',a.id) AS key,
     CASE WHEN a.type_achat='MATIERE' THEN 'MATERIAL'
       WHEN a.type_achat IN ('SOUS_TRAITANCE','TRAITEMENT') THEN 'SUBCONTRACTING' ELSE 'PURCHASE' END::text AS category,
-    round(a.total_achat_ht*dl.quantite,6)::text AS amount_ht,
+    CASE WHEN a.forfait_ht IS NOT NULL OR a.minimum_facturation_ht IS NOT NULL THEN
+      CASE WHEN dl.quantite > 0 THEN round(GREATEST(
+        a.quantite * dl.quantite * COALESCE(a.prix, a.pu_achat, 0) + COALESCE(a.forfait_ht, 0),
+        COALESCE(a.minimum_facturation_ht, 0)
+      ), 2) ELSE 0 END
+      ELSE round(a.total_achat_ht*dl.quantite,6)
+    END::text AS amount_ht,
     'PIECE_TECHNIQUE_ACHAT'::text AS source_type,a.id::text AS source_ref,a.updated_at::text AS observed_at,
     dl.quantite::text AS quantity,dl.version_id::text AS technical_version_id
   FROM dossiers dl JOIN public.pieces_techniques_achats a ON a.piece_technique_id=dl.piece_id
