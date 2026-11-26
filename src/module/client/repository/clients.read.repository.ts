@@ -1,6 +1,7 @@
 // src/module/clients/repository/clients.read.repository.ts
 import pool from "../../../config/database";
 import { maskIban } from "../client.permissions";
+import { CLIENT_CODE_ORDER_SQL, CLIENT_CODE_SQL } from "./client-code.sql";
 
 export type ClientReadOptions = {
   /**
@@ -312,10 +313,7 @@ export async function repoListClients(q: string, limit = 25) {
     `
     SELECT
       c.client_id,
-      COALESCE(
-        NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-        NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-      ) AS client_code,
+      ${CLIENT_CODE_SQL} AS client_code,
       c.company_name, c.email, c.phone, c.website_url,
       c.siret, c.siren, c.vat_number, c.naf_code,
       c.electronic_address_scheme, c.electronic_address_value,
@@ -369,17 +367,14 @@ export async function repoListClients(q: string, limit = 25) {
     WHERE
       ($1 = '%%')
       OR (LOWER(c.company_name) LIKE $1
-          OR LOWER(COALESCE(
-               NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-               NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-             )) LIKE $1
+          OR LOWER(${CLIENT_CODE_SQL}) LIKE $1
           OR LOWER(COALESCE(c.email,'')) LIKE $1
           OR COALESCE(c.siret,'') LIKE replace($1,'%',''))
 
     GROUP BY
       c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
 
-    ORDER BY c.company_name ASC
+    ORDER BY ${CLIENT_CODE_ORDER_SQL}
     LIMIT $2
     `,
     [like, limit]
