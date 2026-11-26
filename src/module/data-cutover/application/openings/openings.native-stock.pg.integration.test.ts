@@ -155,6 +155,26 @@ describePg("native OLD opening on the complete stock schema", () => {
     expect((await db.query("SELECT count(*)::int AS count FROM public.lots WHERE supplier_lot_code='CUT-FOU-LOT-001'")).rows[0]?.count).toBe(0);
   });
 
+  it("releases a new OLD MP opening when the request omits the lot status", async () => {
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      await seedNativePrerequisites(client);
+      const body = historicalImportSchema.parse({ body: {
+        kind: "MP", article_id: ids.article, quantity: 3, unite: "kg", lot_number: "CUT-DEFAULT-STATUS",
+      } }).body;
+      const result = await repoCreateHistoricalImportTx(client, body, audit, "cutover-mp-default-status");
+      const position = await client.query(
+        "SELECT lot_status, qty_available::float8 AS available FROM public.v_stock_availability_225 WHERE lot_id=$1::uuid",
+        [result.lot_id],
+      );
+      expect(position.rows).toEqual([{ lot_status: "LIBERE", available: 3 }]);
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  });
+
   it("requires the selected PF technical version and matching article unit before creating an OLD movement", async () => {
     const client = await db.connect();
     try {
@@ -181,12 +201,15 @@ describePg("native OLD opening on the complete stock schema", () => {
       const base = {
         kind: "PF" as const, client_number: "CUT-001", article_id: article.id, technical_version_id: versionId, unite: "u", quantity: 1,
         of_affaire_refs: [], mp_lot_refs: [], traitement_lot_refs: [], historical_lot_reference: `PF-LOT-${suffix}`,
-        historical_shelf: "PF-TEST", historical_lot_status: "LIBERE" as const, owner_client_id: ownerClientId,
+        historical_shelf: "PF-TEST", owner_client_id: ownerClientId,
       };
       const ok = historicalImportSchema.parse({ body: base }).body;
       const posted = await repoCreateHistoricalImportTx(client, ok, audit, `cutover-pf-ok-${suffix}`);
-      const lot = await client.query<{ version_id: string; scope: string }>("SELECT piece_technique_version_id::text AS version_id, stock_scope AS scope FROM public.lots WHERE id=$1::uuid", [posted.lot_id]);
-      expect(lot.rows).toEqual([{ version_id: versionId, scope: "OLD" }]);
+      const lot = await client.query(
+        "SELECT l.piece_technique_version_id::text AS version_id, l.stock_scope AS scope, l.lot_status, v.qty_available::float8 AS available FROM public.lots l JOIN public.v_stock_availability_225 v ON v.lot_id=l.id WHERE l.id=$1::uuid",
+        [posted.lot_id],
+      );
+      expect(lot.rows).toEqual([{ version_id: versionId, scope: "OLD", lot_status: "LIBERE", available: 1 }]);
       const before = await client.query<{ count: number }>("SELECT count(*)::int AS count FROM public.stock_movements WHERE source_document_type='CERP_HISTORICAL_OPENING'");
       await expect(repoCreateHistoricalImportTx(client, historicalImportSchema.parse({ body: { ...base, technical_version_id: "11111111-1111-4111-8111-111111111111" } }).body, audit, `cutover-pf-version-${suffix}`)).rejects.toMatchObject({ code: "PF_TECHNICAL_VERSION_MISMATCH" });
       await expect(repoCreateHistoricalImportTx(client, historicalImportSchema.parse({ body: { ...base, unite: "kg" } }).body, audit, `cutover-pf-unit-${suffix}`)).rejects.toMatchObject({ code: "PF_ARTICLE_UNIT_MISMATCH" });

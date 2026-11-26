@@ -196,23 +196,25 @@ export function evaluatePreparation(f: PreparationFacts, rulesVersion = PREPARAT
       decision?.mode === "NOT_REQUIRED" &&
       (decision.reason?.trim().length ?? 0) >= 3 &&
       rows.length === 0;
-    const complete =
-      rows.length > 0 &&
-      rows.every(
-        (p) =>
-          p.article_id &&
-          p.quantite > 0 &&
-          p.unite_prix?.trim() &&
-          p.designation?.trim() &&
-          (category === "MATIERE" || p.fournisseur_id),
-      );
+    const missing = rows.flatMap(p => {
+      const fields = [
+        ...(!p.article_id ? ["article"] : []),
+        ...(!(p.quantite > 0) ? ["quantité"] : []),
+        ...(!p.unite_prix?.trim() ? ["unité"] : []),
+        ...(!p.designation?.trim() ? ["désignation"] : []),
+        ...(category !== "MATIERE" && !p.fournisseur_id ? ["fournisseur"] : []),
+      ];
+      return fields.length ? [`${p.designation?.trim() || "Ligne d’achat"} — ${fields.join(", ")} à renseigner`] : [];
+    });
+    const complete = rows.length > 0 && missing.length === 0;
     add(
       key,
       label,
       complete,
-      notRequired
-        ? decision!.reason!
-        : "Articles, quantités, unités et prestations définis pour cet indice.",
+      notRequired ? decision!.reason!
+        : missing.length ? missing.join(" · ")
+        : complete ? "Lignes d’achat complètes pour cet indice."
+        : "Aucune ligne d’achat applicable à cet indice et à la gamme de cet OF.",
       "VERSION",
       !notRequired,
     );
