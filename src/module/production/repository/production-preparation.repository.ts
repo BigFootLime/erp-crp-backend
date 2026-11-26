@@ -6,6 +6,7 @@ import { needsProgramming, programmingPreparationCurrent, type ProgrammingPrepar
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { readImprovementReturns } from "./improvement-returns.repository";
 import { importedInspection } from "../domain/imported-inspection";
+import { inheritOperationProgramming, loadPreviousPreparation, type StockReview } from "./preparation-history.repository";
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -82,6 +83,7 @@ export type PreparationOrder = {
     version_selection_mode?: "AUTO" | "MANUAL";
     execution_programming?: NonNullable<PreparationDecisions['programming']>;
     execution_quality?: Pick<TechnicalSources, 'quality_plan' | 'characteristics'>;
+    inherited_stock_review?: StockReview;
   };
   technical_snapshot?: {
     preparation_evidence?: TechnicalSources;
@@ -350,23 +352,36 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     decisions: frozenDecisions,
   });
   const candidates = await loadStockCandidates(tx, of);
-  const stockHash = sourceHash({
+  const stockHashForQuantity = (quantity: number) => sourceHash({
     version: of.version_id,
-    quantity: of.quantite_lancee,
+    quantity,
     candidates,
   });
+  const stockHash = stockHashForQuantity(of.quantite_lancee);
   const sheetHash = sourceHash({
     sharedHash,
     of_id: id,
     quantity: of.quantite_lancee,
   });
-  const stockReview =
+  const ownStockReview =
     (
-      await tx.query<{ source_hash: string; decision: string; reason: string }>(
+      await tx.query<StockReview>(
         "SELECT source_hash,decision,reason FROM public.of_stock_reviews WHERE of_id=$1",
         [id],
       )
     ).rows[0] ?? null;
+  const previous = await loadPreviousPreparation(tx, of);
+  const previousReview = previous?.stock_review;
+  // Quantities matter when a decision concerned actual available lots. With no
+  // lots, a repeat order of a different size can carry over the same review.
+  const inheritedStockReview: StockReview | null = !ownStockReview && previous && previousReview?.decision === "NO_REUSE"
+    && (candidates.length === 0 || of.quantite_lancee === previous.quantite_lancee)
+    && previousReview.source_hash === stockHashForQuantity(previous.quantite_lancee)
+    ? { ...previousReview, source_hash: stockHash, inherited_from_of_id: previousReview.inherited_from_of_id ?? previous.id }
+    : null;
+  const frozenStockReview = of.technical_snapshot_sha256 ? of.technical_preparation?.inherited_stock_review : null;
+  const stockReview = frozenStockReview?.source_hash === ownStockReview?.source_hash && frozenStockReview
+    ? frozenStockReview : ownStockReview ?? inheritedStockReview ?? frozenStockReview ?? null;
   const sheet =
     (
       await tx.query<{ id: string; state: string; error_code: string | null }>(
@@ -498,16 +513,25 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     `SELECT id::text, concat_ws(' ',code,designation,type_cf) AS label FROM public.centres_frais WHERE id::text=ANY($1::text[])`,
     [sources.operations.map(op => op.cf_id).filter(Boolean)])).rows;
   const centres = new Map(centreRows.map(row => [row.id, row.label]));
-  const programmingOperations = sources.operations.filter(op =>
-    op.programmation_minutes != null || needsProgramming(op, centres)).map(op => {
-    const saved = of.technical_preparation?.operation_programming?.[op.id];
+  const operationsWithProgramming = sources.operations.filter(op =>
+    op.programmation_minutes != null || needsProgramming(op, centres));
+  const inheritedProgramming = previous
+    && sourceHash(previous.global_programming ?? null) === sourceHash(decisions.programming ?? null)
+    ? await inheritOperationProgramming(tx, of, previous, operationsWithProgramming)
+    : {};
+  const programmingOperations = operationsWithProgramming.map(op => {
+    const saved = of.technical_preparation?.operation_programming?.[op.id] ?? inheritedProgramming[op.id];
     const current = programmingPreparationCurrent(op, of.version_id, saved);
     const plannedHours = op.programmation_minutes == null ? null : Number(op.programmation_minutes) / 60;
-    const estimatedHours = current ? saved!.estimated_hours : plannedHours;
-    const notRequired = current ? saved?.mode === 'NOT_REQUIRED' : plannedHours === 0;
+    const knownProgram = decisions.programming?.mode === "EXISTING"
+      && Boolean(op.numero_programme?.trim()) && op.numero_programme === decisions.programming.reference;
+    const notRequired = current ? saved?.mode === 'NOT_REQUIRED'
+      : plannedHours === 0 || (plannedHours === null && knownProgram);
+    const estimatedHours = current ? saved!.estimated_hours : notRequired ? 0 : plannedHours;
     return {operation_id: op.id, designation: op.designation, operation_hash: sourceHash(op),
       estimated_hours: estimatedHours,
-      status: notRequired ? 'NOT_REQUIRED' as const : estimatedHours != null ? 'PREPARED' as const : 'TODO' as const};
+      status: notRequired ? 'NOT_REQUIRED' as const : estimatedHours != null ? 'PREPARED' as const : 'TODO' as const,
+      inherited_from_of_id: current ? saved?.inherited_from_of_id : undefined};
   });
   const programmingItem = items.find(item => item.key === 'programming');
   if (programmingItem && programmingOperations.length) {
@@ -554,6 +578,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     decisions,
     items,
     warnings: preparationWarnings(items),
+    inherited_preparation: { programming: inheritedProgramming, stock_review: inheritedStockReview },
     ready: isPreparationReady(items),
     shared_ready: sharedReady,
     shared_impact: sharedImpact,
@@ -579,6 +604,29 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     consolidation_id: consolidation?.id ?? null,
     evaluated_at: new Date().toISOString(),
   };
+}
+
+export async function freezeInheritedPreparation(
+  tx: Db,
+  evaluation: Awaited<ReturnType<typeof evaluateOfPreparation>>,
+  actorId: number,
+) {
+  const { programming, stock_review } = evaluation.inherited_preparation;
+  if (!stock_review && !Object.keys(programming).length) return;
+  if (stock_review) {
+    await tx.query(
+      `INSERT INTO public.of_stock_reviews(of_id,source_hash,decision,reason,reviewed_by)
+      VALUES($1,$2,'NO_REUSE',$3,$4) ON CONFLICT(of_id) DO NOTHING`,
+      [evaluation.of.id, stock_review.source_hash, stock_review.reason, actorId],
+    );
+  }
+  await tx.query(
+    `UPDATE public.ordres_fabrication SET technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)
+      || jsonb_strip_nulls(jsonb_build_object('inherited_stock_review',$2::jsonb))
+      || jsonb_build_object('operation_programming',$3::jsonb||COALESCE(technical_preparation->'operation_programming','{}'::jsonb))
+      WHERE id=$1`,
+    [evaluation.of.id, JSON.stringify(stock_review), JSON.stringify(programming)],
+  );
 }
 
 export async function persistPreparationEvaluation(tx: Db, id: number) {

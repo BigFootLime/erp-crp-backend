@@ -1,9 +1,10 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
-import { seedProductionWorkbenchFixture } from "../../../__tests__/fixtures/production-workbench.fixture";
+import { seedProductionWorkbenchFixture, seedWorkbenchStock } from "../../../__tests__/fixtures/production-workbench.fixture";
 import { loadApplicableTechnicalSnapshot } from "../domain/of-generation";
-import { evaluateOfPreparation, repoSavePreparationDecisions } from "./production-preparation.repository";
+import { evaluateOfPreparation, repoReviewPreparationStock, repoSavePreparationDecisions } from "./production-preparation.repository";
+import { repoPrepareOperationProgramming } from "./preparation-actions.repository";
 import { repoSubmitOfTechnicalPreparation, repoValidateOfTechnicalPreparation } from "./production.repository";
 import { repoGenerateSelfInspection } from "./self-inspection.repository";
 import { repoCreateGammeRevision } from "../../gammes/repository/gammes.repository";
@@ -22,6 +23,67 @@ const managed = process.env.CERP_E2E_ISOLATED === "1" && process.env.CERP_E2E_MA
 
 describe.skipIf(!managed)("PT documents in a managed disposable workbench", () => {
   afterAll(() => pool.end());
+
+  it("reuses unchanged no-programming and no-stock decisions and preserves them through OF validation", async () => {
+    const f = await seedProductionWorkbenchFixture();
+    const [originalId, repeatId, reviewId, newIndexId] = f.ids;
+    await pool.query("UPDATE public.pieces_techniques_operations SET numero_programme='QA-CNC' WHERE gamme_id=$1", [f.gamme]);
+    let original = await evaluateOfPreparation(pool, originalId);
+    original = await repoSavePreparationDecisions(originalId, {
+      expected_updated_at: original.of.updated_at, version_id: f.version, expected_version: original.profile_version,
+      decisions: {
+        treatment: { mode: "NOT_REQUIRED", reason: "Aucun procédé pour cette pièce" },
+        subcontract: { mode: "NOT_REQUIRED", reason: "Fabrication interne" },
+      },
+    }, f.audit);
+    const [operation] = original.programming_operations;
+    original = await repoPrepareOperationProgramming(originalId, {
+      expected_updated_at: original.of.updated_at, operation_id: operation.operation_id, operation_hash: operation.operation_hash,
+      mode: "NOT_REQUIRED", reason: "Un programme existant est disponible", estimated_hours: 0,
+    }, f.audit);
+    original = await repoReviewPreparationStock(originalId, {
+      expected_updated_at: original.of.updated_at, source_hash: original.stock_hash, reason: "Aucun lot disponible",
+    }, f.audit);
+    await repoValidateOfTechnicalPreparation({ id: originalId, body: { expected_updated_at: original.of.updated_at }, audit: f.audit });
+    const frozenOriginal = await evaluateOfPreparation(pool, originalId);
+
+    const repeat = await evaluateOfPreparation(pool, repeatId);
+    expect(repeat.of.quantite_lancee).not.toBe(original.of.quantite_lancee);
+    expect(repeat.stock_candidates).toEqual([]);
+    expect(repeat.stock_review).toMatchObject({ decision: "NO_REUSE", inherited_from_of_id: originalId, source_hash: repeat.stock_hash });
+    expect(repeat.items).toContainEqual(expect.objectContaining({ key: "stock_compatibility", status: "READY" }));
+    expect(repeat.programming_operations[0]).toMatchObject({ status: "NOT_REQUIRED", inherited_from_of_id: originalId });
+    expect(repeat.of.technical_preparation?.operation_programming).toBeUndefined();
+    await repoValidateOfTechnicalPreparation({ id: repeatId, body: { expected_updated_at: repeat.of.updated_at }, audit: f.audit });
+    const frozenRepeat = await evaluateOfPreparation(pool, repeatId);
+    expect(frozenRepeat.of.technical_snapshot_sha256).toBeTruthy();
+    expect(frozenRepeat.stock_review?.inherited_from_of_id).toBe(originalId);
+    expect((await pool.query("SELECT decision,source_hash FROM public.of_stock_reviews WHERE of_id=$1", [repeatId])).rows[0])
+      .toEqual({ decision: "NO_REUSE", source_hash: repeat.stock_hash });
+    expect(frozenRepeat.of.technical_preparation?.operation_programming?.[operation.operation_id])
+      .toMatchObject({ mode: "NOT_REQUIRED", inherited_from_of_id: originalId });
+
+    const draft = await repoCreateGammeRevision(f.gamme, {}, f.audit, randomUUID());
+    const [copied] = await repoListGammeOperations(draft.gamme.id);
+    await pool.query("UPDATE public.ordres_fabrication SET technical_preparation=technical_preparation||jsonb_build_object('selected_gamme_id',$2::text) WHERE id=$1", [reviewId, draft.gamme.id]);
+    const copiedUnchanged = await evaluateOfPreparation(pool, reviewId);
+    expect(copiedUnchanged.programming_operations[0]).toMatchObject({
+      operation_id: copied.id, status: "NOT_REQUIRED", inherited_from_of_id: originalId,
+    });
+    await repoUpdateGammeOperation(draft.gamme.id, copied.id, { numero_programme: "QA-CHANGED", expected_updated_at: copied.updated_at }, f.audit);
+    await seedWorkbenchStock(f, 4);
+    const changed = await evaluateOfPreparation(pool, reviewId);
+    expect(changed.programming_operations[0]).toMatchObject({ status: "TODO" });
+    expect(changed.stock_review).toBeNull();
+    expect(changed.items).toContainEqual(expect.objectContaining({ key: "stock_compatibility", status: "MISSING" }));
+
+    const versionId = randomUUID(), versionCode = `${f.code}-B`;
+    await pool.query(`INSERT INTO public.piece_technique_versions(id,piece_technique_id,indice,plan_reference,statut,is_current,
+      date_revision,version_interne,code_metier,code_metier_normalise) VALUES($1,$2,'B',$3,'BROUILLON',false,now(),2,$3,$3)`, [versionId, f.piece, versionCode]);
+    await pool.query("UPDATE public.ordres_fabrication SET technical_preparation=technical_preparation||jsonb_build_object('selected_version_id',$2::text) WHERE id=$1", [newIndexId, versionId]);
+    expect((await evaluateOfPreparation(pool, newIndexId)).inherited_preparation).toEqual({ programming: {}, stock_review: null });
+    expect((await evaluateOfPreparation(pool, originalId)).of.technical_snapshot_sha256).toBe(frozenOriginal.of.technical_snapshot_sha256);
+  });
 
   it("uses a new treatment phase linked from purchases in the current OF and its planning only after validation", async () => {
     const f = await seedProductionWorkbenchFixture();

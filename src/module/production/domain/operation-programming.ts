@@ -4,6 +4,7 @@ export type ProgrammingPreparation = {
   version_id: string; operation_hash: string; estimated_hours: number;
   prepared_at: string; prepared_by: number;
   mode?: 'REQUIRED' | 'NOT_REQUIRED'; reason?: string;
+  inherited_from_of_id?: number;
 };
 export function needsProgramming(operation: {type_operation?: string | null; cf_id: string | null}, centres: Map<string, string>) {
   const label = `${operation.type_operation ?? ''} ${centres.get(operation.cf_id ?? '') ?? ''}`
