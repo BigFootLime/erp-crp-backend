@@ -10,17 +10,24 @@ import { listCommandesQuerySchema } from "../validators/commande-client.validato
 
 describe("commande list read owner", () => {
   it("preserves count/data query order, pagination defaults and mapped integer ids", async () => {
+    const lineSummary = { total: 1, items: [{ reference: "PL-42", indice: "A", designation: "Bride" }] };
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [{ total: 1 }] })
-      .mockResolvedValueOnce({ rows: [{ id: "42", numero: "CMD-42" }] });
+      .mockResolvedValueOnce({ rows: [{ id: "42", numero: "CMD-42", list_order: "CMD-42", line_summary: lineSummary }] });
     const owner = createCommandeListReadRepository({
       pool: { query } as unknown as Pool,
       normalizedCommandeStatusSql: vi.fn(() => "'ATTENTE_STOCK'"), toInt: (value) => Number(value),
     });
-    await expect(owner.repoListCommandes({ page: 2, pageSize: 5, sortBy: "numero", sortDir: "asc", client_id: "client-1" })).resolves.toEqual({ items: [{ id: 42, numero: "CMD-42" }], total: 1 });
+    await expect(owner.repoListCommandes({ page: 2, pageSize: 5, sortBy: "numero", sortDir: "asc", client_id: "client-1" }))
+      .resolves.toEqual({ items: [{ id: 42, numero: "CMD-42", line_summary: lineSummary }], total: 1 });
     expect(query.mock.calls).toHaveLength(2);
     expect(query.mock.calls[0][1]).toEqual(["client-1"]);
     expect(query.mock.calls[1][1]).toEqual(["client-1", 5, 5]);
+    const dataSql: string = query.mock.calls[1][0];
+    expect(dataSql).toContain("ORDER BY cc.numero ASC, cc.id ASC");
+    expect(dataSql).toContain("ORDER BY page.list_order ASC, page.id::bigint ASC");
+    expect(dataSql.indexOf("OFFSET $3")).toBeGreaterThan(0);
+    expect(dataSql.indexOf("FROM public.commande_ligne l")).toBeGreaterThan(dataSql.indexOf("OFFSET $3"));
   });
 
   it("binds every real filter in the same count/data order without interpolating search text", async () => {
@@ -104,11 +111,12 @@ function body(source: string, name: string, nested = false) {
 }
 
 describe("commande list extraction proof", () => {
-  it("preserves the base list SQL body and public wrapper signature", () => {
+  it("preserves the historical count SQL and public wrapper signature", () => {
     const base = readHistoricalRepositoryFixture("commandeClientBeforeCreation");
     const owner = readFileSync(path.join(process.cwd(), "src/module/commande-client/repository/commande-list-read.repository.ts"), "utf8");
     const facade = readFileSync(path.join(process.cwd(), "src/module/commande-client/repository/commande-client.repository.ts"), "utf8");
-    expect(body(owner, "repoListCommandes", true)).toBe(body(base, "repoListCommandes"));
+    expect(body(owner, "repoListCommandes", true).split("const dataSql")[0])
+      .toBe(body(base, "repoListCommandes").split("const dataSql")[0]);
     expect(facade).toMatch(/export async function repoListCommandes\(filters: ListCommandesQueryDTO\)/);
     expect(facade).toContain("return commandeListReadRepository.repoListCommandes(filters);");
     for (const name of ["sortColumn", "sortDirection", "buildListWhere"]) {

@@ -2,6 +2,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { listConsolidatedInventorySVC } from "../../stock/services/stock.service";
 import type { ProductionReferenceListQuery } from "../validators/production-references.validators";
+import { CLIENT_CODE_ORDER_SQL, CLIENT_CODE_SQL } from "../../client/repository/client-code.sql";
 
 export type ReferenceOption = { value: string; label: string };
 export type ProductionPieceReference = { id: string; code_piece: string; designation: string };
@@ -23,16 +24,16 @@ export async function repoListProductionReferenceClients(query: ProductionRefere
   const conditions = ["TRUE"];
   if (query.q) {
     values.push(`%${query.q}%`);
-    conditions.push(`(c.company_name ILIKE $${values.length} OR COALESCE(c.client_code, '') ILIKE $${values.length})`);
+    conditions.push(`(c.company_name ILIKE $${values.length} OR ${CLIENT_CODE_SQL} ILIKE $${values.length})`);
   }
   values.push(query.limit);
   const result = await pool.query<{ value: string; label: string }>(
     `SELECT c.client_id::text AS value,
-      CASE WHEN NULLIF(btrim(c.client_code), '') IS NULL THEN c.company_name
-        ELSE c.company_name || ' (' || c.client_code || ')' END AS label
+      CASE WHEN ${CLIENT_CODE_SQL} IS NULL THEN c.company_name
+        ELSE c.company_name || ' (' || ${CLIENT_CODE_SQL} || ')' END AS label
      FROM public.clients c
      WHERE ${conditions.join(" AND ")}
-     ORDER BY c.company_name ASC, c.client_id ASC
+     ORDER BY ${CLIENT_CODE_ORDER_SQL}
      LIMIT $${values.length}`,
     values,
   );

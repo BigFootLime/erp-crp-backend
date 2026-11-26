@@ -7,6 +7,7 @@ import { authoritativePdfFilename } from "../../../shared/authoritative-document
 import { queueCreationPdfArchive } from "../../../shared/authoritative-documents/authoritative-document.service";
 import { buildInternalCreationSnapshot } from "../../../shared/authoritative-documents/internal-creation-snapshot";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { AFFAIRE_LINE_SUMMARY_JOIN_SQL, type CommercialLineSummary } from "../../commande-client/repository/commercial-line-summary.sql";
 import {
   classifyTransition,
   isAllowedTransition,
@@ -568,10 +569,11 @@ export async function repoListAffaires(filters: ListAffairesQueryDTO) {
   return { items, total };
 }
 
-function commandCenterFromSql(whereSql: string, orderBy: string, orderDir: string) {
+function commandCenterFromSql(whereSql: string, orderBy: string, orderDir: string, projectOrder = false) {
   return `
     SELECT
       a.id::text AS id,
+      ${projectOrder ? `${orderBy} AS list_order,` : ""}
       a.reference,
       a.client_id,
       a.commande_id::text AS commande_id,
@@ -760,14 +762,20 @@ export async function repoListAffairesCommandCenter(filters: ListAffairesCommand
   const total = countRes.rows[0]?.total ?? 0;
 
   const dataSql = `
-    ${commandCenterFromSql(whereSql, orderBy, orderDir)}
-    LIMIT $${values.length + 1}
-    OFFSET $${values.length + 2}
+    WITH page AS (
+      ${commandCenterFromSql(whereSql, orderBy, orderDir, true)}
+      LIMIT $${values.length + 1}
+      OFFSET $${values.length + 2}
+    )
+    SELECT page.*, commercial_lines.line_summary
+    FROM page
+    ${AFFAIRE_LINE_SUMMARY_JOIN_SQL}
+    ORDER BY page.list_order ${orderDir}, page.id::bigint ${orderDir}
   `;
 
-  const dataRes = await pool.query<CommandCenterRow>(dataSql, [...values, pageSize, offset]);
+  const dataRes = await pool.query<CommandCenterRow & { line_summary: CommercialLineSummary }>(dataSql, [...values, pageSize, offset]);
   return {
-    items: dataRes.rows.map(mapCommandCenterRow),
+    items: dataRes.rows.map(row => ({ ...mapCommandCenterRow(row), line_summary: row.line_summary })),
     total,
   };
 }

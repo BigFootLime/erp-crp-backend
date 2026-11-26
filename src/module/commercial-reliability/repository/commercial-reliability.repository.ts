@@ -5,6 +5,7 @@ import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
+import { CLIENT_CODE_ORDER_SQL } from "../../client/repository/client-code.sql";
 import {
   repoClients,
   repoOrders,
@@ -401,7 +402,7 @@ async function repoCommercialActivityClients(query: CommercialOverviewQueryDTO) 
      JOIN public.clients c ON c.client_id=a.client_id
      WHERE ($4::text IS NULL OR c.client_id=$4)
        AND ($5::text IS NULL OR UPPER(COALESCE(NULLIF(BTRIM(c.devise),''),'EUR'))=$5)
-     ORDER BY c.company_name NULLS LAST,c.client_id
+     ORDER BY ${CLIENT_CODE_ORDER_SQL}
      LIMIT $6`,
     [query.from, query.to, query.commercial_id ?? null, query.client_id ?? null, query.currency ?? null, limit],
   );
