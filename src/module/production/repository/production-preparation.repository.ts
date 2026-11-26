@@ -90,6 +90,13 @@ export type PreparationOrder = {
     preparation_decisions?: PreparationDecisions;
   };
 };
+// Missing prices use the legacy representation so existing draft fingerprints
+// and matching inspection sheets survive the additive schema change.
+export const TECHNICAL_PURCHASE_SNAPSHOT_SQL = `
+  (to_jsonb(p) - 'forfait_ht' - 'minimum_facturation_ht')
+  || jsonb_strip_nulls(jsonb_build_object('forfait_ht', p.forfait_ht, 'minimum_facturation_ht', p.minimum_facturation_ht))
+`;
+
 type TechnicalSources = {
   improvement_returns?: number;
   version: {
@@ -301,8 +308,7 @@ export async function evaluateOfPreparation(tx: Db, id: number) {
     SELECT jsonb_build_object('version',(SELECT to_jsonb(v)||jsonb_build_object('effective',v.date_effet IS NULL OR v.date_effet<=CURRENT_DATE) FROM v),
       'gamme',(SELECT to_jsonb(g)||jsonb_build_object('is_current',true) FROM g),
       'purchases',COALESCE((SELECT jsonb_agg(
-        (to_jsonb(p) - 'forfait_ht' - 'minimum_facturation_ht')
-          || jsonb_strip_nulls(jsonb_build_object('forfait_ht',p.forfait_ht,'minimum_facturation_ht',p.minimum_facturation_ht))
+        ${TECHNICAL_PURCHASE_SNAPSHOT_SQL}
         || CASE WHEN op.id IS NOT NULL AND op.id IS DISTINCT FROM p.gamme_operation_id
              THEN jsonb_build_object('gamme_operation_id',op.id,'phase',op.phase,'gamme_id',op.gamme_id)
              ELSE '{}'::jsonb END
