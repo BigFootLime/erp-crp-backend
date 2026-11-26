@@ -1,5 +1,7 @@
 # Changelog
 
+- UNRELEASED — La liste des pièces techniques accepte les fiches historiques dont le champ « En fabrication » est vide. L’API renvoie `false` dans ce cas, comme sur la fiche individuelle.
+
 - UNRELEASED : une gamme peut porter des machines autorisées, un temps de programmation et un drapeau d’amélioration par opération. Lors de l’enregistrement de la gamme, les OF existants encore en préparation conservent leur définition ou prennent la nouvelle selon le choix utilisateur. Le patch `20261119_gamme_atelier.sql` prépare les nouveaux centres et la trace du premier OF ayant validé la préparation après signalement.
 
 - UNRELEASED : le skill de préparation des patches PostgreSQL accompagne désormais le dépôt backend. Les anciennes implémentations privées inutilisées de l’expédition et des accusés de réception ont été retirées. Les parcours actifs, exports et contrats HTTP restent identiques.
