@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getPieceTechnique: vi.fn(),
   getAffaire: vi.fn(),
   getStockArticle: vi.fn(),
+  getDelivery: vi.fn(),
   envelope: vi.fn(),
   read: vi.fn(),
   print: vi.fn(),
@@ -104,6 +105,10 @@ vi.mock("../module/stock/services/stock.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../module/stock/services/stock.service")>()),
   getStockArticleSVC: mocks.getStockArticle,
 }));
+vi.mock("../module/livraisons/services/livraisons.service", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../module/livraisons/services/livraisons.service")>()),
+  svcGetLivraison: mocks.getDelivery,
+}));
 vi.mock("../shared/authoritative-documents/authoritative-document.service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../shared/authoritative-documents/authoritative-document.service")>()),
   getOfficialDocumentGenerationEnvelope: mocks.envelope,
@@ -141,6 +146,7 @@ const ofId = "73";
 const pieceTechniqueId = "44444444-4444-4444-8444-444444444444";
 const affaireId = "91";
 const stockArticleId = "55555555-5555-4555-8555-555555555555";
+const deliveryId = "66666666-6666-4666-8666-666666666666";
 
 const routes: readonly MountedRoute[] = [
   {
@@ -229,6 +235,7 @@ beforeEach(() => {
     mocks.getPieceTechnique,
     mocks.getAffaire,
     mocks.getStockArticle,
+    mocks.getDelivery,
   ]) {
     root.mockReset().mockResolvedValue({ id: "visible" });
   }
@@ -244,6 +251,42 @@ beforeEach(() => {
     sha256: "a".repeat(64),
   });
   mocks.print.mockReset().mockResolvedValue(undefined);
+});
+
+describe("mounted delivery PDF routes", () => {
+  it.each([
+    ["creation-snapshot", "DELIVERY_NOTE_CREATION_SNAPSHOT"],
+    ["official-documents/shipped", "DELIVERY_NOTE_SHIPPED"],
+  ])("reads and prints the correct archive through %s routes", async (suffix, documentKind) => {
+    const base = `/api/v1/livraisons/${deliveryId}/${suffix}`;
+    const malformed = await authenticated(request(app).get(`${base}/not-a-uuid/download`));
+    expect(malformed.status).toBe(400);
+    expect(mocks.read).not.toHaveBeenCalled();
+
+    for (const [surface, disposition, eventType] of [
+      ["preview", "inline", "AUTHORITATIVE_PDF_PREVIEWED"],
+      ["download", "attachment", "AUTHORITATIVE_PDF_DOWNLOADED"],
+    ] as const) {
+      const response = await authenticated(
+        request(app).get(`${base}/${ARCHIVE_ID}/${surface}`)
+      ).buffer(true).parse(binaryParser);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(SNAPSHOT_BYTES);
+      expect(response.headers["content-disposition"]).toMatch(new RegExp(`^${disposition};`));
+      expect(mocks.getDelivery).toHaveBeenLastCalledWith(deliveryId);
+      expect(mocks.read).toHaveBeenLastCalledWith({
+        entityType: "bon-livraison", entityId: deliveryId, documentKind,
+        archiveId: ARCHIVE_ID, actorUserId: 7, eventType,
+      });
+    }
+
+    const print = await authenticated(request(app).post(`${base}/${ARCHIVE_ID}/print-intents`));
+    expect(print.status).toBe(204);
+    expect(mocks.print).toHaveBeenCalledWith({
+      entityType: "bon-livraison", entityId: deliveryId, documentKind,
+      archiveId: ARCHIVE_ID, actorUserId: 7,
+    });
+  });
 });
 
 afterAll(() => setLogSinkForTests(null));

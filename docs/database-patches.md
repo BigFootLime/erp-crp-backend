@@ -3,6 +3,33 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Pointage des prestations fournisseur hors stock
+
+`20261126_free_supplier_service_receipts.sql` permet l'absence d'article
+sur une ligne de réception issue d'un BCF de prestation libre. Le déclencheur
+vérifie le fournisseur et le rattachement au bon. Les prestations concernées
+n'admettent ni lot, ni destination, ni entrée en stock. Les lignes existantes
+conservent leur article et le patch n'effectue aucun changement de données.
+
+Le patch prend brièvement un verrou exclusif sur les lignes de réception.
+Après le préflight et la restauration vérifiée des sauvegardes, le script
+`db-patches.js up --only 20261126_free_supplier_service_receipts.sql` doit
+précéder l'activation de l'API et du Web compatibles. Vérifier le registre,
+la conservation des lignes existantes et la présence du déclencheur sur
+chaque base concernée.
+
+Le retour à la paire 2.1.13 est possible tant qu'il n'existe aucune ligne de
+réception sans article. Après la première écriture, conserver un Web qui
+accepte le champ `article_id` nul dans la fiche BCF et une API qui lit la
+réception par jointure externe. La paire 2.1.13 sans cette compatibilité
+ne sait pas afficher le détail de ces dossiers. Sur l’API compatible, le GET
+du BCF et celui de la réception retournent le détail des prestations libres avec
+`include_service_receipts=1`. Sans ce paramètre, le résumé filtre ces
+lignes uniquement. Les réceptions, les totaux du bon et les pièces jointes
+restent accessibles aux clients précédents. La fiche de réception complète est
+disponible aux lecteurs qui demandent ce détail. Conserver le schéma, les preuves du BL et les quantités pointées
+en cas de retour applicatif.
+
 ## Sub-piece references and assembly planning
 
 `20261123_sub_piece_reference.sql` depends on

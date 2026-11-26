@@ -41,7 +41,9 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
       const line=current.items.find(i=>i.id===choice.lineId);
       if(!line||line.supplierId!==receipt.supplierId)throw new HttpError(422,'RECEIPT_SUPPLIER_MISMATCH','Les lignes sélectionnées doivent appartenir au fournisseur de ce BL.');
       if(line.version!==choice.expectedVersion)throw new HttpError(409,'RECEIPT_LINE_CHANGED','Une quantité, une condition ou un achat a changé. Relisez le reste à recevoir.');
-      if(!line.articleId||!line.unit||!line.stockUnit)throw new HttpError(422,'RECEIPT_ARTICLE_REQUIRED','Complétez l’article et les unités de la ligne de commande avant réception.');
+      if((!line.articleId&&!line.offStockService)||!line.unit||!line.stockUnit)throw new HttpError(422,'RECEIPT_ARTICLE_REQUIRED','Complétez l’article et les unités de la ligne de commande avant réception.');
+      if(line.offStockService&&(choice.destination||choice.supplierLotCode||choice.packs.length||choice.materialBars?.length))
+        throw new HttpError(422,'RECEIPT_SERVICE_OFF_STOCK','Une prestation hors stock ne comporte ni lot, ni barres, ni destination de stock.');
       if(choice.quantity>line.remaining+0.000001&&(!roleHasCommandeFournisseurCapability(actor?.role,'over_receipt')||!choice.overReceiptReason||choice.overReceiptReason.length<3))
         throw new HttpError(403,'RECEIPT_OVER_DELIVERY_FORBIDDEN','Une sur-réception exige l’autorisation dédiée et une justification.');
       if(line.stockManaged&&!choice.destination)throw new HttpError(422,'RECEIPT_DESTINATION_REQUIRED','Confirmez le magasin et l’emplacement de réception.');
@@ -57,7 +59,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
       const expected=current.items.find(i=>i.id===choice.lineId)!;
       const portions=groupedMaterialBarPortions(expected,choice);
       for(const [index,portion] of portions.entries()){
-        const created=await repoCreateLine(receiptId,{article_id:expected.articleId!,designation:expected.designation,qty_received:portion.quantity,unite:expected.unit,
+        const created=await repoCreateLine(receiptId,{article_id:expected.articleId,designation:expected.designation,qty_received:portion.quantity,unite:expected.unit,
           supplier_lot_code:portion.supplierLotCode,commande_fournisseur_ligne_id:choice.lineId,notes:choice.overReceiptReason},audit,{client:tx,batchConfirmation:true});
         if(!created)throw new HttpError(409,'RECEIPT_LINE_NOT_CREATED','La ligne reçue n’a pas pu être enregistrée.');
         if(choice.destination)await tx.query('UPDATE public.reception_fournisseur_lignes SET destination_magasin_id=$2::uuid,destination_emplacement_id=$3 WHERE id=$1::uuid',[created.id,choice.destination.magasinId,choice.destination.emplacementId]);
@@ -83,7 +85,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
       }
     }
     await tx.query("UPDATE public.receptions_fournisseurs SET confirmation_state='CONFIRMED',confirmation_key=$2::uuid,confirmed_at=now(),confirmed_by=$3,updated_at=now(),updated_by=$3 WHERE id=$1::uuid",[receiptId,body.idempotencyKey,audit.user_id]);
-    const surplus=await readOffStockSurplusTx(tx,results.filter(r=>{const l=current.items.find(l=>l.id===r.orderLineId)!;return !l.stockManaged&&!l.toolId;}).map(r=>r.receiptLineId));
+    const surplus=await readOffStockSurplusTx(tx,results.filter(r=>{const l=current.items.find(l=>l.id===r.orderLineId)!;return !l.stockManaged&&!l.toolId&&!l.offStockService;}).map(r=>r.receiptLineId));
     return {id:receiptId,number:receipt.number,state:'CONFIRMED' as const,documentIds,lines:results.map(r=>({...r,unallocatedOffStock:surplus.get(r.receiptLineId)??null}))};
   });
 }

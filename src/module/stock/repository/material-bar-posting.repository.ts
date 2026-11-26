@@ -11,10 +11,9 @@ import { prepareMaterialBarQualityTx, applyMaterialBarQualityTx } from './materi
 type Db = Pick<PoolClient, 'query'>;
 export type MaterialBarPostingScope = { enabled: boolean; required: boolean };
 
-/** Resolve the article's canonical unit, not the unit typed on the movement.
- * Take material lot/reservation locks before movement posting locks stock. */
-export async function lockMaterialBarPostingScopeTx(tx: Db, input: {
-  articleId: string; lotIds: string[]; explicit: boolean;
+/** Resolve the material scope from the article's canonical unit. */
+export async function readMaterialBarPostingScope(tx: Db, input: {
+  articleId: string; explicit: boolean;
 }): Promise<MaterialBarPostingScope> {
   const article = (await tx.query<{ millimetres: boolean; required: boolean }>(`SELECT lower(trim(a.unite))='mm' AS millimetres,
     COALESCE(am.barre_a_decouper,false) AS required FROM public.articles a
@@ -31,8 +30,30 @@ export async function lockMaterialBarPostingScopeTx(tx: Db, input: {
   if ((!schema?.ready || !schema?.installed) && (schema?.installed || article.required || input.explicit))
     throw new HttpError(409, 'MATERIAL_BARS_NOT_INSTALLED', 'La mise à jour du suivi des barres doit précéder les mouvements de cette matière.');
   if (!schema?.installed) return { enabled: false, required: false };
-  for (const lotId of [...new Set(input.lotIds)].sort()) await lockMaterialBarReceiptLotTx(tx, lotId);
   return { enabled: true, required: article.required };
+}
+
+/** Take material lot/reservation locks before movement posting locks stock. */
+export async function lockMaterialBarPostingScopeTx(tx: Db, input: {
+  articleId: string; lotIds: string[]; explicit: boolean;
+}): Promise<MaterialBarPostingScope> {
+  const scope = await readMaterialBarPostingScope(tx, input);
+  if (scope.enabled) {
+    for (const lotId of [...new Set(input.lotIds)].sort()) await lockMaterialBarReceiptLotTx(tx, lotId);
+  }
+  return scope;
+}
+
+export async function readMaterialBarTracking(tx: Db, batches: string[]): Promise<boolean> {
+  return (await tx.query<{ tracked: boolean }>(`SELECT EXISTS(SELECT 1 FROM public.stock_material_bar_inventories
+    WHERE stock_batch_id=ANY($1::uuid[])) AS tracked`, [batches])).rows[0]?.tracked === true;
+}
+
+export function assertMaterialBarPostingInputs(input: { hasLotAtLocations: boolean; hasGeometry: boolean }) {
+  if (!input.hasLotAtLocations)
+    throw new HttpError(422, 'MATERIAL_BAR_BATCH_REQUIRED', 'Sélectionnez le lot et son emplacement avant de confirmer les barres.');
+  if (!input.hasGeometry)
+    throw new HttpError(422, 'MATERIAL_BAR_MOVEMENT_REQUIRED', 'Sélectionnez les barres et leurs longueurs avant de comptabiliser ce mouvement.');
 }
 
 export async function prepareMaterialBarPostingTx(tx: Db, input: {
@@ -51,16 +72,16 @@ export async function prepareMaterialBarPostingTx(tx: Db, input: {
     return null;
   }
   const batches = [movement.batchId, input.destinationBatchId].filter((id): id is string => !!id);
-  const tracked = (await tx.query<{ tracked: boolean }>(`SELECT EXISTS(SELECT 1 FROM public.stock_material_bar_inventories
-    WHERE stock_batch_id=ANY($1::uuid[])) AS tracked`, [batches])).rows[0]?.tracked;
+  const tracked = await readMaterialBarTracking(tx, batches);
   if (!scope.required && !tracked && !command) return null;
-  if (!movement.batchId || (movement.type === 'TRANSFER' && !input.destinationBatchId))
-    throw new HttpError(422, 'MATERIAL_BAR_BATCH_REQUIRED', 'Sélectionnez le lot et son emplacement avant de confirmer les barres.');
+  const hasLotAtLocations = Boolean(movement.batchId && (movement.type !== 'TRANSFER' || input.destinationBatchId));
+  assertMaterialBarPostingInputs({ hasLotAtLocations, hasGeometry: Boolean(command || movement.reversalOf) });
   if (movement.reversalOf) {
     if (command) throw new HttpError(422, 'MATERIAL_BAR_COMPENSATION_AUTOMATIC', 'Les barres à restituer sont reprises automatiquement du mouvement d’origine.');
     return prepareMaterialBarCompensationTx(tx, { movementId: movement.id, destinationBatchId: input.destinationBatchId ?? undefined });
   }
-  if (!command) throw new HttpError(422, 'MATERIAL_BAR_MOVEMENT_REQUIRED', 'Sélectionnez les barres et leurs longueurs avant de comptabiliser ce mouvement.');
+  // The shared input check above requires both values for non-compensating movements.
+  if (!command || !movement.batchId) throw new Error('Missing validated material bar posting inputs');
   if (command.kind === 'DEPRECIATE') {
     if (input.destinationBatchId) throw new HttpError(422, 'MATERIAL_BAR_QUALITY_INVALID', 'Une dépréciation ne déplace pas la barre.');
     return prepareMaterialBarQualityTx(tx, { movementId: movement.id, batchId: movement.batchId, command });

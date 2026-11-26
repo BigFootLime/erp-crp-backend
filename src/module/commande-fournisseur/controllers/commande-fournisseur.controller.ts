@@ -424,7 +424,19 @@ export const getCommandeFournisseur: RequestHandler = async (
       params.id,
       includePricesFor(req),
     );
-    res.json(out);
+    if (req.query.include_service_receipts === "1") {
+      res.json(out);
+      return;
+    }
+    // Les lecteurs .213 exigent un identifiant d’article dans ce résumé.
+    // Garder les réceptions accessibles et les quantités de commande intactes.
+    res.json({
+      ...out,
+      receptions: out.receptions.map((receipt) => ({
+        ...receipt,
+        lignes: receipt.lignes.filter((line) => line.article_id !== null),
+      })),
+    });
   } catch (err) {
     next(err);
   }
