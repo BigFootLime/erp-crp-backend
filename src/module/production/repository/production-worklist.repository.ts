@@ -2,6 +2,7 @@ import pool from "../../../config/database";
 import type { WorklistQuery } from "../validators/production-workbench.validators";
 import { effectivePreparationVersionSql } from "./effective-preparation-version.sql";
 import { committedOperationSql } from "../../planning/repository/committed-operation.sql";
+import { CLIENT_CODE_ORDER_SQL } from "../../client/repository/client-code.sql";
 
 /** One SQL statement gives counters, page and clock the same MVCC snapshot. */
 export async function repoProductionWorklist(input: WorklistQuery) {
@@ -70,7 +71,10 @@ export async function repoProductionWorklist(input: WorklistQuery) {
     page AS (SELECT * FROM filtered ORDER BY overdue DESC,CASE priority WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'NORMAL' THEN 2 ELSE 3 END,planning_wait_started_at ASC NULLS LAST,date_fin_prevue ASC NULLS LAST,id LIMIT $5 OFFSET $6)
     SELECT jsonb_build_object('items',COALESCE((SELECT jsonb_agg(to_jsonb(p)) FROM page p),'[]'::jsonb),
       'total',(SELECT count(*) FROM filtered),'server_time',clock.now,
-      'clients',(SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY c.label),'[]'::jsonb) FROM (SELECT DISTINCT c.client_id AS value,c.company_name AS label FROM public.clients c JOIN public.ordres_fabrication o ON o.client_id=c.client_id WHERE o.statut NOT IN ('ANNULE','TERMINE','CLOTURE')) c),
+      'clients',(SELECT COALESCE(jsonb_agg(jsonb_build_object('value',c.client_id,'label',c.company_name)
+        ORDER BY ${CLIENT_CODE_ORDER_SQL}),'[]'::jsonb)
+        FROM public.clients c WHERE EXISTS (SELECT 1 FROM public.ordres_fabrication o
+          WHERE o.client_id=c.client_id AND o.statut NOT IN ('ANNULE','TERMINE','CLOTURE'))),
       'next_deadline',(SELECT min(priority_deadline::timestamptz) FROM classified WHERE priority_deadline::timestamptz>clock.now AND planning_state<>'COMPLETE' AND queue<>'COVERED'),
       'counts',jsonb_build_object('ALL',(SELECT count(*) FROM classified),'OVERDUE',(SELECT count(*) FROM classified WHERE overdue),
         'PREPARATION',(SELECT count(*) FROM classified WHERE queue='PREPARATION'),

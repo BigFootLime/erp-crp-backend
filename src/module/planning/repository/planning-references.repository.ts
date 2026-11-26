@@ -4,13 +4,15 @@ import type { PlanningReferenceOfListQuery, PlanningReferenceClientQuery } from 
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../../production/domain/planned-operation-duration";
 import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
 import { committedOperationSql } from "./committed-operation.sql";
+import { CLIENT_CODE_ORDER_SQL, CLIENT_CODE_SQL } from "../../client/repository/client-code.sql";
 
 /** Minimal planning lookup, without customer contacts, prices or editing rights. */
 export async function repoListPlanningReferenceClients(query: PlanningReferenceClientQuery) {
-  const result = await pool.query<{ client_id: string; company_name: string }>(`
-    SELECT client_id,company_name FROM public.clients
-    WHERE ($1::text IS NULL OR company_name ILIKE '%'||$1||'%' OR client_id ILIKE '%'||$1||'%')
-    ORDER BY company_name,client_id LIMIT $2::int`, [query.q || null, query.limit + 1]);
+  const result = await pool.query<{ client_id: string; client_code: string | null; company_name: string }>(`
+    SELECT c.client_id, c.company_name, ${CLIENT_CODE_SQL} AS client_code FROM public.clients c
+    WHERE ($1::text IS NULL OR c.company_name ILIKE '%'||$1||'%'
+      OR c.client_id ILIKE '%'||$1||'%' OR ${CLIENT_CODE_SQL} ILIKE '%'||$1||'%')
+    ORDER BY ${CLIENT_CODE_ORDER_SQL} LIMIT $2::int`, [query.q || null, query.limit + 1]);
   return { items: result.rows.slice(0, query.limit), hasMore: result.rows.length > query.limit };
 }
 

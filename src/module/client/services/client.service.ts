@@ -2,6 +2,7 @@
 import pool from "../../../config/database";
 import { normalizeStoredImagePath } from "../../../utils/imageStorage";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
+import { CLIENT_CODE_ORDER_SQL, CLIENT_CODE_SQL } from "../repository/client-code.sql";
 
 export type ClientRow = {
   client_id: string
@@ -121,10 +122,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   const sql = `
   SELECT
     c.client_id::text,
-    COALESCE(
-      NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-      NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-    ) AS client_code,
+    ${CLIENT_CODE_SQL} AS client_code,
     c.company_name,
     COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') AS customer_type,
     CASE WHEN COALESCE(NULLIF(btrim(to_jsonb(c)->>'customer_type'), ''), 'PROFESSIONAL') = 'INDIVIDUAL'
@@ -228,10 +226,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
           WHEN $3::text IS NOT NULL THEN
             'CLI-' || LPAD(
               REGEXP_REPLACE(
-                COALESCE(
-                  NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-                  NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-                ),
+                ${CLIENT_CODE_SQL},
                 '^CLI[- ]?',
                 '',
                 'i'
@@ -241,10 +236,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
             ) = $3
           ELSE
             c.company_name ILIKE '%' || $1 || '%'
-            OR COALESCE(
-              NULLIF(btrim(to_jsonb(c)->>'client_code'), ''),
-              NULLIF(btrim(to_jsonb(c)->>'code_client'), '')
-            ) ILIKE '%' || $1 || '%'
+            OR ${CLIENT_CODE_SQL} ILIKE '%' || $1 || '%'
             OR c.email ILIKE '%' || $1 || '%'
             OR c.siret ILIKE replace('%' || $1 || '%',' ','')
             OR c.vat_number ILIKE '%' || $1 || '%'
@@ -256,7 +248,7 @@ export async function listClients(q = "", limit = 25): Promise<ClientRow[]> {
   GROUP BY
     c.client_id, af.bill_address_id, al.delivery_address_id, ib.bank_info_id, ct.contact_id
 
-  ORDER BY c.company_name ASC
+  ORDER BY ${CLIENT_CODE_ORDER_SQL}
   LIMIT $2
 `;
 

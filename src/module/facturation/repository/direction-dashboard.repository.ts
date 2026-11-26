@@ -1,5 +1,6 @@
 import pool from "../../../config/database";
 import { BL_SHIPPED_STATUSES, type Period } from "../domain/reporting-policy";
+import { CLIENT_CODE_ORDER_SQL } from "../../client/repository/client-code.sql";
 import {
   Params,
   balancesCte,
@@ -630,10 +631,10 @@ export async function repoDirectionFilterOptions(): Promise<DirectionFilterOptio
        LIMIT 201`
     ),
     pool.query(
-      `SELECT client_id::text AS id, company_name::text AS name
-       FROM clients
-       WHERE company_name IS NOT NULL AND BTRIM(company_name) <> ''
-       ORDER BY company_name
+      `SELECT c.client_id::text AS id, c.company_name::text AS name
+       FROM clients c
+       WHERE c.company_name IS NOT NULL AND BTRIM(c.company_name) <> ''
+       ORDER BY ${CLIENT_CODE_ORDER_SQL}
        LIMIT 501`
     ),
     pool.query(
