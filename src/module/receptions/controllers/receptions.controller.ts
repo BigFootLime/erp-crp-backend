@@ -148,11 +148,13 @@ export const getReception: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" })
       return
     }
-    if (req.query.include_service_receipts === "1") {
-      res.json(out)
-      return
-    }
-    res.json({ ...out, lines: out.lines.filter(line => line.article_id !== null) })
+    const lines = req.query.include_service_receipts === "1" ? out.lines : out.lines.filter(line => line.article_id !== null)
+    res.json({
+      ...out,
+      lines: req.terminal ? lines.map(line => line.processing?.operatorControl
+        ? { ...line, processing: { ...line.processing, operatorControl: undefined } }
+        : line) : lines,
+    })
   } catch (err) {
     next(err)
   }

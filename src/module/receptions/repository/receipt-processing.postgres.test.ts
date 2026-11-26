@@ -15,6 +15,8 @@ import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { createEmplacementSchema } from "../../stock/validators/stock.validators";
 import { repoPreviewMovement } from "../../stock/repository/stock-movement-corrections.repository";
 import { repoGetCommandeFournisseur } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
+import { recordReceiptOperatorControl } from "./receipt-operator-control.repository";
+import { operatorControlSchema } from "../validators/receipt-processing.validators";
 const createdFiles: string[] = [];
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
@@ -58,8 +60,11 @@ const externalEnabled =
   process.env.CERP_EXTERNAL_FLOW_PG_TEST === "1" &&
   process.env.DATABASE_URL ===
     "postgresql://postgres@127.0.0.1:62168/cerp_test";
+const operatorEnabled = process.env.CERP_RECEIPT_OPERATOR_PG_TEST === "1" &&
+  ["postgresql://postgres@127.0.0.1:50325/cerp_test", "postgresql://postgres@127.0.0.1:50326/cerp_test"]
+    .includes(process.env.DATABASE_URL ?? "");
 const enabled =
-  externalEnabled ||
+  externalEnabled || operatorEnabled ||
   (process.env.CERP_RECEIPT_PG_TEST === "1" &&
     new URL(process.env.DATABASE_URL ?? "postgresql://localhost/unused")
       .pathname === "/cerp_1069_test");
@@ -79,6 +84,8 @@ const audit = (): AuditContext => ({
 async function fixture(
   accepted = 0,
   kind: "PIECE" | "CONSUMABLE" | "TOOL" = "PIECE",
+  operatorKind?: "MP",
+  purchaseConversion?: { received: number; coefficient: number },
 ) {
   const id = randomUUID(),
     mp = randomUUID(),
@@ -90,16 +97,17 @@ async function fixture(
     `INSERT INTO public.fournisseurs(id,code,nom) VALUES($1::uuid,$2,'Fixture fournisseur 1069')`,
     [supplier, `T-${supplier.slice(0, 8)}`],
   );
-  for (const [article, category] of [
-    [id, "achat"],
-    [mp, "matiere"],
-  ])
+  const unit = operatorKind === "MP" ? "mm" : "u";
+  for (const [article, category, articleUnit] of [
+    [id, operatorKind === "MP" ? "matiere" : "achat", unit],
+    [mp, "matiere", "u"],
+  ] as const)
     await pool.query(
       `INSERT INTO public.articles(id,root_article_id,code,designation,family_code,version_number,plan_index,status,article_type,article_category,unite,stock_managed,lot_tracking,created_by,updated_by)
-    VALUES($1::uuid,$1::uuid,$2,'Fixture pièce 1069','TEST1069',1,1,'VALIDE','PURCHASED',$3,'u',true,true,$4,$4)`,
-      [article, `T-${article.slice(0, 8)}`, category, user],
+    VALUES($1::uuid,$1::uuid,$2,'Fixture pièce 1069','TEST1069',1,1,'VALIDE','PURCHASED',$3,$5,true,true,$4,$4)`,
+      [article, `T-${article.slice(0, 8)}`, category, user, articleUnit],
     );
-  await pool.query(
+  if (operatorKind !== "MP") await pool.query(
     "INSERT INTO public.article_receipt_mp_links(article_id,stock_article_id,updated_by) VALUES($1::uuid,$2::uuid,$3)",
     [id, mp, user],
   );
@@ -141,8 +149,10 @@ async function fixture(
   );
   await pool.query(
     `INSERT INTO public.reception_fournisseur_lignes(id,reception_id,line_no,article_id,qty_received,unite,lot_id,stock_unit,stock_conversion_coef,created_by,updated_by,receipt_quality_required)
-    VALUES($1::uuid,$2::uuid,1,$3::uuid,100,'u',$4::uuid,'u',1,$5,$5,$6)`,
-    [line, receipt, id, lot, user, kind === "PIECE" || accepted > 0],
+    VALUES($1::uuid,$2::uuid,1,$3::uuid,$7,$8,$4::uuid,$9,$10,$5,$5,$6)`,
+    [line, receipt, id, lot, user, kind === "PIECE" || accepted > 0,
+      purchaseConversion?.received ?? (operatorKind === "MP" ? 6040 : 100),
+      purchaseConversion ? "kg" : unit, unit, purchaseConversion?.coefficient ?? 1],
   );
   if (kind === "CONSUMABLE" && !accepted)
     await pool.query(
@@ -208,6 +218,15 @@ const body = (qty: number) => ({
   dst_magasin_id: warehouse,
   dst_emplacement_id: place,
 });
+async function attachOperatorOrder(f: Awaited<ReturnType<typeof fixture>>, requirements: {type: string; obligatoire: boolean; valeur?: string}[]) {
+  const order = randomUUID(), orderLine = randomUUID();
+  await pool.query(`INSERT INTO public.commande_fournisseur(id,code,fournisseur_id,statut)
+    SELECT $1::uuid,$2,fournisseur_id,'ENVOYEE' FROM public.receptions_fournisseurs WHERE id=$3::uuid`, [order, `BCF-${order}`, f.receipt]);
+  await pool.query(`INSERT INTO public.commande_fournisseur_ligne(id,commande_id,type,designation,quantite,article_id,exigences_qualite)
+    VALUES($1,$2,'MATIERE','Matière avec exigences',6040,$3,$4::jsonb)`, [orderLine, order, f.id, JSON.stringify(requirements)]);
+  await pool.query(`UPDATE public.reception_fournisseur_lignes SET commande_fournisseur_ligne_id=$2 WHERE id=$1`, [f.line, orderLine]);
+  return orderLine;
+}
 async function technicalPiece() {
   const id = randomUUID();
   await pool.query(
@@ -343,7 +362,7 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   beforeAll(async () => {
     expect(
       (await pool.query("SELECT current_database() AS db")).rows[0].db,
-    ).toBe(externalEnabled ? "cerp_test" : "cerp_1069_test");
+    ).toBe(externalEnabled || operatorEnabled ? "cerp_test" : "cerp_1069_test");
     await pool.query(
       "INSERT INTO public.units(code,label) VALUES('u','Unité'),('mm','Millimètre'),('m','Mètre'),('kg','Kilogramme') ON CONFLICT(code) DO NOTHING",
     );
@@ -385,6 +404,126 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await pool.end();
     await Promise.all(createdFiles.map((file) => fs.unlink(file)));
   });
+  it("operator control admits MP only after a separate stock command and replays the exact proof", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    await pool.query(`INSERT INTO public.stock_nuances(code,norme_usa,designation_principale) VALUES('304L','304L','USA') ON CONFLICT DO NOTHING`);
+    await pool.query(`INSERT INTO public.articles_matiere(article_id,family_code,barre_a_decouper,longueur_barre_source_mm,diametre_mm,nuance_id)
+      SELECT $1,'RO',true,3020,22,id FROM public.stock_nuances WHERE code='304L'`, [f.id]);
+    await attachOperatorOrder(f, ["304L", "diametre_mm: 22 mm minimum", "longueur_mm: 1000 mm minimum"]
+      .map(valeur => ({ type: "SPECIFICATION", obligatoire: true, valeur })));
+    const line = await readProcessingLine(pool, f.line, f.receipt);
+    expect(line.operatorControl).toEqual({ kind: "MP", reopenRequired: false, grade: "304L", dimensions: [
+      { label: "Longueur", valueMm: 3020, minimumMm: 1000 }, { label: "Diamètre", valueMm: 22, minimumMm: 22 },
+    ] });
+    const request = operatorControlSchema.parse({
+      idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+      measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }, { label: "Diamètre", valueMm: 22.001, confirmed: true }],
+      grade: { value: "304l", confirmed: true },
+    });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, measurements: request.measurements.slice(0, 1) }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_CONTROL_DIMENSIONS_REQUIRED" });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, grade: undefined }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_CONTROL_GRADE_REQUIRED" });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, grade: { value: "316L", confirmed: true } }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_CONTROL_GRADE_MISMATCH" });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, measurements: [request.measurements[0], { ...request.measurements[1], valueMm: 21.999 }] }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_CONTROL_DIMENSION_MISMATCH" });
+    const result = await recordReceiptOperatorControl(f.receipt, f.line, request, audit());
+    expect(result).toMatchObject({ nonConformityId: null, released: 6040, held: 0, unit: "mm" });
+    expect(await recordReceiptOperatorControl(f.receipt, f.line, request, audit())).toEqual(result);
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, note: "Changement" }, audit())).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
+    const accepted = await readProcessingLine(pool, f.line, f.receipt);
+    expect(accepted).toMatchObject({ accepted: 6040, stocked: 0, stage: "TO_STOCK" });
+    expect(accepted.operatorControl).toBeUndefined();
+    expect((await pool.query(`SELECT c.plan_id, c.plan_snapshot_sha256, p.characteristic, p.measured_value::float8 AS length,
+      (SELECT count(*)::int FROM public.quality_release_decision WHERE quality_control_id=c.id) AS decisions
+      FROM public.quality_control c JOIN public.quality_control_points p ON p.quality_control_id=c.id
+      WHERE c.id=$1 AND p.characteristic='Longueur'`, [result.controlId])).rows[0])
+      .toEqual({ plan_id: null, plan_snapshot_sha256: null, characteristic: "Longueur", length: 3020, decisions: 1 });
+    await repoCreateStockReceipt(f.receipt, f.line, { ...body(6040), unite: "mm", material_bars: [{ lengthMm: 3020, count: 2 }] }, audit(), randomUUID());
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ stocked: 6040, stage: "DONE" });
+    expect((await pool.query(`SELECT count(*)::int AS bars FROM public.stock_material_bars b JOIN public.stock_batches s ON s.id=b.stock_batch_id
+      WHERE s.lot_id=$1 AND b.remaining_length_mm=3020`, [f.lot])).rows[0].bars).toBe(2);
+  });
+
+  it("operator control records MP dimensions, then blocks a failed lot with one NC", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    const line = await readProcessingLine(pool, f.line, f.receipt);
+    expect(line.operatorControl).toEqual({ kind: "MP", reopenRequired: false, dimensions: [{ label: "Longueur", valueMm: null }] });
+    const request = operatorControlSchema.parse({
+      idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "NON_CONFORME",
+      measurements: [{ label: "Longueur", valueMm: 980, confirmed: true, result: "NOK" }], note: "Longueur non conforme",
+    });
+    const result = await recordReceiptOperatorControl(f.receipt, f.line, request, audit());
+    expect(result.nonConformityId).toBeTruthy();
+    expect(result).toMatchObject({ released: 0, held: 6040, unit: "mm" });
+    expect(await recordReceiptOperatorControl(f.receipt, f.line, request, audit())).toEqual(result);
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ lotStatus: "BLOQUE", accepted: 0, stocked: 0, openNc: 1 });
+    const proof = (await pool.query(`SELECT n.status,n.reception_ligne_id::text AS line,n.lot_id::text AS lot,
+      (SELECT count(*)::int FROM public.quality_control_points WHERE quality_control_id=n.control_id) AS measurements
+      FROM public.non_conformity n WHERE n.id=$1`, [result.nonConformityId])).rows[0];
+    expect(proof).toEqual({ status: "OPEN", line: f.line, lot: f.lot, measurements: 1 });
+  });
+
+  it("operator control accepts the canonical rounded stock conversion and rejects the out-of-tolerance conversion", async () => {
+    const rounded = await fixture(0, "PIECE", "MP", { received: 0.300, coefficient: 3.33333333 });
+    const excessive = await fixture(0, "PIECE", "MP", { received: 0.300, coefficient: 3.33333329 });
+    const control = async (f: typeof rounded) => {
+      const line = await readProcessingLine(pool, f.line, f.receipt);
+      return recordReceiptOperatorControl(f.receipt, f.line, operatorControlSchema.parse({
+        idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+        measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }],
+      }), audit());
+    };
+    const result = await control(rounded);
+    expect(result).toMatchObject({ released: 1, held: 0, unit: "mm" });
+    expect((await pool.query("SELECT qty_population::float8 AS population FROM public.quality_control WHERE id=$1", [result.controlId])).rows[0].population).toBe(1);
+    await expect(control(excessive)).rejects.toMatchObject({ code: "RECEPTION_CONVERSION_PRECISION" });
+    expect((await pool.query("SELECT count(*)::int AS controls FROM public.quality_control WHERE lot_id=$1", [excessive.lot])).rows[0].controls).toBe(0);
+
+    const insertFromConfirmed = (operator: boolean, useOtherLine: boolean, population: number) => pool.query(
+      `INSERT INTO public.quality_control(reference,control_type,status,result,controlled_by,validated_by,validation_date,source_type,source_id,
+        trigger_type,lot_id,article_id,fournisseur_id,reception_ligne_id,unite,qty_population,operator_receipt_control,created_by,updated_by)
+       SELECT $1,control_type,status,result,controlled_by,validated_by,validation_date,source_type,source_id,
+        trigger_type,lot_id,article_id,fournisseur_id,$2,unite,$3,$4,created_by,updated_by FROM public.quality_control WHERE id=$5`,
+      [`FIX-${randomUUID()}`, useOtherLine ? excessive.line : rounded.line, population, operator, result.controlId],
+    );
+    await expect(insertFromConfirmed(false, false, 1)).rejects
+      .toMatchObject({ code: "23514", constraint: "quality_control_context_v3_chk" });
+    await expect(insertFromConfirmed(true, true, 1)).rejects
+      .toMatchObject({ code: "23514", message: expect.stringContaining("must match its raw-material receipt line") });
+    await expect(insertFromConfirmed(true, false, 2)).rejects
+      .toMatchObject({ code: "23514", message: expect.stringContaining("must match its raw-material receipt line") });
+    await expect(pool.query("UPDATE public.quality_control SET operator_receipt_control=false WHERE id=$1", [result.controlId]))
+      .rejects.toMatchObject({ code: "23514", message: expect.stringContaining("origin of a quality control is immutable") });
+  });
+
+  it("operator control leaves a closed dossier, an applicable published plan and a required certificate untouched", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    const initial = await readProcessingLine(pool, f.line, f.receipt);
+    const request = operatorControlSchema.parse({
+      idempotencyKey: randomUUID(), expectedVersion: initial.version, kind: "MP", verdict: "CONFORME",
+      measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }],
+    });
+    await pool.query(`UPDATE public.receptions_fournisseurs SET status='CLOSED' WHERE id=$1`, [f.receipt]);
+    expect((await readProcessingLine(pool, f.line, f.receipt)).operatorControl).toMatchObject({ kind: "MP", reopenRequired: true });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, request, audit())).rejects.toMatchObject({ code: "RECEIPT_NOT_OPEN" });
+    await pool.query(`UPDATE public.receptions_fournisseurs SET status='OPEN' WHERE id=$1`, [f.receipt]);
+    const orderLine = await attachOperatorOrder(f, [{ type: "CERTIFICAT_MATIERE", obligatoire: true }]);
+    const certificate = await readProcessingLine(pool, f.line, f.receipt);
+    expect(certificate.operatorControl).toBeUndefined();
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, expectedVersion: certificate.version }, audit())).rejects.toMatchObject({ code: "RECEIPT_OPERATOR_CONTROL_UNAVAILABLE" });
+    await pool.query(`UPDATE public.commande_fournisseur_ligne SET exigences_qualite='[{"type":"SPECIFICATION","valeur":"Contrôle dureté","obligatoire":true}]' WHERE id=$1`, [orderLine]);
+    expect((await readProcessingLine(pool, f.line, f.receipt)).operatorControl).toBeUndefined();
+    await pool.query("UPDATE public.commande_fournisseur_ligne SET exigences_qualite='[]' WHERE id=$1", [orderLine]);
+    await pool.query(`INSERT INTO public.quality_control_plan(code,label,status,trigger_type,article_id,sampling_rule,published_at,published_by,created_by,updated_by)
+      VALUES($1,'Plan formel dédié','PUBLISHED','RECEPTION',$2::uuid,'LOT',now(),$3,$3,$3)`, [`PLAN-${f.id}`, f.id, user]);
+    const formal = await readProcessingLine(pool, f.line, f.receipt);
+    expect(formal.operatorControl).toBeUndefined();
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...request, expectedVersion: formal.version }, audit())).rejects.toMatchObject({ code: "RECEIPT_OPERATOR_CONTROL_UNAVAILABLE" });
+    expect((await pool.query(`SELECT count(*)::int AS controls FROM public.quality_control WHERE lot_id=$1`, [f.lot])).rows[0].controls).toBe(0);
+  });
+
   it("requires physical bar tracking before offering a generic adjustment", async () => {
     const articleId = randomUUID();
     await pool.query(`INSERT INTO public.articles(id,root_article_id,code,designation,family_code,version_number,plan_index,status,article_type,article_category,unite,stock_managed,lot_tracking,created_by,updated_by)

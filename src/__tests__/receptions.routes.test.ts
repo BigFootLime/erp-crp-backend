@@ -1,6 +1,7 @@
 import request from "supertest"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { EventEmitter } from "events"
+import type { Request } from "express"
 
 vi.mock("../shared/realtime/realtime-outbox.service", async (importOriginal) => ({
   ...await importOriginal<typeof import("../shared/realtime/realtime-outbox.service")>(),
@@ -41,8 +42,9 @@ vi.mock("../utils/checkNetworkDrive", () => ({
 }))
 
 vi.mock("../module/auth/middlewares/auth.middleware", () => ({
-  authenticateToken: (req: { user?: { id: number; username: string; email: string; role: string } }, _res: unknown, next: () => void) => {
+  authenticateToken: (req: Request, _res: unknown, next: () => void) => {
     req.user = { id: 1, username: "test-admin", email: "admin@example.test", role: "administrateur" };
+    if (req.headers["x-fixture-terminal"] === "1") req.terminal = { kind: "RECEPTION" } as Request["terminal"];
     next();
   },
   authorizeRole: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -80,6 +82,34 @@ function makeToken() {
 }
 
 describe("/api/v1/receptions", () => {
+  it("POST operator-control refuses a specialized terminal before database access", async () => {
+    const response = await request(app)
+      .post("/api/v1/receptions/11111111-1111-4111-8111-111111111111/lines/22222222-2222-4222-8222-222222222222/operator-control")
+      .set("Authorization", `Bearer ${makeToken()}`)
+      .set("x-fixture-terminal", "1")
+      .send({});
+    expect(response.status).toBe(403);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
+  it("POST operator-control returns a validation error if a measurement was not confirmed", async () => {
+    mocks.poolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ is_superadmin: true }] });
+    const response = await request(app)
+      .post("/api/v1/receptions/11111111-1111-4111-8111-111111111111/lines/22222222-2222-4222-8222-222222222222/operator-control")
+      .set("Authorization", `Bearer ${makeToken()}`)
+      .send({
+        idempotencyKey: "33333333-3333-4333-8333-333333333333",
+        expectedVersion: 1,
+        kind: "MP",
+        verdict: "CONFORME",
+        measurements: [{ label: "Longueur", valueMm: 3020, confirmed: false }],
+      });
+    expect(response.status).toBe(422);
+    expect(mocks.poolConnect).not.toHaveBeenCalled();
+  });
+
   it("GET /api/v1/receptions returns {items,total} and applies filters", async () => {
     const token = makeToken()
 

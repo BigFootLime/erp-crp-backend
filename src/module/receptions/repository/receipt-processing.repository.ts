@@ -1,5 +1,6 @@
 import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
-import { receiptArticleContextSql } from './receipt-article-context';
+import { receiptArticleContextSql, receiptOperatorKindSql } from './receipt-article-context';
+import { applyOperatorRequirements, operatorMaterialDimensions, type MaterialControlDefinition, type OperatorDimension } from '../domain/operator-control-dimensions';
 import { proposeReceivedMaterialBars } from '../../stock/domain/material-bar-receipt';
 import type { PoolClient } from "pg";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
@@ -29,7 +30,7 @@ import {
 
 type Queryable = Pick<PoolClient, "query">;
 export type ProcessingLine = {
-  flowContext?: { material?: { barToCut?: boolean; sourceLengthMm?: number | null } | null };
+  flowContext?: { material?: MaterialControlDefinition | null };
   materialBarProposal?: ReturnType<typeof proposeReceivedMaterialBars>;
   transferred?: number;
   id: string;
@@ -42,6 +43,7 @@ export type ProcessingLine = {
   toolId: number | null;
   stockManaged: boolean;
   qualityRequired: boolean;
+  operatorControl?: { kind: "MP"; reopenRequired: boolean; dimensions: OperatorDimension[]; grade?: string };
   subcontract: Awaited<ReturnType<typeof readReceiptSubcontract>>;
   articleId: string | null;
   articleCode: string | null;
@@ -130,12 +132,14 @@ export async function readProcessingLine(
         | "blocking"
         | "accepted"
         | "controlId"
-      >
+      > & { operatorKind: "MP" | null; operatorRequirements?: unknown }
     >(
       `
     SELECT l.id::text,l.reception_id::text AS "receptionId",r.reception_no AS "receptionNumber",r.status AS "receiptStatus",
       l.processing_policy AS policy,l.processing_version AS version,l.processing_reconciliation_required AS "reconciliationRequired",
       l.receipt_tool_id AS "toolId",l.stock_managed AS "stockManaged",l.receipt_quality_required AS "qualityRequired",
+      ${receiptOperatorKindSql} AS "operatorKind",
+      coalesce(cl.exigences_qualite,'[]'::jsonb) AS "operatorRequirements",
       COALESCE(d.disposed,0)::float8 AS disposed,COALESCE(d.open_nc,0)::integer AS "openNc",
        l.article_id::text AS "articleId",a.code AS "articleCode",COALESCE(l.designation,a.designation) AS designation,
        ${receiptArticleContextSql('a','lot.client_proprietaire_id')} AS "flowContext",
@@ -246,8 +250,18 @@ export async function readProcessingLine(
     )
       progress.stage = "DONE";
   }
+  const { operatorKind, operatorRequirements, ...line } = row;
+  const material = row.flowContext?.material;
+  const grade = material?.grade?.trim() || null;
+  const dimensions = operatorKind ? applyOperatorRequirements(operatorMaterialDimensions(material), grade, operatorRequirements) : null;
   return {
-    ...row,
+    ...line,
+    ...(operatorKind && dimensions && !row.reconciliationRequired && !subcontract && !row.stocked && !row.packed && !row.disposed && !transferred
+      ? { operatorControl: {
+          kind: operatorKind, reopenRequired: row.receiptStatus === "CLOSED",
+          dimensions, ...(grade ? { grade } : {}),
+        } }
+      : {}),
     materialBarProposal: proposeReceivedMaterialBars({
       required: row.policy === 'STANDARD' && row.stockManaged && row.stockUnit?.trim().toLowerCase() === 'mm' && row.flowContext?.material?.barToCut === true,
       receiptUnit: row.unit ?? '', stockUnit: row.stockUnit ?? '', coefficient: row.coefficient,
@@ -279,6 +293,7 @@ export function receiptAllowedActions(
   if (!canReceive || line.receiptStatus !== "OPEN") return [];
   const pieces = line.policy === "PIECES_CONTROLE_EMBALLAGE";
   const actions: string[] = [];
+  if (line.operatorControl && !line.operatorControl.reopenRequired) actions.push("operator-control");
   if (line.subcontract && !line.subcontract.linked)
     actions.push("subcontract-origins");
   if (pieces) actions.push("stock-article");

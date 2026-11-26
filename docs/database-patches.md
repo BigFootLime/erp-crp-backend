@@ -3,6 +3,22 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Contrôle opérateur des matières à réception
+
+`20261126_receipt_operator_control.sql` ajoute un marqueur à `quality_control`.
+Il reste faux pour les contrôles existants. La nouvelle contrainte est validée
+avant de remplacer la précédente. La branche opérateur exige un contrôle de lot
+de réception déjà décidé et le déclencheur vérifie le lien exact avec la ligne de
+matière reçue, le fournisseur, l’article, l’unité et la population. Le contrôle
+formel conserve ses règles de plan. Le patch ne transforme aucune ligne métier.
+
+La validation de la contrainte conserve un verrou exclusif sur `quality_control`
+pendant le patch. Après restauration vérifiée des sauvegardes, appliquer ce seul
+patch avant la nouvelle API, avec le trafic d’écriture drainé. Comparer le compte
+et l’empreinte des contrôles existants dans les scripts de préflight et de
+vérification du lot. Un retour applicatif conserve le schéma et le registre
+courants afin de préserver les relevés, les décisions et les entrées de stock.
+
 ## Pointage des prestations fournisseur hors stock
 
 `20261126_free_supplier_service_receipts.sql` permet l'absence d'article
