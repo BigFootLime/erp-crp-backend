@@ -43,8 +43,8 @@ export type ProcessingLine = {
   stockManaged: boolean;
   qualityRequired: boolean;
   subcontract: Awaited<ReturnType<typeof readReceiptSubcontract>>;
-  articleId: string;
-  articleCode: string;
+  articleId: string | null;
+  articleCode: string | null;
   designation: string;
   stockArticleId: string | null;
   stockArticleCode: string | null;
@@ -147,7 +147,7 @@ export async function readProcessingLine(
        +COALESCE((SELECT sum(s.quantity) FROM public.reception_tool_stock_receipts s WHERE s.receipt_line_id=l.id),0))::float8 AS stocked
     FROM public.reception_fournisseur_lignes l JOIN public.receptions_fournisseurs r ON r.id=l.reception_id
     LEFT JOIN public.receipt_processing_dispositions_1069 d ON d.receipt_line_id=l.id
-    JOIN public.articles a ON a.id=l.article_id LEFT JOIN public.articles mp ON mp.id=l.stock_article_id
+    LEFT JOIN public.articles a ON a.id=l.article_id LEFT JOIN public.articles mp ON mp.id=l.stock_article_id
     LEFT JOIN public.fournisseurs f ON f.id=r.fournisseur_id LEFT JOIN public.lots lot ON lot.id=l.lot_id
     LEFT JOIN public.commande_fournisseur_ligne cl ON cl.id=l.commande_fournisseur_ligne_id LEFT JOIN public.commande_fournisseur c ON c.id=cl.commande_id
     WHERE l.id=$1::uuid AND ($2::uuid IS NULL OR l.reception_id=$2::uuid) ${lock ? "FOR UPDATE OF l,r" : ""}`,

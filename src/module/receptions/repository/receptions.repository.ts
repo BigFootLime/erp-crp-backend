@@ -51,6 +51,7 @@ import { lockMaterialBarReceiptLotTx, prepareMaterialBarReceiptTx, applyMaterial
 import { receivedMaterialBarLengths } from '../../stock/domain/material-bar-receipt'
 import {readProcessingLine} from './receipt-processing.repository'
 import { assertReceiptProcessingClosed } from './receipt-processing-guard'
+import { offStockServiceEligibilitySql } from './receipt-article-context'
 
 export type AuditContext = {
   user_id: number
@@ -240,7 +241,7 @@ type LineRow = {
   id: string
   reception_id: string
   line_no: number
-  article_id: string
+  article_id: string | null
   article_code: string | null
   article_designation: string | null
   designation: string | null
@@ -683,7 +684,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
   )
 
   const enrichedLines:ReceptionFournisseurLine[]=[]
-  const offStockSurplus=await readOffStockSurplusTx(db,lines.rows.filter(line=>line.stock_managed===false).map(line=>line.id))
+  const offStockSurplus=await readOffStockSurplusTx(db,lines.rows.filter(line=>line.article_id && line.stock_managed===false).map(line=>line.id))
   for(const row of lines.rows){
     const line=mapLineRow(row)
     line.unallocated_off_stock=offStockSurplus.get(line.id)??null
@@ -870,7 +871,9 @@ export async function repoPatchReception(id: string, patch: PatchReceptionBodyDT
   })
 }
 
-export async function repoCreateLine(receptionId: string, body: CreateLineBodyDTO, audit: AuditContext, internal?:{client:PoolClient;customerCallId?:string;batchConfirmation?:boolean}): Promise<ReceptionFournisseurLine | null> {
+type ReceiptLineInput = Omit<CreateLineBodyDTO, "article_id"> & { article_id: string | null }
+
+export async function repoCreateLine(receptionId: string, body: ReceiptLineInput, audit: AuditContext, internal?:{client:PoolClient;customerCallId?:string;batchConfirmation?:boolean}): Promise<ReceptionFournisseurLine | null> {
   const execute=async (tx:PoolClient) => {
     await tx.query('SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE')
     const lockReception = await tx.query<{ ok: number;origin_type:string;status:string;confirmation_state:string|null }>(
@@ -883,6 +886,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       throw new HttpError(409,'GROUPED_RECEIPT_CONFIRMATION_REQUIRED','Cette réception se confirme depuis la vue À réceptionner avec son BL.')
     if(lockReception.rows[0].origin_type==='CUSTOMER'&&!internal?.customerCallId)
       throw new HttpError(409,'CUSTOMER_MATERIAL_CALL_REQUIRED','Enregistrez les bruts reçus depuis leur appel client dans le dossier OF.')
+    const offStockService = body.article_id === null
+    if (offStockService && (
+      !internal?.batchConfirmation || lockReception.rows[0].origin_type !== 'SUPPLIER' ||
+      !body.commande_fournisseur_ligne_id || body.supplier_lot_code
+    )) throw new HttpError(422, 'RECEIPT_ARTICLE_REQUIRED', 'Seule une prestation hors stock liée à une commande peut être réceptionnée sans article.')
 
     const next = await tx.query<{ next_no: number }>(
       `
@@ -912,9 +920,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         purchase_unit:string|null
         stock_unit:string|null
         coefficient:number|null
+        off_stock_service: boolean
       }>(
         `SELECT l.id::text AS ligne_id, l.commande_id::text AS commande_id, l.statut_ligne,
                 l.article_id::text AS ligne_article_id,l.unite AS purchase_unit,l.unite_stock AS stock_unit,l.coef_conversion::float8 AS coefficient,
+                (${offStockServiceEligibilitySql}) AS off_stock_service,
                 c.statut AS cf_statut, c.fournisseur_id::text AS cf_fournisseur_id, c.code AS cf_code,
                 r.fournisseur_id::text AS reception_fournisseur_id
            FROM public.commande_fournisseur_ligne l
@@ -941,12 +951,21 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
       if (link.ligne_article_id && link.ligne_article_id !== body.article_id) {
         throw new HttpError(422, "ARTICLE_MISMATCH", "L'article reçu ne correspond pas à la ligne de commande imputée.")
       }
+      if (offStockService && !link.off_stock_service) {
+        throw new HttpError(422, 'RECEIPT_ARTICLE_REQUIRED', 'Complétez l’article de la ligne avant réception.')
+      }
       commandeIdToRefresh = link.commande_id
       purchaseConversion={unit:link.purchase_unit,stockUnit:link.stock_unit,coefficient:link.coefficient}
     }
 
-    const articleUnit=(await tx.query<{unite:string|null}>("SELECT unite FROM public.articles WHERE id=$1::uuid",[body.article_id])).rows[0]?.unite??null
-    const conversion=receiptUnitConversion({receiptUnit:body.unite??null,articleUnit,purchase:purchaseConversion})
+    const articleUnit = offStockService
+      ? purchaseConversion?.unit?.trim() || 'prestation'
+      : (await tx.query<{unite:string|null}>("SELECT unite FROM public.articles WHERE id=$1::uuid",[body.article_id])).rows[0]?.unite??null
+    const conversion = receiptUnitConversion({
+      receiptUnit: offStockService ? articleUnit : body.unite ?? null,
+      articleUnit,
+      purchase: offStockService ? null : purchaseConversion,
+    })
     convertedStockQuantity(body.qty_received,conversion.coefficient)
 
     const ins = await tx.query<{ id: string }>(
@@ -965,9 +984,11 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
           updated_by,
           stock_unit,
           stock_conversion_coef,
-          customer_material_call_id
+          customer_material_call_id,
+          stock_managed,
+          receipt_quality_required
         )
-        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10,$11,$12,$13::uuid)
+        VALUES ($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,$9::uuid,$10,$10,$11,$12,$13::uuid,$14,$14)
         RETURNING id::text AS id
       `,
       [
@@ -984,6 +1005,7 @@ export async function repoCreateLine(receptionId: string, body: CreateLineBodyDT
         conversion.stockUnit,
         conversion.coefficient,
         internal?.customerCallId??null,
+        !offStockService,
       ]
     )
     const lineId = ins.rows[0]?.id
@@ -1036,7 +1058,7 @@ export async function repoCreateLotForLine(
       id: string
       reception_id: string
       line_no: number
-      article_id: string
+      article_id: string | null
       supplier_lot_code: string | null
       lot_id: string | null
       reception_no: string
@@ -1066,6 +1088,7 @@ export async function repoCreateLotForLine(
     )
     const line = row.rows[0] ?? null
     if (!line) return null
+    if (!line.article_id) throw new HttpError(422, 'RECEIPT_SERVICE_OFF_STOCK', 'Une prestation hors stock n’a pas de lot à créer.')
     if (line.lot_id) throw new HttpError(409, "LOT_ALREADY_SET", "Un lot est deja rattache a cette ligne")
     if(line.article_owner_client_id && line.receipt_owner_client_id && line.article_owner_client_id!==line.receipt_owner_client_id)
       throw new HttpError(409,"MATERIAL_OWNER_MISMATCH","Le client propriétaire du brut diffère de celui de la réception.");

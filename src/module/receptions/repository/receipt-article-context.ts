@@ -20,3 +20,8 @@ export function receiptArticleContextSql(articleAlias:string,ownerSql?:string){
       WHERE t.article_id=${articleAlias}.id)
   )`;
 }
+export const offStockServiceEligibilitySql = `l.type='PRESTATION' AND l.article_id IS NULL
+  AND NOT COALESCE(l.receipt_stock_managed,false) AND NOT COALESCE(l.receipt_quality_required,false)
+  AND COALESCE(l.receipt_consumption_mode,'UNIT')='UNIT'
+  AND COALESCE(l.receipt_processing_policy,'STANDARD')='STANDARD'
+  AND l.receipt_tool_id IS NULL AND l.exigences_qualite='[]'::jsonb`;

@@ -61,7 +61,7 @@ export type ReceptionFournisseurLine = {
   id: string
   reception_id: string
   line_no: number
-  article_id: string
+  article_id: string | null
   article_code: string | null
   article_designation: string | null
   designation: string | null

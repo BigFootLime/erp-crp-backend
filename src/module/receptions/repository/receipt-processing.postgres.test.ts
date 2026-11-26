@@ -13,6 +13,8 @@ import { readMaterialBarInventoryTx } from '../../stock/repository/material-bar-
 import { prepareGroupedReceipt,confirmGroupedReceipt } from './grouped-receipts.repository';
 import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { createEmplacementSchema } from "../../stock/validators/stock.validators";
+import { repoPreviewMovement } from "../../stock/repository/stock-movement-corrections.repository";
+import { repoGetCommandeFournisseur } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
 const createdFiles: string[] = [];
 import { createHash, randomUUID } from "node:crypto";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
@@ -24,6 +26,7 @@ import {
 } from "./receipt-processing.repository";
 import {
   repoCreateStockReceipt,
+  repoGetReception,
   type AuditContext,
 } from "./receptions.repository";
 import { assertOperationalLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
@@ -381,6 +384,97 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   afterAll(async () => {
     await pool.end();
     await Promise.all(createdFiles.map((file) => fs.unlink(file)));
+  });
+  it("requires physical bar tracking before offering a generic adjustment", async () => {
+    const articleId = randomUUID();
+    await pool.query(`INSERT INTO public.articles(id,root_article_id,code,designation,family_code,version_number,plan_index,status,article_type,article_category,unite,stock_managed,lot_tracking,created_by,updated_by)
+      VALUES($1,$1,$2,'Barre de 3 100 mm','TEST1248',1,1,'VALIDE','PURCHASED','matiere','mm',true,false,$3,$3)`,
+    [articleId, `MP-${articleId}`, user]);
+    await pool.query(`INSERT INTO public.articles_matiere(article_id,family_code,barre_a_decouper,longueur_barre_source_mm)
+      SELECT $1,code,true,3100 FROM public.articles_matiere_families ORDER BY code LIMIT 1`, [articleId]);
+    const stockActor = { ...audit(), role: "Directeur", request_id: null, correlation_id: null };
+    const movementBody = {
+      movement_type: "ADJUSTMENT" as const,
+      idempotency_key: randomUUID(),
+      lines: [{ article_id: articleId, qty: 3100, unite: "mm", direction: "IN" as const,
+        dst_magasin_id: warehouse, dst_emplacement_id: place }],
+    };
+    const withoutLot = await repoPreviewMovement(movementBody);
+    expect(withoutLot).toMatchObject({ can_post: false, blockers: [{ code: "MATERIAL_BAR_BATCH_REQUIRED" }] });
+    const oldDraft = await repoCreateMovement(movementBody, stockActor);
+    await expect(repoPostMovement(oldDraft.movement.id, {}, stockActor, randomUUID()))
+      .rejects.toMatchObject({ code: "MATERIAL_BAR_BATCH_REQUIRED" });
+    expect((await pool.query("SELECT status FROM public.stock_movements WHERE id=$1", [oldDraft.movement.id])).rows[0].status).toBe("DRAFT");
+    const lot = randomUUID();
+    await pool.query("INSERT INTO public.lots(id,article_id,lot_code,lot_status,created_by,updated_by) VALUES($1,$2,$3,'LIBERE',$4,$4)",
+      [lot, articleId, `LOT-${lot}`, user]);
+    expect(await repoPreviewMovement({ ...movementBody, lines: [{ ...movementBody.lines[0], lot_id: lot }] }))
+      .toMatchObject({ can_post: false, blockers: [{ code: "MATERIAL_BAR_MOVEMENT_REQUIRED" }] });
+    expect((await pool.query("SELECT COALESCE(sum(qty_on_hand),0)::float8 AS total FROM public.v_stock_availability_225 WHERE article_id=$1", [articleId])).rows[0].total).toBe(0);
+  });
+
+  it("receives a free supplier service partially and then in full without creating stock or lots", async () => {
+    const supplierId = randomUUID(), orderId = randomUUID(), orderLineId = randomUUID(), unrelatedLineId = randomUUID();
+    await pool.query("INSERT INTO public.fournisseurs(id,code,nom) VALUES($1,$2,'Fournisseur prestation fictif')",
+      [supplierId, `T-${supplierId.slice(0,8)}`]);
+    await pool.query("INSERT INTO public.commande_fournisseur(id,code,fournisseur_id,statut) VALUES($1,$2,$3,'ENVOYEE')",
+      [orderId, `BCF-SERVICE-${orderId}`, supplierId]);
+    await pool.query(`INSERT INTO public.commande_fournisseur_ligne(id,commande_id,position,type,designation,quantite)
+      VALUES($1,$2,1,'PRESTATION','Intervention fictive',12),($3,$2,2,'LIBRE_CONTROLEE','Pièce à contrôler',1)`,
+    [orderLineId, orderId, unrelatedLineId]);
+    const loadExpected = async (id: string) =>
+      (await readExpectedReceiptLinesTx(pool, { page: 1, pageSize: 100 }, [id])).items[0];
+    const makeDraft = async (sequence: number) => {
+      const draft = await prepareGroupedReceipt({ idempotencyKey: randomUUID(), supplierId,
+        reference: `BL-SERVICE-${orderLineId.slice(0,8)}-${sequence}`, date: "2026-11-26" }, audit());
+      const file = `fixture-service-${draft.id}.txt`;
+      const directory = getDocumentStoragePath("receptions");
+      await fs.mkdir(directory, { recursive: true });
+      const filePath = path.join(directory, file);
+      const content = Buffer.from("Bon de livraison fictif — prestation");
+      await fs.writeFile(filePath, content, { flag: "wx" });
+      createdFiles.push(filePath);
+      await pool.query(`INSERT INTO public.reception_fournisseur_documents(
+          reception_id,document_type,original_name,stored_name,storage_path,mime_type,size_bytes,sha256,created_by)
+        VALUES ($1,'BON_LIVRAISON',$2,$2,$3,'text/plain',$4,$5,$6)`,
+      [draft.id, file, filePath, content.length, createHash("sha256").update(content).digest("hex"), user]);
+      return draft;
+    };
+    const makeChoice = async (id: string, quantity: number) => ({
+      lineId: id, expectedVersion: (await loadExpected(id)).version, quantity,
+      destination: null, supplierLotCode: null, packs: [], overReceiptReason: null,
+    });
+    const initial = await loadExpected(orderLineId);
+    expect(initial).toMatchObject({ received: 0, remaining: 12, offStockService: true, unit: "prestation", stockManaged: false, qualityRequired: false });
+    const draft = await makeDraft(1);
+    await expect(confirmGroupedReceipt(draft.id, { idempotencyKey: randomUUID(), lines: [await makeChoice(unrelatedLineId, 1)] }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_ARTICLE_REQUIRED" });
+    await expect(pool.query(`INSERT INTO public.reception_fournisseur_lignes(
+        reception_id,line_no,commande_fournisseur_ligne_id,qty_received,unite,stock_unit,stock_conversion_coef,stock_managed,receipt_quality_required)
+      VALUES($1,1,$2,1,'prestation','prestation',1,false,false)`, [draft.id, unrelatedLineId])).rejects.toMatchObject({ code: "23514" });
+    const firstChoice = await makeChoice(orderLineId, 5);
+    await expect(confirmGroupedReceipt(draft.id, { idempotencyKey: randomUUID(), lines: [{ ...firstChoice, supplierLotCode: "NO-LOT" }] }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_SERVICE_OFF_STOCK" });
+    const command = { idempotencyKey: randomUUID(), lines: [firstChoice] };
+    const result = await confirmGroupedReceipt(draft.id, command, audit());
+    expect(result.lines).toEqual([expect.objectContaining({ quantity: 5, lotId: null, lotCode: null, state: "ACCEPTED_OFF_STOCK" })]);
+    expect(await confirmGroupedReceipt(draft.id, command, audit())).toEqual(result);
+    const saved = await repoGetReception(draft.id);
+    expect(saved).toMatchObject({
+      lines: [{ article_id: null, qty_received: 5, stock_managed: false, receipt_quality_required: false,
+        processing: { stage: "DONE", accepted: 5, stocked: 0 } }],
+      documents: [expect.objectContaining({ document_type: "BON_LIVRAISON" })],
+      stock_receipts: [], inspections: [],
+    });
+    expect(saved?.lines[0].quality).toBeUndefined();
+    expect(await loadExpected(orderLineId)).toMatchObject({ received: 5, accepted: 5, remaining: 7, stocked: 0 });
+    const finalDraft = await makeDraft(2);
+    await confirmGroupedReceipt(finalDraft.id, { idempotencyKey: randomUUID(), lines: [await makeChoice(orderLineId, 7)] }, audit());
+    expect(await loadExpected(orderLineId)).toMatchObject({ received: 12, accepted: 12, remaining: 0, stocked: 0 });
+    const order = await repoGetCommandeFournisseur(orderId, { includePrices: true });
+    expect(order.receptions).toHaveLength(2);
+    expect(order.receptions.flatMap(receipt => receipt.lignes).map(line => line.article_id)).toEqual([null, null]);
+    expect(order.lignes.find(line => line.id === orderLineId)).toMatchObject({ qty_recue: 12, qty_restante: 0 });
   });
   it('receives grouped physical bars per supplier lot and replays without duplicate stock',async()=>{
     const f=await fixture(0,'CONSUMABLE'),orderId=randomUUID(),orderLineId=randomUUID();

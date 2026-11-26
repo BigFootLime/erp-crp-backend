@@ -1051,6 +1051,31 @@ function assertOperationExecutable(operation: { status: string } | null) {
   }
 }
 
+async function incrementLegacyOfQuantities(
+  tx: DbQueryer,
+  ofId: number,
+  operationId: string | null,
+  delta: { qty_good: number; qty_scrap: number },
+  actorId: number,
+) {
+  // Preserve the historical baseline on the OF. Only a declaration on
+  // the final active phase adds finished parts to it.
+  await tx.query(
+    `UPDATE public.ordres_fabrication
+     SET quantite_bonne = quantite_bonne + CASE WHEN $5::uuid IS NULL OR $5::uuid = (
+       SELECT op.id FROM public.of_operations op
+       WHERE op.of_id = $1::bigint AND op.status::text <> 'CANCELLED'
+         AND (op.revision_id IS NULL OR EXISTS (
+           SELECT 1 FROM public.of_revisions r WHERE r.id = op.revision_id AND r.statut = 'ACTIVE'
+         ))
+       ORDER BY op.phase DESC, op.id DESC LIMIT 1
+     ) THEN $2 ELSE 0 END,
+     quantite_rebut = quantite_rebut + $3, updated_at = now(), updated_by = $4::int
+     WHERE id = $1::bigint`,
+    [ofId, delta.qty_good, delta.qty_scrap, actorId, operationId],
+  );
+}
+
 /** Une maintenance bloquante interdit le démarrage : elle n'est pas contournable. */
 async function assertMachineAvailable(tx: DbQueryer, machineId: string | null | undefined) {
   if (!machineId) return;
@@ -1730,7 +1755,7 @@ async function buildFinishPreview(
 ): Promise<FinishOperationPreview> {
   const ofRes = await tx.query(
     `
-      SELECT o.id, o.numero, o.quantite_lancee::float8 AS quantite_lancee,
+      SELECT o.id, o.numero, o.statut::text AS statut, o.quantite_lancee::float8 AS quantite_lancee,
              o.quantite_bonne::float8 AS quantite_bonne, o.quantite_rebut::float8 AS quantite_rebut
       FROM public.ordres_fabrication o WHERE o.id = $1::bigint
     `,
@@ -1794,6 +1819,10 @@ async function buildFinishPreview(
   };
 
   const guarded=await usesOperationReadiness(tx,params.body.of_id);
+  if (!guarded) {
+    assertOfExecutable(of.statut);
+    assertOperationExecutable(operation);
+  }
   const authorization=guarded?await assertMaterialQuantityTx(tx,params.body.of_id,params.body.operation_id,declared):null;
   const remainingBefore = Number(of.quantite_lancee) - already.qty_good - already.qty_scrap-(guarded?already.qty_rework+already.qty_pending_control:0);
   const remainingAfter = remainingBefore - declared.qty_good - declared.qty_scrap-(guarded?declared.qty_rework+declared.qty_pending_control:0);
@@ -1921,6 +1950,20 @@ export async function repoFinishOperation(params: {
       );
     }
 
+    if (params.body.complete_operation) {
+      const openLegacyLog = await client.query(
+        `SELECT 1 FROM public.of_time_logs WHERE of_operation_id = $1::uuid AND ended_at IS NULL LIMIT 1`,
+        [params.body.operation_id],
+      );
+      if (openLegacyLog.rowCount) {
+        throw new HttpError(
+          409,
+          "PRODUCTION_EXECUTION_STILL_RUNNING",
+          "Arrêtez le pointage dans le mode atelier avant de terminer cette opération.",
+        );
+      }
+    }
+
     const delta = preview.declared;
     // Completing an operation after an offline quantity declaration is a real
     // state transition even when this confirmation adds no further quantity.
@@ -2029,16 +2072,7 @@ export async function repoFinishOperation(params: {
       // n'y entrent PAS : elles ne sont ni bonnes ni rebutées tant que la
       // Qualité n'a pas décidé.
       if(materialExecution)await syncMaterialOfQuantitiesTx(client,params.body.of_id,params.audit.user_id);
-      else await client.query(
-        `
-          UPDATE public.ordres_fabrication
-          SET quantite_bonne = quantite_bonne + $2,
-              quantite_rebut = quantite_rebut + $3,
-              updated_at = now(), updated_by = $4::int
-          WHERE id = $1::bigint
-        `,
-        [params.body.of_id, delta.qty_good, delta.qty_scrap, params.audit.user_id]
-      );
+      else await incrementLegacyOfQuantities(client, params.body.of_id, params.body.operation_id, delta, params.audit.user_id);
     }
 
     // 4) Recalcul du temps réel depuis la source unique.
@@ -2090,6 +2124,7 @@ export async function repoFinishOperation(params: {
         declaration_id: declarationId,
         ...delta,
         completed: params.body.complete_operation ?? false,
+        note: params.body.note ?? null,
         requires_quality_decision: preview.requires_quality_decision,
         // Traçabilité explicite de ce qui N'A PAS été fait : aucune entrée en
         // stock, aucun lot, aucune NC créés par cette commande.
@@ -2316,15 +2351,7 @@ export async function repoDeclareQuantity(params: {
     const id = ins.rows[0]!.id;
 
     if(materialExecution)await syncMaterialOfQuantitiesTx(client,params.body.of_id,params.audit.user_id);
-    else await client.query(
-      `
-        UPDATE public.ordres_fabrication
-        SET quantite_bonne = quantite_bonne + $2, quantite_rebut = quantite_rebut + $3,
-            updated_at = now(), updated_by = $4::int
-        WHERE id = $1::bigint
-      `,
-      [params.body.of_id, delta.qty_good, delta.qty_scrap, params.audit.user_id]
-    );
+    else await incrementLegacyOfQuantities(client, params.body.of_id, operationId, delta, params.audit.user_id);
 
     if (params.body.pointage_id) {
       await insertExecutionEvent(client, {

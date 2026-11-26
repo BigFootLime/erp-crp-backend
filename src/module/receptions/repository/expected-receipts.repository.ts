@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { receiptArticleContextSql } from './receipt-article-context';
+import { offStockServiceEligibilitySql, receiptArticleContextSql } from './receipt-article-context';
 import pool from '../../../config/database';
 import { coverageFingerprint,quantity } from '../../production/domain/of-material';
 import type { ExpectedReceiptsQuery } from '../validators/grouped-receipts.validators';
@@ -10,7 +10,7 @@ import { groupedMaterialBarProposal,type GroupedMaterialLine } from '../domain/g
 export type ExpectedReceiptLine=GroupedMaterialLine&{materialBarProposal?:ReturnType<typeof groupedMaterialBarProposal>;id:string;orderId:string;orderCode:string;supplierId:string;supplierName:string;supplierCode:string|null;articleId:string|null;articleCode:string|null;crpReference:string|null;supplierReference:string|null;
   designation:string;type:string;categories:string[];unit:string|null;stockUnit:string|null;coefficient:number;ordered:number;received:number;remaining:number;accepted:number;stocked:number;
   stockManaged:boolean;qualityRequired:boolean;consumptionMode:string;lotTracking:boolean;due:string|null;destinationId:string|null;price:number|null;currency:string;
-  processingPolicy?:'STANDARD'|'PIECES_CONTROLE_EMBALLAGE';toolId?:number|null;
+  processingPolicy?:'STANDARD'|'PIECES_CONTROLE_EMBALLAGE';toolId?:number|null;offStockService:boolean;
   ofs:Array<{id:number;number:string}>;version:string;orderVersion:string;articleVersion:string;status:string;total:number};
 export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,filters:ExpectedReceiptsQuery,lineIds?:string[]){
   const values:unknown[]=[],conditions=["l.statut_ligne='ACTIVE'","c.statut IN('ENVOYEE','ACCUSE_RECU','PARTIELLEMENT_RECUE','RECUE')"];
@@ -34,14 +34,19 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
     ${receiptArticleContextSql('a')} AS "flowContext",
     COALESCE(l.receipt_processing_policy,public.receipt_piece_policy_1069(a.id,l.type),'STANDARD') AS "processingPolicy",
     COALESCE(l.receipt_tool_id,(SELECT tool_id FROM public.article_tool_links t WHERE t.article_id=a.id)) AS "toolId",
-    l.unite AS unit,COALESCE(l.unite_stock,a.unite,l.unite) AS "stockUnit",COALESCE(l.coef_conversion,1)::float8 AS coefficient,l.quantite::float8 AS ordered,
+    free_service.eligible AS "offStockService",
+    CASE WHEN free_service.eligible THEN COALESCE(NULLIF(trim(l.unite), ''), 'prestation') ELSE l.unite END AS unit,
+    CASE WHEN free_service.eligible THEN COALESCE(NULLIF(trim(l.unite), ''), 'prestation') ELSE COALESCE(l.unite_stock,a.unite,l.unite) END AS "stockUnit",
+    (CASE WHEN free_service.eligible THEN 1 ELSE COALESCE(l.coef_conversion,1) END)::float8 AS coefficient,l.quantite::float8 AS ordered,
     COALESCE(r.received,0)::float8 AS received,GREATEST(0,l.quantite-l.qty_annulee-COALESCE(r.received,0))::float8 AS remaining,
     COALESCE(s.qty,0)::float8 AS stocked,COALESCE(l.receipt_stock_managed,a.stock_managed,false) AS "stockManaged",
-    COALESCE(l.receipt_quality_required,a.receipt_quality_required,true) AS "qualityRequired",COALESCE(l.receipt_consumption_mode,a.consumption_mode,'UNIT') AS "consumptionMode",
+    CASE WHEN free_service.eligible THEN false ELSE COALESCE(l.receipt_quality_required,a.receipt_quality_required,true) END AS "qualityRequired",
+    COALESCE(l.receipt_consumption_mode,a.consumption_mode,'UNIT') AS "consumptionMode",
     COALESCE(a.lot_tracking,false) AS "lotTracking",COALESCE(l.date_promesse,c.date_promesse,l.date_besoin,c.date_besoin)::text AS due,
     COALESCE(l.magasin_id,c.magasin_livraison_id)::text AS "destinationId",l.prix_unitaire_ht::float8 AS price,c.devise AS currency,
     COALESCE(alloc.ofs,'[]'::jsonb) AS ofs,l.updated_at::text AS version,c.updated_at::text AS "orderVersion",a.updated_at::text AS "articleVersion",count(*) OVER()::int AS total
     FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur c ON c.id=l.commande_id JOIN public.fournisseurs f ON f.id=c.fournisseur_id LEFT JOIN public.articles a ON a.id=l.article_id
+    CROSS JOIN LATERAL (SELECT ${offStockServiceEligibilitySql} AS eligible) free_service
     LEFT JOIN LATERAL(SELECT array_agg(category_code) AS codes FROM public.article_category_link WHERE article_id=a.id) categories ON true
     LEFT JOIN LATERAL(SELECT sum(qty_received) AS received FROM public.reception_fournisseur_lignes WHERE commande_fournisseur_ligne_id=l.id) r ON true
     LEFT JOIN LATERAL(SELECT sum(s.qty) AS qty FROM public.reception_fournisseur_stock_receipts s JOIN public.reception_fournisseur_lignes r ON r.id=s.reception_line_id WHERE r.commande_fournisseur_ligne_id=l.id) s ON true
@@ -67,6 +72,7 @@ export async function readExpectedReceiptLinesTx(tx:Pick<PoolClient,'query'>,fil
   }
   return {items,total:items[0]?.total??0,page:filters.page,pageSize:filters.pageSize};
 }
+
 export async function getExpectedReceiptLines(filters:ExpectedReceiptsQuery){
   const tx=await pool.connect();try{await tx.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await readExpectedReceiptLinesTx(tx,filters);await tx.query('COMMIT');return result;}
   catch(e){await tx.query('ROLLBACK');throw e;}finally{tx.release();}

@@ -8,6 +8,7 @@ import type { CompensateMovementBodyDTO, CreateMovementBodyDTO, CreateMovementLi
 import { assemblyComponentWithdrawalOwnsMovement } from "./assembly-component-movement-guard";
 import { consumableWithdrawalOwnsMovement } from "./consumable-movement-guard";
 import { previewMaterialBarCompensationTx } from "./material-bar-compensation.repository";
+import { assertMaterialBarPostingInputs, readMaterialBarPostingScope, readMaterialBarTracking } from "./material-bar-posting.repository";
 import {
   assertConsistentLocations,
   assertSameArticle,
@@ -107,6 +108,7 @@ export async function repoPreviewMovement(
 
   const impacts: StockMovementImpactPreview["impacts"] = [];
   const blockers: StockMovementImpactPreview["blockers"] = [];
+  const batchIds: string[] = [];
   const addImpact = async (
     side: "SOURCE" | "DESTINATION",
     magasinId: string,
@@ -125,6 +127,7 @@ export async function repoPreviewMovement(
       side === "SOURCE" ? "src" : "dst"
     );
     const state = await readState(mapping.location_id);
+    if (state.stock_batch_id) batchIds.push(state.stock_batch_id);
     const before = calculateStockAvailability(state);
     if (side === "SOURCE") {
       try {
@@ -210,6 +213,16 @@ export async function repoPreviewMovement(
         ? "DEPRECIATE"
         : "OUT"
     );
+  }
+
+  try {
+    const scope = await readMaterialBarPostingScope(db, { articleId, explicit: false });
+    if (scope.enabled && (scope.required || (batchIds.length > 0 && await readMaterialBarTracking(db, batchIds)))) {
+      assertMaterialBarPostingInputs({ hasLotAtLocations: Boolean(lotId), hasGeometry: false });
+    }
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    blockers.unshift({ code: error.code, message: error.message });
   }
 
   return {
