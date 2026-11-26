@@ -101,6 +101,11 @@ describe("rétrocompatibilité de la liste", () => {
     await repoListPieceTechniques(parse({}));
     expect(captured()[0].text).toContain("p.deleted_at IS NULL");
   });
+
+  it("garantit un booléen pour la fabrication même sur une pièce historique sans valeur", async () => {
+    await repoListPieceTechniques(parse({}));
+    expect(captured()[1].text).toContain("COALESCE(p.en_fabrication::int = 1, false) AS en_fabrication");
+  });
 });
 
 /* ------------------------------------------------------------------------------------ */

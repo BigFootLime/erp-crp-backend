@@ -400,7 +400,7 @@ export async function repoListPieceTechniques(filters: ListPiecesTechniquesQuery
       f.code AS famille_code,
       f.designation AS famille_designation,
       p.statut::text AS statut,
-      (p.en_fabrication::int = 1) AS en_fabrication,
+      COALESCE(p.en_fabrication::int = 1, false) AS en_fabrication,
       p.prix_unitaire::float8 AS prix_unitaire,
       p.ensemble,
       COALESCE(p.quality_levels, ARRAY[]::text[]) AS quality_levels,
