@@ -38,10 +38,14 @@ import {
   seedProductionWorkbenchFixture,
   seedWorkbenchStock,
 } from "../../../__tests__/fixtures/production-workbench.fixture";
-const isolated =
-  process.env.CERP_E2E_ISOLATED === "1" &&
-  process.env.DATABASE_URL ===
-    "postgresql://cerp_712@127.0.0.1:55432/cerp_test";
+const workbenchDatabase = new URL(process.env.DATABASE_URL ?? "postgresql://127.0.0.1/off");
+const managedPort = process.env.CERP_E2E_DB_PORT ?? "55432";
+const isolated = process.env.CERP_E2E_ISOLATED === "1" && (
+  process.env.DATABASE_URL === "postgresql://cerp_712@127.0.0.1:55432/cerp_test" ||
+  (process.env.CERP_WORKBENCH_POSTGRES_TEST === "1" && process.env.CERP_E2E_MANAGED_STACK === "1" &&
+    workbenchDatabase.hostname === "127.0.0.1" && workbenchDatabase.port === managedPort &&
+    workbenchDatabase.username === "cerp_e2e" && workbenchDatabase.pathname === "/cerp_test")
+);
 async function prepareFixture(
   f: Awaited<ReturnType<typeof seedProductionWorkbenchFixture>>,
 ) {
@@ -244,6 +248,25 @@ describe.skipIf(!isolated)(
       expect(dossier.operations.every(operation => !operation.planned)).toBe(true);
       const complete = await repoCompleteOfDossier(id, { expectedVersion: dossier.version, idempotencyKey: randomUUID() }, f.audit);
       expect(complete.status).toBe("COMPLETE");
+      const worklist = { q: e.of.numero, kind: "ALL" as const, page: 1, pageSize: 10 };
+      expect(await repoProductionWorklist({ ...worklist, queue: "READY" })).toMatchObject({
+        counts: { READY: 1, PREPARATION: 0 }, items: [expect.objectContaining({ id, queue: "READY" })],
+      });
+      const invalidated = await pool.query(`UPDATE public.of_dossier_validations SET invalidated_at=now(),
+        invalidation_reason='Retour en préparation sur la fixture' WHERE of_id=$1 AND invalidated_at IS NULL`, [id]);
+      expect(invalidated.rowCount).toBe(1);
+      const toRevalidate = await repoOfDossier(id);
+      if (!toRevalidate.enabled) throw new Error("The dossier is required for this test");
+      expect(toRevalidate).toMatchObject({ status: "REVALIDATION_REQUIRED", sourceHash: complete.sourceHash });
+      expect(await repoProductionWorklist({ ...worklist, queue: "PREPARATION" })).toMatchObject({
+        counts: { READY: 0, PREPARATION: 1 }, items: [expect.objectContaining({ id, queue: "PREPARATION" })],
+      });
+      const revalidated = await repoCompleteOfDossier(id, { expectedVersion: toRevalidate.version, idempotencyKey: randomUUID() }, f.audit);
+      expect(revalidated).toMatchObject({ status: "COMPLETE", sourceHash: complete.sourceHash });
+      expect((await evaluateOfPreparation(pool, id)).of.technical_snapshot_sha256).toBe(frozenHash);
+      expect(await repoProductionWorklist({ ...worklist, queue: "READY" })).toMatchObject({
+        counts: { READY: 1, PREPARATION: 0 }, items: [expect.objectContaining({ id, queue: "READY" })],
+      });
       await pool.query("UPDATE public.ordres_fabrication SET statut='PLANIFIE' WHERE id=$1", [id]);
       await pool.query("UPDATE public.quality_control_plan SET status='PUBLISHED',published_at=now(),published_by=$2 WHERE id=$1::uuid", [f.quality, f.audit.user_id]);
       const liveDossier = await repoOfDossier(id);

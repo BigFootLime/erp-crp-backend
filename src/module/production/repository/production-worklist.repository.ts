@@ -11,7 +11,10 @@ export async function repoProductionWorklist(input: WorklistQuery) {
       SELECT cc.id,cc.created_at,public.workshop_working_deadline(cc.created_at,48) AS deadline FROM public.commande_client cc
       WHERE EXISTS(SELECT 1 FROM public.ordres_fabrication active WHERE active.commande_id=cc.id AND active.statut NOT IN('ANNULE','TERMINE','CLOTURE'))
     ), base AS (
-      SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.statut::text,o.technical_readiness,
+      SELECT o.id::bigint::int AS id,o.numero,o.priority::text,o.statut::text,
+         CASE WHEN o.statut='BROUILLON' AND o.technical_readiness='VALIDATED' AND o.preparation_rules_version>=2
+           AND NOT EXISTS (SELECT 1 FROM public.of_dossier_validations v WHERE v.of_id=o.id AND v.invalidated_at IS NULL)
+           THEN 'INCOMPLETE' ELSE o.technical_readiness END AS technical_readiness,
          o.piece_technique_id::text,o.piece_technique_version_id::text,o.article_id::text,o.technical_snapshot_sha256,
          pt.code_piece AS piece_code,pt.designation AS piece_designation,
         o.client_id,c.company_name AS client_company_name,

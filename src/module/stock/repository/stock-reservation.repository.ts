@@ -470,11 +470,12 @@ async function transitionReservation(
     | {
         command_type: "RESERVATION_CONSUME";
         body: ConsumeStockReservationBodyDTO;
-      }
+      },
+  transaction?: PoolClient,
 ): Promise<StockReservationDetail | null> {
-  const client = await db.connect();
+  const client = transaction ?? await db.connect();
   try {
-    await client.query("BEGIN");
+    if (!transaction) await client.query("BEGIN");
     const command = await beginStockCommand(client, {
       audit,
       idempotency_key: idempotencyKey,
@@ -482,8 +483,8 @@ async function transitionReservation(
       request_payload: { reservation_id: id, ...args.body },
     });
     if (command.existing) {
-      await client.query("COMMIT");
-      return repoGetStockReservation(command.existing.resource_id);
+      if (!transaction) await client.query("COMMIT");
+      return await repoGetStockReservation(command.existing.resource_id, client);
     }
 
     // Read the identity first without taking the reservation row lock.  The
@@ -499,7 +500,7 @@ async function transitionReservation(
     );
     const identity = reservationIdentity.rows[0] ?? null;
     if (!identity) {
-      await client.query("ROLLBACK");
+      if (!transaction) await client.query("ROLLBACK");
       return null;
     }
     // Match inventory/grouping's lot-first order without requiring quality
@@ -547,7 +548,7 @@ async function transitionReservation(
     );
     const row = reservation.rows[0] ?? null;
     if (!row) {
-      await client.query("ROLLBACK");
+      if (!transaction) await client.query("ROLLBACK");
       return null;
     }
     if (row.status !== "ACTIVE") {
@@ -555,6 +556,9 @@ async function transitionReservation(
     }
     if (row.row_version !== args.body.expected_version) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Reservation version has changed");
+    }
+    if (transaction && args.command_type === "RESERVATION_RELEASE" && row.qty_consumed > 0) {
+      throw new HttpError(409, "ORDER_STOCK_CONSUMED", "Du stock a déjà été consommé pour cette commande. Annulation refusée.");
     }
     if(args.command_type==='RESERVATION_CONSUME'&&row.material_need_id)
       throw new HttpError(409,'MATERIAL_DEBIT_REQUIRED','Enregistrez cette consommation depuis le débit matière de l’opération OF.');
@@ -707,13 +711,13 @@ async function transitionReservation(
         tx: client,
       });
     }
-    await client.query("COMMIT");
-    return repoGetStockReservation(id);
+    if (!transaction) await client.query("COMMIT");
+    return await repoGetStockReservation(id, client);
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (!transaction) await client.query("ROLLBACK");
     throw error;
   } finally {
-    client.release();
+    if (!transaction) client.release();
   }
 }
 
@@ -727,6 +731,16 @@ export function repoReleaseStockReservation(
     command_type: "RESERVATION_RELEASE",
     body,
   });
+}
+
+export function repoReleaseUnconsumedStockReservationTx(
+  tx: PoolClient,
+  id: string,
+  body: StockReservationActionBodyDTO,
+  audit: AuditContext,
+  idempotencyKey: string,
+): Promise<StockReservationDetail | null> {
+  return transitionReservation(id, audit, idempotencyKey, { command_type: "RESERVATION_RELEASE", body }, tx);
 }
 
 export function repoConsumeStockReservation(
