@@ -6,13 +6,25 @@ type Commitments = { started: boolean; stock: boolean; planning: boolean; groupe
 
 /** Caller holds the planning/OF locks and supplies the existing audited cancellation transaction. */
 export async function releasePrelaunchPurchaseAllocationsTx(tx: Db, ofId: number) {
+  await assertOfPrelaunchCancellationTx(tx, ofId);
+  return releaseOfPurchaseAllocationsTx(tx, ofId);
+}
+
+export async function assertOfPrelaunchCancellationTx(tx: Db, ofId: number, cancellingOfIds: number[] | null = null) {
   const state = (await tx.query<Commitments>(`
     SELECT
       EXISTS(SELECT 1 FROM public.ordres_fabrication o WHERE o.id=$1 AND
-        (o.date_lancement_reelle IS NOT NULL OR o.quantite_bonne>0 OR o.quantite_rebut>0))
-      OR EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id=$1 AND op.status::text NOT IN ('TODO','READY','BLOCKED'))
+        (o.date_lancement_reelle IS NOT NULL OR o.quantite_bonne>0 OR o.quantite_rebut>0
+          OR ($2::bigint[] IS NOT NULL AND o.date_fin_reelle IS NOT NULL)))
+      OR EXISTS(SELECT 1 FROM public.of_operations op WHERE op.of_id=$1 AND
+        ((op.status::text NOT IN ('TODO','READY','BLOCKED') AND (op.status::text<>'CANCELLED' OR $2::bigint[] IS NULL))
+          OR ($2::bigint[] IS NOT NULL AND (op.started_at IS NOT NULL OR op.ended_at IS NOT NULL))))
       OR EXISTS(SELECT 1 FROM public.of_time_logs log JOIN public.of_operations op ON op.id=log.of_operation_id WHERE op.of_id=$1)
       OR EXISTS(SELECT 1 FROM public.production_quantity_declarations d JOIN public.of_operations op ON op.id=d.operation_id WHERE op.of_id=$1)
+      OR ($2::bigint[] IS NOT NULL AND (
+        EXISTS(SELECT 1 FROM public.production_pointages p WHERE p.of_id=$1)
+        OR EXISTS(SELECT 1 FROM public.subcontract_work_packages p JOIN public.of_operations op ON op.id=p.of_operation_id WHERE op.of_id=$1)
+        OR EXISTS(SELECT 1 FROM public.of_receipts r WHERE r.of_id=$1)))
       OR EXISTS(SELECT 1 FROM public.production_material_debits d WHERE d.of_id=$1) AS started,
       EXISTS(SELECT 1 FROM public.stock_reservations r WHERE
         (r.of_id=$1 OR (r.source_type='OF' AND r.source_id=$1::text)) AND
@@ -22,14 +34,17 @@ export async function releasePrelaunchPurchaseAllocationsTx(tx: Db, ofId: number
         AND e.archived_at IS NULL AND e.status<>'CANCELLED') AS planning,
       EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=$1 AND a.state='ACTIVE')
       OR EXISTS(SELECT 1 FROM public.production_consolidations c WHERE c.producer_of_id=$1) AS grouped,
-      EXISTS(SELECT 1 FROM public.ordres_fabrication child WHERE child.parent_of_id=$1 AND child.statut::text<>'ANNULE') AS children
-  `, [ofId])).rows[0];
+      EXISTS(SELECT 1 FROM public.ordres_fabrication child WHERE child.parent_of_id=$1 AND child.statut::text<>'ANNULE'
+        AND NOT (child.id=ANY(COALESCE($2::bigint[],ARRAY[]::bigint[])))) AS children
+  `, [ofId, cancellingOfIds])).rows[0];
   if (!state || [state.started, state.stock, state.planning, state.grouped, state.children].some(value => typeof value !== "boolean"))
     throw new HttpError(409, "OF_CANCELLATION_CHECK_UNAVAILABLE", "Les engagements de cet OF doivent être vérifiés avant son annulation.");
-  const blockers = [state.started && "Fabrication ou pointage déjà enregistré", state.stock && "Réservation matière à libérer",
-    state.planning && "Créneaux à retirer du planning", state.grouped && "Regroupement à traiter", state.children && "Sous-OF actifs à traiter"].filter(Boolean);
+  const blockers = [state.started && "Fabrication ou pointage déjà enregistré", !cancellingOfIds && state.stock && "Réservation matière à libérer",
+    !cancellingOfIds && state.planning && "Créneaux à retirer du planning", state.grouped && "Regroupement à traiter", state.children && "Sous-OF actifs à traiter"].filter(Boolean);
   if (blockers.length) throw new HttpError(409, "OF_CANCELLATION_COMMITMENTS", blockers.join(". ") + ".", { of_id: ofId, blockers });
+}
 
+export async function releaseOfPurchaseAllocationsTx(tx: Db, ofId: number) {
   const allocations = (await tx.query<{ id: string; purchase_order_id: string; quantity: number }>(`
     SELECT b.id::text, l.commande_id::text AS purchase_order_id, b.quantite_couverte::float8 AS quantity
     FROM public.commande_fournisseur_ligne_besoin b JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id

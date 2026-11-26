@@ -13,6 +13,8 @@ import {
   type ReportingContext,
 } from "../../facturation/repository/reporting-v2.repository";
 import { normalizeCommandeWorkflowStatus } from "../../commande-client/workflow/commande-client-workflow.definition";
+import { enqueueProductionOfChanged } from "../../production/repository/production-realtime.repository";
+import { cancelOrderProductionTx } from "./order-cancellation-production.repository";
 import {
   COMMERCIAL_CONTRACT_VERSION,
   COMMERCIAL_TIMEZONE,
@@ -71,7 +73,7 @@ async function insertAudit(
     client_session_id: actor.client_session_id,
     details: entry.details,
   };
-  await repoInsertAuditLog({
+  return repoInsertAuditLog({
     user_id: actor.user_id,
     body,
     ip: actor.ip,
@@ -1106,8 +1108,13 @@ export async function repoCancelOrder(params: {
     const requestHash = commercialPayloadHash({ commande_id: params.commandeId, ...params.input });
     const replay = await readReceipt<Record<string, unknown>>(tx, "ORDER_CANCEL", params.idempotencyKey, requestHash);
     if (replay) return replay;
-    const order = await tx.query<{ id: string; numero: string }>(
-      `SELECT id::text,numero FROM public.commande_client WHERE id=$1 FOR UPDATE`,
+    // Planning/OF writers acquire the revision before business rows. A stock
+    // writer may already hold a lot and be waiting for its revision trigger.
+    // In that case abort the whole cancellation promptly and let it retry.
+    await tx.query("SET LOCAL lock_timeout='1s'");
+    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+    const order = await tx.query<{ id: string; ar_sent_at: string | null }>(
+      `SELECT id::text,ar_sent_at::text FROM public.commande_client WHERE id=$1 FOR UPDATE`,
       [params.commandeId],
     );
     if (!order.rows[0]) throw new HttpError(404, "COMMANDE_NOT_FOUND", "Commande introuvable.");
@@ -1132,6 +1139,9 @@ export async function repoCancelOrder(params: {
     if (downstream.rows[0]?.blocked) {
       throw new HttpError(409, "ORDER_CANCELLATION_HAS_DOWNSTREAM_EVIDENCE", "Annulation refusée : livraison ou facture active déjà enregistrée.");
     }
+    const production = await cancelOrderProductionTx(tx, params.commandeId, Boolean(order.rows[0].ar_sent_at), {
+      ...params.actor, device_type: null, os: null, browser: null,
+    });
     await tx.query(
       `INSERT INTO public.commercial_order_cancellations
          (commande_id,reason_code,note,cancelled_by)
@@ -1158,11 +1168,23 @@ export async function repoCancelOrder(params: {
       [params.commandeId],
     );
     const response = { commande_id: params.commandeId, status: "ANNULE", idempotent_replay: false };
-    await insertAudit(tx, params.actor, {
+    const audit = await insertAudit(tx, params.actor, {
       action: "commercial.order.cancel", entity_type: "commande_client", entity_id: String(params.commandeId),
-      details: { from: current, to: "ANNULE", reason_code: params.input.reason_code },
+      details: { from: current, to: "ANNULE", reason_code: params.input.reason_code,
+        production: { cancelled_of_ids: production.ofIds, archived_event_ids: production.eventIds,
+          released_reservation_ids: production.reservationIds, cancelled_purchase_allocations: production.allocations } },
+    });
+    if (production.ofIds.length && !audit) throw new Error("ORDER_CANCELLATION_AUDIT_MISSING");
+    if (audit) for (const ofId of production.ofIds) await enqueueProductionOfChanged(tx, {
+      ofId, auditId: audit.id, action: "status_changed", occurredAt: audit.created_at,
     });
     await saveReceipt(tx, "ORDER_CANCEL", params.idempotencyKey, requestHash, params.actor.user_id, response);
     return response;
+  }).catch((error: unknown) => {
+    const code = (error as { code?: string } | null)?.code;
+    if (code === "55P03" || code === "40P01") {
+      throw new HttpError(409, "ORDER_CANCELLATION_BUSY", "Une modification du planning ou du stock est en cours. Réessayez l’annulation.");
+    }
+    throw error;
   });
 }

@@ -1802,6 +1802,13 @@ export async function repoUpdateArticle(
   try {
     if (!transactionClient) await client.query("BEGIN");
 
+    // Article creation and technical-client edits lock the piece first.
+    await client.query(
+      `SELECT p.id FROM public.pieces_techniques p
+        JOIN public.articles a ON a.piece_technique_id=p.id
+        WHERE a.id=$1::uuid AND a.article_category='fabrique' FOR NO KEY UPDATE OF p`,
+      [id],
+    );
     const currentRes = await client.query<{
       id: string;
       code: string;
