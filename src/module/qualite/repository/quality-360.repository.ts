@@ -744,6 +744,7 @@ export async function repoTransitionPlan(params: {
   actor: QualityActor;
 }): Promise<{ plan: QualityPlanRow; characteristics: QualityCharacteristicSpec[] } | null> {
   return withTransaction(async (client) => {
+    if (params.body.target_status === "PUBLISHED") await lockReceiptPlanQualification(client);
     const before = await selectPlanRow(client, params.id, true);
     if (!before) return null;
 
@@ -1005,6 +1006,21 @@ async function resolveApplicablePlan(
     discarded: selection.discarded,
     characteristics: await selectPlanCharacteristics(q, selection.plan.id),
   };
+}
+
+export async function lockReceiptPlanQualification(q: DbQueryer) {
+  await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["quality:receipt-plan-publication"]);
+}
+
+/** Anything except the selector's explicit no-plan decision remains formal. */
+export async function requiresFormalReceiptPlan(q: DbQueryer, context: Omit<PlanApplicabilityQueryDTO, "trigger">) {
+  try {
+    await resolveApplicablePlan(q, { ...context, trigger: "RECEPTION" });
+    return true;
+  } catch (error) {
+    if (error instanceof HttpError) return error.code !== "QUALITY_PLAN_NOT_APPLICABLE";
+    throw error;
+  }
 }
 
 export type ExecutionPreview = {

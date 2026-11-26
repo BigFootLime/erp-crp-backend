@@ -71,7 +71,8 @@ const operatorEnabled = process.env.CERP_RECEIPT_OPERATOR_PG_TEST === "1" &&
   ["postgresql://postgres@127.0.0.1:50325/cerp_test", "postgresql://postgres@127.0.0.1:50326/cerp_test"]
     .includes(process.env.DATABASE_URL ?? "");
 const returnControlEnabled = process.env.CERP_SUBCONTRACT_RETURN_PG_TEST === "1" &&
-  process.env.DATABASE_URL === "postgresql://postgres@127.0.0.1:50348/cerp_test";
+  ["postgresql://postgres@127.0.0.1:50348/cerp_test", "postgresql://postgres@127.0.0.1:50349/cerp_test"]
+    .includes(process.env.DATABASE_URL ?? "");
 const enabled =
   externalEnabled || operatorEnabled || returnControlEnabled ||
   (process.env.CERP_RECEIPT_PG_TEST === "1" &&
@@ -247,8 +248,9 @@ async function technicalPiece() {
 async function subcontractFixture(
   issue = true,
   technicalSnapshot?: Record<string, unknown>,
+  receiptAccepted = 60,
 ) {
-  const f = await fixture(60),
+  const f = await fixture(receiptAccepted),
     pt = await technicalPiece();
   // Restore the received lot's physical quarantine before recording custody.
   // The control seeded by fixture represents the later quality decision.
@@ -823,8 +825,9 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await expect(repoRemoveDocument({ entity_type: "CONTROL", entity_id: control, doc_id: pinnedDocument, audit: actor }))
       .rejects.toMatchObject({ code: "AUTOCONTROL_SCAN_IN_USE" });
   });
-  it.skipIf(!returnControlEnabled)("requires a scanned handwritten sheet when there is no plan and keeps its pinned GED version on return", async () => {
-    const f = await subcontractFixture(false);
+  it.skipIf(!returnControlEnabled).each(["operator release", "formal quality", "nonconformity"] as const)(
+    "keeps the pinned GED evidence and handles the handwritten return with %s", async (outcome) => {
+    const f = await subcontractFixture(false, undefined, 0);
     const actor = { ...audit(), role: "Directeur", request_id: null };
     const machining = randomUUID(), operationSource = randomUUID(), documentId = randomUUID(), versionId = randomUUID(),
       uploadId = randomUUID(), blobId = randomUUID();
@@ -877,6 +880,13 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await expect(issue([attestation])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_SCAN_SCOPE" });
     await pool.query("INSERT INTO public.ged_document_links(document_id,entity_type,entity_id,link_role,created_by) " +
       "VALUES($1,'ORDRE_FABRICATION',$2,'RELEVE_CONTROLE_REALISE',$3)", [documentId, String(f.ofId), user]);
+    const cutoverLink = randomUUID();
+    const addCutoverLink = () => pool.query("INSERT INTO public.ged_document_links(id,document_id,entity_type,entity_id,link_role,created_by) " +
+      "VALUES($1,$2,'CUTOVER_ROW',$3,'SOURCE',$4)", [cutoverLink, documentId, randomUUID(), user]);
+    await addCutoverLink();
+    expect(await getPaperSubcontractAttestationOptions(pool, f.operationId)).toMatchObject({ documents: [] });
+    await expect(issue([attestation])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_SCAN_SCOPE" });
+    await pool.query("DELETE FROM public.ged_document_links WHERE id=$1", [cutoverLink]);
     expect(await getPaperSubcontractAttestationOptions(pool, f.operationId)).toMatchObject({ documents: [{ version_id: versionId }] });
     await expect(issue([{ ...attestation, conforming_qty: 99 }])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_QUANTITY" });
     await issue([attestation]);
@@ -891,8 +901,55 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
       mode: "PAPER", documentId: versionId, measurements: [] }] }] });
     expect(state.sources[0].proofs[0].controlId).toBeUndefined();
     expect(await readReceiptReturnDocument(f.receipt, f.line, f.issueEventId, versionId)).toEqual({ bytes: pdf, mimeType: "application/pdf" });
+    await addCutoverLink();
+    await expect(readReceiptReturnDocument(f.receipt, f.line, f.issueEventId, versionId))
+      .rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_SCAN_UNAVAILABLE" });
+    await pool.query("DELETE FROM public.ged_document_links WHERE id=$1", [cutoverLink]);
     await expect(readReceiptReturnDocument(f.receipt, f.line, f.issueEventId, randomUUID())).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_SCAN_NOT_FOUND" });
     await expect(assertSubcontractReturnVerified(pool, f.line)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_CONTROL_REQUIRED" });
+    if (outcome === "formal quality") {
+      const formalPlan = randomUUID();
+      await pool.query("INSERT INTO public.quality_control_plan(id,code,label,status,trigger_type,article_id,sampling_rule,published_at,published_by,created_by,updated_by) " +
+        "VALUES($1,$2,'Exigence de retour fixture','PUBLISHED','RECEPTION',$3,'LOT',now(),$4,$4,$4)", [formalPlan, "RET-" + formalPlan, f.id, user]);
+    }
+    if (outcome !== "nonconformity") {
+      const formal = outcome === "formal quality";
+      const returnState = await readReceiptReturnControl(f.receipt, f.line, true);
+      expect(returnState.formalQualityRequired).toBe(formal);
+      const conforming = { idempotencyKey: randomUUID(), expectedVersion: returnState.version, sourceIssueId: f.issueEventId,
+        appearance: "OK" as const, verdict: "CONFORME" as const, measurements: [] };
+      const result = await recordReceiptReturnControl(f.receipt, f.line, conforming, actor);
+      expect(result).toMatchObject({ verdict: "CONFORME", formalQualityRequired: formal, releasedQuantity: formal ? 0 : 100 });
+      expect(await recordReceiptReturnControl(f.receipt, f.line, conforming, actor)).toEqual(result);
+      const status = (await pool.query("SELECT lot_status FROM public.lots WHERE id=$1", [f.lot])).rows[0].lot_status;
+      expect(status).toBe(formal ? "QUARANTAINE" : "LIBERE");
+      const next = randomUUID();
+      await pool.query("INSERT INTO public.of_operations(id,of_id,revision_id,phase,designation) " +
+        "SELECT $1,of_id,revision_id,20,'Reprise après traitement' FROM public.of_operations WHERE id=$2",
+        [next, f.operationId]);
+      const flow = (await getSubcontractFlow(f.packageId)).flow!;
+      const transfer = transferSubcontractReturn(f.packageId, {
+        return_id: flow.returns[0].id, successor_operation_id: next, quantity: 10, expected_version: flow.version,
+        action: "RELEASE", reason: "Reprise des pièces validées au retour",
+      }, actor, randomUUID());
+      if (formal) {
+        await expect(transfer).rejects.toMatchObject({ code: "SUBCONTRACT_TRANSFER_QUANTITY_EXCEEDED" });
+        expect((await pool.query("SELECT 1 FROM public.quality_control WHERE reception_ligne_id=$1", [f.line])).rowCount).toBe(0);
+      } else {
+        await expect(transfer).resolves.toMatchObject({ quantity: 10 });
+        expect((await getSubcontractFlow(f.packageId)).flow!.transferred).toBe(10);
+        const control = (await pool.query("SELECT of_id,operation_id,source_type,trigger_type,qty_released::int AS released " +
+          "FROM public.quality_control WHERE reception_ligne_id=$1", [f.line])).rows[0];
+        expect(control).toMatchObject({ of_id: String(f.ofId), operation_id: f.operationId, source_type: "LOT", trigger_type: "RECEPTION", released: 100 });
+        const line = await readProcessingLine(pool, f.line);
+        await packReceipt(f.receipt, f.line, { idempotencyKey: randomUUID(), expectedVersion: line.version,
+          quantity: 20, packaging: "Bac", packageCount: 1 }, actor);
+        await repoCreateStockReceipt(f.receipt, f.line, body(20), actor, randomUUID());
+        expect(await readProcessingLine(pool, f.line)).toMatchObject({ accepted: 100, transferred: 10, stocked: 20 });
+        expect((await getSubcontractFlow(f.packageId)).flow!.returns[0].transferable).toBe(70);
+      }
+      return;
+    }
     const input = { idempotencyKey: randomUUID(), expectedVersion: state.version, sourceIssueId: f.issueEventId, appearance: "NOK" as const,
       verdict: "NON_CONFORME" as const, comment: "Trace dans la zone tolérancée.", measurements: [] };
     await expect(recordReceiptReturnControl(f.receipt, f.line, input, actor)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_NONCONFORMITY_EVIDENCE_REQUIRED" });

@@ -28,6 +28,7 @@ async function readWorkshopPaperScans(tx: Db, ofId: number, versionId: string | 
     "OR (d.archived_at IS NULL AND v.status='APPLICABLE' AND d.current_version_id=v.id)) " +
     "AND s.document_id=d.id AND s.scan_status='clean' AND s.quarantine_status='released' AND s.sha256=b.sha256 " +
     "AND s.size_bytes=b.size_bytes AND s.mime_type=b.mime_type AND b.mime_type='application/pdf' AND b.size_bytes BETWEEN 1 AND $4 " +
+    "AND NOT EXISTS (SELECT 1 FROM public.ged_document_links restricted WHERE restricted.document_id=d.id AND restricted.entity_type='CUTOVER_ROW') " +
     "AND ($2::uuid IS NULL OR v.id=$2) AND ($3::boolean OR EXISTS (SELECT 1 FROM public.ged_document_links l " +
     "WHERE l.document_id=d.id AND l.entity_type='ORDRE_FABRICATION' AND l.entity_id=$1::bigint::text AND l.link_role='RELEVE_CONTROLE_REALISE')) " +
     "ORDER BY v.created_at DESC,v.id DESC LIMIT 100" + (lock ? " FOR SHARE OF d,v" : ""),
@@ -73,10 +74,10 @@ export async function confirmPaperSubcontractIssue(tx: Db, input: {
     if (bytes.length !== scan.size) throw new HttpError(409, "GED_INTEGRITY", "La taille de la fiche GED ne correspond plus à sa version.");
     const usage = (await tx.query<{ used: number; other_lot: boolean }>(
       "SELECT COALESCE(sum((c.response->>'quantity')::numeric),0)::float8 AS used," +
-      "COALESCE(bool_or(c.response->>'originLotId' IS DISTINCT FROM $6),false) AS other_lot " +
+      "COALESCE(bool_or(c.response->>'originLotId' IS DISTINCT FROM $5),false) AS other_lot " +
       "FROM public.consumable_commands c CROSS JOIN LATERAL jsonb_array_elements(c.response->'proofs') proof " +
-      "WHERE c.command_type=$1 AND c.of_id=$2 AND proof->>'operationId'=$3 AND proof->>'documentId'=$4 " +
-      "AND proof->>'documentSha256'=$5", [PAPER_SUBCONTRACT_ISSUE_COMMAND, input.ofId, operationId, scan.version_id, scan.sha256, input.originLotId],
+      "WHERE c.command_type=$1 AND c.of_id=$2 AND proof->>'operationId'=$3 AND proof->>'documentSha256'=$4",
+      [PAPER_SUBCONTRACT_ISSUE_COMMAND, input.ofId, operationId, scan.sha256, input.originLotId],
     )).rows[0];
     if (usage.other_lot || attestation.conforming_qty > population || usage.used + input.quantity > attestation.conforming_qty) {
       throw new HttpError(409, "SUBCONTRACT_PAPER_QUANTITY", "La quantité attestée sur ce relevé doit couvrir les pièces de ce lot, départs précédents inclus.");

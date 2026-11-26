@@ -4,12 +4,13 @@ import { HttpError } from "../../../utils/httpError";
 import { consumableCommand } from "../../production/repository/consumable-command.repository";
 import { readVerifiedAutocontrolScan, type AutocontrolScanFile } from "../../qualite/repository/autocontrol-scan";
 import type { AutocontrolProof } from "../../qualite/domain/autocontrol-proof";
-import { insertQualityEvent, type QualityActor } from "../../qualite/repository/quality-360.repository";
+import { insertQualityEvent, lockReceiptPlanQualification, type QualityActor } from "../../qualite/repository/quality-360.repository";
 import { repoCreateNonConformityTx } from "../../qualite/repository/qualite.repository";
 import { readPinnedWorkshopPaperScan, type PaperDepartureProof } from "../../subcontract/subcontract-paper-proof.repository";
 import { readSubcontractReturnSources, SUBCONTRACT_RETURN_VERIFIED } from "../../subcontract/subcontract-return-proof.repository";
 import type { SubcontractReturnControlBody } from "../validators/receipt-processing.validators";
 import { processingEvent } from "./receipt-processing.repository";
+import { readSubcontractOperatorReleaseContext, releaseVerifiedSubcontractReturn } from "./receipt-subcontract-operator-release.repository";
 
 const commandType = "RECEIPT_SUBCONTRACT_RETURN_CONTROL";
 type Queryable = Pick<PoolClient, "query">;
@@ -27,7 +28,8 @@ async function readReturnLine(tx: Queryable, receptionId: string, lineId: string
 
 export async function readReceiptReturnControl(receptionId: string, lineId: string, mayReceive: boolean) {
   const line = await readReturnLine(pool, receptionId, lineId);
-  const sources = (await readSubcontractReturnSources(pool, lineId)).map(source => ({
+  const details = await readSubcontractReturnSources(pool, lineId);
+  const sources = details.map(source => ({
     issueId: source.issueId, quantity: source.quantity, unit: source.unit, lotCode: source.lotCode,
     proofs: source.proofs.map(proof => ({
       controlId: proof.controlId, operationId: proof.operationId, mode: proof.mode,
@@ -38,8 +40,10 @@ export async function readReceiptReturnControl(receptionId: string, lineId: stri
     } } : {}),
   }));
   const pending = sources.some(source => !source.recorded);
+  const formalQualityRequired = pending && !await readSubcontractOperatorReleaseContext(pool, lineId, details);
   return { version: line.version, canRecord: mayReceive && line.status === "OPEN" && pending,
-    reopenRequired: mayReceive && line.status === "CLOSED" && pending, sources };
+    reopenRequired: mayReceive && line.status === "CLOSED" && pending, sources,
+    ...(pending ? { formalQualityRequired } : {}) };
 }
 
 async function readPaperProof(tx: Queryable, proof: AutocontrolProof | PaperDepartureProof) {
@@ -65,7 +69,8 @@ export async function readReceiptReturnDocument(receptionId: string, lineId: str
 }
 
 export async function recordReceiptReturnControl(receptionId: string, lineId: string, body: SubcontractReturnControlBody, actor: QualityActor) {
-  return consumableCommand({}, commandType, { ...body, receptionId, lineId }, actor, async tx => {
+  const command = { ...body, receptionId, lineId };
+  return consumableCommand({}, commandType, command, actor, async tx => {
     const line = await readReturnLine(tx, receptionId, lineId, true);
     if (line.status !== "OPEN") throw new HttpError(409, "RECEIPT_NOT_OPEN", "Rouvrez le dossier de réception pour vérifier ce retour.");
     if (line.version !== body.expectedVersion) throw new HttpError(409, "RECEIPT_PROCESSING_CHANGED", "Relisez la ligne avant de confirmer le contrôle.");
@@ -101,6 +106,8 @@ export async function recordReceiptReturnControl(receptionId: string, lineId: st
     for (const proof of source.proofs) {
       if (proof.mode === "PAPER") await readPaperProof(tx, proof);
     }
+    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["quality-lot:" + line.lotId]);
+    await tx.query("SELECT id FROM public.lots WHERE id=$1::uuid FOR UPDATE", [line.lotId]);
 
     const measuredText = measurements.map(item => {
       const tolerance = [item.reference.minMm === undefined ? null : `mini ${item.reference.minMm}`,
@@ -126,6 +133,13 @@ export async function recordReceiptReturnControl(receptionId: string, lineId: st
         actor, old_values: null, new_values: detail, correlation_id: control.correlation_id,
         idempotency_key: body.idempotencyKey, rule_code: "SUBCONTRACT_RETURN_OPERATOR" });
     }
-    return result;
+    const all = body.verdict === "CONFORME" ? await readSubcontractReturnSources(tx, lineId) : [];
+    if (!all.length || all.some(item => item.recorded?.verdict !== "CONFORME")) return result;
+    await lockReceiptPlanQualification(tx);
+    const scope = await readSubcontractOperatorReleaseContext(tx, lineId, all);
+    const release = scope ? await releaseVerifiedSubcontractReturn(tx, {
+      scope, lineId, idempotencyKey: body.idempotencyKey, sources: all, actor,
+    }) : null;
+    return { ...result, formalQualityRequired: !scope, releasedQuantity: release?.releasedQuantity ?? 0 };
   });
 }
