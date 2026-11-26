@@ -9,7 +9,7 @@ import { repoCreateNonConformityTx } from "../../qualite/repository/qualite.repo
 import { readPinnedWorkshopPaperScan, type PaperDepartureProof } from "../../subcontract/subcontract-paper-proof.repository";
 import { readSubcontractReturnSources, SUBCONTRACT_RETURN_VERIFIED } from "../../subcontract/subcontract-return-proof.repository";
 import type { SubcontractReturnControlBody } from "../validators/receipt-processing.validators";
-import { processingEvent } from "./receipt-processing.repository";
+import { processingEvent, readProcessingLine } from "./receipt-processing.repository";
 import { readSubcontractOperatorReleaseContext, releaseVerifiedSubcontractReturn } from "./receipt-subcontract-operator-release.repository";
 
 const commandType = "RECEIPT_SUBCONTRACT_RETURN_CONTROL";
@@ -19,7 +19,7 @@ async function readReturnLine(tx: Queryable, receptionId: string, lineId: string
   const line = (await tx.query<{ lotId: string | null; supplierId: string; status: string; version: number }>(
     "SELECT l.lot_id::text AS \"lotId\",r.fournisseur_id::text AS \"supplierId\",r.status,l.processing_version::int AS version " +
     "FROM public.reception_fournisseur_lignes l JOIN public.receptions_fournisseurs r ON r.id=l.reception_id " +
-    "WHERE r.id=$1::uuid AND l.id=$2::uuid" + (lock ? " FOR UPDATE OF l,r" : ""),
+    "WHERE r.id=$1::uuid AND l.id=$2::uuid" + (lock ? " FOR NO KEY UPDATE OF l,r" : ""),
     [receptionId, lineId],
   )).rows[0];
   if (!line) throw new HttpError(404, "RECEIPT_LINE_NOT_FOUND", "Ligne de réception introuvable.");
@@ -40,10 +40,18 @@ export async function readReceiptReturnControl(receptionId: string, lineId: stri
     } } : {}),
   }));
   const pending = sources.some(source => !source.recorded);
-  const formalQualityRequired = pending && !await readSubcontractOperatorReleaseContext(pool, lineId, details);
+  let formalQualityRequired: boolean | undefined;
+  if (sources.length) {
+    if (pending) {
+      formalQualityRequired = !await readSubcontractOperatorReleaseContext(pool, lineId, details);
+    } else {
+      const processing = await readProcessingLine(pool, lineId, receptionId);
+      formalQualityRequired = processing.accepted + 1e-9 < processing.received;
+    }
+  }
   return { version: line.version, canRecord: mayReceive && line.status === "OPEN" && pending,
     reopenRequired: mayReceive && line.status === "CLOSED" && pending, sources,
-    ...(pending ? { formalQualityRequired } : {}) };
+    ...(formalQualityRequired === undefined ? {} : { formalQualityRequired }) };
 }
 
 async function readPaperProof(tx: Queryable, proof: AutocontrolProof | PaperDepartureProof) {

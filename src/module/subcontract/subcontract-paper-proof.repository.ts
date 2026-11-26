@@ -72,13 +72,18 @@ export async function confirmPaperSubcontractIssue(tx: Db, input: {
       "Déposez un PDF d’autocontrôle rempli dans cet OF, puis attendez la validation de son scan.");
     const bytes = await readBlob(scan.storage_key, scan.sha256);
     if (bytes.length !== scan.size) throw new HttpError(409, "GED_INTEGRITY", "La taille de la fiche GED ne correspond plus à sa version.");
-    const usage = (await tx.query<{ used: number; other_lot: boolean }>(
+    const usage = (await tx.query<{ used: number; other_lot: boolean; conforming: number | null }>(
       "SELECT COALESCE(sum((c.response->>'quantity')::numeric),0)::float8 AS used," +
-      "COALESCE(bool_or(c.response->>'originLotId' IS DISTINCT FROM $5),false) AS other_lot " +
+      "COALESCE(bool_or(c.response->>'originLotId' IS DISTINCT FROM $5),false) AS other_lot," +
+      "min((proof->>'conformingQuantity')::numeric)::float8 AS conforming " +
       "FROM public.consumable_commands c CROSS JOIN LATERAL jsonb_array_elements(c.response->'proofs') proof " +
       "WHERE c.command_type=$1 AND c.of_id=$2 AND proof->>'operationId'=$3 AND proof->>'documentSha256'=$4",
       [PAPER_SUBCONTRACT_ISSUE_COMMAND, input.ofId, operationId, scan.sha256, input.originLotId],
     )).rows[0];
+    if (usage.conforming !== null && Math.abs(usage.conforming - attestation.conforming_qty) > 1e-9) {
+      throw new HttpError(409, "SUBCONTRACT_PAPER_QUANTITY_CHANGED",
+        "La quantité déjà attestée sur cette fiche est figée. Joignez une fiche corrigée si nécessaire.");
+    }
     if (usage.other_lot || attestation.conforming_qty > population || usage.used + input.quantity > attestation.conforming_qty) {
       throw new HttpError(409, "SUBCONTRACT_PAPER_QUANTITY", "La quantité attestée sur ce relevé doit couvrir les pièces de ce lot, départs précédents inclus.");
     }

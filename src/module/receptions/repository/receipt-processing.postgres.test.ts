@@ -891,6 +891,18 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await expect(issue([{ ...attestation, conforming_qty: 99 }])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_QUANTITY" });
     await issue([attestation]);
     expect(await readPaperSubcontractIssueHash(pool, f.issueEventId)).toBe(hashPaperSubcontractAttestations([attestation]));
+    const revisedQuantity = await pool.connect();
+    try {
+      await revisedQuantity.query("BEGIN");
+      await revisedQuantity.query("UPDATE public.ordres_fabrication SET quantite_lancee=150 WHERE id=$1", [f.ofId]);
+      await expect(bindSubcontractIssueAutocontrol(revisedQuantity, {
+        ofId: f.ofId, operationId: f.operationId, issueId: randomUUID(), lotId: f.sourceLot, materialOriginId: f.sourceLot,
+        quantity: 1, unit: "u", paperAttestations: [{ ...attestation, conforming_qty: 101 }],
+      }, actor)).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_QUANTITY_CHANGED" });
+    } finally {
+      await revisedQuantity.query("ROLLBACK");
+      revisedQuantity.release();
+    }
     await bindReceiptSubcontract(f.receipt, f.line, { idempotencyKey: randomUUID(), expectedVersion: 1,
       origins: [{ issueEventId: f.issueEventId, quantity: 100 }] }, actor);
     await pool.query("UPDATE public.ged_document_versions SET status='OBSOLETE',obsoleted_at=now() WHERE id=$1", [versionId]);
@@ -918,9 +930,33 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
       expect(returnState.formalQualityRequired).toBe(formal);
       const conforming = { idempotencyKey: randomUUID(), expectedVersion: returnState.version, sourceIssueId: f.issueEventId,
         appearance: "OK" as const, verdict: "CONFORME" as const, measurements: [] };
-      const result = await recordReceiptReturnControl(f.receipt, f.line, conforming, actor);
+      const existingLotDecision = await pool.connect();
+      await existingLotDecision.query("BEGIN");
+      await existingLotDecision.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", ["quality-lot:" + f.lot]);
+      const recording = recordReceiptReturnControl(f.receipt, f.line, conforming, actor);
+      void recording.catch(() => undefined);
+      try {
+        let reachedLotLock = false;
+        for (let attempt = 0; attempt < 100 && !reachedLotLock; attempt++) {
+          reachedLotLock = (await existingLotDecision.query(
+            "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'",
+          )).rowCount === 1;
+          if (!reachedLotLock) await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        expect(reachedLotLock).toBe(true);
+        await existingLotDecision.query("SET LOCAL statement_timeout='750ms'");
+        // A concurrent NC needs KEY SHARE for the receipt-line foreign key.
+        await existingLotDecision.query("SELECT id FROM public.reception_fournisseur_lignes WHERE id=$1 FOR KEY SHARE", [f.line]);
+      } finally {
+        await existingLotDecision.query("ROLLBACK");
+        existingLotDecision.release();
+      }
+      const result = await recording;
       expect(result).toMatchObject({ verdict: "CONFORME", formalQualityRequired: formal, releasedQuantity: formal ? 0 : 100 });
       expect(await recordReceiptReturnControl(f.receipt, f.line, conforming, actor)).toEqual(result);
+      expect(await readReceiptReturnControl(f.receipt, f.line, true)).toMatchObject({
+        canRecord: false, formalQualityRequired: formal, sources: [{ recorded: { verdict: "CONFORME" } }],
+      });
       const status = (await pool.query("SELECT lot_status FROM public.lots WHERE id=$1", [f.lot])).rows[0].lot_status;
       expect(status).toBe(formal ? "QUARANTAINE" : "LIBERE");
       const next = randomUUID();
