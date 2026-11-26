@@ -25,6 +25,8 @@ export type PlanningOfOperation = {
   id: string; phase: number; designation: string; poste_id: string | null; poste_code: string | null;
   poste_label: string | null; machine_id: string | null; machine_code: string | null; machine_name: string | null;
   planned_duration_minutes: number; status: string; started_at: string | null; ended_at: string | null; updated_at: string;
+  is_current: boolean;
+  committed: { start: string; end: string } | null;
 };
 export type PlanningOfDetail = PlanningOfListItem & {
   piece_technique_version_id: string | null;
@@ -97,15 +99,42 @@ export async function repoGetPlanningReferenceOf(id: number): Promise<PlanningOf
   );
   const base = header.rows[0];
   if (!base) return null;
-  const operations = await pool.query<PlanningOfOperation>(
+  const operations = await pool.query<Omit<PlanningOfOperation, "committed"> & {
+    committed_start: Date | null; committed_end: Date | null;
+  }>(
     `SELECT op.id::text AS id,op.phase::int AS phase,op.designation,op.poste_id::text AS poste_id,p.code AS poste_code,p.label AS poste_label,
       op.machine_id::text AS machine_id,m.code AS machine_code,m.name AS machine_name,
       ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
-      op.status::text AS status,op.started_at::text AS started_at,op.ended_at::text AS ended_at,op.updated_at::text AS updated_at
+      op.status::text AS status,op.started_at::text AS started_at,op.ended_at::text AS ended_at,op.updated_at::text AS updated_at,
+      current_op.is_current,
+      COALESCE(e.start_ts,t.committed_start) AS committed_start,
+      COALESCE(e.end_ts,t.committed_end) AS committed_end
       FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
       LEFT JOIN public.postes p ON p.id=op.poste_id LEFT JOIN public.machines m ON m.id=op.machine_id
+      CROSS JOIN LATERAL (
+        SELECT op.status::text<>'CANCELLED' AND (op.revision_id IS NULL OR EXISTS (
+          SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE'
+        )) AS is_current
+      ) current_op
+      LEFT JOIN LATERAL (
+        SELECT e.start_ts,e.end_ts FROM public.planning_events e
+        WHERE current_op.is_current AND e.of_operation_id=op.id AND e.archived_at IS NULL
+          AND e.status<>'CANCELLED' AND e.end_ts>e.start_ts AND isfinite(e.start_ts) AND isfinite(e.end_ts)
+        ORDER BY e.start_ts,e.id LIMIT 1
+      ) e ON true
+      LEFT JOIN public.planning_tasks t ON current_op.is_current AND e.start_ts IS NULL
+        AND t.operation_id=op.id AND t.committed_end>t.committed_start
+        AND isfinite(t.committed_start) AND isfinite(t.committed_end)
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb)) f
+          WHERE f->>'phase'=op.phase::text AND f->>'type_operation'='SOUS_TRAITANCE'
+        )
       WHERE o.id=$1::bigint ORDER BY op.phase ASC,op.id ASC`, [id],
   );
   return { ...mapList(base), piece_technique_version_id: base.piece_technique_version_id, technical_readiness: base.technical_readiness,
-    date_lancement_reelle: base.date_lancement_reelle, date_fin_reelle: base.date_fin_reelle, operations: operations.rows };
+    date_lancement_reelle: base.date_lancement_reelle, date_fin_reelle: base.date_fin_reelle,
+    operations: operations.rows.map(({ committed_start, committed_end, ...operation }) => ({
+      ...operation,
+      committed: committed_start && committed_end ? { start: committed_start.toISOString(), end: committed_end.toISOString() } : null,
+    })) };
 }
