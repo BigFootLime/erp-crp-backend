@@ -15,6 +15,7 @@ import { buildTechnicalPieceCreationSnapshotInput } from "../../../shared/author
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload";
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { syncFabricatedArticleTechnicalClientTx } from "../../stock/repository/article-commercial.repository";
 import { applicableBomScopeSql } from './bom-version-scope.sql';
 import { linkPurchaseOperationTx, lockPurchasePreparationOfTx } from "./purchase-operation-link.repository";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
@@ -2372,6 +2373,10 @@ export async function repoUpdatePieceTechnique(
   try {
     await client.query("BEGIN");
 
+    const previous = patch.client_id ? (await client.query<{ client_id: string | null }>(
+      `SELECT client_id FROM public.pieces_techniques WHERE id=$1::uuid AND deleted_at IS NULL FOR NO KEY UPDATE`,
+      [id],
+    )).rows[0] : null;
     const res = await client.query<{ id: string }>(sql, values);
     const row = res.rows[0] ?? null;
     if (!row) {
@@ -2386,12 +2391,16 @@ export async function repoUpdatePieceTechnique(
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "Record was modified by another user");
     }
 
+    const articleClients = previous && patch.client_id
+      ? await syncFabricatedArticleTechnicalClientTx(client, id, previous.client_id, patch.client_id, audit.user_id)
+      : null;
     await insertAuditLog(client, audit, {
       action: "pieces-techniques.update",
       entity_type: "pieces_techniques",
       entity_id: id,
       details: {
         patch,
+        ...(articleClients ? { fabricated_article_clients: articleClients } : {}),
       },
     });
 

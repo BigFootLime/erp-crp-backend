@@ -5,6 +5,23 @@ import {
   type ArticleCommercialPatch,
 } from "../domain/article-commercial";
 
+async function replaceArticleClientLinksTx(tx: PoolClient, id: string, clients: string[], actor: number | null) {
+  const found = await tx.query(
+    "SELECT client_id FROM public.clients WHERE client_id=ANY($1::text[]) FOR SHARE",
+    [clients],
+  );
+  if (found.rows.length !== clients.length)
+    throw new HttpError(422, "ARTICLE_CLIENT_UNKNOWN", "Un des clients associés est introuvable.");
+  await tx.query(
+    "DELETE FROM public.article_client_links WHERE article_id=$1::uuid AND NOT(client_id=ANY($2::text[]))",
+    [id, clients],
+  );
+  await tx.query(
+    "INSERT INTO public.article_client_links(article_id,client_id,created_by) SELECT $1::uuid,unnest($2::text[]),$3 ON CONFLICT DO NOTHING",
+    [id, clients, actor],
+  );
+}
+
 export async function syncArticleCommercialTx(
   tx: PoolClient,
   id: string,
@@ -57,26 +74,8 @@ export async function syncArticleCommercialTx(
       "UPDATE public.articles SET commercial_scope=$2 WHERE id=$1::uuid",
       [id, scope],
     );
-  if (patch.client_ids !== undefined) {
-    const found = await tx.query(
-      "SELECT client_id FROM public.clients WHERE client_id=ANY($1::text[]) FOR SHARE",
-      [clients],
-    );
-    if (found.rows.length !== clients.length)
-      throw new HttpError(
-        422,
-        "ARTICLE_CLIENT_UNKNOWN",
-        "Un des clients associés est introuvable.",
-      );
-    await tx.query(
-      "DELETE FROM public.article_client_links WHERE article_id=$1::uuid AND NOT(client_id=ANY($2::text[]))",
-      [id, clients],
-    );
-    await tx.query(
-      "INSERT INTO public.article_client_links(article_id,client_id,created_by) SELECT $1::uuid,unnest($2::text[]),$3 ON CONFLICT DO NOTHING",
-      [id, clients, actor],
-    );
-  }
+  if (patch.client_ids !== undefined)
+    await replaceArticleClientLinksTx(tx, id, clients, actor);
   if (patch.tool_id !== undefined && patch.tool_id !== current.tool_id) {
     const used = (
       await tx.query<{ used: boolean }>(
@@ -132,4 +131,37 @@ export async function syncArticleCommercialTx(
       "UPDATE public.articles SET stock_managed=false,lot_tracking=false WHERE id=$1::uuid",
       [id],
     );
+}
+
+export async function syncFabricatedArticleTechnicalClientTx(
+  tx: PoolClient,
+  pieceId: string,
+  previousClientId: string | null,
+  clientId: string,
+  actor: number,
+) {
+  const article = (await tx.query<{ id: string }>(
+    `SELECT id::text FROM public.articles
+      WHERE piece_technique_id=$1::uuid AND article_category='fabrique'
+        AND archived_at IS NULL AND commercial_scope IS DISTINCT FROM 'CRP'
+      FOR UPDATE`,
+    [pieceId],
+  )).rows[0];
+  if (!article) return null;
+
+  const links = (await tx.query<{ client_id: string }>(
+    `SELECT client_id FROM public.article_client_links WHERE article_id=$1::uuid ORDER BY client_id`,
+    [article.id],
+  )).rows.map(link => link.client_id);
+  // Only an actual technical client change identifies the link to replace.
+  const supersededClientId = previousClientId === clientId ? null : previousClientId;
+  if (links.includes(clientId) && !links.some(id => id === supersededClientId)) return null;
+  const clients = [...new Set([...links.filter(id => id !== supersededClientId), clientId])].sort();
+  await replaceArticleClientLinksTx(tx, article.id, clients, actor);
+  await tx.query(
+    `UPDATE public.articles SET commercial_scope='CLIENTS', row_version=row_version+1, updated_at=now(), updated_by=$2
+      WHERE id=$1::uuid`,
+    [article.id, actor],
+  );
+  return { article_id: article.id, before: links, after: clients };
 }

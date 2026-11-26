@@ -99,10 +99,8 @@ export const createOrLinkArticleFabrique: RequestHandler = async (req, res, next
         family_code: input.family_code,
         article_category: "fabrique",
         piece_technique_id: id,
-        // La portée commerciale vient du client canonique de la PT, pas d'un
-        // identifiant fourni par le navigateur. Le service stock conserve ses
-        // validations et sa transaction article / lien / audit.
-        ...(pieceClientId ? { commercial_scope: "CLIENTS", client_ids: [pieceClientId] } : {}),
+        // Le service stock hérite du client de la PT sous verrou. Transmettre
+        // celui lu ici le transformerait en association supplémentaire si la PT change.
         is_sold: true,
         unite: "u",
         lot_tracking: true,
