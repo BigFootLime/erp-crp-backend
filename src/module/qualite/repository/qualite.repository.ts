@@ -2450,9 +2450,15 @@ export async function repoGetNonConformity(id: string): Promise<NonConformityDet
 }
 
 export async function repoCreateNonConformity(params: { body: CreateNonConformityBodyDTO; audit: AuditContext }): Promise<NonConformityDetail> {
-  const { audit } = params;
   const client = await pool.connect();
-  const id = await withRealtimeOutboxTransaction(client, async (tx) => {
+  const id = await withRealtimeOutboxTransaction(client, (tx) => repoCreateNonConformityTx(tx, params));
+  const out = await repoGetNonConformity(id);
+  if (!out) throw new Error("Failed to reload non conformity");
+  return out;
+}
+
+export async function repoCreateNonConformityTx(tx: PoolClient, params: { body: CreateNonConformityBodyDTO; audit: AuditContext }): Promise<string> {
+    const { audit } = params;
     const body = await resolveNcControlContext(tx, params.body);
     // Match invoice issuance scope ordering: delivery key before lot key. This
     // makes a newly inserted NC visible-or-blocked, never invisible in the
@@ -2581,10 +2587,6 @@ export async function repoCreateNonConformity(params: { body: CreateNonConformit
     });
 
     return id;
-  });
-  const out = await repoGetNonConformity(id);
-  if (!out) throw new Error("Failed to reload non conformity");
-  return out;
 }
 
 export async function repoPatchNonConformity(params: { id: string; body: PatchNonConformityBodyDTO; audit: AuditContext }): Promise<NonConformityDetail | null> {

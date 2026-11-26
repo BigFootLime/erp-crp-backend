@@ -9,6 +9,7 @@ import * as schema from "../validators/receipt-processing.validators";
 import { repoCreateStockReceipt } from "../repository/receptions.repository";
 import { stockToolReceipt } from "../repository/receipt-tool-stock.repository";
 import { bindReceiptSubcontract } from "../repository/receipt-subcontract.repository";
+import { recordReceiptOperatorControl } from "../repository/receipt-operator-control.repository";
 
 export async function requireReceiptProcessingAccess(
   req: Request,
@@ -23,11 +24,15 @@ export async function requireReceiptProcessingAccess(
     );
   return rights;
 }
-const ids = (req: Request) =>
-  [
-    z.string().guid().parse(req.params.id),
-    z.string().guid().parse(req.params.lineId),
-  ] as const;
+const receiptLineParams = z.object({ id: z.string().guid(), lineId: z.string().guid() });
+function ids(req: Request) {
+  const { id, lineId } = receiptLineParams.parse(req.params);
+  return [id, lineId] as const;
+}
+function processingResponseLine(req: Request, line: repo.ProcessingLine, canReceive: boolean) {
+  const visibleLine = req.terminal ? { ...line, operatorControl: undefined } : line;
+  return { ...visibleLine, allowedActions: repo.receiptAllowedActions(visibleLine, canReceive) };
+}
 export const listProcessing = asyncHandler(async (req, res) => {
   const permissions = await requireReceiptProcessingAccess(req);
   const result = await repo.listProcessingLines(
@@ -35,10 +40,7 @@ export const listProcessing = asyncHandler(async (req, res) => {
   );
   res.json({
     ...result,
-    items: result.items.map((line) => ({
-      ...line,
-      allowedActions: repo.receiptAllowedActions(line, permissions.receive),
-    })),
+    items: result.items.map(line => processingResponseLine(req, line, permissions.receive)),
     permissions,
   });
 });
@@ -46,10 +48,18 @@ export const getProcessing = asyncHandler(async (req, res) => {
   const permissions = await requireReceiptProcessingAccess(req);
   const line = await repo.getProcessingLine(...ids(req));
   res.json({
-    ...line,
+    ...processingResponseLine(req, line, permissions.receive),
     permissions,
-    allowedActions: repo.receiptAllowedActions(line, permissions.receive),
   });
+});
+export const operatorControl = asyncHandler(async (req, res) => {
+  if (req.terminal) throw new HttpError(403, "TERMINAL_KIND_FORBIDDEN", "Ouvrez CERP pour confirmer le contrôle de cette matière.");
+  await requireReceiptProcessingAccess(req, true);
+  const params = receiptLineParams.safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "RECEIPT_LINE_INVALID", "La réception ou sa ligne est invalide.");
+  const body = schema.operatorControlSchema.safeParse(req.body);
+  if (!body.success) throw new HttpError(422, "RECEIPT_OPERATOR_CONTROL_INVALID", "Vérifiez et confirmez chaque mesure requise avant d’enregistrer le contrôle.");
+  res.json(await recordReceiptOperatorControl(params.data.id, params.data.lineId, body.data, buildAuditContext(req)));
 });
 export const packProcessing = asyncHandler(async (req, res) => {
   await requireReceiptProcessingAccess(req, true);

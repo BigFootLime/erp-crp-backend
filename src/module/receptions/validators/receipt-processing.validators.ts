@@ -68,5 +68,27 @@ export const voidPackagingSchema = z
     reason: z.string().trim().min(3).max(2000),
   })
   .strict();
+const operatorMeasurement = z.object({
+  label: z.string().trim().min(1).max(120),
+  valueMm: z.number().finite().positive().max(1000000000).multipleOf(0.001),
+  confirmed: z.literal(true),
+  result: z.enum(["OK", "NOK"]).optional(),
+}).strict();
+export const operatorControlSchema = z.object({
+  ...command,
+  kind: z.literal("MP"),
+  verdict: z.enum(["CONFORME", "NON_CONFORME"]),
+  measurements: z.array(operatorMeasurement).min(1).max(30),
+  grade: z.object({ value: z.string().trim().min(1).max(120), confirmed: z.literal(true) }).strict().optional(),
+  note: z.string().trim().max(2000).optional(),
+}).strict().superRefine((input, ctx) => {
+  if (input.verdict === "CONFORME" && input.measurements.some(item => item.result === "NOK")) {
+    ctx.addIssue({ code: "custom", path: ["verdict"], message: "Une cote non conforme impose le constat non conforme." });
+  }
+  if (input.verdict === "NON_CONFORME" && (input.note?.length ?? 0) < 3) {
+    ctx.addIssue({ code: "custom", path: ["note"], message: "Décrivez la non-conformité constatée." });
+  }
+});
+export type OperatorControlBody = z.infer<typeof operatorControlSchema>;
 export type PackReceiptBody = z.infer<typeof packReceiptSchema>;
 export type ProcessingQuery = z.infer<typeof processingQuerySchema>;
