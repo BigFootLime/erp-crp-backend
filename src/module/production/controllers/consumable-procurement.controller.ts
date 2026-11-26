@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../../../utils/asyncHandler';
 import { HttpError } from '../../../utils/httpError';
 import { buildAuditContext } from './production.controller';
+import { redactOfPurchaseLinePrices } from '../domain/of-purchase-price-visibility';
 import { getOfConsumables } from '../repository/consumable-procurement-read.repository';
 import { configureOfConsumable,prepareOfConsumables,withdrawOfConsumable,reconcileOfConsumables,prepareOfConsumablePurchases } from '../repository/consumable-procurement.repository';
 import {materialCommandSchema} from '../validators/of-material.validators';
@@ -15,7 +16,7 @@ async function present(data:Awaited<ReturnType<typeof getOfConsumables>>,req:Req
   const permissions=await consumableRights(req);
   return {...data,permissions,needs:data.needs.map(n=>({...n,catalogue:n.catalogue?{...n.catalogue,price:permissions.prices?n.catalogue.price:null}:null,
     catalogues:n.catalogues.map(c=>({...c,price:permissions.prices?c.price:null}))})),
-    otherPurchases:data.otherPurchases.map(p=>({...p,pu_achat:permissions.prices?p.pu_achat:null}))};
+    otherPurchases:permissions.prices ? data.otherPurchases : data.otherPurchases.map(redactOfPurchaseLinePrices)};
 }
 export const readConsumables=asyncHandler(async(req,res)=>{res.json(await present(await getOfConsumables(ofId(req)),req));});
 export const prepareConsumablePurchases=asyncHandler(async(req,res)=>{
