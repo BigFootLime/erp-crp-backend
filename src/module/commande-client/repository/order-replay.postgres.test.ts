@@ -6,11 +6,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import pool from "../../../config/database";
+import { errorHandler } from "../../../middlewares/errorHandler";
 import { industrialTx } from "../../planning/services/industrial-runs.service";
 import {
   createPilotFixtureClient,
   createPilotFixtureArticle,
 } from "../../../__tests__/fixtures/demand-pilot.fixture";
+import { seedWorkbenchStock } from "../../../__tests__/fixtures/production-workbench.fixture";
+import commercialReliability from "../../commercial-reliability/routes/commercial-reliability.routes";
 import orders from "../routes/commande-client.routes";
 import {
   repoCreateCommandeDraftTx,
@@ -25,9 +28,141 @@ const isolated =
   process.env.CERP_DEMAND_POSTGRES_TEST === "1" &&
   ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
   url.pathname === "/cerp_test";
+
+async function seedCancellation() {
+  const actor = Number((await pool.query("SELECT id FROM public.users WHERE is_superadmin ORDER BY id LIMIT 1")).rows[0]?.id);
+  expect(actor).toBeGreaterThan(0);
+  const article = randomUUID(), code = `CX-${article.slice(0, 8)}`;
+  const identity = await industrialTx(async tx => {
+    const client = await createPilotFixtureClient(tx, "K", "Client de recette annulation");
+    const { piece, version } = await createPilotFixtureArticle(tx, client, actor, article, code);
+    const order = await repoCreateCommandeDraftTx(tx, {
+      client_id: client, code_client: code, date_commande: "2030-01-02",
+      lignes: [{ article_id: article, designation: code, quantite: 3, prix_unitaire_ht: 5, taux_tva: 20 }],
+    }, actor, "client_demand");
+    const line = (await tx.query("SELECT id::text FROM public.commande_ligne WHERE commande_id=$1", [order.id])).rows[0].id;
+    const ofId = (await tx.query(`INSERT INTO public.ordres_fabrication
+      (numero,commande_id,commande_ligne_id,client_id,piece_technique_id,article_id,quantite_lancee,statut,created_by,updated_by)
+      VALUES($1,$2,$3,$4,$5,$6,3,'BROUILLON',$7,$7) RETURNING id::text`,
+    [code, order.id, line, client, piece, article, actor])).rows[0].id;
+    const revision = (await tx.query(`INSERT INTO public.of_revisions(of_id,revision_rank,revision_code,snapshot,snapshot_sha256,author_user_id,statut)
+      VALUES($1,0,'R00','{}',repeat('a',64),$2,'ACTIVE') RETURNING id::text`, [ofId, actor])).rows[0].id;
+    const operation = (await tx.query(`INSERT INTO public.of_operations(of_id,revision_id,phase,designation)
+      VALUES($1,$2,20,'Fraisage de recette') RETURNING id::text`, [ofId, revision])).rows[0].id;
+    const event = (await tx.query(`INSERT INTO public.planning_events(id,of_id,of_operation_id,machine_id,title,start_ts,end_ts,allow_overlap)
+      SELECT gen_random_uuid(),$1,$3,id,$2,'2030-02-01 08:00+01','2030-02-01 09:00+01',true FROM public.machines ORDER BY id LIMIT 1
+      RETURNING id::text`, [ofId, code, operation])).rows[0]?.id;
+    expect(event).toBeTruthy();
+    await tx.query(`UPDATE public.planning_tasks SET forecast_start='2030-02-01 08:00+01',forecast_end='2030-02-01 09:00+01'
+      WHERE operation_id=$1`, [operation]);
+    return { orderId: order.id, line, ofId, event, version, piece, operation, revision };
+  });
+  const stock = await seedWorkbenchStock({ ...identity, article, code, audit: { user_id: actor } }, 30);
+  const reservations = [randomUUID(), randomUUID()].sort();
+  await industrialTx(async tx => {
+    await tx.query("UPDATE public.stock_levels SET qty_reserved=5 WHERE id=$1", [stock.level]);
+    await tx.query("UPDATE public.stock_batches SET qty_reserved=5 WHERE id=$1", [stock.batch]);
+    await tx.query(`INSERT INTO public.stock_reservations
+      (id,article_id,location_id,lot_id,stock_batch_id,qty_reserved,source_type,source_id,commande_ligne_id,of_id,reason,created_by,updated_by)
+      VALUES($1,$3,$4,$5,$6,2,'COMMANDE_LIGNE',$7::bigint::text,$7,NULL,'Fixture commande',$9,$9),
+            ($2,$3,$4,$5,$6,3,'OF',$8::bigint::text,NULL,$8,'Fixture OF',$9,$9)`,
+    [...reservations, article, stock.location, stock.lot, stock.batch, identity.line, identity.ofId, actor]);
+  });
+  const route = `/orders/${identity.orderId}/cancel`;
+  const app = express().use(express.json()).use((req, _res, next) => {
+    req.user = { id: actor, role: "Directeur" } as typeof req.user;
+    next();
+  }).use(commercialReliability).use(errorHandler);
+  const key = randomUUID();
+  const cancel = () => request(app).post(route).set("Idempotency-Key", key).send({ reason_code: "CUSTOMER_CANCELLED" });
+  const snapshot = async () => (await pool.query(`SELECT
+    (SELECT statut::text FROM public.ordres_fabrication WHERE id=$1) AS of_status,
+    (SELECT status::text FROM public.planning_events WHERE id=$2) AS slot_status,
+    (SELECT archived_at IS NOT NULL FROM public.planning_events WHERE id=$2) AS slot_archived,
+    (SELECT array_agg(status ORDER BY id) FROM public.stock_reservations WHERE id=ANY($3::uuid[])) AS reservations,
+    (SELECT qty_total::float8 FROM public.stock_levels WHERE id=$4) AS physical,
+    (SELECT qty_reserved::float8 FROM public.stock_levels WHERE id=$4) AS reserved,
+    (SELECT qty_reserved::float8 FROM public.stock_batches WHERE id=$5) AS batch_reserved,
+    (SELECT count(*)::int FROM public.stock_movements WHERE article_id=$6) AS movements,
+    (SELECT count(*)::int FROM public.commercial_order_cancellations WHERE commande_id=$7) AS cancelled,
+    (SELECT snapshot_sha256 FROM public.of_revisions WHERE id=$8) AS of_revision_hash,
+    (SELECT forecast_end IS NOT NULL FROM public.planning_tasks WHERE operation_id=$9) AS has_forecast,
+    (SELECT revision::text FROM public.planning_central_settings WHERE singleton) AS revision`,
+  [identity.ofId, identity.event, reservations, stock.level, stock.batch, article, identity.orderId,
+    identity.revision, identity.operation])).rows[0];
+  return { ...identity, stock, reservations, cancel, snapshot };
+}
+
 describe.skipIf(!isolated)("Guided order retries and cancellation", () => {
   afterAll(async () => {
     await pool.end();
+  });
+  it("cancels unstarted production, removes its slot and releases stock once on concurrent replay", async () => {
+    const f = await seedCancellation();
+    const before = await f.snapshot();
+    expect(before).toMatchObject({ of_status: "BROUILLON", slot_status: "PLANNED", reserved: 5, cancelled: 0, has_forecast: true });
+    const responses = await Promise.all([f.cancel(), f.cancel()]);
+    expect(responses.map(response => [response.status, response.body])).toEqual(expect.arrayContaining([
+      [200, expect.objectContaining({ status: "ANNULE", idempotent_replay: false })],
+      [200, expect.objectContaining({ status: "ANNULE", idempotent_replay: true })],
+    ]));
+    const after = await f.snapshot();
+    expect(after).toMatchObject({ of_status: "ANNULE", slot_status: "CANCELLED", slot_archived: true,
+      reservations: ["RELEASED", "RELEASED"], physical: before.physical, reserved: 0, batch_reserved: 0,
+      movements: before.movements, cancelled: 1, of_revision_hash: before.of_revision_hash, has_forecast: false });
+    expect(BigInt(after.revision)).toBeGreaterThan(BigInt(before.revision));
+    expect((await f.cancel()).body.idempotent_replay).toBe(true);
+    expect(await f.snapshot()).toEqual(after);
+  });
+
+  it("rolls back the first release when a second reservation has already been prepared", async () => {
+    const f = await seedCancellation();
+    await pool.query("UPDATE public.stock_reservations SET qty_prepared=1 WHERE id=$1", [f.reservations[1]]);
+    const before = await f.snapshot();
+    const rejected = await f.cancel();
+    expect(rejected.status, JSON.stringify(rejected.body)).toBe(409);
+    expect(JSON.stringify(rejected.body)).toContain("RESERVATION_ALREADY_PREPARED");
+    expect(await f.snapshot()).toEqual(before);
+  });
+
+  it("preserves the order when stock has already been consumed or fabrication launched", async () => {
+    const f = await seedCancellation();
+    await pool.query("UPDATE public.stock_reservations SET qty_consumed=1 WHERE id=$1", [f.reservations[0]]);
+    const consumed = await f.snapshot();
+    expect(JSON.stringify((await f.cancel()).body)).toContain("ORDER_STOCK_COMMITMENT");
+    expect(await f.snapshot()).toEqual(consumed);
+    await pool.query("UPDATE public.ordres_fabrication SET date_lancement_reelle=CURRENT_DATE WHERE id=$1", [f.ofId]);
+    const started = await f.snapshot();
+    expect(JSON.stringify((await f.cancel()).body)).toContain("OF_CANCELLATION_COMMITMENTS");
+    expect(await f.snapshot()).toEqual(started);
+  });
+
+  it("backs off a concurrent lot writer before applying any part of the cancellation", async () => {
+    const f = await seedCancellation();
+    const before = await f.snapshot();
+    const locker = await pool.connect();
+    try {
+      await locker.query("BEGIN");
+      await locker.query("SELECT id FROM public.lots WHERE id=$1 FOR UPDATE", [f.stock.lot]);
+      const busy = await f.cancel();
+      expect(busy.status, JSON.stringify(busy.body)).toBe(409);
+      expect(JSON.stringify(busy.body)).toContain("ORDER_CANCELLATION_BUSY");
+      expect(await f.snapshot()).toEqual(before);
+    } finally {
+      await locker.query("ROLLBACK");
+      locker.release();
+    }
+    expect((await f.cancel()).status).toBe(200);
+  });
+
+  it("preserves a planned order already acknowledged to its client", async () => {
+    const f = await seedCancellation();
+    await pool.query("UPDATE public.commande_client SET ar_sent_at=now() WHERE id=$1", [f.orderId]);
+    const before = await f.snapshot();
+    const result = await f.cancel();
+    expect(result.status, JSON.stringify(result.body)).toBe(409);
+    expect(JSON.stringify(result.body)).toContain("PLANNING_LOCKED_AFTER_AR");
+    expect(await f.snapshot()).toEqual(before);
   });
   it("retains one original PDF after repeated saves and closes only pending work on cancellation", async () => {
     const actorId = (
