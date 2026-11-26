@@ -23,11 +23,11 @@ réception sans article. Après la première écriture, conserver un Web qui
 accepte le champ `article_id` nul dans la fiche BCF et une API qui lit la
 réception par jointure externe. La paire 2.1.13 sans cette compatibilité
 ne sait pas afficher le détail de ces dossiers. Sur l’API compatible, le GET
-de la fiche BCF retourne le détail des prestations libres avec
+du BCF et celui de la réception retournent le détail des prestations libres avec
 `include_service_receipts=1`. Sans ce paramètre, le résumé filtre ces
 lignes uniquement. Les réceptions, les totaux du bon et les pièces jointes
-restent accessibles aux clients précédents. La fiche de réception reste
-complète. Conserver le schéma, les preuves du BL et les quantités pointées
+restent accessibles aux clients précédents. La fiche de réception complète est
+disponible aux lecteurs qui demandent ce détail. Conserver le schéma, les preuves du BL et les quantités pointées
 en cas de retour applicatif.
 
 ## Sub-piece references and assembly planning

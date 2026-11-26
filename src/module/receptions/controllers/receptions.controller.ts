@@ -148,7 +148,11 @@ export const getReception: RequestHandler = async (req, res, next) => {
       res.status(404).json({ error: "Not found" })
       return
     }
-    res.json(out)
+    if (req.query.include_service_receipts === "1") {
+      res.json(out)
+      return
+    }
+    res.json({ ...out, lines: out.lines.filter(line => line.article_id !== null) })
   } catch (err) {
     next(err)
   }
