@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { CommandeListItem, ClientLite } from "../types/commande-client.types";
 import type { ListCommandesQueryDTO } from "../validators/commande-client.validators";
+import { COMMANDE_LINE_SUMMARY_JOIN_SQL, type CommercialLineSummary } from "./commercial-line-summary.sql";
 
 function sortColumn(sortBy: ListCommandesQueryDTO["sortBy"]) {
   switch (sortBy) {
@@ -115,6 +116,7 @@ export function createCommandeListReadRepository(deps: {
     const total = countRes.rows[0]?.total ?? 0;
 
     const dataSql = `
+      WITH page AS (
       SELECT
         cc.id::text AS id,
         cc.numero,
@@ -133,7 +135,8 @@ export function createCommandeListReadRepository(deps: {
           'phone', c.phone,
           'delivery_address_id', c.delivery_address_id::text,
           'bill_address_id', c.bill_address_id::text
-        ) END AS client
+        ) END AS client,
+        ${orderBy} AS list_order
       FROM commande_client cc
       LEFT JOIN clients c ON c.client_id = cc.client_id
       LEFT JOIN LATERAL (
@@ -144,21 +147,28 @@ export function createCommandeListReadRepository(deps: {
         LIMIT 1
       ) st ON TRUE
       ${whereSql}
-      ORDER BY ${orderBy} ${orderDir}
+      ORDER BY ${orderBy} ${orderDir}, cc.id ${orderDir}
       LIMIT $${values.length + 1}
       OFFSET $${values.length + 2}
+      )
+      SELECT page.*, commercial_lines.line_summary
+      FROM page
+      ${COMMANDE_LINE_SUMMARY_JOIN_SQL}
+      ORDER BY page.list_order ${orderDir}, page.id::bigint ${orderDir}
     `;
     const dataValues = [...values, pageSize, offset];
     type CommandeListRow = Omit<CommandeListItem, "id"> & {
       id: string;
       client: ClientLite | null;
+      list_order: unknown;
+      line_summary: CommercialLineSummary;
     };
 
     const dataRes = await pool.query<CommandeListRow>(dataSql, dataValues);
 
-    const items = dataRes.rows.map((r) => ({
-      ...r,
-      id: toInt(r.id, "id"),
+    const items = dataRes.rows.map(({ list_order: _order, ...row }) => ({
+      ...row,
+      id: toInt(row.id, "id"),
     }));
 
     return { items, total };
