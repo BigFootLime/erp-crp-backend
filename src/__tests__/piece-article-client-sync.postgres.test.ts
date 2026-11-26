@@ -64,7 +64,7 @@ describe.skipIf(!enabled)("Technical-piece client changes on PostgreSQL", () => 
   }
 
   const getArticle = (id: string) => request(app).get(`/api/v1/stock/articles/${id}`);
-  const patchPiece = (id: string, client_id: string, expected_updated_at: string) =>
+  const patchPiece = (id: string, client_id: string | null, expected_updated_at: string) =>
     request(app).patch(`/api/v1/pieces-techniques/${id}`).send({ client_id, expected_updated_at });
 
   it("moves the primary relation while preserving other clients and immutable records", async () => {
@@ -101,5 +101,15 @@ describe.skipIf(!enabled)("Technical-piece client changes on PostgreSQL", () => 
 
     await patchPiece(piece, next, updated.body.updated_at).expect(200);
     expect((await getArticle(article).expect(200)).body.row_version).toBe(after.body.row_version);
+  });
+
+  it("preserves existing article authorizations when the technical client is cleared", async () => {
+    const { original, extra, article, code, piece, expected } = await seed({ secondary: true });
+    const before = await getArticle(article).expect(200);
+    const cleared = await patchPiece(piece, null, expected).expect(200);
+    expect(cleared.body.client_id).toBeNull();
+    const after = await getArticle(article).expect(200);
+    expect(after.body).toMatchObject({ code, commercial_scope: "CLIENTS", client_ids: [original, extra].sort(),
+      row_version: before.body.row_version });
   });
 });
