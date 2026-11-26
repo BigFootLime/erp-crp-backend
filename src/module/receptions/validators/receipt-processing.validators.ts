@@ -90,5 +90,26 @@ export const operatorControlSchema = z.object({
   }
 });
 export type OperatorControlBody = z.infer<typeof operatorControlSchema>;
+
+export const subcontractReturnControlSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  expectedVersion: z.number().int().min(1),
+  sourceIssueId: z.string().uuid(),
+  appearance: z.enum(["OK", "NOK"]),
+  verdict: z.enum(["CONFORME", "NON_CONFORME"]),
+  measurements: z.array(z.object({
+    controlId: z.string().uuid(),
+    characteristicKey: z.string().trim().min(1).max(40),
+    sampleNo: z.number().int().min(1),
+    valueMm: z.number().finite().min(0).max(1_000_000),
+  }).strict()).max(100),
+  paperMeasurement: z.object({
+    label: z.string().trim().min(1).max(100),
+    valueMm: z.number().finite().min(0).max(1_000_000),
+  }).strict().optional(),
+  comment: z.string().trim().min(1).max(1000).optional(),
+}).strict();
+
+export type SubcontractReturnControlBody = z.infer<typeof subcontractReturnControlSchema>;
 export type PackReceiptBody = z.infer<typeof packReceiptSchema>;
 export type ProcessingQuery = z.infer<typeof processingQuerySchema>;

@@ -20,7 +20,15 @@ export const subcontractLedgerSchema = z.object({
   lot_id: uuid,
   unit,
   qty: quantity,
+  paper_attestations: z.array(z.object({
+    operation_id: uuid,
+    document_version_id: uuid,
+    complete_sheet: z.literal(true),
+    conforming_qty: quantity,
+  }).strict()).min(1).max(20).optional(),
 });
+
+export type PaperDepartureAttestation = NonNullable<z.infer<typeof subcontractLedgerSchema>["paper_attestations"]>[number];
 
 export const finaliseSubcontractWorkPackageSchema = z.object({
   expected_row_version: numericInput.refine((value) => Number.isInteger(value) && value > 0, "Version positive entière requise"),

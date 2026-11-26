@@ -48,13 +48,13 @@ export type CancelEmptyExecutionBodyDTO = z.infer<typeof cancelEmptyExecutionSch
 export const autocontrolCaptureSchema = z.object({
   params: z.object({ id: uuid }).strict(),
   body: z.discriminatedUnion("mode", [
-    z.object({ mode: z.literal("DIGITAL"), expected_updated_at: isoDateTime }).strict(),
+    z.object({ mode: z.literal("DIGITAL"), expected_updated_at: isoDateTime, confirm: z.literal(true).optional(), lot_id: uuid.optional() }).strict(),
     z.object({
-      mode: z.literal("PAPER"), expected_updated_at: isoDateTime, document_id: uuid,
+      mode: z.literal("PAPER"), expected_updated_at: isoDateTime, document_id: uuid, confirm: z.literal(true).optional(), lot_id: uuid.optional(),
       complete_sheet: z.literal(true), conforming_qty: z.number().finite().min(0).max(1_000_000_000),
       instruments: z.array(z.object({ characteristic_key: shortText(40), instrument_id: uuid }).strict()).max(200),
     }).strict(),
-  ]),
+  ]).refine(body => body.lot_id === undefined || body.confirm === true, { path: ["lot_id"], message: "Le lot est lié à la confirmation d’autocontrôle." }),
 }).strict();
 export type AutocontrolCaptureBodyDTO = z.infer<typeof autocontrolCaptureSchema>["body"];
 
