@@ -4,6 +4,7 @@ import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
 import { buildAuditContext } from "../../production/controllers/production.controller";
 import { consumableAccountRights } from "../../stock/domain/consumable-access";
+import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
 import * as repo from "../repository/receipt-processing.repository";
 import * as schema from "../validators/receipt-processing.validators";
 import { repoCreateStockReceipt } from "../repository/receptions.repository";
@@ -89,6 +90,9 @@ export const downloadReturnControlDocument = asyncHandler(async (req, res) => {
   const params = z.object({ issueId: z.string().guid(), documentId: z.string().guid() }).safeParse(req.params);
   if (!params.success) throw new HttpError(400, "SUBCONTRACT_RETURN_SCAN_INVALID", "La fiche demandée est invalide.");
   const doc = await readReceiptReturnDocument(...scope, params.data.issueId, params.data.documentId);
+  const audit = buildAuditContext(req);
+  await repoInsertAuditLog({ ...audit, body: { event_type: "ACTION", action: "receptions.subcontract-autocontrol.download",
+    entity_type: "reception_fournisseur_ligne", entity_id: scope[1], details: params.data } });
   const ext = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" }[doc.mimeType];
   res.set({ "Content-Type": doc.mimeType, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
     "Content-Disposition": 'inline; filename="fiche-autocontrole.' + ext + '"' }).send(doc.bytes);

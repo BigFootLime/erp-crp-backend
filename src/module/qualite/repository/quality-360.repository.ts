@@ -1426,8 +1426,8 @@ async function buildAutocontrolDetail(q: DbQueryer, row: ExecutionRow): Promise<
 
 async function readAutocontrolScan(q: DbQueryer, row: ExecutionRow, documentId: string, lock = false) {
   assertPaperAutocontrolScope(row);
-  const doc = (await q.query<AutocontrolScanFile & { id: string; removed_at: string | null }>(`
-    SELECT id::text,storage_path,mime_type,size_bytes::text,sha256,removed_at
+  const doc = (await q.query<AutocontrolScanFile & { id: string; removed_at: string | null; confidentiality: string }>(`
+    SELECT id::text,storage_path,mime_type,size_bytes::text,sha256,removed_at,confidentiality
     FROM public.quality_documents WHERE id=$1::uuid AND entity_type='CONTROL' AND entity_id=$2::uuid
     ${lock ? "FOR UPDATE" : ""}`, [documentId, row.id])).rows[0];
   if (!doc || doc.removed_at) throw new HttpError(422, "AUTOCONTROL_SCAN_REQUIRED", "Joignez la fiche papier renseignée à ce contrôle.");
@@ -1462,7 +1462,10 @@ export async function recordSubcontractIssueAutocontrol(
       (row.validation_date && row.verdict !== "CONFORME")) throw fail();
     if (proof.mode === "PAPER") {
       if (!proof.documentId || !proof.documentSha256) throw fail();
-      const digest = await verifyAutocontrolScanFile(await readAutocontrolScan(tx, row, proof.documentId, true), false);
+      const scan = await readAutocontrolScan(tx, row, proof.documentId, true);
+      if (scan.confidentiality === "RESTRICTED") throw new HttpError(409, "AUTOCONTROL_SCAN_RESTRICTED",
+        "Joignez au contrôle une fiche d’autocontrôle accessible au service Réceptions.");
+      const digest = await verifyAutocontrolScanFile(scan, false);
       if (digest !== proof.documentSha256) throw fail();
     }
     const usage = (await tx.query<{ quantity: number; other_origin: boolean }>(

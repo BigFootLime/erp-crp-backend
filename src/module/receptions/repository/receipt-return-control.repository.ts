@@ -1,17 +1,17 @@
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
-import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
+import { consumableCommand } from "../../production/repository/consumable-command.repository";
 import { readVerifiedAutocontrolScan, type AutocontrolScanFile } from "../../qualite/repository/autocontrol-scan";
 import type { AutocontrolProof } from "../../qualite/domain/autocontrol-proof";
 import { insertQualityEvent, type QualityActor } from "../../qualite/repository/quality-360.repository";
-import { acquireIdempotency, saveReceipt } from "../../qualite/repository/quality-command-receipt.repository";
 import { repoCreateNonConformityTx } from "../../qualite/repository/qualite.repository";
+import { readPinnedWorkshopPaperScan, type PaperDepartureProof } from "../../subcontract/subcontract-paper-proof.repository";
 import { readSubcontractReturnSources, SUBCONTRACT_RETURN_VERIFIED } from "../../subcontract/subcontract-return-proof.repository";
 import type { SubcontractReturnControlBody } from "../validators/receipt-processing.validators";
 import { processingEvent } from "./receipt-processing.repository";
 
-const commandType = "receptions.subcontract-return-control";
+const commandType = "RECEIPT_SUBCONTRACT_RETURN_CONTROL";
 type Queryable = Pick<PoolClient, "query">;
 
 async function readReturnLine(tx: Queryable, receptionId: string, lineId: string, lock = false) {
@@ -42,10 +42,11 @@ export async function readReceiptReturnControl(receptionId: string, lineId: stri
     reopenRequired: mayReceive && line.status === "CLOSED" && pending, sources };
 }
 
-async function readPaperProof(tx: Queryable, proof: AutocontrolProof) {
+async function readPaperProof(tx: Queryable, proof: AutocontrolProof | PaperDepartureProof) {
+  if ("source" in proof) return readPinnedWorkshopPaperScan(tx, proof);
   const doc = (await tx.query<AutocontrolScanFile>(
     "SELECT storage_path,mime_type,size_bytes::text,sha256 FROM public.quality_documents " +
-    "WHERE id=$1::uuid AND entity_type='CONTROL' AND entity_id=$2::uuid AND removed_at IS NULL",
+    "WHERE id=$1::uuid AND entity_type='CONTROL' AND entity_id=$2::uuid AND removed_at IS NULL AND confidentiality<>'RESTRICTED'",
     [proof.documentId ?? null, proof.controlId],
   )).rows[0];
   if (!doc || doc.sha256?.toLowerCase() !== proof.documentSha256) {
@@ -64,11 +65,7 @@ export async function readReceiptReturnDocument(receptionId: string, lineId: str
 }
 
 export async function recordReceiptReturnControl(receptionId: string, lineId: string, body: SubcontractReturnControlBody, actor: QualityActor) {
-  return withRealtimeOutboxTransaction(await pool.connect(), async tx => {
-    const { idempotencyKey, ...input } = body;
-    const request = { receptionId, lineId, ...input };
-    const idem = await acquireIdempotency({ client: tx, actor, idempotencyKeyRaw: idempotencyKey, commandType, requestPayload: request });
-    if (idem.replay) return idem.replay;
+  return consumableCommand({}, commandType, { ...body, receptionId, lineId }, actor, async tx => {
     const line = await readReturnLine(tx, receptionId, lineId, true);
     if (line.status !== "OPEN") throw new HttpError(409, "RECEIPT_NOT_OPEN", "Rouvrez le dossier de réception pour vérifier ce retour.");
     if (line.version !== body.expectedVersion) throw new HttpError(409, "RECEIPT_PROCESSING_CHANGED", "Relisez la ligne avant de confirmer le contrôle.");
@@ -105,26 +102,30 @@ export async function recordReceiptReturnControl(receptionId: string, lineId: st
       if (proof.mode === "PAPER") await readPaperProof(tx, proof);
     }
 
+    const measuredText = measurements.map(item => {
+      const tolerance = [item.reference.minMm === undefined ? null : `mini ${item.reference.minMm}`,
+        item.reference.maxMm === undefined ? null : `maxi ${item.reference.maxMm}`].filter(Boolean).join(", ");
+      return `${item.reference.label}, échantillon ${item.sampleNo} : ${item.valueMm} mm (avant traitement ${item.reference.valueMm} mm${tolerance ? ", " + tolerance + " mm" : ""})${item.outOfBounds ? " · hors tolérance" : ""}`;
+    });
+    if (body.paperMeasurement) measuredText.unshift(`${body.paperMeasurement.label} : ${body.paperMeasurement.valueMm} mm (fiche manuscrite)`);
+    const description = [body.comment, body.appearance === "NOK" ? "Aspect au retour non conforme" : "Aspect au retour conforme", ...measuredText]
+      .filter(Boolean).join("\n").slice(0, 10_000);
     const nonConformityId = body.verdict === "NON_CONFORME" ? await repoCreateNonConformityTx(tx, { audit: actor, body: {
       of_id: source.ofId, of_operation_id: source.operationId, lot_id: line.lotId, reception_ligne_id: lineId,
-      fournisseur_id: line.supplierId, status: "OPEN", severity: "MINOR", description: body.comment!,
+      fournisseur_id: line.supplierId, status: "OPEN", severity: "MINOR", description,
     } }) : null;
     const result = { sourceIssueId: source.issueId, verdict: body.verdict, appearance: body.appearance, nonConformityId };
     const detail = { ...result, lineId, receptionId, lotId: line.lotId, measurements, paperMeasurement: body.paperMeasurement, comment: body.comment };
     await processingEvent(tx, lineId, actor, SUBCONTRACT_RETURN_VERIFIED, detail);
-    const origin = source.proofs[0];
     const correlations = (await tx.query<{ id: string; correlation_id: string }>(
       "SELECT id::text,correlation_id::text FROM public.quality_control WHERE id=ANY($1::uuid[])",
-      [source.proofs.map(proof => proof.controlId)],
+      [source.proofs.flatMap(proof => proof.controlId ? [proof.controlId] : [])],
     )).rows;
     for (const control of correlations) {
       await insertQualityEvent(tx, { entity_type: "CONTROL", entity_id: control.id, event_type: SUBCONTRACT_RETURN_VERIFIED,
         actor, old_values: null, new_values: detail, correlation_id: control.correlation_id,
-        idempotency_key: idem.idempotencyKey, rule_code: "SUBCONTRACT_RETURN_OPERATOR" });
+        idempotency_key: body.idempotencyKey, rule_code: "SUBCONTRACT_RETURN_OPERATOR" });
     }
-    await saveReceipt({ client: tx, actor, idempotencyKey: idem.idempotencyKey, requestHash: idem.requestHash,
-      commandType, aggregateType: "CONTROL", aggregateId: origin.controlId, requestPayload: request, resultPayload: result,
-      correlationId: correlations.find(control => control.id === origin.controlId)!.correlation_id });
     return result;
   });
 }

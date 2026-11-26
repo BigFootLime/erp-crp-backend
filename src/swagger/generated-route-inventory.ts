@@ -8,7 +8,7 @@ export type GeneratedRouteContract = {
   rbac: readonly string[];
 };
 
-export const GENERATED_ROUTE_SOURCE_SHA256 = "88cffc07c6e278478a16f0a22111bed53453130909b91cd77a6fd5c963a7d7a3";
+export const GENERATED_ROUTE_SOURCE_SHA256 = "14d092d8bcbb1acb77dc4eb69d714e35317e057cf355366546903d3ff87c8fcd";
 export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "get",
@@ -27225,7 +27225,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages",
-    "source": "src/module/subcontract/subcontract.routes.ts:68",
+    "source": "src/module/subcontract/subcontract.routes.ts:72",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -27257,7 +27257,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/cancel",
-    "source": "src/module/subcontract/subcontract.routes.ts:164",
+    "source": "src/module/subcontract/subcontract.routes.ts:179",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -27273,7 +27273,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/close",
-    "source": "src/module/subcontract/subcontract.routes.ts:163",
+    "source": "src/module/subcontract/subcontract.routes.ts:178",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -27305,7 +27305,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/issues",
-    "source": "src/module/subcontract/subcontract.routes.ts:140",
+    "source": "src/module/subcontract/subcontract.routes.ts:155",
     "middleware": [
       "anonymous",
       "authenticateToken",
@@ -27321,7 +27321,7 @@ export const GENERATED_ROUTE_INVENTORY = [
   {
     "method": "post",
     "path": "/subcontract-work-packages/{id}/returns",
-    "source": "src/module/subcontract/subcontract.routes.ts:141",
+    "source": "src/module/subcontract/subcontract.routes.ts:156",
     "middleware": [
       "anonymous",
       "authenticateToken",

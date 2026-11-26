@@ -37,8 +37,9 @@ import { syncArticleCommercialTx } from "../../stock/repository/article-commerci
 import { assertReceiptProcessingClosed } from "./receipt-processing-guard";
 import { bindReceiptSubcontract } from "./receipt-subcontract.repository";
 import { assertSubcontractReturnVerified } from "../../subcontract/subcontract-return-proof.repository";
-import { bindSubcontractIssueAutocontrol } from "../../subcontract/subcontract-autocontrol.repository";
-import { readReceiptReturnControl, recordReceiptReturnControl } from "./receipt-return-control.repository";
+import { bindSubcontractIssueAutocontrol, getPaperSubcontractAttestationOptions, hashPaperSubcontractAttestations, readPaperSubcontractIssueHash } from "../../subcontract/subcontract-autocontrol.repository";
+import { readReceiptReturnControl, readReceiptReturnDocument, recordReceiptReturnControl } from "./receipt-return-control.repository";
+import { writeBlob } from "../../ged/services/ged-vault.service";
 import { qualitySha256 } from "../../qualite/domain/quality-policy";
 import { repoGetExecution, repoRecordAutocontrolCapture, repoRecordMeasurements } from "../../qualite/repository/quality-360.repository";
 import { measurementInputSchema } from "../../qualite/validators/quality-360.validators";
@@ -54,7 +55,7 @@ import {
   applyCentralSimulation,
   unplanCentral,
 } from "../../planning/services/planning-central.service";
-import { repoCreateNonConformityDisposition } from "../../qualite/repository/qualite.repository";
+import { repoCreateNonConformityDisposition, repoRemoveDocument } from "../../qualite/repository/qualite.repository";
 import { readReceiptDispositionContext } from "./receipt-disposition-context.repository";
 import {
   lockReceiptReleaseScope,
@@ -809,6 +810,99 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     const secondIssue = randomUUID();
     await expect(issue(secondIssue, secondLot, secondLot, secondPackage)).rejects.toMatchObject({ code: "SUBCONTRACT_AUTOCONTROL_REQUIRED" });
     expect((await pool.query("SELECT 1 FROM public.subcontract_work_package_ledger WHERE id=$1", [secondIssue])).rowCount).toBe(0);
+    const removableDocument = randomUUID(), pinnedDocument = randomUUID();
+    await pool.query(
+      "INSERT INTO public.quality_documents(id,entity_type,entity_id,document_type,original_name,stored_name,storage_path,mime_type,size_bytes,uploaded_by) " +
+      "SELECT id,'CONTROL',$1,'REPORT','fiche.pdf',id::text,id::text,'application/pdf',1,$2 FROM unnest($3::uuid[]) id",
+      [control, user, [removableDocument, pinnedDocument]],
+    );
+    await pool.query("INSERT INTO public.quality_event_log(entity_type,entity_id,event_type,user_id,new_values) " +
+      "VALUES('CONTROL',$1,'SUBCONTRACT_AUTOCONTROL_ISSUED',$2,$3::jsonb)",
+      [control, user, JSON.stringify({ issueId: f.issueEventId, proof: { documentId: pinnedDocument } })]);
+    await expect(repoRemoveDocument({ entity_type: "CONTROL", entity_id: control, doc_id: removableDocument, audit: actor })).resolves.toBe(true);
+    await expect(repoRemoveDocument({ entity_type: "CONTROL", entity_id: control, doc_id: pinnedDocument, audit: actor }))
+      .rejects.toMatchObject({ code: "AUTOCONTROL_SCAN_IN_USE" });
+  });
+  it.skipIf(!returnControlEnabled)("requires a scanned handwritten sheet when there is no plan and keeps its pinned GED version on return", async () => {
+    const f = await subcontractFixture(false);
+    const actor = { ...audit(), role: "Directeur", request_id: null };
+    const machining = randomUUID(), operationSource = randomUUID(), documentId = randomUUID(), versionId = randomUUID(),
+      uploadId = randomUUID(), blobId = randomUUID();
+    await pool.query("UPDATE public.of_revisions SET statut='ACTIVE' WHERE of_id=$1", [f.ofId]);
+    await pool.query(
+      "INSERT INTO public.pieces_techniques_operations(id,piece_technique_id,phase,designation,type_operation) " +
+      "SELECT $1,ofr.piece_technique_id,5,'Tournage fixture','TOURNAGE' FROM public.ordres_fabrication ofr WHERE id=$2",
+      [operationSource, f.ofId],
+    );
+    await pool.query(
+      "INSERT INTO public.of_operations(id,of_id,phase,designation,revision_id,source_piece_operation_id) " +
+      "SELECT $1,of_id,5,'Tournage fixture',revision_id,$2 FROM public.of_operations WHERE id=$3",
+      [machining, operationSource, f.operationId],
+    );
+    await pool.query("INSERT INTO public.subcontract_purchase_origins(line_id,of_id,operation_id,material_origin_id,preparation_snapshot,created_by) " +
+      "SELECT supplier_order_line_id,$2,$3,$4,'{}',$5 FROM public.subcontract_work_packages WHERE id=$1",
+      [f.packageId, f.ofId, f.operationId, f.sourceLot, user]);
+    expect(await getPaperSubcontractAttestationOptions(pool, f.operationId)).toMatchObject({ of_id: f.ofId,
+      operations: [{ id: machining, phase: 5, label: "Tournage fixture" }], documents: [] });
+
+    const pdf = Buffer.from("%PDF-1.4\n% Handwritten evidence fixture " + randomUUID() + "\n%%EOF\n");
+    const blob = await writeBlob(pdf);
+    await pool.query("INSERT INTO public.ged_documents(id,code,class_key,title) VALUES($1,$2,'RELEVE_CONTROLE','Fiche manuelle fixture')",
+      [documentId, "GED-" + documentId]);
+    await pool.query("INSERT INTO public.ged_blobs(id,sha256,size_bytes,mime_type,storage_key,created_by) VALUES($1,$2,$3,'application/pdf',$4,$5)",
+      [blobId, blob.sha256, blob.size_bytes, blob.storage_key, user]);
+    await pool.query("INSERT INTO public.ged_upload_sessions(id,class_key,document_id,status,sha256,size_bytes,mime_type,original_name,expires_at,created_by," +
+      "scan_status,quarantine_status) VALUES($1,'RELEVE_CONTROLE',$2,'PUBLISHED',$3,$4,'application/pdf','fiche.pdf',now()+interval '1 day',$5,'clean','released')",
+      [uploadId, documentId, blob.sha256, blob.size_bytes, user]);
+    await pool.query("INSERT INTO public.ged_document_versions(id,document_id,version_number,blob_id,original_name,created_by,upload_session_id) " +
+      "VALUES($1,$2,1,$3,'fiche.pdf',$4,$5)", [versionId, documentId, blobId, user, uploadId]);
+    await pool.query("UPDATE public.ged_document_versions SET status='APPLICABLE',published_at=now() WHERE id=$1", [versionId]);
+    await pool.query("UPDATE public.ged_documents SET current_version_id=$2 WHERE id=$1", [documentId, versionId]);
+    const attestation = { operation_id: machining, document_version_id: versionId, complete_sheet: true as const, conforming_qty: 100 };
+    async function issue(paperAttestations?: typeof attestation[]) {
+      const tx = await pool.connect();
+      try {
+        await tx.query("BEGIN");
+        await tx.query("INSERT INTO public.subcontract_work_package_ledger(id,package_id,event_type,lot_id,qty,unit,idempotency_key,created_by) " +
+          "VALUES($1,$2,'ISSUE',$3,100,'u',$4,$5)", [f.issueEventId, f.packageId, f.sourceLot, randomUUID(), user]);
+        await bindSubcontractIssueAutocontrol(tx, { ofId: f.ofId, operationId: f.operationId, issueId: f.issueEventId,
+          lotId: f.sourceLot, materialOriginId: f.sourceLot, quantity: 100, unit: "u", paperAttestations }, actor);
+        await tx.query("COMMIT");
+      } catch (error) {
+        await tx.query("ROLLBACK");
+        throw error;
+      } finally { tx.release(); }
+    }
+    await expect(issue()).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_FORM_REQUIRED" });
+    await expect(issue([attestation])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_SCAN_SCOPE" });
+    await pool.query("INSERT INTO public.ged_document_links(document_id,entity_type,entity_id,link_role,created_by) " +
+      "VALUES($1,'ORDRE_FABRICATION',$2,'RELEVE_CONTROLE_REALISE',$3)", [documentId, String(f.ofId), user]);
+    expect(await getPaperSubcontractAttestationOptions(pool, f.operationId)).toMatchObject({ documents: [{ version_id: versionId }] });
+    await expect(issue([{ ...attestation, conforming_qty: 99 }])).rejects.toMatchObject({ code: "SUBCONTRACT_PAPER_QUANTITY" });
+    await issue([attestation]);
+    expect(await readPaperSubcontractIssueHash(pool, f.issueEventId)).toBe(hashPaperSubcontractAttestations([attestation]));
+    await bindReceiptSubcontract(f.receipt, f.line, { idempotencyKey: randomUUID(), expectedVersion: 1,
+      origins: [{ issueEventId: f.issueEventId, quantity: 100 }] }, actor);
+    await pool.query("UPDATE public.ged_document_versions SET status='OBSOLETE',obsoleted_at=now() WHERE id=$1", [versionId]);
+    await pool.query("UPDATE public.ged_documents SET current_version_id=NULL,archived_at=now(),archived_by=$2 WHERE id=$1", [documentId, user]);
+    expect(await getPaperSubcontractAttestationOptions(pool, f.operationId)).toMatchObject({ documents: [] });
+    const state = await readReceiptReturnControl(f.receipt, f.line, true);
+    expect(state).toMatchObject({ canRecord: true, sources: [{ issueId: f.issueEventId, proofs: [{ operationId: machining,
+      mode: "PAPER", documentId: versionId, measurements: [] }] }] });
+    expect(state.sources[0].proofs[0].controlId).toBeUndefined();
+    expect(await readReceiptReturnDocument(f.receipt, f.line, f.issueEventId, versionId)).toEqual({ bytes: pdf, mimeType: "application/pdf" });
+    await expect(readReceiptReturnDocument(f.receipt, f.line, f.issueEventId, randomUUID())).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_SCAN_NOT_FOUND" });
+    await expect(assertSubcontractReturnVerified(pool, f.line)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_CONTROL_REQUIRED" });
+    const input = { idempotencyKey: randomUUID(), expectedVersion: state.version, sourceIssueId: f.issueEventId, appearance: "NOK" as const,
+      verdict: "NON_CONFORME" as const, comment: "Trace dans la zone tolérancée.", measurements: [] };
+    await expect(recordReceiptReturnControl(f.receipt, f.line, input, actor)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_NONCONFORMITY_EVIDENCE_REQUIRED" });
+    const result = await recordReceiptReturnControl(f.receipt, f.line, { ...input, paperMeasurement: { label: "Épaisseur", valueMm: 14.8 } }, actor);
+    expect(result).toMatchObject({ verdict: "NON_CONFORME", nonConformityId: expect.any(String) });
+    const nc = (await pool.query("SELECT description FROM public.non_conformity WHERE id=$1", [result.nonConformityId])).rows[0];
+    expect(nc.description).toContain(input.comment);
+    expect(nc.description).toContain("Épaisseur : 14.8 mm");
+    expect((await pool.query("SELECT 1 FROM public.quality_control WHERE of_id=$1 AND operation_id=$2", [f.ofId, machining])).rowCount).toBe(0);
+    expect((await readProcessingLine(pool, f.line)).stocked).toBe(0);
   });
   it.skipIf(!externalEnabled)(
     "accumulates small transfers toward a downstream threshold",
