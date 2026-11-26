@@ -165,9 +165,19 @@ describe("Source-backed production preparation", () => {
       type_achat: "TRAITEMENT",
       fournisseur_id: null,
     });
-    expect(
-      evaluatePreparation(f).find((i) => i.key === "treatment")?.status,
-    ).toBe("MISSING");
+    expect(evaluatePreparation(f).find((i) => i.key === "treatment")).toMatchObject({
+      status: "MISSING", detail: expect.stringContaining("fournisseur"),
+    });
+  });
+  it("accepts a complete special-process purchase without another confirmation", () => {
+    const f = complete();
+    delete f.decisions.treatment;
+    f.purchases.push({
+      ...f.purchases[0], id: "tr", type_achat: "TRAITEMENT",
+      designation: "Passivation", unite_prix: "u", fournisseur_id: "supplier",
+    });
+    expect(evaluatePreparation(f).find(item => item.key === "treatment")?.status).toBe("READY");
+    expect(isPreparationReady(evaluatePreparation(f))).toBe(true);
   });
   it("warns about a requested manufacturing drawing without blocking planning", () => {
     const f = complete();

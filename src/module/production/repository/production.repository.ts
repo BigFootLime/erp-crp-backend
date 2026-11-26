@@ -79,7 +79,7 @@ import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operat
 import { enqueueProductionOfChanged, productionRealtimeActionFromAudit } from "./production-realtime.repository";
 import { findAssetIdsByStorageKeys } from "../../operational-media/repository/operational-media.repository";
 import { promoteOperationalImage } from "../../operational-media/services/operational-media-promotion.service";
-import { assertOfPreparationReady, evaluateOfPreparation, usesPreparationRules, loadPreparationOrder } from './production-preparation.repository';
+import { assertOfPreparationReady, evaluateOfPreparation, freezeInheritedPreparation, usesPreparationRules, loadPreparationOrder } from './production-preparation.repository';
 import {assertMaterialOperationStartTx,usesOperationReadiness,lockMaterialExecutionTx} from './operation-readiness.repository';
 import { releasePrelaunchPurchaseAllocationsTx } from "./of-prelaunch-cancellation.repository";
 import {assertUrgencyRecoveryStartTx} from './urgency-recovery-gate.repository';
@@ -4713,6 +4713,7 @@ export async function repoValidateOfTechnicalPreparation(params: {
         tx, row.piece_technique_id, evaluation.of.version_id, params.audit, evaluation.gamme_id,
       )).gammeId;
       evaluation = preparationEvidence = await assertOfPreparationReady(tx, params.id);
+      await freezeInheritedPreparation(tx, evaluation, params.audit.user_id);
       await tx.query(`INSERT INTO public.piece_version_preparation(piece_technique_version_id,decisions,approved_source_hash,approved_at,approved_by,updated_by)
         VALUES($1::uuid,$2::jsonb,$3,now(),$4,$4) ON CONFLICT(piece_technique_version_id) DO UPDATE
         SET approved_source_hash=excluded.approved_source_hash,approved_at=now(),approved_by=excluded.approved_by`,
