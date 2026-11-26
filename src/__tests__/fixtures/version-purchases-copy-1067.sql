@@ -11,6 +11,7 @@ CREATE TABLE public.pieces_techniques_achats (
   nom text, designation text, designation_2 text, designation_3 text, article_id uuid,
   fournisseur_id uuid, fournisseur_nom text, fournisseur_code text,
   quantite numeric NOT NULL DEFAULT 1, quantite_brut_mm numeric, longueur_mm numeric,
+  forfait_ht numeric, minimum_facturation_ht numeric,
   coefficient_chute numeric, quantite_pieces numeric, prix_par_quantite numeric,
   tarif numeric, prix numeric(16,6), unite_prix text, pu_achat numeric(16,6), tva_achat numeric,
   total_achat_ht numeric(12,2), total_achat_ttc numeric(12,2), type_achat text,

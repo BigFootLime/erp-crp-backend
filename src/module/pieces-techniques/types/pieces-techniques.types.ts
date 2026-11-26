@@ -152,6 +152,8 @@ export type Achat = {
   prix?: number | null
   unite_prix?: string | null
   pu_achat?: number | null
+  forfait_ht?: number | null
+  minimum_facturation_ht?: number | null
   tva_achat?: number | null
   total_achat_ht?: number | null
   total_achat_ttc?: number | null
