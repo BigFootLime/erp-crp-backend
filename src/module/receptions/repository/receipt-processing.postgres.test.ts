@@ -36,6 +36,12 @@ import { stockToolReceipt } from "./receipt-tool-stock.repository";
 import { syncArticleCommercialTx } from "../../stock/repository/article-commercial.repository";
 import { assertReceiptProcessingClosed } from "./receipt-processing-guard";
 import { bindReceiptSubcontract } from "./receipt-subcontract.repository";
+import { assertSubcontractReturnVerified } from "../../subcontract/subcontract-return-proof.repository";
+import { bindSubcontractIssueAutocontrol } from "../../subcontract/subcontract-autocontrol.repository";
+import { readReceiptReturnControl, recordReceiptReturnControl } from "./receipt-return-control.repository";
+import { qualitySha256 } from "../../qualite/domain/quality-policy";
+import { repoGetExecution, repoRecordAutocontrolCapture, repoRecordMeasurements } from "../../qualite/repository/quality-360.repository";
+import { measurementInputSchema } from "../../qualite/validators/quality-360.validators";
 import {
   getSubcontractFlow,
   transferSubcontractReturn,
@@ -63,8 +69,10 @@ const externalEnabled =
 const operatorEnabled = process.env.CERP_RECEIPT_OPERATOR_PG_TEST === "1" &&
   ["postgresql://postgres@127.0.0.1:50325/cerp_test", "postgresql://postgres@127.0.0.1:50326/cerp_test"]
     .includes(process.env.DATABASE_URL ?? "");
+const returnControlEnabled = process.env.CERP_SUBCONTRACT_RETURN_PG_TEST === "1" &&
+  process.env.DATABASE_URL === "postgresql://postgres@127.0.0.1:50348/cerp_test";
 const enabled =
-  externalEnabled || operatorEnabled ||
+  externalEnabled || operatorEnabled || returnControlEnabled ||
   (process.env.CERP_RECEIPT_PG_TEST === "1" &&
     new URL(process.env.DATABASE_URL ?? "postgresql://localhost/unused")
       .pathname === "/cerp_1069_test");
@@ -362,7 +370,7 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   beforeAll(async () => {
     expect(
       (await pool.query("SELECT current_database() AS db")).rows[0].db,
-    ).toBe(externalEnabled || operatorEnabled ? "cerp_test" : "cerp_1069_test");
+    ).toBe(externalEnabled || operatorEnabled || returnControlEnabled ? "cerp_test" : "cerp_1069_test");
     await pool.query(
       "INSERT INTO public.units(code,label) VALUES('u','Unité'),('mm','Millimètre'),('m','Mètre'),('kg','Kilogramme') ON CONFLICT(code) DO NOTHING",
     );
@@ -685,6 +693,122 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await expect(pool.query(`UPDATE public.stock_material_bars SET public_number=DEFAULT WHERE id=$1`,[selected.id])).rejects.toMatchObject({code:'23514'});
     await pool.query(`UPDATE public.lots SET lot_status='BLOQUE' WHERE id=$1`,[lotId]);
     expect(await resolveIdentification({...input,event_id:randomUUID()},actor)).toMatchObject({ok:false,result_code:'FORBIDDEN_STATUS'});
+  });
+  it.skipIf(!returnControlEnabled)("binds the complete machining proof to the sent lot and keeps formal release for the return", async () => {
+    const f = await subcontractFixture(false);
+    const actor = { ...audit(), role: "Directeur", request_id: null };
+    const machining = randomUUID(), operationSource = randomUUID(), plan = randomUUID(), control = randomUUID();
+    await pool.query("UPDATE public.of_revisions SET statut='ACTIVE' WHERE of_id=$1", [f.ofId]);
+    await pool.query(
+      "INSERT INTO public.pieces_techniques_operations(id,piece_technique_id,phase,designation,type_operation) " +
+      "SELECT $1,ofr.piece_technique_id,5,'Fraisage fixture','FRAISAGE' FROM public.ordres_fabrication ofr WHERE id=$2",
+      [operationSource, f.ofId],
+    );
+    await pool.query(
+      "INSERT INTO public.of_operations(id,of_id,phase,designation,revision_id,source_piece_operation_id) " +
+      "SELECT $1,of_id,5,'Fraisage fixture',revision_id,$2 FROM public.of_operations WHERE id=$3",
+      [machining, operationSource, f.operationId],
+    );
+    await pool.query(
+      "INSERT INTO public.quality_control_plan(id,code,label,status,trigger_type,sampling_rule,published_at,published_by,created_by,updated_by,piece_technique_id) " +
+      "SELECT $1,$2,'Relevé sortie fixture','PUBLISHED','IN_PROCESS','LOT',now(),$3,$3,$3,piece_technique_id FROM public.ordres_fabrication WHERE id=$4",
+      [plan, "PLAN-" + plan, user, f.ofId],
+    );
+    const snapshot = { schema: "cerp.quality.plan-snapshot.v1", characteristics: [{
+      key: "e1", position: 1, label: "Épaisseur", characteristic_type: "DIMENSION", value_kind: "NUMERIC", unit: "mm",
+      nominal: 15, tolerance_min: -0.1, tolerance_max: 0.1, precision: null, expected_boolean: null,
+      allowed_values: null, criticality: "MAJOR", mandatory: true, requires_instrument: false, instrument_category: null,
+      method: null, acceptance_rule: null, sampling: { rule: "LOT", value: null, justification: null }, trigger: "IN_PROCESS",
+    }] };
+    const seedControl = (id: string) => pool.query(
+      "INSERT INTO public.quality_control(id,reference,control_type,status,control_date,controlled_by,of_id,operation_id,source_type,source_id," +
+      "trigger_type,plan_id,plan_version,plan_snapshot,plan_snapshot_sha256,qty_population,unite,created_by,updated_by) " +
+      "VALUES($1,$2,'IN_PROCESS','IN_PROGRESS',now(),$3,$4,$5,'OF_OPERATION',$5::uuid::text," +
+      "'IN_PROCESS',$6,1,$7::jsonb,$8,100,'u',$3,$3)",
+      [id, "CQ-" + id, user, f.ofId, machining, plan, JSON.stringify(snapshot), qualitySha256(snapshot)],
+    );
+    await seedControl(control);
+    const confirm = async (id = control, lot_id?: string) => repoRecordAutocontrolCapture({ id, actor, idempotencyKey: randomUUID(),
+      body: { mode: "DIGITAL", confirm: true, lot_id, expected_updated_at: new Date((await repoGetExecution(id))!.updated_at).toISOString() } });
+    async function issue(issueId: string, lotId = f.sourceLot, materialOriginId: string | null = f.sourceLot, packageId = f.packageId) {
+      const tx = await pool.connect();
+      try {
+        await tx.query("BEGIN");
+        await tx.query("INSERT INTO public.subcontract_work_package_ledger(id,package_id,event_type,lot_id,qty,unit,idempotency_key,created_by) " +
+          "VALUES($1,$2,'ISSUE',$3,100,'u',$4,$5)", [issueId, packageId, lotId, randomUUID(), user]);
+        await bindSubcontractIssueAutocontrol(tx, { ofId: f.ofId, operationId: f.operationId, issueId, lotId,
+          materialOriginId, quantity: 100, unit: "u" }, actor);
+        await tx.query("COMMIT");
+      } catch (error) {
+        await tx.query("ROLLBACK");
+        throw error;
+      } finally { tx.release(); }
+    }
+    expect(await repoGetExecution(control)).toMatchObject({ autocontrol_confirmable: true, autocontrol_lots: [] });
+    await expect(issue(f.issueEventId)).rejects.toMatchObject({ code: "SUBCONTRACT_AUTOCONTROL_LOT_UNVERIFIED" });
+    await expect(confirm()).rejects.toMatchObject({ code: "AUTOCONTROL_MEASUREMENTS_INCOMPLETE" });
+    const measurement = async (value: number, correction_reason?: string, id = control) => repoRecordMeasurements({ id, actor,
+      body: { expected_updated_at: new Date((await repoGetExecution(id))!.updated_at).toISOString(),
+        correction_reason, measurements: [measurementInputSchema.parse({ characteristic_key: "e1", sample_no: 1, value_numeric: value, unit: "mm" })] },
+    });
+    await measurement(15);
+    expect(await confirm()).toMatchObject({ autocontrol_confirmation: { mode: "DIGITAL", lot_id: null }, ledger: { released: 0 } });
+    await pool.query("INSERT INTO public.subcontract_purchase_origins(line_id,of_id,operation_id,material_origin_id,preparation_snapshot,created_by) " +
+      "SELECT supplier_order_line_id,$2,$3,$4,'{}',$5 FROM public.subcontract_work_packages WHERE id=$1",
+      [f.packageId, f.ofId, f.operationId, f.sourceLot, user]);
+    await issue(f.issueEventId);
+    await measurement(15.025, "Relecture de la mesure");
+    expect((await repoGetExecution(control))!.autocontrol_confirmation).toBeUndefined();
+    expect(await confirm()).toMatchObject({ autocontrol_confirmation: { lot_id: f.sourceLot } });
+    await bindReceiptSubcontract(f.receipt, f.line, { idempotencyKey: randomUUID(), expectedVersion: 1,
+      origins: [{ issueEventId: f.issueEventId, quantity: 100 }] }, actor);
+    const state = await readReceiptReturnControl(f.receipt, f.line, true);
+    expect(state).toMatchObject({ canRecord: true, sources: [{ issueId: f.issueEventId,
+      proofs: [{ controlId: control, operationId: machining, measurements: [{ valueMm: 15, minMm: 14.9, maxMm: 15.1 }] }],
+    }] });
+    expect(await readReceiptReturnControl(f.receipt, f.line, false)).toMatchObject({ canRecord: false });
+    await expect(assertSubcontractReturnVerified(pool, f.line)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_CONTROL_REQUIRED" });
+    const input = { idempotencyKey: randomUUID(), expectedVersion: state.version, sourceIssueId: f.issueEventId,
+      appearance: "OK" as const, verdict: "CONFORME" as const,
+      measurements: [{ controlId: control, characteristicKey: "e1", sampleNo: 1, valueMm: 15.2 }],
+    };
+    await expect(recordReceiptReturnControl(f.receipt, f.line, { ...input, sourceIssueId: randomUUID() }, actor))
+      .rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_PROOF_REQUIRED" });
+    await expect(recordReceiptReturnControl(f.receipt, f.line, input, actor)).rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_VERDICT_INVALID" });
+    await expect(recordReceiptReturnControl(f.receipt, f.line, { ...input, verdict: "NON_CONFORME", measurements: [] }, actor))
+      .rejects.toMatchObject({ code: "SUBCONTRACT_RETURN_NONCONFORMITY_EVIDENCE_REQUIRED" });
+    const refusal = { ...input, verdict: "NON_CONFORME" as const, appearance: "NOK" as const, measurements: [], comment: "Aspect rayé au retour." };
+    const recorded = await recordReceiptReturnControl(f.receipt, f.line, refusal, actor);
+    expect(recorded).toMatchObject({ verdict: "NON_CONFORME", nonConformityId: expect.any(String) });
+    expect(await recordReceiptReturnControl(f.receipt, f.line, refusal, actor)).toEqual(recorded);
+    await expect(assertSubcontractReturnVerified(pool, f.line)).resolves.toBeUndefined();
+    expect(await readReceiptReturnControl(f.receipt, f.line, true)).toMatchObject({ canRecord: false,
+      sources: [{ lotCode: expect.any(String), recorded: { verdict: "NON_CONFORME", appearance: "NOK", nonConformityId: recorded.nonConformityId } }],
+    });
+    expect((await pool.query("SELECT lot_status FROM public.lots WHERE id=$1", [f.lot])).rows[0].lot_status).not.toBe("LIBERE");
+    expect((await readProcessingLine(pool, f.line)).stocked).toBe(0);
+    const secondLot = randomUUID(), secondControl = randomUUID(), secondLine = randomUUID(), secondPackage = randomUUID();
+    await pool.query("INSERT INTO public.lots(id,article_id,lot_code,lot_status,created_by,updated_by) VALUES($1,$2,$3,'LIBERE',$4,$4)",
+      [secondLot, f.mp, "LOT-" + secondLot, user]);
+    await pool.query("INSERT INTO public.commande_fournisseur_ligne(id,commande_id,type,designation,quantite,article_id,of_id,position) " +
+      "SELECT $1,cl.commande_id,cl.type,cl.designation,cl.quantite,cl.article_id,cl.of_id,cl.position+1 FROM public.commande_fournisseur_ligne cl " +
+      "JOIN public.subcontract_work_packages p ON p.supplier_order_line_id=cl.id WHERE p.id=$2",
+      [secondLine, f.packageId]);
+    await pool.query("INSERT INTO public.subcontract_work_packages(id,supplier_order_line_id,of_operation_id,unit,qty_planned,ged_evidence_document_id,created_by) " +
+      "SELECT $1,$2,of_operation_id,unit,qty_planned,ged_evidence_document_id,created_by FROM public.subcontract_work_packages WHERE id=$3",
+      [secondPackage, secondLine, f.packageId]);
+    await pool.query("INSERT INTO public.subcontract_purchase_origins(line_id,of_id,operation_id,material_origin_id,preparation_snapshot,created_by) " +
+      "VALUES($1,$2,$3,$4,'{}',$5)", [secondLine, f.ofId, f.operationId, secondLot, user]);
+    await seedControl(secondControl);
+    await measurement(15.3, undefined, secondControl);
+    await expect(confirm(secondControl)).rejects.toMatchObject({ code: "AUTOCONTROL_LOT_REQUIRED" });
+    await expect(confirm(control, secondLot)).rejects.toMatchObject({ code: "AUTOCONTROL_LOT_CHANGED" });
+    expect(await confirm(secondControl, secondLot)).toMatchObject({ verdict: "NON_CONFORME",
+      autocontrol_confirmation: { lot_id: secondLot }, ledger: { conforming: 0, released: 0 },
+    });
+    const secondIssue = randomUUID();
+    await expect(issue(secondIssue, secondLot, secondLot, secondPackage)).rejects.toMatchObject({ code: "SUBCONTRACT_AUTOCONTROL_REQUIRED" });
+    expect((await pool.query("SELECT 1 FROM public.subcontract_work_package_ledger WHERE id=$1", [secondIssue])).rowCount).toBe(0);
   });
   it.skipIf(!externalEnabled)(
     "accumulates small transfers toward a downstream threshold",

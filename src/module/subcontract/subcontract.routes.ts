@@ -13,6 +13,8 @@ import { getProcurement,postProcurement,postDemands } from './subcontract-procur
 import { appendSubcontractAudit } from './subcontract-audit.repository';
 import { ACTIVE_SUBCONTRACT_ORDER_STATES, isSubcontractPackageEligible } from "./subcontract-package-policy";
 import { syncClosedSubcontractOperationTx } from "./subcontract-operation-completion.repository";
+import { buildAuditContext } from "../production/controllers/production.controller";
+import { bindSubcontractIssueAutocontrol } from "./subcontract-autocontrol.repository";
 import {
   createSubcontractWorkPackageSchema,
   finaliseSubcontractWorkPackageSchema,
@@ -105,6 +107,7 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
     const lots=await c.query<any>("SELECT lot_status FROM public.lots WHERE id=$1::uuid FOR UPDATE",[lot]); const expected=eventType==="ISSUE"?"LIBERE":"QUARANTAINE";
     if(lots.rows[0]?.lot_status!==expected) throw new HttpError(409,eventType==="ISSUE"?"SUBCONTRACT_QUALITY_BLOCK":"SUBCONTRACT_RETURN_NOT_QUARANTINED",eventType==="ISSUE"?"Le lot expédié doit être LIBERE.":"Le retour doit être en QUARANTAINE avant décision Qualité.");
     if(eventType==="RETURN") { const b=await c.query<any>("SELECT COALESCE(sum(qty) FILTER(WHERE event_type='ISSUE'),0)-COALESCE(sum(qty) FILTER(WHERE event_type='RETURN'),0) qty FROM public.subcontract_work_package_ledger WHERE package_id=$1::uuid",[packageId]); if(Number(b.rows[0].qty)+1e-9<amount) throw new HttpError(409,"SUBCONTRACT_OVER_RETURN","Retour supérieur au solde expédié."); }
+    let ofId: number | null = null;
     if(eventType==='ISSUE'){
        if(p.material_origin_id){
          const matches=await c.query(`WITH RECURSIVE ancestry(id) AS (
@@ -113,6 +116,7 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
          if(!matches.rows.length)throw new HttpError(409,'SUBCONTRACT_WRONG_MATERIAL_ORIGIN','Le lot expédié ne descend pas de l’origine matière de cette ligne fournisseur.');
        }
       const op=(await c.query('SELECT of_id FROM public.of_operations WHERE id=$1',[p.of_operation_id])).rows[0];
+      ofId=Number(op.of_id);
       const readiness=flowInstalled?await assertMaterialOperationStartTx(c,Number(op.of_id),p.of_operation_id):null;
       const issued=await c.query("SELECT COALESCE(sum(qty),0)::float8 AS qty FROM public.subcontract_work_package_ledger WHERE package_id=$1 AND event_type='ISSUE'",[packageId]);
       if(readiness){
@@ -126,6 +130,10 @@ async function ledger(eventType: "ISSUE" | "RETURN", req: any, res: any, next: a
     const inserted=await c.query<any>(
       "INSERT INTO public.subcontract_work_package_ledger(package_id,event_type,lot_id,qty,unit,idempotency_key,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
       [packageId,eventType,lot,amount,eventUnit,key,req.user?.id??null]);
+    if (ofId !== null && flowInstalled) await bindSubcontractIssueAutocontrol(c, {
+      ofId, operationId: p.of_operation_id, issueId: inserted.rows[0].id, lotId: lot,
+      materialOriginId: p.material_origin_id ?? null, quantity: amount, unit: eventUnit,
+    }, { ...buildAuditContext(req), role: req.user?.role ?? null, request_id: req.header("x-request-id") ?? null });
     await audit(c,req.user?.id,eventType,packageId!,{lot,qty:amount,unit:eventUnit,idempotency_key:key}); await c.query("COMMIT"); res.status(201).json({package_id:packageId,ledger_event_id:inserted.rows[0].id,idempotent_replay:false});
   } catch(e) { await c.query("ROLLBACK"); throw e; } finally { c.release(); }
 } catch(e) { next(e); } }

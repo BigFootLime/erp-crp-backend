@@ -104,6 +104,9 @@ import type {
 import type { AuditContext } from "./qualite.repository";
 import { assertAutocontrolCapture, assertPaperAutocontrolScope, paperAutocontrolVerdict } from "../domain/autocontrol-capture";
 import { verifyAutocontrolScanFile, type AutocontrolScanFile } from "./autocontrol-scan";
+import {
+  AUTOCONTROL_CONFIRMED, SUBCONTRACT_AUTOCONTROL_ISSUED, assertCompleteDigitalAutocontrol, confirmedDimensions, type AutocontrolProof,
+} from "../domain/autocontrol-proof";
 import type { AutocontrolCaptureBodyDTO } from "../validators/quality-360.validators";
 
 type DbQueryer = Pick<PoolClient, "query">;
@@ -145,7 +148,7 @@ async function insertAuditLog(
  * Journal métier append-only. Écrit dans la MÊME transaction que la décision :
  * une décision sans trace est impossible.
  */
-async function insertQualityEvent(
+export async function insertQualityEvent(
   tx: DbQueryer,
   params: {
     entity_type: "CONTROL" | "NON_CONFORMITY" | "ACTION" | "PLAN" | "DEROGATION" | "RELEASE";
@@ -1132,6 +1135,9 @@ export type ExecutionDetail = {
   operation_id: string | null;
   capture_mode: "PAPER" | "DIGITAL";
   paper_capture: PaperCapture | null;
+  autocontrol_confirmable?: boolean;
+  autocontrol_confirmation?: { mode: AutocontrolProof["mode"]; confirmed_at: string; lot_id: string | null };
+  autocontrol_lots?: Array<{ id: string; code: string }>;
   characteristics: QualityCharacteristicSpec[];
   id: string;
   reference: string;
@@ -1354,7 +1360,68 @@ function buildExecutionDetail(row: ExecutionRow, measurements: ExecutionDetail["
 export async function repoGetExecution(id: string): Promise<ExecutionDetail | null> {
   const row = await selectExecutionRow(pool, id);
   if (!row) return null;
-  return buildExecutionDetail(row, await selectMeasurements(pool, id));
+  return buildAutocontrolDetail(pool, row);
+}
+
+async function canConfirmMachiningAutocontrol(q: DbQueryer, row: ExecutionRow) {
+  if (!row.of_id || !row.operation_id || row.source_type !== "OF_OPERATION" || row.source_id !== row.operation_id ||
+    !row.plan_id || !row.plan_snapshot_sha256 || !["FIRST_ARTICLE", "IN_PROCESS", "FINAL"].includes(row.trigger_type ?? "")) return false;
+  const activeMachining = (await q.query(
+    "SELECT 1 FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id " +
+    "LEFT JOIN public.pieces_techniques_operations s ON s.id=op.source_piece_operation_id " +
+    "WHERE op.of_id=$1 AND op.id=$2::uuid AND op.status::text<>'CANCELLED' " +
+    "AND (op.revision_id IS NULL OR EXISTS(SELECT 1 FROM public.of_revisions r WHERE r.id=op.revision_id AND r.statut='ACTIVE')) " +
+    "AND COALESCE((SELECT f->>'type_operation' FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]')) f " +
+    "WHERE f->>'phase'=op.phase::text LIMIT 1),s.type_operation) IN ('FRAISAGE','TOURNAGE','REPRISE')",
+    [row.of_id, row.operation_id],
+  )).rows.length > 0;
+  return activeMachining && row.plan_id === await readFrozenQualityPlanId(q, row.of_id, row.operation_id, row.trigger_type);
+}
+
+export async function hasFrozenMachiningAutocontrolPlan(q: DbQueryer, ofId: number, operationId: string) {
+  const planId = await readFrozenQualityPlanId(q, ofId, operationId, null);
+  if (!planId) return false;
+  return (await q.query("SELECT 1 FROM public.quality_control_plan WHERE id=$1::uuid " +
+    "AND trigger_type IN ('FIRST_ARTICLE','IN_PROCESS','FINAL') AND status IN ('PUBLISHED','ARCHIVED')", [planId])).rows.length > 0;
+}
+
+export async function readMachiningAutocontrolLots(q: DbQueryer, ofId: number) {
+  return (await q.query<{ id: string; code: string }>(
+    "SELECT l.id::text,l.lot_code AS code FROM public.lots l WHERE l.id IN (" +
+    "SELECT r.lot_id FROM public.stock_reservations r WHERE r.of_id=$1 AND (r.status IN ('ACTIVE','CONSUMED') OR r.qty_consumed>0) " +
+    "UNION SELECT origin.material_origin_id FROM public.subcontract_purchase_origins origin " +
+    "JOIN public.commande_fournisseur_ligne cl ON cl.id=origin.line_id WHERE origin.of_id=$1 AND cl.statut_ligne='ACTIVE' " +
+    "UNION SELECT rl.lot_id FROM public.reception_subcontract_origins origin " +
+    "JOIN public.reception_fournisseur_lignes rl ON rl.id=origin.receipt_line_id " +
+    "JOIN public.subcontract_work_packages p ON p.id=origin.package_id JOIN public.of_operations op ON op.id=p.of_operation_id " +
+    "WHERE op.of_id=$1 AND l.lot_status='LIBERE') ORDER BY l.lot_code,l.id",
+    [ofId],
+  )).rows;
+}
+
+function autocontrolContentHash(row: ExecutionRow, measurements: ExecutionDetail["measurements"]) {
+  return qualitySha256({ plan: row.plan_snapshot_sha256, measurements, paper: row.paper_capture ?? null });
+}
+
+async function readLastAutocontrolProof(q: DbQueryer, controlId: string) {
+  return (await q.query<{ proof: AutocontrolProof }>(
+    "SELECT new_values AS proof FROM public.quality_event_log WHERE entity_type='CONTROL' AND entity_id=$1::uuid " +
+    "AND event_type=$2 ORDER BY id DESC LIMIT 1", [controlId, AUTOCONTROL_CONFIRMED],
+  )).rows[0]?.proof ?? null;
+}
+
+async function buildAutocontrolDetail(q: DbQueryer, row: ExecutionRow): Promise<ExecutionDetail> {
+  const measures = await selectMeasurements(q, row.id);
+  const detail = buildExecutionDetail(row, measures);
+  if (detail.snapshot_integrity !== "OK" || !await canConfirmMachiningAutocontrol(q, row)) return detail;
+  const prev = await readLastAutocontrolProof(q, row.id);
+  const proof = row.status !== "CANCELLED" && prev?.contentSha256 === autocontrolContentHash(row, measures) ? prev : null;
+  return {
+    ...detail,
+    autocontrol_confirmable: !row.validation_date && row.status !== "CANCELLED",
+    autocontrol_lots: await readMachiningAutocontrolLots(q, row.of_id!),
+    ...(proof ? { autocontrol_confirmation: { mode: proof.mode, confirmed_at: proof.confirmedAt, lot_id: proof.lotId } } : {}),
+  };
 }
 
 async function readAutocontrolScan(q: DbQueryer, row: ExecutionRow, documentId: string, lock = false) {
@@ -1367,20 +1434,82 @@ async function readAutocontrolScan(q: DbQueryer, row: ExecutionRow, documentId: 
   return doc!;
 }
 
+export async function recordSubcontractIssueAutocontrol(
+  tx: PoolClient,
+  input: {
+    ofId: number; operationId: string; issueId: string; lotId: string; originLotId: string;
+    unambiguousOfOrigin: boolean; quantity: number; unit: string; machiningPredecessors: string[];
+  },
+  actor: QualityActor,
+) {
+  for (const operationId of [...input.machiningPredecessors].sort()) {
+    const latest = (await tx.query<{ id: string; proof: AutocontrolProof }>(
+      "SELECT qc.id::text,e.new_values AS proof FROM public.quality_control qc " +
+      "JOIN public.quality_event_log e ON e.entity_type='CONTROL' AND e.entity_id=qc.id AND e.event_type=$3 " +
+      "WHERE qc.of_id=$1 AND qc.operation_id=$2::uuid AND qc.source_type='OF_OPERATION' AND qc.source_id=$2::uuid::text " +
+      "AND (e.new_values->>'lotId'=$4 OR ($5::boolean AND e.new_values->>'lotId' IS NULL)) " +
+      "ORDER BY (e.new_values->>'lotId'=$4) DESC NULLS LAST,e.id DESC LIMIT 1",
+      [input.ofId, operationId, AUTOCONTROL_CONFIRMED, input.originLotId, input.unambiguousOfOrigin],
+    )).rows[0];
+    const fail = () => new HttpError(409, "SUBCONTRACT_AUTOCONTROL_REQUIRED",
+      "Validez l’autocontrôle de l’opération d’usinage pour la quantité et le lot à expédier.", { operationId });
+    if (!latest) throw fail();
+    const row = await selectExecutionRow(tx, latest.id, true);
+    const proof = row && await readLastAutocontrolProof(tx, row.id);
+    if (!row || !proof || row.status === "CANCELLED" || !await canConfirmMachiningAutocontrol(tx, row) ||
+      proof.lotId !== latest.proof.lotId || proof.contentSha256 !== autocontrolContentHash(row, await selectMeasurements(tx, row.id)) ||
+      proof.unit.trim().toUpperCase() !== input.unit.trim().toUpperCase() ||
+      (row.validation_date && row.verdict !== "CONFORME")) throw fail();
+    if (proof.mode === "PAPER") {
+      if (!proof.documentId || !proof.documentSha256) throw fail();
+      const digest = await verifyAutocontrolScanFile(await readAutocontrolScan(tx, row, proof.documentId, true), false);
+      if (digest !== proof.documentSha256) throw fail();
+    }
+    const usage = (await tx.query<{ quantity: number; other_origin: boolean }>(
+      "SELECT COALESCE(sum((new_values->>'quantity')::numeric) FILTER (WHERE new_values->>'originLotId'=$3),0)::float8 AS quantity," +
+      "COALESCE(bool_or(new_values->>'originLotId' IS DISTINCT FROM $3) FILTER (WHERE entity_id=$1::uuid),false) AS other_origin " +
+      "FROM public.quality_event_log WHERE entity_type='CONTROL' AND event_type=$2 AND new_values->'proof'->>'operationId'=$4",
+      [row.id, SUBCONTRACT_AUTOCONTROL_ISSUED, input.originLotId, operationId],
+    )).rows[0];
+    if (usage.other_origin || proof.conformingQuantity + 1e-9 < usage.quantity + input.quantity) throw fail();
+    await insertQualityEvent(tx, { entity_type: "CONTROL", entity_id: row.id, event_type: SUBCONTRACT_AUTOCONTROL_ISSUED,
+      actor, old_values: null, new_values: {
+        proof, issueId: input.issueId, lotId: input.lotId, originLotId: input.originLotId, operationId: input.operationId,
+        quantity: input.quantity, unit: input.unit,
+      }, correlation_id: row.correlation_id, rule_code: "SUBCONTRACT_MACHINING_PROOF" });
+  }
+}
+
 export async function repoRecordAutocontrolCapture(params: {
   id: string; body: AutocontrolCaptureBodyDTO; actor: QualityActor; idempotencyKey: string | null | undefined;
 }): Promise<ExecutionDetail | null> {
   return withTransaction(async client => {
-    const before = await selectExecutionRow(client, params.id, true);
-    if (!before) return null;
     const idem = await acquireIdempotency({ client, actor: params.actor, idempotencyKeyRaw: params.idempotencyKey,
       commandType: "quality.execution.autocontrol-capture", requestPayload: { id: params.id, ...params.body } });
-    if (idem.replay) return buildExecutionDetail(before, await selectMeasurements(client, params.id));
+    const before = await selectExecutionRow(client, params.id, true);
+    if (!before) return null;
+    if (idem.replay) return buildAutocontrolDetail(client, before);
     assertOptimisticVersion({ expectedUpdatedAt: params.body.expected_updated_at, currentUpdatedAt: before.updated_at });
     if (before.validation_date || before.status === "CANCELLED") throw new HttpError(409, "QUALITY_EXECUTION_CLOSED", "Ce contrôle est déjà décidé.");
     assertPaperAutocontrolScope(before);
     if (!before.plan_snapshot_sha256) throw new HttpError(409, "QUALITY_SNAPSHOT_MISSING", "Préparez le plan figé de cet OF.");
     assertSnapshotIntegrity(before.plan_snapshot, before.plan_snapshot_sha256);
+    if (params.body.confirm && !await canConfirmMachiningAutocontrol(client, before)) {
+      throw new HttpError(409, "AUTOCONTROL_MACHINING_PLAN_REQUIRED", "Validez depuis une opération d’usinage liée au plan figé de l’OF.");
+    }
+    let confirmedLot: string | null = null;
+    if (params.body.confirm) {
+      const lots = await readMachiningAutocontrolLots(client, before.of_id!);
+      const previous = await readLastAutocontrolProof(client, before.id);
+      confirmedLot = params.body.lot_id ?? previous?.lotId ?? (lots.length === 1 ? lots[0].id : null);
+      if (lots.length > 1 && !confirmedLot) throw new HttpError(422, "AUTOCONTROL_LOT_REQUIRED", "Sélectionnez le lot contrôlé.");
+      if (confirmedLot && !lots.some(lot => lot.id === confirmedLot)) {
+        throw new HttpError(409, "AUTOCONTROL_LOT_SCOPE", "Choisissez un lot rattaché à la matière de cet OF.");
+      }
+      if (previous?.lotId && previous.lotId !== confirmedLot) {
+        throw new HttpError(409, "AUTOCONTROL_LOT_CHANGED", "Utilisez une fiche distincte pour contrôler un autre lot.");
+      }
+    }
     const specs = characteristicsFromSnapshot(before.plan_snapshot);
     const measures = await selectMeasurements(client, params.id);
     if (params.body.mode === "PAPER" && measures.length) throw new HttpError(409, "AUTOCONTROL_CAPTURE_MIXED", "Des mesures sont déjà saisies : poursuivez ce contrôle sur tablette.");
@@ -1416,6 +1545,7 @@ export async function repoRecordAutocontrolCapture(params: {
     } else {
       await client.query("DELETE FROM public.quality_autocontrol_capture WHERE control_id=$1::uuid", [params.id]);
       const computed = computeExecutionVerdict({ characteristics: specs, samples: await loadSamples(client, params.id), population: toNumber(before.qty_population) });
+      if (params.body.confirm) assertCompleteDigitalAutocontrol(specs, computed);
       ({ controlled, conforming } = computeExecutionQuantities(computed, toNumber(before.qty_population)));
       verdict = computed.verdict;
     }
@@ -1427,11 +1557,24 @@ export async function repoRecordAutocontrolCapture(params: {
       actor: params.actor, old_values: { paper_capture: before.paper_capture ?? null }, new_values: evidence,
       correlation_id: before.correlation_id, idempotency_key: idem.idempotencyKey, rule_code: "AUTOCONTROL_PAPER_OR_TABLET" });
     await insertAuditLog(client, params.actor, { action: "qualite.executions.autocontrol-capture", entity_type: "quality_control", entity_id: params.id, details: evidence });
+    const after = (await selectExecutionRow(client, params.id))!;
+    if (params.body.confirm) {
+      const scope = assertPaperAutocontrolScope(before);
+      const proof: AutocontrolProof = {
+        ...scope, lotId: confirmedLot, controlId: after.id, mode: params.body.mode, confirmedAt: new Date(after.updated_at).toISOString(),
+        contentSha256: autocontrolContentHash(after, measures), snapshotSha256: after.plan_snapshot_sha256!,
+        conformingQuantity: conforming, unit: after.unite!,
+        ...(after.paper_capture ? { documentId: after.paper_capture.document_id, documentSha256: after.paper_capture.document_sha256 } : {}),
+        measurements: params.body.mode === "DIGITAL" ? confirmedDimensions(specs, measures) : [],
+      };
+      await insertQualityEvent(client, { entity_type: "CONTROL", entity_id: after.id, event_type: AUTOCONTROL_CONFIRMED,
+        actor: params.actor, old_values: null, new_values: proof, correlation_id: after.correlation_id,
+        idempotency_key: idem.idempotencyKey, rule_code: "AUTOCONTROL_MACHINING" });
+    }
     await saveReceipt({ client, actor: params.actor, idempotencyKey: idem.idempotencyKey, requestHash: idem.requestHash,
       commandType: "quality.execution.autocontrol-capture", aggregateType: "CONTROL", aggregateId: params.id,
       requestPayload: { id: params.id, ...params.body }, resultPayload: { control_id: params.id }, correlationId: before.correlation_id });
-    const after = await selectExecutionRow(client, params.id);
-    return buildExecutionDetail(after!, await selectMeasurements(client, params.id));
+    return buildAutocontrolDetail(client, after);
   });
 }
 

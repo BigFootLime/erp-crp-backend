@@ -10,6 +10,7 @@ import {
 import { assertReceiptLotQualityEligibility } from "../qualite/repository/quality-operational-gate.repository";
 import type { SubcontractTransferInput } from "./subcontract-flow.validators";
 import { appendSubcontractAudit } from './subcontract-audit.repository';
+import { assertSubcontractReturnVerified } from "./subcontract-return-proof.repository";
 
 export async function readSubcontractSuccessors(
   tx: Pick<PoolClient, "query">,
@@ -193,6 +194,7 @@ export async function transferSubcontractReturn(
           "Choisissez une opération suivante de la gamme active.",
         );
       if (input.action === "RELEASE") {
+        await assertSubcontractReturnVerified(tx, source.receipt_line_id, input.return_id);
         // Released partial returns may progress while the supplier retains the
         // remainder. Downstream starts acknowledge the partial-flow warning.
         if (input.quantity > returned.transferable)

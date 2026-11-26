@@ -500,12 +500,13 @@ export async function assertQualityScope(
   ofId: number,
   operationId: string,
   controlId: string,
+  exactOperation = false,
 ) {
   await operationContext(terminal, ofId, operationId);
   const row = (
     await pool.query(
-      "SELECT id FROM public.quality_control WHERE id=$1 AND of_id=$2",
-      [controlId, ofId],
+      "SELECT id FROM public.quality_control WHERE id=$1 AND of_id=$2" + (exactOperation ? " AND operation_id=$3::uuid" : ""),
+      exactOperation ? [controlId, ofId, operationId] : [controlId, ofId],
     )
   ).rows[0];
   if (!row)

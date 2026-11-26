@@ -10,6 +10,7 @@ import { repoCreateStockReceipt } from "../repository/receptions.repository";
 import { stockToolReceipt } from "../repository/receipt-tool-stock.repository";
 import { bindReceiptSubcontract } from "../repository/receipt-subcontract.repository";
 import { recordReceiptOperatorControl } from "../repository/receipt-operator-control.repository";
+import { readReceiptReturnControl, readReceiptReturnDocument, recordReceiptReturnControl } from "../repository/receipt-return-control.repository";
 
 export async function requireReceiptProcessingAccess(
   req: Request,
@@ -60,6 +61,37 @@ export const operatorControl = asyncHandler(async (req, res) => {
   const body = schema.operatorControlSchema.safeParse(req.body);
   if (!body.success) throw new HttpError(422, "RECEIPT_OPERATOR_CONTROL_INVALID", "Vérifiez et confirmez chaque mesure requise avant d’enregistrer le contrôle.");
   res.json(await recordReceiptOperatorControl(params.data.id, params.data.lineId, body.data, buildAuditContext(req)));
+});
+function returnControlIds(req: Request) {
+  if (req.terminal) throw new HttpError(403, "TERMINAL_KIND_FORBIDDEN", "Ouvrez CERP pour vérifier le retour de traitement.");
+  const params = receiptLineParams.safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "RECEIPT_LINE_INVALID", "La réception ou sa ligne est invalide.");
+  return [params.data.id, params.data.lineId] as const;
+}
+export const getReturnControl = asyncHandler(async (req, res) => {
+  const scope = returnControlIds(req);
+  const rights = await requireReceiptProcessingAccess(req);
+  res.json(await readReceiptReturnControl(...scope, rights.receive));
+});
+export const postReturnControl = asyncHandler(async (req, res) => {
+  const scope = returnControlIds(req);
+  await requireReceiptProcessingAccess(req, true);
+  const body = schema.subcontractReturnControlSchema.safeParse(req.body);
+  if (!body.success) throw new HttpError(422, "SUBCONTRACT_RETURN_INPUT_INVALID", "Vérifiez l’aspect et les mesures renseignées.");
+  const audit = buildAuditContext(req);
+  res.json(await recordReceiptReturnControl(...scope, body.data, {
+    ...audit, role: audit.user_role ?? null, request_id: req.header("x-request-id") ?? null,
+  }));
+});
+export const downloadReturnControlDocument = asyncHandler(async (req, res) => {
+  const scope = returnControlIds(req);
+  await requireReceiptProcessingAccess(req);
+  const params = z.object({ issueId: z.string().guid(), documentId: z.string().guid() }).safeParse(req.params);
+  if (!params.success) throw new HttpError(400, "SUBCONTRACT_RETURN_SCAN_INVALID", "La fiche demandée est invalide.");
+  const doc = await readReceiptReturnDocument(...scope, params.data.issueId, params.data.documentId);
+  const ext = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" }[doc.mimeType];
+  res.set({ "Content-Type": doc.mimeType, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+    "Content-Disposition": 'inline; filename="fiche-autocontrole.' + ext + '"' }).send(doc.bytes);
 });
 export const packProcessing = asyncHandler(async (req, res) => {
   await requireReceiptProcessingAccess(req, true);
