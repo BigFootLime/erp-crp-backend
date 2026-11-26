@@ -1,6 +1,7 @@
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
 import type { PlanningReferenceOfListQuery, PlanningReferenceClientQuery } from "../validators/planning-references.validators";
+import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../../production/domain/planned-operation-duration";
 import { readPlanningEligibleOfIds } from "./planning-of-eligibility.repository";
 import { committedOperationSql } from "./committed-operation.sql";
 
@@ -99,10 +100,11 @@ export async function repoGetPlanningReferenceOf(id: number): Promise<PlanningOf
   const operations = await pool.query<PlanningOfOperation>(
     `SELECT op.id::text AS id,op.phase::int AS phase,op.designation,op.poste_id::text AS poste_id,p.code AS poste_code,p.label AS poste_label,
       op.machine_id::text AS machine_id,m.code AS machine_code,m.name AS machine_name,
-      GREATEST(0,round((COALESCE(op.temps_total_planned,0)::numeric)*60))::int AS planned_duration_minutes,
+      ${PLANNED_OPERATION_DURATION_MINUTES_SQL} AS planned_duration_minutes,
       op.status::text AS status,op.started_at::text AS started_at,op.ended_at::text AS ended_at,op.updated_at::text AS updated_at
-      FROM public.of_operations op LEFT JOIN public.postes p ON p.id=op.poste_id LEFT JOIN public.machines m ON m.id=op.machine_id
-      WHERE op.of_id=$1::bigint ORDER BY op.phase ASC,op.id ASC`, [id],
+      FROM public.of_operations op JOIN public.ordres_fabrication o ON o.id=op.of_id
+      LEFT JOIN public.postes p ON p.id=op.poste_id LEFT JOIN public.machines m ON m.id=op.machine_id
+      WHERE o.id=$1::bigint ORDER BY op.phase ASC,op.id ASC`, [id],
   );
   return { ...mapList(base), piece_technique_version_id: base.piece_technique_version_id, technical_readiness: base.technical_readiness,
     date_lancement_reelle: base.date_lancement_reelle, date_fin_reelle: base.date_fin_reelle, operations: operations.rows };

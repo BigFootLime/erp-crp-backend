@@ -134,7 +134,7 @@ export type CommandeFournisseurReceptionLiee = {
   lignes: Array<{
     reception_ligne_id: string;
     commande_fournisseur_ligne_id: string | null;
-    article_id: string;
+    article_id: string | null;
     qty_received: number;
     lot_id: string | null;
     lot_status: string | null;

@@ -66,14 +66,14 @@ function getRequiredIdempotencyKey(req: Request): string {
 const livraisonCreationSnapshotHandlers = createCreationSnapshotHandlers({
   entityType: "bon-livraison",
   documentKind: "DELIVERY_NOTE_CREATION_SNAPSHOT",
-  parseEntityId: (req) => livraisonIdParamsSchema.parse(req.params).id,
+  parseEntityId: (req) => livraisonIdParamsSchema.parse({ id: req.params.id }).id,
   canReadEntity: async (id) => Boolean(await service.svcGetLivraison(id)),
   baseUrl: (id) => `/livraisons/${encodeURIComponent(id)}/creation-snapshot`,
 })
 const livraisonShippedDocumentHandlers = createCreationSnapshotHandlers({
   entityType: "bon-livraison",
   documentKind: "DELIVERY_NOTE_SHIPPED",
-  parseEntityId: (req) => livraisonIdParamsSchema.parse(req.params).id,
+  parseEntityId: (req) => livraisonIdParamsSchema.parse({ id: req.params.id }).id,
   canReadEntity: async (id) => Boolean(await service.svcGetLivraison(id)),
   baseUrl: (id) => `/livraisons/${encodeURIComponent(id)}/official-documents/shipped`,
 })

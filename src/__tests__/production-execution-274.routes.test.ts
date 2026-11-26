@@ -242,7 +242,7 @@ describe("#274 idempotence", () => {
     mocks.clientQuery.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.ordres_fabrication o WHERE o.id")) {
         return {
-          rows: [{ id: 10, numero: "OF-2026-0010", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
+          rows: [{ id: 10, numero: "OF-2026-0010", statut: "EN_COURS", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
         };
       }
       if (sql.includes("FROM public.of_operations op WHERE op.id")) {
@@ -805,19 +805,19 @@ describe('reprise après pause réelle',()=>{
 });
 
 describe("#274 fin d'opération", () => {
-  function mockPreviewQueries(target: typeof mocks.poolQuery | typeof mocks.clientQuery) {
+  function mockPreviewQueries(target: typeof mocks.poolQuery | typeof mocks.clientQuery, statut = "EN_COURS") {
     target.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.production_execution_idempotency")) return { rows: [] };
       // Verrous posés par la commande atomique avant de recalculer l'aperçu.
       if (sql.includes("FROM public.ordres_fabrication") && sql.includes("FOR UPDATE")) {
-        return { rows: [{ id: "10", statut: "EN_COURS" }] };
+        return { rows: [{ id: "10", statut }] };
       }
       if (sql.includes("FROM public.of_operations") && sql.includes("FOR UPDATE")) {
         return { rows: [{ id: OP_ID, status: "RUNNING", phase: 10, of_id: "10" }] };
       }
       if (sql.includes("FROM public.ordres_fabrication o WHERE o.id")) {
         return {
-          rows: [{ id: 10, numero: "OF-2026-0010", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
+          rows: [{ id: 10, numero: "OF-2026-0010", statut, quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
         };
       }
       if (sql.includes("FROM public.of_operations op WHERE op.id")) {
@@ -870,11 +870,32 @@ describe("#274 fin d'opération", () => {
     expect(warnings).toMatch(/non-conformité n'est créée automatiquement/i);
   });
 
+  it.each(["/operations/finish/preview", "/operations/finish"])(
+    "refuse la déclaration sur un OF historique planifié et non libéré (%s)",
+    async (endpoint) => {
+      mockPreviewQueries(mocks.clientQuery, "PLANIFIE");
+      const becomingFinal = endpoint === "/operations/finish";
+      const command = request(app).post(BASE + endpoint).set("x-test-role", OPERATOR);
+      if (becomingFinal) command.set("Idempotency-Key", KEY);
+      const response = await command.send({
+        of_id: 10,
+        operation_id: OP_ID,
+        qty_good: 3,
+        ...(becomingFinal ? { preview_hash: "0".repeat(64) } : {}),
+      });
+      expect(response.status).toBe(422);
+      expect(response.body.code).toBe("PRODUCTION_EXECUTION_OF_NOT_EXECUTABLE");
+      expect(mocks.clientQuery.mock.calls.some(([sql]) =>
+        /INSERT INTO public\.production_quantity_declarations/i.test(String(sql))
+      )).toBe(false);
+    },
+  );
+
   it("refuse 422 une opération qui n'appartient pas à l'OF indiqué", async () => {
     mocks.clientQuery.mockImplementation((sql: string) => {
       if (sql.includes("FROM public.ordres_fabrication o WHERE o.id")) {
         return {
-          rows: [{ id: 10, numero: "OF-2026-0010", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
+          rows: [{ id: 10, numero: "OF-2026-0010", statut: "EN_COURS", quantite_lancee: 10, quantite_bonne: 0, quantite_rebut: 0 }],
         };
       }
       if (sql.includes("FROM public.of_operations op WHERE op.id")) {
