@@ -4,6 +4,7 @@ import { HttpError } from "../../../utils/httpError";
 import { consumableCommand } from "../../production/repository/consumable-command.repository";
 import type { AuditContext } from "./receptions.repository";
 import { processingEvent } from "./receipt-processing.repository";
+import { assertSubcontractReturnVerified } from "../../subcontract/subcontract-return-proof.repository";
 type Queryable = Pick<PoolClient, "query">;
 export async function readReceiptSubcontract(tx: Queryable, lineId: string) {
   const context = (
@@ -67,6 +68,7 @@ export async function assertReceiptSubcontractLinked(
       "SUBCONTRACT_RECEIPT_ORIGINS_REQUIRED",
       "Rattachez ce retour au dossier de sous-traitance et aux lots réellement expédiés.",
     );
+  if (context) await assertSubcontractReturnVerified(tx, lineId);
 }
 export async function bindReceiptSubcontract(
   receptionId: string,

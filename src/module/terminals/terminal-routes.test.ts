@@ -129,6 +129,12 @@ describe("native terminal HTTP boundary", () => {
     expect((await request(app).post(capturePath).set(headers).set("Idempotency-Key","autocontrol-terminal-12").send(captureBody)).status).toBe(403);
     expect(m.capture).not.toHaveBeenCalled();
   });
+  it("uses the strict operation scope when the paired operator confirms an exit proof", async () => {
+    const response=await request(app).post(capturePath).set(headers).set("Idempotency-Key","autocontrol-terminal-proof")
+      .send({ ...captureBody, confirm: true });
+    expect(response.status).toBe(200);
+    expect(m.qualityScope).toHaveBeenCalledWith(expect.anything(),12,operation,controlId,true);
+  });
   it("never accepts paper documents under an ERP token alone or for another operation", async () => {
     const path=`${endpoint}/controls/${controlId}/paper-documents`;
     expect((await request(app).get(path).set("Authorization","Bearer erp-admin")).status).toBe(401);

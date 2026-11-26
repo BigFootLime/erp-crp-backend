@@ -1,4 +1,5 @@
 import { acquireIdempotency, saveReceipt } from "./quality-command-receipt.repository";
+import { SUBCONTRACT_AUTOCONTROL_ISSUED } from "../domain/autocontrol-proof";
 import {reconcileReleasedConsolidationLot} from '../../production/repository/production-receipt-lot-reconciliation.repository';
 import { lockStockLaneTopology } from '../../stock/repository/stock-lane-routing.repository';
 import { lockMaterialBarPostingScopeTx, prepareMaterialBarPostingTx, applyMaterialBarPostingTx } from '../../stock/repository/material-bar-posting.repository';
@@ -1657,6 +1658,13 @@ export async function repoRemoveDocument(params: {
     );
     const doc = current.rows[0] ?? null;
     if (!doc) return false;
+    if (entity_type === "CONTROL" && (await tx.query(
+      "SELECT 1 FROM public.quality_event_log WHERE entity_type='CONTROL' AND entity_id=$1::uuid " +
+      "AND event_type=$2 AND new_values->'proof'->>'documentId'=$3 LIMIT 1",
+      [entity_id, SUBCONTRACT_AUTOCONTROL_ISSUED, doc_id],
+    )).rows.length > 0) {
+      throw new HttpError(409, "AUTOCONTROL_SCAN_IN_USE", "Cette fiche prouve un départ en sous-traitance et doit être conservée.");
+    }
 
     const upd = await tx.query(
       `

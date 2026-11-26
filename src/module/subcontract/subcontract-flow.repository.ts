@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../utils/httpError";
 import { readReceiptLotQualityEligibility } from "../qualite/repository/quality-operational-gate.repository";
+import { readSubcontractReturnSources } from "./subcontract-return-proof.repository";
 import type {
   SubcontractFlow,
   SubcontractReturn,
@@ -74,8 +75,12 @@ export async function readSubcontractFlows(
   ).rows;
   const budget = new Map<string, number>(),
     reasons = new Map<string, string[]>();
+  const uncheckedOrigins = new Set<string>();
   for (const row of rows) {
     if (!row.receipt_line_id || budget.has(row.receipt_line_id)) continue;
+    for (const source of await readSubcontractReturnSources(tx, row.receipt_line_id)) {
+      if (!source.recorded) uncheckedOrigins.add(source.originId);
+    }
     try {
       const q = await readReceiptLotQualityEligibility({
         client: tx,
@@ -110,7 +115,8 @@ export async function readSubcontractFlows(
     }
   }
   const returns: SubcontractReturn[] = rows.map((row) => {
-    const released = row.receipt_line_id
+    const unchecked = uncheckedOrigins.has(row.id);
+    const released = row.receipt_line_id && !unchecked
       ? Math.min(row.qty, budget.get(row.receipt_line_id) ?? 0)
       : 0;
     if (row.receipt_line_id)
@@ -137,6 +143,7 @@ export async function readSubcontractFlows(
           ]
         : [
             ...(reasons.get(row.receipt_line_id) ?? []),
+            ...(unchecked ? ["Vérifiez l’aspect du retour de traitement avant de continuer."] : []),
             ...(row.transferred > released
               ? [
                   "La qualité ne couvre plus les quantités transférées : vérifier les opérations suivantes.",

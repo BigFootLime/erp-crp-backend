@@ -659,8 +659,9 @@ export const recordMeasurements = handle(async (req, res) => {
 export const recordAutocontrolCapture = handle(async (req, res) => {
   const s = scope(req);
   const id = v.uuid.parse(req.params.id);
-  await dossier.assertQualityScope(req.terminal!, s.of_id, s.operation_id, id);
   const body = qv.autocontrolCaptureSchema.shape.body.parse(req.body);
+  if (body.confirm) await dossier.assertQualityScope(req.terminal!, s.of_id, s.operation_id, id, true);
+  else await dossier.assertQualityScope(req.terminal!, s.of_id, s.operation_id, id);
   res.json(await quality.svcRecordAutocontrolCapture({ id, body, actor: audit(req), idempotencyKey: key(req) }));
 });
 

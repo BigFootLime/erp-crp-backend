@@ -11,7 +11,7 @@ export type AutocontrolScanFile = {
 };
 
 /** Read the committed file under the quality root, then scan those exact bytes. */
-export async function verifyAutocontrolScanFile(file: AutocontrolScanFile, antivirus: boolean) {
+export async function readVerifiedAutocontrolScan(file: AutocontrolScanFile, antivirus: boolean) {
   const size = Number(file.size_bytes);
   if (!Number.isSafeInteger(size) || size <= 0 || size > 25 * 1024 * 1024
     || !file.sha256 || !/^[a-f0-9]{64}$/i.test(file.sha256)
@@ -40,5 +40,9 @@ export async function verifyAutocontrolScanFile(file: AutocontrolScanFile, antiv
     if (scan.status !== "clean") throw new HttpError(scan.status === "infected" ? 422 : 503,
       "AUTOCONTROL_SCAN_UNVERIFIED", "Le scan doit être vérifié par l’antivirus avant validation.");
   }
-  return digest;
+  return { digest, bytes };
+}
+
+export async function verifyAutocontrolScanFile(file: AutocontrolScanFile, antivirus: boolean) {
+  return (await readVerifiedAutocontrolScan(file, antivirus)).digest;
 }
