@@ -3,6 +3,31 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Numérotation des lots et des barres reçues
+
+`20261127_stock_lot_numbering.sql` ajoute deux séries indépendantes par base.
+La première matière reçoit `MP-8000` et le premier traitement reçoit `TR-0001`
+si ces séries sont libres. Le premier numéro tient compte des références de ces
+séries déjà présentes. Chaque allocation est enregistrée avec la création du
+lot. Les références et les stocks historiques sont conservés. Les corrections
+de réservation protègent les séries MP et TR afin de préserver les préfixes
+des barres et d'éviter de prendre un futur numéro du compteur.
+
+Les barres reçues avec une longueur dans un lot MP reçoivent un suffixe
+séquentiel par lot, partagé entre ses emplacements. Le code est conservé
+au déplacement ou à la découpe de la barre. Les identifiants QR gardent
+leur format opaque. Les barres existantes gardent leur code.
+
+Après restauration vérifiée de la sauvegarde et drain des écrivains, appliquer
+le seul patch avant la nouvelle API. Le patch prend un verrou exclusif sur
+`stock_material_bars` pour ajouter et protéger la colonne, et installe une garde
+de renumérotation sur `lots`. Comparer les lots,
+barres, positions, mouvements et étiquettes avant et après. Au retour
+applicatif, garder le schéma et les codes émis. L'ancienne API lit les lots MP
+et TR déjà créés et peut continuer à utiliser l'identifiant historique BAR
+dans ses vues de barres. Les réceptions réalisées pendant le repli utilisent
+l'ancienne numérotation.
+
 ## Regroupement sur un OF planifié
 
 `20261127_consolidation_existing_surplus.sql` ajoute la part du producteur déjà

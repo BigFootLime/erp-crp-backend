@@ -1,4 +1,4 @@
-import type { PoolClient } from "pg";import db from "../../../config/database";import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";import { HttpError } from "../../../utils/httpError";import type { Paginated, StockLotDetail, StockLotGenealogy, StockLotGenealogyEdge, StockLotListItem } from "../types/stock.types";import type { CreateLotBodyDTO, CreateLotGenealogyBodyDTO, ListLotsQueryDTO, UpdateLotBodyDTO, UpdateLotQualityBodyDTO } from "../validators/stock.validators";import { normalizeLikeQuery, sortDirection } from "./stock-query.repository";import { beginStockCommand, completeStockCommand, insertAuditLog, isPgUniqueViolation, type AuditContext } from "./stock-movement-core.repository";import { lockStockLaneTopology } from "./stock-lane-routing.repository";import { reconcileReleasedConsolidationLot } from "../../production/repository/production-receipt-lot-reconciliation.repository";import { tableColumnExists } from "./stock-schema.repository";
+import type { PoolClient } from "pg";import db from "../../../config/database";import { generateStockLotCode } from "../../../shared/codes/stock-lot-code.service";import { HttpError } from "../../../utils/httpError";import type { Paginated, StockLotDetail, StockLotGenealogy, StockLotGenealogyEdge, StockLotListItem } from "../types/stock.types";import type { CreateLotBodyDTO, CreateLotGenealogyBodyDTO, ListLotsQueryDTO, UpdateLotBodyDTO, UpdateLotQualityBodyDTO } from "../validators/stock.validators";import { normalizeLikeQuery, sortDirection } from "./stock-query.repository";import { beginStockCommand, completeStockCommand, insertAuditLog, isPgUniqueViolation, type AuditContext } from "./stock-movement-core.repository";import { lockStockLaneTopology } from "./stock-lane-routing.repository";import { reconcileReleasedConsolidationLot } from "../../production/repository/production-receipt-lot-reconciliation.repository";import { tableColumnExists } from "./stock-schema.repository";
 
 
 
@@ -129,7 +129,11 @@ export async function repoCreateLot(body: CreateLotBodyDTO, audit: AuditContext)
     if (body.lot_code?.trim()) {
       throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.");
     }
-    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
+    const article = await client.query<{ article_category: string }>(
+      "SELECT article_category FROM public.articles WHERE id=$1::uuid FOR KEY SHARE",
+      [body.article_id]
+    );
+    const lotCode = await generateStockLotCode(client, article.rows[0]?.article_category);
     const res = await client.query<{ id: string }>(
       `
         INSERT INTO public.lots (

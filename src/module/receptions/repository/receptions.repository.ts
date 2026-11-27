@@ -10,7 +10,7 @@ import path from "node:path"
 
 import db from "../../../config/database"
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction"
-import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service"
+import { generateStockLotCode } from "../../../shared/codes/stock-lot-code.service"
 import { transferSecureUploadToDestination } from "../../../shared/uploads/secure-upload"
 import { classifyUploadReconciliation, withUploadTransaction } from "../../../shared/uploads/upload-transaction"
 import { ensureDocumentStoragePath } from "../../../utils/cerpStorage"
@@ -1099,7 +1099,11 @@ export async function repoCreateLotForLine(
     if (body.lot_code?.trim()) {
       throw new HttpError(400, "LOT_CODE_SERVER_MANAGED", "Le numéro de lot interne est attribué automatiquement.")
     }
-    const lotCode = await generateTransactionalBusinessCode(tx, { prefix: "LOT" })
+    const article = await tx.query<{ article_category: string }>(
+      "SELECT article_category FROM public.articles WHERE id=$1::uuid FOR KEY SHARE",
+      [line.article_id]
+    )
+    const lotCode = await generateStockLotCode(tx, article.rows[0]?.article_category)
     const supplierLotCode = body.supplier_lot_code ?? line.supplier_lot_code ?? null
 
     let lotId: string

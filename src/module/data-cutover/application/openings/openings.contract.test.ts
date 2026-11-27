@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { applyOpeningStockTx } from "./openings.contract";
 import type { CutoverRow } from "../../types/data-cutover.types";
 
@@ -10,10 +10,15 @@ const base = { stockScope: "OLD", stockKind: "MP", articleReference: "MAT-1", qu
 
 describe("cutover opening stock contract", () => {
   it("fails closed before any native write when a reservation or value needs a separate native target", async () => {
-    const client = {} as never;
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const client = { query } as never;
     const targets = new Map([["OPENING_STOCK:STOCK:1", { id: "article-1", reference: "MAT-1", type: "ARTICLE" }]]);
     const audit = { user_id: 1 } as never;
     await expect(applyOpeningStockTx({ client, targets, audit, idempotencyKeyFor: () => "cutover-opening-1", rows: [row({ ...base, quantityReserved: "1" })] })).rejects.toMatchObject({ code: "CUTOVER_STOCK_RESERVATION_TARGET_REQUIRED" });
     await expect(applyOpeningStockTx({ client, targets, audit, idempotencyKeyFor: () => "cutover-opening-2", rows: [row({ ...base, valuationUnitPrice: "42" })] })).rejects.toMatchObject({ code: "CUTOVER_STOCK_VALUE_BASIS_REQUIRED" });
+    expect(query.mock.calls).toEqual([
+      ["SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE"],
+      ["SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE"],
+    ]);
   });
 });

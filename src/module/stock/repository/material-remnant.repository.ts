@@ -1,20 +1,20 @@
 import type {PoolClient} from 'pg';
 import {HttpError} from '../../../utils/httpError';
-import {generateTransactionalBusinessCode} from '../../../shared/codes/code-generator.service';
+import {generateStockLotCode} from '../../../shared/codes/stock-lot-code.service';
 import {repoCreateMovement,repoPostMovement,repoCreateLotGenealogy,type AuditContext} from './stock.repository';
 
 /** Stock owns lot identity, the inbound movement and genealogy. The new shape
  * requires a new quality decision; a parent's release is never copied. */
 export async function createMaterialRemnantTx(tx:PoolClient,input:{ofId:number;reservationId:string;quantity:number;dimensions:Record<string,number>;note:string;key:string},audit:AuditContext){
   const source=(await tx.query(`SELECT l.id::text AS lot_id,l.article_id::text,l.supplier_lot_code,l.received_at,l.expiry_at,
-    l.client_proprietaire_id,l.material_properties,e.magasin_id::text,e.id::int AS emplacement_id,a.unite
+    l.client_proprietaire_id,l.material_properties,e.magasin_id::text,e.id::int AS emplacement_id,a.unite,a.article_category
     FROM public.stock_reservations r JOIN public.lots l ON l.id=r.lot_id JOIN public.articles a ON a.id=l.article_id
-    JOIN public.emplacements e ON e.location_id=r.location_id WHERE r.id=$1::uuid AND r.of_id=$2 FOR UPDATE OF l`,[input.reservationId,input.ofId])).rows[0];
+    JOIN public.emplacements e ON e.location_id=r.location_id WHERE r.id=$1::uuid AND r.of_id=$2 FOR UPDATE OF l FOR KEY SHARE OF a`,[input.reservationId,input.ofId])).rows[0];
   if(!source)throw new HttpError(409,'MATERIAL_REMNANT_SOURCE_CHANGED','Le lot source de la chute n’est plus disponible.');
   const originalDimensions=source.material_properties?.dimensions??{};
   if(Object.entries(input.dimensions).some(([key,value])=>!Number.isFinite(value)||value<=0||originalDimensions[key]!=null&&value>Number(originalDimensions[key])))
     throw new HttpError(422,'MATERIAL_REMNANT_DIMENSIONS_INVALID','La chute doit avoir des dimensions positives compatibles avec son lot source.');
-  const code=await generateTransactionalBusinessCode(tx,{prefix:'LOT'});
+  const code=await generateStockLotCode(tx,source.article_category);
   const properties={...source.material_properties,dimensions:input.dimensions,remnant_source_lot_id:source.lot_id};
   const lot=(await tx.query<{id:string}>(`INSERT INTO public.lots(article_id,lot_code,supplier_lot_code,received_at,manufactured_at,expiry_at,
     client_proprietaire_id,material_properties,lot_status,notes,created_by,updated_by)
