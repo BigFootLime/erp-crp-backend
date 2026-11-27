@@ -80,6 +80,7 @@ export const operatorControlSchema = z.object({
   verdict: z.enum(["CONFORME", "NON_CONFORME"]),
   measurements: z.array(operatorMeasurement).min(1).max(30),
   grade: z.object({ value: z.string().trim().min(1).max(120), confirmed: z.literal(true) }).strict().optional(),
+  materialState: z.object({ value: z.string().trim().min(1).max(120), confirmed: z.literal(true) }).strict().optional(),
   note: z.string().trim().max(2000).optional(),
   inspection: z.object({
     appearance: z.enum(["OK", "NOK"]),

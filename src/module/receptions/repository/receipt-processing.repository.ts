@@ -1,6 +1,6 @@
 import { assertDeliveryNoteTx } from "./receipt-delivery-note.repository";
 import { receiptArticleContextSql, receiptOperatorKindSql } from './receipt-article-context';
-import { applyOperatorRequirements, operatorMaterialDimensions, type MaterialControlDefinition, type OperatorDimension } from '../domain/operator-control-dimensions';
+import { applyOperatorRequirements, operatorMaterialDimensions, requiredOperatorState, type MaterialControlDefinition, type OperatorDimension } from '../domain/operator-control-dimensions';
 import { proposeReceivedMaterialBars } from '../../stock/domain/material-bar-receipt';
 import type { PoolClient } from "pg";
 import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
@@ -48,6 +48,7 @@ export type ProcessingLine = {
     reopenRequired: boolean;
     dimensions: OperatorDimension[];
     grade?: string;
+    materialState?: string;
     stockTogether?: true;
     stockBarProposal?: ReturnType<typeof proposeReceivedMaterialBars>;
   };
@@ -174,6 +175,7 @@ export async function readProcessingLine(
   let accepted = row.qualityRequired ? 0 : row.received;
   let controlId: string | null = null;
   const blocking: string[] = [];
+  let formalQualityMessage: string | undefined;
   if (row.qualityRequired && !row.lotId)
     blocking.push("Identifiez le lot reçu avant son contrôle.");
   if (row.lotId && row.qualityRequired) {
@@ -197,7 +199,8 @@ export async function readProcessingLine(
       );
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500) throw error;
-      blocking.push(error.message);
+      if (error.code === "QUALITY_RECEIPT_CONTROL_REQUIRED") formalQualityMessage = error.message;
+      else blocking.push(error.message);
     }
   }
   if (row.reconciliationRequired)
@@ -227,6 +230,13 @@ export async function readProcessingLine(
     )
   ).rows;
   const transferred=await receiptTransferred(tx,lineId);
+  const { operatorKind, operatorRequirements, ...line } = row;
+  const material = row.flowContext?.material;
+  const grade = material?.grade?.trim() || null;
+  const materialState = requiredOperatorState(material?.state?.trim() || null, operatorRequirements);
+  const dimensions = operatorKind ? applyOperatorRequirements(operatorMaterialDimensions(material), grade, operatorRequirements, materialState) : null;
+  const operatorEligible = operatorKind && dimensions && !row.reconciliationRequired && !subcontract && !row.stocked && !row.packed && !row.disposed && !transferred;
+  if (formalQualityMessage && !operatorEligible) blocking.unshift(formalQualityMessage);
   const progress = receiptProcessingState(
     { ...row, accepted,packed:row.packed+transferred,stocked:row.stocked+transferred },
     blocking.length > 0,
@@ -257,16 +267,12 @@ export async function readProcessingLine(
     )
       progress.stage = "DONE";
   }
-  const { operatorKind, operatorRequirements, ...line } = row;
-  const material = row.flowContext?.material;
-  const grade = material?.grade?.trim() || null;
-  const dimensions = operatorKind ? applyOperatorRequirements(operatorMaterialDimensions(material), grade, operatorRequirements) : null;
   return {
     ...line,
-    ...(operatorKind && dimensions && !row.reconciliationRequired && !subcontract && !row.stocked && !row.packed && !row.disposed && !transferred
+    ...(operatorEligible
       ? { operatorControl: {
           kind: operatorKind, reopenRequired: row.receiptStatus === "CLOSED",
-          dimensions, ...(grade ? { grade } : {}),
+          dimensions, ...(grade ? { grade } : {}), ...(materialState ? { materialState } : {}),
           ...(row.policy === "STANDARD" && row.stockManaged && row.stockUnit && row.received > 0 ? {
             stockTogether: true,
             stockBarProposal: proposeReceivedMaterialBars({
@@ -305,7 +311,9 @@ export function receiptAllowedActions(
   line: ProcessingLine,
   canReceive: boolean,
 ): string[] {
-  if (!canReceive || line.receiptStatus !== "OPEN") return [];
+  if (!canReceive) return [];
+  if (line.receiptStatus === "CLOSED") return line.operatorControl?.stockTogether ? ["operator-control"] : [];
+  if (line.receiptStatus !== "OPEN") return [];
   const pieces = line.policy === "PIECES_CONTROLE_EMBALLAGE";
   const actions: string[] = [];
   if (line.operatorControl && !line.operatorControl.reopenRequired) actions.push("operator-control");

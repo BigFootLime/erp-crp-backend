@@ -111,7 +111,7 @@ async function sha256File(filePath: string): Promise<string> {
   return hash.digest("hex")
 }
 
-async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
+export async function insertAuditLog(tx: DbQueryer, audit: AuditContext, entry: {
   action: string
   entity_type: string | null
   entity_id: string | null
@@ -689,6 +689,7 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
   for(const row of lines.rows){
     const line=mapLineRow(row)
     line.unallocated_off_stock=offStockSurplus.get(line.id)??null
+    line.processing=await readProcessingLine(db,line.id,id)
     if(line.lot_id){
       const unit=line.stock_unit??line.unite,coefficient=line.stock_conversion_coef??1
       try{
@@ -700,10 +701,11 @@ export async function repoGetReception(id: string): Promise<ReceptionFournisseur
           blocking:quality.eligibility.blocks.filter(block=>block.code!=="QTY_NOT_RELEASED").map(block=>`${block.message} ${block.expected_action}`)}
       }catch(error){
         if(!(error instanceof HttpError)||error.status>=500)throw error
-        line.quality={controlId:null,released:0,held:0,unit,stockable:0,blocking:[error.message]}
+        const blocking = line.processing.operatorControl && error.code === "QUALITY_RECEIPT_CONTROL_REQUIRED"
+          ? [] : [error.message]
+        line.quality={controlId:null,released:0,held:0,unit,stockable:0,blocking}
       }
     }
-    line.processing=await readProcessingLine(db,line.id,id)
     if(line.processing.policy==='PIECES_CONTROLE_EMBALLAGE'&&line.quality)line.quality.stockable=Math.min(line.quality.stockable,line.processing.queues.TO_STOCK)
     if(line.processing.toolId)line.unallocated_off_stock=null
     enrichedLines.push(line)

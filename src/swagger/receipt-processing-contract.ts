@@ -66,7 +66,7 @@ export const receiptProcessingSchemas: Record<string, ObjectSchema> = {
       stockManaged: { type: "boolean" },
       qualityRequired: { type: "boolean" },
       operatorControl: { type: "object", required: ["kind", "reopenRequired", "dimensions"], properties: {
-        kind: { type: "string", enum: ["MP"] }, reopenRequired: { type: "boolean" }, grade: { type: "string" },
+        kind: { type: "string", enum: ["MP"] }, reopenRequired: { type: "boolean" }, grade: { type: "string" }, materialState: { type: "string" },
         dimensions: { type: "array", items: { type: "object", required: ["label", "valueMm"], properties: {
           label: { type: "string" }, valueMm: { type: "number", nullable: true }, minimumMm: positive,
         } } },
@@ -138,9 +138,16 @@ export const receiptProcessingSchemas: Record<string, ObjectSchema> = {
     },
   },
 };
+const confirmedMaterialValue: ObjectSchema = {
+  type: "object", additionalProperties: false, required: ["value", "confirmed"], properties: {
+    value: { type: "string", minLength: 1, maxLength: 120 }, confirmed: { type: "boolean", enum: [true] },
+  },
+};
 const payloads: Record<string, ObjectSchema> = {
   "operator-control": {
     kind: { type: "string", enum: ["MP"] },
+    grade: confirmedMaterialValue,
+    materialState: confirmedMaterialValue,
     verdict: { type: "string", enum: ["CONFORME", "NON_CONFORME"] },
     measurements: { type: "array", minItems: 1, maxItems: 30, items: {
       type: "object", additionalProperties: false, required: ["label", "valueMm", "confirmed"], properties: {

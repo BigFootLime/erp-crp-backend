@@ -79,12 +79,23 @@ export async function assertReceiptProcessingClosed(
   const pending = (
     await tx.query(
       `SELECT l.id FROM public.reception_fournisseur_lignes l
+    JOIN public.receptions_fournisseurs r ON r.id=l.reception_id
+    LEFT JOIN public.articles a ON a.id=l.article_id
     LEFT JOIN public.commande_fournisseur_ligne cl ON cl.id=l.commande_fournisseur_ligne_id
     LEFT JOIN public.receipt_processing_dispositions_1069 d ON d.receipt_line_id=l.id
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(sum(s.qty),0) AS qty FROM public.reception_fournisseur_stock_receipts s
+      JOIN public.stock_movements m ON m.id=s.stock_movement_id AND m.status='POSTED'
+      WHERE s.reception_line_id=l.id
+    ) stock
     WHERE ($1::uuid IS NULL OR l.reception_id=$1::uuid) AND ($2::uuid IS NULL OR cl.commande_id=$2::uuid)
       AND ($3::uuid IS NULL OR cl.id=$3::uuid)
-      AND l.processing_policy='PIECES_CONTROLE_EMBALLAGE' AND (l.processing_reconciliation_required OR COALESCE(d.open_nc,0)>0 OR l.qty_received > COALESCE(d.disposed,0)+${transferredSql}+COALESCE((
-        SELECT sum(s.qty) FROM public.reception_fournisseur_stock_receipts s JOIN public.stock_movements m ON m.id=s.stock_movement_id WHERE s.reception_line_id=l.id AND m.status='POSTED'),0)) LIMIT 1`,
+      AND ((l.processing_policy='PIECES_CONTROLE_EMBALLAGE' AND
+          (l.processing_reconciliation_required OR COALESCE(d.open_nc,0)>0 OR l.qty_received > COALESCE(d.disposed,0)+${transferredSql}+stock.qty))
+        OR (l.processing_policy='STANDARD' AND l.stock_managed AND a.article_category='matiere' AND r.origin_type='SUPPLIER'
+          AND r.status <> 'CANCELLED' AND r.confirmation_state IS DISTINCT FROM 'DRAFT'
+          AND (l.processing_reconciliation_required OR COALESCE(d.open_nc,0)>0 OR l.qty_received > COALESCE(d.disposed,0)+stock.qty)))
+      LIMIT 1`,
       [
         where.receptionId ?? null,
         where.orderId ?? null,
@@ -96,6 +107,6 @@ export async function assertReceiptProcessingClosed(
     throw new HttpError(
       409,
       "RECEIPT_PROCESSING_OPEN",
-      "Des pièces attendent encore un contrôle, un emballage, une entrée en stock ou le traitement d’un écart.",
+      "Terminez la réception et la mise en stock des lignes en attente avant de clôturer.",
     );
 }

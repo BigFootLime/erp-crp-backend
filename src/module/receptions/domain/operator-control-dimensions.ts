@@ -3,6 +3,7 @@ import { isMaterialProfileCode, normalizeMaterialProfile } from "../../../shared
 export type MaterialControlDefinition = {
   profile?: string | null;
   grade?: string | null;
+  state?: string | null;
   barToCut?: boolean;
   sourceLengthMm?: number | null;
   blankLengthMm?: number | null;
@@ -51,7 +52,13 @@ export function normalizeOperatorGrade(grade: string) {
   return grade.trim().normalize("NFKC").toUpperCase();
 }
 
-export function applyOperatorRequirements(dimensions: OperatorDimension[], grade: string | null, requirements: unknown) {
+export function requiredOperatorState(state: string | null, requirements: unknown): string | null {
+  if (!state || !Array.isArray(requirements)) return null;
+  return requirements.some(condition => condition?.obligatoire !== false && condition?.type === "SPECIFICATION" &&
+    typeof condition.valeur === "string" && normalizeOperatorGrade(condition.valeur) === normalizeOperatorGrade(state)) ? state : null;
+}
+
+export function applyOperatorRequirements(dimensions: OperatorDimension[], grade: string | null, requirements: unknown, state?: string | null) {
   if (!Array.isArray(requirements)) return null;
   const byLabel = new Map(dimensions.map(dimension => [dimension.label, dimension]));
   for (const condition of requirements) {
@@ -59,7 +66,7 @@ export function applyOperatorRequirements(dimensions: OperatorDimension[], grade
     if (condition.obligatoire === false) continue;
     if (condition.type !== "SPECIFICATION" || typeof condition.valeur !== "string") return null;
     const specification = condition.valeur.trim();
-    if (grade && normalizeOperatorGrade(specification) === normalizeOperatorGrade(grade)) continue;
+    if ([grade, state].some(expected => expected && normalizeOperatorGrade(specification) === normalizeOperatorGrade(expected))) continue;
     // Procurement serializes these exact keys as "diametre_mm : 22 mm minimum".
     const match = /^(\w+)\s*:\s*(\d+(?:[.,]\d+)?)\s+mm minimum$/iu.exec(specification);
     const label = match ? dimensionLabels.get(match[1].toLowerCase()) : undefined;

@@ -11,7 +11,7 @@ import { normalizeIdempotencyKey } from "../../stock/domain/stock-command";
 import { normalizeOperatorGrade } from "../domain/operator-control-dimensions";
 import { convertedStockQuantity } from "../domain/receipt-unit-conversion";
 import type { OperatorControlBody } from "../validators/receipt-processing.validators";
-import { lockStockReceiptCommand, repoCreateStockReceiptLocked, type AuditContext } from "./receptions.repository";
+import { insertAuditLog, lockStockReceiptCommand, repoCreateStockReceiptLocked, type AuditContext } from "./receptions.repository";
 import { processingEvent, readProcessingLine } from "./receipt-processing.repository";
 import { assertReceiptReleaseAvailable } from "./receipt-quality-release.repository";
 
@@ -49,7 +49,9 @@ export async function recordReceiptOperatorControl(
     )).rows[0];
     if (!locked) throw new HttpError(404, "RECEIPT_LINE_NOT_FOUND", "Ligne de réception introuvable.");
 
-    if (locked.status !== "OPEN") throw new HttpError(409, "RECEIPT_NOT_OPEN", "Rouvrez le dossier de réception avant de saisir le contrôle.");
+    if (locked.status !== "OPEN" && locked.status !== "CLOSED") {
+      throw new HttpError(409, "RECEIPT_NOT_OPEN", "Ce dossier de réception ne peut pas être contrôlé.");
+    }
     if (!locked.lotId) throw new HttpError(409, "LOT_REQUIRED", "Identifiez le lot reçu avant son contrôle.");
 
     await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`quality-lot:${locked.lotId}`]);
@@ -71,6 +73,10 @@ export async function recordReceiptOperatorControl(
     if (conforming && body.inspection &&
       (body.inspection.appearance !== "OK" || Math.abs(body.inspection.quantity - line.received) > 0.0000005)) {
       throw new HttpError(422, "RECEIPT_CONTROL_INSPECTION_MISMATCH", "L’aspect et la quantité du bon de livraison doivent correspondre. Enregistrez le constat non conforme.");
+    }
+    const reopensReceipt = locked.status === "CLOSED";
+    if (reopensReceipt && (!line.operatorControl.stockTogether || !body.inspection || (conforming && !body.stock))) {
+      throw new HttpError(409, "RECEIPT_NOT_OPEN", "Rouvrez le dossier avant ce contrôle.");
     }
     const released = conforming ? population : 0;
     const held = population - released;
@@ -94,16 +100,38 @@ export async function recordReceiptOperatorControl(
     if (referenceGrade && !body.grade) throw new HttpError(422, "RECEIPT_CONTROL_GRADE_REQUIRED", "Confirmez la nuance observée sur la matière.");
     const wrongGrade = !!(referenceGrade && body.grade && normalizeOperatorGrade(referenceGrade) !== normalizeOperatorGrade(body.grade.value));
     if (conforming && wrongGrade) throw new HttpError(422, "RECEIPT_CONTROL_GRADE_MISMATCH", "La nuance observée diffère de la référence. Enregistrez le constat non conforme.");
+    const referenceState = line.operatorControl.materialState;
+    if (referenceState && !body.materialState) {
+      throw new HttpError(422, "RECEIPT_CONTROL_STATE_REQUIRED", "Confirmez l’état observé sur la matière.");
+    }
+    const wrongState = Boolean(referenceState && body.materialState &&
+      normalizeOperatorGrade(referenceState) !== normalizeOperatorGrade(body.materialState.value));
+    if (conforming && wrongState) {
+      throw new HttpError(422, "RECEIPT_CONTROL_STATE_MISMATCH", "L’état observé diffère de la référence. Enregistrez le constat non conforme.");
+    }
     const evidence = {
       source: "RECEIPT_OPERATOR_CONTROL", receptionId, lineId, lotId: locked.lotId, articleId: line.articleId,
       kind: body.kind, verdict: body.verdict, measurements, note: body.note ?? null,
       grade: body.grade ? { ...body.grade, reference: referenceGrade ?? null } : null,
+      ...(body.materialState ? { materialState: { ...body.materialState, reference: referenceState ?? null } } : {}),
       ...(body.inspection ? { inspection: { ...body.inspection, expectedQuantity: line.received, unit: line.unit } } : {}),
       population, unit: line.stockUnit, expectedVersion: body.expectedVersion,
     };
     const proofSha256 = qualityRequestHash(commandType, evidence);
     await assertReceiptReleaseAvailable(tx, { id: lineId, quantity: population, unit: line.stockUnit }, released, line.stockUnit);
 
+    if (reopensReceipt) {
+      await tx.query(
+        "UPDATE public.receptions_fournisseurs SET status='OPEN', updated_at=now(), updated_by=$2 WHERE id=$1::uuid",
+        [receptionId, audit.user_id],
+      );
+      await insertAuditLog(tx, audit, {
+        action: "receptions.status.reopen_for_operator_control",
+        entity_type: "RECEPTION_FOURNISSEUR",
+        entity_id: receptionId,
+        details: { line_id: lineId },
+      });
+    }
     const reference = await generateTransactionalBusinessCode(tx, { prefix: "CQ" });
     const control = (await tx.query<{ id: string; correlationId: string }>(
       `INSERT INTO public.quality_control
@@ -132,6 +160,14 @@ export async function recordReceiptOperatorControl(
            value_text,result,measured_at,recorded_by)
          VALUES ($1::uuid,'Nuance','RECEPTION-NUANCE',1,$2,$3::public.quality_point_result,now(),$4)`,
         [control.id, body.grade.value, referenceGrade ? wrongGrade ? "NOK" : "OK" : null, audit.user_id],
+      );
+    }
+    if (body.materialState) {
+      await tx.query(
+        `INSERT INTO public.quality_control_points(quality_control_id,characteristic,characteristic_key,sample_no,
+           value_text,result,measured_at,recorded_by)
+         VALUES ($1::uuid,'État matière','RECEPTION-ETAT',1,$2,$3::public.quality_point_result,now(),$4)`,
+        [control.id, body.materialState.value, referenceState ? wrongState ? "NOK" : "OK" : null, audit.user_id],
       );
     }
     if (body.inspection) {

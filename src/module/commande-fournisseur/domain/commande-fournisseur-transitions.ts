@@ -99,6 +99,6 @@ export function classifyTransition(
 }
 
 /** Transitions dont le motif est obligatoire (auditabilité). */
-export function transitionRequiresMotif(kind: CommandeFournisseurTransitionKind): boolean {
-  return kind === "cancel" || kind === "reject" || kind === "reopen_draft" || kind === "close";
+export function transitionRequiresMotif(kind: CommandeFournisseurTransitionKind, from?: CommandeFournisseurStatut): boolean {
+  return kind === "cancel" || kind === "reject" || kind === "reopen_draft" || (kind === "close" && from !== "RECUE");
 }

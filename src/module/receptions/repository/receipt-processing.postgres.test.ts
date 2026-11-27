@@ -14,7 +14,7 @@ import { prepareGroupedReceipt,confirmGroupedReceipt } from './grouped-receipts.
 import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { createEmplacementSchema } from "../../stock/validators/stock.validators";
 import { repoPreviewMovement } from "../../stock/repository/stock-movement-corrections.repository";
-import { repoGetCommandeFournisseur } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
+import { repoGetCommandeFournisseur, repoTransitionCommandeFournisseur } from "../../commande-fournisseur/repository/commande-fournisseur.repository";
 import { recordReceiptOperatorControl } from "./receipt-operator-control.repository";
 import { operatorControlSchema } from "../validators/receipt-processing.validators";
 const createdFiles: string[] = [];
@@ -23,6 +23,7 @@ import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import pool from "../../../config/database";
 import {
   packReceipt,
+  receiptAllowedActions,
   readProcessingLine,
   listProcessingLines,
 } from "./receipt-processing.repository";
@@ -521,6 +522,77 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     expect((await pool.query(
       "SELECT count(*)::int AS n FROM public.reception_fournisseur_stock_receipts WHERE reception_line_id=$1", [f.line],
     )).rows[0].n).toBe(1);
+  });
+
+  it("reopens a legacy material dossier, checks its catalog state and posts stock and closure once", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    const orderLine = await attachOperatorOrder(f, [
+      { type: "SPECIFICATION", obligatoire: true, valeur: "NATUREL" },
+      { type: "SPECIFICATION", obligatoire: true, valeur: "longueur_mm: 25 mm minimum" },
+      { type: "SPECIFICATION", obligatoire: true, valeur: "largeur_mm: 80 mm minimum" },
+      { type: "SPECIFICATION", obligatoire: true, valeur: "epaisseur_mm: 16 mm minimum" },
+    ]);
+    const order = (await pool.query(
+      "UPDATE public.commande_fournisseur SET statut='RECUE' WHERE id=(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=$1) RETURNING id",
+      [orderLine],
+    )).rows[0].id;
+    await pool.query("INSERT INTO public.stock_etats(code,designation) VALUES ('NATUREL','Naturel') ON CONFLICT (code) DO NOTHING");
+    await pool.query(`INSERT INTO public.articles_matiere(article_id,family_code,etat_id,longueur_mm,largeur_mm,epaisseur_mm)
+      SELECT $1,'PL',e.id,3020,80,16 FROM public.stock_etats e WHERE e.code='NATUREL'`, [f.id]);
+    await expect(assertReceiptProcessingClosed(pool, { orderId: order }))
+      .rejects.toMatchObject({ code: "RECEIPT_PROCESSING_OPEN" });
+    await pool.query("UPDATE public.receptions_fournisseurs SET status='CLOSED' WHERE id=$1", [f.receipt]);
+    const line = await readProcessingLine(pool, f.line, f.receipt);
+    expect(line.operatorControl).toMatchObject({ materialState: "NATUREL", reopenRequired: true, stockTogether: true });
+    expect(receiptAllowedActions(line, true)).toContain("operator-control");
+    expect(receiptAllowedActions(line, false)).toEqual([]);
+    const detail = await repoGetReception(f.receipt);
+    expect(detail?.lines[0]).toMatchObject({ processing: { operatorControl: { materialState: "NATUREL" } }, quality: { blocking: [] } });
+    const command = operatorControlSchema.parse({
+      idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+      measurements: [
+        { label: "Longueur", valueMm: 3020, confirmed: true },
+        { label: "Largeur", valueMm: 80, confirmed: true },
+        { label: "Épaisseur", valueMm: 16, confirmed: true },
+      ],
+      inspection: { appearance: "OK", quantity: 6040 },
+      stock: { magasinId: warehouse, emplacementId: place },
+    });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, command, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_CONTROL_STATE_REQUIRED" });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, {
+      ...command, materialState: { value: "NOIR", confirmed: true },
+    }, audit())).rejects.toMatchObject({ code: "RECEIPT_CONTROL_STATE_MISMATCH" });
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ receiptStatus: "CLOSED", stocked: 0, controlId: null });
+    const confirmed = { ...command, materialState: { value: "Naturel", confirmed: true as const } };
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, { ...confirmed, stock: undefined }, audit()))
+      .rejects.toMatchObject({ code: "RECEIPT_NOT_OPEN" });
+    const result = await recordReceiptOperatorControl(f.receipt, f.line, confirmed, audit());
+    expect(await recordReceiptOperatorControl(f.receipt, f.line, confirmed, audit())).toEqual(result);
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ receiptStatus: "CLOSED", stocked: 6040, stage: "DONE" });
+    await expect(assertReceiptProcessingClosed(pool, { orderId: order })).resolves.toBeUndefined();
+    expect((await pool.query("SELECT statut FROM public.commande_fournisseur WHERE id=$1", [order])).rows[0])
+      .toEqual({ statut: "CLOTUREE" });
+    expect((await pool.query("SELECT result FROM public.quality_control_points WHERE quality_control_id=$1 AND characteristic_key='RECEPTION-ETAT'", [result.controlId])).rows[0])
+      .toEqual({ result: "OK" });
+  });
+
+  it("manual closure needs no reason for a fully received order and still requires one for a remainder", async () => {
+    const f = await fixture(0, "CONSUMABLE");
+    const orderLine = await attachOperatorOrder(f, []);
+    const order = (await pool.query(
+      "UPDATE public.commande_fournisseur SET statut='PARTIELLEMENT_RECUE' WHERE id=(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=$1) RETURNING id",
+      [orderLine],
+    )).rows[0].id;
+    const actor = { ...audit(), role: "Directeur" };
+    await expect(repoTransitionCommandeFournisseur(order, { to: "CLOTUREE" }, actor))
+      .rejects.toMatchObject({ code: "MOTIF_REQUIS" });
+    await pool.query("UPDATE public.commande_fournisseur_ligne SET quantite=100 WHERE id=$1", [orderLine]);
+    await pool.query("UPDATE public.commande_fournisseur SET statut='RECUE' WHERE id=$1", [order]);
+    expect(await repoTransitionCommandeFournisseur(order, { to: "CLOTUREE" }, actor))
+      .toMatchObject({ statut: "CLOTUREE" });
+    expect((await pool.query("SELECT motif_cloture FROM public.commande_fournisseur WHERE id=$1", [order])).rows[0])
+      .toEqual({ motif_cloture: "Commande entièrement reçue et traitée" });
   });
 
   it("preserves a partial material BCF and refuses stock on visual non-conformity", async () => {
