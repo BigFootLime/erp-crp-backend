@@ -12,6 +12,11 @@ export function changesCataloguePricing(existing:Record<string,unknown>,patch:Re
       .some(key=>key in patch && patch[key]!==existing[key]);
 }
 
+/** Net HT for a supplier tariff or a technical purchase estimate. */
+export function catalogueNetHt(quantity: number, unitPrice: number, flatFee = 0, invoiceMinimum = 0) {
+  return roundMoney(Math.max(quantity * unitPrice + flatFee, invoiceMinimum));
+}
+
 /** Rule confirmed by the business: max(quantity × price + flat fee, minimum). */
 export function priceCatalogueLine(snapshot:CataloguePriceSnapshot,quantity:number,orderQuantity=quantity) {
   if(!Number.isFinite(quantity)||quantity<=0)throw new HttpError(422,"INVALID_QUANTITY","La quantité doit être positive.");
@@ -20,7 +25,7 @@ export function priceCatalogueLine(snapshot:CataloguePriceSnapshot,quantity:numb
   const tier=supplierPriceTiersSchema.parse(snapshot.price_tiers).find(t=>quantity>=t.qty_min&&(t.qty_max===null||quantity<t.qty_max));
   const price=tier?.unit_price??snapshot.prix_unitaire;
   if(price===null||!Number.isFinite(price)||price<0)throw new HttpError(422,"CATALOGUE_PRICE_MISSING","Le prix n’est pas renseigné pour cette quantité.");
-  const total=roundMoney(Math.max(quantity*price+(snapshot.forfait_ht??0),snapshot.minimum_facturation_ht??0));
+  const total=catalogueNetHt(quantity, price, snapshot.forfait_ht ?? 0, snapshot.minimum_facturation_ht ?? 0);
   // Existing order accounting stores all additional charges in frais_ht.
   return {prix_unitaire_ht:price,frais_ht:roundMoney(total-roundMoney(quantity*price)),remise_pct:0,net_ht:total};
 }

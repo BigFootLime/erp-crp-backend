@@ -23,6 +23,10 @@ type Purchase = {
     designation?: string;
     nom?: string;
     gamme_operation_id?: string | null;
+    prix?: number | string | null;
+    pu_achat?: number | string | null;
+    forfait_ht?: number | string | null;
+    minimum_facturation_ht?: number | string | null;
 };
 export async function readSubcontractProcurementTx(tx: Db, ofId: number, selectionOverride?: SubcontractSelection) {
     const of = (await tx.query<{

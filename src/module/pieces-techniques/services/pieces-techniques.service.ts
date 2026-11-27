@@ -1,6 +1,7 @@
 import { repoLinkExistingPurchaseOperation } from "../repository/pieces-techniques.repository";
 // src/module/pieces-techniques/services/pieces-techniques.service.ts
 import crypto from "node:crypto";
+import { catalogueNetHt } from "../../commande-fournisseur/domain/catalogue-line-pricing";
 import { HttpError } from "../../../utils/httpError";
 import type { PieceTechniqueStatut } from "../types/pieces-techniques.types";
 import type {
@@ -69,12 +70,14 @@ function computeOperation(op: AddOperationBodyDTO | UpdateOperationBodyDTO) {
   return { temps_total: tempsTotal, cout_mo: coutMo };
 }
 
-function computeAchat(a: AddAchatBodyDTO | UpdateAchatBodyDTO) {
+function computeAchat(a: AddAchatBodyDTO) {
   const quantite = typeof a.quantite === "number" ? a.quantite : 1;
   const prix = typeof a.prix === "number" ? a.prix : 0;
   const tva = typeof a.tva_achat === "number" ? a.tva_achat : 20;
 
-  const totalHt = roundTo(quantite * prix, 2);
+  const totalHt = a.forfait_ht != null || a.minimum_facturation_ht != null
+    ? catalogueNetHt(quantite, a.prix ?? a.pu_achat ?? 0, a.forfait_ht ?? 0, a.minimum_facturation_ht ?? 0)
+    : roundTo(quantite * prix, 2);
   const totalTtc = roundTo(totalHt * (1 + tva / 100), 2);
   return { total_achat_ht: totalHt, total_achat_ttc: totalTtc };
 }
@@ -299,8 +302,7 @@ export async function updateAchatSVC(pieceTechniqueId: string, achatId: string, 
     if(!audit||Object.keys(body).some(key=>key!=="gamme_operation_id"&&key!=="preparation_of"))throw new HttpError(422,"PURCHASE_LINK_COMMAND","Enregistrez le rattachement séparément des autres modifications de la ligne.");
     return repoLinkExistingPurchaseOperation(pieceTechniqueId,achatId,body.gamme_operation_id,audit,body.preparation_of);
   }
-  const computed = computeAchat(body);
-  return repoUpdateAchat(pieceTechniqueId, achatId, { ...body, ...computed });
+  return repoUpdateAchat(pieceTechniqueId, achatId, body);
 }
 
 export async function deleteAchatSVC(pieceTechniqueId: string, achatId: string) {

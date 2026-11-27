@@ -1,4 +1,7 @@
 import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
+import type { Request } from "express";
+import { consumableRights } from "./consumable-procurement.controller";
+import { redactOfPreparationPrices } from "../domain/of-purchase-price-visibility";
 import { operationProgrammingSchema } from '../validators/production-workbench.validators';
 import { svcPrepareOperationProgramming } from '../services/production-workbench.service';
 import { svcGenerateInspectionTemplate } from '../services/production-workbench.service';
@@ -46,47 +49,56 @@ import {
   svcDownloadSelfInspection,
 } from "../services/production-workbench.service";
 
+async function presentPreparation<T extends { sources?: unknown; of?: unknown }>(
+  req: Request,
+  load: () => Promise<T>,
+) {
+  const { prices } = await consumableRights(req);
+  const data = await load();
+  return prices ? data : redactOfPreparationPrices(data);
+}
+
 export const synchronizePreparationChildren = asyncHandler(async (req, res) => {
   res.json(
-    await svcSynchronizePreparationChildren(
+    await presentPreparation(req, () => svcSynchronizePreparationChildren(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       z
         .object({ expected_updated_at: z.string().min(1) })
         .strict()
         .parse(req.body).expected_updated_at,
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const prepareOperationProgramming = asyncHandler(async (req,res) => {
-  res.json(await svcPrepareOperationProgramming(ofIdParamSchema.parse({params:req.params}).params.id,
-    operationProgrammingSchema.parse(req.body),buildAuditContext(req)));
+  res.json(await presentPreparation(req, () => svcPrepareOperationProgramming(ofIdParamSchema.parse({params:req.params}).params.id,
+    operationProgrammingSchema.parse(req.body),buildAuditContext(req))));
 });
 export const reusePreparationStock = asyncHandler(async (req, res) => {
   res.json(
-    await svcReusePreparationStock(
+    await presentPreparation(req, () => svcReusePreparationStock(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       stockReuseSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const saveProgrammingTask = asyncHandler(async (req, res) => {
   res.json(
-    await svcSaveProgrammingTask(
+    await presentPreparation(req, () => svcSaveProgrammingTask(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       programmingTaskSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const importPreparationPurchases = asyncHandler(async (req, res) => {
   res.json(
-    await svcImportPreparationPurchases(
+    await presentPreparation(req, () => svcImportPreparationPurchases(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       importPurchasesSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const productionWorklist = asyncHandler(async (req, res) => {
@@ -121,34 +133,34 @@ export const ofImprovementReturns = asyncHandler(async (req, res) => {
   res.json(await svcOfImprovementReturns(ofIdParamSchema.parse({ params: req.params }).params.id));
 });
 export const preparationWorkbench = asyncHandler(async (req, res) => {
-  const data = await svcPreparationWorkbench(ofIdParamSchema.parse({ params: req.params }).params.id);
+  const data = await presentPreparation(req, () => svcPreparationWorkbench(ofIdParamSchema.parse({ params: req.params }).params.id));
   res.json({ ...data, can_validate: canValidateTechnicalDossier(req.user) });
 });
 export const savePreparationDecisions = asyncHandler(async (req, res) => {
   res.json(
-    await svcSavePreparationDecisions(
+    await presentPreparation(req, () => svcSavePreparationDecisions(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       savePreparationDecisionsSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const selectPreparationVersion = asyncHandler(async (req, res) => {
   res.json(
-    await svcSelectPreparationVersion(
+    await presentPreparation(req, () => svcSelectPreparationVersion(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       preparationVersionSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const reviewPreparationStock = asyncHandler(async (req, res) => {
   res.json(
-    await svcReviewPreparationStock(
+    await presentPreparation(req, () => svcReviewPreparationStock(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       preparationReviewSchema.parse(req.body),
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const generateSelfInspection = asyncHandler(async (req, res) => {
@@ -157,11 +169,11 @@ export const generateSelfInspection = asyncHandler(async (req, res) => {
     .strict()
     .parse(req.body);
   res.json(
-    await svcGenerateSelfInspection(
+    await presentPreparation(req, () => svcGenerateSelfInspection(
       ofIdParamSchema.parse({ params: req.params }).params.id,
       body.expected_updated_at,
       buildAuditContext(req),
-    ),
+    )),
   );
 });
 export const generateInspectionTemplate = asyncHandler(async (req,res) => {

@@ -33,7 +33,7 @@ async function restoreClonedPurchaseLinksTx(client: PoolClient, sourceVersion: s
   await client.query("DELETE FROM public.pieces_techniques_achats WHERE piece_technique_version_id = $1::uuid", [nextVersion]);
   const fields = ["piece_technique_id", "phase", "famille_piece_id", "nom", "designation", "designation_2", "designation_3", "article_id",
     "fournisseur_id", "fournisseur_nom", "fournisseur_code", "quantite", "quantite_brut_mm", "longueur_mm", "coefficient_chute",
-    "quantite_pieces", "prix_par_quantite", "tarif", "prix", "unite_prix", "pu_achat", "tva_achat", "total_achat_ht", "total_achat_ttc", "type_achat",
+    "quantite_pieces", "prix_par_quantite", "tarif", "prix", "unite_prix", "pu_achat", "tva_achat", "forfait_ht", "minimum_facturation_ht", "total_achat_ht", "total_achat_ttc", "type_achat",
     "designation_snapshot", "source"];
   await client.query(`INSERT INTO public.pieces_techniques_achats
     (${fields.join(", ")}, piece_technique_version_id, gamme_id, gamme_operation_id)

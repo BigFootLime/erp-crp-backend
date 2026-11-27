@@ -1621,6 +1621,8 @@ type AchatRow = {
   prix: number | null;
   unite_prix: string | null;
   pu_achat: number | null;
+  forfait_ht: number | null;
+  minimum_facturation_ht: number | null;
   tva_achat: number | null;
   total_achat_ht: number | null;
   total_achat_ttc: number | null;
@@ -1653,6 +1655,8 @@ async function repoListAchats(pieceTechniqueId: string,queryer:Pick<PoolClient,"
       prix::float8 AS prix,
       unite_prix,
       pu_achat::float8 AS pu_achat,
+      forfait_ht::float8 AS forfait_ht,
+      minimum_facturation_ht::float8 AS minimum_facturation_ht,
       tva_achat::float8 AS tva_achat,
       total_achat_ht::float8 AS total_achat_ht,
       total_achat_ttc::float8 AS total_achat_ttc,
@@ -1686,6 +1690,8 @@ async function repoListAchats(pieceTechniqueId: string,queryer:Pick<PoolClient,"
     prix: r.prix === null ? null : Number(r.prix),
     unite_prix: r.unite_prix,
     pu_achat: r.pu_achat === null ? null : Number(r.pu_achat),
+    forfait_ht: r.forfait_ht ?? null,
+    minimum_facturation_ht: r.minimum_facturation_ht ?? null,
     tva_achat: r.tva_achat === null ? null : Number(r.tva_achat),
     total_achat_ht: r.total_achat_ht === null ? null : Number(r.total_achat_ht),
     total_achat_ttc: r.total_achat_ttc === null ? null : Number(r.total_achat_ttc),
@@ -2233,14 +2239,15 @@ async function insertAchats(
           total_achat_ttc,
           designation,
           designation_2,
-          designation_3
+          designation_3, forfait_ht, minimum_facturation_ht, type_achat
         )
         VALUES (
           $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-          $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+          $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
         )
         RETURNING
           id::text AS id,
+          type_achat,
           phase,
           famille_piece_id::text AS famille_piece_id,
           nom,
@@ -2257,6 +2264,8 @@ async function insertAchats(
           prix::float8 AS prix,
           unite_prix,
           pu_achat::float8 AS pu_achat,
+          forfait_ht::float8 AS forfait_ht,
+          minimum_facturation_ht::float8 AS minimum_facturation_ht,
           tva_achat::float8 AS tva_achat,
           total_achat_ht::float8 AS total_achat_ht,
           total_achat_ttc::float8 AS total_achat_ttc,
@@ -2288,11 +2297,15 @@ async function insertAchats(
         a.designation ?? null,
         a.designation_2 ?? null,
         a.designation_3 ?? null,
+        a.forfait_ht ?? null,
+        a.minimum_facturation_ht ?? null,
+        a.type_achat ?? 'DIVERS',
       ]
     );
     const r = res.rows[0];
     out.push({
       id: r.id,
+      type_achat: (r.type_achat as TypeAchat) ?? 'DIVERS',
       phase: r.phase,
       famille_piece_id: r.famille_piece_id,
       nom: r.nom,
@@ -2309,6 +2322,8 @@ async function insertAchats(
       prix: r.prix === null ? null : Number(r.prix),
       unite_prix: r.unite_prix,
       pu_achat: r.pu_achat === null ? null : Number(r.pu_achat),
+      forfait_ht: r.forfait_ht ?? null,
+      minimum_facturation_ht: r.minimum_facturation_ht ?? null,
       tva_achat: r.tva_achat === null ? null : Number(r.tva_achat),
       total_achat_ht: r.total_achat_ht === null ? null : Number(r.total_achat_ht),
       total_achat_ttc: r.total_achat_ttc === null ? null : Number(r.total_achat_ttc),
@@ -2666,6 +2681,7 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
       `
         SELECT
           id::text AS id,
+          type_achat,
           phase,
           famille_piece_id::text AS famille_piece_id,
           nom,
@@ -2682,6 +2698,8 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
           prix::float8 AS prix,
           unite_prix,
           pu_achat::float8 AS pu_achat,
+          forfait_ht::float8 AS forfait_ht,
+          minimum_facturation_ht::float8 AS minimum_facturation_ht,
           tva_achat::float8 AS tva_achat,
           total_achat_ht::float8 AS total_achat_ht,
           total_achat_ttc::float8 AS total_achat_ttc,
@@ -2852,11 +2870,11 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
               total_achat_ttc,
               designation,
               designation_2,
-              designation_3
+              designation_3, forfait_ht, minimum_facturation_ht, type_achat
             )
             VALUES (
               $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-              $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+              $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
             )
           `,
           [
@@ -2883,6 +2901,9 @@ export async function repoDuplicatePieceTechnique(id: string, userId: number | n
             a.designation ?? null,
             a.designation_2 ?? null,
             a.designation_3 ?? null,
+            a.forfait_ht ?? null,
+            a.minimum_facturation_ht ?? null,
+            a.type_achat ?? 'DIVERS',
           ]
         );
       }
@@ -3483,11 +3504,11 @@ export async function repoAddAchat(
         designation_3,
         type_achat,
         article_id,
-        piece_technique_version_id
+        piece_technique_version_id, forfait_ht, minimum_facturation_ht
       )
       VALUES (
         $1::uuid,$2,$3::uuid,$4,$5::uuid,$6,$7,$8,
-        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::uuid,$26::uuid
+        $9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::uuid,$26::uuid,$27,$28
       )
       RETURNING
         id::text AS id,
@@ -3509,6 +3530,8 @@ export async function repoAddAchat(
         prix::float8 AS prix,
         unite_prix,
         pu_achat::float8 AS pu_achat,
+        forfait_ht::float8 AS forfait_ht,
+        minimum_facturation_ht::float8 AS minimum_facturation_ht,
         tva_achat::float8 AS tva_achat,
         total_achat_ht::float8 AS total_achat_ht,
         total_achat_ttc::float8 AS total_achat_ttc,
@@ -3544,6 +3567,8 @@ export async function repoAddAchat(
       body.type_achat ?? "DIVERS",
       body.article_id ?? null,
       body.piece_technique_version_id ?? null,
+      body.forfait_ht ?? null,
+      body.minimum_facturation_ht ?? null,
     ]
   );
 
@@ -3569,6 +3594,8 @@ export async function repoAddAchat(
     prix: r.prix === null ? null : Number(r.prix),
     unite_prix: r.unite_prix,
     pu_achat: r.pu_achat === null ? null : Number(r.pu_achat),
+    forfait_ht: r.forfait_ht ?? null,
+    minimum_facturation_ht: r.minimum_facturation_ht ?? null,
     tva_achat: r.tva_achat === null ? null : Number(r.tva_achat),
     total_achat_ht: r.total_achat_ht === null ? null : Number(r.total_achat_ht),
     total_achat_ttc: r.total_achat_ttc === null ? null : Number(r.total_achat_ttc),
@@ -3599,7 +3626,7 @@ export async function repoLinkExistingPurchaseOperation(pieceId:string,lineId:st
 export async function repoUpdateAchat(
   pieceTechniqueId: string,
   achatId: string,
-  body: UpdateAchatBodyDTO & { total_achat_ht: number; total_achat_ttc: number }
+  body: UpdateAchatBodyDTO
 ): Promise<Achat | null> {
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -3617,23 +3644,31 @@ export async function repoUpdateAchat(
   if (body.fournisseur_id !== undefined) sets.push(`fournisseur_id = ${push(body.fournisseur_id)}::uuid`);
   if (body.fournisseur_nom !== undefined) sets.push(`fournisseur_nom = ${push(body.fournisseur_nom)}`);
   if (body.fournisseur_code !== undefined) sets.push(`fournisseur_code = ${push(body.fournisseur_code)}`);
-  if (body.quantite !== undefined) sets.push(`quantite = ${push(body.quantite)}`);
   if (body.quantite_brut_mm !== undefined) sets.push(`quantite_brut_mm = ${push(body.quantite_brut_mm)}`);
   if (body.longueur_mm !== undefined) sets.push(`longueur_mm = ${push(body.longueur_mm)}`);
   if (body.coefficient_chute !== undefined) sets.push(`coefficient_chute = ${push(body.coefficient_chute)}`);
   if (body.quantite_pieces !== undefined) sets.push(`quantite_pieces = ${push(body.quantite_pieces)}`);
   if (body.prix_par_quantite !== undefined) sets.push(`prix_par_quantite = ${push(body.prix_par_quantite)}`);
   if (body.tarif !== undefined) sets.push(`tarif = ${push(body.tarif)}`);
-  if (body.prix !== undefined) sets.push(`prix = ${push(body.prix)}`);
   if (body.unite_prix !== undefined) sets.push(`unite_prix = ${push(body.unite_prix)}`);
-  if (body.pu_achat !== undefined) sets.push(`pu_achat = ${push(body.pu_achat)}`);
-  if (body.tva_achat !== undefined) sets.push(`tva_achat = ${push(body.tva_achat)}`);
   if (body.designation !== undefined) sets.push(`designation = ${push(body.designation)}`);
   if (body.designation_2 !== undefined) sets.push(`designation_2 = ${push(body.designation_2)}`);
   if (body.designation_3 !== undefined) sets.push(`designation_3 = ${push(body.designation_3)}`);
 
-  sets.push(`total_achat_ht = ${push(body.total_achat_ht)}`);
-  sets.push(`total_achat_ttc = ${push(body.total_achat_ttc)}`);
+  // SET expressions use values from the same row. Omitted properties keep
+  // their stored values, including an existing minimum.
+  const pricingFields = ["quantite", "prix", "pu_achat", "tva_achat", "forfait_ht", "minimum_facturation_ht"] as const;
+  const next = Object.fromEntries(pricingFields.map(key => {
+    if (body[key] === undefined) return [key, key];
+    const parameter = `${push(body[key])}::numeric`;
+    sets.push(`${key} = ${parameter}`);
+    return [key, parameter];
+  })) as Record<typeof pricingFields[number], string>;
+  if (pricingFields.some(key => body[key] !== undefined)) {
+    const price = `CASE WHEN ${next.minimum_facturation_ht} IS NOT NULL THEN COALESCE(${next.prix}, ${next.pu_achat}, 0) ELSE COALESCE(${next.prix}, 0) END`;
+    const total = `round(GREATEST(${next.quantite} * (${price}) + COALESCE(${next.forfait_ht}, 0), COALESCE(${next.minimum_facturation_ht}, 0)), 2)`;
+    sets.push(`total_achat_ht = ${total}`, `total_achat_ttc = round(${total} * (1 + COALESCE(${next.tva_achat}, 20) / 100), 2)`);
+  }
 
   const sql = `
     UPDATE pieces_techniques_achats
@@ -3660,6 +3695,8 @@ export async function repoUpdateAchat(
       prix::float8 AS prix,
       unite_prix,
       pu_achat::float8 AS pu_achat,
+      forfait_ht::float8 AS forfait_ht,
+      minimum_facturation_ht::float8 AS minimum_facturation_ht,
       tva_achat::float8 AS tva_achat,
       total_achat_ht::float8 AS total_achat_ht,
       total_achat_ttc::float8 AS total_achat_ttc,
@@ -3667,7 +3704,11 @@ export async function repoUpdateAchat(
       designation_2,
       designation_3
   `;
-  const res = await db.query<AchatRow>(sql, values);
+  const res = await db.query<AchatRow>(sql, values).catch((error: { constraint?: string }) => {
+    if (error.constraint === "pt_achats_traitement_facturation_ck")
+      throw new HttpError(422, "PURCHASE_PRICING_INVALID", "Vérifiez le forfait, le prix unitaire et le minimum de facturation.");
+    throw error;
+  });
   const r = res.rows[0];
   if (!r) return null;
   return {
@@ -3691,6 +3732,8 @@ export async function repoUpdateAchat(
     prix: r.prix === null ? null : Number(r.prix),
     unite_prix: r.unite_prix,
     pu_achat: r.pu_achat === null ? null : Number(r.pu_achat),
+    forfait_ht: r.forfait_ht ?? null,
+    minimum_facturation_ht: r.minimum_facturation_ht ?? null,
     tva_achat: r.tva_achat === null ? null : Number(r.tva_achat),
     total_achat_ht: r.total_achat_ht === null ? null : Number(r.total_achat_ht),
     total_achat_ttc: r.total_achat_ttc === null ? null : Number(r.total_achat_ttc),
