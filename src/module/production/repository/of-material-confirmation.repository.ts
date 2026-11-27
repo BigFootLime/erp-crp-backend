@@ -2,7 +2,7 @@ import type {PoolClient} from 'pg';
 import {materialCommand,readMaterialTx,type Candidate} from './of-material.repository';
 import type {MaterialConfirmation} from '../validators/of-material.validators';
 import type {AuditContext} from './production.repository';
-import {quantity,materialBalance,materialSelectionCoverage,barBlankStep,lotCompatibility,materialPurchaseQuantity} from '../domain/of-material';
+import {quantity,materialBalance,materialSelectionCoverage,barBlankStep,lotCompatibility,planMaterialPurchase} from '../domain/of-material';
 import {physicalMaterialSelection} from '../domain/of-material-bars';
 import {HttpError} from '../../../utils/httpError';
 import {repoCreateStockReservation} from '../../stock/repository/stock-reservation.repository';
@@ -22,26 +22,43 @@ export async function reserveMaterialSelectionTx(tx:PoolClient,ofId:number,numbe
 
 export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,audit:AuditContext,canPurchase:boolean){
   return materialCommand(ofId,"CONFIRM",body,audit,async(tx,current)=>{
+    if(current.dossierStatus!=='COMPLETE')throw new HttpError(409,'MATERIAL_DOSSIER_REQUIRED','Validez le dossier avant de réserver ou de commander la matière.');
     if(current.needs.some(n=>n.blockers.length))throw new HttpError(409,"MATERIAL_PREPARATION_REQUIRED","Complétez les besoins matière avant de confirmer la couverture.");
     if(current.previousNeeds.length)throw new HttpError(409,"MATERIAL_PREVIOUS_REVISION","Les affectations de l’ancienne version doivent être revues avant une nouvelle couverture.");
     if(new Set(body.selections.map(s=>`${s.needKey}:${s.batchId}`)).size!==body.selections.length)throw new HttpError(422,"MATERIAL_DUPLICATE_SELECTION","Le même lot est présent deux fois pour ce besoin.");
     if(new Set(body.futureSelections.map(s=>`${s.needKey}:${s.lineId}`)).size!==body.futureSelections.length)throw new HttpError(422,'MATERIAL_DUPLICATE_SELECTION','Le même approvisionnement est présent deux fois pour ce besoin.');
-    await lockFutureMaterialSupplyTx(tx,body.futureSelections.map(s=>s.lineId));
+    const eligibleFutureIds=new Set(body.automaticFutureAllocation
+      ? current.needs.flatMap(n=>n.futureSupplies.filter(s=>s.automatic).map(s=>s.id)) : []);
+    await lockFutureMaterialSupplyTx(tx,[
+      ...body.futureSelections.map(s=>s.lineId),
+      ...eligibleFutureIds,
+    ]);
     // Stabilize quality and material properties before rechecking the preview.
     const batchIds=body.selections.map(s=>s.batchId);
     await tx.query("SELECT id FROM public.lots WHERE id IN (SELECT lot_id FROM public.stock_batches WHERE id=ANY($1::uuid[])) ORDER BY id FOR UPDATE",[batchIds]);
     const locked=await readMaterialTx(tx,ofId);
     if(locked.version!==current.version)throw new HttpError(409,"MATERIAL_COVERAGE_CHANGED","Un lot ou un approvisionnement a changé. Actualisez la proposition.");
     const drafts:MaterialDraftLine[]=[],reservedIds:string[]=[],pending:Array<{needKey:string;message:string}>=[];
-    const allocatedFuture=new Map<string,number>();
+    const assignedPurchases: MaterialConfirmation["futureSelections"]=[];
     for(const initialNeed of current.needs){
       // Earlier needs may have reserved the same physical bar. Re-read its
       // canonical holds/version under the lot locks before planning another hold.
-      const need=reservedIds.length?(await readMaterialTx(tx,ofId)).needs.find(n=>n.key===initialNeed.key)!:initialNeed;
+      const need=reservedIds.length||assignedPurchases.length
+        ?(await readMaterialTx(tx,ofId)).needs.find(n=>n.key===initialNeed.key):initialNeed;
       if(!need||need.blockers.length)throw new HttpError(409,'MATERIAL_COVERAGE_CHANGED','La préparation matière a changé. Actualisez la proposition.');
       const selections=body.selections.filter(s=>s.needKey===need.key),total=materialSelectionCoverage(need,selections);
-      const futureSelections=body.futureSelections.filter(s=>s.needKey===need.key),futureTotal=quantity(futureSelections.reduce((sum,s)=>sum+s.quantity,0));
+      const futureSelections=body.futureSelections.filter(s=>s.needKey===need.key);
+      let futureTotal=quantity(futureSelections.reduce((sum,s)=>sum+s.quantity,0));
       const missing=materialBalance(need).missing,step=barBlankStep(need)/1000;
+      if(body.automaticFutureAllocation){
+        for(const source of need.futureSupplies){
+          if(!source.automatic||!eligibleFutureIds.has(source.id)||futureSelections.some(selection=>selection.lineId===source.id))continue;
+          const assigned=quantity(Math.min(missing-total-futureTotal,source.available));
+          if(assigned<=0)continue;
+          futureSelections.push({needKey:need.key,lineId:source.id,quantity:assigned,requirementsReviewed:true});
+          futureTotal=quantity(futureTotal+assigned);
+        }
+      }
       const maximum=step?quantity(Math.ceil(missing/step)*step):missing;
       if(quantity(total+futureTotal)>maximum)throw new HttpError(409,"MATERIAL_OVER_COVERAGE","La sélection physique et attendue dépasse le manque restant.");
       if(step&&selections.some(s=>{
@@ -49,11 +66,11 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
         return gain<=0||materialSelectionCoverage(need,[{...s,quantity:quantity(Math.max(0,s.quantity-.001))}])===gain;
       }))throw new HttpError(409,'MATERIAL_FRAGMENTED_SELECTION','Réservez les longueurs proposées pour obtenir des bruts entiers sur chaque lot.');
       for(const selection of futureSelections){
-        const candidate=need.futureSupplies.find(s=>s.id===selection.lineId),already=allocatedFuture.get(selection.lineId)??0;
-        if(!selection.requirementsReviewed||!candidate||candidate.reasons.length||quantity(already+selection.quantity)>candidate.available)
+        const candidate=need.futureSupplies.find(s=>s.id===selection.lineId);
+        if(!selection.requirementsReviewed||!candidate||candidate.reasons.length||selection.quantity>candidate.available)
           throw new HttpError(409,'MATERIAL_FUTURE_SUPPLY_CHANGED','L’approvisionnement attendu n’est plus compatible ou disponible. Relisez la proposition.');
         await allocateFutureMaterialSupplyTx(tx,{lineId:selection.lineId,needId:need.id!,sourceRef:need.key,ofId,quantity:selection.quantity});
-        allocatedFuture.set(selection.lineId,quantity(already+selection.quantity));
+        assignedPurchases.push(selection);
       }
       for(const selection of selections){
         const candidate=need.candidates.find(c=>c.lot.batchId===selection.batchId);
@@ -61,20 +78,22 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
         const result=await reserveMaterialSelectionTx(tx,ofId,current.number,need,candidate.lot,selection.quantity,body.idempotencyKey,audit);
         reservedIds.push(result.reservation.id);
       }
-      const buy=materialPurchaseQuantity(quantity(Math.max(0,missing-total-futureTotal)),need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
+      const stillMissing=quantity(Math.max(0,missing-total-futureTotal));
+      if(!stillMissing)continue;
+      const buy=planMaterialPurchase(stillMissing,need.unit,need.sourceBarLengthMm,need.supplyMode==='PURCHASE'?need.catalog:null);
       if(buy.problem)throw new HttpError(422,'MATERIAL_PURCHASE_CONSTRAINT',buy.problem);
       if(!buy.assigned)continue;
       if(need.supplyMode==="CUSTOMER"){pending.push({needKey:need.key,message:`Préparer l’appel de ${buy.assigned} ${need.unit} au client.`});continue;}
       if(!canPurchase){pending.push({needKey:need.key,message:"Faire préparer le brouillon par un utilisateur habilité aux achats."});continue;}
       if(!need.supplierId){pending.push({needKey:need.key,message:"Préparation d’achat enregistrée avec la quantité manquante. Choisissez le fournisseur pour créer la commande brouillon."});continue;}
-      if(need.futureSupplies.some(s=>!s.reasons.length&&quantity(s.available-body.futureSelections.filter(f=>f.lineId===s.id).reduce((sum,f)=>sum+f.quantity,0))>0)&&!body.existingPurchasesReviewed)
+      if(need.futureSupplies.some(s=>!s.reasons.length&&quantity(s.available-(futureSelections.find(f=>f.lineId===s.id)?.quantity??0))>0)&&!body.existingPurchasesReviewed)
         throw new HttpError(409,'MATERIAL_EXISTING_PURCHASE_REVIEW','Un achat attendu reste disponible. Examinez son affectation avant de créer une nouvelle commande.');
-      drafts.push({needId:need.id!,sourceRef:need.key,ofId,articleId:need.articleId!,designation:need.designation,supplierId:need.supplierId,currency:need.currency,destinationId:need.destinationId,unit:need.unit!,quantity:buy.ordered,assigned:buy.assigned,price:need.price,due:current.operations.find(o=>o.id===need.operationId)?.start?.slice(0,10)??null,operation:need.operationLabel!,requirements:[need.requirements.grade,need.requirements.condition,...Object.entries(need.requirements.dimensions).map(([name,value])=>`${name} : ${value} mm minimum`),...need.requirements.certificates,...need.requirements.manualChecks].filter((x):x is string=>!!x)});
+      drafts.push({needId:need.id!,sourceRef:need.key,ofId,articleId:need.articleId!,designation:need.designation,supplierId:need.supplierId,currency:need.currency,destinationId:need.destinationId,unit:buy.unit!,stockUnit:need.unit!,coefficient:buy.coefficient,quantity:buy.ordered,assigned:buy.assigned,price:need.price,due:current.operations.find(o=>o.id===need.operationId)?.start?.slice(0,10)??null,operation:need.operationLabel!,requirements:[need.requirements.grade,need.requirements.condition,...Object.entries(need.requirements.dimensions).map(([name,value])=>`${name} : ${value} mm minimum`),...need.requirements.certificates,...need.requirements.manualChecks].filter((x):x is string=>!!x)});
     }
     if([...body.selections,...body.futureSelections].some(s=>!current.needs.some(n=>n.key===s.needKey)))throw new HttpError(422,"MATERIAL_NEED_NOT_FOUND","Le besoin sélectionné n’existe plus.");
     const commands=await createMaterialDraftsTx(tx,drafts,audit);
     if(canPurchase){const live=await readMaterialTx(tx,ofId);await savePurchasePreparationsTx(tx,live.purchasePreparations,'MATIERE',ofId,live.version,audit);}
-    return {coverage:await readMaterialTx(tx,ofId),commands,reservedIds,pending,futureAssigned:body.futureSelections};
+    return {coverage:await readMaterialTx(tx,ofId),commands,reservedIds,pending,futureAssigned:assignedPurchases};
   });
 }
 

@@ -45,6 +45,10 @@ export type CentralTask = {
   /** Canonical type from the frozen routing, never inferred from its label. */
   operationType?: string | null;
   ofNumber: string | null; reference: string; revision: string | null; label: string;
+  /** Display identity of the plan and its human-readable index, from the OF's technical dossier. */
+  planReference?: string | null;
+  pieceIndex?: string | null;
+  pieceDesignation?: string | null;
   /** Canonical operation phase; absent in older API versions, null for non-operations. */
   phase?: number | null;
   view: Exclude<CentralView, "global" | "machines" | "internal"> | "machines";

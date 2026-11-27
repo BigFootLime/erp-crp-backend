@@ -34,6 +34,7 @@ import {
   listOfficialDocuments,
   previewPropositions,
   previewSupplierEmail,
+  resumeSupplierEmailPdf,
   reorderLignes,
   queueOfficialDocument,
   previewOfficialDocument,
@@ -154,6 +155,7 @@ router.post(
 
 router.get("/:id", requireCapability("read"), getCommandeFournisseur);
 router.get("/:id/email", requireCapability("send"), previewSupplierEmail);
+router.post("/:id/email/document", requireCapability("send"), resumeSupplierEmailPdf);
 router.post("/:id/email", requireCapability("send"), sendSupplierEmail);
 router.get(
   "/:id/qualification",

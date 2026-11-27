@@ -12,6 +12,7 @@ import { readCommercialEmailSetting } from "../../../shared/email/commercial-ema
 import { sendTransactionalEmail } from "../../../shared/email/resend.service";
 import { HttpError } from "../../../utils/httpError";
 import { roleHasCommandeFournisseurCapability } from "../domain/commande-fournisseur-rbac";
+import { canResumeSupplierOrderTestPdf, readCurrentSupplierTestArchive } from "./supplier-order-test-pdf.service";
 import { repoTransitionCommandeFournisseur, type AuditContext } from "../repository/commande-fournisseur.repository";
 import type { SupplierOrderEmailBodyDTO } from "../validators/commande-fournisseur.validators";
 
@@ -32,6 +33,7 @@ type EmailPreview = {
   status: "disabled" | "missing_recipient" | "preparing_document" | "document_failed" | "ready";
   recipient: string | null;
   archive_id: string | null;
+  can_resume_pdf?: true;
 };
 
 function assertSendPermission(audit: AuditContext) {
@@ -76,7 +78,12 @@ async function prepare(tx: Queryer, id: string, actor: number): Promise<{ previe
   preview.status = documents.state === "PENDING" || documents.state === "PROCESSING"
     ? "preparing_document"
     : "document_failed";
-  if (documents.state !== "READY" || !documents.latest_document || !order.frozen_document_id) return result;
+  if (documents.state !== "READY" || !documents.latest_document || !order.frozen_document_id) {
+    if (mode === "test" && order.frozen_document_id && documents.state !== "NOT_GENERATED" &&
+      canResumeSupplierOrderTestPdf() && await readCurrentSupplierTestArchive(tx, id, order.frozen_document_id))
+      preview.can_resume_pdf = true;
+    return result;
+  }
   const archive = await repoGetAuthoritativePdf(tx, scope, id, documents.latest_document.id, documentKind);
   const freeze = archive?.sourceSnapshot.frozen_document as { id?: string } | undefined;
   if (freeze?.id !== order.frozen_document_id) return result;

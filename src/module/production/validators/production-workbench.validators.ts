@@ -20,6 +20,8 @@ export const worklistQuerySchema = z.object({
       "PREPARATION",
       "REVIEW",
       "READY",
+      "MATERIAL_TO_SUPPLY",
+      "MATERIAL_WAITING",
       "PLANNED",
       "RUNNING",
       "COVERED",
@@ -102,10 +104,14 @@ export const consolidationSchema = z
       .max(1000000)
       .multipleOf(0.001)
       .default(0),
+    producer_of_id: z.number().int().positive().optional(),
     reason,
   })
   .strict()
   .superRefine((v, c) => {
+    if (v.producer_of_id && (v.surplus_quantity !== 0 || v.sources.length !== 2 || !v.sources.some(s=>s.of_id===v.producer_of_id))) {
+      c.addIssue({code:'custom',path:['producer_of_id'],message:'Sélectionnez un OF planifié et un OF à couvrir, sans nouvelle quantité à lancer.'});
+    }
     if (new Set(v.sources.map((s) => s.of_id)).size !== v.sources.length)
       c.addIssue({
         code: z.ZodIssueCode.custom,

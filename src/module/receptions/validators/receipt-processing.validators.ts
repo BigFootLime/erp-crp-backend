@@ -81,12 +81,26 @@ export const operatorControlSchema = z.object({
   measurements: z.array(operatorMeasurement).min(1).max(30),
   grade: z.object({ value: z.string().trim().min(1).max(120), confirmed: z.literal(true) }).strict().optional(),
   note: z.string().trim().max(2000).optional(),
+  inspection: z.object({
+    appearance: z.enum(["OK", "NOK"]),
+    quantity: z.number().min(0).max(1_000_000_000).multipleOf(0.000001),
+  }).strict().optional(),
+  stock: stockProcessingSchema.pick({ magasinId: true, emplacementId: true, materialBars: true }).optional(),
 }).strict().superRefine((input, ctx) => {
   if (input.verdict === "CONFORME" && input.measurements.some(item => item.result === "NOK")) {
     ctx.addIssue({ code: "custom", path: ["verdict"], message: "Une cote non conforme impose le constat non conforme." });
   }
   if (input.verdict === "NON_CONFORME" && (input.note?.length ?? 0) < 3) {
     ctx.addIssue({ code: "custom", path: ["note"], message: "Décrivez la non-conformité constatée." });
+  }
+  if (input.verdict === "CONFORME" && input.inspection?.appearance === "NOK") {
+    ctx.addIssue({ code: "custom", path: ["inspection", "appearance"], message: "Un défaut d’aspect impose le constat non conforme." });
+  }
+  if (input.stock && (!input.inspection || input.verdict !== "CONFORME")) {
+    ctx.addIssue({ code: "custom", path: ["stock"], message: "La mise en stock exige un contrôle conforme de l’aspect et de la quantité." });
+  }
+  if (input.inspection && input.verdict === "CONFORME" && !input.stock) {
+    ctx.addIssue({ code: "custom", path: ["stock"], message: "Confirmez la destination du stock." });
   }
 });
 export type OperatorControlBody = z.infer<typeof operatorControlSchema>;

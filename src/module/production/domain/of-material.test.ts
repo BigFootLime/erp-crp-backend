@@ -24,11 +24,19 @@ describe("Material coverage",()=>{
   it("blocks missing certificates, unknown constraints and mismatched units",()=>{expect(lotCompatibility({...need,requirements:{...need.requirements,certificates:["3.1"],manualChecks:["Origine UE"]}},lot)).toHaveLength(2);expect(lotCompatibility({...need,unit:null},lot)).toHaveLength(1);expect(lotCompatibility({...need,requirements:{...need.requirements,dimensions:{diameter:25}}},lot)).toHaveLength(1);});
   it("shows procurement surplus without assigning it",()=>{expect(purchaseQuantity(15,20,12)).toEqual({ordered:24,assigned:15,surplus:9});expect(purchaseQuantity(0,20,12)).toEqual({ordered:0,assigned:0,surplus:0});});
   it("purchases whole source bars in millimetres or metres without increasing the assigned need", () => {
+    expect(materialPurchaseQuantity(500, null, null, "mm", 3000)).toEqual({ ordered: 3000, assigned: 500, surplus: 2500 });
     expect(materialPurchaseQuantity(4000, null, null, "mm", 3020)).toEqual({ ordered: 6040, assigned: 4000, surplus: 2040 });
     expect(materialPurchaseQuantity(4, null, null, "m", 3020)).toEqual({ ordered: 6.04, assigned: 4, surplus: 2.04 });
     expect(materialPurchaseQuantity(4000, null, null, "mm", null).ordered).toBe(4000);
     expect(materialPurchaseQuantity(4000, 6100, 6040, "mm", 3020).ordered).toBe(12080);
     expect(materialPurchaseQuantity(0, 6100, 6040, "mm", 3020).ordered).toBe(0);
+  });
+  it("uses OLD before newer stock while keeping FIFO within each base", () => {
+    const coverage=proposeMaterialCoverage([{...need,required:70}],[
+      {...lot,stockScope:"NEW",receivedAt:"2026-08-01"},
+      {...lot,id:"old",batchId:"old-batch",available:40,stockScope:"OLD",receivedAt:"2026-09-15"},
+    ])[0];
+    expect(coverage.selections.map(s=>[s.batchId,s.quantity])).toEqual([["old-batch",40],["b",30]]);
   });
   it("converts whole bars into the supplier purchase unit", () => {
     expect(materialPurchaseQuantity(8, null, null, "kg", 3020, { stockUnit: "mm", coefficient: 500 }))

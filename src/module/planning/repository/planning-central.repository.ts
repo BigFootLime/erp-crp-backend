@@ -35,6 +35,12 @@ export async function readCentralSettings(tx: CentralQuery = pool) {
   return rows[0];
 }
 
+const TASK_PIECE_IDENTITY = `
+   COALESCE(NULLIF(btrim(o.technical_snapshot#>>'{version,plan_reference}'),''), NULLIF(btrim(v.plan_reference),'')) AS plan_reference,
+   COALESCE(NULLIF(btrim(o.technical_snapshot#>>'{version,indice_externe}'),''), NULLIF(btrim(v.indice_externe_original),''), NULLIF(btrim(v.indice),'')) AS piece_index,
+   COALESCE(NULLIF(btrim(o.technical_snapshot#>>'{piece,designation}'),''), NULLIF(btrim(pt.designation),'')) AS piece_designation
+`;
+
 /** Read-only adapters: committed machine slots still belong to planning_events; quantities to production. */
 const TASK_QUERY = `
 WITH operation_rows AS (
@@ -58,11 +64,12 @@ WITH operation_rows AS (
    CASE WHEN cc.order_type='INTERNE' THEN COALESCE(cl.delai_interne,cl.delai_client)::text ELSE cl.delai_client::text END AS due,
    CASE o.priority::text WHEN 'CRITICAL' THEN 3 WHEN 'HIGH' THEN 2 WHEN 'LOW' THEN 0 ELSE 1 END AS priority,
    op.created_at,op.updated_at,op.tp*60 AS setup_minutes,op.tf_unit*op.qte*op.coef*60 AS unit_minutes,
-   'OPERATION'::text AS source
+   'OPERATION'::text AS source,${TASK_PIECE_IDENTITY}
  FROM public.planning_tasks t
  JOIN public.of_operations op ON op.id=t.operation_id
  JOIN public.ordres_fabrication o ON o.id=op.of_id
  JOIN public.pieces_techniques pt ON pt.id=o.piece_technique_id
+ LEFT JOIN public.piece_technique_versions v ON v.id=o.piece_technique_version_id
  LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
  LEFT JOIN public.commande_ligne cl ON cl.id=o.commande_ligne_id
  LEFT JOIN LATERAL (SELECT value FROM jsonb_array_elements(COALESCE(o.technical_snapshot->'operations','[]'::jsonb))
@@ -82,11 +89,12 @@ WITH operation_rows AS (
    pr.date_commencement::timestamp AT TIME ZONE COALESCE(cal.timezone,'Europe/Paris'),
    (pr.date_fin+1)::timestamp AT TIME ZONE COALESCE(cal.timezone,'Europe/Paris'),
    NULL::timestamptz,NULL::timestamptz,'TODO'::text,'VALIDATED'::text,pr.date_fin::text,1::int,
-   pr.created_at,pr.updated_at,0::numeric,t.envelope_minutes,'PROGRAMMING'::text
+   pr.created_at,pr.updated_at,0::numeric,t.envelope_minutes,'PROGRAMMING'::text,${TASK_PIECE_IDENTITY}
  FROM public.planning_tasks t JOIN public.programmations pr ON pr.id=t.programming_id
  JOIN public.pieces_techniques pt ON pt.id=pr.piece_technique_id
  LEFT JOIN public.of_operations op ON op.id=pr.of_operation_id
  LEFT JOIN public.ordres_fabrication o ON o.id=op.of_id
+ LEFT JOIN public.piece_technique_versions v ON v.id=o.piece_technique_version_id
  LEFT JOIN public.commande_client cc ON cc.id=o.commande_id
  LEFT JOIN public.programmation_calendars cal ON cal.id=pr.calendar_id
  WHERE pr.archived_at IS NULL
@@ -99,7 +107,7 @@ WITH operation_rows AS (
     COALESCE((to_jsonb(pr)->>'progress_percent')::numeric,CASE WHEN pr.status='DONE' THEN 100 ELSE 0 END)/100,
    0::numeric,0::numeric,0::numeric,'person:'||pr.assignee_id::text,t.committed_start,t.committed_end,
     NULL::timestamptz,pr.completed_at,CASE WHEN pr.status='DONE' THEN 'DONE' WHEN COALESCE((to_jsonb(pr)->>'progress_percent')::int,0)>0 THEN 'RUNNING' ELSE pr.status END,'VALIDATED'::text,NULL::text,1::int,
-   pr.updated_at,pr.updated_at,0::numeric,pr.estimated_hours*60,'PROGRAMMING'::text
+   pr.updated_at,pr.updated_at,0::numeric,pr.estimated_hours*60,'PROGRAMMING'::text,${TASK_PIECE_IDENTITY}
  FROM public.planning_tasks t JOIN public.piece_version_programming_tasks pr ON pr.id=t.version_programming_id
  JOIN public.piece_technique_versions v ON v.id=pr.piece_technique_version_id
   JOIN public.pieces_techniques pt ON pt.id=v.piece_technique_id
@@ -142,7 +150,7 @@ SELECT *, (SELECT count(*)::int FROM filtered) AS total FROM filtered
 `;
 
 export function taskFromRow(row: Row, observations: DurationObservation[] = []): CentralTask {
-  const { total: _total, ...versionFields } = row;
+  const { total: _total, plan_reference, piece_index, piece_designation, ...versionFields } = row;
   const resourceIds = row.resource_id ? [String(row.resource_id)] : [];
   const contextKey = [row.reference,row.revision,row.phase,row.resource_id,row.configuration_key].join("|");
   const quantity = num(row.quantity), good = num(row.good), scrap = num(row.scrap), rework = num(row.rework);
@@ -156,6 +164,7 @@ export function taskFromRow(row: Row, observations: DurationObservation[] = []):
     programmingId:str(row.programming_id),ofId:row.of_id == null ? null : num(row.of_id),orderId:row.order_id == null ? null : num(row.order_id),clientId:str(row.client_id),
     clientName:str(row.client_name),clientColor:resolvePlanningClientColor(str(row.client_id),str(row.client_name),str(row.client_color)),cycleStartedAt:instant(row.cycle_started_at),
     ofNumber:str(row.of_number),reference:String(row.reference),revision:str(row.revision),label:String(row.label),
+    planReference:str(plan_reference),pieceIndex:str(piece_index),pieceDesignation:str(piece_designation),
     phase:row.source==="OPERATION" && row.phase != null ? num(row.phase) : null,
     view:row.view as CentralTask["view"],internal:row.internal===true,internalPurpose:str(row.internal_purpose),quantity,good,scrap,rework,
     released:num(row.released),resourceIds,eligibleResourceIds:resourceIds,
