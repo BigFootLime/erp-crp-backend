@@ -172,7 +172,7 @@ export async function issueLabel(params: { body: IssueIdentificationLabelDTO; ac
       throw new HttpError(409, "IDENTIFICATION_LABEL_ALREADY_ACTIVE", "Une étiquette active existe déjà. Réimprimez-la ou remplacez-la.");
     }
     const label = await repoInsertLabel(client, {
-      public_id: crypto.randomUUID(), entity, human_code: buildHumanCode(entity.entity_type, entity.canonical_code),
+      public_id: crypto.randomUUID(), entity, human_code: entity.display_code ?? buildHumanCode(entity.entity_type, entity.canonical_code),
       actor: params.actor,
     });
     const response = { label: presentLabel(label), idempotent_replay: false };
@@ -339,7 +339,7 @@ export async function resolveIdentification(input: ResolveIdentificationDTO, act
   return recordScan(input, actor, {
     ok: true, result_code: "RESOLVED", message: "Identifiant vérifié. Confirmez l'action dans le module métier.",
     requires_online_confirmation: true, target_route: entity.entity_type === "STOCK_MATERIAL_BAR" && entity.parent_entity_id ? targetRoute("STOCK_LOT", entity.parent_entity_id) : targetRoute(label.entity_type, label.entity_id),
-    label: presentLabel(label), entity: { type: entity.entity_type, id: entity.entity_id, code: entity.entity_type === "STOCK_MATERIAL_BAR" ? buildHumanCode(entity.entity_type, entity.canonical_code) : entity.canonical_code, label: entity.label, status: entity.status },
+    label: presentLabel(label), entity: { type: entity.entity_type, id: entity.entity_id, code: entity.entity_type === "STOCK_MATERIAL_BAR" ? entity.display_code ?? buildHumanCode(entity.entity_type, entity.canonical_code) : entity.canonical_code, label: entity.label, status: entity.status },
     label_id: label.id, entity_type: label.entity_type, entity_id: label.entity_id,
   });
 }

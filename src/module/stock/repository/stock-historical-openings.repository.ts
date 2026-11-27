@@ -3,10 +3,8 @@ import type { PoolClient } from "pg";
 import crypto from "node:crypto";
 
 import db from "../../../config/database";
-import {
-  generatePieceTechniqueBusinessCode,
-  generateTransactionalBusinessCode,
-} from "../../../shared/codes/code-generator.service";
+import { generatePieceTechniqueBusinessCode } from "../../../shared/codes/code-generator.service";
+import { generateStockLotCode } from "../../../shared/codes/stock-lot-code.service";
 import { HttpError } from "../../../utils/httpError";
 import type { HistoricalStockImport } from "../types/stock.types";
 import type { HistoricalImportBodyDTO } from "../validators/stock.validators";
@@ -164,10 +162,10 @@ export async function repoResolveStockOpeningReferences(
 
 async function ensureHistoricalPositionTx(client: PoolClient, kind: "PF" | "MP", shelf: string, audit: AuditContext) {
   const magasinCode = `OLD-${kind}`;
-  const magasin = await client.query<{ id: string; warehouse_id: string | null; code: string }>(`SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code FROM public.magasins WHERE code = $1 FOR UPDATE`, [magasinCode]);
+  const magasin = await client.query<{ id: string; warehouse_id: string | null; code: string }>(`SELECT id::text AS id, warehouse_id::text AS warehouse_id, COALESCE(code, code_magasin)::text AS code FROM public.magasins WHERE code = $1 FOR NO KEY UPDATE`, [magasinCode]);
   const magasinId = magasin.rows[0]?.id;
   if (!magasinId) throw new HttpError(503, "STOCK_SCHEMA_UPGRADE_REQUIRED", "Les magasins OLD-PF et OLD-MP doivent être créés par le patch #446.");
-  let emplacement = await client.query<{ id: number }>(`SELECT id::int AS id FROM public.emplacements WHERE magasin_id = $1::uuid AND code = $2 FOR UPDATE`, [magasinId, shelf]);
+  let emplacement = await client.query<{ id: number }>(`SELECT id::int AS id FROM public.emplacements WHERE magasin_id = $1::uuid AND code = $2 FOR NO KEY UPDATE`, [magasinId, shelf]);
   let emplacementId = emplacement.rows[0]?.id;
   if (!emplacementId) {
     emplacement = await client.query<{ id: number }>(
@@ -231,6 +229,11 @@ async function ensureHistoricalPieceTechniqueTx(client: PoolClient, input: { cli
  * transaction.
  */
 export async function repoCreateHistoricalImportTx(client: PoolClient, body: HistoricalImportBodyDTO, audit: AuditContext, idempotencyKey: string): Promise<HistoricalStockImport> {
+    // A debit that creates a remnant holds stock rows before allocating a lot.
+    // Serialize OLD material openings with that workflow before taking any stock lock.
+    if (body.kind === "MP") {
+      await client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+    }
     const command = await beginStockCommand(client, { audit, idempotency_key: idempotencyKey, command_type: "MOVEMENT_CREATE", request_payload: { historical_import: body } });
     if (command.existing) {
       const data = command.existing.result_payload as HistoricalStockImport | null;
@@ -243,7 +246,7 @@ export async function repoCreateHistoricalImportTx(client: PoolClient, body: His
       if (body.article_id) articleId = body.article_id;
       else if (body.article) articleId = (await repoCreateArticleTx(client, body.article, audit)).id;
       else throw new HttpError(400, "ARTICLE_REQUIRED", "Article matière requis.");
-      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR UPDATE OF a`, [articleId]);
+      const a = await client.query<{ category: string; nuance: string | null }>(`SELECT a.article_category::text AS category, n.code AS nuance FROM public.articles a LEFT JOIN public.articles_matiere am ON am.article_id=a.id LEFT JOIN public.stock_nuances n ON n.id=am.nuance_id WHERE a.id=$1::uuid FOR SHARE OF a`, [articleId]);
       if (a.rows[0]?.category !== "matiere") throw new HttpError(422, "MP_ARTICLE_REQUIRED", "L'import MP requiert un article matière première.");
       shelf = body.historical_shelf?.trim() || a.rows[0]?.nuance?.trim() || "SANS-NUANCE";
     } else {
@@ -315,7 +318,7 @@ export async function repoCreateHistoricalImportTx(client: PoolClient, body: His
         )).rows[0]?.id ?? null;
     }
     const position = await ensureHistoricalPositionTx(client, body.kind, shelf, audit);
-    const lotCode = await generateTransactionalBusinessCode(client, { prefix: "LOT" });
+    const lotCode = await generateStockLotCode(client, body.kind === "MP" ? "matiere" : "fabrique");
     const traceSequence = await client.query<{ value: string }>(`SELECT nextval('public.stock_trace_code_446_seq')::text AS value`);
     const trace = (traceSequence.rows[0]?.value ?? "0").padStart(6, "0");
     // Default only new lots. Existing command receipts still use the original request.

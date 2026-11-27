@@ -10,6 +10,8 @@ import {
 import { repoCreateEmplacement } from "../../stock/repository/stock-locations.repository";
 import { issueLabel, resolveIdentification, printLabel } from '../../identification/identification.service';
 import { readMaterialBarInventoryTx } from '../../stock/repository/material-bar-inventory.repository';
+import { allocateReceivedBarCodesTx } from '../../stock/repository/material-bar-receipt-code.repository';
+import { generateStockLotCode } from '../../../shared/codes/stock-lot-code.service';
 import { prepareGroupedReceipt,confirmGroupedReceipt } from './grouped-receipts.repository';
 import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { createEmplacementSchema } from "../../stock/validators/stock.validators";
@@ -29,6 +31,7 @@ import {
 } from "./receipt-processing.repository";
 import {
   repoCreateStockReceipt,
+  repoCreateLotForLine,
   repoGetReception,
   type AuditContext,
 } from "./receptions.repository";
@@ -396,6 +399,8 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await pool.query(
       "INSERT INTO public.user_role_assignments(user_id,role_key) SELECT id,role FROM public.users WHERE username LIKE 'test-1069-%' AND role='Directeur' ON CONFLICT DO NOTHING",
     );
+    await pool.query("INSERT INTO public.app_modules(module_key,label) VALUES('stock','Stock') ON CONFLICT DO NOTHING");
+    await pool.query("INSERT INTO public.app_module_user_access(user_id,module_key,access) VALUES($1,'stock','GRANTED')", [user]);
     warehouse = (
       await pool.query(
         `INSERT INTO public.magasins(code,name,is_active,created_by,updated_by) VALUES($1,'Magasin test 1069',true,$2,$2) RETURNING id::text`,
@@ -809,6 +814,40 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     expect(order.receptions.flatMap(receipt => receipt.lignes).map(line => line.article_id)).toEqual([null, null]);
     expect(order.lignes.find(line => line.id === orderLineId)).toMatchObject({ qty_recue: 12, qty_restante: 0 });
   });
+  it("allocates independent MP and TR numbers and rolls back allocation with its transaction", async () => {
+    const counters = (await pool.query(`SELECT last_material_number::text AS mp, last_treatment_number::text AS tr
+      FROM public.stock_lot_code_counters WHERE singleton`)).rows[0];
+    const next = (previous: string, offset: number) => (BigInt(previous) + BigInt(offset)).toString().padStart(4, "0");
+    const tx = await pool.connect();
+    try {
+      await tx.query("BEGIN");
+      await tx.query("SET LOCAL ROLE cerp_app");
+      expect(await generateStockLotCode(tx, "MATIERE_PREMIERE")).toBe(`MP-${next(counters.mp, 1)}`);
+      expect(await generateStockLotCode(tx, "TRAITEMENT")).toBe(`TR-${next(counters.tr, 1)}`);
+    } finally {
+      await tx.query("ROLLBACK");
+      tx.release();
+    }
+    const fixtures = await Promise.all([fixture(), fixture()]);
+    for (const f of fixtures) {
+      await pool.query("UPDATE public.articles SET article_category='traitement' WHERE id=$1", [f.id]);
+      await pool.query("UPDATE public.reception_fournisseur_lignes SET lot_id=NULL WHERE id=$1", [f.line]);
+    }
+    const created = await Promise.all(fixtures.map((f, index) =>
+      repoCreateLotForLine(f.receipt, f.line, { supplier_lot_code: `FOU-TR-${index}` }, audit())));
+    expect(created.map(lot => lot?.lot_code).sort()).toEqual([
+      `TR-${next(counters.tr, 1)}`, `TR-${next(counters.tr, 2)}`,
+    ]);
+    const saved = await pool.query("SELECT lot_code, supplier_lot_code FROM public.lots WHERE id=ANY($1::uuid[])",
+      [created.map(lot => lot?.lot_id)]);
+    expect(saved.rows.map(row => row.supplier_lot_code).sort()).toEqual(["FOU-TR-0", "FOU-TR-1"]);
+    expect((await pool.query("SELECT last_material_number::text AS mp FROM public.stock_lot_code_counters")).rows[0].mp)
+      .toBe(counters.mp);
+    await expect(pool.query("UPDATE public.lots SET lot_code=$2 WHERE id=$1",
+      [fixtures[0].lot, `mp-${next(counters.mp, 1)}`])).rejects.toMatchObject({ constraint: "stock_lot_numbered_code_immutable" });
+    expect((await pool.query("UPDATE public.lots SET lot_code=$2 WHERE id=$1",
+      [fixtures[0].lot, "LEGACY-FIXTURE-CORRECTED"])).rowCount).toBe(1);
+  });
   it('receives grouped physical bars per supplier lot and replays without duplicate stock',async()=>{
     const f=await fixture(0,'CONSUMABLE'),orderId=randomUUID(),orderLineId=randomUUID();
     const supplierId=(await pool.query('SELECT fournisseur_id::text AS id FROM public.receptions_fournisseurs WHERE id=$1',[f.receipt])).rows[0].id;
@@ -829,15 +868,47 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     const choice={lineId:orderLineId,expectedVersion:expected.version,quantity:2,destination:{magasinId:warehouse,emplacementId:place},supplierLotCode:null,packs:[],overReceiptReason:null};
     await expect(confirmGroupedReceipt(draft.id,{idempotencyKey:randomUUID(),lines:[choice]},audit())).rejects.toMatchObject({code:'MATERIAL_BAR_RECEIPT_REQUIRED'});
     expect((await pool.query('SELECT count(*)::int AS count FROM public.reception_fournisseur_lignes WHERE reception_id=$1',[draft.id])).rows[0].count).toBe(0);
+    const previous = BigInt((await pool.query("SELECT last_material_number::text AS last FROM public.stock_lot_code_counters")).rows[0].last);
     const request={idempotencyKey:randomUUID(),lines:[{...choice,packs:[{quantity:1,supplierLotCode:'SUP-A',materialBars:[{lengthMm:3000,count:1}]},{quantity:1,supplierLotCode:'SUP-B',materialBars:[{lengthMm:1500,count:2}]}]}]};
     const result=await confirmGroupedReceipt(draft.id,request,audit());
     expect(result.state).toBe('CONFIRMED');expect(result.lines).toHaveLength(2);
+    const firstLotCode = `MP-${previous + 1n}`, secondLotCode = `MP-${previous + 2n}`;
+    expect(result.lines.map(line => line.lotCode)).toEqual([firstLotCode, secondLotCode]);
+    await expect(pool.query("UPDATE public.lots SET lot_code=$2 WHERE id=$1",
+      [result.lines[0].lotId, "FIXTURE-RENAMED"])).rejects.toMatchObject({ constraint: "stock_lot_numbered_code_immutable" });
     expect(await confirmGroupedReceipt(draft.id,request,audit())).toEqual(result);
-    const bars=(await pool.query(`SELECT l.supplier_lot_code AS supplier,b.remaining_length_mm::float8 AS length,b.public_number::text AS code
+    const bars=(await pool.query(`SELECT b.id,batch.id AS batch_id,l.supplier_lot_code AS supplier,b.remaining_length_mm::float8 AS length,b.receipt_bar_code AS code
       FROM public.stock_material_bars b JOIN public.stock_batches batch ON batch.id=b.stock_batch_id JOIN public.lots l ON l.id=batch.lot_id
       WHERE l.id=ANY($1::uuid[]) ORDER BY l.supplier_lot_code,b.public_number`,[result.lines.map(line=>line.lotId)])).rows;
     expect(bars.map(bar=>[bar.supplier,bar.length])).toEqual([['SUP-A',3000],['SUP-B',1500],['SUP-B',1500]]);
-    expect(new Set(bars.map(bar=>bar.code)).size).toBe(3);
+    expect(bars.map(bar => bar.code)).toEqual([`${firstLotCode}-1`, `${secondLotCode}-1`, `${secondLotCode}-2`]);
+    const inventory = await readMaterialBarInventoryTx(pool, bars[1].batch_id);
+    expect(inventory.bars.map(bar => [bar.code, bar.lengthMm])).toEqual([
+      [`${secondLotCode}-1`, 1500], [`${secondLotCode}-2`, 1500],
+    ]);
+    const actor = { ...audit(), role: "Directeur", request_id: null, correlation_id: null };
+    const issued = await issueLabel({ body: { entity_type: "STOCK_MATERIAL_BAR", entity_id: bars[2].id },
+      actor, idempotencyKey: randomUUID() });
+    expect(issued.label.human_code).toBe(`${secondLotCode}-2`);
+    const scanned = await resolveIdentification({
+      event_id: randomUUID(), code: issued.label.payload, source: "KEYBOARD", flow: "CONSUME",
+      expected_entity_types: ["STOCK_MATERIAL_BAR"], client_scanned_at: new Date().toISOString(),
+    }, actor);
+    expect(scanned).toMatchObject({ ok: true, entity: { id: bars[2].id, code: `${secondLotCode}-2` } });
+    await expect(pool.query("UPDATE public.stock_material_bars SET receipt_bar_code=$2 WHERE id=$1",
+      [bars[2].id, `${secondLotCode}-999`])).rejects.toMatchObject({ code: "23514" });
+    const continuation = await pool.connect();
+    try {
+      await continuation.query("BEGIN");
+      await continuation.query("SET LOCAL ROLE cerp_app");
+      expect(await allocateReceivedBarCodesTx(continuation, inventory.batch, 2))
+        .toEqual([`${secondLotCode}-3`, `${secondLotCode}-4`]);
+    } finally {
+      await continuation.query("ROLLBACK");
+      continuation.release();
+    }
+    expect((await pool.query("SELECT last_number::text AS last FROM public.stock_received_bar_counters WHERE lot_id=$1",
+      [inventory.batch.lotId])).rows[0].last).toBe("2");
     expect((await readExpectedReceiptLinesTx(pool,{page:1,pageSize:100},[orderLineId])).items[0].remaining).toBe(2);
   });
   it('identifies two physical bars with stable codes and resolves the exact bar label',async()=>{
