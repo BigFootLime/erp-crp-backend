@@ -15,6 +15,8 @@ import { readPurchaseQualificationTx } from "./purchase-qualification.repository
 import { purchaseQualificationRevision } from "../../fournisseurs/domain/purchase-qualification";
 import { generateCommandeFournisseurCode } from "../../../shared/codes/code-generator.service";
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository";
+import { fullyStockedMaterialSql } from "../../receptions/repository/fully-stocked-material.sql";
+import { enqueueEntityChanged } from "../../../shared/realtime/realtime-outbox.service";
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators";
 import {
   allowedTargetsFrom,
@@ -1948,6 +1950,67 @@ export async function repoGetDocument(
 }
 
 /* ------------------------ imputation réceptions (système) ------------------------ */
+
+/** A fully received material order can close once all of its deliveries are in stock. */
+export async function repoCloseFullyStockedMaterialOrders(tx: DbQueryer, receiptId: string, audit: AuditContext) {
+  const candidates = await tx.query<{ id: string }>(
+    `SELECT cf.id::text FROM public.commande_fournisseur cf
+     WHERE cf.statut='RECUE' AND cf.id IN (
+       SELECT cl.commande_id FROM public.commande_fournisseur_ligne cl
+       JOIN public.reception_fournisseur_lignes l ON l.commande_fournisseur_ligne_id=cl.id
+       WHERE l.reception_id=$1::uuid AND cl.statut_ligne='ACTIVE'
+     ) ORDER BY cf.id FOR UPDATE`,
+    [receiptId],
+  );
+  const motif = "Clôture automatique après mise en stock de toute la matière commandée";
+  for (const { id } of candidates.rows) {
+    const closed = await tx.query<{ occurred_at: string }>(
+      `UPDATE public.commande_fournisseur cf
+         SET statut='CLOTUREE', date_cloture=now(), motif_cloture=$2, updated_at=now(), updated_by=$3
+       WHERE cf.id=$1::uuid AND cf.statut='RECUE'
+         AND NOT EXISTS (
+           SELECT 1 FROM public.commande_fournisseur_ligne cl
+           WHERE cl.commande_id=cf.id AND cl.statut_ligne='ACTIVE'
+             AND cl.quantite-cl.qty_annulee > COALESCE((
+               SELECT sum(l.qty_received)
+               FROM public.reception_fournisseur_lignes l
+               JOIN public.receptions_fournisseurs r ON r.id=l.reception_id
+               WHERE l.commande_fournisseur_ligne_id=cl.id AND r.status='CLOSED'
+                 AND r.origin_type='SUPPLIER' AND r.confirmation_state IS DISTINCT FROM 'DRAFT'
+             ), 0)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM public.commande_fournisseur_ligne cl
+           JOIN public.reception_fournisseur_lignes l ON l.commande_fournisseur_ligne_id=cl.id
+           JOIN public.receptions_fournisseurs r ON r.id=l.reception_id
+           LEFT JOIN public.articles a ON a.id=l.article_id
+           LEFT JOIN public.lots lot ON lot.id=l.lot_id
+           WHERE cl.commande_id=cf.id AND cl.statut_ligne='ACTIVE' AND r.status <> 'CANCELLED'
+             AND (r.status='CLOSED' AND r.origin_type='SUPPLIER'
+               AND r.fournisseur_id=cf.fournisseur_id AND l.article_id=cl.article_id
+               AND r.confirmation_state IS DISTINCT FROM 'DRAFT' AND (${fullyStockedMaterialSql})) IS NOT TRUE
+         )
+       RETURNING cf.updated_at::text AS occurred_at`,
+      [id, motif, audit.user_id],
+    );
+    if (!closed.rows[0]) continue;
+    await insertTransitionRow(tx, id, "RECUE", "CLOTUREE", motif, null);
+    await insertAuditLog(tx, audit, {
+      action: "commandes_fournisseurs.transition.close",
+      entity_type: "commande_fournisseur",
+      entity_id: id,
+      details: { from: "RECUE", to: "CLOTUREE", motif, system: true, reception_id: receiptId },
+    });
+    await enqueueEntityChanged(tx, {
+      entityType: "COMMANDE_FOURNISSEUR",
+      entityId: id,
+      module: "commandes-fournisseurs",
+      action: "status_changed",
+      at: closed.rows[0].occurred_at,
+      invalidateKeys: ["commandes-fournisseurs", `achats:detail:${id}`],
+    }, { deduplicationKey: `supplier-order-stock-closure:${id}` });
+  }
+}
 
 /**
  * Recalcule l'état de réception d'une commande à partir des réceptions LIÉES (SUM).

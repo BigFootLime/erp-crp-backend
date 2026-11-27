@@ -2,14 +2,16 @@ import pool from "../../../config/database";
 import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
 import { withRealtimeOutboxTransaction } from "../../../shared/realtime/realtime-outbox-transaction";
 import { HttpError } from "../../../utils/httpError";
+import { lockMaterialReceiptRecipientsTx } from "../../production/repository/of-material-receipts.repository";
 import { qualityRequestHash } from "../../qualite/domain/quality-policy";
 import { repoCreateNonConformityTx } from "../../qualite/repository/qualite.repository";
 import { acquireIdempotency, saveReceipt } from "../../qualite/repository/quality-command-receipt.repository";
 import { applyMaterialLotDecision } from "../../qualite/repository/quality-material-lot-decision";
+import { normalizeIdempotencyKey } from "../../stock/domain/stock-command";
 import { normalizeOperatorGrade } from "../domain/operator-control-dimensions";
 import { convertedStockQuantity } from "../domain/receipt-unit-conversion";
 import type { OperatorControlBody } from "../validators/receipt-processing.validators";
-import type { AuditContext } from "./receptions.repository";
+import { lockStockReceiptCommand, repoCreateStockReceiptLocked, type AuditContext } from "./receptions.repository";
 import { processingEvent, readProcessingLine } from "./receipt-processing.repository";
 import { assertReceiptReleaseAvailable } from "./receipt-quality-release.repository";
 
@@ -23,6 +25,7 @@ type OperatorControlResult = {
   released: number;
   held: number;
   unit: string;
+  stockMovementId?: string;
 };
 
 export async function recordReceiptOperatorControl(
@@ -36,6 +39,9 @@ export async function recordReceiptOperatorControl(
     const request = { receptionId, lineId, ...input };
     const idem = await acquireIdempotency({ client: tx, actor: audit, idempotencyKeyRaw: idempotencyKey, commandType, requestPayload: request });
     if (idem.replay) return idem.replay as OperatorControlResult;
+    const stockKey = normalizeIdempotencyKey(`operator-control:${idempotencyKey}`);
+    const materialInstalled = body.stock ? await lockMaterialReceiptRecipientsTx(tx, lineId) : false;
+    if (body.stock) await lockStockReceiptCommand(tx, audit, stockKey);
     const locked = (await tx.query<{ lotId: string | null; supplierId: string; status: string }>(
       `SELECT l.lot_id::text AS "lotId",r.fournisseur_id::text AS "supplierId",r.status
        FROM public.reception_fournisseur_lignes l JOIN public.receptions_fournisseurs r ON r.id=l.reception_id
@@ -56,6 +62,16 @@ export async function recordReceiptOperatorControl(
 
     const population = convertedStockQuantity(line.received, line.coefficient);
     const conforming = body.verdict === "CONFORME";
+    if ((body.inspection || body.stock) && !line.operatorControl.stockTogether) {
+      throw new HttpError(409, "RECEIPT_CONTROL_STOCK_UNAVAILABLE", "Cette ligne doit suivre son circuit de réception habituel.");
+    }
+    if (body.stock && (!body.inspection || !conforming)) {
+      throw new HttpError(422, "RECEIPT_CONTROL_STOCK_REQUIRES_CONFORMITY", "La mise en stock exige un contrôle conforme de l’aspect et de la quantité.");
+    }
+    if (conforming && body.inspection &&
+      (body.inspection.appearance !== "OK" || Math.abs(body.inspection.quantity - line.received) > 0.0000005)) {
+      throw new HttpError(422, "RECEIPT_CONTROL_INSPECTION_MISMATCH", "L’aspect et la quantité du bon de livraison doivent correspondre. Enregistrez le constat non conforme.");
+    }
     const released = conforming ? population : 0;
     const held = population - released;
     const referenceDimensions = line.operatorControl.dimensions;
@@ -82,6 +98,7 @@ export async function recordReceiptOperatorControl(
       source: "RECEIPT_OPERATOR_CONTROL", receptionId, lineId, lotId: locked.lotId, articleId: line.articleId,
       kind: body.kind, verdict: body.verdict, measurements, note: body.note ?? null,
       grade: body.grade ? { ...body.grade, reference: referenceGrade ?? null } : null,
+      ...(body.inspection ? { inspection: { ...body.inspection, expectedQuantity: line.received, unit: line.unit } } : {}),
       population, unit: line.stockUnit, expectedVersion: body.expectedVersion,
     };
     const proofSha256 = qualityRequestHash(commandType, evidence);
@@ -117,6 +134,16 @@ export async function recordReceiptOperatorControl(
         [control.id, body.grade.value, referenceGrade ? wrongGrade ? "NOK" : "OK" : null, audit.user_id],
       );
     }
+    if (body.inspection) {
+      await tx.query(
+        `INSERT INTO public.quality_control_points(quality_control_id,characteristic,characteristic_key,sample_no,
+           measured_value,nominal_value,unit,result,measured_at,recorded_by)
+         VALUES ($1::uuid,'Quantité','RECEPTION-QUANTITE',1,$2,$3,$4,$5::public.quality_point_result,now(),$6),
+                ($1::uuid,'Aspect','RECEPTION-ASPECT',1,NULL,NULL,NULL,$7::public.quality_point_result,now(),$6)`,
+        [control.id, body.inspection.quantity, line.received, line.unit,
+          Math.abs(body.inspection.quantity - line.received) <= 0.0000005 ? "OK" : "NOK", audit.user_id, body.inspection.appearance],
+      );
+    }
     const decision = conforming ? "FULL" : "REJECT";
     const { id: decisionId } = (await tx.query<{ id: string }>(
       `INSERT INTO public.quality_release_decision (quality_control_id,decision,object_type,object_id,qty,unite,verdict,
@@ -136,6 +163,16 @@ export async function recordReceiptOperatorControl(
         description: body.note!, severity: "MINOR", status: "OPEN" },
     });
     const result: OperatorControlResult = { controlId: control.id, decisionId, nonConformityId, verdict: body.verdict, released, held, unit: line.stockUnit };
+    if (body.stock) {
+      const stock = await repoCreateStockReceiptLocked(tx, materialInstalled, receptionId, lineId, {
+        qty: line.received,
+        dst_magasin_id: body.stock.magasinId,
+        dst_emplacement_id: body.stock.emplacementId,
+        material_bars: body.stock.materialBars,
+      }, audit, stockKey);
+      if (!stock) throw new HttpError(409, "RECEIPT_STOCK_NOT_POSTED", "La mise en stock n’a pas pu être enregistrée.");
+      result.stockMovementId = stock.stock_movement_id;
+    }
     await processingEvent(tx, lineId, audit, "OPERATOR_CONTROL_RECORDED", { ...evidence, ...result, proofSha256 });
     await saveReceipt({ client: tx, actor: audit, idempotencyKey: idem.idempotencyKey, requestHash: idem.requestHash, commandType,
       aggregateType: "CONTROL", aggregateId: control.id, requestPayload: request, resultPayload: result, correlationId: control.correlationId });
