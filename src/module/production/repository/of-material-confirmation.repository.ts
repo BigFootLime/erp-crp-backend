@@ -27,9 +27,11 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
     if(current.previousNeeds.length)throw new HttpError(409,"MATERIAL_PREVIOUS_REVISION","Les affectations de l’ancienne version doivent être revues avant une nouvelle couverture.");
     if(new Set(body.selections.map(s=>`${s.needKey}:${s.batchId}`)).size!==body.selections.length)throw new HttpError(422,"MATERIAL_DUPLICATE_SELECTION","Le même lot est présent deux fois pour ce besoin.");
     if(new Set(body.futureSelections.map(s=>`${s.needKey}:${s.lineId}`)).size!==body.futureSelections.length)throw new HttpError(422,'MATERIAL_DUPLICATE_SELECTION','Le même approvisionnement est présent deux fois pour ce besoin.');
+    const eligibleFutureIds=new Set(body.automaticFutureAllocation
+      ? current.needs.flatMap(n=>n.futureSupplies.filter(s=>s.automatic).map(s=>s.id)) : []);
     await lockFutureMaterialSupplyTx(tx,[
       ...body.futureSelections.map(s=>s.lineId),
-      ...(body.automaticFutureAllocation ? current.needs.flatMap(n=>n.futureSupplies.filter(s=>s.automatic).map(s=>s.id)) : []),
+      ...eligibleFutureIds,
     ]);
     // Stabilize quality and material properties before rechecking the preview.
     const batchIds=body.selections.map(s=>s.batchId);
@@ -50,7 +52,7 @@ export async function confirmOfMaterial(ofId:number,body:MaterialConfirmation,au
       const missing=materialBalance(need).missing,step=barBlankStep(need)/1000;
       if(body.automaticFutureAllocation){
         for(const source of need.futureSupplies){
-          if(!source.automatic||futureSelections.some(selection=>selection.lineId===source.id))continue;
+          if(!source.automatic||!eligibleFutureIds.has(source.id)||futureSelections.some(selection=>selection.lineId===source.id))continue;
           const assigned=quantity(Math.min(missing-total-futureTotal,source.available));
           if(assigned<=0)continue;
           futureSelections.push({needKey:need.key,lineId:source.id,quantity:assigned,requirementsReviewed:true});

@@ -219,6 +219,10 @@ describe.skipIf(!isolated)(
       const rows=(await pool.query<{of_id:number;expected_updated_at:string}>(`SELECT id::int AS of_id,updated_at::text AS expected_updated_at
         FROM public.ordres_fabrication WHERE id=ANY($1::bigint[])`,[[recipient,producer]])).rows;
       const request={sources:rows,surplus_quantity:0,producer_of_id:producer,reason:'Absorber le second besoin sur le lot prévu'};
+      const demandLine=(await pool.query<{id:number}>(`SELECT commande_ligne_id::int AS id FROM public.ordres_fabrication WHERE id=$1`,[recipient])).rows[0].id;
+      await pool.query('UPDATE public.commande_ligne_affaire_allocation SET qty_to_produce=9 WHERE commande_ligne_id=$1',[demandLine]);
+      await expect(repoPreviewConsolidation(request)).rejects.toMatchObject({code:'CONSOLIDATION_EXISTING_SURPLUS',message:expect.stringContaining('Quantité disponible')});
+      await pool.query('UPDATE public.commande_ligne_affaire_allocation SET qty_to_produce=8 WHERE commande_ligne_id=$1',[demandLine]);
       const preview=await repoPreviewConsolidation(request);
       expect(preview).toMatchObject({quantity:20,demand_quantity:20,surplus_quantity:0,existing_producer:{free:8}});
       const command={request,preview_hash:preview.preview_hash,idempotency_key:randomUUID()};

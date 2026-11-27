@@ -33,6 +33,7 @@ import {
 } from "./consolidation-material.repository";
 import { restoreConsolidationHoldsTx } from "./consolidation-material-holds.repository";
 import { readMaterialOriginPolicyTx } from './of-material-policy.repository';
+import { readOfDossierTx } from './of-dossier.repository';
 import type { AuditContext } from "./production.repository";
 import type { ConsolidationRequest } from "../validators/production-workbench.validators";
 
@@ -160,6 +161,8 @@ async function previewExistingSurplusTx(tx: Db, request: ConsolidationRequest, s
         source.technical_snapshot_sha256!==producer.technical_snapshot_sha256 || source.piece_technique_version_id!==producer.piece_technique_version_id ||
         !source.client_id || source.client_id!==producer.client_id || source.article_id!==producer.article_id)
       throw fail('Les deux OF doivent être préparés, compatibles et sans fabrication commencée.');
+    if ((await readOfDossierTx(tx,source.id)).status!=='COMPLETE')
+      throw fail(`Validez le dossier de ${source.numero} avant de rattacher la livraison.`);
   }
   const ids = sources.map(s=>s.id);
   if (lock) {
