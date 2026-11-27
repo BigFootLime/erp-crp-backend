@@ -1403,9 +1403,10 @@ export async function repoTransitionCommandeFournisseur(
       }
     }
 
-    const motif = body.motif?.trim() || null;
-    if (transitionRequiresMotif(kind) && !motif) {
-      throw new HttpError(422, "MOTIF_REQUIS", "Un motif est obligatoire pour cette transition.", { kind });
+    const motif = body.motif?.trim() || (kind === "close" && from === "RECUE" ? "Commande entièrement reçue et traitée" : null);
+    if (transitionRequiresMotif(kind, from) && !motif) {
+      const message = kind === "close" ? "La clôture avec reliquat exige un motif explicite." : "Un motif est obligatoire pour cette transition.";
+      throw new HttpError(422, "MOTIF_REQUIS", message, { kind });
     }
 
     // Préconditions métier par nature de transition.
@@ -1466,10 +1467,6 @@ export async function repoTransitionCommandeFournisseur(
         );
       }
     }
-    if (kind === "close" && from === "PARTIELLEMENT_RECUE" && !motif) {
-      throw new HttpError(422, "MOTIF_REQUIS", "La clôture avec reliquat exige un motif explicite.");
-    }
-
     const mailDelivery = kind === "send" ? await options?.beforeSend?.(client) : undefined;
 
     // Effets par transition.

@@ -6,6 +6,7 @@ export function receiptArticleContextSql(articleAlias:string,ownerSql?:string){
     'ownerClientName',(SELECT company_name FROM public.clients WHERE client_id=${owner}),
     'material',(SELECT jsonb_build_object('profile',m.family_code,'barToCut',m.barre_a_decouper,
       'grade',(SELECT n.code FROM public.stock_nuances n WHERE n.id=m.nuance_id),
+      'state',(SELECT e.code FROM public.stock_etats e WHERE e.id=m.etat_id),
       'sourceLengthMm',m.longueur_barre_source_mm,'cutLengthMm',m.longueur_coupe_mm,'blankLengthMm',m.longueur_brut_mm,
       'lengthMm',m.longueur_mm,'unitLengthMm',m.longueur_unitaire_mm,
       'widthMm',m.largeur_mm,'heightMm',m.hauteur_mm,'thicknessMm',m.epaisseur_mm,'diameterMm',m.diametre_mm,'acrossFlatsMm',m.largeur_plat_mm)

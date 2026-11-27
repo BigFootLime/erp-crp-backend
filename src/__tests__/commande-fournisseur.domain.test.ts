@@ -91,6 +91,8 @@ describe("machine d'état commandes fournisseurs (#172)", () => {
     expect(transitionRequiresMotif("reject")).toBe(true);
     expect(transitionRequiresMotif("reopen_draft")).toBe(true);
     expect(transitionRequiresMotif("close")).toBe(true);
+    expect(transitionRequiresMotif("close", "RECUE")).toBe(false);
+    expect(transitionRequiresMotif("close", "PARTIELLEMENT_RECUE")).toBe(true);
     expect(transitionRequiresMotif("submit")).toBe(false);
     expect(transitionRequiresMotif("approve")).toBe(false);
     expect(transitionRequiresMotif("send")).toBe(false);
