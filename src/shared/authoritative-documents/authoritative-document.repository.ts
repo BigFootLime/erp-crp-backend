@@ -119,16 +119,18 @@ export async function repoFindAuthoritativePdfByIdempotency(
 export async function repoClaimAuthoritativePdfWork(
   tx: Pick<PoolClient, "query">,
   workerId: string,
-  limit: number
+  limit: number,
+  exactArchiveId?: string,
 ): Promise<ArchiveQueueItem[]> {
+  const archiveFilter = exactArchiveId === undefined ? "" : "o.archive_id = $3::uuid AND ";
   const result = await tx.query<ArchiveRow & { outbox_id: string; claim_token: string }>(
     `WITH candidate AS (
        SELECT o.id FROM public.authoritative_pdf_archive_outbox o
-       WHERE (
+       WHERE ${archiveFilter}((
          o.status IN ('PENDING', 'FAILED') AND o.available_at <= now()
        ) OR (
          o.status = 'PROCESSING' AND o.locked_at < now() - interval '15 minutes'
-       )
+       ))
        ORDER BY o.created_at, o.id
        LIMIT $1
        FOR UPDATE SKIP LOCKED
@@ -140,7 +142,7 @@ export async function repoClaimAuthoritativePdfWork(
      )
      SELECT c.outbox_id, c.claim_token, ${archiveColumnsFor("a")}
        FROM claimed c JOIN public.authoritative_pdf_archives a ON a.id = c.archive_id`,
-    [limit, workerId]
+    exactArchiveId === undefined ? [limit, workerId] : [limit, workerId, exactArchiveId]
   );
   return result.rows.map((row) => ({ outboxId: String(row.outbox_id), claimToken: String(row.claim_token), archive: mapArchive(row) }));
 }
