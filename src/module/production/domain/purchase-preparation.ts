@@ -1,4 +1,4 @@
-import { materialPropertiesFingerprint, materialPurchaseQuantity, quantity, type MaterialRequirements } from './of-material';
+import { materialPropertiesFingerprint, planMaterialPurchase, quantity, type MaterialRequirements } from './of-material';
 
 export type PurchasePreparation = {
   scopeKey: string; kind: 'MATIERE' | 'CONSOMMABLE' | 'PRESTATION'; mode: 'OF' | 'GLOBAL_PACK';
@@ -24,7 +24,7 @@ type MaterialPreparationNeed = {
   supplyMode: 'PURCHASE' | 'CUSTOMER'; required: number; purchaseMissing: number; blockers: string[];
   supplierId: string | null; destinationId: string | null; price: number | null;
   operationId: string | null; operationLabel: string | null; requirements: MaterialRequirements;
-  catalog?: { moq: number | null; lot_achat: number | null } | null;
+  catalog?: Parameters<typeof planMaterialPurchase>[3];
   sourceBarLengthMm?: number | null;
   futureSupplies: Array<{ id: string; code: string; available: number; reasons: string[] }>;
 };
@@ -35,6 +35,7 @@ export function materialPurchasePreparations(input: Identity & {
     const definition = [...need.blockers];
     if (input.previousNeeds.length) definition.push('Rapprocher les engagements de la version précédente.');
     const missing = definition.length ? null : quantity(need.purchaseMissing);
+    const purchase = missing === null ? null : planMaterialPurchase(missing, need.unit, need.sourceBarLengthMm, need.catalog);
     const futurePurchases = need.futureSupplies.filter(p => !p.reasons.length && p.available > 0)
       .map(p => ({ id: p.id, code: p.code, available: p.available }));
     const actions = [...definition];
@@ -47,8 +48,8 @@ export function materialPurchasePreparations(input: Identity & {
       scopeKey: purchaseScopeKey(input, 'MATIERE', need.key), kind: 'MATIERE', mode: 'OF', ofId: input.ofId,
       sourceRef: need.key, needId: need.id, technicalVersion: input.technicalVersion, technicalHash: input.technicalHash,
       ofRevisionId: input.ofRevisionId ?? null, articleId: need.articleId, designation: need.designation, unit: need.unit,
-      required: need.required, missing, ordered: missing === null ? null : materialPurchaseQuantity(missing, need.catalog?.moq ?? null, need.catalog?.lot_achat ?? null, need.unit, need.sourceBarLengthMm).ordered,
-      purchaseUnit: need.unit,
+      required: need.required, missing, ordered: purchase?.ordered ?? null,
+      purchaseUnit: purchase?.unit ?? need.unit,
       supplierId: need.supplierId, destinationId: need.destinationId,
       status: missing === 0 ? 'COUVERTE' : actions.length ? 'A_COMPLETER' : 'A_COMMANDER', actions,
       operation: need.operationLabel, due: input.operations.find(op => op.id === need.operationId)?.start?.slice(0, 10) ?? null,

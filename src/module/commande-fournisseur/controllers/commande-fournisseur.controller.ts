@@ -15,6 +15,7 @@ import { HttpError } from "../../../utils/httpError";
 import { roleHasCommandeFournisseurCapability } from "../domain/commande-fournisseur-rbac";
 import type { AuditContext } from "../repository/commande-fournisseur.repository";
 import { previewSupplierOrderEmail, sendSupplierOrderEmail } from "../services/supplier-order-email.service";
+import { resumeSupplierOrderTestPdf } from "../services/supplier-order-test-pdf.service";
 import {
   accuseSchema,
   addLigneSchema,
@@ -122,6 +123,13 @@ export const sendSupplierEmail: RequestHandler = async (req, res, next) => {
     const { params } = commandeIdParamSchema.parse({ params: req.params });
     const input = supplierOrderEmailBodySchema.parse(req.body);
     res.json(await sendSupplierOrderEmail(params.id, input, buildAuditContext(req)));
+  } catch (error) { next(error); }
+};
+
+export const resumeSupplierEmailPdf: RequestHandler = async (req, res, next) => {
+  try {
+    const { params } = commandeIdParamSchema.parse({ params: req.params });
+    res.status(202).json(await resumeSupplierOrderTestPdf(params.id, buildAuditContext(req)));
   } catch (error) { next(error); }
 };
 

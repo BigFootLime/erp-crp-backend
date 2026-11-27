@@ -37,9 +37,12 @@ describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
       VALUES($1,$2,$3,2,$3)`,[task,version,user]);
     return {task:"version-program:"+task,user,calendar,piece,version};
   }
-  async function operationFixture(purchase?:{sourceRef:string;article:string;supplier:string}) {
+  async function operationFixture(purchase?:{sourceRef:string;article:string;supplier:string},
+    identity?: { planReference:string; index:string; designation:string }) {
     const f=await fixture(),machine=randomUUID(),revision=randomUUID(),operations=[randomUUID(),randomUUID()];
     const snapshot=JSON.stringify({operations:[{phase:10,machine_family_code:"F"},{phase:20,machine_family_code:"F"}],
+      ...(identity ? { version: { plan_reference:identity.planReference, indice_externe:identity.index },
+        piece:{ designation:identity.designation } } : {}),
       ...(purchase?{preparation_evidence:{purchases:[{id:purchase.sourceRef,article_id:purchase.article,type_achat:'MATIERE',quantite:10,unite_prix:'u',fournisseur_id:purchase.supplier}]}}:{})}),sha=createHash("sha256").update(snapshot).digest("hex");
     const tx=await pool.connect();
     try {
@@ -58,6 +61,26 @@ describe.skipIf(!isolated)("Planning central — PostgreSQL réel isolé",()=>{
       return {of,operations,machine,calendar:f.calendar,piece:f.piece,version:f.version,snapshotHash:sha};
     } catch(error) {await tx.query("ROLLBACK");throw error;} finally {tx.release();}
   }
+  it("projects frozen plan identity ahead of the linked version and part record",async()=>{
+    const readLegacyValidatedSnapshot = async (ofId:number) => {
+      await pool.query("UPDATE public.ordres_fabrication SET technical_readiness='VALIDATED',preparation_rules_version=1 WHERE id=$1",[ofId]);
+      return readCentralSnapshot({from,to,limit:10,of_id:ofId});
+    };
+    const identity={planReference:"PLAN-FIGE",index:"B",designation:"Bride figée"};
+    const f=await operationFixture(undefined,identity);
+    const snapshot=await readLegacyValidatedSnapshot(f.of);
+    const tasks=snapshot.tasks.filter(t=>t.source==="OPERATION");
+    expect(tasks).toHaveLength(2);
+    expect(tasks[0]).toMatchObject({planReference:identity.planReference,pieceIndex:identity.index,
+      pieceDesignation:identity.designation,revision:f.version});
+
+    const legacy=await operationFixture();
+    const linked=await pool.query("SELECT plan_reference FROM public.piece_technique_versions WHERE id=$1",[legacy.version]);
+    const legacySnapshot=await readLegacyValidatedSnapshot(legacy.of);
+    expect(legacySnapshot.tasks.find(t=>t.source==="OPERATION")).toMatchObject({
+      planReference:linked.rows[0].plan_reference,pieceIndex:"C",pieceDesignation:"Pièce synthétique planning",revision:legacy.version,
+    });
+  });
   it('projects real material ledgers without reusing receipts allocated to an OF outside the page',async()=>{
     const article=randomUUID(),order=randomUUID(),line=randomUUID(),sourceRef=randomUUID(),supplier=(await pool.query("SELECT id FROM public.fournisseurs WHERE code='E2E-FOURN-001'")).rows[0].id;
     const previous=(await pool.query("SELECT enabled FROM public.app_feature_flags WHERE key='PRODUCTION_MATERIAL_WORKFLOW'")).rows[0].enabled;

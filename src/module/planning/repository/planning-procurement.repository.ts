@@ -1,11 +1,6 @@
-import { randomUUID } from 'node:crypto';
-import { materialWorkflowEnabled } from '../../production/repository/of-dossier.repository';
-import { reserveMaterialSelectionTx } from '../../production/repository/of-material-confirmation.repository';
-import { consumeMaterialReservationTx } from '../../stock/repository/partial-reservation-consumption.repository';
 import {defaultProcurementDay,parisDay,provisionalServiceQuantity} from '../domain/procurement-forecast';
 import {readSubcontractForecastPredecessorsTx} from '../../commande-fournisseur/repository/subcontract-purchase.repository';
 import {readProcurementWarningsTx} from './planning-procurement-readiness';
-import {preparationAudit} from '../../production/repository/production-preparation.repository';
 import {savePurchasePreparationsTx} from '../../production/repository/purchase-preparation.repository';
 import pool from '../../../config/database';
 import type { PoolClient } from 'pg';
@@ -13,7 +8,7 @@ import { z } from 'zod';
 import { HttpError } from '../../../utils/httpError';
 import { coverageFingerprint,materialPurchaseQuantity,quantity as materialQuantity } from '../../production/domain/of-material';
 import { consumableCommand } from '../../production/repository/consumable-command.repository';
-import { readMaterialTx,saveMaterialConfigurationTx,linkUnassignedMaterialPurchasesTx } from '../../production/repository/of-material.repository';
+import { readMaterialTx } from '../../production/repository/of-material.repository';
 import { readSubcontractProcurementTx } from '../../subcontract/subcontract-procurement.repository';
 import { isSubcontractPieceUnit } from '../../subcontract/subcontract-procurement.domain';
 import { createMaterialDraftsTx,type MaterialDraftLine } from '../../commande-fournisseur/repository/commande-fournisseur.repository';
@@ -114,6 +109,8 @@ export async function savePlanningProcurementTx(tx:PoolClient,ofId:number,body:z
     throw new HttpError(409,'OF_CLOSED','Les achats de cet OF terminé ou annulé restent consultables.');
   if(current.service.coveredByOfId)throw new HttpError(409,'OF_COVERED_BY_CONSOLIDATION','Préparez les achats dans l’OF de regroupement.');
   const entries=current.entries.filter(e=>body.scope==='material'?e.kind==='MATIERE':body.scope==='treatment'?e.kind==='PRESTATION'&&e.operationId===body.operationId:true);
+  if(entries.some(entry=>entry.kind==='MATIERE')&&current.material.dossierStatus!=='COMPLETE')
+    throw new HttpError(409,'MATERIAL_DOSSIER_REQUIRED','Validez le dossier avant d’enregistrer les achats de matière.');
   if(new Set(body.entries.map(e=>e.key)).size!==body.entries.length||body.entries.length!==entries.length||body.entries.some(e=>!entries.some(row=>row.key===e.key)))throw new HttpError(422,'PLANNING_SUPPLY_INVALID','Relisez les besoins de cet OF.');
   const saved:PlanningSupplyState['entries']=current.state?.entries.filter(e=>!entries.some(selected=>selected.key===e.key))??[];
   const createdOrders:Array<{id:string;code:string}>=[];
@@ -175,64 +172,3 @@ export async function savePlanningProcurementTx(tx:PoolClient,ofId:number,body:z
 }
 
 /** Called after the technical snapshot is frozen, while the caller holds Planning then OF. */
-export async function prepareAutomaticPlanningPurchasesTx(tx:PoolClient,ofId:number,audit:AuditContext,canPurchase:boolean,stockReview?:{reserve:boolean;deplete:boolean;reviewedSources:ReadonlySet<string>}){
- if(stockReview&&await materialWorkflowEnabled(tx))await applyReviewedStockTx(tx,ofId,audit,stockReview);
- const current=await readPlanningProcurementTx(tx,ofId);
- if(!current.material.technicalHash||current.service.coveredByOfId||!current.material.needs.length)return null;
- const raw=(await tx.query("SELECT technical_preparation->'planning_supply' AS state FROM public.ordres_fabrication WHERE id=$1",[ofId])).rows[0]?.state;
- const carry=raw?.technicalVersion===current.material.technicalVersion&&raw?.technicalHash===null?raw.entries:[];
- const body={expectedVersion:current.version,idempotencyKey:'00000000-0000-4000-8000-000000001836',scope:'material' as const,entries:current.entries.filter(entry=>entry.kind==='MATIERE').map(entry=>{
-  const prior=Array.isArray(carry)?carry.find((p:{key:string})=>p.key===entry.key):null;
-  const proposedSupplier=prior?prior.supplierId:entry.supplierId;
-  const supplierId=current.suppliers.some(s=>s.id===proposedSupplier)?proposedSupplier:null;
-  const proposedCatalogue=prior?prior.catalogueId:entry.catalogueId;
-  const catalogueId=current.offers.some(o=>o.id===proposedCatalogue&&o.supplier_id===supplierId&&o.article_id===entry.articleId&&matchesMaterialUnit(o,entry.unit))?proposedCatalogue:null;
-  return {key:entry.key,due:prior?.due??entry.due,supplierId,catalogueId};
- })};
- const result=await savePlanningProcurementTx(tx,ofId,savePlanningProcurementSchema.parse(body),audit,canPurchase);
- await preparationAudit(tx,audit,ofId,'production.preparation.procurement.automatic',{orders:result.orders,canPurchase});
- return result;
-}
-
-/** The user has approved the material summary. Recompute FIFO under the OF
- * and lot locks and use the same stock commands as the manual workflow. */
-async function applyReviewedStockTx(tx:PoolClient,ofId:number,audit:AuditContext,rights:{reserve:boolean;deplete:boolean;reviewedSources:ReadonlySet<string>}){
- const preview=await readMaterialTx(tx,ofId,true);
- if(!preview.technicalHash||!preview.technicalVersion||preview.previousNeeds.length||!['BROUILLON','PLANIFIE'].includes(preview.executionStatus))return;
- for(const need of preview.needs){
-  if(!canReviewMaterial(need)||!rights.reviewedSources.has(need.key))continue;
-  await saveMaterialConfigurationTx(tx,ofId,preview.technicalVersion,preview.technicalHash,need,{
-   operationId:need.operationId!,requirements:need.requirements,debitRule:need.debitRule!,supplyMode:need.supplyMode,
-   allowPartial:false,supplierId:need.supplierId,destinationId:need.destinationId,
-  },need.required,audit.user_id);
-  await linkUnassignedMaterialPurchasesTx(tx,ofId,need.key,preview.technicalVersion,need.promises.map(p=>p.command_id),audit);
-  await preparationAudit(tx,audit,ofId,'production.of.material.reviewed_from_preparation',{sourceRef:need.key,operationId:need.operationId,requirements:need.requirements,debitRule:need.debitRule});
- }
- if(!rights.reserve)return;
- const current=await readMaterialTx(tx,ofId);
- const key=randomUUID();
- for(const initial of current.needs){
-  const live=await readMaterialTx(tx,ofId);
-  const need=live.needs.find(n=>n.key===initial.key);
-  if(!need?.id||!need.operationId||need.blockers.length)continue;
-  for(const selection of need.selections){
-   const lot=need.candidates.find(c=>c.lot.batchId===selection.batchId)?.lot;
-   if(!lot)continue;
-   const result=await reserveMaterialSelectionTx(tx,ofId,live.number,need,lot,selection.quantity,key,audit);
-   if(rights.deplete&&need.debitRule?.form==='UNIT'&&need.unit&&isSubcontractPieceUnit(need.unit)){
-    await consumeMaterialReservationTx(tx,{reservationId:result.reservation.id,ofId,operationId:need.operationId,quantity:selection.quantity,
-     expectedVersion:result.reservation.row_version,idempotencyKey:`${key}:issue:${result.reservation.id}`,reason:`Sortie de bruts unitaires pour ${live.number}`},audit);
-   }
-  }
- }
-}
-
-export async function assertStockReviewVersionTx(tx:PoolClient,ofId:number,version:string){
- const current=await readPlanningProcurementTx(tx,ofId);
- const lotIds=[...new Set(current.material.needs.flatMap(n=>n.candidates.map(c=>c.lot.id)))];
- await tx.query('SELECT id FROM public.lots WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE',[lotIds]);
- const locked=await readPlanningProcurementTx(tx,ofId);
- if(locked.version!==version)
-  throw new HttpError(409,'PLANNING_SUPPLY_CHANGED','Le stock ou les achats ont changé. Vérifiez la nouvelle proposition avant de valider.');
- return new Set(locked.material.needs.filter(canReviewMaterial).map(need=>need.key));
-}

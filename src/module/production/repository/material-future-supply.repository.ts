@@ -41,6 +41,19 @@ export function futureSupplyCompatibility(need:{id:string|null;articleId:string|
   return reasons;
 }
 
+/** Only reuse a future line automatically when every recorded requirement is carried by the order. */
+export function futureSupplyRequirementsMatch(need: MaterialRequirements, source: Pick<FutureMaterialSupply, "requirements" | "documents">) {
+  const normalize = (value: string) => value.trim().toUpperCase().replace(/\s*:\s*/g, ":").replace(/\s+/g, " ");
+  const specifications = new Set((source.requirements ?? [])
+    .filter(requirement => requirement.obligatoire && typeof requirement.valeur === "string")
+    .map(requirement => normalize(requirement.valeur)));
+  const documents = new Set((source.documents ?? []).filter(value => typeof value === "string").map(normalize));
+  return [need.grade, need.condition, ...need.manualChecks,
+    ...Object.entries(need.dimensions).map(([name,value]) => `${name}: ${value} mm minimum`),
+  ].every(value => !value || specifications.has(normalize(value)))
+    && need.certificates.every(value => documents.has(normalize(value)) || specifications.has(normalize(value)));
+}
+
 export async function lockFutureMaterialSupplyTx(tx:PoolClient,lineIds:string[]){
   if(!lineIds.length)return;
   await tx.query(`SELECT c.id FROM public.commande_fournisseur c WHERE c.id IN(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=ANY($1::uuid[])) ORDER BY c.id FOR UPDATE`,[lineIds]);

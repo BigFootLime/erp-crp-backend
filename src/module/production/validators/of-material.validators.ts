@@ -12,6 +12,7 @@ export const materialConfigurationSchema=materialCommandSchema.extend({configura
 }).strict()}).strict();
 export const materialConfirmationSchema=materialCommandSchema.extend({
   existingPurchasesReviewed:z.boolean().default(false),
+  automaticFutureAllocation:z.boolean().optional(),
   selections:z.array(z.object({needKey:z.string().guid(),batchId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001)}).strict()).max(100),
   futureSelections:z.array(z.object({needKey:z.string().guid(),lineId:z.string().guid(),quantity:z.number().finite().positive().max(1e9).multipleOf(.001),requirementsReviewed:z.literal(true)}).strict()).max(100).default([]),
 }).strict();

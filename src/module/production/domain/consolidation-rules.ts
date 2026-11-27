@@ -16,6 +16,7 @@ export type ConsolidationSource = {
   statut: string;
   technical_readiness: string;
   planned_count: number;
+  committed_count?: number;
   started_count: number;
   covered: boolean;
   producer: boolean;

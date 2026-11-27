@@ -4,7 +4,7 @@ import { HttpError } from '../../../utils/httpError';
 import { consumableCommand } from '../../production/repository/consumable-command.repository';
 import { lockFutureMaterialSupplyTx } from '../../production/repository/material-future-supply.repository';
 import { lockMaterialReceiptRecipientsTx } from '../../production/repository/of-material-receipts.repository';
-import { repoCreateReception,repoCreateLine,repoCreateLotForLine,repoCreateStockReceiptLocked,type AuditContext } from './receptions.repository';
+import { closeFullyStockedMaterialReceipt,repoCreateReception,repoCreateLine,repoCreateLotForLine,repoCreateStockReceiptLocked,type AuditContext } from './receptions.repository';
 import { readExpectedReceiptLinesTx } from './expected-receipts.repository';
 import { readOffStockSurplusTx } from './off-stock-surplus.repository';
 import {postToolReceiptTx} from './receipt-tool-stock.repository';
@@ -26,7 +26,9 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
   const actionBody={...body,receiptId};
   return consumableCommand({},'RECEIPT_CONFIRM',actionBody,audit,async tx=>{
     const lineIds=body.lines.map(l=>l.lineId);
-    // Lock recipients before supplier orders and physical stock, matching OF preparation.
+    // Line creation and stock posting share this lock. Take it before any OF,
+    // order or receipt locks, including when the final posting closes the order.
+    await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
     await tx.query(`SELECT id FROM public.ordres_fabrication WHERE id IN(SELECT besoin_of_id FROM public.commande_fournisseur_ligne_besoin WHERE ligne_id=ANY($1::uuid[]) AND NOT annule) ORDER BY id FOR UPDATE`,[lineIds]);
     await lockFutureMaterialSupplyTx(tx,lineIds);
     const receipt=(await tx.query<{id:string;number:string;supplierId:string;state:string|null;status:string}>(`SELECT id::text,reception_no AS number,fournisseur_id::text AS "supplierId",confirmation_state AS state,status FROM public.receptions_fournisseurs WHERE id=$1::uuid FOR UPDATE`,[receiptId])).rows[0];
@@ -85,6 +87,7 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
       }
     }
     await tx.query("UPDATE public.receptions_fournisseurs SET confirmation_state='CONFIRMED',confirmation_key=$2::uuid,confirmed_at=now(),confirmed_by=$3,updated_at=now(),updated_by=$3 WHERE id=$1::uuid",[receiptId,body.idempotencyKey,audit.user_id]);
+    await closeFullyStockedMaterialReceipt(tx, receiptId, audit);
     const surplus=await readOffStockSurplusTx(tx,results.filter(r=>{const l=current.items.find(l=>l.id===r.orderLineId)!;return !l.stockManaged&&!l.toolId&&!l.offStockService;}).map(r=>r.receiptLineId));
     return {id:receiptId,number:receipt.number,state:'CONFIRMED' as const,documentIds,lines:results.map(r=>({...r,unallocatedOffStock:surplus.get(r.receiptLineId)??null}))};
   });

@@ -1,5 +1,6 @@
 import type { DbQueryer } from "./of-versioning.repository";
 import type { OfDocumentAffaire, OfQuantityInput } from "../domain/of-document";
+import type { OfDeliveryAffair } from '../types/production.types';
 
 /** Commercial demand, physical reservations and production commitments are separate, disjoint facts. */
 export const OF_DOCUMENT_COMMERCIAL_SQL = `
@@ -123,4 +124,28 @@ export async function readOfDocumentCommercial(tx: DbQueryer, ofId: number): Pro
   if (!result) throw new Error("OF document commercial projection missing");
   for (const value of Object.values(result.quantity)) if (!Number.isFinite(value) || value < 0) throw new Error("Invalid OF document commercial quantity");
   return result;
+}
+
+/** The OF sheet shows each live delivery commitment, including revised AR parts. */
+export async function readOfDeliveryAffairs(tx: DbQueryer, ofId: number): Promise<OfDeliveryAffair[]> {
+  return (await tx.query<OfDeliveryAffair>(`WITH group_sources AS (
+    SELECT a.source_of_id AS id FROM public.production_consolidations g JOIN public.production_consolidation_allocations a
+      ON a.consolidation_id=g.id AND a.state='ACTIVE' WHERE g.producer_of_id=$1 AND g.state='ACTIVE'
+    UNION SELECT $1::bigint
+  ), deliveries AS (
+    SELECT DISTINCT ON (a.id) a.id,a.qty_ordered,c.ar_sent_at,l.delai_client,
+      f.id::int AS affaire_id,f.reference,o.id::int AS source_of_id
+    FROM group_sources s JOIN public.ordres_fabrication o ON o.id=s.id AND o.parent_of_id IS NULL
+    JOIN public.commande_ligne l ON l.id=o.commande_ligne_id AND l.article_id=o.article_id
+    JOIN public.commande_client c ON c.id=l.commande_id AND c.order_type<>'INTERNE'
+    JOIN public.commande_ligne_affaire_allocation a ON a.commande_ligne_id=l.id
+      AND o.affaire_id IN (a.livraison_affaire_id,a.production_affaire_id)
+    JOIN public.affaire f ON f.id=a.livraison_affaire_id AND f.statut::text NOT IN ('ANNULE','ANNULEE','CANCELLED')
+    ORDER BY a.id,o.id
+  ) SELECT d.affaire_id,d.reference,d.source_of_id,COALESCE(p.quantity,d.qty_ordered)::float8 AS quantity,
+    COALESCE(p.due_date,r.initial_due_date,d.delai_client)::text AS due_date,
+    (r.id IS NOT NULL) AS confirmed
+  FROM deliveries d LEFT JOIN public.delivery_promise_roots r ON r.allocation_id=d.id AND d.ar_sent_at IS NOT NULL
+  LEFT JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
+  ORDER BY COALESCE(p.due_date,r.initial_due_date,d.delai_client),d.affaire_id,p.id`, [ofId])).rows;
 }

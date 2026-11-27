@@ -3,6 +3,17 @@
 CERP stores SQL patch files in `db/patches/`. The local-first production
 database is PostgreSQL on HYPERBOX2, database `cerp_prod`.
 
+## Regroupement sur un OF planifié
+
+`20261127_consolidation_existing_surplus.sql` ajoute la part du producteur déjà
+engagée pour sa propre livraison et valide la contrainte élargie avant de retirer
+la précédente. Les regroupements historiques conservent leurs règles. Le patch
+prend un verrou exclusif sur `production_consolidations` et conserve toutes les
+relations et quantités existantes. Le nouveau parcours nécessite une API qui lit
+les regroupements sur surplus et réserve la part d’origine lors de la réception.
+Après la première création `EXISTING_SURPLUS_V1`, le retour Web peut conserver
+cette API. Un retour applicatif garde le schéma et les écritures courantes.
+
 ## Estimation d’achat des procédés spéciaux
 
 `20261126_special_process_purchase_pricing.sql` ajoute le forfait et le minimum

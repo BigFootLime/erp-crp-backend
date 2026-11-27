@@ -43,7 +43,14 @@ export type ProcessingLine = {
   toolId: number | null;
   stockManaged: boolean;
   qualityRequired: boolean;
-  operatorControl?: { kind: "MP"; reopenRequired: boolean; dimensions: OperatorDimension[]; grade?: string };
+  operatorControl?: {
+    kind: "MP";
+    reopenRequired: boolean;
+    dimensions: OperatorDimension[];
+    grade?: string;
+    stockTogether?: true;
+    stockBarProposal?: ReturnType<typeof proposeReceivedMaterialBars>;
+  };
   subcontract: Awaited<ReturnType<typeof readReceiptSubcontract>>;
   articleId: string | null;
   articleCode: string | null;
@@ -260,6 +267,14 @@ export async function readProcessingLine(
       ? { operatorControl: {
           kind: operatorKind, reopenRequired: row.receiptStatus === "CLOSED",
           dimensions, ...(grade ? { grade } : {}),
+          ...(row.policy === "STANDARD" && row.stockManaged && row.stockUnit && row.received > 0 ? {
+            stockTogether: true,
+            stockBarProposal: proposeReceivedMaterialBars({
+              required: row.stockUnit.trim().toLowerCase() === "mm" && material?.barToCut === true,
+              receiptUnit: row.unit ?? "", stockUnit: row.stockUnit, coefficient: row.coefficient,
+              quantity: row.received, sourceLengthMm: material?.sourceLengthMm,
+            }),
+          } : {}),
         } }
       : {}),
     materialBarProposal: proposeReceivedMaterialBars({

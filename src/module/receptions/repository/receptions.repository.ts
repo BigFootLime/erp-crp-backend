@@ -18,7 +18,7 @@ import { HttpError } from "../../../utils/httpError"
 import { repoInsertAuditLog } from "../../audit-logs/repository/audit-logs.repository"
 import type { CreateAuditLogBodyDTO } from "../../audit-logs/validators/audit-logs.validators"
 import { roleHasCommandeFournisseurCapability } from "../../commande-fournisseur/domain/commande-fournisseur-rbac"
-import { repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
+import { repoCloseFullyStockedMaterialOrders, repoRefreshCommandeReceptionState } from "../../commande-fournisseur/repository/commande-fournisseur.repository"
 import { repoCreateMovement, repoGetMovement, repoPostMovement } from "../../stock/repository/stock.repository"
 import { hashStockCommand, normalizeIdempotencyKey } from "../../stock/domain/stock-command"
 import type { StockMovementDetail } from "../../stock/types/stock.types"
@@ -52,6 +52,7 @@ import { receivedMaterialBarLengths } from '../../stock/domain/material-bar-rece
 import {readProcessingLine} from './receipt-processing.repository'
 import { assertReceiptProcessingClosed } from './receipt-processing-guard'
 import { offStockServiceEligibilitySql } from './receipt-article-context'
+import { fullyStockedMaterialSql } from './fully-stocked-material.sql'
 
 export type AuditContext = {
   user_id: number
@@ -1755,6 +1756,35 @@ async function sumReceiptedQty(tx:PoolClient,lineId: string): Promise<number> {
   return (res.rows[0]?.qty ?? 0) + await receiptTransferred(tx,lineId)
 }
 
+export async function closeFullyStockedMaterialReceipt(tx: PoolClient, receptionId: string, audit: AuditContext) {
+  const closure = await tx.query(
+    `UPDATE public.receptions_fournisseurs r
+       SET status='CLOSED', updated_at=now(), updated_by=$2
+     WHERE r.id=$1::uuid AND r.status='OPEN' AND r.origin_type='SUPPLIER'
+       AND r.confirmation_state IS DISTINCT FROM 'DRAFT'
+       AND EXISTS (SELECT 1 FROM public.reception_fournisseur_lignes l WHERE l.reception_id=r.id)
+       AND NOT EXISTS (
+         SELECT 1 FROM public.reception_fournisseur_lignes l
+         LEFT JOIN public.articles a ON a.id=l.article_id
+         LEFT JOIN public.lots lot ON lot.id=l.lot_id
+         WHERE l.reception_id=r.id AND (${fullyStockedMaterialSql}) IS NOT TRUE
+       ) RETURNING r.id`,
+    [receptionId, audit.user_id],
+  )
+  if (!closure.rowCount) return
+  await insertAuditLog(tx, audit, {
+    action: "receptions.status.close_after_stock",
+    entity_type: "RECEPTION_FOURNISSEUR",
+    entity_id: receptionId,
+    details: { status: "CLOSED", reason: "Matière intégralement mise en stock" },
+  })
+  await repoCloseFullyStockedMaterialOrders(tx, receptionId, audit)
+}
+
+export function lockStockReceiptCommand(tx: PoolClient, audit: AuditContext, receiptKey: string) {
+  return tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`reception-stock-receipt:${audit.user_id}:${receiptKey}`])
+}
+
 export async function repoCreateStockReceiptLocked(
   tx:PoolClient,
   materialInstalled:boolean,
@@ -1955,6 +1985,7 @@ export async function repoCreateStockReceiptLocked(
     entity_id: posted.movement.id,
     details: { reception_id: receptionId, line_id: lineId, movement_no: posted.movement.movement_no, qty: body.qty },
   })
+  if (Math.abs(body.qty - remaining) <= 1e-9) await closeFullyStockedMaterialReceipt(tx, receptionId, audit)
 
   return {
     stock_movement_id: posted.movement.id,
@@ -1973,7 +2004,7 @@ export async function repoCreateStockReceipt(
   const receiptKey=normalizeIdempotencyKey(idempotencyKey)
   return withRealtimeOutboxTransaction(await db.connect(),async tx=>{
     const materialInstalled=await lockMaterialReceiptRecipientsTx(tx,lineId)
-    await tx.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`reception-stock-receipt:${audit.user_id}:${receiptKey}`])
+    await lockStockReceiptCommand(tx, audit, receiptKey)
     return repoCreateStockReceiptLocked(tx,materialInstalled,receptionId,lineId,body,audit,receiptKey)
   })
 }

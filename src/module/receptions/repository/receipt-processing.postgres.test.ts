@@ -423,7 +423,7 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
     await attachOperatorOrder(f, ["304L", "diametre_mm: 22 mm minimum", "longueur_mm: 1000 mm minimum"]
       .map(valeur => ({ type: "SPECIFICATION", obligatoire: true, valeur })));
     const line = await readProcessingLine(pool, f.line, f.receipt);
-    expect(line.operatorControl).toEqual({ kind: "MP", reopenRequired: false, grade: "304L", dimensions: [
+    expect(line.operatorControl).toMatchObject({ kind: "MP", reopenRequired: false, grade: "304L", stockTogether: true, dimensions: [
       { label: "Longueur", valueMm: 3020, minimumMm: 1000 }, { label: "Diamètre", valueMm: 22, minimumMm: 22 },
     ] });
     const request = operatorControlSchema.parse({
@@ -460,7 +460,7 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
   it("operator control records MP dimensions, then blocks a failed lot with one NC", async () => {
     const f = await fixture(0, "PIECE", "MP");
     const line = await readProcessingLine(pool, f.line, f.receipt);
-    expect(line.operatorControl).toEqual({ kind: "MP", reopenRequired: false, dimensions: [{ label: "Longueur", valueMm: null }] });
+    expect(line.operatorControl).toMatchObject({ kind: "MP", reopenRequired: false, stockTogether: true, dimensions: [{ label: "Longueur", valueMm: null }] });
     const request = operatorControlSchema.parse({
       idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "NON_CONFORME",
       measurements: [{ label: "Longueur", valueMm: 980, confirmed: true, result: "NOK" }], note: "Longueur non conforme",
@@ -474,6 +474,117 @@ suite("Received pieces on the full PostgreSQL schema (#1069)", () => {
       (SELECT count(*)::int FROM public.quality_control_points WHERE quality_control_id=n.control_id) AS measurements
       FROM public.non_conformity n WHERE n.id=$1`, [result.nonConformityId])).rows[0];
     expect(proof).toEqual({ status: "OPEN", line: f.line, lot: f.lot, measurements: 1 });
+  });
+
+  it("posts the conforming material inspection, stock and closures once, with full rollback after a bad destination", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    const orderLine = await attachOperatorOrder(f, []);
+    const orderId = (await pool.query(
+      "UPDATE public.commande_fournisseur SET statut='RECUE' WHERE id=(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=$1) RETURNING id",
+      [orderLine],
+    )).rows[0].id;
+    const line = await readProcessingLine(pool, f.line, f.receipt);
+    const command = operatorControlSchema.parse({
+      idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+      measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }],
+      inspection: { appearance: "OK", quantity: 6040 },
+      stock: { magasinId: warehouse, emplacementId: place },
+    });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, {
+      ...command, inspection: { appearance: "OK", quantity: 6039 },
+    }, audit())).rejects.toMatchObject({ code: "RECEIPT_CONTROL_INSPECTION_MISMATCH" });
+    await expect(recordReceiptOperatorControl(f.receipt, f.line, {
+      ...command, stock: { magasinId: randomUUID(), emplacementId: place },
+    }, audit())).rejects.toThrow();
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({
+      stockManaged: true, receiptStatus: "OPEN", stocked: 0, controlId: null, lotStatus: "QUARANTAINE",
+    });
+    const [result, replay] = await Promise.all([
+      recordReceiptOperatorControl(f.receipt, f.line, command, audit()),
+      recordReceiptOperatorControl(f.receipt, f.line, command, audit()),
+    ]);
+    expect(replay).toEqual(result);
+    expect(result.stockMovementId).toBeTruthy();
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ receiptStatus: "CLOSED", stocked: 6040, stage: "DONE" });
+    expect((await pool.query(
+      "SELECT statut, motif_cloture FROM public.commande_fournisseur WHERE id=$1", [orderId],
+    )).rows[0]).toMatchObject({ statut: "CLOTUREE", motif_cloture: expect.stringContaining("mise en stock") });
+    expect((await pool.query(
+      "SELECT count(*)::int AS n FROM public.commande_fournisseur_transition WHERE commande_id=$1 AND to_statut='CLOTUREE'", [orderId],
+    )).rows[0].n).toBe(1);
+    expect((await pool.query(
+      "SELECT characteristic_key, result, measured_value::float8 FROM public.quality_control_points WHERE quality_control_id=$1 ORDER BY characteristic_key", [result.controlId],
+    )).rows).toEqual(expect.arrayContaining([
+      { characteristic_key: "RECEPTION-ASPECT", result: "OK", measured_value: null },
+      { characteristic_key: "RECEPTION-QUANTITE", result: "OK", measured_value: 6040 },
+    ]));
+    expect((await pool.query(
+      "SELECT count(*)::int AS n FROM public.reception_fournisseur_stock_receipts WHERE reception_line_id=$1", [f.line],
+    )).rows[0].n).toBe(1);
+  });
+
+  it("preserves a partial material BCF and refuses stock on visual non-conformity", async () => {
+    const f = await fixture(0, "PIECE", "MP");
+    const orderLine = await attachOperatorOrder(f, []);
+    await pool.query("UPDATE public.commande_fournisseur_ligne SET quantite=10000 WHERE id=$1", [orderLine]);
+    await pool.query("UPDATE public.commande_fournisseur SET statut='PARTIELLEMENT_RECUE' WHERE id=(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=$1)", [orderLine]);
+    const line = await readProcessingLine(pool, f.line, f.receipt);
+    const command = {
+      idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+      measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }],
+      inspection: { appearance: "NOK", quantity: 6040 },
+      stock: { magasinId: warehouse, emplacementId: place },
+    };
+    expect(operatorControlSchema.safeParse(command).success).toBe(false);
+    expect(operatorControlSchema.safeParse({ ...command, verdict: "NON_CONFORME", note: "Surface marquée" }).success).toBe(false);
+    const separate = await fixture(0, "PIECE", "MP");
+    const separateLine = await readProcessingLine(pool, separate.line, separate.receipt);
+    const result = await recordReceiptOperatorControl(separate.receipt, separate.line, operatorControlSchema.parse({
+      ...command, expectedVersion: separateLine.version, stock: undefined, verdict: "NON_CONFORME", note: "Surface marquée",
+    }), audit());
+    expect(result.nonConformityId).toBeTruthy();
+    expect(await readProcessingLine(pool, separate.line, separate.receipt)).toMatchObject({
+      receiptStatus: "OPEN", lotStatus: "BLOQUE", stocked: 0, openNc: 1,
+    });
+
+    await recordReceiptOperatorControl(f.receipt, f.line, operatorControlSchema.parse({
+      ...command, idempotencyKey: randomUUID(), inspection: { appearance: "OK", quantity: 6040 },
+    }), audit());
+    expect(await readProcessingLine(pool, f.line, f.receipt)).toMatchObject({ receiptStatus: "CLOSED", stocked: 6040 });
+    expect((await pool.query(
+      "SELECT c.statut FROM public.commande_fournisseur c JOIN public.commande_fournisseur_ligne l ON l.commande_id=c.id WHERE l.id=$1", [orderLine],
+    )).rows[0].statut).toBe("PARTIELLEMENT_RECUE");
+  });
+
+  it("concurrent receipts close a shared BCF once only after both lots are stocked", async () => {
+    const first = await fixture(0, "PIECE", "MP");
+    const second = await fixture(0, "PIECE", "MP");
+    const sharedLine = await attachOperatorOrder(first, []);
+    await pool.query("UPDATE public.commande_fournisseur_ligne SET quantite=12080 WHERE id=$1", [sharedLine]);
+    await pool.query("UPDATE public.receptions_fournisseurs SET fournisseur_id=(SELECT fournisseur_id FROM public.receptions_fournisseurs WHERE id=$1) WHERE id=$2",
+      [first.receipt, second.receipt]);
+    await pool.query("UPDATE public.reception_fournisseur_lignes SET commande_fournisseur_ligne_id=$2, article_id=$3 WHERE id=$1",
+      [second.line, sharedLine, first.id]);
+    await pool.query("UPDATE public.lots SET article_id=$1 WHERE id=$2", [first.id, second.lot]);
+    const orderId = (await pool.query(
+      "UPDATE public.commande_fournisseur SET statut='RECUE' WHERE id=(SELECT commande_id FROM public.commande_fournisseur_ligne WHERE id=$1) RETURNING id",
+      [sharedLine],
+    )).rows[0].id;
+    const stock = { magasinId: warehouse, emplacementId: place };
+    await Promise.all([first, second].map(async item => {
+      const line = await readProcessingLine(pool, item.line, item.receipt);
+      return recordReceiptOperatorControl(item.receipt, item.line, operatorControlSchema.parse({
+        idempotencyKey: randomUUID(), expectedVersion: line.version, kind: "MP", verdict: "CONFORME",
+        measurements: [{ label: "Longueur", valueMm: 3020, confirmed: true }],
+        inspection: { appearance: "OK", quantity: 6040 }, stock,
+      }), audit());
+    }));
+    expect((await pool.query(
+      "SELECT count(*)::int AS n FROM public.commande_fournisseur_transition WHERE commande_id=$1 AND to_statut='CLOTUREE'", [orderId],
+    )).rows[0].n).toBe(1);
+    for (const item of [first, second]) {
+      expect(await readProcessingLine(pool, item.line, item.receipt)).toMatchObject({ receiptStatus: "CLOSED", stocked: 6040 });
+    }
   });
 
   it("operator control accepts the canonical rounded stock conversion and rejects the out-of-tolerance conversion", async () => {
