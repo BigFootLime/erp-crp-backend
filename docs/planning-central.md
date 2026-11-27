@@ -1,5 +1,9 @@
 # Planning central — première publication (#717)
 
+## Identité des pièces sur la grille
+
+Le snapshot du planning transmet `planReference`, `pieceIndex` et `pieceDesignation`. Il privilégie l’identité figée dans le dossier OF, puis la version technique rattachée pour le plan et l’indice et la pièce technique pour la désignation. Le champ `revision` reste l’identifiant technique de version. Les informations d’affichage n’entrent pas dans la version de concurrence d’une tâche.
+
 ## OF complet et prévisions d’approvisionnement — 2.0.70 / #1835
 
 `POST /planning/v2/ofs/:ofId/auto-plan` reçoit `earliestStart` et `autoAssign`. Il relit la route et les programmations liées, génère une simulation versionnée et conserve les créneaux engagés par `preserveCommitted`. Il renvoie l’intention et les tâches complètes pour l’aperçu. La validation canonique séparée reste nécessaire ; la limite de 100 opérations ne produit jamais un OF partiellement demandé.

@@ -18,4 +18,13 @@ describe("central task canonical phase", () => {
   it.each(["DRAFT", "PROGRAMMING"])("does not invent an operation phase for %s", source => {
     expect(taskFromRow({ ...row, source, phase: 0 }).phase).toBeNull();
   });
+  it("keeps the visible plan index separate from the routing version identifier", () => {
+    const input = { ...row, revision: "772ffa2f-e017-42fe-9a28-544afa392ea5" };
+    const task = taskFromRow({ ...input, plan_reference: "PLAN-42", piece_index: "C", piece_designation: "Bride courte" });
+    expect(task).toMatchObject({
+      planReference: "PLAN-42", pieceIndex: "C", pieceDesignation: "Bride courte",
+      revision: input.revision, label: row.label,
+    });
+    expect(task.version).toBe(taskFromRow(input).version);
+  });
 });
