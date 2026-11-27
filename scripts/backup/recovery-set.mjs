@@ -372,21 +372,40 @@ function referenceFingerprint(reference) {
 function resolveSnapshotPath(reference, sourceMap, recoveryRoot) {
   const roots = sourceMap.roots ?? [];
   const candidates = [];
-  const value = normalizePosix(reference.storage_path);
-  if (reference.storage_column === "storage_key" || reference.source_table === "ged_blobs") {
-    for (const root of roots.filter((item) => item.kind === "ged")) {
-      candidates.push(path.join(recoveryRoot, root.snapshot, value));
-    }
-  }
-  if (path.posix.isAbsolute(value) || /^[A-Za-z]:\//.test(value)) {
-    for (const root of roots) {
-      for (const alias of [root.source, ...(root.aliases ?? [])]) {
-        const relative = safeRelative(value, alias);
-        if (relative !== null) candidates.push(path.join(recoveryRoot, root.snapshot, ...relative.split("/")));
-      }
+  const isMetrologySource = reference.source_table === "metrologie_import_source_files"
+    && reference.storage_column === "storage_path";
+  const historicalMetrology = isMetrologySource
+    ? /^uploads\/docs\/legacy-import\/([a-f0-9]{64})\/([a-f0-9]{64})\.(xlsx|ods|pdf|zip)$/.exec(reference.storage_path)
+    : null;
+  if (historicalMetrology && historicalMetrology[0] === reference.storage_path) {
+    // Match the API's immutable-reference mapping, using the raw metadata.
+    // The physical legacy alias is intentionally absent from the strict vault.
+    for (const root of roots.filter((item) => item.kind === "data" || item.kind === "ged")) {
+      const documents = root.kind === "data" ? ["data", "documents"] : ["documents"];
+      candidates.push(path.join(recoveryRoot, root.snapshot, ...documents, "metrologie", "legacy-import",
+        historicalMetrology[1], `${historicalMetrology[2]}.${historicalMetrology[3]}`));
     }
   } else {
-    for (const root of roots) candidates.push(path.join(recoveryRoot, root.snapshot, ...value.split("/")));
+    const possibleHistoricalPrefix = reference.storage_path.replaceAll("\\", "/").trim()
+      .replace(/^(?:\.\/|\/)+/, "").toLowerCase();
+    if (isMetrologySource && (possibleHistoricalPrefix === "uploads/docs/legacy-import"
+      || possibleHistoricalPrefix.startsWith("uploads/docs/legacy-import/"))) return [];
+    const value = normalizePosix(reference.storage_path);
+    if (reference.storage_column === "storage_key" || reference.source_table === "ged_blobs") {
+      for (const root of roots.filter((item) => item.kind === "ged")) {
+        candidates.push(path.join(recoveryRoot, root.snapshot, value));
+      }
+    }
+    if (path.posix.isAbsolute(value) || /^[A-Za-z]:\//.test(value)) {
+      for (const root of roots) {
+        for (const alias of [root.source, ...(root.aliases ?? [])]) {
+          const relative = safeRelative(value, alias);
+          if (relative !== null) candidates.push(path.join(recoveryRoot, root.snapshot, ...relative.split("/")));
+        }
+      }
+    } else {
+      for (const root of roots) candidates.push(path.join(recoveryRoot, root.snapshot, ...value.split("/")));
+    }
   }
   return [...new Set(candidates.map((candidate) => path.resolve(candidate)))].filter((candidate) => {
     const relative = path.relative(path.resolve(recoveryRoot), candidate);
