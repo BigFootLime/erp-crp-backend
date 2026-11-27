@@ -19,7 +19,7 @@ describe.skipIf(!url)("quote cost capture — isolated temporary fixtures", () =
       CREATE TEMP TABLE articles(id uuid,piece_technique_id uuid);
       CREATE TEMP TABLE piece_technique_versions(id uuid,piece_technique_id uuid,statut text,version_interne int,created_at timestamptz DEFAULT now());
       CREATE TEMP TABLE gammes(id uuid,piece_technique_version_id uuid,statut text,is_current boolean,updated_at timestamptz DEFAULT now());
-      CREATE TEMP TABLE pieces_techniques_achats(id uuid,piece_technique_id uuid,piece_technique_version_id uuid,type_achat text,total_achat_ht numeric,updated_at timestamptz DEFAULT now());
+      CREATE TEMP TABLE pieces_techniques_achats(id uuid,piece_technique_id uuid,piece_technique_version_id uuid,type_achat text,total_achat_ht numeric,quantite numeric,prix numeric,pu_achat numeric,forfait_ht numeric,minimum_facturation_ht numeric,updated_at timestamptz DEFAULT now());
       CREATE TEMP TABLE pieces_techniques_operations(id uuid,piece_technique_id uuid,gamme_id uuid,type_operation text,tp numeric,tf_unit numeric,coef numeric,taux_horaire numeric,updated_at timestamptz DEFAULT now());
       CREATE TEMP TABLE margin_input_versions (LIKE public.margin_input_versions);
       CREATE TEMP TABLE margin_rates (LIKE public.margin_rates);
@@ -55,6 +55,16 @@ describe.skipIf(!url)("quote cost capture — isolated temporary fixtures", () =
     const current = (await tx.query(QUOTE_MARGIN_SOURCES_SQL, ["410", "DEVIS_LINE"])).rows;
     expect(Number(current.find(c => c.category === "MATERIAL").amount_ht)).toBe(500);
     expect((await tx.query('SELECT count(*)::int AS n FROM public.quote_margin_source_snapshots WHERE devis_id=41')).rows[0].n).toBe(3);
+  });
+  it("charges a flat fee or a billing minimum once per quoted lot", async () => {
+    await pool.query(`INSERT INTO pg_temp.pieces_techniques_achats
+      (id,piece_technique_id,piece_technique_version_id,type_achat,total_achat_ht,quantite,prix,forfait_ht,minimum_facturation_ht) VALUES
+      ('00000000-0000-4000-8000-000000000010','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','TRAITEMENT',70,1,NULL,70,NULL),
+      ('00000000-0000-4000-8000-000000000011','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','TRAITEMENT',30,1,2,NULL,30)`);
+    const costs = async (line: string) => (await tx.query(QUOTE_MARGIN_SOURCES_SQL,[line,"DEVIS_LINE"])).rows
+      .filter(row => row.category === "SUBCONTRACTING").map(row => Number(row.amount_ht));
+    expect(await costs("410")).toEqual([70,30]);
+    expect(await costs("411")).toEqual([70,40]);
   });
   it("does not invent quoted costs for an offer entered after it was sent", async () => {
     await captureQuoteMarginsTx(tx, 42, "RECORDED_SENT", null);

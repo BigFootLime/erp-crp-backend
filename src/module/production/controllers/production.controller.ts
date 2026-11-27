@@ -1,6 +1,7 @@
 import {consumableRights} from './consumable-procurement.controller';
 import type { Request } from "express";
 import { canValidateTechnicalDossier } from "../domain/technical-dossier-approval";
+import { redactOfTechnicalSnapshotPrices } from "../domain/of-purchase-price-visibility";
 import { requestHasGrantedAccountModuleAccess } from "../../access-control/context/account-module-access.context";
 import { asyncHandler } from "../../../utils/asyncHandler";
 import { HttpError } from "../../../utils/httpError";
@@ -511,7 +512,8 @@ export const getOfTechnicalSnapshot = asyncHandler(async (req, res) => {
     res.status(404).json({ error: "Not found" });
     return;
   }
-  res.json(out);
+  const { prices } = await consumableRights(req);
+  res.json(prices ? out : { ...out, snapshot: redactOfTechnicalSnapshotPrices(out.snapshot) });
 });
 
 // #170 §11 : une dépendance indisponible (pool PostgreSQL saturé/refusé) est un

@@ -6,7 +6,21 @@ import { readSubcontractProcurement, prepareSubcontractProcurement, prepareSubco
 import { subcontractProcurementIdentity, subcontractProcurementCommand, subcontractDemandCommand } from './subcontract-procurement.validators';
 export const getProcurement = asyncHandler(async (req, res) => {
     const data = await readSubcontractProcurement(subcontractProcurementIdentity.parse(req.params).ofId), rights = await consumableRights(req);
-    res.json({ ...data, canPrepare: rights.purchase && !data.coveredByOfId, pricesVisible: rights.prices, offers: data.offers.map(o => ({ ...o, price: rights.prices ? o.price : null, forfait: rights.prices ? o.forfait : null, minimumInvoice: rights.prices ? o.minimumInvoice : null })) });
+    const amount = (value: number | string | null | undefined) => {
+        if (!rights.prices || value == null) return null;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    };
+    // The purchases originate in to_jsonb() or a frozen snapshot. Return only
+    // the operational fields and expose the estimate under the price permission.
+    const purchases = data.purchases.map(purchase => {
+        const { id, article_id, fournisseur_id, type_achat, designation, nom, gamme_operation_id } = purchase;
+        return { id, article_id, fournisseur_id, type_achat, designation, nom, gamme_operation_id,
+            estimatedUnitPrice: amount(purchase.prix ?? purchase.pu_achat),
+            estimatedFlatFee: amount(purchase.forfait_ht),
+            estimatedMinimumInvoice: amount(purchase.minimum_facturation_ht) };
+    });
+    res.json({ ...data, purchases, canPrepare: rights.purchase && !data.coveredByOfId, pricesVisible: rights.prices, offers: data.offers.map(o => ({ ...o, price: rights.prices ? o.price : null, forfait: rights.prices ? o.forfait : null, minimumInvoice: rights.prices ? o.minimumInvoice : null })) });
 });
 export const postDemands = asyncHandler(async (req, res) => {
     if (!(await consumableRights(req)).purchase)

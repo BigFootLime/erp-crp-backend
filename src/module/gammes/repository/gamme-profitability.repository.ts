@@ -1,6 +1,7 @@
 import db from '../../../config/database';
 import { HttpError } from '../../../utils/httpError';
 import { profitability } from '../domain/gamme-profitability';
+import { catalogueNetHt } from '../../commande-fournisseur/domain/catalogue-line-pricing';
 import { ofDocumentMaterialCutting } from '../../production/domain/of-document-technical-source';
 
 const money=(value:number)=>Math.round(value*100)/100;
@@ -13,7 +14,7 @@ export async function repoGammeProfitability(gammeId:string,quantity:number){
   const context=(await tx.query<{piece_id:string;version_id:string;prix_unitaire:string|null;ensemble:boolean}>(`SELECT p.id::text AS piece_id,g.piece_technique_version_id::text AS version_id,p.prix_unitaire,p.ensemble FROM public.gammes g JOIN public.piece_technique_versions v ON v.id=g.piece_technique_version_id JOIN public.pieces_techniques p ON p.id=v.piece_technique_id WHERE g.id=$1::uuid`,[gammeId])).rows[0];
   if(!context)throw new HttpError(404,'NOT_FOUND','Gamme introuvable.');
   const operations=(await tx.query(`SELECT o.id::text,o.phase,o.type_operation,o.tp,o.tf_unit,o.qte,o.coef,o.taux_horaire,o.taux_horaire_source,o.prix_vente_horaire,COALESCE(cf.devise,'EUR') AS devise FROM public.pieces_techniques_operations o LEFT JOIN public.centres_frais cf ON cf.id=o.cf_id WHERE o.gamme_id=$1::uuid ORDER BY o.ordre,o.id`,[gammeId])).rows;
-  const purchases=(await tx.query(`SELECT id::text,designation,type_achat,quantite,unite_prix,longueur_mm,quantite_pieces,COALESCE(pu_achat,prix) AS unit_price FROM public.pieces_techniques_achats WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$2::uuid ORDER BY id`,[context.piece_id,context.version_id])).rows;
+  const purchases=(await tx.query(`SELECT id::text,designation,type_achat,quantite,unite_prix,longueur_mm,quantite_pieces,CASE WHEN minimum_facturation_ht IS NOT NULL THEN COALESCE(prix,pu_achat) ELSE COALESCE(pu_achat,prix) END AS unit_price,forfait_ht,minimum_facturation_ht FROM public.pieces_techniques_achats WHERE piece_technique_id=$1::uuid AND piece_technique_version_id=$2::uuid ORDER BY id`,[context.piece_id,context.version_id])).rows;
   const missing:string[]=[];
   if(context.ensemble)missing.push('Coût des sous-ensembles non inclus dans cette gamme');
   if(!operations.length)missing.push('Aucune opération dans la gamme');
@@ -37,7 +38,16 @@ export async function repoGammeProfitability(gammeId:string,quantity:number){
     else {missing.push(`Longueur de coupe manquante · ${p.designation??p.id}`);need=NaN;}
    }
    const price=numeric(p.unit_price);
-   const cost=need===0?0:!Number.isFinite(need)||price===null||price<=0?null:money(need*price);
+   const forfait = numeric(p.forfait_ht);
+   const minimum = numeric(p.minimum_facturation_ht);
+   const specialProcess = p.type_achat === 'TRAITEMENT';
+   let cost = null;
+   if (need === 0) cost = 0;
+   else if (Number.isFinite(need)) {
+    if (specialProcess && (forfait !== null || minimum !== null && price !== null))
+     cost = catalogueNetHt(need, price ?? 0, forfait ?? 0, minimum ?? 0);
+    else if (price !== null && price > 0) cost = money(need * price);
+   }
    if(cost===null)missing.push(`Prix d'achat ou quantité manquant · ${p.designation??p.id}`);
    return {purchase_id:p.id,quantity:Number.isFinite(need)?need:null,unit,cost,cutting};
   });

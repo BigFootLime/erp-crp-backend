@@ -284,8 +284,8 @@ export async function repoImportPreparationPurchases(
         "Des achats existent déjà sur cette révision. Complétez les lignes existantes.",
       );
     const copied = await tx.query(
-      `INSERT INTO public.pieces_techniques_achats(piece_technique_id,piece_technique_version_id,phase,nom,designation,article_id,fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat)
-      SELECT piece_technique_id,$2::uuid,phase,nom,designation,article_id,fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat
+      `INSERT INTO public.pieces_techniques_achats(piece_technique_id,piece_technique_version_id,phase,nom,designation,article_id,fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat,prix,tva_achat,total_achat_ht,total_achat_ttc,forfait_ht,minimum_facturation_ht)
+      SELECT piece_technique_id,$2::uuid,phase,nom,designation,article_id,fournisseur_id,fournisseur_nom,quantite,quantite_pieces,pu_achat,unite_prix,type_achat,prix,tva_achat,total_achat_ht,total_achat_ttc,forfait_ht,minimum_facturation_ht
       FROM public.pieces_techniques_achats WHERE piece_technique_id=$1::uuid AND piece_technique_version_id IS NOT DISTINCT FROM $3::uuid`,
       [of.piece_technique_id, of.version_id, input.source_version_id],
     );
