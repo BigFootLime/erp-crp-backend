@@ -50,9 +50,10 @@ export async function readMaterialBarInventoryTx(tx: Db, batchId: string): Promi
   if (batch.unit !== 'mm') throw new HttpError(422, 'MATERIAL_BAR_UNIT_REQUIRED', 'Le suivi des barres concerne les matières gérées en millimètres.');
   const inventory = (await tx.query<{ revision: number; movementCount: string }>(`SELECT row_version AS revision,movement_count::text AS "movementCount"
     FROM public.stock_material_bar_inventories WHERE stock_batch_id=$1::uuid`, [batchId])).rows[0];
-  const bars = (await tx.query<MaterialBarRecord>(`SELECT id::text,('BAR-'||lpad(public_number::text,greatest(6,length(public_number::text)),'0')) AS code,stock_batch_id::text AS "batchId",
+  const bars = (await tx.query<MaterialBarRecord>(`SELECT id::text,COALESCE(receipt_bar_code,'BAR-'||lpad(public_number::text,greatest(6,length(public_number::text)),'0')) AS code,stock_batch_id::text AS "batchId",
     remaining_length_mm::float8 AS "lengthMm",depreciated_length_mm::float8 AS "depreciatedMm",initial_length_mm::float8 AS "initialLengthMm",row_version AS version,created_at::text AS "createdAt"
-    FROM public.stock_material_bars WHERE stock_batch_id=$1::uuid AND retired_at IS NULL ORDER BY created_at,id`, [batchId])).rows;
+    FROM public.stock_material_bars WHERE stock_batch_id=$1::uuid AND retired_at IS NULL
+    ORDER BY created_at,CASE WHEN receipt_bar_code IS NOT NULL THEN public_number END NULLS FIRST,id`, [batchId])).rows;
   const reservations = (await tx.query<MaterialBarReservation>(`SELECT r.id::text,r.stock_batch_id::text AS "batchId",
     greatest(0,r.qty_reserved-r.qty_consumed)::float8 AS "remainingMm",r.row_version AS version,r.of_id AS "ofId",o.numero AS "ofNumber"
     FROM public.stock_reservations r LEFT JOIN public.ordres_fabrication o ON o.id=r.of_id

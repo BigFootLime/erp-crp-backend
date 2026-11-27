@@ -110,6 +110,10 @@ export async function applyOpeningStockTx(params: {
   idempotencyKeyFor(row: CutoverRow): string;
 }): Promise<{ targets: OpeningTarget[]; effects: OpeningEffect[] }> {
   assertOpeningRowsReady(params.rows, ["OPENING_STOCK"]);
+  // A mixed PF/MP batch must take the common planning lock before its first stock row.
+  if (params.rows.some(row => row.values.stockKind === "MP")) {
+    await params.client.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+  }
   const targets: OpeningTarget[] = [], effects: OpeningEffect[] = [];
   for (const row of params.rows) {
     assertOpeningStockInputs(row);

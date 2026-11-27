@@ -32,6 +32,7 @@ export type EntityDescriptor = {
   entity_type: IdentificationEntityType;
   entity_id: string;
   canonical_code: string;
+  display_code?: string | null;
   parent_entity_id?: string;
   label: string;
   status: string | null;
@@ -102,7 +103,7 @@ async function descriptorFromQuery(
   sql: string,
   entityId: string
 ): Promise<EntityDescriptor> {
-  const result = await queryer.query<{ entity_id: string; canonical_code: string; label: string; status: string | null }>(sql, [entityId]);
+  const result = await queryer.query<Omit<EntityDescriptor, "entity_type">>(sql, [entityId]);
   const row = result.rows[0];
   if (!row) throw new HttpError(404, "IDENTIFICATION_ENTITY_NOT_FOUND", "L'entité à étiqueter est introuvable.");
   return { entity_type: entityType, ...row };
@@ -120,6 +121,7 @@ export async function repoFindEntity(entityType: IdentificationEntityType, entit
       assertUuidEntityId(entityId);
       return descriptorFromQuery(queryer, entityType,
         `SELECT l.id::text AS entity_id,l.lot_code::text AS canonical_code,
+                CASE WHEN l.lot_code ~ '^(MP|TR)-[0-9]{4,}$' THEN l.lot_code END AS display_code,
                 (a.code||' — lot '||l.lot_code)::text AS label,l.lot_status::text AS status
            FROM public.lots l JOIN public.articles a ON a.id=l.article_id WHERE l.id=$1::uuid`, entityId);
     case "STOCK_MATERIAL_BAR":
@@ -127,7 +129,8 @@ export async function repoFindEntity(entityType: IdentificationEntityType, entit
       return descriptorFromQuery(queryer, entityType,
         `SELECT bar.id::text AS entity_id,
           lpad(bar.public_number::text,greatest(6,length(bar.public_number::text)),'0') AS canonical_code,
-          (a.code||' — '||l.lot_code||' — barre '||bar.public_number)::text AS label,l.id::text AS parent_entity_id,
+          bar.receipt_bar_code AS display_code,
+          (a.code||' — '||l.lot_code||' — barre '||COALESCE(bar.receipt_bar_code,bar.public_number::text))::text AS label,l.id::text AS parent_entity_id,
           CASE WHEN bar.retired_at IS NOT NULL OR bar.remaining_length_mm=0 THEN 'SOLDE' ELSE l.lot_status::text END AS status
           FROM public.stock_material_bars bar JOIN public.stock_batches batch ON batch.id=bar.stock_batch_id
           JOIN public.lots l ON l.id=batch.lot_id JOIN public.articles a ON a.id=l.article_id WHERE bar.id=$1::uuid`, entityId);

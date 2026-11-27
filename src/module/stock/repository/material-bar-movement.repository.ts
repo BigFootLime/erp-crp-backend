@@ -4,6 +4,7 @@ import { HttpError } from '../../../utils/httpError';
 import { planMaterialBarMovement, type MaterialBarMovementCommand, type MaterialBarMovementPlan } from '../domain/material-bar-movement';
 import { lockMaterialBarInventoryTx, readMaterialBarInventoryTx, type MaterialBarInventory } from './material-bar-inventory.repository';
 import { lockMaterialBarReceiptLotTx } from './material-bar-receipt.repository';
+import { allocateReceivedBarCodesTx } from './material-bar-receipt-code.repository';
 
 type Db = Pick<PoolClient, 'query'>;
 type LedgerMovement = { id: string; batchId: string | null; articleId: string; quantity: number; status: string; type: string };
@@ -109,11 +110,13 @@ export async function applyMaterialBarMovementTx(tx: Db, prepared: PreparedMater
     [barId,movement.id,action,before === null ? null : JSON.stringify(before),JSON.stringify(after),actor]);
   }
   if (plan.kind === 'RECEIVE') {
-    for (const lengthMm of plan.lengths) {
+    const codes = movement.type === 'IN' ? await allocateReceivedBarCodesTx(tx, source.batch, plan.lengths.length) : [];
+    for (const [index, lengthMm] of plan.lengths.entries()) {
       const id = randomUUID();
-      await tx.query(`INSERT INTO public.stock_material_bars(id,stock_batch_id,initial_length_mm,remaining_length_mm,created_by,updated_by)
-        VALUES($1::uuid,$2::uuid,$3,$3,$4,$4)`, [id,source.batch.id,lengthMm,actor]);
-      await event(id, 'INITIALIZE', null, { id, batchId: source.batch.id, lengthMm, version: 1, source: 'STOCK_MOVEMENT' });
+      const code = codes[index] ?? null;
+      await tx.query(`INSERT INTO public.stock_material_bars(id,stock_batch_id,initial_length_mm,remaining_length_mm,created_by,updated_by,receipt_bar_code)
+        VALUES($1::uuid,$2::uuid,$3,$3,$4,$4,$5)`, [id,source.batch.id,lengthMm,actor,code]);
+      await event(id, 'INITIALIZE', null, { id, batchId: source.batch.id, lengthMm, version: 1, source: 'STOCK_MOVEMENT', ...(code && {code}) });
     }
   } else if (plan.kind === 'ISSUE') {
     for (const change of plan.changes) {

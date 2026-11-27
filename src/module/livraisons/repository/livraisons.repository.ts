@@ -3237,7 +3237,13 @@ export async function repoCorrectPreparationStock(params: {
           WHERE id = $1::uuid
         `,
         [reservation.lot_id, correctedLotCode, params.user_id]
-      )
+      ).catch((error: unknown) => {
+        const failure = getPgErrorInfo(error)
+        if (failure.code === "23514" && failure.constraint === "stock_lot_numbered_code_immutable") {
+          throw new HttpError(409, "LOT_CODE_IMMUTABLE", "Les numéros internes des séries MP et TR sont attribués automatiquement.")
+        }
+        throw error
+      })
       if ((lotUpdate.rowCount ?? 0) !== 1) {
         throw new HttpError(409, "LOT_CODE_CORRECTION_CONFLICT", "Le numéro de lot n'a pas pu être corrigé.")
       }

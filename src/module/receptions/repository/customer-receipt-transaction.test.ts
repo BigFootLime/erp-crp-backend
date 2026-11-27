@@ -1,7 +1,7 @@
 import {beforeEach,describe,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({connect:vi.fn(),audit:vi.fn(),code:vi.fn()}));
 vi.mock('../../../config/database',()=>({default:{connect:m.connect}}));
-vi.mock('../../../shared/codes/code-generator.service',()=>({generateTransactionalBusinessCode:m.code}));
+vi.mock('../../../shared/codes/stock-lot-code.service',()=>({generateStockLotCode:m.code}));
 vi.mock('../../stock/repository/stock.repository',()=>({repoCreateMovement:vi.fn(),repoPostMovement:vi.fn(),repoGetMovement:vi.fn()}));
 vi.mock('../../production/repository/of-material-receipts.repository',()=>({lockMaterialReceiptRecipientsTx:vi.fn(),transferMaterialReceiptTx:vi.fn()}));
 vi.mock('../../commande-fournisseur/repository/commande-fournisseur.repository',()=>({repoRefreshCommandeReceptionState:vi.fn()}));
@@ -12,9 +12,9 @@ import {createCustomerMaterialReceiptTx,repoCreateLine,repoCreateLotForLine,type
 const audit:AuditContext={user_id:1,ip:null,user_agent:null,device_type:null,os:null,browser:null,path:null,page_key:null,client_session_id:null};
 const input={callId:'call',clientId:'client',articleId:'article',designation:'Matière client',quantity:15,unit:'u',date:'2026-09-08',reference:'LOT-CLIENT-TEST',note:'Réception partielle fictive'};
 let tx:{query:ReturnType<typeof vi.fn>;release:ReturnType<typeof vi.fn>},lotCreated:boolean;
-let receiptOwner:string|null,articleOwner:string|null;
+let receiptOwner:string|null,articleOwner:string|null,articleCategory:string;
 beforeEach(()=>{
-  vi.resetAllMocks();lotCreated=false;receiptOwner='client';articleOwner='client';m.audit.mockResolvedValue({id:'audit',created_at:'2026-09-08'});m.code.mockResolvedValue('LOT-TEST');
+  vi.resetAllMocks();lotCreated=false;receiptOwner='client';articleOwner='client';articleCategory='matiere';m.audit.mockResolvedValue({id:'audit',created_at:'2026-09-08'});m.code.mockResolvedValue('MP-8000');
   tx={release:vi.fn(),query:vi.fn(async(sql:string)=>{
     if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows:[]};
     if(sql.includes('FROM public.planning_central_settings'))return {rows:[{revision:1}]};
@@ -26,6 +26,7 @@ beforeEach(()=>{
     if(sql.includes('INSERT INTO public.reception_fournisseur_lignes'))return {rows:[{id:'line'}]};
     if(sql.includes('a.code AS article_code'))return {rows:[{id:'line',article_id:'article',qty_received:15,lot_id:lotCreated?'lot':null}]};
     if(sql.includes(' AS owner_client_id'))return {rows:[{id:'line',reception_id:'receipt',article_id:'article',lot_id:null,owner_client_id:receiptOwner??articleOwner,article_owner_client_id:articleOwner,receipt_owner_client_id:receiptOwner}]};
+    if(sql.includes('SELECT article_category FROM public.articles'))return {rows:[{article_category:articleCategory}]};
     if(sql.includes('INSERT INTO public.lots')){lotCreated=true;return {rows:[{id:'lot'}]};}
     if(sql.includes('UPDATE public.reception_fournisseur_lignes'))return {rows:[]};
     throw new Error(`Unexpected customer receipt query: ${sql}`);
@@ -37,6 +38,19 @@ describe('customer receipt transaction and ownership',()=>{
     await repoCreateLotForLine('receipt','line',{},audit,tx as never);
     const lot=tx.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO public.lots'));
     expect(lot?.[1]?.[10]).toBe('client');
+    expect(m.code).toHaveBeenCalledWith(tx, 'matiere');
+  });
+  it.each([
+    { category: 'traitement', lotCode: 'TR-0001' },
+    { category: 'TRAITEMENT', lotCode: 'TR-0001' },
+    { category: 'fabrique', lotCode: 'LOT-2026-00001' },
+  ])('uses the persisted article category $category for a received lot', async ({ category, lotCode }) => {
+    articleCategory = category;
+    m.code.mockResolvedValue(lotCode);
+    await repoCreateLotForLine('receipt', 'line', {}, audit, tx as never);
+    const lot = tx.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO public.lots'));
+    expect(m.code).toHaveBeenCalledExactlyOnceWith(tx, category);
+    expect(lot?.[1]?.[1]).toBe(lotCode);
   });
   it('refuses conflicting material owners before a lot is created',async()=>{
     receiptOwner='another-client';
@@ -52,6 +66,7 @@ describe('customer receipt transaction and ownership',()=>{
     expect(line?.[1]?.[8]).toBeNull();expect(line?.[1]?.[12]).toBe('call');
     const lot=tx.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO public.lots'));
     expect(lot?.[1]?.[7]).toBe('EN_ATTENTE');expect(lot?.[1]?.[10]).toBe('client');
+    expect(lot?.[1]?.[1]).toBe('MP-8000');expect(lot?.[1]?.[2]).toBe(input.reference);
     expect(m.connect).not.toHaveBeenCalled();expect(tx.query.mock.calls.filter(([sql])=>sql==='BEGIN')).toHaveLength(1);expect(tx.query.mock.calls.filter(([sql])=>sql==='COMMIT')).toHaveLength(1);expect(tx.release).toHaveBeenCalledTimes(1);
   });
   it('rolls back the whole receipt when the lot cannot be created',async()=>{

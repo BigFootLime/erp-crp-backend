@@ -38,6 +38,15 @@ async function installStockFixture(pool: Pool) {
         ON CONFLICT(code_key) DO UPDATE SET value=public.issued_code_counters.value+1
         RETURNING value INTO next_value; RETURN next_value;
       END $$;
+    CREATE TABLE IF NOT EXISTS public.planning_central_settings (
+      singleton boolean PRIMARY KEY, revision bigint NOT NULL
+    );
+    INSERT INTO public.planning_central_settings VALUES (true, 0) ON CONFLICT DO NOTHING;
+    CREATE TABLE IF NOT EXISTS public.stock_lot_code_counters (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      last_material_number bigint NOT NULL CHECK (last_material_number >= 7999),
+      last_treatment_number bigint NOT NULL CHECK (last_treatment_number >= 0)
+    );
     CREATE SEQUENCE IF NOT EXISTS public.stock_trace_code_446_seq START 1;
     CREATE SEQUENCE IF NOT EXISTS public.stock_movement_no_seq START 1;
     CREATE TABLE IF NOT EXISTS public.stock_nuances(id uuid PRIMARY KEY,code text);
@@ -102,6 +111,8 @@ describePg("native OLD opening PostgreSQL", () => {
   beforeEach(async()=>{
     // Audit evidence stays append-only, including in this disposable fixture.
     await db.query(`TRUNCATE public.stock_movement_lines,public.stock_movement_event_log,public.stock_movements,public.stock_batches,public.stock_levels,public.stock_lot_trace_references,public.lots,public.stock_command_receipts,public.erp_outbox_events,public.realtime_stream_enqueue_state,public.emplacements,public.locations,public.magasins,public.warehouses,public.articles_matiere,public.articles,public.units RESTART IDENTITY CASCADE`);
+    await db.query(`INSERT INTO public.stock_lot_code_counters (last_material_number, last_treatment_number)
+      VALUES (7999, 0) ON CONFLICT (singleton) DO UPDATE SET last_material_number=7999, last_treatment_number=0`);
     await db.query("INSERT INTO public.units(id,code,label) VALUES($1,'kg','Kilogramme')",[ids.unit]);
     await db.query("INSERT INTO public.articles(id,article_category,stock_managed,lot_tracking,unite) VALUES($1,'matiere',true,true,'kg')",[ids.article]);
     await db.query("INSERT INTO public.warehouses(id) VALUES($1)",[ids.warehouse]);
@@ -115,7 +126,10 @@ describePg("native OLD opening PostgreSQL", () => {
     const replayClient=await db.connect(); let replay;
     try { await replayClient.query("BEGIN"); replay=await repoCreateHistoricalImportTx(replayClient,body,audit,"cutover-old-native-1"); await replayClient.query("COMMIT"); } catch (error) { await replayClient.query("ROLLBACK"); throw error; } finally { replayClient.release(); }
     expect(replay.replayed).toBe(true); expect(replay.lot_id).toBe(first!.lot_id);
-    expect((await db.query("SELECT stock_scope,lot_status,client_proprietaire_id FROM public.lots")).rows).toEqual([{stock_scope:"OLD",lot_status:"LIBERE",client_proprietaire_id:"001"}]);
+    expect((await db.query("SELECT stock_scope,lot_status,client_proprietaire_id,lot_code,supplier_lot_code FROM public.lots")).rows)
+      .toEqual([{stock_scope:"OLD",lot_status:"LIBERE",client_proprietaire_id:"001",lot_code:"MP-8000",supplier_lot_code:"FOU-LOT-7"}]);
+    expect((await db.query("SELECT last_material_number::int AS last_number FROM public.stock_lot_code_counters WHERE singleton")).rows)
+      .toEqual([{last_number:8000}]);
     expect((await db.query("SELECT reference_type,reference_value FROM public.stock_lot_trace_references ORDER BY reference_type")).rows).toEqual([{reference_type:"HISTORICAL_LOT",reference_value:"CLIPPER-LOT-7"},{reference_type:"MP_LOT",reference_value:"FOU-LOT-7"}]);
     expect(Number((await db.query("SELECT count(*)::int AS count FROM public.stock_movements")).rows[0].count)).toBe(1);
   });
@@ -127,8 +141,30 @@ describePg("native OLD opening PostgreSQL", () => {
       await repoCreateHistoricalImportTx(client,body,audit,"cutover-old-rollback-1");
       await client.query("ROLLBACK");
     } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+    expect((await db.query("SELECT last_material_number::int AS last_number FROM public.stock_lot_code_counters WHERE singleton")).rows)
+      .toEqual([{last_number:7999}]);
     for (const table of ["lots","stock_movements","stock_command_receipts"]) {
       expect(Number((await db.query(`SELECT count(*)::int AS count FROM public.${table}`)).rows[0].count)).toBe(0);
     }
+  });
+  it("waits on the shared planning lock before an OLD material opening allocates its number", async () => {
+    const planning = await db.connect();
+    const opening = await db.connect();
+    try {
+      await planning.query("BEGIN");
+      await planning.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
+      await opening.query("BEGIN");
+      await opening.query("SET LOCAL lock_timeout='250ms'");
+      await expect(repoCreateHistoricalImportTx(opening, {
+        kind: "MP", article_id: ids.article, quantity: 1, unite: "kg", lot_number: "LOCK-FIXTURE",
+      }, audit, "cutover-old-planning-lock")).rejects.toMatchObject({ code: "55P03" });
+    } finally {
+      await opening.query("ROLLBACK");
+      await planning.query("ROLLBACK");
+      opening.release();
+      planning.release();
+    }
+    expect((await db.query("SELECT last_material_number::int AS last FROM public.stock_lot_code_counters")).rows[0].last).toBe(7999);
+    expect((await db.query("SELECT count(*)::int AS count FROM public.stock_command_receipts")).rows[0].count).toBe(0);
   });
 });

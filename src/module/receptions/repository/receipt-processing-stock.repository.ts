@@ -4,7 +4,7 @@ import { transferMaterialReceiptTx } from "../../production/repository/of-materi
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { HttpError } from "../../../utils/httpError";
-import { generateTransactionalBusinessCode } from "../../../shared/codes/code-generator.service";
+import { generateStockLotCode } from "../../../shared/codes/stock-lot-code.service";
 import { assertReceiptLotQualityEligibility } from "../../qualite/repository/quality-operational-gate.repository";
 import {
   repoCreateMovement,
@@ -93,9 +93,7 @@ export async function postPieceReceiptStockTx(
       Math.max(0, pack.quantity - pack.stocked),
     );
     if (quantity <= 0.000001) continue;
-    const lotCode = await generateTransactionalBusinessCode(tx, {
-      prefix: "LOT",
-    });
+    const lotCode = await generateStockLotCode(tx, "matiere");
     const lot = (
       await tx.query<{ id: string }>(
         `INSERT INTO public.lots(article_id,lot_code,supplier_lot_code,received_at,notes,lot_status,lot_status_note,created_by,updated_by,client_proprietaire_id)

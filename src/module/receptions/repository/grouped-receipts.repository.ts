@@ -56,6 +56,11 @@ export async function confirmGroupedReceipt(receiptId:string,body:ConfirmGrouped
         if(!valid)throw new HttpError(422,'RECEIPT_DESTINATION_INVALID','Cet emplacement n’appartient pas au magasin choisi.');
       }
     }
+    // Lock the receipt's articles before the first lot takes the shared number counter.
+    const articleIds = current.items.flatMap(line => line.articleId ? [line.articleId] : []);
+    if (articleIds.length) {
+      await tx.query("SELECT id FROM public.articles WHERE id=ANY($1::uuid[]) ORDER BY id FOR KEY SHARE", [articleIds]);
+    }
     const results:Array<{orderLineId:string;receiptLineId:string;quantity:number;lotId:string|null;lotCode:string|null;state:'STOCKED'|'QUALITY_PENDING'|'ACCEPTED_OFF_STOCK'}>=[];
     for(const choice of body.lines){
       const expected=current.items.find(i=>i.id===choice.lineId)!;

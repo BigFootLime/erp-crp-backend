@@ -4,6 +4,7 @@ import { HttpError } from '../../../utils/httpError';
 import { receivedMaterialBarLengths, type ReceivedBarGroup } from '../domain/material-bar-receipt';
 import { assertMaterialBarSchema, lockMaterialBarInventoryTx, readMaterialBarInventoryTx, type MaterialBarInventory } from './material-bar-inventory.repository';
 import { createMaterialBarPostingOwner, type MaterialBarPostingOwner } from './material-bar-posting-owner';
+import { allocateReceivedBarCodesTx } from './material-bar-receipt-code.repository';
 
 type Db = Pick<PoolClient, 'query'>;
 export type MaterialBarReceiptPlan = { current: MaterialBarInventory; movementId: string; quantityMm: number; lengths: number[]; postingOwner: MaterialBarPostingOwner };
@@ -55,13 +56,15 @@ export async function applyMaterialBarReceiptTx(tx: Db, plan: MaterialBarReceipt
     VALUES($1::uuid,$2::bigint,$3,'Barres confirmées à la réception') ON CONFLICT(stock_batch_id) DO UPDATE
     SET movement_count=excluded.movement_count,row_version=stock_material_bar_inventories.row_version+1,
       confirmed_at=now(),confirmed_by=excluded.confirmed_by,note=excluded.note`, [current.batch.id,current.batch.movementCount,actor]);
-  for (const length of plan.lengths) {
+  const codes = await allocateReceivedBarCodesTx(tx, current.batch, plan.lengths.length);
+  for (const [index, length] of plan.lengths.entries()) {
     const barId = randomUUID();
-    await tx.query(`INSERT INTO public.stock_material_bars(id,stock_batch_id,initial_length_mm,remaining_length_mm,created_by,updated_by)
-      VALUES($1::uuid,$2::uuid,$3,$3,$4,$4)`, [barId,current.batch.id,length,actor]);
+    const code = codes[index] ?? null;
+    await tx.query(`INSERT INTO public.stock_material_bars(id,stock_batch_id,initial_length_mm,remaining_length_mm,created_by,updated_by,receipt_bar_code)
+      VALUES($1::uuid,$2::uuid,$3,$3,$4,$4,$5)`, [barId,current.batch.id,length,actor,code]);
     await tx.query(`INSERT INTO public.stock_material_bar_events(bar_id,command_key,action,stock_movement_id,before_state,after_state,reason,created_by)
       VALUES($1::uuid,$2::uuid,'INITIALIZE',$2::uuid,NULL,$3::jsonb,'Barre reçue et contrôlée',$4)`,
-    [barId,plan.movementId,JSON.stringify({ id:barId,batchId:current.batch.id,lengthMm:length,version:1,holds:[],source:'RECEIPT' }),actor]);
+    [barId,plan.movementId,JSON.stringify({ id:barId,batchId:current.batch.id,lengthMm:length,version:1,holds:[],source:'RECEIPT',...(code && {code}) }),actor]);
   }
   const result = await readMaterialBarInventoryTx(tx, current.batch.id);
   if (result.status !== 'CONFIRMED') throw new HttpError(409, 'MATERIAL_BAR_RECEIPT_CHANGED', result.warning ?? 'Les barres reçues ne correspondent pas à l’entrée en stock.');
