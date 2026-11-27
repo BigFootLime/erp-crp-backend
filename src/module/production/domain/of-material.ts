@@ -12,7 +12,7 @@ export type MaterialRequirements={
 };
 export type MaterialLot={
   id:string; batchId:string; articleId:string; code:string; unit:string|null; quality:string;
-  available:number; receivedAt:string; grade:string|null; condition:string|null;
+  available:number; receivedAt:string; stockScope?:string|null; grade:string|null; condition:string|null;
   ownerClientId:string|null; dimensions:Record<string,number>; certificates:string[];
   manualVerified:boolean;
   stockLevelId?:string;levelAvailable?:number;
@@ -94,7 +94,8 @@ export function proposeMaterialCoverage<T extends MaterialLot>(needs:MaterialNee
   const available=new Map(lots.map(l=>[l.batchId,milli(Math.max(0,l.available))]));
   const levels=new Map(lots.filter(l=>l.stockLevelId&&l.levelAvailable!==undefined).map(l=>[l.stockLevelId!,milli(Math.max(0,l.levelAvailable!))]));
   const released=new Map(lots.filter(l=>l.qualityAvailable!==undefined).map(l=>[l.id,milli(Math.max(0,l.qualityAvailable!))]));
-  const ordered=[...lots].sort((a,b)=>a.receivedAt.localeCompare(b.receivedAt)||a.id.localeCompare(b.id)||a.batchId.localeCompare(b.batchId));
+  const ordered=[...lots].sort((a,b)=>Number(b.stockScope==="OLD")-Number(a.stockScope==="OLD")
+    ||a.receivedAt.localeCompare(b.receivedAt)||a.id.localeCompare(b.id)||a.batchId.localeCompare(b.batchId));
   for(const need of needs)for(const inventory of Object.values(need.barInventories??{}))for(const bar of inventory.bars){
     if(!proposedBarAvailability.has(bar.id))proposedBarAvailability.set(bar.id,
       Math.max(0,milli(bar.lengthMm)-inventory.holds.filter(h=>h.barId===bar.id).reduce((sum,h)=>sum+milli(h.remainingMm),0))/1000);
@@ -169,6 +170,34 @@ export function materialPurchaseQuantity(
     return problem('Le conditionnement fournisseur ne correspond pas à la longueur d’une barre entière. Vérifiez le lot d’achat.');
   }
   return purchaseQuantity(shortage, minimum, Math.max(bar, supplierPack) / 1000);
+}
+
+type MaterialPurchaseOffer = {
+  unite?: string; unite_stock?: string | null; coef_conversion?: number | null;
+  moq: number | null; lot_achat: number | null;
+};
+
+export function planMaterialPurchase(shortage: number, stockUnit: string | null,
+  sourceBarLengthMm?: number | null, offer?: MaterialPurchaseOffer | null) {
+  const unit = offer?.unite ?? stockUnit;
+  const coefficient = offer?.coef_conversion ?? 1;
+  const minimum = offer?.moq ?? null;
+  const pack = offer?.lot_achat ?? null;
+  if (shortage === 0) return { ordered: 0, assigned: 0, surplus: 0, unit, coefficient };
+  if (!unit || !/^barres?$/i.test(unit.trim())) {
+    return { ...materialPurchaseQuantity(shortage, minimum, pack, unit, sourceBarLengthMm), unit, coefficient: 1 };
+  }
+  const stockLengthFactor = millimetresPerUnit.get(stockUnit?.trim().toLowerCase() ?? '');
+  if (!stockLengthFactor || !sourceBarLengthMm || offer?.unite_stock !== stockUnit ||
+      !Number.isFinite(coefficient) || Math.abs(coefficient - sourceBarLengthMm / stockLengthFactor) > 1e-9) {
+    return { ordered: 0, assigned: shortage, surplus: 0, unit, coefficient,
+      problem: 'La quantité de stock par barre doit correspondre à la longueur de barre source de l’article.' };
+  }
+  // Shortage and commitments stay in stock units, while quantities on the PO
+  // and the price are expressed in whole bars.
+  const result = materialPurchaseQuantity(Math.ceil(milli(shortage) / milli(coefficient)), minimum, pack, unit,
+    sourceBarLengthMm, { stockUnit, coefficient });
+  return { ...result, assigned: shortage, surplus: result.problem ? 0 : quantity(result.ordered * coefficient - shortage), unit, coefficient };
 }
 export function coverageFingerprint(value:unknown){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
 /** JSONB may reorder object keys; evidence must survive that round trip. */

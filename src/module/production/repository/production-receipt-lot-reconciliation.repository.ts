@@ -132,8 +132,10 @@ async function reserveConsolidatedReceipt(
   },
 ) {
   const group = (
-    await client.query<{ id: string }>(
-      `SELECT id::text FROM public.production_consolidations WHERE producer_of_id=$1 AND state='ACTIVE' FOR UPDATE`,
+    await client.query<{ id:string; quantity_semantics:string; producer_own_quantity:number|null }>(
+      `SELECT id::text,to_jsonb(g)->>'quantity_semantics' AS quantity_semantics,
+        (to_jsonb(g)->>'producer_own_quantity')::float8 AS producer_own_quantity
+        FROM public.production_consolidations g WHERE producer_of_id=$1 AND state='ACTIVE' FOR UPDATE`,
       [args.of_id],
     )
   ).rows[0];
@@ -163,14 +165,33 @@ async function reserveConsolidatedReceipt(
       )
     ).rows[0].quantity,
   );
+  const reservationIds: string[] = [];
+  let reserved = 0;
+  if (group.quantity_semantics==='EXISTING_SURPLUS_V1') {
+    const own=(await client.query<{line_id:number; delivery_id:number; reserved_by_producer:number}>(`SELECT
+        a.commande_ligne_id::int AS line_id,a.livraison_affaire_id::int AS delivery_id,
+        COALESCE((SELECT sum(r.qty_reserved) FROM public.stock_reservations r
+          WHERE r.commande_ligne_affaire_allocation_id=a.id AND r.of_id=o.id AND r.status IN ('ACTIVE','CONSUMED')),0)::float8 AS reserved_by_producer
+      FROM public.ordres_fabrication o JOIN public.commande_ligne_affaire_allocation a ON a.commande_ligne_id=o.commande_ligne_id
+        AND o.affaire_id IN (a.livraison_affaire_id,a.production_affaire_id) WHERE o.id=$1`,[args.of_id])).rows;
+    if(own.length!==1)throw new HttpError(409,'CONSOLIDATION_OWN_DELIVERY_CHANGED','L’affaire initiale du producteur doit être vérifiée.');
+    const maximum=Math.min(args.qty_ok, args.max_allocate??Infinity, Math.max(0,(group.producer_own_quantity??0)-own[0].reserved_by_producer));
+    if(maximum>0){
+      const result=await reserveProducedQtyForCommandeLine(client,{...args,qty_ok:maximum,commande_ligne_id:own[0].line_id,livraison_affaire_id:own[0].delivery_id});
+      if(result){reserved=result.qty_reserved;reservationIds.push(...result.reservation_ids);}
+    }
+  }
   const distribution = allocateReceivedQuantity(
     rows,
-    Math.min(Math.max(0, args.qty_ok - applied), args.max_allocate ?? Infinity),
+    Math.max(0,Math.min(group.quantity_semantics==='EXISTING_SURPLUS_V1' ? args.qty_ok : args.qty_ok-applied,args.max_allocate??Infinity)-reserved),
   );
-  let reserved = 0;
-  const reservationIds: string[] = [];
   for (const allocated of distribution.allocations) {
     const source = rows.find((r) => r.id === allocated.allocation_id)!;
+    const existingDelivery=group.quantity_semantics==='EXISTING_SURPLUS_V1'&&source.commande_ligne_id!==null
+      ? (await client.query<{id:number}>(`SELECT livraison_affaire_id::int AS id FROM public.commande_ligne_affaire_allocation
+        WHERE commande_ligne_id=$1 AND $2::bigint IN (livraison_affaire_id,production_affaire_id)`,[source.commande_ligne_id,source.affaire_id])).rows : null;
+    if (existingDelivery&&existingDelivery.length!==1)
+      throw new HttpError(409,'CONSOLIDATION_DELIVERY_CHANGED','Vérifiez l’affaire de livraison de l’OF couvert.');
     const recovery = await reserveUrgencyRecoveryReceiptTx(client, {
       ...args, of_id: source.source_of_id, qty_ok: allocated.quantity,
     });
@@ -192,7 +213,7 @@ async function reserveConsolidatedReceipt(
               ...args,
               of_id: source.source_of_id,
               commande_ligne_id: source.commande_ligne_id,
-              livraison_affaire_id: source.affaire_id,
+              livraison_affaire_id: existingDelivery?.[0].id??source.affaire_id,
               qty_ok: allocated.quantity,
             })
           : null;
@@ -200,13 +221,15 @@ async function reserveConsolidatedReceipt(
       reservationIds.push(...reservation.reservation_ids);
       reserved += reservation.qty_reserved;
     }
+    const credited=group.quantity_semantics==='EXISTING_SURPLUS_V1' ? reservation?.qty_reserved??0 : allocated.quantity;
+    if (credited<=0) continue;
     await client.query(
       `INSERT INTO public.production_consolidation_receipt_allocations(allocation_id,movement_id,lot_id,quantity) VALUES($1::uuid,$2::uuid,$3::uuid,$4) ON CONFLICT(allocation_id,movement_id) DO UPDATE SET quantity=production_consolidation_receipt_allocations.quantity+excluded.quantity`,
-      [source.id, args.movement_id, args.lot_id, allocated.quantity],
+      [source.id, args.movement_id, args.lot_id, credited],
     );
     await client.query(
       "UPDATE public.production_consolidation_allocations SET received_quantity=received_quantity+$2 WHERE id=$1::uuid",
-      [source.id, allocated.quantity],
+      [source.id, credited],
     );
   }
   return {
@@ -240,6 +263,7 @@ async function reconcileLegacyReleasedConsolidationLot(
       `SELECT r.id::text AS receipt_id,r.of_id::bigint::int,m.article_id::text,sl.location_id::text,r.stock_level_id::text,r.stock_batch_id::text,r.stock_movement_id::text AS movement_id,r.qty_ok::float8
     FROM public.of_receipts r JOIN public.stock_movements m ON m.id=r.stock_movement_id
     JOIN public.production_consolidations c ON c.producer_of_id=r.of_id AND c.state='ACTIVE'
+      AND to_jsonb(c)->>'quantity_semantics' IS DISTINCT FROM 'EXISTING_SURPLUS_V1'
     JOIN public.stock_batches sb ON sb.id=r.stock_batch_id JOIN public.stock_levels sl ON sl.id=r.stock_level_id
     JOIN public.lots l ON l.id=sb.lot_id AND l.lot_status='LIBERE'
     WHERE sb.lot_id=$1::uuid AND m.status='POSTED'

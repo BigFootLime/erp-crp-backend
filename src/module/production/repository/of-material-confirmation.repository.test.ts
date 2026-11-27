@@ -13,7 +13,7 @@ function need(){return {id:'need',key:'source',articleId:'article',operationId:'
   requirements,blockers:[],supplierId:'supplier',price:2,currency:'EUR',destinationId:null,catalog:null,supplyMode:'PURCHASE',
   candidates:[{available:60,lot:{id:'lot',batchId:'batch',articleId:'article',unit:'u',quality:'LIBERE',ownerClientId:null,dimensions:{diametre_mm:25},certificates:[],magasinId:'store',emplacementId:1}}],
   futureSupplies:[{id:'line',available:25,reasons:[] as string[]}]};}
-function coverage(){return {version:'v1',number:'OF-TEST',previousNeeds:[] as unknown[],purchasePreparations:[],needs:[need()],operations:[{id:'cut',start:'2026-09-18T08:00:00Z'}]};}
+function coverage(){return {version:'v1',number:'OF-TEST',dossierStatus:'COMPLETE',previousNeeds:[] as unknown[],purchasePreparations:[],needs:[need()],operations:[{id:'cut',start:'2026-09-18T08:00:00Z'}]};}
 const body:MaterialConfirmation={expectedVersion:'v1',idempotencyKey:'command',selections:[{needKey:'source',batchId:'batch',quantity:60}],futureSelections:[{needKey:'source',lineId:'line',quantity:25,requirementsReviewed:true}]};
 const audit={user_id:1} as never;
 let current:ReturnType<typeof coverage>;
@@ -24,6 +24,18 @@ beforeEach(()=>{
   m.read.mockImplementation(async()=>current);m.reserve.mockResolvedValue({reservation:{id:'reservation'}});m.draft.mockResolvedValue([{id:'draft',code:'BCF-TEST'}]);
 });
 describe('physical and future material confirmation',()=>{
+  it('does not reserve or order material for an incomplete dossier',async()=>{
+    current.dossierStatus='INCOMPLETE';
+    await expect(confirmOfMaterial(19,body,audit,true)).rejects.toMatchObject({code:'MATERIAL_DOSSIER_REQUIRED'});
+    expect(m.reserve).not.toHaveBeenCalled();expect(m.allocate).not.toHaveBeenCalled();expect(m.draft).not.toHaveBeenCalled();
+  });
+  it('writes the full-bar price and keeps only the required length allocated',async()=>{
+    Object.assign(current.needs[0],{required:500,unit:'mm',sourceBarLengthMm:3000,price:35,
+      catalog:{unite:'barre',unite_stock:'mm',coef_conversion:3000,moq:null,lot_achat:null}});
+    await confirmOfMaterial(19,{...body,selections:[],futureSelections:[],existingPurchasesReviewed:true},audit,true);
+    expect(m.draft).toHaveBeenCalledWith(tx,[expect.objectContaining({quantity:1,assigned:500,price:35,
+      unit:'barre',stockUnit:'mm',coefficient:3000})],audit);
+  });
   it('passes the physical top-up to the canonical reservation without another purchase',async()=>{
     Object.assign(current.needs[0],{required:221,reserved:210,unit:'mm',futureSupplies:[],
       debitRule:{form:'BAR',stockUnit:'mm',unitsPerBlank:110,kerfPerBlank:.5,yieldValidated:true},
@@ -116,8 +128,20 @@ describe('physical and future material confirmation',()=>{
   });
   it('never assigns one future pool twice to two needs',async()=>{
     const second=need();second.id='need2';second.key='source2';current.needs.push(second);
+    m.allocate.mockImplementation(async(_tx,allocation)=>{
+      for(const need of current.needs) for(const line of need.futureSupplies) {
+        if(line.id===allocation.lineId)line.available-=allocation.quantity;
+      }
+    });
     await expect(confirmOfMaterial(19,{...body,futureSelections:[...body.futureSelections,{needKey:'source2',lineId:'line',quantity:1,requirementsReviewed:true}]},audit,true)).rejects.toMatchObject({code:'MATERIAL_FUTURE_SUPPLY_CHANGED'});
     expect(tx.query).toHaveBeenCalledWith('ROLLBACK');expect(tx.query).not.toHaveBeenCalledWith('COMMIT');
+  });
+  it('automatically uses the unassigned quantity on a compatible order before drafting another',async()=>{
+    Object.assign(current.needs[0],{required:3000,unit:'mm',futureSupplies:[{id:'line',available:10000,reasons:[],automatic:true}]});
+    const result=await confirmOfMaterial(19,{...body,selections:[],futureSelections:[],automaticFutureAllocation:true},audit,true);
+    expect(m.allocate).toHaveBeenCalledWith(tx,{lineId:'line',needId:'need',sourceRef:'source',ofId:19,quantity:3000});
+    expect(m.draft).toHaveBeenCalledWith(tx,[],audit);
+    expect(result.futureAssigned).toHaveLength(1);
   });
   it('rejects combined physical and future overcoverage',async()=>{
     await expect(confirmOfMaterial(19,{...body,futureSelections:[{...body.futureSelections[0],quantity:41}]},audit,true)).rejects.toMatchObject({code:'MATERIAL_OVER_COVERAGE'});

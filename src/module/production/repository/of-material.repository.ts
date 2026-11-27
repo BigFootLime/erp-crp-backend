@@ -8,10 +8,10 @@ import {withRealtimeOutboxTransaction} from "../../../shared/realtime/realtime-o
 import {materialWorkflowEnabled,readOfDossierTx,type DossierDb} from "./of-dossier.repository";
 import {preparationAudit} from "./production-preparation.repository";
 import type {AuditContext} from "./production.repository";
-import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,materialPurchaseQuantity,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
+import {materialPropertiesFingerprint,coverageFingerprint,materialRequirementForPieces,proposeMaterialCoverage,planMaterialPurchase,quantity,type MaterialNeed,type MaterialLot,type MaterialRequirements,type DebitRule} from "../domain/of-material";
 import {physicalMaterialInventoryBlockers} from '../domain/of-material-bars';
 import {readMaterialBarCoverageTx} from './material-bar-coverage.repository';
-import {readFutureMaterialSupplyTx,futureSupplyCompatibility} from './material-future-supply.repository';
+import {readFutureMaterialSupplyTx,futureSupplyCompatibility,futureSupplyRequirementsMatch} from './material-future-supply.repository';
 import {readCustomerMaterialCallsTx} from './customer-material-read.repository';
 import {readMaterialDebitsTx} from './material-debit-history.repository';
 import {materialCarryBlockers} from '../domain/material-reconciliation';
@@ -102,13 +102,15 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
   const articles=defaults.articles;
   const lots=(await tx.query<Candidate>(`SELECT l.id::text,b.id::text AS "batchId",l.article_id::text AS "articleId",l.lot_code AS code,a.unite AS unit,l.lot_status AS quality,
     GREATEST(0,LEAST(b.qty_total-b.qty_reserved-b.qty_depreciated,s.qty_total-s.qty_reserved-s.qty_depreciated))::float8 AS available,s.id::text AS "stockLevelId",GREATEST(0,s.qty_total-s.qty_reserved-s.qty_depreciated)::float8 AS "levelAvailable",
-    COALESCE(l.received_at::text,l.created_at::text) AS "receivedAt",l.material_properties->>'grade' AS grade,l.material_properties->>'condition' AS condition,
+    COALESCE(l.received_at::text,l.created_at::text) AS "receivedAt",COALESCE(w.stock_scope,l.stock_scope) AS "stockScope",
+    l.material_properties->>'grade' AS grade,l.material_properties->>'condition' AS condition,
     (SELECT COALESCE(sum(GREATEST(0,physical.qty_total-physical.qty_depreciated)),0)::float8 FROM public.stock_batches physical WHERE physical.lot_id=l.id) AS "physicalQuantity",
     COALESCE(l.client_proprietaire_id,m.client_proprietaire_id) AS "ownerClientId",COALESCE(l.material_properties->'dimensions','{}') AS dimensions,
     COALESCE(l.material_properties->'certificates','[]') AS certificates,false AS "manualVerified",COALESCE(l.material_properties,'{}'::jsonb) AS properties,
     e.magasin_id::text AS "magasinId",e.id::bigint::int AS "emplacementId",concat_ws(':',l.updated_at,s.updated_at,b.qty_reserved,b.qty_total) AS version
     FROM public.stock_batches b JOIN public.stock_levels s ON s.id=b.stock_level_id JOIN public.lots l ON l.id=b.lot_id
     JOIN public.articles a ON a.id=l.article_id LEFT JOIN public.articles_matiere m ON m.article_id=a.id
+    LEFT JOIN public.warehouses w ON w.id=s.warehouse_id
     JOIN public.emplacements e ON e.location_id=s.location_id WHERE l.article_id=ANY($1::uuid[]) AND b.qty_total>0
     ORDER BY l.received_at NULLS LAST,l.created_at,l.id,b.id`,[articleIds])).rows;
   const qualityByLot=new Map<string,{available:number;blocks:string[];explanation:string[];controlId:string|null}>();
@@ -175,8 +177,12 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
     const choice=of.technical_preparation?.material_supplier_choices?.[p.id];
     const currentChoice=choice?.version===of.revision?choice:null;
     const supplierId=currentChoice?currentChoice.supplierId??null:row?row.supplier_id:p.fournisseur_id;
-    const catalog=catalogs.find(c=>c.article_id===p.article_id&&c.fournisseur_id===supplierId&&c.unite===need.unit&&(!c.coef_conversion||c.coef_conversion===1));
-    const price=catalog?.prix_unitaire??(supplierId&&supplierId===p.fournisseur_id&&p.unite_prix===need.unit?p.pu_achat:null)??null;
+    const catalog=catalogs.find(c=>c.article_id===p.article_id&&c.fournisseur_id===supplierId&&(
+      c.unite===need.unit&&(!c.coef_conversion||c.coef_conversion===1) ||
+      article?.source_bar_length_mm&&c.unite_stock===need.unit&&/^barres?$/i.test(c.unite.trim())
+    ));
+    const purchaseUnit=catalog?.unite??need.unit;
+    const price=catalog?.prix_unitaire??(supplierId&&supplierId===p.fournisseur_id&&p.unite_prix===purchaseUnit?p.pu_achat:null)??null;
     return {...need,id:row?.id??null,designation:p.designation??p.nom??article?.code??"Matière à définir",articleCode:article?.code??null,articleUnit:article?.unite??null,
       operationId:operation?.id??null,operationLabel:operation?.label??null,supplyMode:row?.supply_mode??proposed?.supplyMode??"PURCHASE",allowPartial:row?.allow_partial??false,
       debitRule,reviewed:!!row?.specification_reviewed_at,supplierId,destinationId:currentChoice?currentChoice.destinationId??null:row?.destination_id??null,
@@ -205,9 +211,13 @@ export async function readMaterialTx(tx:DossierDb,ofId:number,previewConfigurati
     for(const s of proposal.selections){remainingQuality.set(s.lotId,quantity((remainingQuality.get(s.lotId)??0)-s.quantity));remaining.set(s.batchId,quantity((remaining.get(s.batchId)??0)-s.quantity));const levelId=lots.find(l=>l.batchId===s.batchId)?.stockLevelId;if(levelId)remainingLevels.set(levelId,quantity((remainingLevels.get(levelId)??0)-s.quantity));}
     const blockers=[...need.blockers,...physicalMaterialInventoryBlockers(need),
       ...(proposal.purchaseRequiresBarReview?['Vérifiez les barres du stock existant avant de préparer un achat.']:[])];
-    const { problem, ...purchase } = materialPurchaseQuantity(proposal.purchaseMissing,need.catalog?.moq??null,need.catalog?.lot_achat??null,need.unit,need.sourceBarLengthMm);
+    const { problem, ...purchase } = planMaterialPurchase(proposal.purchaseMissing,need.unit,need.sourceBarLengthMm,need.catalog);
     if(problem)blockers.push(problem);
-    return {...need,...proposal,blockers,futureSupplies:futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>({...s,reasons:futureSupplyCompatibility(need,s)})),purchase};
+    const expectedPurchases=futureSupplies.filter(s=>s.articleId===need.articleId).map(s=>{
+      const reasons=futureSupplyCompatibility(need,s);
+      return {...s,reasons,automatic:reasons.length===0&&futureSupplyRequirementsMatch(need.requirements,s)};
+    });
+    return {...need,...proposal,blockers,futureSupplies:expectedPurchases,purchase};
   });
   const historicalNeeds=saved.filter(n=>!needs.some(current=>current.id===n.id)).map(n=>{
     const attached=reservations.filter(r=>effectiveNeed(r.material_need_id)===n.id),expected=promises.filter(p=>effectiveNeed(p.material_need_id)===n.id);
@@ -316,7 +326,6 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
     await tx.query(`UPDATE public.ordres_fabrication SET technical_preparation=COALESCE(technical_preparation,'{}'::jsonb)||jsonb_build_object('material_supplier_choices',COALESCE(technical_preparation->'material_supplier_choices','{}'::jsonb)||jsonb_build_object($2::text,$3::jsonb)) WHERE id=$1`,[ofId,sourceRef,JSON.stringify({version:current.technicalVersion,supplierId:c.supplierId,destinationId:c.destinationId})]);
     const supply=(await readPlanningSupplyStates(tx,[ofId])).get(ofId)?.entries.find(e=>e.kind==='MATIERE'&&e.sourceRef===sourceRef);
     await linkUnassignedMaterialPurchasesTx(tx,ofId,sourceRef,current.technicalVersion,supply?.orders.map(o=>o.id)??[],audit);
-    await tx.query("UPDATE public.of_dossier_validations SET invalidated_at=now(),invalidation_reason='La préparation matière ou les règles de débit ont changé.' WHERE of_id=$1 AND invalidated_at IS NULL",[ofId]);
     return readMaterialTx(tx,ofId);
   });
 }
@@ -324,6 +333,7 @@ export async function configureOfMaterial(ofId:number,sourceRef:string,body:{exp
 export async function prepareOfMaterialPurchases(ofId:number,body:{expectedVersion:string;idempotencyKey:string},audit:AuditContext){
   return materialCommand(ofId,'PREPARE_PURCHASES',body,audit,async(tx,current)=>{
     if(['TERMINE','CLOTURE','ANNULE'].includes(current.executionStatus))throw new HttpError(409,'MATERIAL_OF_CLOSED','Cet OF est terminé ou annulé ; ses préparations restent consultables.');
+    if(current.dossierStatus!=='COMPLETE')throw new HttpError(409,'MATERIAL_DOSSIER_REQUIRED','Validez le dossier avant d’enregistrer les achats de matière.');
     await savePurchasePreparationsTx(tx,current.purchasePreparations,'MATIERE',ofId,current.version,audit);
     return readMaterialTx(tx,ofId);
   });
@@ -332,6 +342,7 @@ export async function prepareOfMaterialPurchases(ofId:number,body:{expectedVersi
 export async function chooseOfMaterialSupplier(ofId:number,sourceRef:string,body:MaterialSupplier,audit:AuditContext){
   return materialCommand(ofId,'CHOOSE_SUPPLIER',{...body,sourceRef},audit,async(tx,current)=>{
     if(['TERMINE','CLOTURE','ANNULE'].includes(current.executionStatus))throw new HttpError(409,'MATERIAL_OF_CLOSED','Cet OF est terminé ou annulé ; ses préparations restent consultables.');
+    if(current.dossierStatus!=='COMPLETE')throw new HttpError(409,'MATERIAL_DOSSIER_REQUIRED','Validez le dossier avant de choisir le fournisseur pour cet OF.');
     const need=current.needs.find(n=>n.key===sourceRef);
     if(!need||need.supplyMode!=='PURCHASE')throw new HttpError(409,'MATERIAL_DEFINITION_REQUIRED','Choisissez un besoin de matière achetée pour cet OF.');
     if(!current.suppliers.some(s=>s.id===body.supplierId))throw new HttpError(422,'MATERIAL_SUPPLIER_INVALID','Choisissez un fournisseur actif.');

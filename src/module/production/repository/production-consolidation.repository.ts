@@ -1,4 +1,5 @@
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
+import { committedOperationSql } from '../../planning/repository/committed-operation.sql';
 import type { PoolClient } from "pg";
 import pool from "../../../config/database";
 import { HttpError } from "../../../utils/httpError";
@@ -10,8 +11,11 @@ import {
 } from "../domain/of-generation";
 import {
   buildConsolidationPlan,
+  sourceCommercialQuantity,
   type ConsolidationSource,
 } from "../domain/consolidation-rules";
+import { frozenYieldGoodOutputNumber } from '../domain/frozen-yield';
+import { quantity } from '../domain/of-material';
 import {
   PREPARATION_RULES_VERSION,
   sourceHash,
@@ -28,6 +32,7 @@ import {
   transferConsolidationMaterialTx,
 } from "./consolidation-material.repository";
 import { restoreConsolidationHoldsTx } from "./consolidation-material-holds.repository";
+import { readMaterialOriginPolicyTx } from './of-material-policy.repository';
 import type { AuditContext } from "./production.repository";
 import type { ConsolidationRequest } from "../validators/production-workbench.validators";
 
@@ -68,6 +73,8 @@ async function readSources(
         AND execution.result->'industrial_proposal'->>'coverage_semantics'='GOOD_OUTPUT_V1'
       ORDER BY execution.created_at DESC,execution.id DESC LIMIT 1) AS industrial_semantics,
     (SELECT count(*)::int FROM public.planning_events e WHERE (e.of_id=o.id OR e.of_operation_id IN(SELECT id FROM public.of_operations WHERE of_id=o.id)) AND e.archived_at IS NULL AND e.status<>'CANCELLED') AS planned_count,
+    (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id=o.id AND op.status::text<>'CANCELLED'
+      AND ${committedOperationSql('op','o')}) AS committed_count,
     (SELECT count(*)::int FROM public.of_operations op WHERE op.of_id=o.id AND op.status::text NOT IN ('TODO','READY')) AS started_count,
     EXISTS(SELECT 1 FROM public.production_consolidation_allocations a WHERE a.source_of_id=o.id AND a.state='ACTIVE') AS covered,
     EXISTS(SELECT 1 FROM public.production_consolidations c WHERE c.producer_of_id=o.id) AS producer
@@ -96,13 +103,26 @@ async function readSources(
 async function previewTx(tx: Db, request: ConsolidationRequest, lock = false) {
   await assertConsolidationEnabled(tx);
   const sources = await readSources(tx, request, lock);
+  if (request.producer_of_id) return previewExistingSurplusTx(tx, request, sources, lock);
   const plan = buildConsolidationPlan(sources, request.surplus_quantity);
-  const material = await previewConsolidationMaterialTx(
-    tx,
-    sources.map((s) => s.id),
-    plan.quantity,
-    lock,
-  );
+  const ids=sources.map(s=>s.id);
+  const stockEngaged=(await tx.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.stock_reservations r
+      LEFT JOIN public.of_material_needs n ON n.id=r.material_need_id
+      WHERE (r.of_id=ANY($1::bigint[]) OR (r.source_type='OF' AND r.source_id=ANY($2::text[])))
+        AND (n.need_kind='MATIERE' OR (n.id IS NULL AND r.of_component_requirement_id IS NULL
+          AND EXISTS(SELECT 1 FROM public.articles_matiere m WHERE m.article_id=r.article_id)))
+        AND r.status IN ('ACTIVE','CONSUMED')) OR EXISTS(SELECT 1 FROM public.production_material_debits WHERE of_id=ANY($1::bigint[])) AS present`,
+    [ids,ids.map(String)])).rows[0].present;
+  const material=stockEngaged ? await previewConsolidationMaterialTx(tx,ids,plan.quantity,lock) : null;
+  // Do not duplicate open purchasing commitments from the sources. New OFs
+  // without commitments carry their technical needs into the future producer.
+  const openSupply=(await tx.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM public.commande_fournisseur_ligne_besoin b
+      JOIN public.commande_fournisseur_ligne l ON l.id=b.ligne_id AND l.statut_ligne='ACTIVE'
+      JOIN public.commande_fournisseur c ON c.id=l.commande_id AND c.statut NOT IN ('ANNULEE','CLOTUREE')
+      WHERE b.besoin_of_id=ANY($1::bigint[]) AND NOT b.annule AND b.besoin_type='OF_MATERIAL')
+      OR EXISTS(SELECT 1 FROM public.of_customer_material_calls c JOIN public.of_material_needs n ON n.id=c.need_id
+        WHERE n.of_id=ANY($1::bigint[]) AND c.status<>'CANCELLED') AS present`,[ids])).rows[0].present;
+  if (openSupply) throw new HttpError(409,'CONSOLIDATION_MATERIAL_COMMITTED','Rapprochez les achats et les appels matière déjà affectés aux OF sources avant de les regrouper.');
   const load = (
     await tx.query<{ producer_minutes: number; separate_minutes: number }>(
       `SELECT (SELECT COALESCE(sum(${PLANNED_OPERATION_DURATION_MINUTES_SQL}),0)::int FROM public.of_operations op CROSS JOIN (SELECT $2::numeric AS quantite_lancee) o WHERE op.of_id=$1) AS producer_minutes,
@@ -124,8 +144,74 @@ async function previewTx(tx: Db, request: ConsolidationRequest, lock = false) {
       plan,
       material,
     }),
-    sources,
+    sources, existing_producer: null,
   };
+}
+
+async function previewExistingSurplusTx(tx: Db, request: ConsolidationRequest, sources: ConsolidationSource[], lock: boolean) {
+  const producer = sources.find(s=>s.id===request.producer_of_id)!;
+  const recipient = sources.find(s=>s.id!==producer.id)!;
+  const fail = (message: string) => new HttpError(409, 'CONSOLIDATION_EXISTING_SURPLUS', message);
+  if (!['BROUILLON','PLANIFIE'].includes(producer.statut) || !producer.committed_count || recipient.statut!=='BROUILLON' || recipient.planned_count>0 || recipient.committed_count)
+    throw fail('Choisissez un producteur déjà planifié et une demande qui n’est pas encore planifiée.');
+  for (const source of sources) {
+    if (source.parent_of_id!==null || source.covered || source.producer || source.technical_readiness!=='VALIDATED' ||
+        source.started_count>0 || source.quantite_bonne>0 || source.quantite_rebut>0 || !source.technical_snapshot_sha256 ||
+        source.technical_snapshot_sha256!==producer.technical_snapshot_sha256 || source.piece_technique_version_id!==producer.piece_technique_version_id ||
+        !source.client_id || source.client_id!==producer.client_id || source.article_id!==producer.article_id)
+      throw fail('Les deux OF doivent être préparés, compatibles et sans fabrication commencée.');
+  }
+  const ids = sources.map(s=>s.id);
+  if (lock) {
+    await tx.query(`SELECT c.id FROM public.commande_client c WHERE c.id IN
+      (SELECT o.commande_id FROM public.ordres_fabrication o WHERE o.id=ANY($1::bigint[])) ORDER BY c.id FOR UPDATE`,[ids]);
+    await tx.query(`SELECT l.id FROM public.commande_ligne l WHERE l.id IN
+      (SELECT o.commande_ligne_id FROM public.ordres_fabrication o WHERE o.id=ANY($1::bigint[])) ORDER BY l.id FOR UPDATE`,[ids]);
+    await tx.query(`SELECT a.id FROM public.commande_ligne_affaire_allocation a WHERE a.commande_ligne_id IN
+      (SELECT o.commande_ligne_id FROM public.ordres_fabrication o WHERE o.id=ANY($1::bigint[])) ORDER BY a.id FOR UPDATE`,[ids]);
+  }
+  const deliveries = (await tx.query<{ of_id:number; id:string; affaire_id:number; reference:string; required:number; due_date:string|null; line_id:string }>(`SELECT
+      o.id::int AS of_id,a.id::text,a.livraison_affaire_id::int AS affaire_id,f.reference,
+      a.qty_to_produce::float8 AS required,COALESCE(promised.due_date,l.delai_client)::text AS due_date,l.id::text AS line_id
+    FROM public.ordres_fabrication o JOIN public.commande_ligne l ON l.id=o.commande_ligne_id
+    JOIN public.commande_client c ON c.id=l.commande_id AND c.id=o.commande_id AND c.order_type<>'INTERNE'
+    JOIN public.commande_ligne_affaire_allocation a ON a.commande_ligne_id=l.id
+      AND o.affaire_id IN (a.livraison_affaire_id,a.production_affaire_id)
+    JOIN public.affaire f ON f.id=a.livraison_affaire_id AND f.statut::text NOT IN ('ANNULE','ANNULEE','CANCELLED')
+    LEFT JOIN LATERAL (SELECT min(COALESCE(p.due_date,r.initial_due_date)) AS due_date
+      FROM public.delivery_promise_roots r LEFT JOIN public.delivery_promise_parts p ON p.root_id=r.id AND p.retired_at IS NULL
+      WHERE r.allocation_id=a.id) promised ON c.ar_sent_at IS NOT NULL
+    WHERE o.id=ANY($1::bigint[]) AND l.article_id=o.article_id AND c.client_id=o.client_id ORDER BY a.id`,[ids])).rows;
+  const own = deliveries.find(d=>d.of_id===producer.id), delivery = deliveries.find(d=>d.of_id===recipient.id);
+  if (deliveries.length!==2 || !own || !delivery || own.line_id===delivery.line_id || delivery.required<=0)
+    throw fail('Il faut deux besoins de livraison distincts et identifiés pour ce regroupement.');
+  const commitments = (await tx.query<{ present:boolean }>(`SELECT
+    EXISTS(SELECT 1 FROM public.stock_reservations r WHERE r.of_id=$1 AND
+      (r.source_type='OF' OR r.material_need_id IS NOT NULL OR r.of_component_requirement_id IS NOT NULL)
+      AND r.status IN ('ACTIVE','CONSUMED'))
+    OR EXISTS(SELECT 1 FROM public.commande_fournisseur_ligne l JOIN public.commande_fournisseur c ON c.id=l.commande_id
+        WHERE c.statut NOT IN ('ANNULEE','CLOTUREE') AND l.statut_ligne='ACTIVE' AND (l.of_id=$1 OR EXISTS(
+          SELECT 1 FROM public.commande_fournisseur_ligne_besoin b WHERE b.ligne_id=l.id AND b.besoin_of_id=$1 AND NOT b.annule)))
+    OR EXISTS(SELECT 1 FROM public.of_customer_material_calls c JOIN public.of_material_needs n ON n.id=c.need_id
+        WHERE n.of_id=$1 AND c.status<>'CANCELLED')
+    OR EXISTS(SELECT 1 FROM public.ordres_fabrication o WHERE o.parent_of_id=$1 AND o.statut<>'ANNULE')
+    OR EXISTS(SELECT 1 FROM public.of_receipts WHERE of_id=ANY($2::bigint[])) AS present`,[recipient.id,ids])).rows[0];
+  if (commitments.present) throw fail('L’OF à couvrir a déjà engagé de la matière, une sous-pièce ou une réception.');
+  let projected = producer.quantite_lancee;
+  if (producer.industrial_semantics != null) {
+    sourceCommercialQuantity(producer); // Validate the frozen yield contract before reusing it.
+    projected = frozenYieldGoodOutputNumber({launched:producer.quantite_lancee,unit:producer.unit,
+      yieldPercent:(producer.industrial_semantics as {yield_percent:number|string}).yield_percent});
+  }
+  if (delivery.required>sourceCommercialQuantity(recipient)) throw fail('Le besoin restant dépasse déjà la quantité conforme de l’OF à couvrir.');
+  const free = quantity(Math.max(0,projected-own.required));
+  if (delivery.required>free) throw fail(`Quantité disponible sur ${producer.numero} : ${free}. Besoin à couvrir : ${delivery.required}.`);
+  const existing_producer = { id:producer.id, numero:producer.numero, own, delivery, free };
+  return { quantity:producer.quantite_lancee, demand_quantity:quantity(own.required+delivery.required),
+    surplus_quantity:quantity(free-delivery.required), planning_wait_started_at:producer.planning_wait_started_at,
+    allocations:[{source_of_id:recipient.id,numero:recipient.numero,quantity:delivery.required,launched_quantity:recipient.quantite_lancee,
+      due_date:delivery.due_date,parent_of_id:null,root_of_id:recipient.root_of_id}], material:null, workload:null,
+    preview_hash:sourceHash({ request, existing_producer, free, projected, sources }), sources, existing_producer };
 }
 export async function repoPreviewConsolidation(request: ConsolidationRequest) {
   return previewTx(pool, request);
@@ -175,8 +261,25 @@ export async function repoCreateConsolidation(
         "CONSOLIDATION_PREVIEW_CHANGED",
         "L’aperçu a changé. Recalculez le regroupement.",
       );
+    if (preview.existing_producer) {
+      const { id:producerId, numero, own, delivery } = preview.existing_producer;
+      const recipient = preview.sources.find(s=>s.id===delivery.of_id)!;
+      const group = (await tx.query<{id:string}>(`INSERT INTO public.production_consolidations
+        (producer_of_id,idempotency_key,request_hash,surplus_quantity,reason,created_by,quantity_semantics,producer_own_quantity)
+        VALUES($1,$2::uuid,$3,$4,$5,$6,'EXISTING_SURPLUS_V1',$7) RETURNING id::text`,
+      [producerId,input.idempotency_key,requestHash,preview.surplus_quantity,input.request.reason,audit.user_id,own.required])).rows[0];
+      await tx.query(`INSERT INTO public.production_consolidation_allocations(consolidation_id,source_of_id,quantity,due_date,source_updated_at)
+        VALUES($1::uuid,$2,$3,$4::date,$5::timestamptz)`,[group.id,recipient.id,delivery.required,delivery.due_date,recipient.updated_at]);
+      await tx.query('UPDATE public.ordres_fabrication SET updated_at=now(),updated_by=$2 WHERE id=$1',[recipient.id,audit.user_id]);
+      await preparationAudit(tx,audit,recipient.id,'production.consolidation.cover',{consolidation_id:group.id,producer_of_id:producerId,allocated_good_quantity:delivery.required});
+      await preparationAudit(tx,audit,producerId,'production.consolidation.use_surplus',{consolidation_id:group.id,delivery,free_after:preview.surplus_quantity});
+      return {id:group.id,producer_of_id:producerId,numero,quantity:preview.quantity,demand_quantity:preview.demand_quantity,
+        surplus_quantity:preview.surplus_quantity,idempotent_replay:false};
+    }
     for (const s of preview.sources) await assertOfPreparationReady(tx, s.id);
     const first = preview.sources[0];
+    const maximumMaterialOrigins = preview.material?.policy.maximumLots ??
+      (await readMaterialOriginPolicyTx(tx,preview.sources.map(source=>source.id))).maximumLots;
     const firstEvaluation = await evaluateOfPreparation(tx, first.id);
     const currentTechnical = await loadApplicableTechnicalSnapshot(
       tx,
@@ -235,7 +338,7 @@ export async function repoCreateConsolidation(
               a.priority ?? "NORMAL",
             ),
         )[0].priority ?? "NORMAL",
-        preview.material.policy.maximumLots,
+        maximumMaterialOrigins,
         PREPARATION_RULES_VERSION,
       ],
     );
@@ -283,7 +386,7 @@ export async function repoCreateConsolidation(
         ],
       )
     ).rows[0];
-    await transferConsolidationMaterialTx(
+    if (preview.material) await transferConsolidationMaterialTx(
       tx,
       group.id,
       producerId,
@@ -457,9 +560,10 @@ export async function repoDissolveConsolidation(
       await tx.query<{
         producer_of_id: number;
         state: string;
+        quantity_semantics:string;
         surplus_of_ids: string[];
       }>(
-        "SELECT producer_of_id::bigint::int,state,surplus_of_ids FROM public.production_consolidations WHERE id=$1::uuid FOR UPDATE",
+        "SELECT producer_of_id::bigint::int,state,surplus_of_ids,quantity_semantics FROM public.production_consolidations WHERE id=$1::uuid FOR UPDATE",
         [id],
       )
     ).rows[0];
@@ -471,6 +575,8 @@ export async function repoDissolveConsolidation(
       );
     if (group.state === "DISSOLVED")
       return { id, state: "DISSOLVED", idempotent_replay: true };
+    if (group.quantity_semantics==='EXISTING_SURPLUS_V1')
+      throw new HttpError(409,'CONSOLIDATION_ENGAGED','Le producteur a un planning engagé. Révisez la couverture des affaires avec le planificateur.');
     const producer = (
       await tx.query<{
         updated_at: string;

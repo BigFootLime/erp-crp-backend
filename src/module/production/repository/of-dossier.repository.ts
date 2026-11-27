@@ -1,4 +1,3 @@
-import {assertStockReviewVersionTx,prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
 import {createHash} from "node:crypto";
 import type {PoolClient} from "pg";
 import pool from "../../../config/database";
@@ -85,7 +84,7 @@ export async function completePreparedDossierTx(tx:DossierDb,id:number,audit:Aud
   return readOfDossierTx(tx,id);
 }
 
-export async function repoCompleteOfDossier(id:number,body:{expectedVersion:string;idempotencyKey:string;materialReviewVersion?:string},audit:AuditContext,canPurchase=false,stockRights?:{reserve:boolean;deplete:boolean}) {
+export async function repoCompleteOfDossier(id:number,body:{expectedVersion:string;idempotencyKey:string;materialReviewVersion?:string},audit:AuditContext) {
   return withRealtimeOutboxTransaction(await pool.connect(),async tx=>{
     // Same lock order as central planning: planning revision before the OF.
     await tx.query("SELECT revision FROM public.planning_central_settings WHERE singleton FOR UPDATE");
@@ -101,9 +100,7 @@ export async function repoCompleteOfDossier(id:number,body:{expectedVersion:stri
     }
     const current=await readOfDossierTx(tx,id);
     if(current.version!==body.expectedVersion) throw new HttpError(409,"DOSSIER_CHANGED","Le dossier a changé. Relis ses conséquences avant de valider.");
-    const reviewedSources=body.materialReviewVersion?await assertStockReviewVersionTx(tx,id,body.materialReviewVersion):undefined;
-    const procurement=await prepareAutomaticPlanningPurchasesTx(tx,id,audit,canPurchase,stockRights&&reviewedSources?{...stockRights,reviewedSources}:undefined);
-    const response={...await completePreparedDossierTx(tx,id,audit),materialDrafts:procurement?.orders??[]};
+    const response={...await completePreparedDossierTx(tx,id,audit),materialDrafts:[]};
     await tx.query("INSERT INTO public.of_material_commands(idempotency_key,actor_id,of_id,command_type,payload_hash,response) VALUES($1::uuid,$2,$3,'COMPLETE',$4,$5::jsonb)",[body.idempotencyKey,audit.user_id,id,payloadHash,JSON.stringify(response)]);
     return response;
   });

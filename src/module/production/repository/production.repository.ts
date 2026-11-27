@@ -1,6 +1,6 @@
-import {assertStockReviewVersionTx,prepareAutomaticPlanningPurchasesTx} from '../../planning/repository/planning-procurement.repository';
 import { publishPreparationDefinitionTx } from "./preparation-publication.repository";
 import { completePreparedDossierTx } from "./of-dossier.repository";
+import { readOfDeliveryAffairs } from './of-document-commercial.repository';
 import {preparationAudit} from './production-preparation.repository';
 import {synchronizeDraftChildrenTx} from './preparation-children.repository';
 import type { PoolClient } from "pg";
@@ -3358,13 +3358,16 @@ export async function repoGetOrdreFabrication(params: {
   const header = await selectOfHeader(pool, params.id);
   if (!header) return null;
 
-  const operations = await selectOfOperations(pool, { of_id: params.id, user_id: params.user_id });
+  const [operations,deliveryAffairs] = await Promise.all([
+    selectOfOperations(pool, { of_id: params.id, user_id: params.user_id }),
+    readOfDeliveryAffairs(pool, params.id),
+  ]);
 
   // #170 : la fiche expose les transitions licites — l'UI n'invente jamais un statut.
   const statut = header.statut as OfStatut;
   const allowed = OF_STATUT_TRANSITIONS[statut] ?? [];
 
-  return { ...header, operations, allowed_statut_transitions: [...allowed] };
+  return { ...header, operations, delivery_affairs: deliveryAffairs, allowed_statut_transitions: [...allowed] };
 }
 
 type OfTreeRow = {
@@ -4689,17 +4692,13 @@ export async function repoValidateOfTechnicalPreparation(params: {
     }
     const finishValidation = async () => {
       const state = (await tx.query<{statut:string}>('SELECT statut::text FROM public.ordres_fabrication WHERE id=$1',[params.id])).rows[0];
-      const procurement=state?.statut==='BROUILLON'
-        ?await prepareAutomaticPlanningPurchasesTx(tx,params.id,params.audit,params.canPurchase===true,params.stockRights&&reviewedSources?{...params.stockRights,reviewedSources}:undefined)
-        :null;
       if (state?.statut === 'BROUILLON' && await usesPreparationRules(tx,params.id))
         await completePreparedDossierTx(tx,params.id,params.audit);
-      return {...await getOfTechnicalPreparationTx(tx,params.id),materialDrafts:procurement?.orders??[]};
+      return {...await getOfTechnicalPreparationTx(tx,params.id),materialDrafts:[]};
     };
     if (params.body.expected_updated_at && Date.parse(params.body.expected_updated_at) !== Date.parse(row.updated_at)) {
       throw new HttpError(409, "CONCURRENT_MODIFICATION", "L'OF a été modifié. Rechargez sa préparation technique.");
     }
-    const reviewedSources=params.body.material_review_version?await assertStockReviewVersionTx(tx,params.id,params.body.material_review_version):undefined;
     if (row.technical_readiness === 'VALIDATED') return finishValidation();
     const selected = typeof row.technical_preparation?.selected_version_id === "string"
       ? row.technical_preparation.selected_version_id

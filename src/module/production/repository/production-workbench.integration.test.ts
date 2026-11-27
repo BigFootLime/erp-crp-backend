@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { repoReusePreparationStock } from "./preparation-stock-reuse.repository";
-import { reconcileReleasedConsolidationLot } from "./production-receipts.repository";
+import { reconcileReleasedConsolidationLot, repoCreateOfReceipt } from "./production-receipts.repository";
 import { createRecursiveOrdresFabrication } from "../domain/of-generation";
 import { synchronizeDraftChildrenTx } from "./preparation-children.repository";
 import { repoCreateNextVersion } from "../../pieces-techniques/repository/versions.repository";
@@ -11,6 +11,10 @@ import { randomUUID } from "node:crypto";
 import { PLANNED_OPERATION_DURATION_MINUTES_SQL } from "../domain/planned-operation-duration";
 import pool from "../../../config/database";
 import { repoProductionWorklist } from "./production-worklist.repository";
+import { readOfDeliveryAffairs } from './of-document-commercial.repository';
+import { reserveProducedDeliveryDemands } from './receipt-delivery-reservations.repository';
+import { createMaterialDraftsTx } from '../../commande-fournisseur/repository/commande-fournisseur.repository';
+import { withRealtimeOutboxTransaction } from '../../../shared/realtime/realtime-outbox-transaction';
 import {
   evaluateOfPreparation,
   repoSavePreparationDecisions,
@@ -154,6 +158,108 @@ describe.skipIf(!isolated)(
     });
     afterAll(async () => {
       await pool.end();
+    });
+    it('allocates another OF against the remaining supplier line and moves it to waiting', async () => {
+      const f=await seedProductionWorkbenchFixture();
+      await prepareFixture(f);
+      const supplier=(await pool.query<{id:string}>(`SELECT id::text FROM public.fournisseurs WHERE code='E2E-FOURN-001'`)).rows[0].id;
+      for(const [id,perPiece] of [[f.ids[0],200],[f.ids[1],100]]){
+        const initial=await getOfMaterial(id);
+        if(!initial.enabled) throw new Error('Le parcours matière doit être activé.');
+        await configureOfMaterial(id,initial.needs[0].key,{expectedVersion:initial.version,idempotencyKey:randomUUID(),configuration:{
+          operationId:initial.operations[0].id,requirements:{grade:null,condition:null,ownerClientId:null,dimensions:{},certificates:[],manualChecks:[]},
+          supplyMode:'PURCHASE',allowPartial:false,supplierId:supplier,destinationId:null,
+          debitRule:{form:'UNIT',stockUnit:'kg',unitsPerBlank:perPiece,kerfPerBlank:0,yieldValidated:true},
+        }},f.audit);
+      }
+      const first=await getOfMaterial(f.ids[0]);
+      if(!first.enabled) throw new Error('Le parcours matière doit être activé.');
+      const source=first.needs[0];
+      const commands=await withRealtimeOutboxTransaction(await pool.connect(),tx=>createMaterialDraftsTx(tx,[{
+        needId:source.id,sourceRef:source.key,ofId:f.ids[0],articleId:source.articleId!,designation:source.designation,
+        supplierId:supplier,currency:'EUR',destinationId:null,unit:'kg',quantity:12000,assigned:2000,price:10,due:null,
+        requirements:[],operation:source.operationLabel!,
+      }],f.audit));
+      const second=await getOfMaterial(f.ids[1]);
+      if(!second.enabled) throw new Error('Le parcours matière doit être activé.');
+      expect(second).toMatchObject({dossierStatus:'COMPLETE',needs:[expect.objectContaining({futureSupplies:[expect.objectContaining({available:10000,automatic:true})]})]});
+      const confirmed=await confirmOfMaterial(f.ids[1],{expectedVersion:second.version,idempotencyKey:randomUUID(),selections:[],futureSelections:[],
+        existingPurchasesReviewed:false,automaticFutureAllocation:true},f.audit,true);
+      expect(confirmed.commands).toEqual([]);
+      expect(confirmed.futureAssigned).toEqual([expect.objectContaining({quantity:2000})]);
+      expect((await pool.query(`SELECT o.quantite::int AS ordered,sum(b.quantite_couverte)::int AS assigned
+        FROM public.commande_fournisseur_ligne o JOIN public.commande_fournisseur_ligne_besoin b ON b.ligne_id=o.id
+        WHERE o.commande_id=$1::uuid AND NOT b.annule GROUP BY o.id`,[commands[0].id])).rows).toEqual([{ordered:12000,assigned:4000}]);
+      const waiting=await repoProductionWorklist({q:f.code,queue:'MATERIAL_WAITING',kind:'ALL',page:1,pageSize:25});
+      expect(waiting.items).toEqual(expect.arrayContaining([expect.objectContaining({id:f.ids[1],material_state:'WAITING'})]));
+    });
+    it('groups a second delivery into the surplus of a planned OF without changing its quantity, slot or material', async () => {
+      const f=await seedProductionWorkbenchFixture();
+      await prepareFixture(f);
+      const [recipient,producer]=f.ids;
+      for (const [id,required] of [[recipient,8],[producer,12]]) {
+        const order=(await pool.query<{id:string}>(`INSERT INTO public.commande_client(numero,client_id,order_type)
+          VALUES($1,'901','FERME') RETURNING id::text`,[`${f.code}-CMD-${id}`])).rows[0].id;
+        const line=(await pool.query<{id:string}>(`INSERT INTO public.commande_ligne(commande_id,code_piece,designation,article_id,quantite,delai_client)
+          VALUES($1,$2,'Support', $3::uuid,$4,'2030-12-04') RETURNING id::text`,[order,f.code,f.article,required])).rows[0].id;
+        const affair=(await pool.query<{id:string}>(`INSERT INTO public.affaire(reference,client_id,commande_id,type_affaire,statut,date_ouverture)
+          VALUES($1,'901',$2,'livraison','OUVERTE','2030-11-30') RETURNING id::text`,[`${f.code}-AFF-${id}`,order])).rows[0].id;
+        await pool.query(`INSERT INTO public.commande_ligne_affaire_allocation(commande_id,commande_ligne_id,article_ref_id,
+          livraison_affaire_id,qty_ordered,qty_to_produce) VALUES($1,$2,$3::uuid,$4,$5,$5)`,[order,line,f.article,affair,required]);
+        await pool.query('UPDATE public.ordres_fabrication SET commande_id=$2,commande_ligne_id=$3,affaire_id=$4 WHERE id=$1',[id,order,line,affair]);
+      }
+      const poste=randomUUID();
+      await pool.query("INSERT INTO public.postes(id,code,label,is_active) VALUES($1::uuid,$2,'Planification de recette',true)",[poste,`${f.code}-SITE`]);
+      const slot=(await pool.query(`INSERT INTO public.planning_events(id,of_id,of_operation_id,poste_id,title,start_ts,end_ts,allow_overlap,created_by)
+        SELECT gen_random_uuid(),$1,op.id,$2::uuid,'Surplus en recette',now()+interval '1 day',now()+interval '1 day 9 hours',true,$3
+        FROM public.of_operations op WHERE op.of_id=$1 RETURNING id::text,start_ts::text,end_ts::text`,[producer,poste,f.audit.user_id])).rows[0];
+      const openOrders=await pool.query('SELECT count(*)::int AS total FROM public.commande_fournisseur');
+      const worklist=await repoProductionWorklist({q:f.code,queue:'MATERIAL_TO_SUPPLY',kind:'ALL',page:1,pageSize:25});
+      expect(worklist.items).toEqual(expect.arrayContaining([expect.objectContaining({id:producer,material_state:'TO_SUPPLY'})]));
+      const rows=(await pool.query<{of_id:number;expected_updated_at:string}>(`SELECT id::int AS of_id,updated_at::text AS expected_updated_at
+        FROM public.ordres_fabrication WHERE id=ANY($1::bigint[])`,[[recipient,producer]])).rows;
+      const request={sources:rows,surplus_quantity:0,producer_of_id:producer,reason:'Absorber le second besoin sur le lot prévu'};
+      const preview=await repoPreviewConsolidation(request);
+      expect(preview).toMatchObject({quantity:20,demand_quantity:20,surplus_quantity:0,existing_producer:{free:8}});
+      const command={request,preview_hash:preview.preview_hash,idempotency_key:randomUUID()};
+      const [first,second]=await Promise.all([repoCreateConsolidation(command,f.audit),repoCreateConsolidation(command,f.audit)]);
+      expect(first.id).toBe(second.id);
+      expect([first,second].filter(result=>result.idempotent_replay)).toHaveLength(1);
+      expect((await pool.query('SELECT quantite_lancee::int FROM public.ordres_fabrication WHERE id=$1',[producer])).rows[0].quantite_lancee).toBe(20);
+      expect((await pool.query('SELECT id::text,start_ts::text,end_ts::text FROM public.planning_events WHERE of_id=$1',[producer])).rows).toEqual([slot]);
+      expect((await pool.query('SELECT count(*)::int AS total FROM public.commande_fournisseur')).rows).toEqual(openOrders.rows);
+      expect(await readOfDeliveryAffairs(pool,producer)).toEqual(expect.arrayContaining([
+        expect.objectContaining({source_of_id:recipient,quantity:8,due_date:'2030-12-04',confirmed:false}),
+        expect.objectContaining({source_of_id:producer,quantity:12,due_date:'2030-12-04',confirmed:false}),
+      ]));
+      const ready=(await pool.query<{updated_at:string}>(`UPDATE public.ordres_fabrication SET statut='TERMINE',quantite_bonne=20
+        WHERE id=$1 RETURNING updated_at::text`,[producer])).rows[0];
+      const stock=await seedWorkbenchStock({...f,code:`${f.code}-FIN`},20);
+      const result=await repoCreateOfReceipt({of_id:producer,idempotency_key:randomUUID(),audit:f.audit,body:{
+        article_id:f.article,qty_ok:13,qty_scrap:0,qty_rework:0,unite:'u',location_id:stock.location,
+        lot_mode:'EXISTING',lot_id:stock.lot,quality_status:'LIBERE',expected_of_updated_at:ready.updated_at,
+      }});
+      expect(result.reserved_qty).toBe(13);
+      expect((await pool.query(`SELECT of_id::int,qty_reserved::float8 FROM public.stock_reservations
+        WHERE lot_id=$1::uuid AND status='ACTIVE' ORDER BY of_id`,[stock.lot])).rows).toEqual([
+        {of_id:recipient,qty_reserved:1},{of_id:producer,qty_reserved:12},
+      ]);
+      const demand=(await pool.query<{line_id:number;affair_id:number}>(`SELECT commande_ligne_id::int AS line_id,affaire_id::int AS affair_id
+        FROM public.ordres_fabrication WHERE id=$1`,[recipient])).rows[0];
+      const extra=await seedWorkbenchStock({...f,code:`${f.code}-LIBRE`},6);
+      await withRealtimeOutboxTransaction(await pool.connect(),tx=>reserveProducedDeliveryDemands(tx,{
+        article_id:f.article,commande_ligne_id:demand.line_id,livraison_affaire_id:demand.affair_id,qty_ok:6,
+        location_id:extra.location,stock_level_id:extra.level,stock_batch_id:extra.batch,lot_id:extra.lot,actor_user_id:f.audit.user_id,
+      }));
+      const latest=(await pool.query<{updated_at:string}>('SELECT updated_at::text FROM public.ordres_fabrication WHERE id=$1',[producer])).rows[0];
+      const remainder=await repoCreateOfReceipt({of_id:producer,idempotency_key:randomUUID(),audit:f.audit,body:{
+        article_id:f.article,qty_ok:7,qty_scrap:0,qty_rework:0,unite:'u',location_id:stock.location,
+        lot_mode:'EXISTING',lot_id:stock.lot,quality_status:'LIBERE',expected_of_updated_at:latest.updated_at,
+      }});
+      expect(remainder).toMatchObject({reserved_qty:1,available_qty:6});
+      const borrowed=(await pool.query<{total:number}>(`SELECT received_quantity::float8 AS total
+        FROM public.production_consolidation_allocations WHERE consolidation_id=$1::uuid`,[first.id])).rows[0];
+      expect(borrowed.total).toBe(2);
     });
     it("selects a draft revision without partially attaching an immutable OF snapshot", async () => {
       const f = await seedProductionWorkbenchFixture();
@@ -1068,6 +1174,7 @@ describe.skipIf(!isolated)(
       };
       const preview = await repoPreviewConsolidation(request);
       expect(preview.quantity).toBe(35);
+      if (!preview.workload) throw new Error('Le regroupement doit calculer la nouvelle charge.');
       const input = {
         request,
         preview_hash: preview.preview_hash,

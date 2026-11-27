@@ -161,6 +161,8 @@ export type OfOperation = {
   open_time_log: OfTimeLog | null;
 };
 
+export type OfDeliveryAffair = { affaire_id:number; reference:string; quantity:number; due_date:string|null; confirmed:boolean; source_of_id:number };
+
 export type OrdreFabricationDetail = {
   id: number;
   numero: string;
@@ -201,6 +203,7 @@ export type OrdreFabricationDetail = {
   created_by: number | null;
   updated_by: number | null;
   operations: OfOperation[];
+  delivery_affairs?: OfDeliveryAffair[];
   // #170 : transitions licites depuis le statut courant (automate serveur).
   allowed_statut_transitions: OfStatusDTO[];
 };
